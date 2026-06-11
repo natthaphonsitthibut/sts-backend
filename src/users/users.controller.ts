@@ -8,15 +8,18 @@ import {
   Param,
   NotFoundException,
   ParseIntPipe,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { UsersService } from './users.service';
 import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
   RequirePermission,
+  SessionCookieService,
   type AuthenticatedRequestUser,
 } from '../auth';
 import {
@@ -38,6 +41,7 @@ export class UsersController {
     private readonly roleGroupsService: RoleGroupsService,
     private readonly userAuthService: UserAuthService,
     private readonly passwordMigrationService: PasswordMigrationService,
+    private readonly sessionCookieService: SessionCookieService,
   ) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -146,12 +150,19 @@ export class UsersController {
   }
 
   @Post('login')
-  async login(@Body() body: LoginDto) {
+  async login(@Body() body: LoginDto, @Res({ passthrough: true }) res: Response) {
     const user = await this.userAuthService.validateUser(body.username, body.password);
     if (!user) {
       throw new UnauthorizedException('ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง');
     }
+    this.sessionCookieService.setSession(res, user.id);
     return user;
+  }
+
+  @Post('logout')
+  logout(@Res({ passthrough: true }) res: Response) {
+    this.sessionCookieService.clearSession(res);
+    return { success: true };
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

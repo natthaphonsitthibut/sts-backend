@@ -1,15 +1,18 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { ROLE_BASELINES } from '../common/utils/authorization';
 import { hashToken } from '../common/utils/helpers';
 import { queryDataSource } from '../database/sql-query';
 import { DataSource } from 'typeorm';
 import type { AuthenticatedRequestUser } from './auth.types';
+import { authConfig } from '../config/auth.config';
 
 interface StudentAuthRow extends Record<string, unknown> {
   PersonID_Onec: string;
@@ -47,9 +50,15 @@ function normalizePersonId(value: string): string {
 
 @Injectable()
 export class StudentAuthService {
-  private readonly virtualAuthSecret = process.env.AUTH_SESSION_SECRET || 'SECRET_STS_KEY';
+  private readonly virtualAuthSecret: string;
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @Inject(authConfig.KEY)
+    private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
+  ) {
+    this.virtualAuthSecret = this.authRuntimeConfig.sessionSecret;
+  }
 
   async loginWithMockThaId(personId: string) {
     this.ensureMockModeEnabled();
@@ -92,8 +101,7 @@ export class StudentAuthService {
   }
 
   private ensureMockModeEnabled(): void {
-    const thaidMode = (process.env.THAID_MODE || 'mock').trim().toLowerCase();
-    if (thaidMode !== 'mock') {
+    if (this.authRuntimeConfig.thaidMode !== 'mock') {
       throw new ServiceUnavailableException('ThaID mock mode is disabled');
     }
   }

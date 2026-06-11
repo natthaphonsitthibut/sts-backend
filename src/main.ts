@@ -13,6 +13,8 @@ async function bootstrap() {
 
   app.enableCors({
     origin: runtimeConfig.corsOrigins.length > 0 ? runtimeConfig.corsOrigins : true,
+    // Required so the browser sends/accepts the httpOnly session cookie cross-origin.
+    credentials: true,
   });
   app.useStaticAssets(runtimeConfig.uploadsDir, {
     prefix: runtimeConfig.uploadsPrefix,

@@ -15,6 +15,7 @@ import { ConfigModule, type ConfigType } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { StudentsModule } from './students/students.module';
 import { appConfig } from './config/app.config';
+import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
@@ -23,7 +24,7 @@ import { createTypeOrmOptions } from './database/typeorm.config';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, emailConfig],
+      load: [appConfig, authConfig, databaseConfig, emailConfig],
     }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({

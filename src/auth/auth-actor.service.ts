@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { hashToken } from '../common/utils/helpers';
 import { queryDataSource } from '../database/sql-query';
@@ -9,6 +10,8 @@ import {
 } from './auth.types';
 import * as crypto from 'crypto';
 import { StudentAuthService } from './student-auth.service';
+import { SessionCookieService } from './session-cookie.service';
+import { authConfig } from '../config/auth.config';
 
 interface QueryResult<T extends Record<string, unknown>> {
   rows: T[];
@@ -63,11 +66,12 @@ function resolvePermissions(permissions: unknown, defaultPermissions: unknown): 
 
 @Injectable()
 export class AuthActorService {
-  private readonly magicSessionSecret = 'SECRET_STS_KEY';
-
   constructor(
     private readonly dataSource: DataSource,
     private readonly studentAuthService: StudentAuthService,
+    private readonly sessionCookieService: SessionCookieService,
+    @Inject(authConfig.KEY)
+    private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
   ) {}
 
   async loadRequiredUser(
@@ -105,18 +109,10 @@ export class AuthActorService {
   }
 
   private extractUserId(request: Pick<RequestWithUser, 'headers' | 'session'>): number | null {
-    const sessionUserId = request.session?.['userId'];
-    if (typeof sessionUserId === 'number' && Number.isInteger(sessionUserId)) {
-      return sessionUserId;
-    }
-
-    const userIdHeader = this.readHeader(request.headers, 'x-user-id');
-    if (!userIdHeader) {
-      return null;
-    }
-
-    const parsedUserId = Number.parseInt(userIdHeader, 10);
-    return Number.isInteger(parsedUserId) ? parsedUserId : null;
+    // Identity comes only from the server-signed httpOnly session cookie — never
+    // from a client-supplied header (a forgeable `x-user-id` would be a full auth
+    // bypass).
+    return this.sessionCookieService.readUserId(this.readHeader(request.headers, 'cookie'));
   }
 
   private async loadUser(userId: number): Promise<AuthenticatedRequestUser | null> {
@@ -170,7 +166,7 @@ export class AuthActorService {
       const [base64Payload, signature] = sessionToken.split('.');
       const payload = Buffer.from(base64Payload, 'base64').toString('utf-8');
       const expectedSign = crypto
-        .createHmac('sha256', this.magicSessionSecret)
+        .createHmac('sha256', this.authRuntimeConfig.sessionSecret)
         .update(payload)
         .digest('hex');
 
