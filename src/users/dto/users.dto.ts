@@ -1,0 +1,118 @@
+import { PartialType } from '@nestjs/mapped-types';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsEmail,
+  IsInt,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
+import type { DataScope } from '../users.types';
+
+export class CreateUserDto {
+  @IsString()
+  @IsNotEmpty()
+  username!: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  password?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  FirstName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  LastName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  PersonID_Onec!: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  affiliation?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsArray()
+  permissions?: string[];
+
+  @IsOptional()
+  @IsString()
+  role?: string;
+
+  @IsOptional()
+  @IsArray()
+  roles?: string[];
+
+  @IsOptional()
+  @IsObject()
+  data_scope?: DataScope;
+}
+
+export class UpdateUserDto extends PartialType(CreateUserDto) {}
+
+export class LoginDto {
+  @IsString()
+  @IsNotEmpty()
+  username!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+}
+
+export class ChangePasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(8)
+  newPassword!: string;
+}
+
+export class CreateRoleGroupDto {
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  label!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  rank!: number;
+
+  @IsOptional()
+  @IsArray()
+  default_permissions?: string[];
+
+  @IsOptional()
+  @IsArray()
+  permissions?: string[];
+
+  @IsOptional()
+  @IsString()
+  scope_mode?: string;
+}
+
+export class UpdateRoleGroupDto extends PartialType(CreateRoleGroupDto) {}

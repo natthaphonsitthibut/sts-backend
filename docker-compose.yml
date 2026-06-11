@@ -1,0 +1,26 @@
+# Pin the Compose project name so the named volume is always
+# "sts-backend_postgres_data" regardless of the directory it's run from.
+name: sts-backend
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: sts-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: sts
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/backups/sts_backup.sql:/docker-entrypoint-initdb.d/01-sts_backup.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sts"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres_data:
