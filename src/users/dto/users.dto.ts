@@ -8,6 +8,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   MinLength,
 } from 'class-validator';
 import type { DataScope } from '../users.types';
@@ -32,10 +33,11 @@ export class CreateUserDto {
 
   @IsString()
   @IsNotEmpty()
+  @Matches(/^\d{13}$/, { message: 'เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก' })
   PersonID_Onec!: string;
 
   @IsOptional()
-  @IsString()
+  @Matches(/^\d{9,10}$/, { message: 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก' })
   phone?: string;
 
   @IsOptional()
