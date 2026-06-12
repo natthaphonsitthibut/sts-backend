@@ -65,9 +65,11 @@ export class DelegationService {
     const newToken = generateToken();
     const newTokenHash = hashToken(newToken);
     const newLinkId = crypto.randomUUID();
-    const otpVerified = newAssigneeEmail ? 0 : 1;
+    // TODO(otp): email OTP is bypassed until the email API is configured.
+    // Restore `newAssigneeEmail ? 0 : 1` to require OTP for email-assigned links.
+    const otpVerified = 1;
     const expiresAt = new Date(Date.now() + delegateHours * 60 * 60 * 1000).toISOString();
-    const magicLink = `${baseUrl}/#/task/${newToken}`;
+    const magicLink = `${baseUrl}/task/${newToken}`;
 
     await this.taskRepository.withTransaction(async (executor) => {
       await this.taskRepository.updateTaskLinkStatus(String(link.id), 'DELEGATED', executor);

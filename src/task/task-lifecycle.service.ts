@@ -96,7 +96,7 @@ export class TaskLifecycleService {
     }
 
     const expiresAt = new Date(Date.now() + expiresMs).toISOString();
-    const magicLink = `${baseUrl}/#/task/${token}`;
+    const magicLink = `${baseUrl}/task/${token}`;
 
     try {
       await this.taskRepository.withTransaction(async (executor) => {
@@ -160,7 +160,9 @@ export class TaskLifecycleService {
             assignedToEmail: assignedEmail,
             expiresAt,
             subject: clean(data.subject),
-            otpVerified: assignedEmail ? 0 : 1,
+            // TODO(otp): email OTP is bypassed until the email API is configured.
+            // Restore `assignedEmail ? 0 : 1` to require OTP for email-assigned links.
+            otpVerified: 1,
             createdByUserId: currentActor.virtual_login ? null : currentActor.id,
             loginRole,
             loginPermissions,
