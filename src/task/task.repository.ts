@@ -10,6 +10,7 @@ interface CreateCaseInput {
   studentLat: number | null;
   studentLng: number | null;
   reasonFlagged: string | null;
+  studentId: string | null;
 }
 
 interface CreateTaskInput {
@@ -181,9 +182,10 @@ export class TaskRepository {
         student_address,
         student_lat,
         student_lng,
-        reason_flagged
+        reason_flagged,
+        student_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id
     `,
       [
@@ -193,6 +195,7 @@ export class TaskRepository {
         data.studentLat,
         data.studentLng,
         data.reasonFlagged,
+        data.studentId,
       ],
     );
 

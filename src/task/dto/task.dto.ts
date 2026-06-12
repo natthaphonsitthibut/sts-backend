@@ -22,6 +22,7 @@ export class CreateTaskDto {
   expires_value?: string | number | null;
   expires_unit?: string | null;
   student_name?: string | null;
+  student_id?: string | null;
   student_school?: string | null;
   student_address?: string | null;
   student_lat?: string | number | null;

@@ -64,6 +64,7 @@ export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS cases (
     id SERIAL PRIMARY KEY,
     student_name TEXT NOT NULL,
+    student_id TEXT,
     student_school TEXT,
     student_address TEXT,
     student_lat REAL,
@@ -269,6 +270,7 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "role" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "data_scope" JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';

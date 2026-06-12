@@ -126,6 +126,7 @@ export class TaskLifecycleService {
                 studentLat: this.normalizeNumber(data.student_lat),
                 studentLng: this.normalizeNumber(data.student_lng),
                 reasonFlagged: clean(data.reason_flagged),
+                studentId: clean(data.student_id) || null,
               },
               executor,
             );
