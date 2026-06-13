@@ -75,6 +75,13 @@ export class TaskAccessService {
       ? this.isMagicSessionVerified(String(link.id), sessionToken)
       : false;
 
+    // TODO(otp): OTP is globally bypassed until the email API is configured, so
+    // every link type (visit / attendance / login) behaves the same. Flip
+    // `otpEnabled` back to true to require OTP on email-assigned links again.
+    const otpEnabled = false;
+    const authRequired =
+      otpEnabled && hasEmailForOtp && !link.otp_verified && !sessionVerified;
+
     const result: Record<string, unknown> = {
       task_id: link.task_id,
       link_id: link.id,
@@ -92,7 +99,7 @@ export class TaskAccessService {
       expires_at: link.expires_at,
       subject: link.subject,
       school_name: link.school_name,
-      auth_required: !!(hasEmailForOtp && !link.otp_verified && !sessionVerified),
+      auth_required: authRequired,
       login_role: link.login_role || null,
       login_permissions: link.login_permissions || [],
       login_data_scope: link.login_data_scope || {},
