@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
@@ -127,6 +128,7 @@ export class TaskLifecycleService {
                 studentLng: this.normalizeNumber(data.student_lng),
                 reasonFlagged: clean(data.reason_flagged),
                 studentId: clean(data.student_id) || null,
+                createdBy: resolveAuditActorId(currentActor),
               },
               executor,
             );
@@ -143,6 +145,7 @@ export class TaskLifecycleService {
             targetGrade: clean(data.target_grade) || null,
             targetRoom: clean(data.target_room) || null,
             targetSchoolId: this.normalizeNumber(data.target_school_id),
+            createdBy: resolveAuditActorId(currentActor),
           },
           executor,
         );
@@ -163,7 +166,7 @@ export class TaskLifecycleService {
             // TODO(otp): email OTP is bypassed until the email API is configured.
             // Restore `assignedEmail ? 0 : 1` to require OTP for email-assigned links.
             otpVerified: 1,
-            createdByUserId: currentActor.virtual_login ? null : currentActor.id,
+            createdBy: resolveAuditActorId(currentActor),
             loginRole,
             loginPermissions,
             loginDataScope,

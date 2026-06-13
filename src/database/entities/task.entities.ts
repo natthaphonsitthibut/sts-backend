@@ -126,8 +126,8 @@ export class TaskLinkEntity {
   @Column({ name: 'created_at', type: 'timestamptz', nullable: true })
   createdAt!: Date | null;
 
-  @Column({ name: 'created_by_user_id', type: 'integer', nullable: true })
-  createdByUserId!: number | null;
+  @Column({ name: 'created_by', type: 'integer', nullable: true })
+  createdBy!: number | null;
 
   @Column({ name: 'login_role', type: 'text', nullable: true })
   loginRole!: string | null;

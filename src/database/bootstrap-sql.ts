@@ -46,6 +46,104 @@ const SYSTEM_SETTING_BASELINE_SQL = SYSTEM_SETTING_DEFINITIONS.map(
   ON CONFLICT (setting_key) DO NOTHING;`,
 ).join('\n');
 
+/**
+ * Standard audit columns for NEW tables (audit-columns standard, Phase 1).
+ * Embed inside a CREATE TABLE column list, then attach the updated_at trigger
+ * with {@link auditUpdatedAtTriggerSql}.
+ * - timestamps are TIMESTAMPTZ (UTC-correct); `created_at` defaults to now() and
+ *   `updated_at` is bumped by the shared `set_updated_at()` trigger.
+ * - `*_by` are nullable FKs to users(id) filled from the authenticated actor
+ *   (see common/audit/audit-actor.util.ts). Nullable + ON DELETE SET NULL so
+ *   external / magic-link actors and deleted users don't break history.
+ * - `deleted_at`/`deleted_by` are for soft delete (NULL = live row).
+ * Tables using this MUST be created after `users` (FK dependency).
+ */
+export const AUDIT_COLUMNS_SQL = `created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    deleted_at TIMESTAMPTZ,
+    deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL`;
+
+/**
+ * Shared trigger function that keeps `updated_at` accurate on every UPDATE.
+ * Postgres has no built-in "on update" timestamp, so audited tables attach this
+ * via {@link auditUpdatedAtTriggerSql}. Idempotent (CREATE OR REPLACE).
+ */
+export const SET_UPDATED_AT_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION set_updated_at()
+  RETURNS trigger AS $$
+  BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;`;
+
+/** BEFORE UPDATE trigger that bumps updated_at for one audited table. */
+export function auditUpdatedAtTriggerSql(table: string): string {
+  return `DROP TRIGGER IF EXISTS trg_${table}_set_updated_at ON ${table};
+  CREATE TRIGGER trg_${table}_set_updated_at
+    BEFORE UPDATE ON ${table}
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();`;
+}
+
+/**
+ * Tables retrofitted with the standard audit columns (Phase 2a). Used by both
+ * the baseline (fresh installs) and the Phase 2a migration (existing DBs) so the
+ * two never drift. `created_by`/`updated_by` start NULL and are filled by the
+ * service layer; `created_at`/`updated_at` are DB-managed.
+ */
+export const AUDIT_RETROFIT_TABLES = [
+  'users',
+  'roles',
+  'cases',
+  'tasks',
+  'task_links',
+  'task_submissions',
+  'case_reviews',
+  'attendance',
+  'system_settings',
+  'schools',
+] as const;
+
+/**
+ * Idempotently adds the standard audit columns + updated_at trigger to every
+ * table in {@link AUDIT_RETROFIT_TABLES}, normalizes any pre-existing plain
+ * `timestamp` columns to `timestamptz`, backfills nulls, and enforces
+ * NOT NULL + DEFAULT now() on the timestamps. Safe to run repeatedly.
+ */
+export const AUDIT_RETROFIT_SQL = `
+  DO $audit$
+  DECLARE
+    t text;
+    audit_tables text[] := ARRAY[${AUDIT_RETROFIT_TABLES.map((name) => `'${name}'`).join(', ')}];
+  BEGIN
+    FOREACH t IN ARRAY audit_tables LOOP
+      EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_at timestamptz', t);
+      EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at timestamptz', t);
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = t AND column_name = 'created_at'
+                   AND data_type = 'timestamp without time zone') THEN
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN created_at TYPE timestamptz USING created_at AT TIME ZONE ''UTC''', t);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = t AND column_name = 'updated_at'
+                   AND data_type = 'timestamp without time zone') THEN
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN updated_at TYPE timestamptz USING updated_at AT TIME ZONE ''UTC''', t);
+      END IF;
+      EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by integer REFERENCES users(id) ON DELETE SET NULL', t);
+      EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by integer REFERENCES users(id) ON DELETE SET NULL', t);
+      EXECUTE format('UPDATE %I SET created_at = COALESCE(created_at, now()) WHERE created_at IS NULL', t);
+      EXECUTE format('UPDATE %I SET updated_at = COALESCE(updated_at, created_at, now()) WHERE updated_at IS NULL', t);
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN created_at SET DEFAULT now()', t);
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN updated_at SET DEFAULT now()', t);
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN created_at SET NOT NULL', t);
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN updated_at SET NOT NULL', t);
+      EXECUTE format('DROP TRIGGER IF EXISTS trg_%I_set_updated_at ON %I', t, t);
+      EXECUTE format('CREATE TRIGGER trg_%I_set_updated_at BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION set_updated_at()', t, t);
+    END LOOP;
+  END $audit$;
+`;
+
 export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS schools (
     id SERIAL PRIMARY KEY,
@@ -286,7 +384,7 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_links ALTER COLUMN otp_expires_at TYPE TIMESTAMP WITH TIME ZONE USING otp_expires_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN admin_lock_at TYPE TIMESTAMP WITH TIME ZONE USING admin_lock_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at AT TIME ZONE 'UTC';
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_role TEXT;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_permissions JSONB DEFAULT '[]'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
@@ -447,6 +545,10 @@ export const DATABASE_BASELINE_SQL = `
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
   );
+
+  ${SET_UPDATED_AT_FUNCTION_SQL}
+
+  ${AUDIT_RETROFIT_SQL}
 `;
 
 export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<void> {

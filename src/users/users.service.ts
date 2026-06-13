@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { PasswordService } from '../auth/password.service';
 import type { ChangePasswordDto, CreateUserDto, UpdateUserDto } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
@@ -76,6 +77,7 @@ export class UsersService {
             role: primaryRole,
             dataScope: data.data_scope || {},
             mustChangePassword: true,
+            createdBy: resolveAuditActorId(currentActor),
           },
           executor,
         );
@@ -148,6 +150,7 @@ export class UsersService {
               this.usersPolicyService.normalizePermissionList(existingUser.permissions),
             role: primaryRole,
             dataScope: data.data_scope ?? existingUser.data_scope ?? {},
+            updatedBy: resolveAuditActorId(currentActor),
           },
           executor,
         );

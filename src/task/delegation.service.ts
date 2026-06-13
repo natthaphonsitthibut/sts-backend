@@ -88,7 +88,7 @@ export class DelegationService {
           expiresAt,
           subject: null,
           otpVerified,
-          createdByUserId: null,
+          createdBy: null,
           loginRole: null,
           loginPermissions: [],
           loginDataScope: {},

@@ -11,6 +11,7 @@ interface CreateCaseInput {
   studentLng: number | null;
   reasonFlagged: string | null;
   studentId: string | null;
+  createdBy: number | null;
 }
 
 interface CreateTaskInput {
@@ -20,6 +21,7 @@ interface CreateTaskInput {
   targetGrade: string | null;
   targetRoom: string | null;
   targetSchoolId: number | null;
+  createdBy: number | null;
 }
 
 interface CreateTaskLinkInput {
@@ -35,7 +37,7 @@ interface CreateTaskLinkInput {
   expiresAt: string;
   subject: string | null;
   otpVerified: number;
-  createdByUserId: number | null;
+  createdBy: number | null;
   loginRole: string | null;
   loginPermissions: string[];
   loginDataScope: Record<string, unknown>;
@@ -183,9 +185,11 @@ export class TaskRepository {
         student_lat,
         student_lng,
         reason_flagged,
-        student_id
+        student_id,
+        created_by,
+        updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
       RETURNING id
     `,
       [
@@ -196,6 +200,7 @@ export class TaskRepository {
         data.studentLng,
         data.reasonFlagged,
         data.studentId,
+        data.createdBy,
       ],
     );
 
@@ -219,9 +224,11 @@ export class TaskRepository {
         target_grade,
         target_room,
         status,
-        target_school_id
+        target_school_id,
+        created_by,
+        updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, 'IN_PROGRESS', $6)
+      VALUES ($1, $2, $3, $4, $5, 'IN_PROGRESS', $6, $7, $7)
     `,
       [
         data.taskId,
@@ -230,6 +237,7 @@ export class TaskRepository {
         data.targetGrade,
         data.targetRoom,
         data.targetSchoolId,
+        data.createdBy,
       ],
     );
   }
@@ -250,7 +258,8 @@ export class TaskRepository {
         expires_at,
         subject,
         otp_verified,
-        created_by_user_id,
+        created_by,
+        updated_by,
         login_role,
         login_permissions,
         login_data_scope
@@ -268,6 +277,7 @@ export class TaskRepository {
         $10,
         $11,
         $12,
+        $13,
         $13,
         $14,
         $15,
@@ -287,7 +297,7 @@ export class TaskRepository {
         data.expiresAt,
         data.subject,
         data.otpVerified,
-        data.createdByUserId,
+        data.createdBy,
         data.loginRole,
         JSON.stringify(data.loginPermissions),
         JSON.stringify(data.loginDataScope),
@@ -346,7 +356,7 @@ export class TaskRepository {
         tl.login_role,
         tl.login_permissions,
         tl.login_data_scope,
-        tl.created_by_user_id,
+        tl.created_by,
         r.label AS login_role_label,
         t.created_at
       FROM task_links tl

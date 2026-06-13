@@ -23,6 +23,7 @@ interface CreateUserRecordInput {
   role: string;
   dataScope: DataScope;
   mustChangePassword: boolean;
+  createdBy: number | null;
 }
 
 interface UpdateUserRecordInput {
@@ -39,6 +40,7 @@ interface UpdateUserRecordInput {
   permissions: string[];
   role: string;
   dataScope: DataScope;
+  updatedBy: number | null;
 }
 
 interface CreateRoleRecordInput {
@@ -193,9 +195,11 @@ export class UsersRepository {
           permissions,
           role,
           data_scope,
-          must_change_password
+          must_change_password,
+          created_by,
+          updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
         RETURNING id
       `,
       [
@@ -212,6 +216,7 @@ export class UsersRepository {
         data.role,
         JSON.stringify(data.dataScope),
         data.mustChangePassword,
+        data.createdBy,
       ],
     );
 
@@ -232,6 +237,7 @@ export class UsersRepository {
       `permissions = $9`,
       `role = $10`,
       `data_scope = $11`,
+      `updated_by = $12`,
     ];
 
     const params: unknown[] = [
@@ -246,6 +252,7 @@ export class UsersRepository {
       JSON.stringify(data.permissions),
       data.role,
       JSON.stringify(data.dataScope),
+      data.updatedBy,
     ];
 
     let idParamIndex = params.length + 1;
