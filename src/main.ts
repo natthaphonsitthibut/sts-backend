@@ -11,6 +11,14 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const runtimeConfig = app.get<ConfigType<typeof appConfig>>(appConfig.KEY);
 
+  // In production an empty allowlist would reflect ANY origin (`origin: true`),
+  // which combined with `credentials: true` lets any site make authenticated
+  // cross-origin requests. Fail closed instead: production MUST set CORS_ORIGINS.
+  if (runtimeConfig.isProduction && runtimeConfig.corsOrigins.length === 0) {
+    throw new Error(
+      '[config] CORS_ORIGINS must be set in production (comma-separated allowlist); refusing to reflect every origin.',
+    );
+  }
   app.enableCors({
     origin: runtimeConfig.corsOrigins.length > 0 ? runtimeConfig.corsOrigins : true,
     // Required so the browser sends/accepts the httpOnly session cookie cross-origin.
@@ -22,7 +30,11 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
-      whitelist: false,
+      // Strip properties that have no validation decorator (mass-assignment
+      // defense). NOT using forbidNonWhitelisted yet: some clients still send
+      // extra body fields (e.g. user save sends `id`/`labels`), so we silently
+      // strip rather than 400 until the FE/BE payload contracts are aligned.
+      whitelist: true,
       forbidUnknownValues: false,
       transformOptions: {
         enableImplicitConversion: true,

@@ -2,6 +2,8 @@ import { join } from 'path';
 import { registerAs } from '@nestjs/config';
 
 export interface AppRuntimeConfig {
+  nodeEnv: string;
+  isProduction: boolean;
   port: number;
   corsOrigins: string[];
   uploadsDir: string;
@@ -36,8 +38,11 @@ function resolveUploadsDir(value: string | undefined): string {
 export function getAppConfigFromEnv(): AppRuntimeConfig {
   const uploadsPrefix = process.env.UPLOADS_PREFIX || '/uploads/';
   const frontendBaseUrl = process.env.FRONTEND_BASE_URL?.trim();
+  const nodeEnv = (process.env.NODE_ENV || 'development').trim().toLowerCase();
 
   return {
+    nodeEnv,
+    isProduction: nodeEnv === 'production',
     port: parsePort(process.env.PORT, 3000),
     corsOrigins: parseCsv(process.env.CORS_ORIGINS),
     uploadsDir: resolveUploadsDir(process.env.UPLOADS_DIR),
