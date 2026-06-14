@@ -65,6 +65,11 @@ export class AbsenceMonitorService {
           executor,
         );
 
+        const absentIdSet = new Set(
+          absentStudents
+            .map((student) => this.normalizeText(student.person_id_onec))
+            .filter((id) => id.length > 0),
+        );
         const absentNamesSet = new Set(
           absentStudents
             .map((student) => this.buildStudentName(student))
@@ -74,11 +79,19 @@ export class AbsenceMonitorService {
         const openCases = await this.automationRepository.listOpenAbsenceCases(executor);
 
         for (const openCase of openCases) {
+          const caseStudentId = this.normalizeText(openCase.student_id);
           const caseStudentName = this.normalizeText(openCase.student_name);
-          if (caseStudentName && !absentNamesSet.has(caseStudentName)) {
+          if (!caseStudentId && !caseStudentName) {
+            continue; // ระบุตัวไม่ได้ → ไม่แตะ (รักษา guard เดิม)
+          }
+          // id-first; ใช้ชื่อ fallback เฉพาะเคส legacy ที่ไม่มี student_id
+          const stillAbsent = caseStudentId
+            ? absentIdSet.has(caseStudentId)
+            : absentNamesSet.has(caseStudentName);
+          if (!stillAbsent) {
             await this.automationRepository.deleteOpenCaseById(openCase.id, executor);
             this.logger.log(
-              `Deleted / Canceled Case ${openCase.id} for ${caseStudentName} due to attendance correction.`,
+              `Deleted / Canceled Case ${openCase.id} for ${caseStudentName || caseStudentId} due to attendance correction.`,
             );
           }
         }
@@ -95,10 +108,12 @@ export class AbsenceMonitorService {
           if (!studentName) {
             continue;
           }
+          const studentId = this.normalizeText(student.person_id_onec);
 
           this.logger.log(`Checking existing cases for: ${studentName}`);
 
-          const existingCaseId = await this.automationRepository.findOpenCaseByStudentName(
+          const existingCaseId = await this.automationRepository.findOpenAbsenceCaseByStudent(
+            studentId,
             studentName,
             executor,
           );
@@ -120,6 +135,7 @@ export class AbsenceMonitorService {
           const caseId = await this.automationRepository.createAutomatedCase(
             {
               studentName,
+              studentId: studentId || null,
               schoolName,
               studentAddress: address,
               reason,

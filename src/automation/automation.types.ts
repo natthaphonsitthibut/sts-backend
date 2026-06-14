@@ -17,6 +17,7 @@ export interface SettingValueRow extends Record<string, unknown> {
 export interface OpenAbsenceCaseRow extends Record<string, unknown> {
   id: number;
   student_name: string | null;
+  student_id: string | null;
 }
 
 export interface ConsecutiveAbsentStudentRow extends Record<string, unknown> {
@@ -40,6 +41,7 @@ export interface CreatedCaseRow extends Record<string, unknown> {
 
 export interface CreateAutomatedCaseInput {
   studentName: string;
+  studentId: string | null;
   schoolName: string;
   studentAddress: string | null;
   reason: string;

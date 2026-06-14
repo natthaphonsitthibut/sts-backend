@@ -102,7 +102,7 @@ export class AutomationRepository {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<OpenAbsenceCaseRow>(
       `
-        SELECT id, student_name
+        SELECT id, student_name, student_id
         FROM cases
         WHERE status = 'OPEN'
           AND reason_flagged LIKE 'ขาดเรียนติดต่อกัน%'
@@ -117,14 +117,24 @@ export class AutomationRepository {
     await queryExecutor.query('DELETE FROM cases WHERE id = $1 AND status = $2', [id, 'OPEN']);
   }
 
-  async findOpenCaseByStudentName(
+  async findOpenAbsenceCaseByStudent(
+    studentId: string,
     studentName: string,
     executor?: QueryExecutor,
   ): Promise<number | null> {
     const queryExecutor = this.getExecutor(executor);
+    // Match by stable student_id; fall back to name only for legacy rows
+    // created before student_id was populated (student_id IS NULL).
     const result = await queryExecutor.query<CreatedCaseRow>(
-      'SELECT id FROM cases WHERE student_name = $1 AND status = $2',
-      [studentName, 'OPEN'],
+      `
+        SELECT id FROM cases
+        WHERE status = $1
+          AND (
+            (student_id IS NOT NULL AND student_id = $2)
+            OR (student_id IS NULL AND student_name = $3)
+          )
+      `,
+      ['OPEN', studentId, studentName],
     );
 
     return result.rows[0]?.id ?? null;
@@ -139,15 +149,16 @@ export class AutomationRepository {
       `
         INSERT INTO cases (
           student_name,
+          student_id,
           student_school,
           student_address,
           reason_flagged,
           status
         )
-        VALUES ($1, $2, $3, $4, 'OPEN')
+        VALUES ($1, $2, $3, $4, $5, 'OPEN')
         RETURNING id
       `,
-      [data.studentName, data.schoolName, data.studentAddress, data.reason],
+      [data.studentName, data.studentId, data.schoolName, data.studentAddress, data.reason],
     );
 
     return result.rows[0].id;
