@@ -74,6 +74,10 @@ export class TaskService {
     return await this.taskAccessService.adminLockLink(actor, linkId, action, reason);
   }
 
+  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string, date?: string) {
+    return await this.taskAccessService.getAdminLinkDetail(actor, linkId, date);
+  }
+
   async getCases() {
     return await this.taskStatsService.getCases();
   }

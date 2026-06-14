@@ -363,6 +363,87 @@ export class TaskAccessService {
     }
   }
 
+  /**
+   * Admin-only link detail by id (not token). Unlike the public token endpoint
+   * this returns the link even when it is closed/expired, so the admin detail
+   * page can render and manage it. Same scope gate as adminLockLink. Returns an
+   * explicit shape (never the raw row) so token_hash / otp are never leaked.
+   */
+  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string, date?: string) {
+    try {
+      const currentActor = this.taskPolicyService.ensureActor(actor);
+      const link = await this.taskRepository.findLinkDetailById(linkId);
+
+      if (!link) {
+        throw new NotFoundException('ไม่พบลิงก์');
+      }
+
+      const roleMap = await this.taskPolicyService.getRoleMap();
+      if (
+        !this.taskPolicyService.canManageAdminLink(
+          currentActor,
+          {
+            task_type: typeof link.task_type === 'string' ? link.task_type : null,
+            login_role: typeof link.login_role === 'string' ? link.login_role : null,
+            login_data_scope: link.login_data_scope,
+            target_school_id: link.target_school_id,
+            target_room: link.target_room,
+          },
+          roleMap,
+        )
+      ) {
+        throw new ForbiddenException('ไม่มีสิทธิ์ดูลิงก์นี้');
+      }
+
+      const isExpired = new Date(String(link.expires_at)) < new Date();
+      const status = link.admin_locked ? 'LOCKED' : isExpired ? 'EXPIRED' : 'ACTIVE';
+
+      const schoolId =
+        typeof link.target_school_id === 'number'
+          ? link.target_school_id
+          : typeof link.target_school_id === 'string' && link.target_school_id.trim().length > 0
+            ? Number.parseInt(link.target_school_id, 10)
+            : null;
+
+      const records =
+        link.task_type === 'ATTENDANCE' && typeof date === 'string' && date.trim().length > 0
+          ? await this.taskRepository.listTaskHistory(
+              date,
+              typeof link.target_grade === 'string' ? link.target_grade : null,
+              typeof link.target_room === 'string' ? link.target_room : null,
+              Number.isInteger(schoolId) ? schoolId : null,
+            )
+          : [];
+
+      return {
+        link_id: link.id,
+        task_id: link.task_id,
+        type: link.task_type,
+        task_type: link.task_type,
+        status,
+        admin_locked: link.admin_locked ? 1 : 0,
+        admin_lock_reason: link.admin_lock_reason ?? null,
+        magic_link: link.magic_link ?? null,
+        expires_at: link.expires_at,
+        subject: link.subject ?? null,
+        assigned_to_name: link.assigned_to_name ?? null,
+        assigned_to_email: link.assigned_to_email ?? null,
+        school_name: link.school_name ?? null,
+        target_grade: link.target_grade ?? null,
+        target_room: link.target_room ?? null,
+        target_school_id: link.target_school_id ?? null,
+        login_role: link.login_role ?? null,
+        login_permissions: link.login_permissions ?? [],
+        login_data_scope: link.login_data_scope ?? {},
+        records,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`getAdminLinkDetail error: ${message}`);
+      throw err;
+    }
+  }
+
   private isMagicSessionVerified(linkId: string, sessionToken?: string): boolean {
     if (!sessionToken) {
       return false;

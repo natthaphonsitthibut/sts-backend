@@ -713,6 +713,44 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
+  /**
+   * Admin link detail by id — explicit safe column list (no token_hash / otp_code)
+   * plus school name. Returns the row regardless of locked/expired status so the
+   * admin detail page can render and manage a closed link.
+   */
+  async findLinkDetailById(linkId: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        tl.id,
+        tl.task_id,
+        tl.assigned_to_name,
+        tl.assigned_to_email,
+        tl.expires_at,
+        tl.status,
+        tl.magic_link,
+        tl.admin_locked,
+        tl.admin_lock_reason,
+        tl.subject,
+        tl.login_role,
+        tl.login_permissions,
+        tl.login_data_scope,
+        t.task_type,
+        t.target_grade,
+        t.target_room,
+        t.target_school_id,
+        s.name AS school_name
+      FROM task_links tl
+      JOIN tasks t ON t.id = tl.task_id
+      LEFT JOIN schools s ON s.id = t.target_school_id
+      WHERE tl.id = $1
+    `,
+      [linkId],
+    );
+
+    return result.rows[0] || null;
+  }
+
   async updateAdminLockState(data: AdminLockUpdateInput, executor?: QueryExecutor): Promise<void> {
     if (data.locked) {
       await this.getExecutor(executor).query(
