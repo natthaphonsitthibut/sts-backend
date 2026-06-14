@@ -3,6 +3,7 @@ import { CreateStudentDto } from './dto/create-student.dto';
 import type { GetStudentsQueryDto } from './dto/students.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import type { DataScope } from '../common/utils/authorization';
+import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { StudentsRepository } from './students.repository';
 import type { StudentDetailRow, StudentListFilters, StudentListRow } from './students.types';
 import type { AuthenticatedRequestUser } from '../auth';
@@ -124,7 +125,9 @@ export class StudentsService {
         throw new NotFoundException(`Student with ID ${id} not found`);
       }
 
-      return student;
+      // Attach a ready-to-use home address string so the visit-home form can
+      // prefill it (instead of capturing the creator's current GPS).
+      return { ...student, address: buildStudentTermAddress(student) };
     } catch (err) {
       if (err instanceof NotFoundException) {
         throw err;
