@@ -4,6 +4,10 @@ import { CronJob } from 'cron';
 import { AbsenceMonitorService } from './absence-monitor.service';
 import { AutomationRepository } from './automation.repository';
 
+// ALERT_SCHEDULE_TIME is wall-clock time for Thai schools; pin the cron to
+// Asia/Bangkok so it does not drift with the server's local timezone (e.g. UTC).
+const SCHEDULER_TIMEZONE = 'Asia/Bangkok';
+
 @Injectable()
 export class AutomationSchedulerService {
   private readonly logger = new Logger(AutomationSchedulerService.name);
@@ -55,13 +59,19 @@ export class AutomationSchedulerService {
     const finalMinute = validMinute ? minute : 0;
     const cronTime = `0 ${finalMinute} ${finalHour} * * *`;
 
-    const job = new CronJob(cronTime, () => {
-      void this.runScheduledAbsenceCheck(cronTime);
+    const job = CronJob.from({
+      cronTime,
+      timeZone: SCHEDULER_TIMEZONE,
+      onTick: () => {
+        void this.runScheduledAbsenceCheck(cronTime);
+      },
     });
 
     this.schedulerRegistry.addCronJob(this.absenceJobName, job);
     job.start();
 
-    this.logger.log(`Registered Dynamic CronJob [${this.absenceJobName}] to run at ${cronTime}`);
+    this.logger.log(
+      `Registered Dynamic CronJob [${this.absenceJobName}] to run at ${cronTime} (${SCHEDULER_TIMEZONE})`,
+    );
   }
 }
