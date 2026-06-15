@@ -98,6 +98,7 @@ export class TaskController {
   }
 
   @Get(':taskId/chain')
+  @UseGuards(AuthGuard)
   async getTaskChain(@Param('taskId') taskId: string) {
     const result = await this.taskService.getTaskChain(taskId);
     if (!result) {
@@ -129,6 +130,7 @@ export class TaskController {
   @Post(':taskId/delete')
   @Post('delete/:taskId')
   @Delete(':taskId')
+  @UseGuards(AuthGuard)
   async deleteTask(@Param('taskId') taskId: string) {
     return await this.taskService.deleteTask(taskId);
   }

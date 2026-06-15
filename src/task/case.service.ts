@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { clean } from '../common/utils/helpers';
+import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
 import { ReviewCaseDto } from './dto/task.dto';
 import { TaskRepository } from './task.repository';
@@ -34,10 +35,11 @@ export class CaseService {
     return 'IN_PROGRESS'; // ASSIST — วนกลับเข้ากระบวนการติดตามใหม่
   }
 
-  async reviewCase(caseId: number, body: ReviewCaseDto) {
+  async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {
     const reviewAction = this.normalizeAction(body.review_action);
     const reviewNote = clean(this.normalizeText(body.review_note)) || null;
-    const reviewedBy = clean(this.normalizeText(body.reviewed_by)) || 'ผอ.';
+    const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
+    const reviewedBy = actorName || actor?.username || 'ผอ.';
     const nextStatus = this.getCaseStatusByAction(reviewAction);
     const reviewId = crypto.randomUUID();
 
