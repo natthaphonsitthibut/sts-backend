@@ -8,9 +8,34 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { extname } from 'path';
 import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
 import { BulkImportUploadDto, CheckSchoolsUploadDto } from './dto/imports.dto';
 import { ImportsService } from './imports.service';
+
+const ALLOWED_IMPORT_EXTENSIONS = ['.xlsx', '.csv'];
+
+// Memory storage (default) keeps file.buffer for the parser; we only add limits
+// and a type gate so an oversized or non-spreadsheet upload is rejected early.
+const importMulterOptions = {
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1,
+    fields: 8,
+    fieldSize: 1 * 1024 * 1024,
+  },
+  fileFilter: (
+    _req: unknown,
+    file: Express.Multer.File,
+    callback: (error: Error | null, acceptFile: boolean) => void,
+  ) => {
+    const ext = extname(file.originalname).toLowerCase();
+    if (!ALLOWED_IMPORT_EXTENSIONS.includes(ext)) {
+      return callback(new BadRequestException('รองรับเฉพาะไฟล์ .xlsx หรือ .csv'), false);
+    }
+    callback(null, true);
+  },
+};
 
 @UseGuards(AuthGuard, PermissionsGuard)
 @RequirePermission('import-data')
@@ -19,7 +44,7 @@ export class ImportsController {
   constructor(private readonly importsService: ImportsService) {}
 
   @Post('check-schools')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', importMulterOptions))
   async checkSchools(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: CheckSchoolsUploadDto,
@@ -30,7 +55,7 @@ export class ImportsController {
   }
 
   @Post('bulk')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', importMulterOptions))
   async importData(@UploadedFile() file: Express.Multer.File, @Body() body: BulkImportUploadDto) {
     if (!file) throw new BadRequestException('No file uploaded');
 

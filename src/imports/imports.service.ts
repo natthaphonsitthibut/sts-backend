@@ -2,11 +2,14 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import * as xlsx from 'xlsx';
 import { ImportsRepository } from './imports.repository';
 import {
+  IMPORT_TARGET_COLUMNS,
   isImportTarget,
   type ImportTarget,
   type ManualSchool,
   type SheetRow,
 } from './imports.types';
+
+const MAX_IMPORT_ROWS = 10_000;
 
 @Injectable()
 export class ImportsService {
@@ -23,13 +26,35 @@ export class ImportsService {
   }
 
   private readWorksheetRows(file: Express.Multer.File): SheetRow[] {
-    const workbook = xlsx.read(file.buffer, { type: 'buffer' });
+    // Cap parsing work (sheetRows) and reject oversized sheets so a crafted file
+    // cannot exhaust memory/CPU on the worker. sheet_to_json consumes the first
+    // physical row as headers, so read MAX+2 physical rows (header + MAX+1 data)
+    // to guarantee the `> MAX` check below fires instead of silently truncating.
+    const workbook = xlsx.read(file.buffer, { type: 'buffer', sheetRows: MAX_IMPORT_ROWS + 2 });
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) {
       return [];
     }
 
-    return xlsx.utils.sheet_to_json<SheetRow>(workbook.Sheets[sheetName]);
+    const rows = xlsx.utils.sheet_to_json<SheetRow>(workbook.Sheets[sheetName]);
+    if (rows.length > MAX_IMPORT_ROWS) {
+      throw new BadRequestException(`ไฟล์มีจำนวนแถวเกินกำหนด (สูงสุด ${MAX_IMPORT_ROWS} แถว)`);
+    }
+
+    return rows;
+  }
+
+  /**
+   * Reject any mapped column that is not a known column of the target table.
+   * Column names are interpolated into SQL identifiers downstream, so this is
+   * the primary guard against identifier-based SQL injection.
+   */
+  private assertMappedColumnsAllowed(target: ImportTarget, mapping: Record<string, string>): void {
+    const allowed = IMPORT_TARGET_COLUMNS[target];
+    const invalid = Object.keys(mapping).filter((column) => !allowed.has(column));
+    if (invalid.length > 0) {
+      throw new BadRequestException(`พบคอลัมน์ที่ไม่อนุญาตสำหรับ ${target}: ${invalid.join(', ')}`);
+    }
   }
 
   private parseMapping(mappingStr: string): Record<string, string> {
@@ -139,9 +164,10 @@ export class ImportsService {
   ) {
     const validTarget = this.parseTarget(target);
     const mapping = this.parseMapping(mappingStr);
+    this.assertMappedColumnsAllowed(validTarget, mapping);
     const manualSchools = this.parseManualSchools(schoolsStr);
 
-    this.logger.log(`Parsing file: ${file.originalname} for target: ${validTarget}`);
+    this.logger.log(`Parsing import file for target: ${validTarget}`);
     const data = this.readWorksheetRows(file);
 
     if (!data || data.length === 0) {
@@ -159,11 +185,6 @@ export class ImportsService {
 
       let inserted = 0;
       let skipped = 0;
-
-      this.logger.log(`Using mapping: ${JSON.stringify(mapping)}`);
-      if (data.length > 0) {
-        this.logger.log(`First row parsed: ${JSON.stringify(data[0])}`);
-      }
 
       for (const row of data) {
         const dbRow: Record<string, unknown> = {};
@@ -183,8 +204,12 @@ export class ImportsService {
           continue;
         }
 
-        await this.importsRepository.insertImportRow(validTarget, dbRow, executor);
-        inserted++;
+        const rowCount = await this.importsRepository.insertImportRow(validTarget, dbRow, executor);
+        if (rowCount > 0) {
+          inserted++;
+        } else {
+          skipped++;
+        }
       }
 
       this.logger.log(

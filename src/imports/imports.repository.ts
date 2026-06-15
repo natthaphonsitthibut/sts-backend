@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
+import { IMPORT_TARGET_COLUMNS } from './imports.types';
 import type {
   ExistingSchoolIdRow,
   ImportTarget,
@@ -81,6 +82,17 @@ export class ImportsRepository {
   ): Promise<number> {
     const queryExecutor = this.getExecutor(executor);
     const columns = Object.keys(row);
+
+    // Defense in depth: column names are interpolated as SQL identifiers, so
+    // reject anything outside the target's known columns even though the service
+    // already validates the mapping. Fails closed against identifier injection.
+    const allowedColumns = IMPORT_TARGET_COLUMNS[target];
+    for (const column of columns) {
+      if (!allowedColumns.has(column)) {
+        throw new Error(`Illegal import column for ${target}: ${column}`);
+      }
+    }
+
     const values = Object.values(row);
     const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ');
 
