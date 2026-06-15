@@ -38,7 +38,7 @@ export class SubmissionController {
     @Body() body: Record<string, string>,
     @UploadedFiles() files: Express.Multer.File[],
   ) {
-    this.logger.log(`[submitReport] token=${token}, files=${files?.length || 0}`);
+    this.logger.log(`[submitReport] files=${files?.length || 0}`);
 
     const photoPaths = files?.map((f) => `/uploads/${f.filename}`) || [];
 
@@ -63,6 +63,9 @@ export class SubmissionController {
       const result = await this.taskService.saveTaskSubmission(token, data);
       return { ...result, success: true };
     } catch (err: unknown) {
+      if (err instanceof HttpException) {
+        throw err;
+      }
       const message = err instanceof Error ? err.message : 'Submit failed';
       this.logger.error(`submitReport error: ${message}`);
       throw new HttpException(message, HttpStatus.BAD_REQUEST);

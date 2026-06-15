@@ -1,4 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  GoneException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
 import { hashToken } from '../common/utils/helpers';
 import { SaveTaskSubmissionDto, TaskAttendanceRecordDto } from './dto/task.dto';
@@ -45,6 +53,54 @@ export class TaskSubmissionService {
     return false;
   }
 
+  /**
+   * Validate a magic-link token's state before any write. The token is the
+   * credential (no AuthGuard), so this is where we fail closed: reject missing,
+   * expired, admin-locked, completed, or delegated links, and links whose type
+   * does not match the write surface. Returns the validated link shape.
+   */
+  private validateUsableLink(
+    task: Awaited<ReturnType<TaskAccessService['getTaskByToken']>>,
+    expectedType: 'ATTENDANCE' | 'VISIT',
+  ): Record<string, unknown> {
+    if (!task) {
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
+    }
+
+    const link = task;
+
+    if (link.error) {
+      const status = typeof link.status === 'string' ? link.status : '';
+      const message = typeof link.error === 'string' ? link.error : 'ลิงก์ใช้งานไม่ได้';
+      if (status === 'EXPIRED') {
+        throw new GoneException(message);
+      }
+      if (status === 'ADMIN_LOCKED') {
+        throw new ForbiddenException(message);
+      }
+      if (status === 'COMPLETED' || status === 'DELEGATED') {
+        throw new ConflictException(message);
+      }
+      throw new BadRequestException(message);
+    }
+
+    if (link.task_type !== expectedType) {
+      throw new ForbiddenException('ลิงก์นี้ไม่รองรับการบันทึกประเภทนี้');
+    }
+
+    return link;
+  }
+
+  private toScalarString(value: unknown): string | null {
+    if (typeof value === 'string') {
+      return value.trim().length > 0 ? value : null;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    return null;
+  }
+
   private resolveAttendanceStatus(status: string | undefined): number {
     if (status === 'P_PRESENT') {
       return 1;
@@ -62,8 +118,36 @@ export class TaskSubmissionService {
 
     try {
       const task = await this.taskAccessService.getTaskByToken(token);
+      const link = this.validateUsableLink(task, 'ATTENDANCE');
       const recorder =
-        typeof task?.assigned_to_name === 'string' ? task.assigned_to_name : 'Teacher (Magic Link)';
+        typeof link.assigned_to_name === 'string' ? link.assigned_to_name : 'Teacher (Magic Link)';
+
+      // Enforce the link's own scope: every record must belong to the task's
+      // school (and grade/room when set). Reject any student outside that roster.
+      const targetSchoolId =
+        typeof link.target_school_id === 'number'
+          ? link.target_school_id
+          : Number(link.target_school_id);
+      // School scope is the security floor: without it listTaskStudents would
+      // return every student nationwide. Grade/room narrow it further when the
+      // link carries them, but a school-wide attendance link is still valid.
+      if (!Number.isInteger(targetSchoolId)) {
+        throw new ConflictException('ลิงก์เช็คชื่อนี้ไม่มีขอบเขตโรงเรียน');
+      }
+
+      const roster = await this.taskRepository.listTaskStudents({
+        targetGrade: this.toScalarString(link.target_grade),
+        targetRoom: this.toScalarString(link.target_room),
+        targetSchoolId,
+      });
+      const allowedStudentIds = new Set(roster.map((student) => String(student.id)));
+
+      for (const record of attendanceRecords) {
+        const studentId = typeof record.student_id === 'string' ? record.student_id : '';
+        if (!studentId || !allowedStudentIds.has(studentId)) {
+          throw new ForbiddenException('พบนักเรียนนอกขอบเขตของลิงก์นี้');
+        }
+      }
 
       await this.taskRepository.withTransaction(async (executor) => {
         for (const record of attendanceRecords) {
@@ -116,14 +200,15 @@ export class TaskSubmissionService {
   }
 
   async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto) {
-    this.logger.log(`[saveTaskSubmission] token=${token}, data=${JSON.stringify(data)}`);
-
     try {
+      const task = await this.taskAccessService.getTaskByToken(token);
+      this.validateUsableLink(task, 'VISIT');
+
       const tokenHash = hashToken(token);
       const link = await this.taskRepository.findTaskSubmissionContextByTokenHash(tokenHash);
 
       if (!link) {
-        throw new Error('Task not found');
+        throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
       }
 
       await this.taskRepository.withTransaction(async (executor) => {
