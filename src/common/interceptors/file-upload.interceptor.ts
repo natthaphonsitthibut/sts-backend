@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 
@@ -18,9 +19,12 @@ const editFileName = (
   file: Express.Multer.File,
   callback: (error: Error | null, filename: string) => void,
 ) => {
-  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+  // Unguessable filename (defense-in-depth): even though access is guarded, a
+  // crypto-random name avoids enumeration if a URL ever leaks. Math.random was
+  // not cryptographically secure.
+  const uniqueName = randomBytes(16).toString('hex');
   const fileExtName = extname(file.originalname);
-  callback(null, `${uniqueSuffix}${fileExtName}`);
+  callback(null, `${uniqueName}${fileExtName}`);
 };
 
 @Injectable()

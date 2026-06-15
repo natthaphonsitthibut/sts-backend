@@ -8,6 +8,7 @@ import { UsersModule } from './users/users.module';
 import { SettingsModule } from './settings/settings.module';
 import { MasterDataModule } from './master-data/master-data.module';
 import { AutomationModule } from './automation/automation.module';
+import { FilesModule } from './files/files.module';
 import { ImportsModule } from './imports/imports.module';
 import { AuthModule } from './auth/auth.module';
 
@@ -40,6 +41,7 @@ import { createTypeOrmOptions } from './database/typeorm.config';
     AutomationModule,
     StudentsModule,
     ImportsModule,
+    FilesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

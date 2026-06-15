@@ -24,9 +24,9 @@ async function bootstrap() {
     // Required so the browser sends/accepts the httpOnly session cookie cross-origin.
     credentials: true,
   });
-  app.useStaticAssets(runtimeConfig.uploadsDir, {
-    prefix: runtimeConfig.uploadsPrefix,
-  });
+  // Uploaded visit photos are sensitive minor PII and are NOT served as public
+  // static files. They are streamed only through the guarded FilesController
+  // (auth + 'students' permission). See src/files/files.controller.ts.
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
