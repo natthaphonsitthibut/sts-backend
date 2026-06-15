@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { AuthenticatedRequestUser } from '../auth';
 import type { DataScope } from '../common/utils/authorization';
 import { AttendanceLookupService } from './attendance-lookup.service';
 import { AttendanceReadService } from './attendance-read.service';
@@ -33,8 +34,8 @@ export class AttendanceService {
     return await this.attendanceReadService.getHistory(date, userScope);
   }
 
-  async saveAttendance(records: AttendanceSaveRecordInput[]) {
-    return await this.attendanceWriteService.saveAttendance(records);
+  async saveAttendance(records: AttendanceSaveRecordInput[], actor?: AuthenticatedRequestUser) {
+    return await this.attendanceWriteService.saveAttendance(records, actor);
   }
 
   async getAttendanceTasks(userScope?: DataScope) {

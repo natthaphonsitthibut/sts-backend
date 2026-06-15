@@ -350,6 +350,57 @@ export class AttendanceRepository {
     return result.rows[0] || null;
   }
 
+  /**
+   * Return the subset of studentIds whose student_term row falls within the
+   * actor's data scope. Mirrors the scope clause used by listStudents so write
+   * authorization matches read visibility. Empty scope (global admin) imposes no
+   * scope filter, so all existing requested ids are returned.
+   */
+  async filterStudentIdsInScope(
+    studentIds: string[],
+    userScope?: DataScope,
+    executor?: QueryExecutor,
+  ): Promise<string[]> {
+    if (studentIds.length === 0) {
+      return [];
+    }
+
+    const params: unknown[] = [studentIds];
+    const conditions: string[] = [`s."PersonID_Onec" = ANY($1::text[])`];
+
+    if (userScope) {
+      const scopeResult = buildDataScopeQuery(
+        userScope,
+        {
+          school_id: `s."SchoolID_Onec"`,
+          grade: `s."GradeLevelID_Onec"`,
+          room: `s."RoomID_Onec"::text`,
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+
+      if (scopeResult.sql) {
+        conditions.push(`(${scopeResult.sql})`);
+        pushScopeParams(params, scopeResult.params);
+      }
+    }
+
+    const result = await this.getExecutor(executor).query<{ id: string }>(
+      `
+        SELECT s."PersonID_Onec" AS id
+        FROM student_term s
+        LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+        WHERE ${conditions.join(' AND ')}
+      `,
+      params,
+    );
+
+    return result.rows.map((row) => String(row.id));
+  }
+
   async insertAttendanceRecord(
     data: AttendanceInsertRecord,
     executor?: QueryExecutor,

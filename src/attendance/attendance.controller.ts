@@ -1,5 +1,12 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
-import { AuthGuard, CurrentUser, normalizeDataScope, type AuthenticatedRequestUser } from '../auth';
+import {
+  AuthGuard,
+  CurrentUser,
+  PermissionsGuard,
+  RequirePermission,
+  normalizeDataScope,
+  type AuthenticatedRequestUser,
+} from '../auth';
 import { AttendanceService } from './attendance.service';
 import {
   GetHistoryQueryDto,
@@ -57,9 +64,18 @@ export class AttendanceController {
     );
   }
 
+  // Class-level AuthGuard authenticates; PermissionsGuard here additionally
+  // requires the 'attendance' permission so only teachers/admins (not e.g.
+  // executives or students) can write attendance. Actor is passed so the write
+  // is scope-checked and attributed to the real user, not a hardcoded "Admin".
   @Post()
-  async saveAttendance(@Body() body: SaveAttendanceDto) {
-    return await this.attendanceService.saveAttendance(body.records);
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async saveAttendance(
+    @Body() body: SaveAttendanceDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceService.saveAttendance(body.records, actor);
   }
 
   @Get('tasks')

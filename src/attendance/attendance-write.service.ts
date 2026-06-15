@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { normalizeDataScope, type AuthenticatedRequestUser } from '../auth';
 import { AutomationService, NewCase } from '../automation/automation.service';
 import { AttendanceRepository } from './attendance.repository';
 import type {
@@ -22,16 +23,32 @@ export class AttendanceWriteService {
     private readonly automationService: AutomationService,
   ) {}
 
-  async saveAttendance(records: AttendanceSaveRecordInput[]) {
+  async saveAttendance(records: AttendanceSaveRecordInput[], actor?: AuthenticatedRequestUser) {
     const normalizedRecords = this.normalizeRecords(records);
     if (normalizedRecords.length === 0) {
       return { success: true, newCases: [] as NewCase[] };
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const studentIds = normalizedRecords.map((record) => record.student_id);
+
+    // Enforce the actor's data scope on the write: every student must be within
+    // the actor's school/area/grade/room (empty scope = global admin = all).
+    // Reject the whole batch if any student is out of scope (fail closed).
+    const scope = normalizeDataScope(actor?.data_scope);
+    const inScopeIds = new Set(
+      await this.attendanceRepository.filterStudentIdsInScope(studentIds, scope),
+    );
+    for (const studentId of studentIds) {
+      if (!inScopeIds.has(studentId)) {
+        throw new ForbiddenException('พบนักเรียนนอกขอบเขตของคุณ');
+      }
+    }
+
+    // Attribute the write to the real actor instead of a hardcoded "Admin".
+    const recordedBy = this.resolveRecorder(actor);
 
     await this.attendanceRepository.withTransaction(async (executor) => {
-      const studentIds = normalizedRecords.map((record) => record.student_id);
       await this.attendanceRepository.deleteAttendanceBatchForDate(today, studentIds, executor);
 
       for (const record of normalizedRecords) {
@@ -49,7 +66,7 @@ export class AttendanceWriteService {
             studentId: record.student_id,
             date: today,
             statusCode: STATUS_CODE_MAP[record.status],
-            recordedBy: 'Admin',
+            recordedBy,
             period: 1,
             metadata,
           },
@@ -67,6 +84,16 @@ export class AttendanceWriteService {
     }
 
     return { success: true, newCases };
+  }
+
+  private resolveRecorder(actor?: AuthenticatedRequestUser): string {
+    if (actor?.username && actor.username.trim().length > 0) {
+      return actor.username;
+    }
+    if (typeof actor?.id === 'number') {
+      return `user#${actor.id}`;
+    }
+    return 'Unknown';
   }
 
   private normalizeRecords(records: AttendanceSaveRecordInput[]): AttendanceWriteRecord[] {
