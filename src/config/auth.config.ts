@@ -9,6 +9,8 @@ export interface AuthRuntimeConfig {
   sessionSecret: string;
   /** Lifetime of an OTP-verified magic session before re-verification is required. */
   magicSessionTtlSeconds: number;
+  /** Validity window of a one-time OTP code itself (request → verify). */
+  otpTtlSeconds: number;
   cookieName: string;
   cookieSecure: boolean;
   cookieSameSite: CookieSameSite;
@@ -48,6 +50,7 @@ export function getAuthConfigFromEnv(): AuthRuntimeConfig {
     // OTP-verified magic session TTL — default 6h (re-OTP after, capped anyway by
     // the link's own expiry). The instant is checked against the token's `ts`.
     magicSessionTtlSeconds: parsePositiveInt(process.env.MAGIC_SESSION_TTL_SECONDS, 6 * 60 * 60),
+    otpTtlSeconds: parsePositiveInt(process.env.OTP_TTL_SECONDS, 10 * 60),
     cookieName: process.env.AUTH_COOKIE_NAME?.trim() || 'sts_session',
     cookieSecure: (process.env.AUTH_COOKIE_SECURE || '').trim().toLowerCase() === 'true',
     cookieSameSite: parseSameSite(process.env.AUTH_COOKIE_SAMESITE),

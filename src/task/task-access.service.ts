@@ -86,10 +86,12 @@ export class TaskAccessService {
       ? this.isMagicSessionVerified(String(link.id), sessionToken)
       : false;
 
-    // OTP is gated on email being configured — it can only be delivered when the
-    // email transport is enabled, so tie the two together (no hardcoded flag).
-    // Set EMAIL_ENABLED=false to fall back to no-OTP single-factor links.
-    const otpEnabled = this.emailRuntimeConfig.enabled;
+    // OTP is gated on email actually being deliverable — both the transport
+    // enabled AND a sender configured. Otherwise the OTP would only be logged
+    // (simulated) and the guest could never receive it, so fall back to no-OTP
+    // single-factor links instead of locking them out. (no hardcoded flag)
+    const otpEnabled =
+      this.emailRuntimeConfig.enabled && this.emailRuntimeConfig.user.trim().length > 0;
     const authRequired = otpEnabled && hasEmailForOtp && !link.otp_verified && !sessionVerified;
 
     const result: Record<string, unknown> = {
@@ -241,8 +243,9 @@ export class TaskAccessService {
       throw new BadRequestException('No email found for this link');
     }
 
+    const otpTtlSeconds = this.authRuntimeConfig.otpTtlSeconds;
     const otp = crypto.randomInt(100000, 1000000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + otpTtlSeconds * 1000);
 
     await this.taskRepository.updateLinkOtp({
       linkId: String(link.id),
@@ -251,7 +254,7 @@ export class TaskAccessService {
     });
 
     try {
-      await this.emailService.sendOTP(email, otp);
+      await this.emailService.sendOTP(email, otp, Math.round(otpTtlSeconds / 60));
       return {
         success: true,
         message: 'OTP sent successfully',
