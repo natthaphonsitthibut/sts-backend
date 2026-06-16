@@ -7,6 +7,8 @@ export interface AuthRuntimeConfig {
   jwtSecret: string;
   /** Secret for the magic-link / virtual-student signed tokens (HMAC). */
   sessionSecret: string;
+  /** Lifetime of an OTP-verified magic session before re-verification is required. */
+  magicSessionTtlSeconds: number;
   cookieName: string;
   cookieSecure: boolean;
   cookieSameSite: CookieSameSite;
@@ -43,6 +45,9 @@ export function getAuthConfigFromEnv(): AuthRuntimeConfig {
   return {
     jwtSecret: requireSecret('JWT_SECRET', process.env.JWT_SECRET),
     sessionSecret: requireSecret('AUTH_SESSION_SECRET', process.env.AUTH_SESSION_SECRET),
+    // OTP-verified magic session TTL — default 6h (re-OTP after, capped anyway by
+    // the link's own expiry). The instant is checked against the token's `ts`.
+    magicSessionTtlSeconds: parsePositiveInt(process.env.MAGIC_SESSION_TTL_SECONDS, 6 * 60 * 60),
     cookieName: process.env.AUTH_COOKIE_NAME?.trim() || 'sts_session',
     cookieSecure: (process.env.AUTH_COOKIE_SECURE || '').trim().toLowerCase() === 'true',
     cookieSameSite: parseSameSite(process.env.AUTH_COOKIE_SAMESITE),

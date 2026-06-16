@@ -480,8 +480,22 @@ export class TaskAccessService {
       const data = JSON.parse(payload) as {
         link_id?: string;
         verified?: boolean;
+        ts?: number;
       };
-      return data.link_id === linkId && data.verified === true;
+      if (data.link_id !== linkId || data.verified !== true) {
+        return false;
+      }
+
+      // Expire the session so a single OTP does not grant access for the link's
+      // entire lifetime — re-verification is required after the configured TTL.
+      const issuedAt = typeof data.ts === 'number' ? data.ts : 0;
+      const ageMs = Date.now() - issuedAt;
+      const ttlMs = this.authRuntimeConfig.magicSessionTtlSeconds * 1000;
+      if (!Number.isFinite(issuedAt) || issuedAt <= 0 || ageMs > ttlMs || ageMs < 0) {
+        return false;
+      }
+
+      return true;
     } catch {
       return false;
     }
