@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
+import { getBangkokDateString } from '../common/utils/date.util';
 import { hashToken } from '../common/utils/helpers';
 import { SaveTaskSubmissionDto, TaskAttendanceRecordDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
@@ -113,7 +114,7 @@ export class TaskSubmissionService {
   }
 
   async saveTaskAttendance(token: string, records: TaskAttendanceRecordDto[] | undefined) {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getBangkokDateString();
     const attendanceRecords = Array.isArray(records) ? records : [];
 
     try {

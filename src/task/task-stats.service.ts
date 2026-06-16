@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { getBangkokDateString } from '../common/utils/date.util';
 import { TaskRepository } from './task.repository';
 
 @Injectable()
@@ -19,7 +20,7 @@ export class TaskStatsService {
 
   async getStats() {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getBangkokDateString();
 
       return {
         total: await this.taskRepository.countCases(),

@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { normalizeDataScope, type AuthenticatedRequestUser } from '../auth';
+import { getBangkokDateString } from '../common/utils/date.util';
 import { AutomationService, NewCase } from '../automation/automation.service';
 import { AttendanceRepository } from './attendance.repository';
 import type {
@@ -29,7 +30,7 @@ export class AttendanceWriteService {
       return { success: true, newCases: [] as NewCase[] };
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getBangkokDateString();
     const studentIds = normalizedRecords.map((record) => record.student_id);
 
     // Enforce the actor's data scope on the write: every student must be within

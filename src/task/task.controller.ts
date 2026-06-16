@@ -17,6 +17,7 @@ import { TaskService } from './task.service';
 import type { Request } from 'express';
 import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
+import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
 import { CreateTaskDto, SaveTaskAttendanceDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import {
@@ -93,7 +94,7 @@ export class TaskController {
 
   @Get(':token/history')
   async getTaskHistory(@Param('token') token: string, @Query('date') date: string) {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || getBangkokDateString();
     return await this.taskService.getTaskHistory(token, targetDate);
   }
 

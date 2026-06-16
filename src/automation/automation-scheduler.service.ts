@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { AbsenceMonitorService } from './absence-monitor.service';
 import { AutomationRepository } from './automation.repository';
 
 // ALERT_SCHEDULE_TIME is wall-clock time for Thai schools; pin the cron to
 // Asia/Bangkok so it does not drift with the server's local timezone (e.g. UTC).
-const SCHEDULER_TIMEZONE = 'Asia/Bangkok';
+const SCHEDULER_TIMEZONE = BANGKOK_TIME_ZONE;
 
 @Injectable()
 export class AutomationSchedulerService {
