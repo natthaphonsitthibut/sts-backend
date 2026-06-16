@@ -79,8 +79,7 @@ export class TaskAccessService {
     // every link type (visit / attendance / login) behaves the same. Flip
     // `otpEnabled` back to true to require OTP on email-assigned links again.
     const otpEnabled = false;
-    const authRequired =
-      otpEnabled && hasEmailForOtp && !link.otp_verified && !sessionVerified;
+    const authRequired = otpEnabled && hasEmailForOtp && !link.otp_verified && !sessionVerified;
 
     const result: Record<string, unknown> = {
       task_id: link.task_id,
@@ -231,7 +230,7 @@ export class TaskAccessService {
       throw new BadRequestException('No email found for this link');
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     await this.taskRepository.updateLinkOtp({
