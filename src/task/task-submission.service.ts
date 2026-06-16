@@ -233,19 +233,21 @@ export class TaskSubmissionService {
         if (link.task_type === 'VISIT' && typeof link.case_id === 'number') {
           const nextSummary = data.notes || data.cause_detail || 'No notes provided';
           const addressChanged = this.normalizeBoolean(data.address_changed);
+          // When the visitor flags the home location as wrong, persist the
+          // corrected coordinates to the case independently of the address TEXT —
+          // changing only the pin (no typed address) must still update the canonical
+          // student_lat/lng. Address text updates only when actually provided.
           await this.taskRepository.updateCaseAfterSubmission(
             {
               caseId: link.case_id,
               nextSummary,
               updatedStudentAddress: addressChanged ? (data.updated_student_address ?? null) : null,
-              updatedLat:
-                addressChanged && data.updated_student_address
-                  ? (this.normalizeNumber(data.updated_lat) ?? this.normalizeNumber(data.visit_lat))
-                  : null,
-              updatedLng:
-                addressChanged && data.updated_student_address
-                  ? (this.normalizeNumber(data.updated_lng) ?? this.normalizeNumber(data.visit_lng))
-                  : null,
+              updatedLat: addressChanged
+                ? (this.normalizeNumber(data.updated_lat) ?? this.normalizeNumber(data.visit_lat))
+                : null,
+              updatedLng: addressChanged
+                ? (this.normalizeNumber(data.updated_lng) ?? this.normalizeNumber(data.visit_lng))
+                : null,
             },
             executor,
           );

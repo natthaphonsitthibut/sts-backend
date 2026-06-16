@@ -562,33 +562,28 @@ export class TaskRepository {
     data: CaseSubmissionUpdateInput,
     executor?: QueryExecutor,
   ): Promise<void> {
-    if (data.updatedStudentAddress) {
-      await this.getExecutor(executor).query(
-        `
+    // Address text and coordinates update independently: COALESCE keeps the
+    // existing value when a field is null, so a pin-only correction (coords with
+    // no typed address) still saves student_lat/lng without wiping the address.
+    await this.getExecutor(executor).query(
+      `
         UPDATE cases
         SET
           status = $1,
           result_summary = $2,
-          student_address = $3,
+          student_address = COALESCE($3, student_address),
           student_lat = COALESCE($4, student_lat),
           student_lng = COALESCE($5, student_lng)
         WHERE id = $6
       `,
-        [
-          'PENDING_REVIEW',
-          data.nextSummary,
-          data.updatedStudentAddress,
-          data.updatedLat,
-          data.updatedLng,
-          data.caseId,
-        ],
-      );
-      return;
-    }
-
-    await this.getExecutor(executor).query(
-      `UPDATE cases SET status = $1, result_summary = $2 WHERE id = $3`,
-      ['PENDING_REVIEW', data.nextSummary, data.caseId],
+      [
+        'PENDING_REVIEW',
+        data.nextSummary,
+        data.updatedStudentAddress,
+        data.updatedLat,
+        data.updatedLng,
+        data.caseId,
+      ],
     );
   }
 
