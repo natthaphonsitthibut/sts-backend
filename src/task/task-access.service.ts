@@ -1,11 +1,14 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
+import { authConfig } from '../config/auth.config';
 import { clean, hashToken } from '../common/utils/helpers';
 import { EmailService } from './email.service';
 import { TaskPolicyService } from './task-policy.service';
@@ -26,13 +29,18 @@ function maskName(name: string | null | undefined): string {
 @Injectable()
 export class TaskAccessService {
   private readonly logger = new Logger(TaskAccessService.name);
-  private readonly magicSessionSecret = 'SECRET_STS_KEY';
 
   constructor(
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
     private readonly emailService: EmailService,
+    @Inject(authConfig.KEY)
+    private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
   ) {}
+
+  private get magicSessionSecret(): string {
+    return this.authRuntimeConfig.sessionSecret;
+  }
 
   async getTaskByToken(token: string, sessionToken?: string) {
     const tokenHash = hashToken(token);
@@ -456,7 +464,13 @@ export class TaskAccessService {
         .update(payload)
         .digest('hex');
 
-      if (expectedSignature !== signature) {
+      // Constant-time compare to avoid leaking the signature via timing.
+      const expectedBuf = Buffer.from(expectedSignature);
+      const providedBuf = Buffer.from(signature ?? '');
+      if (
+        expectedBuf.length !== providedBuf.length ||
+        !crypto.timingSafeEqual(expectedBuf, providedBuf)
+      ) {
         return false;
       }
 
