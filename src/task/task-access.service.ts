@@ -9,6 +9,7 @@ import {
 import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { authConfig } from '../config/auth.config';
+import { emailConfig } from '../config/email.config';
 import { clean, hashToken } from '../common/utils/helpers';
 import { EmailService } from './email.service';
 import { TaskPolicyService } from './task-policy.service';
@@ -36,6 +37,8 @@ export class TaskAccessService {
     private readonly emailService: EmailService,
     @Inject(authConfig.KEY)
     private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
+    @Inject(emailConfig.KEY)
+    private readonly emailRuntimeConfig: ConfigType<typeof emailConfig>,
   ) {}
 
   private get magicSessionSecret(): string {
@@ -83,10 +86,10 @@ export class TaskAccessService {
       ? this.isMagicSessionVerified(String(link.id), sessionToken)
       : false;
 
-    // TODO(otp): OTP is globally bypassed until the email API is configured, so
-    // every link type (visit / attendance / login) behaves the same. Flip
-    // `otpEnabled` back to true to require OTP on email-assigned links again.
-    const otpEnabled = false;
+    // OTP is gated on email being configured — it can only be delivered when the
+    // email transport is enabled, so tie the two together (no hardcoded flag).
+    // Set EMAIL_ENABLED=false to fall back to no-OTP single-factor links.
+    const otpEnabled = this.emailRuntimeConfig.enabled;
     const authRequired = otpEnabled && hasEmailForOtp && !link.otp_verified && !sessionVerified;
 
     const result: Record<string, unknown> = {
