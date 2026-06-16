@@ -269,22 +269,24 @@ export class TaskAccessService {
   }
 
   async verifyOtp(token: string, otp: string) {
+    // Use HTTP exceptions (not plain Error) so a wrong/expired code returns a
+    // 4xx with a readable message instead of a 500 Internal Server Error.
     if (!otp) {
-      throw new Error('OTP is required');
+      throw new BadRequestException('กรุณากรอกรหัส OTP');
     }
 
     const tokenHash = hashToken(token);
     const link = await this.taskRepository.findOtpLinkByTokenHash(tokenHash);
     if (!link) {
-      throw new Error('Link not found');
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
     }
 
-    if (link.otp_code !== otp) {
-      throw new Error('Invalid OTP code');
+    if (!link.otp_code || link.otp_code !== otp) {
+      throw new BadRequestException('รหัส OTP ไม่ถูกต้อง');
     }
 
     if (new Date(String(link.otp_expires_at)) < new Date()) {
-      throw new Error('OTP expired');
+      throw new BadRequestException('รหัส OTP หมดอายุ กรุณาขอรหัสใหม่');
     }
 
     const payload = JSON.stringify({
