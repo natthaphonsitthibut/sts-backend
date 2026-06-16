@@ -3,21 +3,29 @@ import {
   Post,
   Param,
   Body,
+  Inject,
   UseInterceptors,
   UploadedFiles,
   HttpException,
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { TaskService } from './task.service';
+import { appConfig } from '../config/app.config';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
+import { processVisitPhoto } from '../common/file-upload/visit-photo.util';
 
 @Controller('api/tasks')
 export class SubmissionController {
   private readonly logger = new Logger(SubmissionController.name);
 
-  constructor(private readonly taskService: TaskService) {}
+  constructor(
+    private readonly taskService: TaskService,
+    @Inject(appConfig.KEY)
+    private readonly runtimeConfig: ConfigType<typeof appConfig>,
+  ) {}
 
   private parseOptionalNumber(value?: string): number | null {
     if (typeof value !== 'string' || value.trim() === '') return null;
@@ -40,7 +48,15 @@ export class SubmissionController {
   ) {
     this.logger.log(`[submitReport] files=${files?.length || 0}`);
 
-    const photoPaths = files?.map((f) => `/uploads/${f.filename}`) || [];
+    // Strip EXIF/GPS + re-encode each photo before persisting; the stored name is
+    // server-generated. Raw uploads stay in memory and are never written as-is.
+    const photoPaths = files?.length
+      ? await Promise.all(
+          files.map(
+            async (f) => `/uploads/${await processVisitPhoto(f, this.runtimeConfig.uploadsDir)}`,
+          ),
+        )
+      : [];
 
     const causeDetail = body.cause_detail || body.notes || '';
     const addressChanged = this.parseBoolean(body.address_changed);

@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import * as xlsx from 'xlsx';
+import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
 import { ImportsRepository } from './imports.repository';
 import {
   IMPORT_TARGET_COLUMNS,
@@ -26,6 +27,13 @@ export class ImportsService {
   }
 
   private readWorksheetRows(file: Express.Multer.File): SheetRow[] {
+    // Validate by content (magic bytes), not the client extension/MIME: a real
+    // spreadsheet is a zip (xlsx) and a csv is text. Reject a binary payload
+    // mislabeled as .csv/.xlsx before handing it to the parser.
+    if (!isXlsxBuffer(file.buffer) && !looksLikeTextBuffer(file.buffer)) {
+      throw new BadRequestException('ไฟล์ไม่ถูกต้อง (รองรับเฉพาะ .xlsx หรือ .csv)');
+    }
+
     // Cap parsing work (sheetRows) and reject oversized sheets so a crafted file
     // cannot exhaust memory/CPU on the worker. sheet_to_json consumes the first
     // physical row as headers, so read MAX+2 physical rows (header + MAX+1 data)
