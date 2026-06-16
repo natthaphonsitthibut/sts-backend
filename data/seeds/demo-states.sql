@@ -27,9 +27,9 @@ INSERT INTO task_links
    admin_locked, expires_at, created_at, updated_at, created_by,
    login_permissions, login_data_scope)
 VALUES
-  ('seed-link-1005', 'seed-task-1005', '1e0201e13d2cdb74c016384963fab88a753d4795036092d34e0641946a6f1bc4', '/task/seed-visit-1005', 0,
+  ('seed-link-1005', 'seed-task-1005', '1491e917687e944a0cf35525131219dda75cc140f73c3f89a4bced1967669b87', '/task/cd9c99fbe4d761679395deb7b47950ff358f72190a722c87115d87738ba6b0f9', 0,
    'ครูชาญวิทย์ ครูประจำชั้น', '0800000009', 'seed.teacher.p6r2@example.test', 0,
-   'ลงพื้นที่ติดตามนักเรียน (หมดอายุ)', 'ACTIVE', 0,
+   'ลงพื้นที่ติดตามนักเรียน', 'ACTIVE', 0,
    '2026-05-27 03:00:00+00', '2026-05-20 03:00:00+00', '2026-05-20 03:00:00+00', 5,
    '[]'::jsonb, '{}'::jsonb);
 
@@ -44,8 +44,8 @@ INSERT INTO task_links
    admin_locked, expires_at, created_at, updated_at, created_by,
    login_permissions, login_data_scope)
 VALUES
-  ('seed-link-attendance-3', 'seed-attendance-task-3', '8cca5348add416047441be133986c164dd0a236a25d3084e068166ea4670fdc4',
-   '/task/seed-p6-room1', 0, 'ครูวีรพล ครูประจำชั้น', '0800000010',
+  ('seed-link-attendance-3', 'seed-attendance-task-3', '97ebdfc85682e6c465f6aafdeacece83c7153c95b152e08bce811c0c7e69bd0f',
+   '/task/52851e14b4c4f7a569fe5056e08dc1fd34c6591d3b8496f8ee23fd53aaa948fe', 0, 'ครูวีรพล ครูประจำชั้น', '0800000010',
    'seed.teacher.ud.p6r1@example.test', 0, 'เช็คชื่อ ป.6 ห้อง 1', 'ACTIVE', 0,
    '2026-06-20 02:00:00+00', '2026-06-13 02:00:00+00', '2026-06-13 02:00:00+00', 14,
    '[]'::jsonb, '{}'::jsonb);
@@ -59,7 +59,7 @@ INSERT INTO task_links
    assigned_to_email, otp_verified, subject, status, admin_locked, expires_at,
    created_at, updated_at, created_by, login_role, login_permissions, login_data_scope)
 VALUES
-  ('seed-link-login-1', 'seed-task-login-1', '0802fa22f148fc866bbee6b519d12d876277cc92d156ebb5457fbfc97440b0ca', '/task/seed-login-1', 0,
+  ('seed-link-login-1', 'seed-task-login-1', '620320ee74dcdb448c4c1df57674787a7b24d26d3d907a5cfb0ae6a6257b907b', '/task/6e641b6f0595b5f2fb02b55fc9982ca5e9220e8c13fe54ffa658bc1bd36698bc', 0,
    'ครูสุภาวดี ครูประจำชั้น', 'seed.teacher.p3r1@example.test', 0,
    'ลิงก์เข้าสู่ระบบสำหรับครู', 'ACTIVE', 0, '2026-06-19 04:00:00+00',
    '2026-06-12 04:00:00+00', '2026-06-12 04:00:00+00', 5, 'TEACHER',
@@ -76,9 +76,9 @@ INSERT INTO task_links
    admin_lock_at, expires_at, created_at, updated_at, created_by, login_role,
    login_permissions, login_data_scope)
 VALUES
-  ('seed-link-login-2', 'seed-task-login-2', '66b92b3a6b3fc67025979a9f6fea1e9d907c70f58f1a2cfef64c76f49e663aab', '/task/seed-login-2', 0,
+  ('seed-link-login-2', 'seed-task-login-2', 'a49699205212c4615d9aa40b1f7044edb1793fe6ecdbed6241b9cd836a4132ba', '/task/b78cd3a7b8de14078f446a822f3143619e3e639580403b9eef26f6410c932421', 0,
    'ผอ.ปรียา ผู้อำนวยการ', 'seed.director@example.test', 0,
-   'ลิงก์เข้าสู่ระบบสำหรับผู้บริหาร (ถูกล็อก)', 'ACTIVE', 1, 'ปิดลิงก์โดยผู้ดูแลระบบ',
+   'ลิงก์เข้าสู่ระบบสำหรับผู้บริหาร', 'ACTIVE', 1, 'ปิดลิงก์โดยผู้ดูแลระบบ',
    '2026-06-12 06:00:00+00', '2026-06-19 05:00:00+00', '2026-06-12 05:00:00+00',
    '2026-06-12 06:00:00+00', 5, 'ADMIN_SCHOOL',
    '["home", "attendance", "attendance-dashboard", "students"]'::jsonb,
