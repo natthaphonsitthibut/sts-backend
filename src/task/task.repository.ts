@@ -459,10 +459,21 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
+  // Chain view — explicit safe column list (no token_hash / otp_code / otp_* /
+  // assigned_to_phone / login_* ) to keep secrets out of the task-chain response.
   async listTaskLinksByTaskId(taskId: string): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
-      SELECT tl.*
+      SELECT
+        tl.id,
+        tl.assigned_to_name,
+        tl.assigned_to_email,
+        tl.status,
+        tl.created_at,
+        tl.expires_at,
+        tl.magic_link,
+        tl.admin_locked,
+        tl.delegation_depth
       FROM task_links tl
       WHERE tl.task_id = $1
       ORDER BY tl.delegation_depth ASC
@@ -473,9 +484,22 @@ export class TaskRepository {
     return result.rows;
   }
 
+  // Chain view — explicit safe column list (no internal ids / audit columns /
+  // raw updated_* fields) matching the TaskSubmission response contract.
   async findTaskSubmissionByLinkId(linkId: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
-      `SELECT * FROM task_submissions WHERE task_link_id = $1`,
+      `
+      SELECT
+        cause_category,
+        cause_detail,
+        recommendation,
+        submitted_at,
+        visit_lat,
+        visit_lng,
+        photo_paths
+      FROM task_submissions
+      WHERE task_link_id = $1
+    `,
       [linkId],
     );
 
@@ -777,7 +801,13 @@ export class TaskRepository {
   async listCasesWithActiveLinks(): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(`
       SELECT
-        c.*,
+        c.id,
+        c.student_name,
+        c.student_school,
+        c.student_address,
+        c.reason_flagged,
+        c.status,
+        c.created_at,
         student_match.student_id,
         t.id AS task_id,
         tl.id AS active_link_id,

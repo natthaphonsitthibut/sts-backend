@@ -22,7 +22,20 @@ export class TaskService {
   }
 
   async getTaskByToken(token: string, sessionToken?: string) {
-    return await this.taskAccessService.getTaskByToken(token, sessionToken);
+    const result = await this.taskAccessService.getTaskByToken(token, sessionToken);
+    if (!result || typeof result !== 'object') {
+      return result;
+    }
+    // The public token endpoint must not expose the link's access config to the
+    // guest holding the token. These fields are consumed only internally by the
+    // login-verify flow (verifyMagicLogin reads the unsanitized access-service
+    // result directly), so strip them from the HTTP-facing response.
+    const { login_role, login_permissions, login_data_scope, otp_verified, ...safe } = result;
+    void login_role;
+    void login_permissions;
+    void login_data_scope;
+    void otp_verified;
+    return safe;
   }
 
   async verifyMagicLogin(token: string, sessionToken?: string) {
