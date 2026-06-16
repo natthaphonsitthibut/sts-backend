@@ -163,9 +163,9 @@ export class TaskLifecycleService {
             assignedToEmail: assignedEmail,
             expiresAt,
             subject: clean(data.subject),
-            // TODO(otp): email OTP is bypassed until the email API is configured.
-            // Restore `assignedEmail ? 0 : 1` to require OTP for email-assigned links.
-            otpVerified: 1,
+            // Email-assigned links require OTP (start unverified); links with no
+            // email can't be OTP'd, so mark them pre-verified to skip the gate.
+            otpVerified: assignedEmail ? 0 : 1,
             createdBy: resolveAuditActorId(currentActor),
             loginRole,
             loginPermissions,
