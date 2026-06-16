@@ -241,7 +241,11 @@ export class TaskSubmissionService {
             {
               caseId: link.case_id,
               nextSummary,
-              updatedStudentAddress: addressChanged ? (data.updated_student_address ?? null) : null,
+              // Trim to null so an empty/whitespace address does not wipe the
+              // existing one via COALESCE (pin-only correction sends no address).
+              updatedStudentAddress: addressChanged
+                ? data.updated_student_address?.trim() || null
+                : null,
               updatedLat: addressChanged
                 ? (this.normalizeNumber(data.updated_lat) ?? this.normalizeNumber(data.visit_lat))
                 : null,
