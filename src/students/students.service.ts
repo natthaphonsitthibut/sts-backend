@@ -1,12 +1,62 @@
-import { Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { CreateStudentDto } from './dto/create-student.dto';
 import type { GetStudentsQueryDto } from './dto/students.dto';
+import type { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import type { DataScope } from '../common/utils/authorization';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
+import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
+import { piiConfig } from '../config/pii.config';
+import {
+  PHASE1_MASKED_GROUPS,
+  PII_FIELD_GROUPS,
+  PII_REASON_REQUIRES_NOTE,
+  type PiiFieldGroup,
+  type PiiReasonCode,
+  hasPiiValue,
+  maskPiiValue,
+} from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
 import type { StudentDetailRow, StudentListFilters, StudentListRow } from './students.types';
 import type { AuthenticatedRequestUser } from '../auth';
+
+/** Metadata captured from the HTTP request for the PII access log. */
+export interface PiiRevealRequestMeta {
+  ip: string | null;
+  userAgent: string | null;
+  requestId: string | null;
+}
+
+/**
+ * Mask the Phase-1 sensitive groups (national id, passport) on a student-detail
+ * row before it leaves the server, and report which fields were masked so the UI
+ * can offer a reveal. Address is intentionally left untouched (Phase 1).
+ */
+function maskStudentDetail(
+  row: Record<string, unknown>,
+): Record<string, unknown> & { masked_fields: string[] } {
+  const masked: Record<string, unknown> = { ...row };
+  const maskedFields: string[] = [];
+
+  for (const group of PHASE1_MASKED_GROUPS) {
+    for (const column of PII_FIELD_GROUPS[group]) {
+      if (hasPiiValue(masked[column])) {
+        masked[column] = maskPiiValue(masked[column]);
+        maskedFields.push(column);
+      }
+    }
+  }
+
+  return { ...masked, masked_fields: maskedFields };
+}
 
 function parseOptionalInteger(value?: string): number | undefined {
   if (!value || value === 'ALL' || value === 'all') {
@@ -81,7 +131,11 @@ function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
 export class StudentsService {
   private readonly logger = new Logger(StudentsService.name);
 
-  constructor(private readonly studentsRepository: StudentsRepository) {}
+  constructor(
+    private readonly studentsRepository: StudentsRepository,
+    @Inject(piiConfig.KEY)
+    private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
+  ) {}
 
   create(createStudentDto: CreateStudentDto) {
     void createStudentDto;
@@ -126,14 +180,89 @@ export class StudentsService {
       }
 
       // Attach a ready-to-use home address string so the visit-home form can
-      // prefill it (instead of capturing the creator's current GPS).
-      return { ...student, address: buildStudentTermAddress(student) };
+      // prefill it (instead of capturing the creator's current GPS), then mask
+      // the sensitive groups (national id / passport) before the row leaves the
+      // server — they are revealed on demand via revealPii (audited).
+      return maskStudentDetail({ ...student, address: buildStudentTermAddress(student) });
     } catch (err) {
       if (err instanceof NotFoundException) {
         throw err;
       }
       const error = err as Error;
       this.logger.error(`findOne error: ${error.message}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Reveal one sensitive PII group for a student and append an immutable record
+   * to the access log. Authorization (authenticated staff + `students`
+   * permission) is enforced by the controller guards; this method re-applies the
+   * same data-scope as findOne and records the reveal before returning values.
+   */
+  async revealPii(
+    id: string,
+    actor: AuthenticatedRequestUser | undefined,
+    userScope: DataScope | undefined,
+    dto: PiiRevealDto,
+    meta: PiiRevealRequestMeta,
+  ): Promise<{ field_group: string; values: Record<string, unknown> }> {
+    try {
+      this.assertOwnStudentAccess(id, actor);
+
+      const reasonCode = dto.reason_code as PiiReasonCode;
+      const note = dto.reason_note?.trim() || null;
+      if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !note) {
+        throw new BadRequestException('reason_note is required for this reason code');
+      }
+      // The note must not itself carry raw PII into the access log — reject any
+      // long digit run (e.g. a 13-digit national id) regardless of separators.
+      if (note && /\d(?:[\s-]*\d){9,}/u.test(note)) {
+        throw new BadRequestException('reason_note must not contain ID or document numbers');
+      }
+
+      const student = await this.studentsRepository.findStudentById(id, userScope);
+      if (!student) {
+        throw new NotFoundException(`Student with ID ${id} not found`);
+      }
+
+      const group = dto.field_group as PiiFieldGroup;
+      const columns = PII_FIELD_GROUPS[group];
+      const values: Record<string, unknown> = {};
+      for (const column of columns) {
+        values[column] = student[column] ?? null;
+      }
+
+      await this.studentsRepository.insertPiiAccessEvent({
+        actorUserId: typeof actor?.id === 'number' ? actor.id : null,
+        actorRoles: actor?.roles ?? [],
+        actorKind: actor?.virtual_login ? 'GUEST' : 'STAFF',
+        subjectStudentRef: buildSubjectStudentRef(
+          id,
+          this.piiRuntimeConfig.hashPepper,
+          this.piiRuntimeConfig.hashKeyVersion,
+        ),
+        subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+        fieldGroup: group,
+        reasonCode,
+        reasonNote: note,
+        purposeLinkId: null,
+        requestId: meta.requestId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+
+      return { field_group: group, values };
+    } catch (err) {
+      if (
+        err instanceof NotFoundException ||
+        err instanceof BadRequestException ||
+        err instanceof UnauthorizedException
+      ) {
+        throw err;
+      }
+      const error = err as Error;
+      this.logger.error(`revealPii error: ${error.message}`);
       throw err;
     }
   }

@@ -37,3 +37,19 @@ export interface StudentAttendanceRow extends Record<string, unknown> {
 }
 
 export type StudentsQueryResult<T extends Record<string, unknown>> = SqlQueryResult<T>;
+
+/** One row to append to the immutable `pii_access_events` log. */
+export interface PiiAccessEventInput {
+  actorUserId: number | null;
+  actorRoles: string[];
+  actorKind: 'STAFF' | 'GUEST';
+  subjectStudentRef: string;
+  subjectRefKeyVersion: number;
+  fieldGroup: string;
+  reasonCode: string;
+  reasonNote: string | null;
+  purposeLinkId: string | null;
+  requestId: string | null;
+  ip: string | null;
+  userAgent: string | null;
+}

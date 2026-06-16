@@ -7,13 +7,30 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
-import { AuthGuard, CurrentUser, normalizeDataScope, type AuthenticatedRequestUser } from '../auth';
+import type { Request } from 'express';
+import {
+  AuthGuard,
+  CurrentUser,
+  normalizeDataScope,
+  PermissionsGuard,
+  RequirePermission,
+  type AuthenticatedRequestUser,
+} from '../auth';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { GetStudentsQueryDto } from './dto/students.dto';
+import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+
+function firstHeaderValue(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
 
 @UseGuards(AuthGuard)
 @Controller('api/students')
@@ -50,6 +67,25 @@ export class StudentsController {
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findOne(id, actor, normalizeDataScope(actor?.data_scope));
+  }
+
+  // Reveal a masked PII group (national id / passport) for one student. Stricter
+  // than findOne: explicit `students` permission + the actor's data scope, and
+  // every reveal is recorded in the immutable pii_access_events log.
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('students')
+  @Post(':id/pii-reveal')
+  revealPii(
+    @Param('id') id: string,
+    @Body() body: PiiRevealDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return this.studentsService.revealPii(id, actor, normalizeDataScope(actor?.data_scope), body, {
+      ip: firstHeaderValue(req.headers['x-forwarded-for']) ?? req.ip ?? null,
+      userAgent: firstHeaderValue(req.headers['user-agent']),
+      requestId: firstHeaderValue(req.headers['x-request-id']),
+    });
   }
 
   @Patch(':id')

@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { buildDataScopeQuery, type DataScope } from '../common/utils/authorization';
 import { queryDataSource } from '../database/sql-query';
 import type {
+  PiiAccessEventInput,
   StudentAttendanceRow,
   StudentCaseRow,
   StudentDetailRow,
@@ -134,6 +135,43 @@ export class StudentsRepository {
 
     const result = await this.query<StudentDetailRow>(query, params);
     return result.rows[0] || null;
+  }
+
+  /** Append one immutable PII-reveal record to the access log. */
+  async insertPiiAccessEvent(event: PiiAccessEventInput): Promise<void> {
+    await this.query(
+      `
+        INSERT INTO pii_access_events (
+          actor_user_id,
+          actor_roles,
+          actor_kind,
+          subject_student_ref,
+          subject_ref_key_version,
+          field_group,
+          reason_code,
+          reason_note,
+          purpose_link_id,
+          request_id,
+          ip,
+          user_agent
+        )
+        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `,
+      [
+        event.actorUserId,
+        JSON.stringify(event.actorRoles ?? []),
+        event.actorKind,
+        event.subjectStudentRef,
+        event.subjectRefKeyVersion,
+        event.fieldGroup,
+        event.reasonCode,
+        event.reasonNote,
+        event.purposeLinkId,
+        event.requestId,
+        event.ip,
+        event.userAgent,
+      ],
+    );
   }
 
   async findCasesByStudentName(name: string): Promise<StudentCaseRow[]> {

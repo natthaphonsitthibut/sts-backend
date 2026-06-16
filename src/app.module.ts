@@ -19,13 +19,14 @@ import { appConfig } from './config/app.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
+import { piiConfig } from './config/pii.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, authConfig, databaseConfig, emailConfig],
+      load: [appConfig, authConfig, databaseConfig, emailConfig, piiConfig],
     }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
