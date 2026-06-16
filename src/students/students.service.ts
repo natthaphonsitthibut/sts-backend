@@ -42,20 +42,30 @@ export interface PiiRevealRequestMeta {
  */
 function maskStudentDetail(
   row: Record<string, unknown>,
-): Record<string, unknown> & { masked_fields: string[] } {
+  activeGroups: string[] = [],
+): Record<string, unknown> & { masked_fields: string[]; revealed_fields: string[] } {
   const masked: Record<string, unknown> = { ...row };
   const maskedFields: string[] = [];
+  const revealedFields: string[] = [];
 
   for (const group of PHASE1_MASKED_GROUPS) {
+    // Within an active reveal window the field stays unmasked for this actor —
+    // no re-prompt, and GET does not write a new audit row.
+    const active = activeGroups.includes(group);
     for (const column of PII_FIELD_GROUPS[group]) {
-      if (hasPiiValue(masked[column])) {
+      if (!hasPiiValue(masked[column])) {
+        continue;
+      }
+      if (active) {
+        revealedFields.push(column);
+      } else {
         masked[column] = maskPiiValue(masked[column]);
         maskedFields.push(column);
       }
     }
   }
 
-  return { ...masked, masked_fields: maskedFields };
+  return { ...masked, masked_fields: maskedFields, revealed_fields: revealedFields };
 }
 
 function parseOptionalInteger(value?: string): number | undefined {
@@ -170,6 +180,14 @@ export class StudentsService {
     }
   }
 
+  private subjectRefFor(studentId: string): string {
+    return buildSubjectStudentRef(
+      studentId,
+      this.piiRuntimeConfig.hashPepper,
+      this.piiRuntimeConfig.hashKeyVersion,
+    );
+  }
+
   async findOne(id: string, actor?: AuthenticatedRequestUser, userScope?: DataScope) {
     try {
       this.assertOwnStudentAccess(id, actor);
@@ -179,11 +197,25 @@ export class StudentsService {
         throw new NotFoundException(`Student with ID ${id} not found`);
       }
 
+      // Groups this actor revealed within the reveal window stay unmasked so a
+      // refresh does not re-prompt or duplicate the audit row.
+      const activeGroups =
+        typeof actor?.id === 'number'
+          ? await this.studentsRepository.listActiveRevealGroups(
+              actor.id,
+              this.subjectRefFor(id),
+              this.piiRuntimeConfig.revealTtlSeconds,
+            )
+          : [];
+
       // Attach a ready-to-use home address string so the visit-home form can
       // prefill it (instead of capturing the creator's current GPS), then mask
       // the sensitive groups (national id / passport) before the row leaves the
       // server — they are revealed on demand via revealPii (audited).
-      return maskStudentDetail({ ...student, address: buildStudentTermAddress(student) });
+      return maskStudentDetail(
+        { ...student, address: buildStudentTermAddress(student) },
+        activeGroups,
+      );
     } catch (err) {
       if (err instanceof NotFoundException) {
         throw err;
@@ -210,15 +242,32 @@ export class StudentsService {
     try {
       this.assertOwnStudentAccess(id, actor);
 
+      const group = dto.field_group as PiiFieldGroup;
+      const subjectRef = this.subjectRefFor(id);
+
+      // If this actor already revealed this group within the window, re-reveal is
+      // a no-op log-wise (return the value, no new reason, no duplicate audit row).
+      const activeGroups =
+        typeof actor?.id === 'number'
+          ? await this.studentsRepository.listActiveRevealGroups(
+              actor.id,
+              subjectRef,
+              this.piiRuntimeConfig.revealTtlSeconds,
+            )
+          : [];
+      const withinWindow = activeGroups.includes(group);
+
       const reasonCode = dto.reason_code as PiiReasonCode;
       const note = dto.reason_note?.trim() || null;
-      if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !note) {
-        throw new BadRequestException('reason_note is required for this reason code');
-      }
-      // The note must not itself carry raw PII into the access log — reject any
-      // long digit run (e.g. a 13-digit national id) regardless of separators.
-      if (note && /\d(?:[\s-]*\d){9,}/u.test(note)) {
-        throw new BadRequestException('reason_note must not contain ID or document numbers');
+      if (!withinWindow) {
+        if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !note) {
+          throw new BadRequestException('reason_note is required for this reason code');
+        }
+        // The note must not itself carry raw PII into the access log — reject any
+        // long digit run (e.g. a 13-digit national id) regardless of separators.
+        if (note && /\d(?:[\s-]*\d){9,}/u.test(note)) {
+          throw new BadRequestException('reason_note must not contain ID or document numbers');
+        }
       }
 
       const student = await this.studentsRepository.findStudentById(id, userScope);
@@ -226,31 +275,28 @@ export class StudentsService {
         throw new NotFoundException(`Student with ID ${id} not found`);
       }
 
-      const group = dto.field_group as PiiFieldGroup;
       const columns = PII_FIELD_GROUPS[group];
       const values: Record<string, unknown> = {};
       for (const column of columns) {
         values[column] = student[column] ?? null;
       }
 
-      await this.studentsRepository.insertPiiAccessEvent({
-        actorUserId: typeof actor?.id === 'number' ? actor.id : null,
-        actorRoles: actor?.roles ?? [],
-        actorKind: actor?.virtual_login ? 'GUEST' : 'STAFF',
-        subjectStudentRef: buildSubjectStudentRef(
-          id,
-          this.piiRuntimeConfig.hashPepper,
-          this.piiRuntimeConfig.hashKeyVersion,
-        ),
-        subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
-        fieldGroup: group,
-        reasonCode,
-        reasonNote: note,
-        purposeLinkId: null,
-        requestId: meta.requestId,
-        ip: meta.ip,
-        userAgent: meta.userAgent,
-      });
+      if (!withinWindow) {
+        await this.studentsRepository.insertPiiAccessEvent({
+          actorUserId: typeof actor?.id === 'number' ? actor.id : null,
+          actorRoles: actor?.roles ?? [],
+          actorKind: actor?.virtual_login ? 'GUEST' : 'STAFF',
+          subjectStudentRef: subjectRef,
+          subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+          fieldGroup: group,
+          reasonCode,
+          reasonNote: note,
+          purposeLinkId: null,
+          requestId: meta.requestId,
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+        });
+      }
 
       return { field_group: group, values };
     } catch (err) {

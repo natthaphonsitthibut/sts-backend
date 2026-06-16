@@ -174,6 +174,29 @@ export class StudentsRepository {
     );
   }
 
+  /**
+   * Field groups this actor revealed for this student within the reveal window —
+   * used to keep those fields unmasked (no re-prompt / no duplicate log) until
+   * the window lapses.
+   */
+  async listActiveRevealGroups(
+    actorUserId: number,
+    subjectStudentRef: string,
+    withinSeconds: number,
+  ): Promise<string[]> {
+    const result = await this.query<{ field_group: string }>(
+      `
+        SELECT DISTINCT field_group
+        FROM pii_access_events
+        WHERE actor_user_id = $1
+          AND subject_student_ref = $2
+          AND created_at > now() - make_interval(secs => $3)
+      `,
+      [actorUserId, subjectStudentRef, withinSeconds],
+    );
+    return result.rows.map((row) => row.field_group);
+  }
+
   async findCasesByStudentName(name: string): Promise<StudentCaseRow[]> {
     const result = await this.query<StudentCaseRow>(
       `

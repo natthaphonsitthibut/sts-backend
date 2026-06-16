@@ -5,6 +5,13 @@ export interface PiiRuntimeConfig {
   hashPepper: string;
   /** Key version stored alongside each ref so the pepper can be rotated later. */
   hashKeyVersion: number;
+  /**
+   * Reveal-session window (seconds). After an actor reveals a student's PII, the
+   * same field stays unmasked for that actor+student without a new reason/log
+   * until the window lapses — so a page refresh does not re-prompt or duplicate
+   * the audit row.
+   */
+  revealTtlSeconds: number;
 }
 
 /**
@@ -38,11 +45,17 @@ function resolvePepper(): string {
   );
 }
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function getPiiConfigFromEnv(): PiiRuntimeConfig {
   const keyVersion = Number.parseInt(process.env.PII_HASH_KEY_VERSION || '1', 10);
   return {
     hashPepper: resolvePepper(),
     hashKeyVersion: Number.isInteger(keyVersion) && keyVersion > 0 ? keyVersion : 1,
+    revealTtlSeconds: parsePositiveInt(process.env.PII_REVEAL_TTL_SECONDS, 15 * 60),
   };
 }
 
