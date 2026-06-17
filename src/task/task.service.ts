@@ -58,8 +58,8 @@ export class TaskService {
     return await this.taskReadService.getTaskHistory(token, date);
   }
 
-  async getTaskChain(taskId: string) {
-    return await this.taskReadService.getTaskChain(taskId);
+  async getTaskChain(actor: ActorContext | undefined, taskId: string) {
+    return await this.taskReadService.getTaskChain(actor, taskId);
   }
 
   async saveTaskAttendance(token: string, records: SaveTaskAttendanceDto['records']) {
@@ -91,15 +91,15 @@ export class TaskService {
     return await this.taskAccessService.getAdminLinkDetail(actor, linkId, date);
   }
 
-  async getCases() {
-    return await this.taskStatsService.getCases();
+  async getCases(actor?: ActorContext) {
+    return await this.taskStatsService.getCases(actor);
   }
 
-  async getStats() {
-    return await this.taskStatsService.getStats();
+  async getStats(actor?: ActorContext) {
+    return await this.taskStatsService.getStats(actor);
   }
 
-  async getOverviewStats() {
-    return await this.taskStatsService.getOverviewStats();
+  async getOverviewStats(actor?: ActorContext) {
+    return await this.taskStatsService.getOverviewStats(actor);
   }
 }

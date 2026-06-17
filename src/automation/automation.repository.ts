@@ -120,6 +120,7 @@ export class AutomationRepository {
   async findOpenAbsenceCaseByStudent(
     studentId: string,
     studentName: string,
+    schoolId: number | null,
     executor?: QueryExecutor,
   ): Promise<number | null> {
     const queryExecutor = this.getExecutor(executor);
@@ -129,12 +130,13 @@ export class AutomationRepository {
       `
         SELECT id FROM cases
         WHERE status = $1
+          AND ($4::int IS NULL OR school_id = $4)
           AND (
             (student_id IS NOT NULL AND student_id = $2)
             OR (student_id IS NULL AND student_name = $3)
           )
       `,
-      ['OPEN', studentId, studentName],
+      ['OPEN', studentId, studentName, schoolId],
     );
 
     return result.rows[0]?.id ?? null;
@@ -150,15 +152,23 @@ export class AutomationRepository {
         INSERT INTO cases (
           student_name,
           student_id,
+          school_id,
           student_school,
           student_address,
           reason_flagged,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, 'OPEN')
+        VALUES ($1, $2, $3, $4, $5, $6, 'OPEN')
         RETURNING id
       `,
-      [data.studentName, data.studentId, data.schoolName, data.studentAddress, data.reason],
+      [
+        data.studentName,
+        data.studentId,
+        data.schoolId,
+        data.schoolName,
+        data.studentAddress,
+        data.reason,
+      ],
     );
 
     return result.rows[0].id;

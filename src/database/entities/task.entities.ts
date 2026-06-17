@@ -11,6 +11,9 @@ export class CaseEntity {
   @Column({ name: 'student_school', type: 'text', nullable: true })
   studentSchool!: string | null;
 
+  @Column({ name: 'school_id', type: 'integer', nullable: true })
+  schoolId!: number | null;
+
   @Column({ name: 'student_address', type: 'text', nullable: true })
   studentAddress!: string | null;
 

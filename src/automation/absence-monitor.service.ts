@@ -109,12 +109,17 @@ export class AbsenceMonitorService {
             continue;
           }
           const studentId = this.normalizeText(student.person_id_onec);
+          const schoolId =
+            typeof student.school_id_onec === 'number' && Number.isFinite(student.school_id_onec)
+              ? student.school_id_onec
+              : null;
 
           this.logger.log(`Checking existing cases for: ${studentName}`);
 
           const existingCaseId = await this.automationRepository.findOpenAbsenceCaseByStudent(
             studentId,
             studentName,
+            schoolId,
             executor,
           );
 
@@ -136,6 +141,7 @@ export class AbsenceMonitorService {
             {
               studentName,
               studentId: studentId || null,
+              schoolId,
               schoolName,
               studentAddress: address,
               reason,

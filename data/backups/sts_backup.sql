@@ -174,7 +174,8 @@ CREATE TABLE public.cases (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by integer,
     updated_by integer,
-    student_id text
+    student_id text,
+    school_id integer
 );
 
 

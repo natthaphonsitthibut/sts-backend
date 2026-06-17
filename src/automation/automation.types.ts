@@ -42,6 +42,7 @@ export interface CreatedCaseRow extends Record<string, unknown> {
 export interface CreateAutomatedCaseInput {
   studentName: string;
   studentId: string | null;
+  schoolId: number | null;
   schoolName: string;
   studentAddress: string | null;
   reason: string;

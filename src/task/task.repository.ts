@@ -1,7 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
-import type { QueryExecutor, QueryResultLike, QueryResultRow, RoleDefinition } from './task.types';
+import type {
+  ActorContext,
+  QueryExecutor,
+  QueryResultLike,
+  QueryResultRow,
+  RoleDefinition,
+} from './task.types';
 
 interface CreateCaseInput {
   studentName: string;
@@ -11,6 +17,7 @@ interface CreateCaseInput {
   studentLng: number | null;
   reasonFlagged: string | null;
   studentId: string | null;
+  schoolId: number | null;
   createdBy: number | null;
 }
 
@@ -108,6 +115,11 @@ interface CountRow extends QueryResultRow {
   count: number | string;
 }
 
+interface ScopeQuery {
+  sql: string;
+  params: unknown[];
+}
+
 interface SettingValueRow extends QueryResultRow {
   setting_value?: unknown;
 }
@@ -129,6 +141,105 @@ export class TaskRepository {
     params?: unknown[],
   ): Promise<QueryResultLike<T>> {
     return await queryDataSource<T>(this.dataSource, sql, params);
+  }
+
+  private normalizeScopeArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(value.map((item) => String(item).trim()).filter((item) => item.length > 0)),
+    );
+  }
+
+  private normalizeScopeIntArray(value: unknown): number[] {
+    return this.normalizeScopeArray(value)
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item));
+  }
+
+  private buildCaseScopeQuery(
+    actor: ActorContext | undefined,
+    startIndex = 1,
+    caseAlias = 'c',
+  ): ScopeQuery {
+    const scope = actor?.data_scope || {};
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    let paramIndex = startIndex;
+
+    const schoolIds = this.normalizeScopeIntArray(scope.school_ids);
+    if (schoolIds.length > 0) {
+      conditions.push(`${caseAlias}.school_id = ANY($${paramIndex++}::int[])`);
+      params.push(schoolIds);
+    }
+
+    const schoolConditions: string[] = [];
+    const provinces = this.normalizeScopeArray(scope.provinces);
+    if (provinces.length > 0) {
+      schoolConditions.push(`case_scope_school.province = ANY($${paramIndex++}::text[])`);
+      params.push(provinces);
+    }
+
+    const districts = this.normalizeScopeArray(scope.districts);
+    if (districts.length > 0) {
+      schoolConditions.push(`case_scope_school.district = ANY($${paramIndex++}::text[])`);
+      params.push(districts);
+    }
+
+    const subDistricts = this.normalizeScopeArray(scope.sub_districts);
+    if (subDistricts.length > 0) {
+      schoolConditions.push(`case_scope_school.sub_district = ANY($${paramIndex++}::text[])`);
+      params.push(subDistricts);
+    }
+
+    if (schoolConditions.length > 0) {
+      conditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM schools case_scope_school
+          WHERE case_scope_school.id = ${caseAlias}.school_id
+            AND ${schoolConditions.join(' AND ')}
+        )
+      `);
+    }
+
+    const studentConditions: string[] = [];
+    const gradeLevels = this.normalizeScopeIntArray(scope.grade_levels);
+    if (gradeLevels.length > 0) {
+      studentConditions.push(
+        `case_scope_student."GradeLevelID_Onec" = ANY($${paramIndex++}::int[])`,
+      );
+      params.push(gradeLevels);
+    }
+
+    const roomIds = this.normalizeScopeIntArray(scope.room_ids);
+    if (roomIds.length > 0) {
+      studentConditions.push(`case_scope_student."RoomID_Onec" = ANY($${paramIndex++}::int[])`);
+      params.push(roomIds);
+    }
+
+    if (studentConditions.length > 0) {
+      conditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM student_term case_scope_student
+          WHERE case_scope_student."PersonID_Onec" = ${caseAlias}.student_id
+            AND ${studentConditions.join(' AND ')}
+        )
+      `);
+    }
+
+    if (scope.own_only === true && Number.isInteger(actor?.id)) {
+      conditions.push(`${caseAlias}.created_by = $${paramIndex++}`);
+      params.push(actor?.id);
+    }
+
+    return {
+      sql: conditions.length > 0 ? conditions.join(' AND ') : '',
+      params,
+    };
   }
 
   async withTransaction<T>(callback: (executor: QueryExecutor) => Promise<T>): Promise<T> {
@@ -167,10 +278,21 @@ export class TaskRepository {
     }));
   }
 
-  async findCaseById(caseId: number, executor?: QueryExecutor): Promise<QueryResultRow | null> {
+  async findCaseById(
+    caseId: number,
+    executor?: QueryExecutor,
+    actor?: ActorContext,
+  ): Promise<QueryResultRow | null> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.getExecutor(executor).query(
-      `SELECT id FROM cases WHERE id = $1 LIMIT 1`,
-      [caseId],
+      `
+      SELECT id, school_id
+      FROM cases c
+      WHERE c.id = $1${scopeSql}
+      LIMIT 1
+    `,
+      [caseId, ...scopeQuery.params],
     );
     return result.rows[0] || null;
   }
@@ -186,10 +308,11 @@ export class TaskRepository {
         student_lng,
         reason_flagged,
         student_id,
+        school_id,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
       RETURNING id
     `,
       [
@@ -200,6 +323,7 @@ export class TaskRepository {
         data.studentLng,
         data.reasonFlagged,
         data.studentId,
+        data.schoolId,
         data.createdBy,
       ],
     );
@@ -207,11 +331,18 @@ export class TaskRepository {
     return Number(result.rows[0]?.id);
   }
 
-  async updateCaseStatus(caseId: number, status: string, executor?: QueryExecutor): Promise<void> {
-    await this.getExecutor(executor).query(`UPDATE cases SET status = $1 WHERE id = $2`, [
-      status,
-      caseId,
-    ]);
+  async updateCaseStatus(
+    caseId: number,
+    status: string,
+    executor?: QueryExecutor,
+    actor?: ActorContext,
+  ): Promise<void> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 3);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    await this.getExecutor(executor).query(
+      `UPDATE cases c SET status = $1 WHERE c.id = $2${scopeSql}`,
+      [status, caseId, ...scopeQuery.params],
+    );
   }
 
   async createTask(data: CreateTaskInput, executor?: QueryExecutor): Promise<void> {
@@ -438,7 +569,9 @@ export class TaskRepository {
     return result.rows;
   }
 
-  async findTaskChainTask(taskId: string): Promise<QueryResultRow | null> {
+  async findTaskChainTask(taskId: string, actor?: ActorContext): Promise<QueryResultRow | null> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<QueryResultRow>(
       `
       SELECT
@@ -451,9 +584,9 @@ export class TaskRepository {
         c.result_summary
       FROM tasks t
       LEFT JOIN cases c ON c.id = t.case_id
-      WHERE t.id = $1
+      WHERE t.id = $1${scopeSql}
     `,
-      [taskId],
+      [taskId, ...scopeQuery.params],
     );
 
     return result.rows[0] || null;
@@ -621,6 +754,20 @@ export class TaskRepository {
       WHERE "PersonID_Onec" = $1
     `,
       [studentId],
+    );
+
+    return result.rows[0] || null;
+  }
+
+  async findSchoolById(schoolId: number, executor?: QueryExecutor): Promise<QueryResultRow | null> {
+    const result = await this.getExecutor(executor).query(
+      `
+      SELECT id, province, district, sub_district
+      FROM schools
+      WHERE id = $1
+      LIMIT 1
+    `,
+      [schoolId],
     );
 
     return result.rows[0] || null;
@@ -867,8 +1014,11 @@ export class TaskRepository {
     );
   }
 
-  async listCasesWithActiveLinks(): Promise<QueryResultRow[]> {
-    const result = await this.query<QueryResultRow>(`
+  async listCasesWithActiveLinks(actor?: ActorContext): Promise<QueryResultRow[]> {
+    const scopeQuery = this.buildCaseScopeQuery(actor);
+    const scopeSql = scopeQuery.sql ? `WHERE ${scopeQuery.sql}` : '';
+    const result = await this.query<QueryResultRow>(
+      `
       SELECT
         c.id,
         c.student_name,
@@ -928,31 +1078,59 @@ export class TaskRepository {
         ORDER BY delegation_depth DESC
         LIMIT 1
       ) tl ON true
+      ${scopeSql}
       ORDER BY c.created_at DESC
-    `);
+    `,
+      scopeQuery.params,
+    );
 
     return result.rows;
   }
 
-  async countCases(status?: string): Promise<number> {
-    const result = status
-      ? await this.query<CountRow>(`SELECT count(*) FROM cases WHERE status = $1`, [status])
-      : await this.query<CountRow>(`SELECT count(*) FROM cases`);
+  async countCases(status?: string, actor?: ActorContext): Promise<number> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    if (status) {
+      params.push(status);
+      conditions.push(`c.status = $${params.length}`);
+    }
+
+    const scopeQuery = this.buildCaseScopeQuery(actor, params.length + 1);
+    if (scopeQuery.sql) {
+      conditions.push(scopeQuery.sql);
+      params.push(...scopeQuery.params);
+    }
+
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await this.query<CountRow>(`SELECT count(*) FROM cases c ${whereSql}`, params);
 
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
-  async countCasesCreatedOn(date: string): Promise<number> {
+  async countCasesCreatedOn(date: string, actor?: ActorContext): Promise<number> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM cases WHERE created_at::date = $1`,
-      [date],
+      `SELECT count(*) FROM cases c WHERE c.created_at::date = $1${scopeSql}`,
+      [date, ...scopeQuery.params],
     );
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
-  async countActiveTaskLinks(): Promise<number> {
+  async countActiveTaskLinks(actor?: ActorContext): Promise<number> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 1);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM task_links WHERE status = 'ACTIVE' AND expires_at > NOW()`,
+      `
+      SELECT count(*)
+      FROM task_links tl
+      JOIN tasks t ON t.id = tl.task_id
+      JOIN cases c ON c.id = t.case_id
+      WHERE tl.status = 'ACTIVE'
+        AND tl.expires_at > NOW()${scopeSql}
+    `,
+      scopeQuery.params,
     );
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }

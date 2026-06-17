@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
@@ -6,7 +6,7 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
-import type { ActorContext } from './task.types';
+import type { ActorContext, DataScope, QueryExecutor, QueryResultRow } from './task.types';
 
 @Injectable()
 export class TaskLifecycleService {
@@ -36,6 +36,89 @@ export class TaskLifecycleService {
     }
 
     return 'hours';
+  }
+
+  private getSingleActorSchoolId(actor: ActorContext): number | null {
+    const scope = this.taskPolicyService.normalizeScope(actor.data_scope);
+    if (scope.school_ids.length !== 1) {
+      return null;
+    }
+
+    return this.normalizeNumber(scope.school_ids[0]);
+  }
+
+  private buildSchoolScope(school: QueryResultRow): DataScope {
+    const schoolId = this.normalizeNumber(school.id as string | number | null | undefined);
+    const scope: DataScope = {};
+
+    if (typeof school.province === 'string' && school.province.trim().length > 0) {
+      scope.provinces = [school.province.trim()];
+    }
+    if (typeof school.district === 'string' && school.district.trim().length > 0) {
+      scope.districts = [school.district.trim()];
+    }
+    if (typeof school.sub_district === 'string' && school.sub_district.trim().length > 0) {
+      scope.sub_districts = [school.sub_district.trim()];
+    }
+    if (schoolId !== null) {
+      scope.school_ids = [schoolId];
+    }
+
+    return scope;
+  }
+
+  private async assertSchoolWithinActorScope(
+    actor: ActorContext,
+    schoolId: number,
+    executor: QueryExecutor,
+  ): Promise<void> {
+    const school = await this.taskRepository.findSchoolById(schoolId, executor);
+    if (!school) {
+      throw new Error('School not found');
+    }
+
+    if (
+      !this.taskPolicyService.isScopeSubsetOfActor(this.buildSchoolScope(school), actor.data_scope)
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์เข้าถึงโรงเรียนนี้');
+    }
+  }
+
+  private async resolveCaseSchoolId(
+    actor: ActorContext,
+    studentId: string | null,
+    targetSchoolId: number | null,
+    executor: QueryExecutor,
+  ): Promise<number | null> {
+    if (studentId) {
+      const studentMetadata = await this.taskRepository.findStudentTermMetadata(
+        studentId,
+        executor,
+      );
+      const studentSchoolId = this.normalizeNumber(
+        studentMetadata?.SchoolID_Onec as string | number | null | undefined,
+      );
+      if (studentSchoolId !== null) {
+        if (targetSchoolId !== null && targetSchoolId !== studentSchoolId) {
+          throw new Error('target_school_id does not match student school');
+        }
+        await this.assertSchoolWithinActorScope(actor, studentSchoolId, executor);
+        return studentSchoolId;
+      }
+    }
+
+    if (targetSchoolId !== null) {
+      await this.assertSchoolWithinActorScope(actor, targetSchoolId, executor);
+      return targetSchoolId;
+    }
+
+    const actorSchoolId = this.getSingleActorSchoolId(actor);
+    if (actorSchoolId !== null) {
+      await this.assertSchoolWithinActorScope(actor, actorSchoolId, executor);
+      return actorSchoolId;
+    }
+
+    return null;
   }
 
   async createTask(actor: ActorContext | undefined, data: CreateTaskDto, baseUrl: string) {
@@ -102,22 +185,59 @@ export class TaskLifecycleService {
     try {
       await this.taskRepository.withTransaction(async (executor) => {
         let caseId: number | null = null;
+        const inputTargetSchoolId = this.normalizeNumber(data.target_school_id);
+        let resolvedTargetSchoolId = inputTargetSchoolId;
+
+        if (inputTargetSchoolId !== null) {
+          await this.assertSchoolWithinActorScope(currentActor, inputTargetSchoolId, executor);
+        } else if (taskType !== 'LOGIN') {
+          resolvedTargetSchoolId = this.getSingleActorSchoolId(currentActor);
+        }
 
         if (taskType === 'VISIT') {
           const existingCaseId = this.normalizeNumber(data.existing_case_id);
 
           if (existingCaseId) {
-            const existingCase = await this.taskRepository.findCaseById(existingCaseId, executor);
+            const existingCase = await this.taskRepository.findCaseById(
+              existingCaseId,
+              executor,
+              currentActor,
+            );
             if (!existingCase) {
               throw new Error('Case not found');
             }
+            const existingCaseSchoolId = this.normalizeNumber(
+              existingCase.school_id as string | number | null | undefined,
+            );
+            if (
+              existingCaseSchoolId !== null &&
+              resolvedTargetSchoolId !== null &&
+              existingCaseSchoolId !== resolvedTargetSchoolId
+            ) {
+              throw new Error('target_school_id does not match case school');
+            }
+            resolvedTargetSchoolId = resolvedTargetSchoolId ?? existingCaseSchoolId;
             caseId = existingCaseId;
-            await this.taskRepository.updateCaseStatus(caseId, 'IN_PROGRESS', executor);
+            await this.taskRepository.updateCaseStatus(
+              caseId,
+              'IN_PROGRESS',
+              executor,
+              currentActor,
+            );
           } else {
             const studentName = clean(data.student_name);
+            const studentId = clean(data.student_id) || null;
             if (!studentName) {
               throw new Error('student_name is required for Field Visit');
             }
+
+            const caseSchoolId = await this.resolveCaseSchoolId(
+              currentActor,
+              studentId,
+              resolvedTargetSchoolId,
+              executor,
+            );
+            resolvedTargetSchoolId = resolvedTargetSchoolId ?? caseSchoolId;
 
             caseId = await this.taskRepository.createCase(
               {
@@ -127,13 +247,19 @@ export class TaskLifecycleService {
                 studentLat: this.normalizeNumber(data.student_lat),
                 studentLng: this.normalizeNumber(data.student_lng),
                 reasonFlagged: clean(data.reason_flagged),
-                studentId: clean(data.student_id) || null,
+                studentId,
+                schoolId: caseSchoolId,
                 createdBy: resolveAuditActorId(currentActor),
               },
               executor,
             );
 
-            await this.taskRepository.updateCaseStatus(caseId, 'IN_PROGRESS', executor);
+            await this.taskRepository.updateCaseStatus(
+              caseId,
+              'IN_PROGRESS',
+              executor,
+              currentActor,
+            );
           }
         }
 
@@ -144,7 +270,7 @@ export class TaskLifecycleService {
             taskType,
             targetGrade: clean(data.target_grade) || null,
             targetRoom: clean(data.target_room) || null,
-            targetSchoolId: this.normalizeNumber(data.target_school_id),
+            targetSchoolId: resolvedTargetSchoolId,
             createdBy: resolveAuditActorId(currentActor),
           },
           executor,

@@ -43,9 +43,14 @@ export class CaseController {
   }
 
   @Get(':caseId/tasks')
-  async getCaseTasks(@Param('caseId', ParseIntPipe) caseId: number) {
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('students')
+  async getCaseTasks(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
     try {
-      return await this.caseService.getTasksByCase(caseId);
+      return await this.caseService.getTasksByCase(caseId, actor);
     } catch (err) {
       const message = getTaskErrorMessage(err);
       const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
@@ -54,9 +59,14 @@ export class CaseController {
   }
 
   @Get(':caseId/reviews')
-  async getCaseReviews(@Param('caseId', ParseIntPipe) caseId: number) {
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('students')
+  async getCaseReviews(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
     try {
-      return await this.caseService.getCaseReviews(caseId);
+      return await this.caseService.getCaseReviews(caseId, actor);
     } catch (err) {
       const message = getTaskErrorMessage(err);
       const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;

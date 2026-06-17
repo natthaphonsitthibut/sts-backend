@@ -1,16 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { getBangkokDateString } from '../common/utils/date.util';
+import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
+import type { ActorContext } from './task.types';
 
 @Injectable()
 export class TaskStatsService {
   private readonly logger = new Logger(TaskStatsService.name);
 
-  constructor(private readonly taskRepository: TaskRepository) {}
+  constructor(
+    private readonly taskRepository: TaskRepository,
+    private readonly taskPolicyService: TaskPolicyService,
+  ) {}
 
-  async getCases() {
+  async getCases(actor?: ActorContext) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
     try {
-      return await this.taskRepository.listCasesWithActiveLinks();
+      return await this.taskRepository.listCasesWithActiveLinks(currentActor);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`getCases error: ${message}`);
@@ -18,18 +24,19 @@ export class TaskStatsService {
     }
   }
 
-  async getStats() {
+  async getStats(actor?: ActorContext) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
     try {
       const today = getBangkokDateString();
 
       return {
-        total: await this.taskRepository.countCases(),
-        open: await this.taskRepository.countCases('OPEN'),
-        inProgress: await this.taskRepository.countCases('IN_PROGRESS'),
-        resolved: await this.taskRepository.countCases('RESOLVED'),
-        today: await this.taskRepository.countCasesCreatedOn(today),
-        pendingReview: await this.taskRepository.countCases('PENDING_REVIEW'),
-        activeLinks: await this.taskRepository.countActiveTaskLinks(),
+        total: await this.taskRepository.countCases(undefined, currentActor),
+        open: await this.taskRepository.countCases('OPEN', currentActor),
+        inProgress: await this.taskRepository.countCases('IN_PROGRESS', currentActor),
+        resolved: await this.taskRepository.countCases('RESOLVED', currentActor),
+        today: await this.taskRepository.countCasesCreatedOn(today, currentActor),
+        pendingReview: await this.taskRepository.countCases('PENDING_REVIEW', currentActor),
+        activeLinks: await this.taskRepository.countActiveTaskLinks(currentActor),
         delegations: 0,
       };
     } catch (err) {
@@ -39,7 +46,8 @@ export class TaskStatsService {
     }
   }
 
-  async getOverviewStats() {
+  async getOverviewStats(actor?: ActorContext) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
     try {
       return {
         success: true,
@@ -48,9 +56,9 @@ export class TaskStatsService {
           dropoutStudents: await this.taskRepository.countStudentDropouts(),
           atRiskStudents: 0,
           helpStats: {
-            waiting: await this.taskRepository.countCases('OPEN'),
-            inProgress: await this.taskRepository.countCases('IN_PROGRESS'),
-            resolved: await this.taskRepository.countCases('RESOLVED'),
+            waiting: await this.taskRepository.countCases('OPEN', currentActor),
+            inProgress: await this.taskRepository.countCases('IN_PROGRESS', currentActor),
+            resolved: await this.taskRepository.countCases('RESOLVED', currentActor),
           },
         },
       };

@@ -15,7 +15,7 @@ import {
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
 import type { Request } from 'express';
-import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
+import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
@@ -101,8 +101,11 @@ export class TaskController {
 
   @Get(':taskId/chain')
   @UseGuards(AuthGuard)
-  async getTaskChain(@Param('taskId') taskId: string) {
-    const result = await this.taskService.getTaskChain(taskId);
+  async getTaskChain(
+    @Param('taskId') taskId: string,
+    @CurrentUser() actor: RequestWithActor['user'],
+  ) {
+    const result = await this.taskService.getTaskChain(actor, taskId);
     if (!result) {
       throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
     }

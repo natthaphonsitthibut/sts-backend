@@ -163,6 +163,7 @@ export const DATABASE_BASELINE_SQL = `
     id SERIAL PRIMARY KEY,
     student_name TEXT NOT NULL,
     student_id TEXT,
+    school_id INTEGER,
     student_school TEXT,
     student_address TEXT,
     student_lat REAL,
@@ -371,6 +372,7 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "data_scope" JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS school_id INTEGER;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
@@ -379,6 +381,7 @@ export const DATABASE_BASELINE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_task_links_token ON task_links(token_hash);
   CREATE INDEX IF NOT EXISTS idx_task_links_task_id ON task_links(task_id);
   CREATE INDEX IF NOT EXISTS idx_case_reviews_case_id ON case_reviews(case_id);
+  CREATE INDEX IF NOT EXISTS idx_cases_school_id ON cases(school_id);
   CREATE INDEX IF NOT EXISTS idx_attendance_person_id ON attendance("PersonID_Onec");
   CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance("AttendanceDate");
 

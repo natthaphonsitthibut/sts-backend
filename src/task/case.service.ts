@@ -3,6 +3,7 @@ import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
 import { ReviewCaseDto } from './dto/task.dto';
+import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 
 type ReviewAction = 'ASSIST' | 'FORWARD' | 'CLOSE';
@@ -11,7 +12,10 @@ type ReviewAction = 'ASSIST' | 'FORWARD' | 'CLOSE';
 export class CaseService {
   private readonly logger = new Logger(CaseService.name);
 
-  constructor(private readonly taskRepository: TaskRepository) {}
+  constructor(
+    private readonly taskRepository: TaskRepository,
+    private readonly taskPolicyService: TaskPolicyService,
+  ) {}
 
   private normalizeText(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') {
@@ -36,6 +40,7 @@ export class CaseService {
   }
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
     const reviewAction = this.normalizeAction(body.review_action);
     const reviewNote = clean(this.normalizeText(body.review_note)) || null;
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
@@ -44,7 +49,7 @@ export class CaseService {
     const reviewId = crypto.randomUUID();
 
     try {
-      const caseRecord = await this.taskRepository.findCaseById(caseId);
+      const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
       if (!caseRecord) {
         throw new Error('Case not found');
       }
@@ -60,7 +65,7 @@ export class CaseService {
           },
           executor,
         );
-        await this.taskRepository.updateCaseStatus(caseId, nextStatus, executor);
+        await this.taskRepository.updateCaseStatus(caseId, nextStatus, executor, currentActor);
       });
 
       const reviewRecord = await this.taskRepository.findCaseReviewById(reviewId);
@@ -78,9 +83,10 @@ export class CaseService {
     }
   }
 
-  async getTasksByCase(caseId: number) {
+  async getTasksByCase(caseId: number, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
     try {
-      const caseRecord = await this.taskRepository.findCaseById(caseId);
+      const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
       if (!caseRecord) {
         throw new Error('Case not found');
       }
@@ -96,9 +102,10 @@ export class CaseService {
     }
   }
 
-  async getCaseReviews(caseId: number) {
+  async getCaseReviews(caseId: number, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
     try {
-      const caseRecord = await this.taskRepository.findCaseById(caseId);
+      const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
       if (!caseRecord) {
         throw new Error('Case not found');
       }

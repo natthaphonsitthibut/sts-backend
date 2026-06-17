@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { TaskAccessService } from './task-access.service';
+import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
+import type { ActorContext } from './task.types';
 
 @Injectable()
 export class TaskReadService {
@@ -9,6 +11,7 @@ export class TaskReadService {
   constructor(
     private readonly taskRepository: TaskRepository,
     private readonly taskAccessService: TaskAccessService,
+    private readonly taskPolicyService: TaskPolicyService,
   ) {}
 
   async getTaskStudents(token: string) {
@@ -63,9 +66,10 @@ export class TaskReadService {
     }
   }
 
-  async getTaskChain(taskId: string) {
+  async getTaskChain(actor: ActorContext | undefined, taskId: string) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
     try {
-      const task = await this.taskRepository.findTaskChainTask(taskId);
+      const task = await this.taskRepository.findTaskChainTask(taskId, currentActor);
       if (!task) {
         return null;
       }
