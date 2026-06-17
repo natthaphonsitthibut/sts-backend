@@ -692,7 +692,9 @@ export class TaskRepository {
         id,
         assigned_to_email,
         otp_code,
-        otp_expires_at
+        otp_expires_at,
+        otp_attempts,
+        otp_locked_until
       FROM task_links
       WHERE token_hash = $1
     `,
@@ -702,14 +704,86 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
+  /**
+   * Same as findOtpLinkByTokenHash but takes a row lock (FOR UPDATE) so the OTP
+   * verify path (lock-check → compare → increment/clear) runs serialized within
+   * a transaction. Without this, concurrent guesses could each read the row
+   * before the lock is set and slip past the attempt cap.
+   */
+  async findOtpLinkByTokenHashForUpdate(
+    tokenHash: string,
+    executor: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const result = await executor.query(
+      `
+      SELECT
+        id,
+        otp_code,
+        otp_expires_at,
+        otp_attempts,
+        otp_locked_until
+      FROM task_links
+      WHERE token_hash = $1
+      FOR UPDATE
+    `,
+      [tokenHash],
+    );
+
+    return result.rows[0] || null;
+  }
+
   async updateLinkOtp(data: TaskLinkOtpInput, executor?: QueryExecutor): Promise<void> {
+    // Issuing a fresh OTP resets the brute-force counter and clears any lockout:
+    // a new code is a new challenge, so the previous failed guesses no longer apply.
     await this.getExecutor(executor).query(
       `
       UPDATE task_links
-      SET otp_code = $1, otp_expires_at = $2, otp_verified = 0
+      SET otp_code = $1, otp_expires_at = $2, otp_verified = 0,
+          otp_attempts = 0, otp_locked_until = NULL
       WHERE id = $3
     `,
       [data.otpCode, data.otpExpiresAt, data.linkId],
+    );
+  }
+
+  /**
+   * Record one failed OTP guess and lock the link once `maxAttempts` is reached.
+   * The increment + conditional lock happen in a single UPDATE so concurrent
+   * guesses cannot race past the cap. Returns the new attempt count and lock time.
+   */
+  async registerFailedOtpAttempt(
+    linkId: string,
+    maxAttempts: number,
+    lockSeconds: number,
+    executor?: QueryExecutor,
+  ): Promise<{ attempts: number; lockedUntil: Date | null }> {
+    const result = await this.getExecutor(executor).query(
+      `
+      UPDATE task_links
+      SET otp_attempts = otp_attempts + 1,
+          otp_locked_until = CASE
+            WHEN otp_attempts + 1 >= $2 THEN now() + ($3 || ' seconds')::interval
+            ELSE otp_locked_until
+          END
+      WHERE id = $1
+      RETURNING otp_attempts, otp_locked_until
+    `,
+      [linkId, maxAttempts, lockSeconds],
+    );
+    const row = result.rows[0] as
+      | { otp_attempts: number; otp_locked_until: Date | null }
+      | undefined;
+    return {
+      attempts: Number(row?.otp_attempts ?? 0),
+      lockedUntil: row?.otp_locked_until ? new Date(String(row.otp_locked_until)) : null,
+    };
+  }
+
+  /** Clear the OTP brute-force counter after a successful verification. */
+  async clearOtpAttempts(linkId: string, executor?: QueryExecutor): Promise<void> {
+    await this.getExecutor(executor).query(
+      `UPDATE task_links SET otp_attempts = 0, otp_locked_until = NULL WHERE id = $1`,
+      [linkId],
     );
   }
 

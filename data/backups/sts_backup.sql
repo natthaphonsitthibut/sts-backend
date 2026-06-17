@@ -629,6 +629,8 @@ CREATE TABLE public.task_links (
     otp_code text,
     otp_expires_at timestamp with time zone,
     otp_verified integer DEFAULT 0,
+    otp_attempts integer DEFAULT 0 NOT NULL,
+    otp_locked_until timestamp with time zone,
     subject text,
     status text DEFAULT 'ACTIVE'::text,
     admin_locked integer DEFAULT 0,

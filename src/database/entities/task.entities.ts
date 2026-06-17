@@ -105,6 +105,12 @@ export class TaskLinkEntity {
   @Column({ name: 'otp_verified', type: 'integer', default: 0 })
   otpVerified!: number;
 
+  @Column({ name: 'otp_attempts', type: 'integer', default: 0 })
+  otpAttempts!: number;
+
+  @Column({ name: 'otp_locked_until', type: 'timestamptz', nullable: true })
+  otpLockedUntil!: Date | null;
+
   @Column({ name: 'subject', type: 'text', nullable: true })
   subject!: string | null;
 

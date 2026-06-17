@@ -19,6 +19,7 @@ import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
+import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decorators';
 import { CreateTaskDto, SaveTaskAttendanceDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import {
   getHeaderValue,
@@ -118,11 +119,13 @@ export class TaskController {
     return await this.taskService.saveTaskSubmission(token, body);
   }
 
+  @ThrottleOtpRequest()
   @Post(':token/otp')
   async requestOtp(@Param('token') token: string) {
     return await this.taskService.requestOtp(token);
   }
 
+  @ThrottleOtpVerify()
   @Post(':token/verify')
   async verifyOtp(@Param('token') token: string, @Body('otp') otp: string) {
     return await this.taskService.verifyOtp(token, otp);

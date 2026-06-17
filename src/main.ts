@@ -11,6 +11,11 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const runtimeConfig = app.get<ConfigType<typeof appConfig>>(appConfig.KEY);
 
+  // Controls how the real client IP is derived from X-Forwarded-For for rate
+  // limiting. Default 0 (trust none = socket IP). Behind a known proxy set
+  // TRUST_PROXY to the trusted hop count; never a blanket `true` (spoofable).
+  app.set('trust proxy', runtimeConfig.trustProxy);
+
   // In production an empty allowlist would reflect ANY origin (`origin: true`),
   // which combined with `credentials: true` lets any site make authenticated
   // cross-origin requests. Fail closed instead: production MUST set CORS_ORIGINS.

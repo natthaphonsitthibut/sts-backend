@@ -198,6 +198,8 @@ export const DATABASE_BASELINE_SQL = `
     otp_code TEXT,
     otp_expires_at TIMESTAMP,
     otp_verified INTEGER DEFAULT 0,
+    otp_attempts INTEGER NOT NULL DEFAULT 0,
+    otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
     status TEXT DEFAULT 'ACTIVE',
     admin_locked INTEGER DEFAULT 0,

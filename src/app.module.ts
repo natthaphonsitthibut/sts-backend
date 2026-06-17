@@ -14,21 +14,39 @@ import { AuthModule } from './auth/auth.module';
 
 import { ConfigModule, type ConfigType } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { StudentsModule } from './students/students.module';
 import { appConfig } from './config/app.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
 import { piiConfig } from './config/pii.config';
+import { throttleConfig } from './config/throttle.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, authConfig, databaseConfig, emailConfig, piiConfig],
+      load: [appConfig, authConfig, databaseConfig, emailConfig, piiConfig, throttleConfig],
     }),
     ScheduleModule.forRoot(),
+    // IP rate limiting (in-memory store). Limits come from the runtime config
+    // (so .env overrides apply), exposed as named throttlers. The guard is
+    // applied per-route via the Throttle* decorators (throttle.decorators.ts),
+    // not globally, so only the sensitive credential endpoints are throttled.
+    ThrottlerModule.forRootAsync({
+      inject: [throttleConfig.KEY],
+      useFactory: (config: ConfigType<typeof throttleConfig>) => ({
+        errorMessage: 'คำขอมากเกินไป กรุณาลองใหม่อีกครั้งภายหลัง',
+        throttlers: [
+          { name: 'login', ttl: config.login.ttlMs, limit: config.login.limit },
+          { name: 'otpRequest', ttl: config.otpRequest.ttlMs, limit: config.otpRequest.limit },
+          { name: 'otpVerify', ttl: config.otpVerify.ttlMs, limit: config.otpVerify.limit },
+          { name: 'mockLogin', ttl: config.mockLogin.ttlMs, limit: config.mockLogin.limit },
+        ],
+      }),
+    }),
     TypeOrmModule.forRootAsync({
       inject: [databaseConfig.KEY],
       useFactory: (config: ConfigType<typeof databaseConfig>) => createTypeOrmOptions(config),

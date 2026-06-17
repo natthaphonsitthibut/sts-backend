@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { ThrottleLogin } from '../config/throttle.decorators';
 import { UsersService } from './users.service';
 import {
   AuthGuard,
@@ -149,6 +150,7 @@ export class UsersController {
     return await this.usersService.deleteUser(actor, id);
   }
 
+  @ThrottleLogin()
   @Post('login')
   async login(@Body() body: LoginDto, @Res({ passthrough: true }) res: Response) {
     const user = await this.userAuthService.validateUser(body.username, body.password);

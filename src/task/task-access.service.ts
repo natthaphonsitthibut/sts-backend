@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -235,12 +237,12 @@ export class TaskAccessService {
     const link = await this.taskRepository.findOtpLinkByTokenHash(tokenHash);
 
     if (!link) {
-      throw new NotFoundException('Link not found');
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
     }
 
     const email = typeof link.assigned_to_email === 'string' ? link.assigned_to_email.trim() : '';
     if (!email) {
-      throw new BadRequestException('No email found for this link');
+      throw new BadRequestException('ลิงก์นี้ไม่มีอีเมลผู้ใช้งานที่เชื่อมโยง');
     }
 
     const otpTtlSeconds = this.authRuntimeConfig.otpTtlSeconds;
@@ -276,21 +278,67 @@ export class TaskAccessService {
     }
 
     const tokenHash = hashToken(token);
-    const link = await this.taskRepository.findOtpLinkByTokenHash(tokenHash);
-    if (!link) {
+
+    // The whole check runs in one transaction with the row locked (FOR UPDATE)
+    // so concurrent guesses on the same link are serialized — without this they
+    // could each read the row before the lock is set and slip past the cap. The
+    // transaction must COMMIT even on a wrong guess (to persist the incremented
+    // attempt), so the outcome is returned and the 4xx is thrown afterwards
+    // rather than thrown inside (which would roll the increment back).
+    const result = await this.taskRepository.withTransaction(async (executor) => {
+      const link = await this.taskRepository.findOtpLinkByTokenHashForUpdate(tokenHash, executor);
+      if (!link) {
+        return { outcome: 'not_found' as const };
+      }
+
+      // Brute-force lockout: a link that has exhausted its OTP attempts stays
+      // locked until the cool-down passes (or a new OTP is requested, which
+      // resets the counter). Checked before comparing the code so a locked link
+      // cannot be probed further.
+      const lockedRaw = link.otp_locked_until as string | Date | null;
+      const lockedUntil = lockedRaw ? new Date(lockedRaw) : null;
+      if (lockedUntil && lockedUntil > new Date()) {
+        return { outcome: 'locked' as const };
+      }
+
+      if (new Date(String(link.otp_expires_at)) < new Date()) {
+        return { outcome: 'expired' as const };
+      }
+
+      if (!link.otp_code || link.otp_code !== otp) {
+        const { lockedUntil: nowLocked } = await this.taskRepository.registerFailedOtpAttempt(
+          String(link.id),
+          this.authRuntimeConfig.otpMaxAttempts,
+          this.authRuntimeConfig.otpLockSeconds,
+          executor,
+        );
+        const justLocked = !!nowLocked && nowLocked > new Date();
+        return { outcome: justLocked ? ('locked' as const) : ('wrong' as const) };
+      }
+
+      // Correct code — clear the brute-force counter and issue the session.
+      await this.taskRepository.clearOtpAttempts(String(link.id), executor);
+      return { outcome: 'ok' as const, linkId: String(link.id) };
+    });
+
+    if (result.outcome === 'not_found') {
       throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
     }
-
-    if (!link.otp_code || link.otp_code !== otp) {
+    if (result.outcome === 'locked') {
+      throw new HttpException(
+        'ลองรหัส OTP ผิดหลายครั้งเกินไป กรุณาขอรหัสใหม่หรือลองอีกครั้งภายหลัง',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (result.outcome === 'expired') {
+      throw new BadRequestException('รหัส OTP หมดอายุ กรุณาขอรหัสใหม่');
+    }
+    if (result.outcome === 'wrong') {
       throw new BadRequestException('รหัส OTP ไม่ถูกต้อง');
     }
 
-    if (new Date(String(link.otp_expires_at)) < new Date()) {
-      throw new BadRequestException('รหัส OTP หมดอายุ กรุณาขอรหัสใหม่');
-    }
-
     const payload = JSON.stringify({
-      link_id: link.id,
+      link_id: result.linkId,
       verified: true,
       ts: Date.now(),
     });

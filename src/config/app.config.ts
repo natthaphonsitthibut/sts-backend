@@ -9,6 +9,13 @@ export interface AppRuntimeConfig {
   uploadsDir: string;
   uploadsPrefix: string;
   frontendBaseUrl?: string;
+  /**
+   * Express `trust proxy` hop count. 0 = trust none (use the socket IP, correct
+   * for direct exposure). Behind a known reverse proxy/LB set the number of
+   * trusted hops (usually 1) so rate-limiting sees the real client IP. Never a
+   * blanket `true`: that lets clients spoof X-Forwarded-For to dodge throttling.
+   */
+  trustProxy: number;
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -25,6 +32,20 @@ function parseCsv(value: string | undefined): string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function parseTrustProxy(value: string | undefined): number {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === '' || normalized === 'false') {
+    return 0;
+  }
+  // `true` is mapped to a single trusted hop rather than Express's blanket-trust
+  // boolean, so X-Forwarded-For cannot be spoofed past one proxy.
+  if (normalized === 'true') {
+    return 1;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 function resolveUploadsDir(value: string | undefined): string {
@@ -48,6 +69,7 @@ export function getAppConfigFromEnv(): AppRuntimeConfig {
     uploadsDir: resolveUploadsDir(process.env.UPLOADS_DIR),
     uploadsPrefix: uploadsPrefix.startsWith('/') ? uploadsPrefix : `/${uploadsPrefix}`,
     frontendBaseUrl: frontendBaseUrl && frontendBaseUrl.length > 0 ? frontendBaseUrl : undefined,
+    trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   };
 }
 
