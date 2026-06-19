@@ -8,7 +8,11 @@ import {
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { CreateStudentDto } from './dto/create-student.dto';
-import type { GetStudentsQueryDto } from './dto/students.dto';
+import {
+  DEFAULT_STUDENT_PAGE_SIZE,
+  type GetStudentFilterOptionsQueryDto,
+  type GetStudentsQueryDto,
+} from './dto/students.dto';
 import type { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import type { DataScope } from '../common/utils/authorization';
@@ -89,6 +93,18 @@ function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): Student
     room: parseOptionalInteger(queryParams.room),
     schoolId: parseOptionalInteger(queryParams.schoolId),
     searchTerm: searchTerm && searchTerm.length > 0 ? searchTerm : undefined,
+    page: queryParams.page && queryParams.page > 0 ? queryParams.page : 1,
+    limit:
+      queryParams.limit && queryParams.limit > 0 ? queryParams.limit : DEFAULT_STUDENT_PAGE_SIZE,
+  };
+}
+
+function buildPaginationMeta(page: number, limit: number, totalCount: number) {
+  return {
+    page,
+    limit,
+    totalCount,
+    totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 0,
   };
 }
 
@@ -157,25 +173,50 @@ export class StudentsService {
     userScope?: DataScope,
     actor?: AuthenticatedRequestUser,
   ) {
+    const filters = normalizeStudentListFilters(queryParams);
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? DEFAULT_STUDENT_PAGE_SIZE;
+
     try {
       if (isOwnOnlyStudentActor(actor)) {
         const ownStudent = await this.studentsRepository.findStudentById(actor.PersonID_Onec);
+        const data = ownStudent ? [mapDetailRowToListRow(ownStudent)] : [];
 
         return {
           success: true,
-          data: ownStudent ? [mapDetailRowToListRow(ownStudent)] : [],
+          data,
+          meta: buildPaginationMeta(page, limit, data.length),
         };
       }
 
-      const students = await this.studentsRepository.listStudents(
-        normalizeStudentListFilters(queryParams),
-        userScope,
-      );
+      const { rows, totalCount } = await this.studentsRepository.listStudents(filters, userScope);
 
-      return { success: true, data: students };
+      return {
+        success: true,
+        data: rows,
+        meta: buildPaginationMeta(page, limit, totalCount),
+      };
     } catch (error) {
       const resolvedError = error as Error;
       this.logger.error(`findAll error: ${resolvedError.message}`);
+      throw error;
+    }
+  }
+
+  async getFilterOptions(query: GetStudentFilterOptionsQueryDto, userScope?: DataScope) {
+    try {
+      const options = await this.studentsRepository.getStudentFilterOptions(
+        {
+          schoolId: parseOptionalInteger(query.schoolId),
+          grade: query.grade && query.grade !== 'ALL' ? query.grade : undefined,
+        },
+        userScope,
+      );
+
+      return { success: true, data: options };
+    } catch (error) {
+      const resolvedError = error as Error;
+      this.logger.error(`getFilterOptions error: ${resolvedError.message}`);
       throw error;
     }
   }

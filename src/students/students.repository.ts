@@ -7,10 +7,25 @@ import type {
   StudentAttendanceRow,
   StudentCaseRow,
   StudentDetailRow,
+  StudentFilterOptions,
   StudentListFilters,
+  StudentListResult,
   StudentListRow,
   StudentsQueryResult,
 } from './students.types';
+
+const DEFAULT_PAGE_SIZE = 20;
+
+/** Scope-column aliases for the student_term + schools join — shared by every
+ * student query so scope enforcement stays identical across them. */
+const STUDENT_SCOPE_ALIASES = {
+  school_id: `s."SchoolID_Onec"`,
+  grade: `s."GradeLevelID_Onec"`,
+  room: `s."RoomID_Onec"::text`,
+  province: 'sc.province',
+  district: 'sc.district',
+  sub_district: 'sc.sub_district',
+} as const;
 
 function pushParams(target: unknown[], values: unknown[]): void {
   values.forEach((value) => {
@@ -29,38 +44,20 @@ export class StudentsRepository {
     return await queryDataSource<T>(this.dataSource, sql, params);
   }
 
-  async listStudents(
+  /**
+   * Build the shared FROM/JOIN + WHERE for the student list, with its bound
+   * params. The same clause feeds both the COUNT and the paginated SELECT so the
+   * total can never drift from the rows it counts.
+   */
+  private buildStudentListFromWhere(
     filters: StudentListFilters,
     userScope?: DataScope,
-  ): Promise<StudentListRow[]> {
-    let query = `
-      SELECT
-        s."PersonID_Onec" as id,
-        (s."FirstName_Onec" || ' ' || s."LastName_Onec") as name,
-        COALESCE(gl.label, 'ไม่ทราบ') as grade,
-        s."RoomID_Onec"::text as room,
-        sc.name as school_name,
-        sc.id as school_id
-      FROM student_term s
-      LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
-      LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
-    `;
+  ): { fromWhere: string; params: unknown[] } {
     const params: unknown[] = [];
     const conditions: string[] = [];
 
     if (userScope) {
-      const scopeResult = buildDataScopeQuery(
-        userScope,
-        {
-          school_id: `s."SchoolID_Onec"`,
-          grade: `s."GradeLevelID_Onec"`,
-          room: `s."RoomID_Onec"::text`,
-          province: 'sc.province',
-          district: 'sc.district',
-          sub_district: 'sc.sub_district',
-        },
-        params.length + 1,
-      );
+      const scopeResult = buildDataScopeQuery(userScope, STUDENT_SCOPE_ALIASES, params.length + 1);
 
       if (scopeResult.sql) {
         conditions.push(`(${scopeResult.sql})`);
@@ -84,19 +81,139 @@ export class StudentsRepository {
     }
 
     if (filters.searchTerm) {
+      // Match name OR student code, preserving the previous client-side filter
+      // which searched both the full name and the PersonID_Onec ("รหัส").
       params.push(`%${filters.searchTerm}%`);
-      conditions.push(`(s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length}`);
+      conditions.push(
+        `((s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length} OR s."PersonID_Onec" ILIKE $${params.length})`,
+      );
     }
 
-    if (conditions.length > 0) {
-      query += ` WHERE ${conditions.join(' AND ')}`;
-    }
+    const fromWhere = `
+      FROM student_term s
+      LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
+      LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+      ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
+    `;
 
-    query +=
-      ' ORDER BY s."SchoolID_Onec" ASC, s."GradeLevelID_Onec" ASC, s."RoomID_Onec" ASC, s."PersonID_Onec" ASC';
-    const result = await this.query<StudentListRow>(query, params);
+    return { fromWhere, params };
+  }
 
-    return result.rows;
+  async listStudents(
+    filters: StudentListFilters,
+    userScope?: DataScope,
+  ): Promise<StudentListResult> {
+    const { fromWhere, params } = this.buildStudentListFromWhere(filters, userScope);
+
+    const countResult = await this.query<{ total: number }>(
+      `SELECT COUNT(*)::int AS total ${fromWhere}`,
+      params,
+    );
+    const totalCount = countResult.rows[0]?.total ?? 0;
+
+    const limit = filters.limit && filters.limit > 0 ? filters.limit : DEFAULT_PAGE_SIZE;
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const offset = (page - 1) * limit;
+
+    const selectParams = [...params];
+    selectParams.push(limit);
+    const limitPlaceholder = selectParams.length;
+    selectParams.push(offset);
+    const offsetPlaceholder = selectParams.length;
+
+    const result = await this.query<StudentListRow>(
+      `
+        SELECT
+          s."PersonID_Onec" as id,
+          (s."FirstName_Onec" || ' ' || s."LastName_Onec") as name,
+          COALESCE(gl.label, 'ไม่ทราบ') as grade,
+          s."RoomID_Onec"::text as room,
+          sc.name as school_name,
+          sc.id as school_id
+        ${fromWhere}
+        ORDER BY s."SchoolID_Onec" ASC, s."GradeLevelID_Onec" ASC, s."RoomID_Onec" ASC, s."PersonID_Onec" ASC
+        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+      `,
+      selectParams,
+    );
+
+    return { rows: result.rows, totalCount };
+  }
+
+  /**
+   * Scoped distinct grade/room options for the student-list filter dropdowns.
+   * Grades respect scope + school; rooms additionally narrow by the selected
+   * grade so the two dropdowns can cascade. Both stay within the actor's scope.
+   */
+  async getStudentFilterOptions(
+    filters: { schoolId?: number; grade?: string },
+    userScope?: DataScope,
+  ): Promise<StudentFilterOptions> {
+    const buildConditions = (params: unknown[], withGrade: boolean): string => {
+      const conditions: string[] = [];
+
+      if (userScope) {
+        const scopeResult = buildDataScopeQuery(
+          userScope,
+          STUDENT_SCOPE_ALIASES,
+          params.length + 1,
+        );
+        if (scopeResult.sql) {
+          conditions.push(`(${scopeResult.sql})`);
+          pushParams(params, scopeResult.params);
+        }
+      }
+
+      if (typeof filters.schoolId === 'number') {
+        params.push(filters.schoolId);
+        conditions.push(`s."SchoolID_Onec" = $${params.length}`);
+      }
+
+      if (withGrade && filters.grade) {
+        params.push(filters.grade);
+        conditions.push(`gl.label = $${params.length}`);
+      }
+
+      return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    };
+
+    const gradeParams: unknown[] = [];
+    const gradeWhere = buildConditions(gradeParams, false);
+    const gradesResult = await this.query<{ grade: string | null; grade_id: number | null }>(
+      `
+        SELECT DISTINCT COALESCE(gl.label, 'ไม่ทราบ') AS grade, gl.id AS grade_id
+        FROM student_term s
+        LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
+        LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+        ${gradeWhere}
+        ORDER BY grade_id ASC NULLS LAST
+      `,
+      gradeParams,
+    );
+
+    const roomParams: unknown[] = [];
+    const roomWhere = buildConditions(roomParams, true);
+    const roomsResult = await this.query<{ room: number | null }>(
+      `
+        SELECT DISTINCT s."RoomID_Onec" AS room
+        FROM student_term s
+        LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
+        LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+        ${roomWhere}
+        ORDER BY room ASC NULLS LAST
+      `,
+      roomParams,
+    );
+
+    const grades = gradesResult.rows
+      .map((row) => (typeof row.grade === 'string' ? row.grade.trim() : ''))
+      .filter((grade) => grade.length > 0);
+
+    const rooms = roomsResult.rows
+      .map((row) => (row.room === null || row.room === undefined ? '' : String(row.room)))
+      .filter((room) => room.length > 0 && room !== '0');
+
+    return { grades, rooms };
   }
 
   async findStudentById(id: string, userScope?: DataScope): Promise<StudentDetailRow | null> {

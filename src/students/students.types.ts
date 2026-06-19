@@ -5,6 +5,18 @@ export interface StudentListFilters {
   room?: number;
   schoolId?: number;
   searchTerm?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface StudentListResult {
+  rows: StudentListRow[];
+  totalCount: number;
+}
+
+export interface StudentFilterOptions {
+  grades: string[];
+  rooms: string[];
 }
 
 export interface StudentListRow extends Record<string, unknown> {

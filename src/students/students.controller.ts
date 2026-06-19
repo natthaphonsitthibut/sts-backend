@@ -21,7 +21,7 @@ import {
 } from '../auth';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
-import { GetStudentsQueryDto } from './dto/students.dto';
+import { GetStudentFilterOptionsQueryDto, GetStudentsQueryDto } from './dto/students.dto';
 import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 
@@ -45,6 +45,16 @@ export class StudentsController {
   @Get()
   findAll(@Query() query: GetStudentsQueryDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findAll(query, normalizeDataScope(actor?.data_scope), actor);
+  }
+
+  // Declared before the dynamic `:id` route so the static segment isn't
+  // captured as a student id.
+  @Get('filter-options')
+  getFilterOptions(
+    @Query() query: GetStudentFilterOptionsQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return this.studentsService.getFilterOptions(query, normalizeDataScope(actor?.data_scope));
   }
 
   @Get('cases/by-name/:name')
