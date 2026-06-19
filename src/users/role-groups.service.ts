@@ -5,9 +5,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { CreateRoleGroupDto, UpdateRoleGroupDto } from './dto/users.dto';
+import {
+  buildPaginationMeta,
+  resolveLimit,
+  resolvePage,
+} from '../common/pagination/pagination.util';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
-import type { ActorContext } from './users.types';
+import type { ActorContext, RoleDefinition } from './users.types';
+
+interface RoleGroupListOptions {
+  searchTerm?: string;
+  page?: number;
+  limit?: number;
+}
 
 @Injectable()
 export class RoleGroupsService {
@@ -16,27 +27,49 @@ export class RoleGroupsService {
     private readonly usersPolicyService: UsersPolicyService,
   ) {}
 
-  async getRoleGroups(actor?: ActorContext) {
+  // Role definitions are a small, bounded set gated by permission policy
+  // (canManageRole / canGrantPermissions) that can't be expressed in SQL, so the
+  // policy filter runs in memory and the page is sliced from the filtered set.
+  async getRoleGroups(actor?: ActorContext, options: RoleGroupListOptions = {}) {
     const definitions = await this.usersPolicyService.getRoleDefinitions(true);
-    if (!actor) {
-      return definitions;
+
+    let visible: RoleDefinition[] = definitions;
+    if (actor) {
+      const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
+      const actorRole = this.usersPolicyService.getPrimaryRole({
+        roles: actor.roles,
+      });
+
+      visible = definitions.filter(
+        (role) =>
+          this.usersPolicyService.canManageRole(actorRole, role.name, roleMap) &&
+          this.usersPolicyService.canGrantPermissions(
+            actor.permissions || [],
+            role.default_permissions || [],
+            actorRole,
+            roleMap,
+          ),
+      );
     }
 
-    const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
-    const actorRole = this.usersPolicyService.getPrimaryRole({
-      roles: actor.roles,
-    });
+    const search = options.searchTerm?.trim().toLowerCase();
+    if (search) {
+      visible = visible.filter(
+        (role) =>
+          (role.label || '').toLowerCase().includes(search) ||
+          (role.name || '').toLowerCase().includes(search),
+      );
+    }
 
-    return definitions.filter(
-      (role) =>
-        this.usersPolicyService.canManageRole(actorRole, role.name, roleMap) &&
-        this.usersPolicyService.canGrantPermissions(
-          actor.permissions || [],
-          role.default_permissions || [],
-          actorRole,
-          roleMap,
-        ),
-    );
+    const page = resolvePage(options.page);
+    const limit = resolveLimit(options.limit);
+    const start = (page - 1) * limit;
+
+    return {
+      success: true,
+      data: visible.slice(start, start + limit),
+      meta: buildPaginationMeta(page, limit, visible.length),
+    };
   }
 
   async createRoleGroup(actor: ActorContext | undefined, data: CreateRoleGroupDto) {

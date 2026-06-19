@@ -9,6 +9,13 @@ import type {
   RoleDefinition,
 } from './task.types';
 
+export interface CaseListFilters {
+  status?: string;
+  searchTerm?: string;
+  page?: number;
+  limit?: number;
+}
+
 interface CreateCaseInput {
   studentName: string;
   studentSchool: string | null;
@@ -1014,9 +1021,47 @@ export class TaskRepository {
     );
   }
 
-  async listCasesWithActiveLinks(actor?: ActorContext): Promise<QueryResultRow[]> {
-    const scopeQuery = this.buildCaseScopeQuery(actor);
-    const scopeSql = scopeQuery.sql ? `WHERE ${scopeQuery.sql}` : '';
+  async listCasesWithActiveLinks(
+    actor?: ActorContext,
+    filters: CaseListFilters = {},
+  ): Promise<{ rows: QueryResultRow[]; totalCount: number }> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    if (filters.status) {
+      params.push(filters.status);
+      conditions.push(`c.status = $${params.length}`);
+    }
+
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      conditions.push(`c.student_name ILIKE $${params.length}`);
+    }
+
+    const scopeQuery = this.buildCaseScopeQuery(actor, params.length + 1);
+    if (scopeQuery.sql) {
+      conditions.push(scopeQuery.sql);
+      params.push(...scopeQuery.params);
+    }
+
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // The list fans out one row per (case, task); count joins tasks the same way
+    // so the total matches the rows actually paged.
+    const countResult = await this.query<CountRow>(
+      `SELECT count(*) FROM cases c LEFT JOIN tasks t ON t.case_id = c.id ${whereSql}`,
+      params,
+    );
+    const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
+
+    const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const offset = (page - 1) * limit;
+
+    const selectParams = [...params, limit, offset];
+    const limitPlaceholder = selectParams.length - 1;
+    const offsetPlaceholder = selectParams.length;
+
     const result = await this.query<QueryResultRow>(
       `
       SELECT
@@ -1078,13 +1123,14 @@ export class TaskRepository {
         ORDER BY delegation_depth DESC
         LIMIT 1
       ) tl ON true
-      ${scopeSql}
-      ORDER BY c.created_at DESC
+      ${whereSql}
+      ORDER BY c.created_at DESC, c.id DESC, t.id DESC NULLS LAST
+      LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
     `,
-      scopeQuery.params,
+      selectParams,
     );
 
-    return result.rows;
+    return { rows: result.rows, totalCount };
   }
 
   async countCases(status?: string, actor?: ActorContext): Promise<number> {

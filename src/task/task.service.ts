@@ -5,6 +5,7 @@ import { TaskLifecycleService } from './task-lifecycle.service';
 import { TaskReadService } from './task-read.service';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
+import type { CaseListFilters } from './task.repository';
 import type { ActorContext } from './task.types';
 
 @Injectable()
@@ -91,8 +92,8 @@ export class TaskService {
     return await this.taskAccessService.getAdminLinkDetail(actor, linkId, date);
   }
 
-  async getCases(actor?: ActorContext) {
-    return await this.taskStatsService.getCases(actor);
+  async getCases(actor?: ActorContext, filters: CaseListFilters = {}) {
+    return await this.taskStatsService.getCases(actor, filters);
   }
 
   async getStats(actor?: ActorContext) {

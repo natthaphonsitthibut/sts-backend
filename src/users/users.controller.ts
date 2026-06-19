@@ -8,12 +8,14 @@ import {
   Param,
   NotFoundException,
   ParseIntPipe,
+  Query,
   Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ThrottleLogin } from '../config/throttle.decorators';
+import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
 import { UsersService } from './users.service';
 import {
   AuthGuard,
@@ -61,8 +63,15 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-role-groups')
   @Get('role-groups')
-  async getRoleGroups(@CurrentUser() actor: AuthenticatedRequestUser | undefined) {
-    return await this.roleGroupsService.getRoleGroups(actor);
+  async getRoleGroups(
+    @Query() query: PaginatedSearchQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.roleGroupsService.getRoleGroups(actor, {
+      searchTerm: query.searchTerm?.trim() || undefined,
+      page: query.page,
+      limit: query.limit,
+    });
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

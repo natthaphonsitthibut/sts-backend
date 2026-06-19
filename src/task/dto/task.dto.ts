@@ -9,6 +9,7 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator';
+import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 
 export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
@@ -189,6 +190,16 @@ export class ReviewCaseDto {
   @IsOptional()
   @IsString()
   reviewed_by?: string | null;
+}
+
+export class GetCasesQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  searchTerm?: string;
 }
 
 export class AdminLockLinkDto {
