@@ -5,7 +5,7 @@ import { TaskLifecycleService } from './task-lifecycle.service';
 import { TaskReadService } from './task-read.service';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
-import type { CaseListFilters } from './task.repository';
+import type { CaseListFilters, LoginLinkListFilters } from './task.repository';
 import type { ActorContext } from './task.types';
 
 @Injectable()
@@ -43,8 +43,8 @@ export class TaskService {
     return await this.taskAccessService.verifyMagicLogin(token, sessionToken);
   }
 
-  async getLoginLinks(actor?: ActorContext) {
-    return await this.taskAccessService.getLoginLinks(actor);
+  async getLoginLinks(actor?: ActorContext, filters: Partial<LoginLinkListFilters> = {}) {
+    return await this.taskAccessService.getLoginLinks(actor, filters);
   }
 
   async deleteTask(taskId: string) {

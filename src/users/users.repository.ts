@@ -51,6 +51,25 @@ interface CreateRoleRecordInput {
   scope_mode: string;
 }
 
+export interface UserListFilters {
+  actorId: number;
+  actorRole: string | null;
+  actorRank: number;
+  actorScope?: DataScope;
+  searchTerm?: string;
+  page?: number;
+  limit?: number;
+}
+
+interface ScopeQuery {
+  sql: string;
+  params: unknown[];
+}
+
+interface CountRow extends Record<string, unknown> {
+  count: number | string;
+}
+
 @Injectable()
 export class UsersRepository {
   private readonly userFieldsSql = `
@@ -104,6 +123,65 @@ export class UsersRepository {
       query: async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) => {
         return await this.query<T>(sql, params);
       },
+    };
+  }
+
+  private normalizeScopeArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(value.map((item) => String(item).trim()).filter((item) => item.length > 0)),
+    );
+  }
+
+  private buildJsonScopeSubsetQuery(
+    scopeSql: string,
+    actorScope: DataScope | undefined,
+    startIndex = 1,
+  ): ScopeQuery {
+    const scope = actorScope || {};
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    let paramIndex = startIndex;
+
+    const addScopeCondition = (key: keyof Omit<DataScope, 'own_only'>): void => {
+      const actorValues = this.normalizeScopeArray(scope[key]);
+      if (actorValues.length === 0) {
+        return;
+      }
+
+      conditions.push(`
+        CASE
+          WHEN jsonb_typeof(${scopeSql} -> '${key}') = 'array' THEN
+            jsonb_array_length(${scopeSql} -> '${key}') > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(${scopeSql} -> '${key}') AS target_scope(value)
+              WHERE NOT (target_scope.value = ANY($${paramIndex}::text[]))
+            )
+          ELSE FALSE
+        END
+      `);
+      params.push(actorValues);
+      paramIndex += 1;
+    };
+
+    addScopeCondition('provinces');
+    addScopeCondition('districts');
+    addScopeCondition('sub_districts');
+    addScopeCondition('school_ids');
+    addScopeCondition('grade_levels');
+    addScopeCondition('room_ids');
+
+    if (scope.own_only === true) {
+      conditions.push(`COALESCE((${scopeSql} ->> 'own_only')::boolean, FALSE) = TRUE`);
+    }
+
+    return {
+      sql: conditions.length > 0 ? conditions.join(' AND ') : '',
+      params,
     };
   }
 
@@ -164,6 +242,88 @@ export class UsersRepository {
     `);
 
     return result.rows;
+  }
+
+  async listUsersPaginated(
+    filters: UserListFilters,
+  ): Promise<{ rows: HydratableUserRow[]; totalCount: number }> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    const roleRankSql = 'COALESCE(r.rank, 0)';
+    const scopeSql = `COALESCE(u.data_scope::jsonb, '{}'::jsonb)`;
+
+    params.push(filters.actorId);
+    const actorIdPlaceholder = params.length;
+    params.push(filters.actorRank);
+    const actorRankPlaceholder = params.length;
+    params.push(filters.actorRole);
+    const actorRolePlaceholder = params.length;
+
+    const manageConditions: string[] = [
+      `
+        (
+          ${roleRankSql} < $${actorRankPlaceholder}
+          OR ($${actorRolePlaceholder} = 'ADMIN' AND ${roleRankSql} = $${actorRankPlaceholder})
+        )
+      `,
+    ];
+    const scopeQuery = this.buildJsonScopeSubsetQuery(
+      scopeSql,
+      filters.actorScope,
+      params.length + 1,
+    );
+    if (scopeQuery.sql) {
+      manageConditions.push(scopeQuery.sql);
+      params.push(...scopeQuery.params);
+    }
+
+    conditions.push(`
+      (
+        u.id = $${actorIdPlaceholder}
+        OR (${manageConditions.join(' AND ')})
+      )
+    `);
+
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      conditions.push(`
+        (
+          CONCAT_WS(' ', u."FirstName", u."LastName") ILIKE $${params.length}
+          OR u.username ILIKE $${params.length}
+        )
+      `);
+    }
+
+    const whereSql = `WHERE ${conditions.join(' AND ')}`;
+    const countResult = await this.query<CountRow>(
+      `
+        SELECT COUNT(*)::int AS count
+        FROM users u
+        LEFT JOIN roles r ON r.name = u.role
+        ${whereSql}
+      `,
+      params,
+    );
+    const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
+
+    const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const offset = (page - 1) * limit;
+    const selectParams = [...params, limit, offset];
+    const limitPlaceholder = selectParams.length - 1;
+    const offsetPlaceholder = selectParams.length;
+
+    const result = await this.query<HydratableUserRow>(
+      `
+        ${this.userSelectSql}
+        ${whereSql}
+        ORDER BY u.created_at DESC, u.id DESC
+        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+      `,
+      selectParams,
+    );
+
+    return { rows: result.rows, totalCount };
   }
 
   async findUserById(id: number): Promise<HydratableUserRow | null> {

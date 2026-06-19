@@ -20,7 +20,12 @@ import { resolveExternalBaseUrl } from '../common/utils/request-url';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
 import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decorators';
-import { CreateTaskDto, SaveTaskAttendanceDto, SaveTaskSubmissionDto } from './dto/task.dto';
+import {
+  CreateTaskDto,
+  GetLoginLinksQueryDto,
+  SaveTaskAttendanceDto,
+  SaveTaskSubmissionDto,
+} from './dto/task.dto';
 import {
   getHeaderValue,
   getTaskErrorMessage,
@@ -61,8 +66,13 @@ export class TaskController {
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('login-links')
   @Get('login-links')
-  async getLoginLinks(@Req() req: RequestWithActor) {
-    return await this.taskService.getLoginLinks(req.user);
+  async getLoginLinks(@Req() req: RequestWithActor, @Query() query: GetLoginLinksQueryDto) {
+    return await this.taskService.getLoginLinks(req.user, {
+      status: query.status,
+      searchTerm: query.searchTerm?.trim() || undefined,
+      page: query.page,
+      limit: query.limit,
+    });
   }
 
   @Get(':token')

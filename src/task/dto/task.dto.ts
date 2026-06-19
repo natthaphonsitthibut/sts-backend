@@ -202,6 +202,16 @@ export class GetCasesQueryDto extends PaginationQueryDto {
   searchTerm?: string;
 }
 
+export class GetLoginLinksQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsIn(['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'])
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  searchTerm?: string;
+}
+
 export class AdminLockLinkDto {
   @IsString()
   @IsIn(['lock', 'unlock'])

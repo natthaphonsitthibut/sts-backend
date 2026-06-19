@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
   ActorContext,
+  DataScope,
   QueryExecutor,
   QueryResultLike,
   QueryResultRow,
@@ -14,6 +15,23 @@ export interface CaseListFilters {
   searchTerm?: string;
   page?: number;
   limit?: number;
+}
+
+export interface LoginLinkListFilters {
+  actorRole: string | null;
+  actorRank: number;
+  actorScope?: DataScope;
+  status?: string;
+  searchTerm?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface LoginLinkSummary {
+  total: number;
+  active: number;
+  locked: number;
+  expired: number;
 }
 
 interface CreateCaseInput {
@@ -241,6 +259,55 @@ export class TaskRepository {
     if (scope.own_only === true && Number.isInteger(actor?.id)) {
       conditions.push(`${caseAlias}.created_by = $${paramIndex++}`);
       params.push(actor?.id);
+    }
+
+    return {
+      sql: conditions.length > 0 ? conditions.join(' AND ') : '',
+      params,
+    };
+  }
+
+  private buildJsonScopeSubsetQuery(
+    scopeSql: string,
+    actorScope: DataScope | undefined,
+    startIndex = 1,
+  ): ScopeQuery {
+    const scope = actorScope || {};
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    let paramIndex = startIndex;
+
+    const addScopeCondition = (key: keyof Omit<DataScope, 'own_only'>): void => {
+      const actorValues = this.normalizeScopeArray(scope[key]);
+      if (actorValues.length === 0) {
+        return;
+      }
+
+      conditions.push(`
+        CASE
+          WHEN jsonb_typeof(${scopeSql} -> '${key}') = 'array' THEN
+            jsonb_array_length(${scopeSql} -> '${key}') > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(${scopeSql} -> '${key}') AS target_scope(value)
+              WHERE NOT (target_scope.value = ANY($${paramIndex}::text[]))
+            )
+          ELSE FALSE
+        END
+      `);
+      params.push(actorValues);
+      paramIndex += 1;
+    };
+
+    addScopeCondition('provinces');
+    addScopeCondition('districts');
+    addScopeCondition('sub_districts');
+    addScopeCondition('school_ids');
+    addScopeCondition('grade_levels');
+    addScopeCondition('room_ids');
+
+    if (scope.own_only === true) {
+      conditions.push(`COALESCE((${scopeSql} ->> 'own_only')::boolean, FALSE) = TRUE`);
     }
 
     return {
@@ -505,6 +572,144 @@ export class TaskRepository {
     `);
 
     return result.rows;
+  }
+
+  async listLoginLinksPaginated(
+    filters: LoginLinkListFilters,
+  ): Promise<{ rows: QueryResultRow[]; totalCount: number; summary: LoginLinkSummary }> {
+    const params: unknown[] = [];
+    const policyConditions: string[] = [`t.task_type = 'LOGIN'`];
+    const linkStateSql = `
+      CASE
+        WHEN tl.admin_locked = 1 THEN 'LOCKED'
+        WHEN tl.expires_at < NOW() THEN 'EXPIRED'
+        ELSE 'ACTIVE'
+      END
+    `;
+    const roleRankSql = 'COALESCE(r.rank, 0)';
+    const scopeSql = `COALESCE(tl.login_data_scope::jsonb, '{}'::jsonb)`;
+
+    params.push(filters.actorRank);
+    const actorRankPlaceholder = params.length;
+    params.push(filters.actorRole);
+    const actorRolePlaceholder = params.length;
+    policyConditions.push(`
+      (
+        ${roleRankSql} < $${actorRankPlaceholder}
+        OR ($${actorRolePlaceholder} = 'ADMIN' AND ${roleRankSql} = $${actorRankPlaceholder})
+      )
+    `);
+
+    const scopeQuery = this.buildJsonScopeSubsetQuery(
+      scopeSql,
+      filters.actorScope,
+      params.length + 1,
+    );
+    if (scopeQuery.sql) {
+      policyConditions.push(scopeQuery.sql);
+      params.push(...scopeQuery.params);
+    }
+
+    const policyParamCount = params.length;
+    const filteredConditions = [...policyConditions];
+    if (filters.status && filters.status !== 'ALL') {
+      params.push(filters.status);
+      filteredConditions.push(`${linkStateSql} = $${params.length}`);
+    }
+
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      const searchPlaceholder = params.length;
+      filteredConditions.push(`
+        (
+          tl.assigned_to_name ILIKE $${searchPlaceholder}
+          OR tl.assigned_to_email ILIKE $${searchPlaceholder}
+          OR tl.login_role ILIKE $${searchPlaceholder}
+          OR r.label ILIKE $${searchPlaceholder}
+          OR tl.magic_link ILIKE $${searchPlaceholder}
+          OR CASE (${linkStateSql})
+            WHEN 'LOCKED' THEN 'ถูกปิด'
+            WHEN 'EXPIRED' THEN 'หมดอายุ'
+            ELSE 'ใช้งานอยู่'
+          END ILIKE $${searchPlaceholder}
+        )
+      `);
+    }
+
+    const fromSql = `
+      FROM task_links tl
+      JOIN tasks t ON t.id = tl.task_id
+      LEFT JOIN roles r ON r.name = COALESCE(NULLIF(TRIM(tl.login_role), ''), 'TEACHER')
+    `;
+    const policyWhereSql = `WHERE ${policyConditions.join(' AND ')}`;
+    const filteredWhereSql = `WHERE ${filteredConditions.join(' AND ')}`;
+
+    const summaryResult = await this.query<QueryResultRow>(
+      `
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE link_state = 'ACTIVE')::int AS active,
+        COUNT(*) FILTER (WHERE link_state = 'LOCKED')::int AS locked,
+        COUNT(*) FILTER (WHERE link_state = 'EXPIRED')::int AS expired
+      FROM (
+        SELECT ${linkStateSql} AS link_state
+        ${fromSql}
+        ${policyWhereSql}
+      ) scoped_login_links
+    `,
+      params.slice(0, policyParamCount),
+    );
+
+    const countResult = await this.query<CountRow>(
+      `SELECT COUNT(*)::int AS count ${fromSql} ${filteredWhereSql}`,
+      params,
+    );
+    const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
+
+    const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const offset = (page - 1) * limit;
+    const selectParams = [...params, limit, offset];
+    const limitPlaceholder = selectParams.length - 1;
+    const offsetPlaceholder = selectParams.length;
+
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        tl.id,
+        tl.task_id,
+        tl.assigned_to_name,
+        tl.assigned_to_email,
+        tl.expires_at,
+        tl.status,
+        tl.magic_link,
+        tl.admin_locked,
+        tl.login_role,
+        tl.login_permissions,
+        tl.login_data_scope,
+        tl.created_by,
+        r.label AS login_role_label,
+        t.created_at,
+        ${linkStateSql} AS link_state
+      ${fromSql}
+      ${filteredWhereSql}
+      ORDER BY t.created_at DESC, tl.id DESC
+      LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+    `,
+      selectParams,
+    );
+
+    const summaryRow = summaryResult.rows[0] || {};
+    return {
+      rows: result.rows,
+      totalCount,
+      summary: {
+        total: Number(summaryRow.total || 0),
+        active: Number(summaryRow.active || 0),
+        locked: Number(summaryRow.locked || 0),
+        expired: Number(summaryRow.expired || 0),
+      },
+    };
   }
 
   async deleteTask(taskId: string): Promise<QueryResultLike> {
@@ -982,6 +1187,8 @@ export class TaskRepository {
         tl.login_role,
         tl.login_permissions,
         tl.login_data_scope,
+        r.label AS login_role_label,
+        t.created_at,
         t.task_type,
         t.target_grade,
         t.target_room,
@@ -990,6 +1197,7 @@ export class TaskRepository {
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       LEFT JOIN schools s ON s.id = t.target_school_id
+      LEFT JOIN roles r ON r.name = COALESCE(NULLIF(TRIM(tl.login_role), ''), 'TEACHER')
       WHERE tl.id = $1
     `,
       [linkId],

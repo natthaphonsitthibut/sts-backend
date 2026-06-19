@@ -1,7 +1,9 @@
 import { DataSource } from 'typeorm';
 import { AuthActorService } from './auth-actor.service';
 import { StudentAuthService } from './student-auth.service';
+import { SessionCookieService } from './session-cookie.service';
 import type { AuthenticatedRequestUser } from './auth.types';
+import type { AuthRuntimeConfig } from '../config/auth.config';
 
 function buildActor(overrides: Partial<AuthenticatedRequestUser> = {}): AuthenticatedRequestUser {
   return {
@@ -17,21 +19,45 @@ function buildActor(overrides: Partial<AuthenticatedRequestUser> = {}): Authenti
 describe('AuthActorService', () => {
   let service: AuthActorService;
   let studentAuthService: jest.Mocked<Pick<StudentAuthService, 'loadVirtualStudentActor'>>;
+  let sessionCookieService: jest.Mocked<Pick<SessionCookieService, 'readUserId'>>;
 
   beforeEach(() => {
     studentAuthService = {
       loadVirtualStudentActor: jest.fn(),
     };
+    sessionCookieService = {
+      readUserId: jest.fn().mockReturnValue(null),
+    };
 
-    service = new AuthActorService({} as DataSource, studentAuthService as StudentAuthService);
+    const authRuntimeConfig: AuthRuntimeConfig = {
+      jwtSecret: 'test-jwt-secret-value',
+      sessionSecret: 'test-session-secret-value',
+      magicSessionTtlSeconds: 60,
+      otpTtlSeconds: 60,
+      otpMaxAttempts: 5,
+      otpLockSeconds: 60,
+      cookieName: 'sts_session',
+      cookieSecure: false,
+      cookieSameSite: 'lax',
+      tokenTtlSeconds: 60,
+      thaidMode: 'mock',
+    };
+
+    service = new AuthActorService(
+      {} as DataSource,
+      studentAuthService as unknown as StudentAuthService,
+      sessionCookieService as unknown as SessionCookieService,
+      authRuntimeConfig,
+    );
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  it('prefers local user loading when x-user-id is present', async () => {
+  it('prefers local user loading when a signed session cookie is present', async () => {
     const localActor = buildActor({ id: 42, username: 'local-user' });
+    sessionCookieService.readUserId.mockReturnValue(42);
     const loadUserSpy = jest
       .spyOn(service as never, 'loadUser' as never)
       .mockResolvedValue(localActor as never);
@@ -45,7 +71,7 @@ describe('AuthActorService', () => {
 
     const actor = await service.loadOptionalUser({
       headers: {
-        'x-user-id': '42',
+        cookie: 'sts_session=signed-token',
         'x-virtual-auth': 'virtual-token',
         'x-magic-link-token': 'magic-token',
         'x-magic-session': 'magic-session',

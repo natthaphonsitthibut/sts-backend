@@ -15,8 +15,13 @@ import { emailConfig } from '../config/email.config';
 import { clean, hashToken } from '../common/utils/helpers';
 import { EmailService } from './email.service';
 import { TaskPolicyService } from './task-policy.service';
-import { TaskRepository } from './task.repository';
+import { TaskRepository, type LoginLinkListFilters } from './task.repository';
 import { getTaskErrorMessage, type ActorContext } from './task.types';
+import {
+  buildPaginationMeta,
+  resolveLimit,
+  resolvePage,
+} from '../common/pagination/pagination.util';
 
 function maskName(name: string | null | undefined): string {
   if (!name) return '-';
@@ -207,24 +212,30 @@ export class TaskAccessService {
     }
   }
 
-  async getLoginLinks(actor?: ActorContext) {
+  async getLoginLinks(actor?: ActorContext, filters: Partial<LoginLinkListFilters> = {}) {
     try {
-      const rows = await this.taskRepository.listLoginLinks();
-      if (!actor) {
-        return rows;
-      }
-
+      const currentActor = this.taskPolicyService.ensureActor(actor);
       const roleMap = await this.taskPolicyService.getRoleMap();
-      return rows.filter((link) =>
-        this.taskPolicyService.canManageLoginLink(
-          actor,
-          {
-            login_role: typeof link.login_role === 'string' ? link.login_role : null,
-            login_data_scope: link.login_data_scope,
-          },
-          roleMap,
-        ),
-      );
+      const actorRole = this.taskPolicyService.getPrimaryRole({ roles: currentActor.roles });
+      const actorRank = this.taskPolicyService.getRoleRank(actorRole, roleMap);
+      const page = resolvePage(filters.page);
+      const limit = resolveLimit(filters.limit);
+      const { rows, totalCount, summary } = await this.taskRepository.listLoginLinksPaginated({
+        actorRole,
+        actorRank,
+        actorScope: currentActor.data_scope,
+        status: filters.status,
+        searchTerm: filters.searchTerm,
+        page,
+        limit,
+      });
+
+      return {
+        success: true,
+        data: rows,
+        meta: buildPaginationMeta(page, limit, totalCount),
+        summary,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`getLoginLinks error: ${message}`);
@@ -488,6 +499,7 @@ export class TaskAccessService {
         admin_lock_reason: link.admin_lock_reason ?? null,
         magic_link: link.magic_link ?? null,
         expires_at: link.expires_at,
+        created_at: link.created_at ?? null,
         subject: link.subject ?? null,
         assigned_to_name: link.assigned_to_name ?? null,
         assigned_to_email: link.assigned_to_email ?? null,
@@ -496,6 +508,7 @@ export class TaskAccessService {
         target_room: link.target_room ?? null,
         target_school_id: link.target_school_id ?? null,
         login_role: link.login_role ?? null,
+        login_role_label: link.login_role_label ?? null,
         login_permissions: link.login_permissions ?? [],
         login_data_scope: link.login_data_scope ?? {},
         records,

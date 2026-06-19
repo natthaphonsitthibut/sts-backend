@@ -1,9 +1,14 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import {
+  buildPaginationMeta,
+  resolveLimit,
+  resolvePage,
+} from '../common/pagination/pagination.util';
 import { PasswordService } from '../auth/password.service';
 import type { ChangePasswordDto, CreateUserDto, UpdateUserDto } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
-import { UsersRepository } from './users.repository';
+import { UsersRepository, type UserListFilters } from './users.repository';
 import type { ActorContext } from './users.types';
 
 @Injectable()
@@ -16,17 +21,31 @@ export class UsersService {
     private readonly passwordService: PasswordService,
   ) {}
 
-  async getAllUsers(actor?: ActorContext) {
+  async getAllUsers(actor?: ActorContext, filters: Partial<UserListFilters> = {}) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
     const roleMap = await this.usersPolicyService.getRoleMap();
-    const users = (await this.usersRepository.listUsers()).map((row) =>
-      this.usersPolicyService.hydrateUserPermissions(row, roleMap),
-    );
+    const actorRole = this.usersPolicyService.getPrimaryRole({
+      roles: currentActor.roles,
+    });
+    const actorRank = this.usersPolicyService.getRoleRank(actorRole, roleMap);
+    const page = resolvePage(filters.page);
+    const limit = resolveLimit(filters.limit);
+    const { rows, totalCount } = await this.usersRepository.listUsersPaginated({
+      actorId: currentActor.id,
+      actorRole,
+      actorRank,
+      actorScope: currentActor.data_scope,
+      searchTerm: filters.searchTerm,
+      page,
+      limit,
+    });
+    const users = rows.map((row) => this.usersPolicyService.hydrateUserPermissions(row, roleMap));
 
-    if (!actor) {
-      return users;
-    }
-
-    return users.filter((user) => this.usersPolicyService.canManageUser(actor, user, roleMap));
+    return {
+      success: true,
+      data: users,
+      meta: buildPaginationMeta(page, limit, totalCount),
+    };
   }
 
   async getUserById(id: number, actor?: ActorContext) {

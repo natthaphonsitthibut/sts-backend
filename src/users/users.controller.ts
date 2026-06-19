@@ -50,8 +50,15 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-users-list')
   @Get()
-  async getAllUsers(@CurrentUser() actor: AuthenticatedRequestUser | undefined) {
-    return await this.usersService.getAllUsers(actor);
+  async getAllUsers(
+    @Query() query: PaginatedSearchQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.getAllUsers(actor, {
+      searchTerm: query.searchTerm?.trim() || undefined,
+      page: query.page,
+      limit: query.limit,
+    });
   }
 
   @UseGuards(AuthGuard)
