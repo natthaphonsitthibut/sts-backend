@@ -58,9 +58,11 @@ export class AttendanceController {
     @Query() query: GetHistoryQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
+    const schoolId = query.schoolId ? Number(query.schoolId) : null;
     return await this.attendanceService.getHistory(
       query.date,
       normalizeDataScope(actor?.data_scope),
+      Number.isInteger(schoolId) ? schoolId : null,
     );
   }
 

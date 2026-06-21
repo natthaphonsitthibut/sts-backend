@@ -193,7 +193,14 @@ export class AttendanceRepository {
   async listAttendanceHistory(
     date: string,
     userScope?: DataScope,
+    schoolId?: number | null,
   ): Promise<AttendanceHistoryRow[]> {
+    // Bound the query to a single school's day. Without a school the result set
+    // is a whole day nationwide (global admin) — return empty instead. Scope is
+    // still applied on top so an actor can't read a school outside their area.
+    if (!Number.isInteger(schoolId)) {
+      return [];
+    }
     let query = `
       SELECT
         a.*,
@@ -207,8 +214,9 @@ export class AttendanceRepository {
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       WHERE a."AttendanceDate" = $1
+        AND a."SchoolID_Onec" = $2
     `;
-    const params: unknown[] = [date];
+    const params: unknown[] = [date, schoolId];
 
     if (userScope) {
       const scopeResult = buildDataScopeQuery(

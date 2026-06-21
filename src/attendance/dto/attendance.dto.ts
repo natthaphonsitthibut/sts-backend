@@ -43,6 +43,13 @@ export class GetHistoryQueryDto {
   @IsString()
   @IsNotEmpty()
   date!: string;
+
+  // Bounds the query to one school's day. Without it a global/area admin would
+  // pull a whole day of attendance nationwide; the read path returns empty when
+  // it is absent.
+  @IsOptional()
+  @IsString()
+  schoolId?: string;
 }
 
 export class GetRoomsQueryDto {

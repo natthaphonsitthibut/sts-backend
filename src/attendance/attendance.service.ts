@@ -30,8 +30,8 @@ export class AttendanceService {
     return await this.attendanceReadService.getStudents(grade, room, schoolId, userScope);
   }
 
-  async getHistory(date: string, userScope?: DataScope) {
-    return await this.attendanceReadService.getHistory(date, userScope);
+  async getHistory(date: string, userScope?: DataScope, schoolId?: number | null) {
+    return await this.attendanceReadService.getHistory(date, userScope, schoolId);
   }
 
   async saveAttendance(records: AttendanceSaveRecordInput[], actor?: AuthenticatedRequestUser) {
