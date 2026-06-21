@@ -105,6 +105,7 @@ export class AutomationRepository {
         SELECT id, student_name, student_id
         FROM cases
         WHERE status = 'OPEN'
+          AND deleted_at IS NULL
           AND reason_flagged LIKE 'ขาดเรียนติดต่อกัน%'
       `,
     );
@@ -114,7 +115,13 @@ export class AutomationRepository {
 
   async deleteOpenCaseById(id: number, executor?: QueryExecutor): Promise<void> {
     const queryExecutor = this.getExecutor(executor);
-    await queryExecutor.query('DELETE FROM cases WHERE id = $1 AND status = $2', [id, 'OPEN']);
+    // Soft-delete: a false-positive auto-case (attendance later corrected) is
+    // tombstoned, not hard-deleted, so the create/cancel trail survives for
+    // audit. deleted_by stays null — this is a system action, not a user.
+    await queryExecutor.query(
+      `UPDATE cases SET deleted_at = now() WHERE id = $1 AND status = $2 AND deleted_at IS NULL`,
+      [id, 'OPEN'],
+    );
   }
 
   async findOpenAbsenceCaseByStudent(
@@ -130,6 +137,7 @@ export class AutomationRepository {
       `
         SELECT id FROM cases
         WHERE status = $1
+          AND deleted_at IS NULL
           AND ($4::int IS NULL OR school_id = $4)
           AND (
             (student_id IS NOT NULL AND student_id = $2)

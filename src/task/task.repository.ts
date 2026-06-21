@@ -363,7 +363,7 @@ export class TaskRepository {
       `
       SELECT id, school_id
       FROM cases c
-      WHERE c.id = $1${scopeSql}
+      WHERE c.id = $1 AND c.deleted_at IS NULL${scopeSql}
       LIMIT 1
     `,
       [caseId, ...scopeQuery.params],
@@ -414,7 +414,7 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 3);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     await this.getExecutor(executor).query(
-      `UPDATE cases c SET status = $1 WHERE c.id = $2${scopeSql}`,
+      `UPDATE cases c SET status = $1 WHERE c.id = $2 AND c.deleted_at IS NULL${scopeSql}`,
       [status, caseId, ...scopeQuery.params],
     );
   }
@@ -539,7 +539,7 @@ export class TaskRepository {
       SELECT c.*
       FROM cases c
       JOIN tasks t ON t.case_id = c.id
-      WHERE t.id = $1
+      WHERE t.id = $1 AND c.deleted_at IS NULL
     `,
       [taskId],
     );
@@ -795,8 +795,9 @@ export class TaskRepository {
         c.status AS case_status,
         c.result_summary
       FROM tasks t
-      LEFT JOIN cases c ON c.id = t.case_id
-      WHERE t.id = $1${scopeSql}
+      LEFT JOIN cases c ON c.id = t.case_id AND c.deleted_at IS NULL
+      WHERE t.id = $1
+        AND (t.case_id IS NULL OR c.id IS NOT NULL)${scopeSql}
     `,
       [taskId, ...scopeQuery.params],
     );
@@ -919,7 +920,7 @@ export class TaskRepository {
           student_address = COALESCE($3, student_address),
           student_lat = COALESCE($4, student_lat),
           student_lng = COALESCE($5, student_lng)
-        WHERE id = $6
+        WHERE id = $6 AND deleted_at IS NULL
       `,
       [
         'PENDING_REVIEW',
@@ -1252,6 +1253,8 @@ export class TaskRepository {
       params.push(...scopeQuery.params);
     }
 
+    conditions.push('c.deleted_at IS NULL');
+
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // The list fans out one row per (case, task); count joins tasks the same way
@@ -1356,6 +1359,8 @@ export class TaskRepository {
       params.push(...scopeQuery.params);
     }
 
+    conditions.push('c.deleted_at IS NULL');
+
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const result = await this.query<CountRow>(`SELECT count(*) FROM cases c ${whereSql}`, params);
 
@@ -1366,7 +1371,7 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM cases c WHERE c.created_at::date = $1${scopeSql}`,
+      `SELECT count(*) FROM cases c WHERE c.created_at::date = $1 AND c.deleted_at IS NULL${scopeSql}`,
       [date, ...scopeQuery.params],
     );
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
@@ -1382,7 +1387,8 @@ export class TaskRepository {
       JOIN tasks t ON t.id = tl.task_id
       JOIN cases c ON c.id = t.case_id
       WHERE tl.status = 'ACTIVE'
-        AND tl.expires_at > NOW()${scopeSql}
+        AND tl.expires_at > NOW()
+        AND c.deleted_at IS NULL${scopeSql}
     `,
       scopeQuery.params,
     );

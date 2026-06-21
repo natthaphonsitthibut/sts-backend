@@ -320,6 +320,7 @@ export class StudentsRepository {
         SELECT *
         FROM cases
         WHERE student_name = $1
+          AND deleted_at IS NULL
       `,
       [name],
     );
