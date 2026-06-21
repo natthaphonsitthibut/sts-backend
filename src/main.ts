@@ -36,10 +36,11 @@ async function bootstrap() {
     new ValidationPipe({
       transform: true,
       // Strip properties that have no validation decorator (mass-assignment
-      // defense). NOT using forbidNonWhitelisted yet: some clients still send
-      // extra body fields (e.g. user save sends `id`/`labels`), so we silently
-      // strip rather than 400 until the FE/BE payload contracts are aligned.
+      // defense), and reject unknown DTO properties now that FE/BE payload
+      // contracts are aligned. DTOs may explicitly @Allow() harmless echoed
+      // fields that must be accepted but ignored by services.
       whitelist: true,
+      forbidNonWhitelisted: true,
       forbidUnknownValues: false,
       transformOptions: {
         enableImplicitConversion: true,

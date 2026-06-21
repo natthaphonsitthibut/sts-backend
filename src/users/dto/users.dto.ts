@@ -1,6 +1,7 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { Type } from 'class-transformer';
 import {
+  Allow,
   IsArray,
   IsEmail,
   IsInt,
@@ -14,6 +15,10 @@ import {
 import type { DataScope } from '../users.types';
 
 export class CreateUserDto {
+  // FE echoes this on save; create/update services must use generated/path ids.
+  @Allow()
+  id?: unknown;
+
   @IsString()
   @IsNotEmpty()
   username!: string;
