@@ -3,13 +3,16 @@ import {
   Body,
   Controller,
   Post,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Request } from 'express';
 import { extname } from 'path';
-import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
+import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
+import type { AuthenticatedRequestUser } from '../auth';
 import { BulkImportUploadDto, CheckSchoolsUploadDto } from './dto/imports.dto';
 import { ImportsService } from './imports.service';
 
@@ -56,9 +59,16 @@ export class ImportsController {
 
   @Post('bulk')
   @UseInterceptors(FileInterceptor('file', importMulterOptions))
-  async importData(@UploadedFile() file: Express.Multer.File, @Body() body: BulkImportUploadDto) {
+  async importData(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: BulkImportUploadDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
     if (!file) throw new BadRequestException('No file uploaded');
 
-    return this.importsService.processImport(file, body.target, body.mapping, body.schools);
+    return this.importsService.processImport(file, body.target, body.mapping, body.schools, actor, {
+      ip: req.ip ?? null,
+    });
   }
 }

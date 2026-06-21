@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { hashToken, generateToken, clean } from '../common/utils/helpers';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { DelegateTaskDto } from './dto/task.dto';
 import { TaskRepository } from './task.repository';
 
@@ -12,7 +13,10 @@ const DEFAULT_EXPIRY_HOURS = 24;
 export class DelegationService {
   private readonly logger = new Logger(DelegationService.name);
 
-  constructor(private readonly taskRepository: TaskRepository) {}
+  constructor(
+    private readonly taskRepository: TaskRepository,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -95,6 +99,15 @@ export class DelegationService {
         },
         executor,
       );
+    });
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: clean(link.assigned_to_name) || 'guest',
+      action: 'DELEGATION',
+      targetType: 'task_link',
+      targetId: String(link.id),
+      metadata: { toDepth: Number(link.delegation_depth) + 1 },
+      ip: null,
     });
 
     let qrDataUrl: string | null = null;

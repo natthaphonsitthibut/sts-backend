@@ -16,6 +16,7 @@ import { ConfigModule, type ConfigType } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { StudentsModule } from './students/students.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
 import { appConfig } from './config/app.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
@@ -61,6 +62,7 @@ import { createTypeOrmOptions } from './database/typeorm.config';
     StudentsModule,
     ImportsModule,
     FilesModule,
+    AuditLogModule,
   ],
   controllers: [AppController],
   providers: [AppService],

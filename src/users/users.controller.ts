@@ -9,22 +9,26 @@ import {
   NotFoundException,
   ParseIntPipe,
   Query,
+  Req,
   Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { ThrottleLogin } from '../config/throttle.decorators';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
 import { UsersService } from './users.service';
 import {
   AuthGuard,
   CurrentUser,
+  OptionalAuthGuard,
   PermissionsGuard,
   RequirePermission,
   SessionCookieService,
   type AuthenticatedRequestUser,
 } from '../auth';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
   ChangePasswordDto,
   CreateRoleGroupDto,
@@ -37,6 +41,15 @@ import { RoleGroupsService } from './role-groups.service';
 import { UserAuthService } from './user-auth.service';
 import { PasswordMigrationService } from './password-migration.service';
 
+/**
+ * Client IP for audit. Relies on `req.ip`, which Express resolves through the
+ * configured `trust proxy` setting — so x-forwarded-for is only honoured when
+ * we actually trust the proxy, not when a client spoofs the header.
+ */
+function requestIp(req: Request): string | null {
+  return req.ip || null;
+}
+
 @Controller('api/users')
 export class UsersController {
   constructor(
@@ -45,6 +58,7 @@ export class UsersController {
     private readonly userAuthService: UserAuthService,
     private readonly passwordMigrationService: PasswordMigrationService,
     private readonly sessionCookieService: SessionCookieService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -86,9 +100,20 @@ export class UsersController {
   @Post('role-groups')
   async createRoleGroup(
     @Body() data: CreateRoleGroupDto,
+    @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
-    return await this.roleGroupsService.createRoleGroup(actor, data);
+    const result = await this.roleGroupsService.createRoleGroup(actor, data);
+    await this.auditLog.record({
+      action: 'ROLE_GROUP_CREATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'role_group',
+      targetId: data.name ?? null,
+      metadata: { op: 'create' },
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -97,9 +122,20 @@ export class UsersController {
   async updateRoleGroup(
     @Param('name') name: string,
     @Body() data: UpdateRoleGroupDto,
+    @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
-    return await this.roleGroupsService.updateRoleGroup(actor, name, data);
+    const result = await this.roleGroupsService.updateRoleGroup(actor, name, data);
+    await this.auditLog.record({
+      action: 'ROLE_GROUP_UPDATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'role_group',
+      targetId: name,
+      metadata: { op: 'update' },
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -107,9 +143,20 @@ export class UsersController {
   @Delete('role-groups/:name')
   async deleteRoleGroup(
     @Param('name') name: string,
+    @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
-    return await this.roleGroupsService.deleteRoleGroup(actor, name);
+    const result = await this.roleGroupsService.deleteRoleGroup(actor, name);
+    await this.auditLog.record({
+      action: 'ROLE_GROUP_DELETE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'role_group',
+      targetId: name,
+      metadata: { op: 'delete' },
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @UseGuards(AuthGuard)
@@ -140,9 +187,19 @@ export class UsersController {
   @Post()
   async createUser(
     @Body() data: CreateUserDto,
+    @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
-    return await this.usersService.createUser(actor, data);
+    const result = await this.usersService.createUser(actor, data);
+    await this.auditLog.record({
+      action: 'USER_CREATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'user',
+      metadata: { username: data.username },
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -151,9 +208,20 @@ export class UsersController {
   async updateUser(
     @Param('id', ParseIntPipe) id: number,
     @Body() data: UpdateUserDto,
+    @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
-    return await this.usersService.updateUser(actor, id, data);
+    const result = await this.usersService.updateUser(actor, id, data);
+    await this.auditLog.record({
+      action: 'USER_UPDATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'user',
+      targetId: String(id),
+      metadata: { fields: Object.keys(data) },
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -161,25 +229,62 @@ export class UsersController {
   @Delete(':id')
   async deleteUser(
     @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
-    return await this.usersService.deleteUser(actor, id);
+    const result = await this.usersService.deleteUser(actor, id);
+    await this.auditLog.record({
+      action: 'USER_DELETE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'user',
+      targetId: String(id),
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @ThrottleLogin()
   @Post('login')
-  async login(@Body() body: LoginDto, @Res({ passthrough: true }) res: Response) {
+  async login(
+    @Body() body: LoginDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const ip = requestIp(req);
     const user = await this.userAuthService.validateUser(body.username, body.password);
     if (!user) {
+      await this.auditLog.record({
+        action: 'LOGIN_FAILED',
+        actorLabel: body.username,
+        ip,
+      });
       throw new UnauthorizedException('ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง');
     }
     this.sessionCookieService.setSession(res, user.id);
+    await this.auditLog.record({
+      action: 'LOGIN',
+      actorUserId: user.id,
+      actorLabel: user.username,
+      ip,
+    });
     return user;
   }
 
+  @UseGuards(OptionalAuthGuard)
   @Post('logout')
-  logout(@Res({ passthrough: true }) res: Response) {
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
     this.sessionCookieService.clearSession(res);
+    await this.auditLog.record({
+      action: 'LOGOUT',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      ip: requestIp(req),
+    });
     return { success: true };
   }
 

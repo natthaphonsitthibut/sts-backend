@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { UpsertMasterDataItemDto } from './dto/master-data.dto';
 import { MasterDataRepository } from './master-data.repository';
 import {
@@ -11,7 +12,10 @@ import {
 export class MasterDataService {
   private readonly logger = new Logger(MasterDataService.name);
 
-  constructor(private readonly masterDataRepository: MasterDataRepository) {}
+  constructor(
+    private readonly masterDataRepository: MasterDataRepository,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   private validateTableName(table: string): MasterDataTable {
     if (!isMasterDataTable(table)) {
@@ -48,7 +52,16 @@ export class MasterDataService {
     const value = this.resolveValue(data);
     const valueColumn = getMasterDataValueColumn(validTable);
 
-    return await this.masterDataRepository.createRow(validTable, valueColumn, value);
+    const row = await this.masterDataRepository.createRow(validTable, valueColumn, value);
+    await this.auditLog.record({
+      action: 'MASTER_DATA_EDIT',
+      targetType: validTable,
+      targetId: row?.id == null ? null : String(row.id),
+      metadata: { op: 'create' },
+      ip: null,
+    });
+
+    return row;
   }
 
   async update(table: string, id: number, data: UpsertMasterDataItemDto) {
@@ -56,11 +69,29 @@ export class MasterDataService {
     const value = this.resolveValue(data);
     const valueColumn = getMasterDataValueColumn(validTable);
 
-    return await this.masterDataRepository.updateRow(validTable, id, valueColumn, value);
+    const row = await this.masterDataRepository.updateRow(validTable, id, valueColumn, value);
+    await this.auditLog.record({
+      action: 'MASTER_DATA_EDIT',
+      targetType: validTable,
+      targetId: String(id),
+      metadata: { op: 'update' },
+      ip: null,
+    });
+
+    return row;
   }
 
   async remove(table: string, id: number) {
     const validTable = this.validateTableName(table);
-    return await this.masterDataRepository.deleteRow(validTable, id);
+    const row = await this.masterDataRepository.deleteRow(validTable, id);
+    await this.auditLog.record({
+      action: 'MASTER_DATA_EDIT',
+      targetType: validTable,
+      targetId: String(id),
+      metadata: { op: 'delete' },
+      ip: null,
+    });
+
+    return row;
   }
 }

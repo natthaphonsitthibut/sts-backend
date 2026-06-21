@@ -2,10 +2,31 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
 
+/**
+ * Closed vocabulary of audited sensitive actions. Centralised so both the
+ * users/auth wiring and the task/imports/master-data wiring stay in sync and
+ * a typo can't silently create an un-greppable action.
+ */
+export type AuditAction =
+  | 'LOGIN'
+  | 'LOGIN_FAILED'
+  | 'LOGOUT'
+  | 'USER_CREATE'
+  | 'USER_UPDATE'
+  | 'USER_DELETE'
+  | 'ROLE_GROUP_CREATE'
+  | 'ROLE_GROUP_UPDATE'
+  | 'ROLE_GROUP_DELETE'
+  | 'CASE_CLOSE'
+  | 'CASE_FORWARD'
+  | 'DELEGATION'
+  | 'DATA_IMPORT'
+  | 'MASTER_DATA_EDIT';
+
 export interface AuditLogRecordInput {
   actorUserId?: number | null;
   actorLabel?: string | null;
-  action: string;
+  action: AuditAction;
   targetType?: string | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

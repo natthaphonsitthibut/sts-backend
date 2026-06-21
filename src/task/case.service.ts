@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { ReviewCaseDto } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
@@ -15,6 +17,7 @@ export class CaseService {
   constructor(
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   private normalizeText(value: unknown): string {
@@ -37,6 +40,11 @@ export class CaseService {
     if (action === 'CLOSE') return 'RESOLVED';
     if (action === 'FORWARD') return 'AWAITING_HELP';
     return 'IN_PROGRESS'; // ASSIST — วนกลับเข้ากระบวนการติดตามใหม่
+  }
+
+  private actorLabel(actor?: AuthenticatedRequestUser): string | null {
+    const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
+    return actor?.username || actorName || null;
   }
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {
@@ -69,6 +77,17 @@ export class CaseService {
       });
 
       const reviewRecord = await this.taskRepository.findCaseReviewById(reviewId);
+      if (reviewAction === 'CLOSE' || reviewAction === 'FORWARD') {
+        await this.auditLog.record({
+          actorUserId: resolveAuditActorId(actor),
+          actorLabel: this.actorLabel(actor),
+          action: reviewAction === 'CLOSE' ? 'CASE_CLOSE' : 'CASE_FORWARD',
+          targetType: 'case',
+          targetId: String(caseId),
+          metadata: { reviewAction },
+          ip: null,
+        });
+      }
 
       return {
         success: true,

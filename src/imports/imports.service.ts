@@ -1,5 +1,8 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import * as xlsx from 'xlsx';
+import type { AuthenticatedRequestUser } from '../auth';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
 import { ImportsRepository } from './imports.repository';
 import {
@@ -16,7 +19,10 @@ const MAX_IMPORT_ROWS = 10_000;
 export class ImportsService {
   private readonly logger = new Logger(ImportsService.name);
 
-  constructor(private readonly importsRepository: ImportsRepository) {}
+  constructor(
+    private readonly importsRepository: ImportsRepository,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   private normalizeScalar(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') {
@@ -128,6 +134,11 @@ export class ImportsService {
     return target;
   }
 
+  private actorLabel(actor?: AuthenticatedRequestUser): string | null {
+    const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
+    return actor?.username || actorName || null;
+  }
+
   async checkMissingSchools(
     file: Express.Multer.File,
     mappingStr: string,
@@ -169,6 +180,8 @@ export class ImportsService {
     target: string,
     mappingStr: string,
     schoolsStr?: string,
+    actor?: AuthenticatedRequestUser,
+    auditMeta: { ip?: string | null } = {},
   ) {
     const validTarget = this.parseTarget(target);
     const mapping = this.parseMapping(mappingStr);
@@ -186,7 +199,7 @@ export class ImportsService {
 
     const validDbColumns = Object.keys(mapping);
 
-    return await this.importsRepository.withTransaction(async (executor) => {
+    const result = await this.importsRepository.withTransaction(async (executor) => {
       for (const school of manualSchools) {
         await this.importsRepository.upsertManualSchool(school, executor);
       }
@@ -230,5 +243,21 @@ export class ImportsService {
         rowsSkipped: skipped,
       };
     });
+    await this.auditLog.record({
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: this.actorLabel(actor),
+      action: 'DATA_IMPORT',
+      targetType: 'import',
+      targetId: null,
+      metadata: {
+        rowCount: result.rowsProcessed,
+        rowsInserted: result.rowsInserted,
+        rowsSkipped: result.rowsSkipped,
+        manualSchools: manualSchools.length,
+      },
+      ip: auditMeta.ip ?? null,
+    });
+
+    return result;
   }
 }
