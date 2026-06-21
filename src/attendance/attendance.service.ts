@@ -42,6 +42,13 @@ export class AttendanceService {
     return await this.attendanceReadService.getAttendanceTasks(userScope);
   }
 
+  async getAttendanceTasksPaginated(
+    userScope: DataScope | undefined,
+    filters: { page: number; limit: number; searchTerm?: string; status?: string },
+  ) {
+    return await this.attendanceReadService.getAttendanceTasksPaginated(userScope, filters);
+  }
+
   async getRooms(gradeLabel: string, schoolId?: string) {
     return await this.attendanceLookupService.getRooms(gradeLabel, schoolId);
   }

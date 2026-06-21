@@ -8,8 +8,17 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator';
+import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 
 const ATTENDANCE_STATUS_VALUES = ['P_PRESENT', 'P_ABSENT', 'P_LATE'] as const;
+
+export const ATTENDANCE_LINK_STATE_VALUES = ['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'] as const;
+
+export class GetAttendanceTasksQueryDto extends PaginatedSearchQueryDto {
+  @IsOptional()
+  @IsIn(ATTENDANCE_LINK_STATE_VALUES)
+  status?: (typeof ATTENDANCE_LINK_STATE_VALUES)[number];
+}
 
 export class GetSchoolsQueryDto {
   @IsOptional()

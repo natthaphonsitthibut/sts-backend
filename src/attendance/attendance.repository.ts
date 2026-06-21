@@ -306,6 +306,139 @@ export class AttendanceRepository {
     return result.rows;
   }
 
+  /**
+   * Server-paginated attendance links for the dashboard (replaces loading every
+   * task + filtering client-side). Link state (ACTIVE/LOCKED/EXPIRED) is derived
+   * in SQL; the summary counts the whole scoped set (not just the page); the
+   * LATERAL picks one active link per task so paging is stable.
+   */
+  async listAttendanceTasksPaginated(
+    userScope: DataScope | undefined,
+    filters: { page: number; limit: number; searchTerm?: string; status?: string },
+  ): Promise<{
+    rows: AttendanceTaskRow[];
+    totalCount: number;
+    summary: { total: number; active: number; locked: number; expired: number };
+  }> {
+    const linkStateSql = `
+      CASE
+        WHEN COALESCE(tl.admin_locked, 0) = 1 THEN 'LOCKED'
+        WHEN tl.id IS NULL THEN 'EXPIRED'
+        ELSE 'ACTIVE'
+      END`;
+    const fromSql = `
+      FROM tasks t
+      LEFT JOIN schools sc ON sc.id = t.target_school_id
+      LEFT JOIN grade_levels gl ON gl.label = t.target_grade
+      LEFT JOIN LATERAL (
+        SELECT l.*
+        FROM task_links l
+        WHERE l.task_id = t.id AND l.status = 'ACTIVE' AND l.deleted_at IS NULL
+        ORDER BY l.created_at DESC
+        LIMIT 1
+      ) tl ON true`;
+
+    const params: unknown[] = [];
+    const policyConditions: string[] = [`t.task_type = 'ATTENDANCE'`, 't.deleted_at IS NULL'];
+    if (userScope) {
+      const scopeResult = buildDataScopeQuery(
+        userScope,
+        {
+          school_id: 't.target_school_id',
+          grade: 'gl.id',
+          room: 't.target_room',
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+      if (scopeResult.sql) {
+        policyConditions.push(`(${scopeResult.sql})`);
+        pushScopeParams(params, scopeResult.params);
+      }
+    }
+
+    const policyWhereSql = `WHERE ${policyConditions.join(' AND ')}`;
+    // Summary spans the whole scoped set, so it runs on policy params only —
+    // before search/status params are appended below.
+    const summaryResult = await this.query<Record<string, unknown>>(
+      `
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE ${linkStateSql} = 'ACTIVE')::int AS active,
+        COUNT(*) FILTER (WHERE ${linkStateSql} = 'LOCKED')::int AS locked,
+        COUNT(*) FILTER (WHERE ${linkStateSql} = 'EXPIRED')::int AS expired
+      ${fromSql}
+      ${policyWhereSql}
+    `,
+      params,
+    );
+
+    const filteredConditions = [...policyConditions];
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      const p = params.length;
+      filteredConditions.push(
+        `(sc.name ILIKE $${p} OR t.target_grade ILIKE $${p} OR t.target_room ILIKE $${p} OR tl.assigned_to_name ILIKE $${p})`,
+      );
+    }
+    if (filters.status && filters.status !== 'ALL') {
+      params.push(filters.status);
+      filteredConditions.push(`${linkStateSql} = $${params.length}`);
+    }
+    const filteredWhereSql = `WHERE ${filteredConditions.join(' AND ')}`;
+
+    const countResult = await this.query<{ count?: string }>(
+      `SELECT count(*) ${fromSql} ${filteredWhereSql}`,
+      params,
+    );
+    const totalCount = Number.parseInt(countResult.rows[0]?.count ?? '0', 10);
+
+    const offset = (filters.page - 1) * filters.limit;
+    const selectParams = [...params, filters.limit, offset];
+    const limitPlaceholder = selectParams.length - 1;
+    const offsetPlaceholder = selectParams.length;
+
+    const result = await this.query<AttendanceTaskRow>(
+      `
+      SELECT
+        t.id as task_id,
+        t.task_type,
+        t.target_grade,
+        t.target_room,
+        t.target_school_id,
+        sc.name as target_school_name,
+        t.status as task_status,
+        t.created_at,
+        tl.id as active_link_id,
+        tl.magic_link as active_link,
+        tl.assigned_to_name as link_assigned_to,
+        COALESCE(tl.admin_locked, 0) as active_link_locked,
+        tl.admin_lock_reason as active_link_lock_reason,
+        tl.admin_lock_at as active_link_lock_at,
+        ${linkStateSql} AS link_state
+      ${fromSql}
+      ${filteredWhereSql}
+      ORDER BY t.created_at DESC, t.id DESC
+      LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+    `,
+      selectParams,
+    );
+
+    const summaryRow = summaryResult.rows[0] || {};
+    return {
+      rows: result.rows,
+      totalCount,
+      summary: {
+        total: Number(summaryRow.total || 0),
+        active: Number(summaryRow.active || 0),
+        locked: Number(summaryRow.locked || 0),
+        expired: Number(summaryRow.expired || 0),
+      },
+    };
+  }
+
   async listRooms(gradeLabel: string, schoolId?: number): Promise<RoomRow[]> {
     let query = `
       SELECT DISTINCT s."RoomID_Onec"::text as room

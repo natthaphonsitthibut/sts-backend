@@ -9,12 +9,14 @@ import {
 } from '../auth';
 import { AttendanceService } from './attendance.service';
 import {
+  GetAttendanceTasksQueryDto,
   GetHistoryQueryDto,
   GetRoomsQueryDto,
   GetSchoolsQueryDto,
   GetStudentsQueryDto,
   SaveAttendanceDto,
 } from './dto/attendance.dto';
+import { resolveLimit, resolvePage } from '../common/pagination/pagination.util';
 
 @UseGuards(AuthGuard)
 @Controller('api/attendance')
@@ -81,8 +83,22 @@ export class AttendanceController {
   }
 
   @Get('tasks')
-  async getAttendanceTasks(@CurrentUser() actor?: AuthenticatedRequestUser) {
-    return await this.attendanceService.getAttendanceTasks(normalizeDataScope(actor?.data_scope));
+  async getAttendanceTasks(
+    @Query() query: GetAttendanceTasksQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    const scope = normalizeDataScope(actor?.data_scope);
+    // Opt-in pagination: the dashboard sends `page` and gets the paginated
+    // envelope; legacy callers (no page) still get the full array.
+    if (query.page === undefined) {
+      return await this.attendanceService.getAttendanceTasks(scope);
+    }
+    return await this.attendanceService.getAttendanceTasksPaginated(scope, {
+      page: resolvePage(query.page),
+      limit: resolveLimit(query.limit),
+      searchTerm: query.searchTerm?.trim() || undefined,
+      status: query.status,
+    });
   }
 
   @Get('rooms')
