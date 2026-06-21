@@ -7,9 +7,11 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
+import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
 import { UpsertMasterDataItemDto } from './dto/master-data.dto';
 import { MasterDataService } from './master-data.service';
 
@@ -20,8 +22,12 @@ export class MasterDataController {
   constructor(private readonly masterDataService: MasterDataService) {}
 
   @Get(':table')
-  getAll(@Param('table') table: string) {
-    return this.masterDataService.getAll(table);
+  getAll(@Param('table') table: string, @Query() query: PaginatedSearchQueryDto) {
+    return this.masterDataService.getAll(table, {
+      page: query.page,
+      limit: query.limit,
+      searchTerm: query.searchTerm,
+    });
   }
 
   @Get(':table/:id')

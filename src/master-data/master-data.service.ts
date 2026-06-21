@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { resolveLimit, resolvePage } from '../common/pagination/pagination.util';
 import { UpsertMasterDataItemDto } from './dto/master-data.dto';
 import { MasterDataRepository } from './master-data.repository';
 import {
@@ -37,8 +38,26 @@ export class MasterDataService {
     return rawValue.trim();
   }
 
-  async getAll(table: string) {
+  async getAll(table: string, query: { page?: number; limit?: number; searchTerm?: string } = {}) {
     const validTable = this.validateTableName(table);
+
+    if (query.page !== undefined) {
+      const page = resolvePage(query.page);
+      const limit = resolveLimit(query.limit);
+      const { rows, totalCount } = await this.masterDataRepository.listRowsPaginated(validTable, {
+        page,
+        limit,
+        searchTerm: query.searchTerm?.trim() || undefined,
+      });
+
+      return {
+        rows,
+        totalCount,
+        page,
+        limit,
+      };
+    }
+
     return await this.masterDataRepository.listRows(validTable);
   }
 
