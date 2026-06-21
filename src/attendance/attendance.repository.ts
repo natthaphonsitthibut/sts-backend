@@ -120,6 +120,16 @@ export class AttendanceRepository {
     filters: StudentFilters,
     userScope?: DataScope,
   ): Promise<AttendanceStudentRow[]> {
+    // Roster guard: this list is a class roster, not a national directory. A
+    // global/area admin must pin a school (explicit filter or school-scoped
+    // login) before we run it — otherwise return empty instead of every student
+    // in the country.
+    const hasSchoolBound =
+      Number.isInteger(filters.schoolId) ||
+      (Array.isArray(userScope?.school_ids) && userScope.school_ids.length > 0);
+    if (!hasSchoolBound) {
+      return [];
+    }
     let query = `
       SELECT
         s."PersonID_Onec" as id,
