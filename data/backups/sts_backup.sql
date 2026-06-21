@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict G2j9m1gcIic1fNR0rnA9pnAf95ftvPK1P2lNYbD6VZXhfgmDhf86i8kPtjsE4Qv
+\restrict bNshHbAuB9SuCTL7n9IOsMS72c7fR1RXBLbreGlsAR0vllamZRsyqRLPdds5hhh
 
 -- Dumped from database version 15.18
 -- Dumped by pg_dump version 15.18
@@ -33,6 +33,21 @@ ALTER SCHEMA public OWNER TO postgres;
 
 COMMENT ON SCHEMA public IS '';
 
+
+--
+-- Name: audit_log_block_mutation(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.audit_log_block_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+          RAISE EXCEPTION 'audit_log is append-only; % is not allowed', TG_OP;
+        END;
+        $$;
+
+
+ALTER FUNCTION public.audit_log_block_mutation() OWNER TO postgres;
 
 --
 -- Name: pii_access_events_block_mutation(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -156,6 +171,46 @@ ALTER SEQUENCE public."attendance_AttendanceID_seq" OWNED BY public.attendance."
 
 
 --
+-- Name: audit_log; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.audit_log (
+    id bigint NOT NULL,
+    actor_user_id integer,
+    actor_label text,
+    action text NOT NULL,
+    target_type text,
+    target_id text,
+    metadata jsonb,
+    ip text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.audit_log OWNER TO postgres;
+
+--
+-- Name: audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.audit_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.audit_log_id_seq OWNER TO postgres;
+
+--
+-- Name: audit_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.audit_log_id_seq OWNED BY public.audit_log.id;
+
+
+--
 -- Name: case_reviews; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -196,7 +251,8 @@ CREATE TABLE public.cases (
     student_id text,
     school_id integer,
     deleted_at timestamp with time zone,
-    deleted_by integer
+    deleted_by integer,
+    CONSTRAINT chk_cases_status CHECK ((status = ANY (ARRAY['OPEN'::text, 'IN_PROGRESS'::text, 'AWAITING_HELP'::text, 'PENDING_REVIEW'::text, 'RESOLVED'::text])))
 );
 
 
@@ -815,7 +871,7 @@ ALTER SEQUENCE public.task_submissions_id_seq OWNED BY public.task_submissions.i
 CREATE TABLE public.tasks (
     id text NOT NULL,
     case_id integer,
-    status text DEFAULT 'PENDING'::text,
+    status text DEFAULT 'IN_PROGRESS'::text,
     max_delegation_depth integer DEFAULT 3,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     task_type text DEFAULT 'VISIT'::text,
@@ -824,7 +880,8 @@ CREATE TABLE public.tasks (
     target_school_id integer,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by integer,
-    updated_by integer
+    updated_by integer,
+    CONSTRAINT chk_tasks_status CHECK ((status = ANY (ARRAY['OPEN'::text, 'ACTIVE'::text, 'IN_PROGRESS'::text, 'COMPLETED'::text, 'PENDING_REVIEW'::text])))
 );
 
 
@@ -892,6 +949,13 @@ ALTER TABLE ONLY public.assistance_measures ALTER COLUMN id SET DEFAULT nextval(
 --
 
 ALTER TABLE ONLY public.attendance ALTER COLUMN "AttendanceID" SET DEFAULT nextval('public."attendance_AttendanceID_seq"'::regclass);
+
+
+--
+-- Name: audit_log id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.audit_log ALTER COLUMN id SET DEFAULT nextval('public.audit_log_id_seq'::regclass);
 
 
 --
@@ -1027,6 +1091,14 @@ COPY public.attendance ("AttendanceID", "PersonID_Onec", "SchoolID_Onec", "Grade
 
 
 --
+-- Data for Name: audit_log; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.audit_log (id, actor_user_id, actor_label, action, target_type, target_id, metadata, ip, created_at) FROM stdin;
+\.
+
+
+--
 -- Data for Name: case_reviews; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1111,6 +1183,8 @@ COPY public.migrations (id, "timestamp", name) FROM stdin;
 10	260620121000	AddMissingAuditColumns20260620121000
 11	260620122000	NormalizeTimestampsAndCoords20260620122000
 12	260620123000	AddSoftDeleteColumns20260620123000
+13	260621120000	AddStatusCheckConstraints20260621120000
+14	260621121000	CreateAuditLog20260621121000
 \.
 
 
@@ -6786,6 +6860,13 @@ SELECT pg_catalog.setval('public."attendance_AttendanceID_seq"', 33, true);
 
 
 --
+-- Name: audit_log_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.audit_log_id_seq', 1, true);
+
+
+--
 -- Name: cases_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
@@ -6817,7 +6898,7 @@ SELECT pg_catalog.setval('public."external_users_ExternalID_seq"', 1, false);
 -- Name: migrations_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.migrations_id_seq', 12, true);
+SELECT pg_catalog.setval('public.migrations_id_seq', 14, true);
 
 
 --
@@ -6899,6 +6980,14 @@ ALTER TABLE ONLY public.assistance_measures
 
 ALTER TABLE ONLY public.attendance
     ADD CONSTRAINT attendance_pkey PRIMARY KEY ("AttendanceID");
+
+
+--
+-- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.audit_log
+    ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
 
 
 --
@@ -7139,6 +7228,34 @@ CREATE INDEX idx_attendance_school_date ON public.attendance USING btree ("Schoo
 
 
 --
+-- Name: idx_audit_log_action; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_audit_log_action ON public.audit_log USING btree (action);
+
+
+--
+-- Name: idx_audit_log_actor_user_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_audit_log_actor_user_id ON public.audit_log USING btree (actor_user_id);
+
+
+--
+-- Name: idx_audit_log_created_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_audit_log_created_at ON public.audit_log USING btree (created_at);
+
+
+--
+-- Name: idx_audit_log_target; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_audit_log_target ON public.audit_log USING btree (target_type, target_id);
+
+
+--
 -- Name: idx_case_reviews_case_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -7241,6 +7358,13 @@ CREATE TRIGGER trg_assistance_measures_set_updated_at BEFORE UPDATE ON public.as
 --
 
 CREATE TRIGGER trg_attendance_set_updated_at BEFORE UPDATE ON public.attendance FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: audit_log trg_audit_log_immutable; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_audit_log_immutable BEFORE DELETE OR UPDATE ON public.audit_log FOR EACH ROW EXECUTE FUNCTION public.audit_log_block_mutation();
 
 
 --
@@ -7430,6 +7554,14 @@ ALTER TABLE ONLY public.attendance
 
 ALTER TABLE ONLY public.attendance
     ADD CONSTRAINT attendance_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: audit_log audit_log_actor_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.audit_log
+    ADD CONSTRAINT audit_log_actor_user_id_fkey FOREIGN KEY (actor_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -7851,5 +7983,5 @@ REVOKE USAGE ON SCHEMA public FROM PUBLIC;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict G2j9m1gcIic1fNR0rnA9pnAf95ftvPK1P2lNYbD6VZXhfgmDhf86i8kPtjsE4Qv
+\unrestrict bNshHbAuB9SuCTL7n9IOsMS72c7fR1RXBLbreGlsAR0vllamZRsyqRLPdds5hhh
 
