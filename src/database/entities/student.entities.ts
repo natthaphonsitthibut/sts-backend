@@ -5,6 +5,11 @@ export class StudentTermEntity {
   @PrimaryColumn({ name: 'PersonID_Onec', type: 'text' })
   personIdOnec!: string;
 
+  // B1.1 surrogate — DB default gen_random_uuid() populates it; becomes the
+  // public identifier and PK in B1.4. PersonID_Onec stays PK until then.
+  @Column({ name: 'student_uuid', type: 'uuid', unique: true, default: () => 'gen_random_uuid()' })
+  studentUuid!: string;
+
   @Column({ name: 'AcademicYear_Onec', type: 'integer', nullable: true })
   academicYearOnec!: number | null;
 
@@ -61,6 +66,10 @@ export class StudentTermEntity {
 export class StudentDropoutEntity {
   @PrimaryColumn({ name: 'PersonID_Onec', type: 'text' })
   personIdOnec!: string;
+
+  // B1.1 surrogate — see StudentTermEntity.studentUuid.
+  @Column({ name: 'student_uuid', type: 'uuid', unique: true, default: () => 'gen_random_uuid()' })
+  studentUuid!: string;
 
   @Column({ name: 'ProvinceNameThai_Onec', type: 'text', nullable: true })
   provinceNameThaiOnec!: string | null;

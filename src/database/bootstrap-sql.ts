@@ -241,6 +241,8 @@ export const DATABASE_BASELINE_SQL = `
     "DepartmentID_Onec" INTEGER,
     "SchoolID_Onec" INTEGER,
     "PersonID_Onec" TEXT PRIMARY KEY,
+    "student_uuid" UUID NOT NULL DEFAULT gen_random_uuid()
+      CONSTRAINT uq_student_term_student_uuid UNIQUE,
     "PassportNumber_Onec" TEXT,
     "PrefixID_Onec" INTEGER,
     "FirstName_Onec" TEXT,
@@ -270,6 +272,8 @@ export const DATABASE_BASELINE_SQL = `
     "DistrictNameThai_Onec" TEXT,
     "SubDistrictNameThai_Onec" TEXT,
     "PersonID_Onec" TEXT PRIMARY KEY,
+    "student_uuid" UUID NOT NULL DEFAULT gen_random_uuid()
+      CONSTRAINT uq_student_dropouts_student_uuid UNIQUE,
     "Fullname_Onec" TEXT,
     "Gender_Onec" TEXT,
     "NationalityName_Onec" TEXT,
