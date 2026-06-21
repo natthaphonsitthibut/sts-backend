@@ -18,6 +18,7 @@ import { UpdateStudentDto } from './dto/update-student.dto';
 import type { DataScope } from '../common/utils/authorization';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { piiConfig } from '../config/pii.config';
 import {
   PHASE1_MASKED_GROUPS,
@@ -324,7 +325,7 @@ export class StudentsService {
 
       if (!withinWindow) {
         await this.studentsRepository.insertPiiAccessEvent({
-          actorUserId: typeof actor?.id === 'number' ? actor.id : null,
+          actorUserId: resolveAuditActorId(actor),
           actorRoles: actor?.roles ?? [],
           actorKind: actor?.virtual_login ? 'GUEST' : 'STAFF',
           subjectStudentRef: subjectRef,

@@ -92,7 +92,7 @@ export class StudentsController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return this.studentsService.revealPii(id, actor, normalizeDataScope(actor?.data_scope), body, {
-      ip: firstHeaderValue(req.headers['x-forwarded-for']) ?? req.ip ?? null,
+      ip: req.ip ?? null,
       userAgent: firstHeaderValue(req.headers['user-agent']),
       requestId: firstHeaderValue(req.headers['x-request-id']),
     });
