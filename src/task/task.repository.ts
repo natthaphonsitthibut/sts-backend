@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
+import { buildDataScopeQuery } from '../common/utils/authorization';
 import type {
   ActorContext,
   DataScope,
@@ -1461,13 +1462,74 @@ export class TaskRepository {
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
-  async countStudents(): Promise<number> {
-    const result = await this.query<CountRow>(`SELECT count(*) FROM student_term`);
+  // Overview totals must respect the actor's data scope — a province admin's
+  // "total students" is their province, not the whole country. student_term
+  // scopes via the schools join (province/district live on schools); the
+  // dropouts table carries the area names on its own columns.
+  async countStudents(actor?: ActorContext): Promise<number> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    if (actor?.data_scope) {
+      const scopeResult = buildDataScopeQuery(
+        actor.data_scope,
+        {
+          school_id: `s."SchoolID_Onec"`,
+          grade: `s."GradeLevelID_Onec"`,
+          room: `s."RoomID_Onec"::text`,
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+      if (scopeResult.sql) {
+        conditions.push(`(${scopeResult.sql})`);
+        params.push(...scopeResult.params);
+      }
+    }
+    // own_only with no area scope (e.g. a student self-login) owns no student
+    // rows — never fall through to a national total.
+    if (actor?.data_scope?.own_only === true && conditions.length === 0) {
+      return 0;
+    }
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await this.query<CountRow>(
+      `SELECT count(*) FROM student_term s
+       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id ${whereSql}`,
+      params,
+    );
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
-  async countStudentDropouts(): Promise<number> {
-    const result = await this.query<CountRow>(`SELECT count(*) FROM student_dropouts`);
+  async countStudentDropouts(actor?: ActorContext): Promise<number> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    if (actor?.data_scope) {
+      const scopeResult = buildDataScopeQuery(
+        actor.data_scope,
+        {
+          school_id: `"SchoolID_Onec"`,
+          grade: `"GradeLevelID_Onec"`,
+          room: `"RoomID_Onec"::text`,
+          province: `"ProvinceNameThai_Onec"`,
+          district: `"DistrictNameThai_Onec"`,
+          sub_district: `"SubDistrictNameThai_Onec"`,
+        },
+        params.length + 1,
+      );
+      if (scopeResult.sql) {
+        conditions.push(`(${scopeResult.sql})`);
+        params.push(...scopeResult.params);
+      }
+    }
+    if (actor?.data_scope?.own_only === true && conditions.length === 0) {
+      return 0;
+    }
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await this.query<CountRow>(
+      `SELECT count(*) FROM student_dropouts ${whereSql}`,
+      params,
+    );
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
