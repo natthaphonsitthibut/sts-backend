@@ -17,10 +17,10 @@ export class CaseEntity {
   @Column({ name: 'student_address', type: 'text', nullable: true })
   studentAddress!: string | null;
 
-  @Column({ name: 'student_lat', type: 'real', nullable: true })
+  @Column({ name: 'student_lat', type: 'double precision', nullable: true })
   studentLat!: number | null;
 
-  @Column({ name: 'student_lng', type: 'real', nullable: true })
+  @Column({ name: 'student_lng', type: 'double precision', nullable: true })
   studentLng!: number | null;
 
   @Column({ name: 'reason_flagged', type: 'text', nullable: true })
@@ -44,7 +44,7 @@ export class TaskEntity {
   @Column({ name: 'case_id', type: 'integer', nullable: true })
   caseId!: number | null;
 
-  @Column({ name: 'status', type: 'text', default: 'PENDING' })
+  @Column({ name: 'status', type: 'text', default: 'IN_PROGRESS' })
   status!: string;
 
   @Column({ name: 'max_delegation_depth', type: 'integer', default: 3 })
@@ -194,7 +194,7 @@ export class TaskSubmissionEntity {
   @Column({ name: 'updated_lng', type: 'real', nullable: true })
   updatedLng!: number | null;
 
-  @Column({ name: 'submitted_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'submitted_at', type: 'timestamptz', nullable: true })
   submittedAt!: Date | null;
 }
 
@@ -215,6 +215,6 @@ export class CaseReviewEntity {
   @Column({ name: 'reviewed_by', type: 'text', nullable: true })
   reviewedBy!: string | null;
 
-  @Column({ name: 'reviewed_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'reviewed_at', type: 'timestamptz', nullable: true })
   reviewedAt!: Date | null;
 }

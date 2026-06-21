@@ -119,7 +119,7 @@ export class AttendanceEntity {
   @Column({ name: 'AttendanceStatus', type: 'smallint' })
   attendanceStatus!: number;
 
-  @Column({ name: 'RecordedAt', type: 'timestamp', nullable: true })
+  @Column({ name: 'RecordedAt', type: 'timestamptz', nullable: true })
   recordedAt!: Date | null;
 
   @Column({ name: 'RecordedBy', type: 'varchar', length: 100, nullable: true })

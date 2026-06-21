@@ -166,8 +166,8 @@ export const DATABASE_BASELINE_SQL = `
     school_id INTEGER,
     student_school TEXT,
     student_address TEXT,
-    student_lat REAL,
-    student_lng REAL,
+    student_lat DOUBLE PRECISION,
+    student_lng DOUBLE PRECISION,
     reason_flagged TEXT,
     status TEXT DEFAULT 'OPEN',
     result_summary TEXT,
@@ -177,7 +177,7 @@ export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
-    status TEXT DEFAULT 'PENDING',
+    status TEXT DEFAULT 'IN_PROGRESS',
     max_delegation_depth INTEGER DEFAULT 3,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     task_type TEXT DEFAULT 'VISIT',
@@ -223,7 +223,7 @@ export const DATABASE_BASELINE_SQL = `
     updated_student_address TEXT,
     updated_lat REAL,
     updated_lng REAL,
-    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    submitted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS case_reviews (
@@ -232,7 +232,7 @@ export const DATABASE_BASELINE_SQL = `
     review_action TEXT NOT NULL,
     review_note TEXT,
     reviewed_by TEXT,
-    reviewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    reviewed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS student_term (
@@ -303,7 +303,7 @@ export const DATABASE_BASELINE_SQL = `
       "AttendanceDate"      DATE NOT NULL,
       "Period"              INT NOT NULL,
       "AttendanceStatus"    SMALLINT NOT NULL,
-      "RecordedAt"          TIMESTAMP DEFAULT NOW(),
+      "RecordedAt"          TIMESTAMPTZ DEFAULT NOW(),
       "RecordedBy"          VARCHAR(100)
   );
 
