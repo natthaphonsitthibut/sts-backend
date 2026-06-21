@@ -211,10 +211,13 @@ export class UsersRepository {
             GROUP BY role
           ) u ON u.role = r.name
           LEFT JOIN (
-            SELECT login_role, COUNT(*) AS login_link_count
-            FROM task_links
-            WHERE login_role IS NOT NULL
-            GROUP BY login_role
+            SELECT tl.login_role, COUNT(*) AS login_link_count
+            FROM task_links tl
+            JOIN tasks t ON t.id = tl.task_id
+            WHERE tl.login_role IS NOT NULL
+              AND tl.deleted_at IS NULL
+              AND t.deleted_at IS NULL
+            GROUP BY tl.login_role
           ) tl ON tl.login_role = r.name
           ORDER BY r.rank DESC, r.name ASC
         `

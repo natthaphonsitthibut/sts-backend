@@ -3,6 +3,7 @@ import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
@@ -15,6 +16,7 @@ export class TaskLifecycleService {
   constructor(
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
@@ -324,10 +326,22 @@ export class TaskLifecycleService {
     }
   }
 
-  async deleteTask(taskId: string) {
+  async deleteTask(taskId: string, actor?: ActorContext, ip?: string | null) {
     try {
-      const result = await this.taskRepository.deleteTask(taskId);
-      return { success: true, rowCount: result.rowCount ?? 0 };
+      const actorId = resolveAuditActorId(actor);
+      const result = await this.taskRepository.deleteTask(taskId, actorId);
+      const rowCount = result.rowCount ?? 0;
+      if (rowCount > 0) {
+        await this.auditLog.record({
+          action: 'TASK_DELETE',
+          actorUserId: actorId,
+          actorLabel: actor?.username,
+          targetType: 'task',
+          targetId: taskId,
+          ip: ip ?? null,
+        });
+      }
+      return { success: true, rowCount };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`deleteTask error: ${message}`);

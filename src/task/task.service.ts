@@ -47,8 +47,8 @@ export class TaskService {
     return await this.taskAccessService.getLoginLinks(actor, filters);
   }
 
-  async deleteTask(taskId: string) {
-    return await this.taskLifecycleService.deleteTask(taskId);
+  async deleteTask(taskId: string, actor?: ActorContext, ip?: string | null) {
+    return await this.taskLifecycleService.deleteTask(taskId, actor, ip);
   }
 
   async getTaskStudents(token: string) {

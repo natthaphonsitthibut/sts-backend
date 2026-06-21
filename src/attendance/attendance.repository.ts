@@ -237,7 +237,7 @@ export class AttendanceRepository {
   }
 
   async listAttendanceTasks(userScope?: DataScope): Promise<AttendanceTaskRow[]> {
-    const conditions = [`t.task_type = 'ATTENDANCE'`];
+    const conditions = [`t.task_type = 'ATTENDANCE'`, 't.deleted_at IS NULL'];
     let query = `
       SELECT
         t.id as task_id,
@@ -257,7 +257,7 @@ export class AttendanceRepository {
       FROM tasks t
       LEFT JOIN schools sc ON sc.id = t.target_school_id
       LEFT JOIN grade_levels gl ON gl.label = t.target_grade
-      LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.status = 'ACTIVE'
+      LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.status = 'ACTIVE' AND tl.deleted_at IS NULL
     `;
     const params: unknown[] = [];
 

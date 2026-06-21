@@ -526,6 +526,8 @@ export class TaskRepository {
       JOIN tasks t ON t.id = tl.task_id
       LEFT JOIN schools s ON s.id = t.target_school_id
       WHERE tl.token_hash = $1
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
     `,
       [tokenHash],
     );
@@ -539,7 +541,7 @@ export class TaskRepository {
       SELECT c.*
       FROM cases c
       JOIN tasks t ON t.case_id = c.id
-      WHERE t.id = $1 AND c.deleted_at IS NULL
+      WHERE t.id = $1 AND c.deleted_at IS NULL AND t.deleted_at IS NULL
     `,
       [taskId],
     );
@@ -568,6 +570,8 @@ export class TaskRepository {
       JOIN tasks t ON t.id = tl.task_id
       LEFT JOIN roles r ON r.name = tl.login_role
       WHERE t.task_type = 'LOGIN'
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
       ORDER BY t.created_at DESC
     `);
 
@@ -578,7 +582,11 @@ export class TaskRepository {
     filters: LoginLinkListFilters,
   ): Promise<{ rows: QueryResultRow[]; totalCount: number; summary: LoginLinkSummary }> {
     const params: unknown[] = [];
-    const policyConditions: string[] = [`t.task_type = 'LOGIN'`];
+    const policyConditions: string[] = [
+      `t.task_type = 'LOGIN'`,
+      `tl.deleted_at IS NULL`,
+      `t.deleted_at IS NULL`,
+    ];
     const linkStateSql = `
       CASE
         WHEN tl.admin_locked = 1 THEN 'LOCKED'
@@ -712,8 +720,24 @@ export class TaskRepository {
     };
   }
 
-  async deleteTask(taskId: string): Promise<QueryResultLike> {
-    return await this.query(`DELETE FROM tasks WHERE id = $1`, [taskId]);
+  /**
+   * Soft-delete the whole task tree: tombstone the task and its delegation
+   * links in one transaction so the accountability chain survives for audit
+   * and recovery (was a hard `DELETE FROM tasks` that cascade-purged links).
+   * task_submissions are FK-protected and hidden via their join to a live link.
+   * Idempotent via `deleted_at IS NULL`; returns rows affected on the task.
+   */
+  async deleteTask(taskId: string, actorId?: number | null): Promise<QueryResultLike> {
+    return await this.withTransaction(async (executor) => {
+      await executor.query(
+        `UPDATE task_links SET deleted_at = now(), deleted_by = $2 WHERE task_id = $1 AND deleted_at IS NULL`,
+        [taskId, actorId ?? null],
+      );
+      return await executor.query(
+        `UPDATE tasks SET deleted_at = now(), deleted_by = $2 WHERE id = $1 AND deleted_at IS NULL`,
+        [taskId, actorId ?? null],
+      );
+    });
   }
 
   async listTaskStudents(filters: TaskStudentFilters): Promise<QueryResultRow[]> {
@@ -797,6 +821,7 @@ export class TaskRepository {
       FROM tasks t
       LEFT JOIN cases c ON c.id = t.case_id AND c.deleted_at IS NULL
       WHERE t.id = $1
+        AND t.deleted_at IS NULL
         AND (t.case_id IS NULL OR c.id IS NOT NULL)${scopeSql}
     `,
       [taskId, ...scopeQuery.params],
@@ -822,6 +847,7 @@ export class TaskRepository {
         tl.delegation_depth
       FROM task_links tl
       WHERE tl.task_id = $1
+        AND tl.deleted_at IS NULL
       ORDER BY tl.delegation_depth ASC
     `,
       [taskId],
@@ -845,6 +871,7 @@ export class TaskRepository {
         photo_paths
       FROM task_submissions
       WHERE task_link_id = $1
+        AND deleted_at IS NULL
     `,
       [linkId],
     );
@@ -863,6 +890,8 @@ export class TaskRepository {
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       WHERE tl.token_hash = $1
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
     `,
       [tokenHash],
     );
@@ -934,10 +963,13 @@ export class TaskRepository {
   }
 
   async updateTaskStatus(taskId: string, status: string, executor?: QueryExecutor): Promise<void> {
-    await this.getExecutor(executor).query(`UPDATE tasks SET status = $1 WHERE id = $2`, [
-      status,
-      taskId,
-    ]);
+    // `deleted_at IS NULL` guard: if the task was tombstoned between an earlier
+    // token validation and this write (submit/delegate race), the status change
+    // no-ops instead of mutating a deleted row.
+    await this.getExecutor(executor).query(
+      `UPDATE tasks SET status = $1 WHERE id = $2 AND deleted_at IS NULL`,
+      [status, taskId],
+    );
   }
 
   async updateTaskLinkStatus(
@@ -945,10 +977,30 @@ export class TaskRepository {
     status: string,
     executor?: QueryExecutor,
   ): Promise<void> {
-    await this.getExecutor(executor).query(`UPDATE task_links SET status = $1 WHERE id = $2`, [
-      status,
-      linkId,
-    ]);
+    await this.getExecutor(executor).query(
+      `UPDATE task_links SET status = $1 WHERE id = $2 AND deleted_at IS NULL`,
+      [status, linkId],
+    );
+  }
+
+  /**
+   * Lock a link row and confirm the link + its parent task are both live.
+   * Returns null if either is tombstoned. Call at the start of a submit/write
+   * transaction so an admin delete that commits after token validation can't be
+   * raced: deleteTask's UPDATE and this `FOR UPDATE` serialize on the same row.
+   */
+  async lockLiveTaskLink(linkId: string, executor: QueryExecutor): Promise<QueryResultRow | null> {
+    const result = await executor.query(
+      `SELECT tl.id
+       FROM task_links tl
+       JOIN tasks t ON t.id = tl.task_id
+       WHERE tl.id = $1
+         AND tl.deleted_at IS NULL
+         AND t.deleted_at IS NULL
+       FOR UPDATE OF tl`,
+      [linkId],
+    );
+    return result.rows[0] || null;
   }
 
   async findStudentTermMetadata(
@@ -1049,14 +1101,17 @@ export class TaskRepository {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
-        id,
-        assigned_to_email,
-        otp_code,
-        otp_expires_at,
-        otp_attempts,
-        otp_locked_until
-      FROM task_links
-      WHERE token_hash = $1
+        tl.id,
+        tl.assigned_to_email,
+        tl.otp_code,
+        tl.otp_expires_at,
+        tl.otp_attempts,
+        tl.otp_locked_until
+      FROM task_links tl
+      JOIN tasks t ON t.id = tl.task_id
+      WHERE tl.token_hash = $1
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
     `,
       [tokenHash],
     );
@@ -1077,14 +1132,17 @@ export class TaskRepository {
     const result = await executor.query(
       `
       SELECT
-        id,
-        otp_code,
-        otp_expires_at,
-        otp_attempts,
-        otp_locked_until
-      FROM task_links
-      WHERE token_hash = $1
-      FOR UPDATE
+        tl.id,
+        tl.otp_code,
+        tl.otp_expires_at,
+        tl.otp_attempts,
+        tl.otp_locked_until
+      FROM task_links tl
+      JOIN tasks t ON t.id = tl.task_id
+      WHERE tl.token_hash = $1
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
+      FOR UPDATE OF tl
     `,
       [tokenHash],
     );
@@ -1159,6 +1217,8 @@ export class TaskRepository {
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       WHERE tl.id = $1
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
     `,
       [linkId],
     );
@@ -1200,6 +1260,8 @@ export class TaskRepository {
       LEFT JOIN schools s ON s.id = t.target_school_id
       LEFT JOIN roles r ON r.name = COALESCE(NULLIF(TRIM(tl.login_role), ''), 'TEACHER')
       WHERE tl.id = $1
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
     `,
       [linkId],
     );
@@ -1260,7 +1322,7 @@ export class TaskRepository {
     // The list fans out one row per (case, task); count joins tasks the same way
     // so the total matches the rows actually paged.
     const countResult = await this.query<CountRow>(
-      `SELECT count(*) FROM cases c LEFT JOIN tasks t ON t.case_id = c.id ${whereSql}`,
+      `SELECT count(*) FROM cases c LEFT JOIN tasks t ON t.case_id = c.id AND t.deleted_at IS NULL ${whereSql}`,
       params,
     );
     const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
@@ -1311,7 +1373,7 @@ export class TaskRepository {
             )
         ) candidate
       ) student_match ON true
-      LEFT JOIN tasks t ON t.case_id = c.id
+      LEFT JOIN tasks t ON t.case_id = c.id AND t.deleted_at IS NULL
       LEFT JOIN LATERAL (
         SELECT
           CASE
@@ -1322,6 +1384,7 @@ export class TaskRepository {
         FROM task_links latest_active_link
         WHERE latest_active_link.task_id = t.id
           AND latest_active_link.status = 'ACTIVE'
+          AND latest_active_link.deleted_at IS NULL
         ORDER BY latest_active_link.delegation_depth DESC, latest_active_link.created_at DESC
         LIMIT 1
       ) link_state_snapshot ON true
@@ -1331,6 +1394,7 @@ export class TaskRepository {
         WHERE task_id = t.id
           AND status = 'ACTIVE'
           AND expires_at > NOW()
+          AND deleted_at IS NULL
         ORDER BY delegation_depth DESC
         LIMIT 1
       ) tl ON true
@@ -1388,7 +1452,9 @@ export class TaskRepository {
       JOIN cases c ON c.id = t.case_id
       WHERE tl.status = 'ACTIVE'
         AND tl.expires_at > NOW()
-        AND c.deleted_at IS NULL${scopeSql}
+        AND c.deleted_at IS NULL
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL${scopeSql}
     `,
       scopeQuery.params,
     );
@@ -1414,6 +1480,8 @@ export class TaskRepository {
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       WHERE tl.token_hash = $1
+        AND tl.deleted_at IS NULL
+        AND t.deleted_at IS NULL
     `,
       [tokenHash],
     );
@@ -1459,16 +1527,19 @@ export class TaskRepository {
         t.id AS task_id,
         t.created_at,
         tl.assigned_to_name AS initial_assignee,
-        (SELECT COUNT(*) FROM task_links WHERE task_id = t.id) AS link_count,
+        (SELECT COUNT(*) FROM task_links WHERE task_id = t.id AND deleted_at IS NULL) AS link_count,
         EXISTS(
           SELECT 1
           FROM task_links tl2
           JOIN task_submissions ts ON ts.task_link_id = tl2.id
           WHERE tl2.task_id = t.id
+            AND tl2.deleted_at IS NULL
+            AND ts.deleted_at IS NULL
         ) AS has_submission
       FROM tasks t
-      LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.delegation_depth = 0
+      LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.delegation_depth = 0 AND tl.deleted_at IS NULL
       WHERE t.case_id = $1
+        AND t.deleted_at IS NULL
       ORDER BY t.created_at ASC
     `,
       [caseId],

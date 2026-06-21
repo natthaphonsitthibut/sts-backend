@@ -215,6 +215,8 @@ export class AuthActorService {
           JOIN tasks t ON t.id = tl.task_id
           LEFT JOIN roles r ON r.name = tl.login_role
           WHERE tl.token_hash = $1
+            AND tl.deleted_at IS NULL
+            AND t.deleted_at IS NULL
         `,
         [tokenHash],
       )) as QueryResult<MagicLinkActorRow>;

@@ -19,6 +19,7 @@ export type AuditAction =
   | 'ROLE_GROUP_DELETE'
   | 'CASE_CLOSE'
   | 'CASE_FORWARD'
+  | 'TASK_DELETE'
   | 'DELEGATION'
   | 'DATA_IMPORT'
   | 'MASTER_DATA_EDIT';

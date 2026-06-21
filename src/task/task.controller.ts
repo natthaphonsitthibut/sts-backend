@@ -148,7 +148,7 @@ export class TaskController {
   @Post('delete/:taskId')
   @Delete(':taskId')
   @UseGuards(AuthGuard)
-  async deleteTask(@Param('taskId') taskId: string) {
-    return await this.taskService.deleteTask(taskId);
+  async deleteTask(@Param('taskId') taskId: string, @Req() req: RequestWithActor) {
+    return await this.taskService.deleteTask(taskId, req.user, req.ip ?? null);
   }
 }

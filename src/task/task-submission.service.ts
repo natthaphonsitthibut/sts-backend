@@ -151,6 +151,10 @@ export class TaskSubmissionService {
       }
 
       await this.taskRepository.withTransaction(async (executor) => {
+        const live = await this.taskRepository.lockLiveTaskLink(String(link.link_id), executor);
+        if (!live) {
+          throw new ConflictException('ลิงก์นี้ถูกลบแล้ว');
+        }
         for (const record of attendanceRecords) {
           const studentId = typeof record.student_id === 'string' ? record.student_id : '';
           if (!studentId) {
@@ -213,6 +217,10 @@ export class TaskSubmissionService {
       }
 
       await this.taskRepository.withTransaction(async (executor) => {
+        const live = await this.taskRepository.lockLiveTaskLink(String(link.link_id), executor);
+        if (!live) {
+          throw new ConflictException('ลิงก์นี้ถูกลบแล้ว');
+        }
         await this.taskRepository.insertTaskSubmission(
           {
             linkId: String(link.link_id),
