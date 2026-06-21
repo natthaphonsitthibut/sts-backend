@@ -550,35 +550,6 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
-  async listLoginLinks(): Promise<QueryResultRow[]> {
-    const result = await this.query<QueryResultRow>(`
-      SELECT
-        tl.id,
-        tl.task_id,
-        tl.assigned_to_name,
-        tl.assigned_to_email,
-        tl.expires_at,
-        tl.status,
-        tl.magic_link,
-        tl.admin_locked,
-        tl.login_role,
-        tl.login_permissions,
-        tl.login_data_scope,
-        tl.created_by,
-        r.label AS login_role_label,
-        t.created_at
-      FROM task_links tl
-      JOIN tasks t ON t.id = tl.task_id
-      LEFT JOIN roles r ON r.name = tl.login_role
-      WHERE t.task_type = 'LOGIN'
-        AND tl.deleted_at IS NULL
-        AND t.deleted_at IS NULL
-      ORDER BY t.created_at DESC
-    `);
-
-    return result.rows;
-  }
-
   async listLoginLinksPaginated(
     filters: LoginLinkListFilters,
   ): Promise<{ rows: QueryResultRow[]; totalCount: number; summary: LoginLinkSummary }> {

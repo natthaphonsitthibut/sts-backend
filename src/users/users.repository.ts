@@ -238,15 +238,6 @@ export class UsersRepository {
     return result.rows;
   }
 
-  async listUsers(): Promise<HydratableUserRow[]> {
-    const result = await this.query<HydratableUserRow>(`
-      ${this.userSelectSql}
-      ORDER BY u.created_at DESC
-    `);
-
-    return result.rows;
-  }
-
   async listUsersPaginated(
     filters: UserListFilters,
   ): Promise<{ rows: HydratableUserRow[]; totalCount: number }> {
