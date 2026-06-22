@@ -24,8 +24,10 @@ interface StudentAuthRow extends Record<string, unknown> {
 
 interface StudentVirtualTokenPayload {
   source: 'THAID_MOCK';
-  personId: string;
-  studentUuid?: string;
+  // Identity on the wire is the opaque surrogate, never the national id. The
+  // PersonID stays server-side (looked up by uuid on demand) so it never rides
+  // in the bearer token the client holds.
+  studentUuid: string;
   roles: string[];
   permissions: string[];
   issuedAt: number;
@@ -74,11 +76,12 @@ export class StudentAuthService {
       throw new NotFoundException('เลขบัตรนี้ยังไม่มีข้อมูลนักเรียนในระบบ');
     }
 
-    const virtualAuthToken = this.issueVirtualStudentToken(
-      student.PersonID_Onec,
-      student.student_uuid ?? undefined,
-    );
-    const actor = this.buildStudentActor(student);
+    if (!student.student_uuid) {
+      throw new ServiceUnavailableException('ข้อมูลนักเรียนยังไม่มี surrogate id');
+    }
+    const studentUuid = student.student_uuid;
+    const virtualAuthToken = this.issueVirtualStudentToken(studentUuid);
+    const actor = this.buildStudentActor(student, studentUuid);
 
     return {
       ...actor,
@@ -94,13 +97,12 @@ export class StudentAuthService {
     }
 
     return {
-      id: this.buildVirtualStudentId(payload.personId),
-      username: payload.personId,
+      id: this.buildVirtualStudentId(payload.studentUuid),
+      username: payload.studentUuid,
       roles: payload.roles,
       permissions: payload.permissions,
       data_scope: { own_only: true },
       virtual_login: true,
-      PersonID_Onec: payload.personId,
       student_uuid: payload.studentUuid,
       auth_source: payload.source,
     };
@@ -133,20 +135,22 @@ export class StudentAuthService {
     return result.rows[0] || null;
   }
 
-  private buildStudentActor(student: StudentAuthRow): AuthenticatedRequestUser & {
+  private buildStudentActor(
+    student: StudentAuthRow,
+    studentUuid: string,
+  ): AuthenticatedRequestUser & {
     FirstName: string | null;
     LastName: string | null;
     affiliation: string | null;
   } {
     return {
-      id: this.buildVirtualStudentId(student.PersonID_Onec),
-      username: student.PersonID_Onec,
+      id: this.buildVirtualStudentId(studentUuid),
+      username: studentUuid,
       roles: [STUDENT_ROLE],
       permissions: [...STUDENT_PERMISSIONS],
       data_scope: { own_only: true },
       virtual_login: true,
-      PersonID_Onec: student.PersonID_Onec,
-      student_uuid: student.student_uuid ?? undefined,
+      student_uuid: studentUuid,
       FirstName: normalizeNamePart(student.FirstName_Onec),
       LastName: normalizeNamePart(student.LastName_Onec),
       affiliation: normalizeNamePart(student.school_name),
@@ -154,11 +158,10 @@ export class StudentAuthService {
     };
   }
 
-  private issueVirtualStudentToken(personId: string, studentUuid?: string): string {
+  private issueVirtualStudentToken(studentUuid: string): string {
     const issuedAt = Date.now();
     const payload: StudentVirtualTokenPayload = {
       source: 'THAID_MOCK',
-      personId,
       studentUuid,
       roles: [STUDENT_ROLE],
       permissions: [...STUDENT_PERMISSIONS],
@@ -195,7 +198,7 @@ export class StudentAuthService {
       const decoded = JSON.parse(payload) as Partial<StudentVirtualTokenPayload>;
       if (
         decoded.source !== 'THAID_MOCK' ||
-        typeof decoded.personId !== 'string' ||
+        typeof decoded.studentUuid !== 'string' ||
         !Array.isArray(decoded.roles) ||
         !Array.isArray(decoded.permissions) ||
         typeof decoded.expiresAt !== 'number' ||
@@ -206,8 +209,7 @@ export class StudentAuthService {
 
       return {
         source: decoded.source,
-        personId: decoded.personId,
-        studentUuid: typeof decoded.studentUuid === 'string' ? decoded.studentUuid : undefined,
+        studentUuid: decoded.studentUuid,
         roles: decoded.roles.filter(
           (role): role is string => typeof role === 'string' && role.trim().length > 0,
         ),
@@ -223,8 +225,12 @@ export class StudentAuthService {
     }
   }
 
-  private buildVirtualStudentId(personId: string): number {
-    const parsed = Number.parseInt(hashToken(personId).slice(0, 8), 16);
-    return Number.isFinite(parsed) && parsed > 0 ? -parsed : -1;
+  private buildVirtualStudentId(key: string): number {
+    // Stable synthetic id for a virtual student. Bound it into PostgreSQL int4
+    // range (it keys the reveal-window lookup, an int column) so a large hash
+    // never overflows. Negative to stay clear of real users.id values.
+    const parsed = Number.parseInt(hashToken(key).slice(0, 8), 16);
+    const bounded = Number.isFinite(parsed) ? parsed % 0x7fffffff : 0;
+    return bounded > 0 ? -bounded : -1;
   }
 }
