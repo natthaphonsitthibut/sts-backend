@@ -1331,7 +1331,7 @@ export class TaskRepository {
       LEFT JOIN LATERAL (
         SELECT
           CASE
-            WHEN COUNT(*) = 1 THEN MAX(candidate.student_uuid)
+            WHEN COUNT(*) = 1 THEN (array_agg(candidate.student_uuid))[1]
             ELSE NULL
           END AS student_id
         FROM (
