@@ -16,6 +16,7 @@ import { authConfig } from '../config/auth.config';
 
 interface StudentAuthRow extends Record<string, unknown> {
   PersonID_Onec: string;
+  student_uuid?: string | null;
   FirstName_Onec?: string | null;
   LastName_Onec?: string | null;
   school_name?: string | null;
@@ -24,6 +25,7 @@ interface StudentAuthRow extends Record<string, unknown> {
 interface StudentVirtualTokenPayload {
   source: 'THAID_MOCK';
   personId: string;
+  studentUuid?: string;
   roles: string[];
   permissions: string[];
   issuedAt: number;
@@ -72,7 +74,10 @@ export class StudentAuthService {
       throw new NotFoundException('เลขบัตรนี้ยังไม่มีข้อมูลนักเรียนในระบบ');
     }
 
-    const virtualAuthToken = this.issueVirtualStudentToken(student.PersonID_Onec);
+    const virtualAuthToken = this.issueVirtualStudentToken(
+      student.PersonID_Onec,
+      student.student_uuid ?? undefined,
+    );
     const actor = this.buildStudentActor(student);
 
     return {
@@ -96,6 +101,7 @@ export class StudentAuthService {
       data_scope: { own_only: true },
       virtual_login: true,
       PersonID_Onec: payload.personId,
+      student_uuid: payload.studentUuid,
       auth_source: payload.source,
     };
   }
@@ -112,6 +118,7 @@ export class StudentAuthService {
       `
         SELECT
           s."PersonID_Onec",
+          s.student_uuid,
           s."FirstName_Onec",
           s."LastName_Onec",
           sc.name AS school_name
@@ -139,6 +146,7 @@ export class StudentAuthService {
       data_scope: { own_only: true },
       virtual_login: true,
       PersonID_Onec: student.PersonID_Onec,
+      student_uuid: student.student_uuid ?? undefined,
       FirstName: normalizeNamePart(student.FirstName_Onec),
       LastName: normalizeNamePart(student.LastName_Onec),
       affiliation: normalizeNamePart(student.school_name),
@@ -146,11 +154,12 @@ export class StudentAuthService {
     };
   }
 
-  private issueVirtualStudentToken(personId: string): string {
+  private issueVirtualStudentToken(personId: string, studentUuid?: string): string {
     const issuedAt = Date.now();
     const payload: StudentVirtualTokenPayload = {
       source: 'THAID_MOCK',
       personId,
+      studentUuid,
       roles: [STUDENT_ROLE],
       permissions: [...STUDENT_PERMISSIONS],
       issuedAt,
@@ -198,6 +207,7 @@ export class StudentAuthService {
       return {
         source: decoded.source,
         personId: decoded.personId,
+        studentUuid: typeof decoded.studentUuid === 'string' ? decoded.studentUuid : undefined,
         roles: decoded.roles.filter(
           (role): role is string => typeof role === 'string' && role.trim().length > 0,
         ),

@@ -124,7 +124,7 @@ export class StudentsRepository {
     const result = await this.query<StudentListRow>(
       `
         SELECT
-          s."PersonID_Onec" as id,
+          s.student_uuid as id,
           (s."FirstName_Onec" || ' ' || s."LastName_Onec") as name,
           COALESCE(gl.label, 'ไม่ทราบ') as grade,
           s."RoomID_Onec"::text as room,
@@ -252,6 +252,26 @@ export class StudentsRepository {
 
     const result = await this.query<StudentDetailRow>(query, params);
     return result.rows[0] || null;
+  }
+
+  /**
+   * Reverse-resolve a client-facing surrogate `student_uuid` to its internal
+   * `PersonID_Onec`. Returns null for a non-uuid input (so a malformed route
+   * param surfaces as not-found instead of a Postgres uuid-syntax error) or
+   * when no student matches. Scope is NOT applied here — callers re-apply it on
+   * the scoped query that follows (e.g. findStudentById).
+   */
+  async getPersonIdByStudentUuid(uuid: string): Promise<string | null> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)) {
+      return null;
+    }
+
+    const result = await this.query<{ PersonID_Onec: string }>(
+      'SELECT "PersonID_Onec" FROM student_term WHERE student_uuid = $1 LIMIT 1',
+      [uuid],
+    );
+
+    return result.rows[0]?.PersonID_Onec ?? null;
   }
 
   /** Append one immutable PII-reveal record to the access log. */

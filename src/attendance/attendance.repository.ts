@@ -132,7 +132,7 @@ export class AttendanceRepository {
     }
     let query = `
       SELECT
-        s."PersonID_Onec" as id,
+        s.student_uuid as id,
         (s."FirstName_Onec" || ' ' || s."LastName_Onec") as name,
         COALESCE(gl.label, 'ไม่ทราบ') as grade,
         s."RoomID_Onec"::text as room,
@@ -600,6 +600,34 @@ export class AttendanceRepository {
     );
 
     return result.rows[0]?.student_uuid ?? null;
+  }
+
+  /**
+   * Batch-resolve student_uuid → PersonID_Onec for a list of uuids.
+   * Returns a Map<uuid, personId> for all uuids that exist in student_term.
+   * Uuids not present in the result are unknown/out-of-scope.
+   */
+  async getPersonIdsByStudentUuids(
+    uuids: string[],
+    executor?: QueryExecutor,
+  ): Promise<Map<string, string>> {
+    if (uuids.length === 0) {
+      return new Map();
+    }
+
+    const result = await this.getExecutor(executor).query<{
+      student_uuid: string;
+      person_id: string;
+    }>(
+      'SELECT student_uuid, "PersonID_Onec" AS person_id FROM student_term WHERE student_uuid = ANY($1::uuid[])',
+      [uuids],
+    );
+
+    const map = new Map<string, string>();
+    for (const row of result.rows) {
+      map.set(row.student_uuid, row.person_id);
+    }
+    return map;
   }
 
   async getAlertTriggerType(): Promise<string> {

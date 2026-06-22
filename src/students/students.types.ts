@@ -30,6 +30,7 @@ export interface StudentListRow extends Record<string, unknown> {
 
 export interface StudentDetailRow extends Record<string, unknown> {
   PersonID_Onec: string;
+  student_uuid?: string | null;
   grade?: string | null;
   room?: string | null;
   school_name?: string | null;

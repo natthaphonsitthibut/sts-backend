@@ -6,6 +6,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
@@ -72,8 +73,7 @@ export class GetRoomsQueryDto {
 }
 
 export class AttendanceRecordDto {
-  @IsString()
-  @IsNotEmpty()
+  @IsUUID()
   student_id!: string;
 
   @IsString()

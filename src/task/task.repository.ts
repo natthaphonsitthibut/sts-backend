@@ -718,8 +718,8 @@ export class TaskRepository {
 
   async listTaskStudents(filters: TaskStudentFilters): Promise<QueryResultRow[]> {
     let query = `
-      SELECT DISTINCT ON (s."PersonID_Onec")
-        s."PersonID_Onec" AS id,
+      SELECT DISTINCT ON (s.student_uuid)
+        s.student_uuid AS id,
         (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS name,
         COALESCE(gl.label, 'ไม่ทราบ') AS grade,
         s."RoomID_Onec"::text AS room
@@ -748,7 +748,7 @@ export class TaskRepository {
       query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
-    query += ` ORDER BY s."PersonID_Onec" ASC`;
+    query += ` ORDER BY s.student_uuid ASC`;
 
     const result = await this.query<QueryResultRow>(query, params);
     return result.rows;
@@ -1611,6 +1611,15 @@ export class TaskRepository {
     );
 
     return (result.rows[0]?.student_uuid as string | null | undefined) ?? null;
+  }
+
+  async getPersonIdByStudentUuid(uuid: string, executor?: QueryExecutor): Promise<string | null> {
+    const result = await this.getExecutor(executor).query<QueryResultRow>(
+      `SELECT "PersonID_Onec" FROM student_term WHERE student_uuid = $1 LIMIT 1`,
+      [uuid],
+    );
+
+    return (result.rows[0]?.PersonID_Onec as string | null | undefined) ?? null;
   }
 
   private getExecutor(executor?: QueryExecutor): QueryExecutor {

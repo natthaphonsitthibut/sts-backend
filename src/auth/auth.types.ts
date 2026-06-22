@@ -18,6 +18,9 @@ export interface AuthenticatedRequestUser {
   data_scope?: DataScope;
   virtual_login?: boolean;
   PersonID_Onec?: string;
+  // Opaque surrogate id for a virtual-login student — what the client uses to
+  // address its own record (keeps the national id off the wire).
+  student_uuid?: string;
   FirstName?: string | null;
   LastName?: string | null;
   affiliation?: string | null;

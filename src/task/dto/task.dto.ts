@@ -7,6 +7,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
@@ -45,6 +46,7 @@ export class CreateTaskDto {
   student_name?: string | null;
 
   @IsOptional()
+  @IsUUID()
   student_id?: string | null;
 
   @IsOptional()
