@@ -3,10 +3,14 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
+  MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
@@ -33,6 +37,18 @@ export class GetSchoolsQueryDto {
   @IsOptional()
   @IsString()
   subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  searchTerm?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
 }
 
 export class GetStudentsQueryDto {

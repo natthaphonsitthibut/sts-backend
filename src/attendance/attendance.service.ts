@@ -18,8 +18,22 @@ export class AttendanceService {
     return await this.attendanceLookupService.getGradeLevels();
   }
 
-  async getSchools(province?: string, district?: string, subDistrict?: string) {
-    return await this.attendanceLookupService.getSchools(province, district, subDistrict);
+  async getSchools(
+    province?: string,
+    district?: string,
+    subDistrict?: string,
+    searchTerm?: string,
+    limit?: number,
+    userScope?: DataScope,
+  ) {
+    return await this.attendanceLookupService.getSchools(
+      province,
+      district,
+      subDistrict,
+      searchTerm,
+      limit,
+      userScope,
+    );
   }
 
   async getLocations() {

@@ -29,11 +29,17 @@ export class AttendanceController {
   }
 
   @Get('schools')
-  async getSchools(@Query() query: GetSchoolsQueryDto) {
+  async getSchools(
+    @Query() query: GetSchoolsQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
     return await this.attendanceService.getSchools(
       query.province,
       query.district,
       query.subDistrict,
+      query.searchTerm,
+      query.limit,
+      normalizeDataScope(actor?.data_scope),
     );
   }
 

@@ -64,10 +64,34 @@ export class AttendanceRepository {
     return result.rows;
   }
 
-  async listSchools(filters: SchoolFilters): Promise<SchoolRow[]> {
+  async listSchools(filters: SchoolFilters, userScope?: DataScope): Promise<SchoolRow[]> {
     let query = 'SELECT id, name, province, district, sub_district FROM schools';
     const params: unknown[] = [];
     const conditions: string[] = [];
+
+    // Scope enforcement: schools table only has school_id/province/district/sub_district
+    // dimensions — grade/room are not columns on schools, so only map the 4 supported
+    // dimensions. buildDataScopeQuery falls back to bare column names for unmapped
+    // dimensions (grade_level_id, room_id) which don't exist in schools, so we build
+    // scope conditions manually for only the supported columns instead.
+    if (userScope) {
+      if (userScope.school_ids && userScope.school_ids.length > 0) {
+        params.push(userScope.school_ids);
+        conditions.push(`id = ANY($${params.length}::int[])`);
+      }
+      if (userScope.provinces && userScope.provinces.length > 0) {
+        params.push(userScope.provinces);
+        conditions.push(`province = ANY($${params.length}::text[])`);
+      }
+      if (userScope.districts && userScope.districts.length > 0) {
+        params.push(userScope.districts);
+        conditions.push(`district = ANY($${params.length}::text[])`);
+      }
+      if (userScope.sub_districts && userScope.sub_districts.length > 0) {
+        params.push(userScope.sub_districts);
+        conditions.push(`sub_district = ANY($${params.length}::text[])`);
+      }
+    }
 
     if (filters.province) {
       params.push(filters.province);
@@ -81,12 +105,21 @@ export class AttendanceRepository {
       params.push(filters.subDistrict);
       conditions.push(`sub_district = $${params.length}`);
     }
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      conditions.push(`name ILIKE $${params.length}`);
+    }
 
     if (conditions.length > 0) {
       query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     query += ' ORDER BY name ASC';
+
+    const limit = filters.limit ?? 50;
+    params.push(limit);
+    query += ` LIMIT $${params.length}`;
+
     const result = await this.query<SchoolRow>(query, params);
 
     return result.rows;

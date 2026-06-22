@@ -18,6 +18,8 @@ export interface SchoolFilters {
   province?: string;
   district?: string;
   subDistrict?: string;
+  searchTerm?: string;
+  limit?: number;
 }
 
 export interface StudentFilters {
