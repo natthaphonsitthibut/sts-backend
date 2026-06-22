@@ -42,7 +42,6 @@ interface CreateCaseInput {
   studentLat: number | null;
   studentLng: number | null;
   reasonFlagged: string | null;
-  studentId: string | null;
   studentUuid: string | null;
   schoolId: number | null;
   createdBy: number | null;
@@ -98,7 +97,6 @@ interface TaskSubmissionInput {
 }
 
 interface AttendanceReplaceInput {
-  studentId: string;
   studentUuid: string;
   attendanceDate: string;
   attendanceStatus: number;
@@ -253,7 +251,7 @@ export class TaskRepository {
         EXISTS (
           SELECT 1
           FROM student_term case_scope_student
-          WHERE case_scope_student."PersonID_Onec" = ${caseAlias}.student_id
+          WHERE case_scope_student.student_uuid = ${caseAlias}.student_uuid
             AND ${studentConditions.join(' AND ')}
         )
       `);
@@ -384,13 +382,12 @@ export class TaskRepository {
         student_lat,
         student_lng,
         reason_flagged,
-        student_id,
         student_uuid,
         school_id,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
       RETURNING id
     `,
       [
@@ -400,7 +397,6 @@ export class TaskRepository {
         data.studentLat,
         data.studentLng,
         data.reasonFlagged,
-        data.studentId,
         data.studentUuid,
         data.schoolId,
         data.createdBy,
@@ -762,18 +758,18 @@ export class TaskRepository {
   ): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
-      SELECT DISTINCT ON (a."PersonID_Onec")
-        a."PersonID_Onec" AS student_id,
+      SELECT DISTINCT ON (a.student_uuid)
+        a.student_uuid AS student_id,
         (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS student_name,
         a."AttendanceStatus" AS status
       FROM attendance a
-      JOIN student_term s ON s."PersonID_Onec" = a."PersonID_Onec"
+      JOIN student_term s ON s.student_uuid = a.student_uuid
       WHERE a."AttendanceDate" = $1
         AND s."GradeLevelID_Onec" = (SELECT id FROM grade_levels WHERE label = $2)
         AND s."RoomID_Onec" = $3
         AND a."Period" = 1
         AND s."SchoolID_Onec" = $4
-      ORDER BY a."PersonID_Onec" ASC
+      ORDER BY a.student_uuid ASC
     `,
       [date, targetGrade, Number.parseInt(targetRoom || '0', 10), targetSchoolId],
     );
@@ -980,7 +976,7 @@ export class TaskRepository {
   }
 
   async findStudentTermMetadata(
-    studentId: string,
+    studentUuid: string,
     executor?: QueryExecutor,
   ): Promise<QueryResultRow | null> {
     const result = await this.getExecutor(executor).query(
@@ -992,9 +988,9 @@ export class TaskRepository {
         "Semester_Onec",
         "AcademicYear_Onec"
       FROM student_term
-      WHERE "PersonID_Onec" = $1
+      WHERE student_uuid = $1
     `,
-      [studentId],
+      [studentUuid],
     );
 
     return result.rows[0] || null;
@@ -1023,15 +1019,14 @@ export class TaskRepository {
     await queryExecutor.query(
       `
       DELETE FROM attendance
-      WHERE "AttendanceDate" = $1 AND "PersonID_Onec" = $2
+      WHERE "AttendanceDate" = $1 AND student_uuid = $2
     `,
-      [data.attendanceDate, data.studentId],
+      [data.attendanceDate, data.studentUuid],
     );
 
     await queryExecutor.query(
       `
       INSERT INTO attendance (
-        "PersonID_Onec",
         student_uuid,
         "SchoolID_Onec",
         "GradeLevelID_Onec",
@@ -1043,10 +1038,9 @@ export class TaskRepository {
         "Period",
         "RecordedBy"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `,
       [
-        data.studentId,
         data.studentUuid,
         data.schoolId,
         data.gradeLevelId,
@@ -1337,11 +1331,11 @@ export class TaskRepository {
       LEFT JOIN LATERAL (
         SELECT
           CASE
-            WHEN COUNT(*) = 1 THEN MAX(candidate."PersonID_Onec")
+            WHEN COUNT(*) = 1 THEN MAX(candidate.student_uuid)
             ELSE NULL
           END AS student_id
         FROM (
-          SELECT DISTINCT s."PersonID_Onec"
+          SELECT DISTINCT s.student_uuid
           FROM student_term s
           LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
           WHERE LOWER(TRIM(CONCAT_WS(' ', s."FirstName_Onec", s."LastName_Onec"))) = LOWER(TRIM(c.student_name))
@@ -1599,27 +1593,6 @@ export class TaskRepository {
     );
 
     return result.rows;
-  }
-
-  async getStudentUuidByPersonId(
-    personId: string,
-    executor?: QueryExecutor,
-  ): Promise<string | null> {
-    const result = await this.getExecutor(executor).query<QueryResultRow>(
-      `SELECT student_uuid FROM student_term WHERE "PersonID_Onec" = $1 LIMIT 1`,
-      [personId],
-    );
-
-    return (result.rows[0]?.student_uuid as string | null | undefined) ?? null;
-  }
-
-  async getPersonIdByStudentUuid(uuid: string, executor?: QueryExecutor): Promise<string | null> {
-    const result = await this.getExecutor(executor).query<QueryResultRow>(
-      `SELECT "PersonID_Onec" FROM student_term WHERE student_uuid = $1 LIMIT 1`,
-      [uuid],
-    );
-
-    return (result.rows[0]?.PersonID_Onec as string | null | undefined) ?? null;
   }
 
   private getExecutor(executor?: QueryExecutor): QueryExecutor {

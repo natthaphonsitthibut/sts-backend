@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
@@ -88,13 +88,13 @@ export class TaskLifecycleService {
 
   private async resolveCaseSchoolId(
     actor: ActorContext,
-    studentId: string | null,
+    studentUuid: string | null,
     targetSchoolId: number | null,
     executor: QueryExecutor,
   ): Promise<number | null> {
-    if (studentId) {
+    if (studentUuid) {
       const studentMetadata = await this.taskRepository.findStudentTermMetadata(
-        studentId,
+        studentUuid,
         executor,
       );
       const studentSchoolId = this.normalizeNumber(
@@ -228,35 +228,19 @@ export class TaskLifecycleService {
             );
           } else {
             const studentName = clean(data.student_name);
-            const incomingStudentUuid = clean(data.student_id) || null;
+            const studentUuid = clean(data.student_id) || null;
             if (!studentName) {
               throw new Error('student_name is required for Field Visit');
             }
 
-            // B1.3: client now sends student_uuid (opaque) instead of PersonID.
-            // Reverse-resolve uuid → PersonID once at entry; fail closed on unknown uuid.
-            let studentId: string | null = null;
-            if (incomingStudentUuid) {
-              const resolved = await this.taskRepository.getPersonIdByStudentUuid(
-                incomingStudentUuid,
-                executor,
-              );
-              if (!resolved) {
-                throw new BadRequestException('student_id ไม่พบในระบบ');
-              }
-              studentId = resolved;
-            }
-
             const caseSchoolId = await this.resolveCaseSchoolId(
               currentActor,
-              studentId,
+              studentUuid,
               resolvedTargetSchoolId,
               executor,
             );
             resolvedTargetSchoolId = resolvedTargetSchoolId ?? caseSchoolId;
 
-            // studentUuid is already known from the incoming picker value; pass it
-            // directly so cases.student_uuid ↔ cases.student_id stay consistent.
             caseId = await this.taskRepository.createCase(
               {
                 studentName,
@@ -265,8 +249,7 @@ export class TaskLifecycleService {
                 studentLat: this.normalizeNumber(data.student_lat),
                 studentLng: this.normalizeNumber(data.student_lng),
                 reasonFlagged: clean(data.reason_flagged),
-                studentId,
-                studentUuid: incomingStudentUuid,
+                studentUuid,
                 schoolId: caseSchoolId,
                 createdBy: resolveAuditActorId(currentActor),
               },

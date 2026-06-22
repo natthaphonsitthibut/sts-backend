@@ -65,10 +65,10 @@ export class AbsenceMonitorService {
           executor,
         );
 
-        const absentIdSet = new Set(
+        const absentUuidSet = new Set(
           absentStudents
-            .map((student) => this.normalizeText(student.person_id_onec))
-            .filter((id) => id.length > 0),
+            .map((student) => this.normalizeText(student.student_uuid))
+            .filter((uuid) => uuid.length > 0),
         );
         const absentNamesSet = new Set(
           absentStudents
@@ -79,19 +79,19 @@ export class AbsenceMonitorService {
         const openCases = await this.automationRepository.listOpenAbsenceCases(executor);
 
         for (const openCase of openCases) {
-          const caseStudentId = this.normalizeText(openCase.student_id);
+          const caseStudentUuid = this.normalizeText(openCase.student_uuid);
           const caseStudentName = this.normalizeText(openCase.student_name);
-          if (!caseStudentId && !caseStudentName) {
+          if (!caseStudentUuid && !caseStudentName) {
             continue; // ระบุตัวไม่ได้ → ไม่แตะ (รักษา guard เดิม)
           }
-          // id-first; ใช้ชื่อ fallback เฉพาะเคส legacy ที่ไม่มี student_id
-          const stillAbsent = caseStudentId
-            ? absentIdSet.has(caseStudentId)
+          // uuid-first; ใช้ชื่อ fallback เฉพาะเคส legacy ที่ไม่มี student_uuid
+          const stillAbsent = caseStudentUuid
+            ? absentUuidSet.has(caseStudentUuid)
             : absentNamesSet.has(caseStudentName);
           if (!stillAbsent) {
             await this.automationRepository.deleteOpenCaseById(openCase.id, executor);
             this.logger.log(
-              `Deleted / Canceled Case ${openCase.id} for ${caseStudentName || caseStudentId} due to attendance correction.`,
+              `Deleted / Canceled Case ${openCase.id} for ${caseStudentName || caseStudentUuid} due to attendance correction.`,
             );
           }
         }
@@ -108,7 +108,7 @@ export class AbsenceMonitorService {
           if (!studentName) {
             continue;
           }
-          const studentId = this.normalizeText(student.person_id_onec);
+          const studentUuid = this.normalizeText(student.student_uuid) || null;
           const schoolId =
             typeof student.school_id_onec === 'number' && Number.isFinite(student.school_id_onec)
               ? student.school_id_onec
@@ -117,7 +117,7 @@ export class AbsenceMonitorService {
           this.logger.log(`Checking existing cases for: ${studentName}`);
 
           const existingCaseId = await this.automationRepository.findOpenAbsenceCaseByStudent(
-            studentId,
+            studentUuid ?? '',
             studentName,
             schoolId,
             executor,
@@ -137,16 +137,9 @@ export class AbsenceMonitorService {
 
           this.logger.log(`Inserting Case for ${studentName} with Reason: ${reason}`);
 
-          // cases.student_uuid is NULLABLE; person_id_onec may be empty, so the
-          // resolved uuid may be null — pass through.
-          const studentUuid = studentId
-            ? await this.automationRepository.getStudentUuidByPersonId(studentId, executor)
-            : null;
-
           const caseId = await this.automationRepository.createAutomatedCase(
             {
               studentName,
-              studentId: studentId || null,
               studentUuid,
               schoolId,
               schoolName,

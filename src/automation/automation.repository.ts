@@ -59,24 +59,24 @@ export class AutomationRepository {
       `
         WITH ranked_attendance AS (
           SELECT
-            "PersonID_Onec",
+            student_uuid,
             "AttendanceDate",
             "AttendanceStatus",
             ROW_NUMBER() OVER (
-              PARTITION BY "PersonID_Onec"
+              PARTITION BY student_uuid
               ORDER BY "AttendanceDate" DESC, "AttendanceID" DESC
             ) AS rn
           FROM attendance
         ),
         recent_consecutive_absences AS (
-          SELECT "PersonID_Onec", COUNT(*) AS consecutive_days
+          SELECT student_uuid, COUNT(*) AS consecutive_days
           FROM ranked_attendance
           WHERE rn <= $1 AND "AttendanceStatus" = 2
-          GROUP BY "PersonID_Onec"
+          GROUP BY student_uuid
           HAVING COUNT(*) >= $1
         )
         SELECT
-          r."PersonID_Onec" AS person_id_onec,
+          r.student_uuid,
           r.consecutive_days::int AS consecutive_days,
           s."FirstName_Onec" AS first_name_onec,
           s."LastName_Onec" AS last_name_onec,
@@ -89,7 +89,7 @@ export class AutomationRepository {
           s."ProvinceNameThai_Onec" AS province_name_thai_onec,
           sc.name AS school_name
         FROM recent_consecutive_absences r
-        JOIN student_term s ON r."PersonID_Onec" = s."PersonID_Onec"
+        JOIN student_term s ON r.student_uuid = s.student_uuid
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       `,
       [thresholdDays],
@@ -102,7 +102,7 @@ export class AutomationRepository {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<OpenAbsenceCaseRow>(
       `
-        SELECT id, student_name, student_id
+        SELECT id, student_name, student_uuid
         FROM cases
         WHERE status = 'OPEN'
           AND deleted_at IS NULL
@@ -125,14 +125,14 @@ export class AutomationRepository {
   }
 
   async findOpenAbsenceCaseByStudent(
-    studentId: string,
+    studentUuid: string,
     studentName: string,
     schoolId: number | null,
     executor?: QueryExecutor,
   ): Promise<number | null> {
     const queryExecutor = this.getExecutor(executor);
-    // Match by stable student_id; fall back to name only for legacy rows
-    // created before student_id was populated (student_id IS NULL).
+    // Match by stable student_uuid; fall back to name only for legacy rows
+    // created before student_uuid was populated (student_uuid IS NULL).
     const result = await queryExecutor.query<CreatedCaseRow>(
       `
         SELECT id FROM cases
@@ -140,11 +140,11 @@ export class AutomationRepository {
           AND deleted_at IS NULL
           AND ($4::int IS NULL OR school_id = $4)
           AND (
-            (student_id IS NOT NULL AND student_id = $2)
-            OR (student_id IS NULL AND student_name = $3)
+            (student_uuid IS NOT NULL AND student_uuid = $2)
+            OR (student_uuid IS NULL AND student_name = $3)
           )
       `,
-      ['OPEN', studentId, studentName, schoolId],
+      ['OPEN', studentUuid, studentName, schoolId],
     );
 
     return result.rows[0]?.id ?? null;
@@ -159,7 +159,6 @@ export class AutomationRepository {
       `
         INSERT INTO cases (
           student_name,
-          student_id,
           student_uuid,
           school_id,
           student_school,
@@ -167,12 +166,11 @@ export class AutomationRepository {
           reason_flagged,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN')
+        VALUES ($1, $2, $3, $4, $5, $6, 'OPEN')
         RETURNING id
       `,
       [
         data.studentName,
-        data.studentId,
         data.studentUuid,
         data.schoolId,
         data.schoolName,
@@ -182,18 +180,5 @@ export class AutomationRepository {
     );
 
     return result.rows[0].id;
-  }
-
-  async getStudentUuidByPersonId(
-    personId: string,
-    executor?: QueryExecutor,
-  ): Promise<string | null> {
-    const queryExecutor = this.getExecutor(executor);
-    const result = await queryExecutor.query<{ student_uuid: string | null }>(
-      `SELECT student_uuid FROM student_term WHERE "PersonID_Onec" = $1 LIMIT 1`,
-      [personId],
-    );
-
-    return result.rows[0]?.student_uuid ?? null;
   }
 }

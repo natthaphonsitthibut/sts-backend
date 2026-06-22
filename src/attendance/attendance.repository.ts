@@ -141,13 +141,13 @@ export class AttendanceRepository {
         (
           SELECT COUNT(*)
           FROM attendance a
-          WHERE a."PersonID_Onec" = s."PersonID_Onec"
+          WHERE a.student_uuid = s.student_uuid
             AND a."AttendanceStatus" = 3
         ) as total_late,
         (
           SELECT COUNT(*)
           FROM attendance a
-          WHERE a."PersonID_Onec" = s."PersonID_Onec"
+          WHERE a.student_uuid = s.student_uuid
             AND a."AttendanceStatus" = 2
         ) as total_absent
       FROM student_term s
@@ -194,7 +194,7 @@ export class AttendanceRepository {
       query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
-    query += ' ORDER BY s."GradeLevelID_Onec" ASC, s."RoomID_Onec" ASC, s."PersonID_Onec" ASC';
+    query += ' ORDER BY s."GradeLevelID_Onec" ASC, s."RoomID_Onec" ASC, s.student_uuid ASC';
     const result = await this.query<AttendanceStudentRow>(query, params);
 
     return result.rows;
@@ -220,7 +220,7 @@ export class AttendanceRepository {
         s."RoomID_Onec"::text as room,
         a."AttendanceStatus" as status
       FROM attendance a
-      JOIN student_term s ON s."PersonID_Onec" = a."PersonID_Onec"
+      JOIN student_term s ON s.student_uuid = a.student_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       WHERE a."AttendanceDate" = $1
@@ -473,7 +473,7 @@ export class AttendanceRepository {
       `
         DELETE FROM attendance
         WHERE "AttendanceDate" = $1
-          AND "PersonID_Onec" = ANY($2::text[])
+          AND student_uuid = ANY($2::uuid[])
       `,
       [date, studentIds],
     );
@@ -493,7 +493,7 @@ export class AttendanceRepository {
           "AcademicYear_Onec",
           "Semester_Onec"
         FROM student_term
-        WHERE "PersonID_Onec" = $1
+        WHERE student_uuid = $1
       `,
       [studentId],
     );
@@ -517,7 +517,7 @@ export class AttendanceRepository {
     }
 
     const params: unknown[] = [studentIds];
-    const conditions: string[] = [`s."PersonID_Onec" = ANY($1::text[])`];
+    const conditions: string[] = [`s.student_uuid = ANY($1::uuid[])`];
 
     if (userScope) {
       const scopeResult = buildDataScopeQuery(
@@ -541,7 +541,7 @@ export class AttendanceRepository {
 
     const result = await this.getExecutor(executor).query<{ id: string }>(
       `
-        SELECT s."PersonID_Onec" AS id
+        SELECT s.student_uuid AS id
         FROM student_term s
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         WHERE ${conditions.join(' AND ')}
@@ -560,7 +560,7 @@ export class AttendanceRepository {
     await queryExecutor.query(
       `
         INSERT INTO attendance (
-          "PersonID_Onec",
+          student_uuid,
           "SchoolID_Onec",
           "GradeLevelID_Onec",
           "RoomID_Onec",
@@ -569,13 +569,12 @@ export class AttendanceRepository {
           "AttendanceDate",
           "Period",
           "AttendanceStatus",
-          "RecordedBy",
-          student_uuid
+          "RecordedBy"
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
-        data.studentId,
+        data.studentUuid,
         data.metadata.SchoolID_Onec,
         data.metadata.GradeLevelID_Onec,
         data.metadata.RoomID_Onec,
@@ -585,49 +584,8 @@ export class AttendanceRepository {
         data.period,
         data.statusCode,
         data.recordedBy,
-        data.studentUuid,
       ],
     );
-  }
-
-  async getStudentUuidByPersonId(
-    personId: string,
-    executor?: QueryExecutor,
-  ): Promise<string | null> {
-    const result = await this.getExecutor(executor).query<{ student_uuid: string }>(
-      'SELECT student_uuid FROM student_term WHERE "PersonID_Onec" = $1 LIMIT 1',
-      [personId],
-    );
-
-    return result.rows[0]?.student_uuid ?? null;
-  }
-
-  /**
-   * Batch-resolve student_uuid → PersonID_Onec for a list of uuids.
-   * Returns a Map<uuid, personId> for all uuids that exist in student_term.
-   * Uuids not present in the result are unknown/out-of-scope.
-   */
-  async getPersonIdsByStudentUuids(
-    uuids: string[],
-    executor?: QueryExecutor,
-  ): Promise<Map<string, string>> {
-    if (uuids.length === 0) {
-      return new Map();
-    }
-
-    const result = await this.getExecutor(executor).query<{
-      student_uuid: string;
-      person_id: string;
-    }>(
-      'SELECT student_uuid, "PersonID_Onec" AS person_id FROM student_term WHERE student_uuid = ANY($1::uuid[])',
-      [uuids],
-    );
-
-    const map = new Map<string, string>();
-    for (const row of result.rows) {
-      map.set(row.student_uuid, row.person_id);
-    }
-    return map;
   }
 
   async getAlertTriggerType(): Promise<string> {

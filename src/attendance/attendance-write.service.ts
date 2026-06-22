@@ -30,24 +30,8 @@ export class AttendanceWriteService {
       return { success: true, newCases: [] as NewCase[] };
     }
 
-    // Translate-at-entry: incoming student_id values are student_uuid (opaque).
-    // Resolve all uuids → PersonID in one batch query before any downstream logic.
-    // Fail closed: any uuid that doesn't resolve is treated identically to
-    // out-of-scope — we never reveal whether it exists.
-    const incomingUuids = normalizedRecords.map((record) => record.student_id);
-    const uuidToPersonId =
-      await this.attendanceRepository.getPersonIdsByStudentUuids(incomingUuids);
-    for (const uuid of incomingUuids) {
-      if (!uuidToPersonId.has(uuid)) {
-        throw new ForbiddenException('พบนักเรียนนอกขอบเขตของคุณ');
-      }
-    }
-    // Swap student_id from uuid to PersonID so all downstream logic is unchanged.
-    for (const record of normalizedRecords) {
-      record.student_id = uuidToPersonId.get(record.student_id)!;
-    }
-
     const today = getBangkokDateString();
+    // incoming student_id values are already student_uuid (client sends uuid directly)
     const studentIds = normalizedRecords.map((record) => record.student_id);
 
     // Enforce the actor's data scope on the write: every student must be within
@@ -79,15 +63,9 @@ export class AttendanceWriteService {
           continue;
         }
 
-        const studentUuid = await this.attendanceRepository.getStudentUuidByPersonId(
-          record.student_id,
-          executor,
-        );
-
         await this.attendanceRepository.insertAttendanceRecord(
           {
-            studentId: record.student_id,
-            studentUuid: studentUuid!,
+            studentUuid: record.student_id,
             date: today,
             statusCode: STATUS_CODE_MAP[record.status],
             recordedBy,

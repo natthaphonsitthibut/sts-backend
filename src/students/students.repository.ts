@@ -226,7 +226,7 @@ export class StudentsRepository {
       FROM student_term s
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
-      WHERE s."PersonID_Onec" = $1
+      WHERE s.student_uuid = $1
     `;
     const params: unknown[] = [id];
 
@@ -252,26 +252,6 @@ export class StudentsRepository {
 
     const result = await this.query<StudentDetailRow>(query, params);
     return result.rows[0] || null;
-  }
-
-  /**
-   * Reverse-resolve a client-facing surrogate `student_uuid` to its internal
-   * `PersonID_Onec`. Returns null for a non-uuid input (so a malformed route
-   * param surfaces as not-found instead of a Postgres uuid-syntax error) or
-   * when no student matches. Scope is NOT applied here — callers re-apply it on
-   * the scoped query that follows (e.g. findStudentById).
-   */
-  async getPersonIdByStudentUuid(uuid: string): Promise<string | null> {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)) {
-      return null;
-    }
-
-    const result = await this.query<{ PersonID_Onec: string }>(
-      'SELECT "PersonID_Onec" FROM student_term WHERE student_uuid = $1 LIMIT 1',
-      [uuid],
-    );
-
-    return result.rows[0]?.PersonID_Onec ?? null;
   }
 
   /** Append one immutable PII-reveal record to the access log. */
@@ -357,10 +337,10 @@ export class StudentsRepository {
         a."AttendanceDate" as date,
         a."AttendanceStatus" as status,
         a."Period" as period
-      FROM attendance a
-      JOIN student_term s ON s."PersonID_Onec" = a."PersonID_Onec"
+      FROM student_term s
+      JOIN attendance a ON a.student_uuid = s.student_uuid
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
-      WHERE a."PersonID_Onec" = $1
+      WHERE s.student_uuid = $1
     `;
     const params: unknown[] = [id];
 

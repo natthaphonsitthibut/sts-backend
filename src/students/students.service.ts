@@ -111,11 +111,11 @@ function buildPaginationMeta(page: number, limit: number, totalCount: number) {
 
 function isOwnOnlyStudentActor(
   actor?: AuthenticatedRequestUser,
-): actor is AuthenticatedRequestUser & { PersonID_Onec: string } {
+): actor is AuthenticatedRequestUser & { student_uuid: string } {
   return Boolean(
     actor?.roles.includes('STUDENT') &&
     actor.virtual_login &&
-    actor.PersonID_Onec &&
+    actor.student_uuid &&
     actor.data_scope?.own_only,
   );
 }
@@ -180,7 +180,7 @@ export class StudentsService {
 
     try {
       if (isOwnOnlyStudentActor(actor)) {
-        const ownStudent = await this.studentsRepository.findStudentById(actor.PersonID_Onec);
+        const ownStudent = await this.studentsRepository.findStudentById(actor.student_uuid);
         const data = ownStudent ? [mapDetailRowToListRow(ownStudent)] : [];
 
         return {
@@ -232,11 +232,8 @@ export class StudentsService {
 
   async findOne(id: string, actor?: AuthenticatedRequestUser, userScope?: DataScope) {
     try {
-      // The route `id` is now the opaque surrogate (student_uuid). Translate it
-      // to PersonID once at the entry; everything below stays PersonID-keyed.
-      const personId = await this.resolveStudentPersonId(id);
-      this.assertOwnStudentAccess(personId, actor);
-      const student = await this.studentsRepository.findStudentById(personId, userScope);
+      this.assertOwnStudentAccess(id, actor);
+      const student = await this.studentsRepository.findStudentById(id, userScope);
 
       if (!student) {
         throw new NotFoundException(`Student with ID ${id} not found`);
@@ -248,7 +245,7 @@ export class StudentsService {
         typeof actor?.id === 'number'
           ? await this.studentsRepository.listActiveRevealGroups(
               actor.id,
-              this.subjectRefFor(personId),
+              this.subjectRefFor(id),
               this.piiRuntimeConfig.revealTtlSeconds,
             )
           : [];
@@ -285,11 +282,10 @@ export class StudentsService {
     meta: PiiRevealRequestMeta,
   ): Promise<{ field_group: string; values: Record<string, unknown> }> {
     try {
-      const personId = await this.resolveStudentPersonId(id);
-      this.assertOwnStudentAccess(personId, actor);
+      this.assertOwnStudentAccess(id, actor);
 
       const group = dto.field_group as PiiFieldGroup;
-      const subjectRef = this.subjectRefFor(personId);
+      const subjectRef = this.subjectRefFor(id);
 
       // If this actor already revealed this group within the window, re-reveal is
       // a no-op log-wise (return the value, no new reason, no duplicate audit row).
@@ -316,7 +312,7 @@ export class StudentsService {
         }
       }
 
-      const student = await this.studentsRepository.findStudentById(personId, userScope);
+      const student = await this.studentsRepository.findStudentById(id, userScope);
       if (!student) {
         throw new NotFoundException(`Student with ID ${id} not found`);
       }
@@ -379,9 +375,8 @@ export class StudentsService {
     userScope?: DataScope,
   ) {
     try {
-      const personId = await this.resolveStudentPersonId(id);
-      this.assertOwnStudentAccess(personId, actor);
-      return await this.studentsRepository.listAttendanceByStudentId(personId, userScope);
+      this.assertOwnStudentAccess(id, actor);
+      return await this.studentsRepository.listAttendanceByStudentId(id, userScope);
     } catch (error) {
       const resolvedError = error as Error;
       this.logger.error(`findAttendanceByStudentId error: ${resolvedError.message}`);
@@ -398,31 +393,16 @@ export class StudentsService {
     return `This action removes a #${id} student`;
   }
 
-  /**
-   * Resolve a client-facing surrogate `student_uuid` to its internal PersonID.
-   * Throws NotFound for an unknown/malformed id so detail/reveal/attendance
-   * endpoints never key a query on a raw uuid.
-   */
-  private async resolveStudentPersonId(id: string): Promise<string> {
-    const personId = await this.studentsRepository.getPersonIdByStudentUuid(id);
-    if (!personId) {
-      throw new NotFoundException(`Student with ID ${id} not found`);
-    }
-    return personId;
-  }
-
-  private assertOwnStudentAccess(resolvedPersonId: string, actor?: AuthenticatedRequestUser): void {
+  private assertOwnStudentAccess(requestedUuid: string, actor?: AuthenticatedRequestUser): void {
     if (!isOwnOnlyStudentActor(actor)) {
       return;
     }
 
-    if (!actor.PersonID_Onec) {
+    if (!actor.student_uuid) {
       throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
     }
 
-    // resolvedPersonId is the internal PersonID — never echo it back in the
-    // response (it would leak another student's national id to an own-only user).
-    if (actor.PersonID_Onec !== resolvedPersonId) {
+    if (actor.student_uuid !== requestedUuid) {
       throw new NotFoundException('Student not found');
     }
   }

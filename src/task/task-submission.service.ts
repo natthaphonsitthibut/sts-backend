@@ -144,8 +144,8 @@ export class TaskSubmissionService {
       const allowedStudentIds = new Set(roster.map((student) => String(student.id)));
 
       for (const record of attendanceRecords) {
-        const studentId = typeof record.student_id === 'string' ? record.student_id : '';
-        if (!studentId || !allowedStudentIds.has(studentId)) {
+        const studentUuid = typeof record.student_id === 'string' ? record.student_id : '';
+        if (!studentUuid || !allowedStudentIds.has(studentUuid)) {
           throw new ForbiddenException('พบนักเรียนนอกขอบเขตของลิงก์นี้');
         }
       }
@@ -156,31 +156,19 @@ export class TaskSubmissionService {
           throw new ConflictException('ลิงก์นี้ถูกลบแล้ว');
         }
         for (const record of attendanceRecords) {
-          const studentId = typeof record.student_id === 'string' ? record.student_id : '';
-          if (!studentId) {
+          const studentUuid = typeof record.student_id === 'string' ? record.student_id : '';
+          if (!studentUuid) {
             continue;
           }
 
-          const student = await this.taskRepository.findStudentTermMetadata(studentId, executor);
+          const student = await this.taskRepository.findStudentTermMetadata(studentUuid, executor);
 
           if (!student) {
             continue;
           }
 
-          // attendance.student_uuid is NOT NULL; PersonID is FK-bound to
-          // student_term (the findStudentTermMetadata check above confirms the
-          // row exists), so the surrogate uuid always resolves here.
-          const studentUuid = await this.taskRepository.getStudentUuidByPersonId(
-            studentId,
-            executor,
-          );
-          if (!studentUuid) {
-            continue;
-          }
-
           await this.taskRepository.replaceAttendanceRecord(
             {
-              studentId,
               studentUuid,
               attendanceDate: today,
               attendanceStatus: this.resolveAttendanceStatus(record.status),
