@@ -27,9 +27,17 @@ export class RoleGroupsService {
     private readonly usersPolicyService: UsersPolicyService,
   ) {}
 
-  // Role definitions are a small, bounded set gated by permission policy
-  // (canManageRole / canGrantPermissions) that can't be expressed in SQL, so the
-  // policy filter runs in memory and the page is sliced from the filtered set.
+  // Role definitions are a small, bounded *config* set (tens of rows, bounded by
+  // design — not by population), so this is intentionally a Class-B bounded
+  // management catalog: the policy filter runs in memory and the page is sliced
+  // from the filtered set. Do NOT "optimize" this into SQL-level COUNT/LIMIT —
+  // visibility is gated per-actor by runtime policy (canManageRole /
+  // canGrantPermissions, which compare the actor's rank and grantable
+  // permissions), which cannot be expressed as plain column predicates.
+  // Pushing it into SQL would duplicate the security logic into a second source
+  // of truth and risk scope-bypass / totalCount divergence whenever the
+  // permission rules change. The contract (PaginatedSearchQueryDto + { success,
+  // data, meta }) is already uniform with /api/users.
   async getRoleGroups(actor?: ActorContext, options: RoleGroupListOptions = {}) {
     const definitions = await this.usersPolicyService.getRoleDefinitions(true);
 
