@@ -569,9 +569,10 @@ export class AttendanceRepository {
           "AttendanceDate",
           "Period",
           "AttendanceStatus",
-          "RecordedBy"
+          "RecordedBy",
+          student_uuid
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         data.studentId,
@@ -584,8 +585,21 @@ export class AttendanceRepository {
         data.period,
         data.statusCode,
         data.recordedBy,
+        data.studentUuid,
       ],
     );
+  }
+
+  async getStudentUuidByPersonId(
+    personId: string,
+    executor?: QueryExecutor,
+  ): Promise<string | null> {
+    const result = await this.getExecutor(executor).query<{ student_uuid: string }>(
+      'SELECT student_uuid FROM student_term WHERE "PersonID_Onec" = $1 LIMIT 1',
+      [personId],
+    );
+
+    return result.rows[0]?.student_uuid ?? null;
   }
 
   async getAlertTriggerType(): Promise<string> {

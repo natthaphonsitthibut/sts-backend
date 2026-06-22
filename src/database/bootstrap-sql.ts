@@ -377,6 +377,13 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS school_id INTEGER;
+  -- Surrogate-key FK to the opaque student UUID (B1.2). Nullable here: a fresh
+  -- seed loads from a dump that lacks the column, so it is backfilled from
+  -- student_term below. cases.student_uuid stays nullable (loose student_id has
+  -- no FK; some rows won't map); the migration enforces NOT NULL on
+  -- attendance.student_uuid for the migrated live DB.
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_uuid UUID;
+  ALTER TABLE attendance ADD COLUMN IF NOT EXISTS student_uuid UUID;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
@@ -386,8 +393,10 @@ export const DATABASE_BASELINE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_task_links_task_id ON task_links(task_id);
   CREATE INDEX IF NOT EXISTS idx_case_reviews_case_id ON case_reviews(case_id);
   CREATE INDEX IF NOT EXISTS idx_cases_school_id ON cases(school_id);
+  CREATE INDEX IF NOT EXISTS idx_cases_student_uuid ON cases(student_uuid);
   CREATE INDEX IF NOT EXISTS idx_attendance_person_id ON attendance("PersonID_Onec");
   CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance("AttendanceDate");
+  CREATE INDEX IF NOT EXISTS idx_attendance_student_uuid ON attendance(student_uuid);
 
   ALTER TABLE task_links ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE;
   ALTER TABLE task_links ALTER COLUMN otp_expires_at TYPE TIMESTAMP WITH TIME ZONE USING otp_expires_at AT TIME ZONE 'UTC';
@@ -423,6 +432,35 @@ export const DATABASE_BASELINE_SQL = `
           ALTER TABLE student_dropouts
           ADD CONSTRAINT fk_student_dropouts_school
           FOREIGN KEY ("SchoolID_Onec") REFERENCES schools(id) ON DELETE SET NULL;
+      END IF;
+
+      -- B1.2 surrogate-key FKs to student_term(student_uuid). Backfill from the
+      -- legacy link first since a fresh dump load lacks student_uuid; then add
+      -- the FK. attendance is total (every row FK-references student_term);
+      -- cases.student_id is loose text so some rows stay NULL.
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_student_uuid') THEN
+          UPDATE attendance a
+          SET student_uuid = st.student_uuid
+          FROM student_term st
+          WHERE a."PersonID_Onec" = st."PersonID_Onec"
+            AND a.student_uuid IS NULL;
+
+          ALTER TABLE attendance
+          ADD CONSTRAINT fk_attendance_student_uuid
+          FOREIGN KEY (student_uuid) REFERENCES student_term(student_uuid);
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_cases_student_uuid') THEN
+          UPDATE cases c
+          SET student_uuid = st.student_uuid
+          FROM student_term st
+          WHERE c.student_id = st."PersonID_Onec"
+            AND c.student_id IS NOT NULL
+            AND c.student_uuid IS NULL;
+
+          ALTER TABLE cases
+          ADD CONSTRAINT fk_cases_student_uuid
+          FOREIGN KEY (student_uuid) REFERENCES student_term(student_uuid);
       END IF;
   END
   $$;

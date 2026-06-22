@@ -137,10 +137,17 @@ export class AbsenceMonitorService {
 
           this.logger.log(`Inserting Case for ${studentName} with Reason: ${reason}`);
 
+          // cases.student_uuid is NULLABLE; person_id_onec may be empty, so the
+          // resolved uuid may be null — pass through.
+          const studentUuid = studentId
+            ? await this.automationRepository.getStudentUuidByPersonId(studentId, executor)
+            : null;
+
           const caseId = await this.automationRepository.createAutomatedCase(
             {
               studentName,
               studentId: studentId || null,
+              studentUuid,
               schoolId,
               schoolName,
               studentAddress: address,

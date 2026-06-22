@@ -167,9 +167,21 @@ export class TaskSubmissionService {
             continue;
           }
 
+          // attendance.student_uuid is NOT NULL; PersonID is FK-bound to
+          // student_term (the findStudentTermMetadata check above confirms the
+          // row exists), so the surrogate uuid always resolves here.
+          const studentUuid = await this.taskRepository.getStudentUuidByPersonId(
+            studentId,
+            executor,
+          );
+          if (!studentUuid) {
+            continue;
+          }
+
           await this.taskRepository.replaceAttendanceRecord(
             {
               studentId,
+              studentUuid,
               attendanceDate: today,
               attendanceStatus: this.resolveAttendanceStatus(record.status),
               recordedBy: recorder,

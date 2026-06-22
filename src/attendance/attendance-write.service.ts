@@ -62,9 +62,15 @@ export class AttendanceWriteService {
           continue;
         }
 
+        const studentUuid = await this.attendanceRepository.getStudentUuidByPersonId(
+          record.student_id,
+          executor,
+        );
+
         await this.attendanceRepository.insertAttendanceRecord(
           {
             studentId: record.student_id,
+            studentUuid: studentUuid!,
             date: today,
             statusCode: STATUS_CODE_MAP[record.status],
             recordedBy,

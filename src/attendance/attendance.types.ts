@@ -123,6 +123,7 @@ export interface AttendanceSaveRecordInput {
 
 export interface AttendanceInsertRecord {
   studentId: string;
+  studentUuid: string;
   date: string;
   statusCode: number;
   recordedBy: string;

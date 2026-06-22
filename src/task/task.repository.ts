@@ -43,6 +43,7 @@ interface CreateCaseInput {
   studentLng: number | null;
   reasonFlagged: string | null;
   studentId: string | null;
+  studentUuid: string | null;
   schoolId: number | null;
   createdBy: number | null;
 }
@@ -98,6 +99,7 @@ interface TaskSubmissionInput {
 
 interface AttendanceReplaceInput {
   studentId: string;
+  studentUuid: string;
   attendanceDate: string;
   attendanceStatus: number;
   recordedBy: string;
@@ -383,11 +385,12 @@ export class TaskRepository {
         student_lng,
         reason_flagged,
         student_id,
+        student_uuid,
         school_id,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
       RETURNING id
     `,
       [
@@ -398,6 +401,7 @@ export class TaskRepository {
         data.studentLng,
         data.reasonFlagged,
         data.studentId,
+        data.studentUuid,
         data.schoolId,
         data.createdBy,
       ],
@@ -1028,6 +1032,7 @@ export class TaskRepository {
       `
       INSERT INTO attendance (
         "PersonID_Onec",
+        student_uuid,
         "SchoolID_Onec",
         "GradeLevelID_Onec",
         "RoomID_Onec",
@@ -1038,10 +1043,11 @@ export class TaskRepository {
         "Period",
         "RecordedBy"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     `,
       [
         data.studentId,
+        data.studentUuid,
         data.schoolId,
         data.gradeLevelId,
         data.roomId,
@@ -1593,6 +1599,18 @@ export class TaskRepository {
     );
 
     return result.rows;
+  }
+
+  async getStudentUuidByPersonId(
+    personId: string,
+    executor?: QueryExecutor,
+  ): Promise<string | null> {
+    const result = await this.getExecutor(executor).query<QueryResultRow>(
+      `SELECT student_uuid FROM student_term WHERE "PersonID_Onec" = $1 LIMIT 1`,
+      [personId],
+    );
+
+    return (result.rows[0]?.student_uuid as string | null | undefined) ?? null;
   }
 
   private getExecutor(executor?: QueryExecutor): QueryExecutor {

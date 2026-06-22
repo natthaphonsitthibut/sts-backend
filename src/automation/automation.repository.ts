@@ -160,18 +160,20 @@ export class AutomationRepository {
         INSERT INTO cases (
           student_name,
           student_id,
+          student_uuid,
           school_id,
           student_school,
           student_address,
           reason_flagged,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 'OPEN')
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN')
         RETURNING id
       `,
       [
         data.studentName,
         data.studentId,
+        data.studentUuid,
         data.schoolId,
         data.schoolName,
         data.studentAddress,
@@ -180,5 +182,18 @@ export class AutomationRepository {
     );
 
     return result.rows[0].id;
+  }
+
+  async getStudentUuidByPersonId(
+    personId: string,
+    executor?: QueryExecutor,
+  ): Promise<string | null> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<{ student_uuid: string | null }>(
+      `SELECT student_uuid FROM student_term WHERE "PersonID_Onec" = $1 LIMIT 1`,
+      [personId],
+    );
+
+    return result.rows[0]?.student_uuid ?? null;
   }
 }

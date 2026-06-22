@@ -241,6 +241,12 @@ export class TaskLifecycleService {
             );
             resolvedTargetSchoolId = resolvedTargetSchoolId ?? caseSchoolId;
 
+            // cases.student_uuid is NULLABLE; student_id is loose text that may
+            // be null/unmatched, so the resolved uuid may be null — pass through.
+            const studentUuid = studentId
+              ? await this.taskRepository.getStudentUuidByPersonId(studentId, executor)
+              : null;
+
             caseId = await this.taskRepository.createCase(
               {
                 studentName,
@@ -250,6 +256,7 @@ export class TaskLifecycleService {
                 studentLng: this.normalizeNumber(data.student_lng),
                 reasonFlagged: clean(data.reason_flagged),
                 studentId,
+                studentUuid,
                 schoolId: caseSchoolId,
                 createdBy: resolveAuditActorId(currentActor),
               },
