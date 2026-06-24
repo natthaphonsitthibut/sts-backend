@@ -29,6 +29,9 @@ export const PII_REASON_CODES = [
   'VERIFY_DATA',
   'COORDINATE_AGENCY',
   'OTHER',
+  // SELF_ACCESS is reserved for data-subject self-reveal and must never be
+  // accepted from a non-self actor.
+  'SELF_ACCESS',
 ] as const;
 
 export type PiiReasonCode = (typeof PII_REASON_CODES)[number];

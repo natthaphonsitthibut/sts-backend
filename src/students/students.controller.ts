@@ -16,7 +16,7 @@ import {
   CurrentUser,
   normalizeDataScope,
   PermissionsGuard,
-  RequirePermission,
+  RequireAnyPermission,
   type AuthenticatedRequestUser,
 } from '../auth';
 import { StudentsService } from './students.service';
@@ -79,11 +79,11 @@ export class StudentsController {
     return this.studentsService.findOne(id, actor, normalizeDataScope(actor?.data_scope));
   }
 
-  // Reveal a masked PII group (national id / passport) for one student. Stricter
-  // than findOne: explicit `students` permission + the actor's data scope, and
-  // every reveal is recorded in the immutable pii_access_events log.
+  // Reveal a masked PII group (national id / passport) for one student. Staff
+  // need `students`; student self-access uses `student-self` and is still
+  // limited by assertOwnStudentAccess in the service.
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'student-self')
   @Post(':id/pii-reveal')
   revealPii(
     @Param('id') id: string,

@@ -23,6 +23,7 @@ import { piiConfig } from '../config/pii.config';
 import {
   PHASE1_MASKED_GROUPS,
   PII_FIELD_GROUPS,
+  PII_REASON_CODES,
   PII_REASON_REQUIRES_NOTE,
   type PiiFieldGroup,
   type PiiReasonCode,
@@ -284,6 +285,7 @@ export class StudentsService {
     try {
       this.assertOwnStudentAccess(id, actor);
 
+      const isSelfReveal = isOwnOnlyStudentActor(actor) && actor.student_uuid === id;
       const group = dto.field_group as PiiFieldGroup;
       const subjectRef = this.subjectRefFor(id);
 
@@ -299,9 +301,24 @@ export class StudentsService {
           : [];
       const withinWindow = activeGroups.includes(group);
 
-      const reasonCode = dto.reason_code as PiiReasonCode;
-      const note = dto.reason_note?.trim() || null;
-      if (!withinWindow) {
+      let reasonCode: PiiReasonCode;
+      // Self-reveal carries no reason context — never persist a client-supplied
+      // note for it, so un-guarded input can't reach the immutable audit log.
+      const note = isSelfReveal ? null : dto.reason_note?.trim() || null;
+      if (isSelfReveal) {
+        reasonCode = 'SELF_ACCESS';
+      } else {
+        if (
+          !dto.reason_code ||
+          dto.reason_code === 'SELF_ACCESS' ||
+          !PII_REASON_CODES.includes(dto.reason_code as PiiReasonCode)
+        ) {
+          throw new BadRequestException('valid reason_code is required');
+        }
+        reasonCode = dto.reason_code as PiiReasonCode;
+      }
+
+      if (!withinWindow && !isSelfReveal) {
         if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !note) {
           throw new BadRequestException('reason_note is required for this reason code');
         }

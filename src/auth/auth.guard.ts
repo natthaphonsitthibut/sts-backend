@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PERMISSIONS_KEY, ROLES_KEY } from './permissions.decorator';
+import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY, ROLES_KEY } from './permissions.decorator';
 import { hasPermission } from './permissions.constants';
 import { AuthActorService } from './auth-actor.service';
 import type { RequestWithUser } from './auth.types';
@@ -37,8 +37,15 @@ export class PermissionsGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const anyPermissions = this.reflector.getAllAndOverride<string[]>(ANY_PERMISSIONS_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    if (!requiredPermissions || requiredPermissions.length === 0) {
+    const hasRequired = requiredPermissions && requiredPermissions.length > 0;
+    const hasAny = anyPermissions && anyPermissions.length > 0;
+
+    if (!hasRequired && !hasAny) {
       return true;
     }
 
@@ -49,11 +56,17 @@ export class PermissionsGuard implements CanActivate {
       throw new UnauthorizedException('ไม่ได้เข้าสู่ระบบ');
     }
 
-    const hasAllPermissions = requiredPermissions.every((permission) =>
-      hasPermission(user.roles, user.permissions, permission),
-    );
+    // AND set (all required) and OR set (at least one) both apply when present.
+    const passesRequired =
+      !hasRequired ||
+      requiredPermissions.every((permission) =>
+        hasPermission(user.roles, user.permissions, permission),
+      );
+    const passesAny =
+      !hasAny ||
+      anyPermissions.some((permission) => hasPermission(user.roles, user.permissions, permission));
 
-    if (!hasAllPermissions) {
+    if (!passesRequired || !passesAny) {
       throw new ForbiddenException('ไม่มีสิทธิ์เข้าถึง');
     }
 

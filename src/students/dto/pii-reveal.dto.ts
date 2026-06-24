@@ -10,8 +10,9 @@ export class PiiRevealDto {
   @IsIn(REVEALABLE_GROUPS)
   field_group!: string;
 
+  @IsOptional()
   @IsIn(PII_REASON_CODES)
-  reason_code!: string;
+  reason_code?: string;
 
   @IsOptional()
   @IsString()
