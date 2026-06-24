@@ -32,6 +32,8 @@ describe('CaseService', () => {
       | 'findEligibleReferralAgency'
       | 'insertCaseReferral'
       | 'listCaseReferrals'
+      | 'findCaseReferralById'
+      | 'updateCaseReferralOutcome'
       | 'updateCaseStatus'
       | 'findCaseReviewById'
     >
@@ -58,8 +60,20 @@ describe('CaseService', () => {
           agency_id: 20,
           agency_name_snapshot: 'โรงพยาบาลทดสอบ',
           agency_type_snapshot: 'HOSPITAL',
+          status: 'ACCEPTED',
         },
       ]),
+      findCaseReferralById: jest.fn().mockResolvedValue({
+        id: 'referral-id',
+        case_id: 10,
+        status: 'SENT',
+      }),
+      updateCaseReferralOutcome: jest.fn().mockResolvedValue({
+        id: 'referral-id',
+        case_id: 10,
+        status: 'ACCEPTED',
+        outcome: 'รับดำเนินการแล้ว',
+      }),
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
@@ -166,5 +180,49 @@ describe('CaseService', () => {
 
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
     expect(taskRepository.insertCaseReferral).not.toHaveBeenCalled();
+  });
+
+  it('updates referral outcome with forward-case permission', async () => {
+    const result = await service.updateCaseReferralOutcome(
+      10,
+      'referral-id',
+      { status: 'ACCEPTED', outcome: 'รับดำเนินการแล้ว' },
+      buildActor(['review-cases', 'forward-case']),
+    );
+
+    expect(result.data?.status).toBe('ACCEPTED');
+    expect(taskRepository.findCaseReferralById).toHaveBeenCalledWith(
+      'referral-id',
+      expect.objectContaining({ id: 1 }),
+    );
+    expect(taskRepository.updateCaseReferralOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referralId: 'referral-id',
+        status: 'ACCEPTED',
+        outcome: 'รับดำเนินการแล้ว',
+        updatedBy: 1,
+      }),
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_REFERRAL_OUTCOME_UPDATE',
+        targetType: 'case_referral',
+        targetId: 'referral-id',
+      }),
+    );
+  });
+
+  it('rejects referral outcome update without forward-case before lookup', async () => {
+    await expect(
+      service.updateCaseReferralOutcome(
+        10,
+        'referral-id',
+        { status: 'ACCEPTED', outcome: 'รับดำเนินการแล้ว' },
+        buildActor(['review-cases']),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(taskRepository.findCaseReferralById).not.toHaveBeenCalled();
+    expect(taskRepository.updateCaseReferralOutcome).not.toHaveBeenCalled();
   });
 });

@@ -156,6 +156,13 @@ interface CaseReferralInput {
   createdBy: number | null;
 }
 
+interface CaseReferralOutcomeInput {
+  referralId: string;
+  status: string;
+  outcome: string | null;
+  updatedBy: number | null;
+}
+
 interface CountRow extends QueryResultRow {
   count: number | string;
 }
@@ -1709,6 +1716,73 @@ export class TaskRepository {
     );
 
     return result.rows;
+  }
+
+  async findCaseReferralById(
+    referralId: string,
+    actor?: ActorContext,
+  ): Promise<QueryResultRow | null> {
+    const scope = this.buildCaseScopeQuery(actor, 2, 'c');
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        r.id,
+        r.case_id,
+        r.agency_id,
+        r.agency_name_snapshot,
+        r.agency_type_snapshot,
+        r.referred_by,
+        r.referred_by_label,
+        r.referred_at,
+        r.referral_note,
+        r.status,
+        r.outcome,
+        r.responded_at
+      FROM case_referrals r
+      JOIN cases c ON c.id = r.case_id AND c.deleted_at IS NULL
+      WHERE r.id = $1
+        AND r.deleted_at IS NULL
+        ${scope.sql ? `AND ${scope.sql}` : ''}
+      LIMIT 1
+    `,
+      [referralId, ...scope.params],
+    );
+
+    return result.rows[0] || null;
+  }
+
+  async updateCaseReferralOutcome(
+    data: CaseReferralOutcomeInput,
+    executor?: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const result = await this.getExecutor(executor).query(
+      `
+      UPDATE case_referrals
+      SET
+        status = $2,
+        outcome = $3,
+        responded_at = now(),
+        updated_by = $4
+      WHERE id = $1
+        AND deleted_at IS NULL
+      RETURNING
+        id,
+        case_id,
+        agency_id,
+        agency_name_snapshot,
+        agency_type_snapshot,
+        referred_by,
+        referred_by_label,
+        referred_at,
+        referral_note,
+        status,
+        outcome,
+        responded_at
+    `,
+      [data.referralId, data.status, data.outcome, data.updatedBy],
+    );
+
+    return result.rows[0] || null;
   }
 
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {

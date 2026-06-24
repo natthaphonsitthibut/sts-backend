@@ -4,11 +4,17 @@ import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
-import { ReviewCaseDto } from './dto/task.dto';
+import { ReviewCaseDto, type CaseReferralOutcomeStatus } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 
 type ReviewAction = 'ASSIST' | 'FORWARD' | 'CLOSE';
+const CASE_REFERRAL_OUTCOME_STATUSES: CaseReferralOutcomeStatus[] = [
+  'ACKNOWLEDGED',
+  'ACCEPTED',
+  'DECLINED',
+  'RETURNED',
+];
 
 @Injectable()
 export class CaseService {
@@ -47,6 +53,14 @@ export class CaseService {
     throw new Error('review_action must be one of: ASSIST, FORWARD, CLOSE');
   }
 
+  private normalizeReferralOutcomeStatus(status: unknown): CaseReferralOutcomeStatus {
+    const normalized = this.normalizeText(status).toUpperCase();
+    if (CASE_REFERRAL_OUTCOME_STATUSES.includes(normalized as CaseReferralOutcomeStatus)) {
+      return normalized as CaseReferralOutcomeStatus;
+    }
+    throw new Error('status must be one of: ACKNOWLEDGED, ACCEPTED, DECLINED, RETURNED');
+  }
+
   private getCaseStatusByAction(action: ReviewAction): string {
     if (action === 'CLOSE') return 'RESOLVED';
     if (action === 'FORWARD') return 'AWAITING_HELP';
@@ -63,6 +77,15 @@ export class CaseService {
 
     if (!this.taskPolicyService.hasPermission(actor, requiredPermission)) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
+    }
+  }
+
+  private assertCanUpdateReferralOutcome(actor: AuthenticatedRequestUser): void {
+    if (
+      !this.taskPolicyService.hasPermission(actor, 'review-cases') ||
+      !this.taskPolicyService.hasPermission(actor, 'forward-case')
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์อัปเดตผลการส่งต่อเคสนี้');
     }
   }
 
@@ -240,6 +263,62 @@ export class CaseService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`getCaseReferrals error: ${message}`);
+      throw err;
+    }
+  }
+
+  async updateCaseReferralOutcome(
+    caseId: number,
+    referralId: string,
+    body: { status?: unknown; outcome?: unknown },
+    actor?: AuthenticatedRequestUser,
+  ) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    this.assertCanUpdateReferralOutcome(currentActor);
+    const status = this.normalizeReferralOutcomeStatus(body.status);
+    const outcome = clean(this.normalizeText(body.outcome)) || null;
+
+    try {
+      const referral = await this.taskRepository.findCaseReferralById(referralId, currentActor);
+      if (!referral || Number(referral.case_id) !== caseId) {
+        throw new Error('Referral not found');
+      }
+
+      const savedReferral = await this.taskRepository.updateCaseReferralOutcome({
+        referralId,
+        status,
+        outcome,
+        updatedBy: resolveAuditActorId(actor),
+      });
+      if (!savedReferral) {
+        throw new Error('Referral not found');
+      }
+
+      const updatedReferral =
+        (await this.taskRepository.listCaseReferrals(caseId)).find(
+          (item) => item.id === referralId,
+        ) || null;
+
+      await this.auditLog.record({
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: this.actorLabel(actor),
+        action: 'CASE_REFERRAL_OUTCOME_UPDATE',
+        targetType: 'case_referral',
+        targetId: referralId,
+        metadata: {
+          caseId,
+          status,
+        },
+        ip: null,
+      });
+
+      return {
+        success: true,
+        data: updatedReferral,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`updateCaseReferralOutcome error: ${message}`);
       throw err;
     }
   }

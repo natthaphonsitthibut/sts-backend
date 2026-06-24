@@ -15,6 +15,7 @@ import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
 export type AttendanceTaskStatus = 'P_PRESENT' | 'P_ABSENT' | 'P_LATE';
+export type CaseReferralOutcomeStatus = 'ACKNOWLEDGED' | 'ACCEPTED' | 'DECLINED' | 'RETURNED';
 
 // Fields are intentionally loose unions (string | number | null) because the
 // service coerces them downstream. Every property carries at least @IsOptional()
@@ -222,6 +223,16 @@ export class ReviewCaseDto {
   // Legacy clients may still send this, but the service deliberately ignores it.
   // Reviewer attribution must come from the authenticated actor, not the body.
   reviewed_by?: string | null;
+}
+
+export class UpdateCaseReferralDto {
+  @IsString()
+  @IsIn(['ACKNOWLEDGED', 'ACCEPTED', 'DECLINED', 'RETURNED'])
+  status?: CaseReferralOutcomeStatus;
+
+  @IsOptional()
+  @IsString()
+  outcome?: string | null;
 }
 
 export class GetCasesQueryDto extends PaginationQueryDto {

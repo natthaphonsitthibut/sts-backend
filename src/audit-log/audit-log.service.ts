@@ -19,6 +19,7 @@ export type AuditAction =
   | 'ROLE_GROUP_DELETE'
   | 'CASE_CLOSE'
   | 'CASE_FORWARD'
+  | 'CASE_REFERRAL_OUTCOME_UPDATE'
   | 'TASK_DELETE'
   | 'DELEGATION'
   | 'DATA_IMPORT'
