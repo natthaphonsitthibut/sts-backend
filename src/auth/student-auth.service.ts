@@ -17,6 +17,7 @@ import { authConfig } from '../config/auth.config';
 interface StudentAuthRow extends Record<string, unknown> {
   PersonID_Onec: string;
   student_uuid?: string | null;
+  person_uuid?: string | null;
   FirstName_Onec?: string | null;
   LastName_Onec?: string | null;
   school_name?: string | null;
@@ -28,6 +29,9 @@ interface StudentVirtualTokenPayload {
   // PersonID stays server-side (looked up by uuid on demand) so it never rides
   // in the bearer token the client holds.
   studentUuid: string;
+  // Canonical person id (stable across terms). Optional for backward compat with
+  // tokens issued before B2 — verify tolerates its absence.
+  personUuid?: string;
   roles: string[];
   permissions: string[];
   issuedAt: number;
@@ -80,11 +84,17 @@ export class StudentAuthService {
       throw new ServiceUnavailableException('ข้อมูลนักเรียนยังไม่มี surrogate id');
     }
     const studentUuid = student.student_uuid;
-    const virtualAuthToken = this.issueVirtualStudentToken(studentUuid);
-    const actor = this.buildStudentActor(student, studentUuid);
+    const personUuid = student.person_uuid ?? undefined;
+    const virtualAuthToken = this.issueVirtualStudentToken(studentUuid, personUuid);
+    const actor = this.buildStudentActor(student, studentUuid, personUuid);
+
+    // person_uuid is server-side context (carried in the signed token for own
+    // access across enrollments) — it must not ride in the login response body.
+    const { person_uuid: _personUuid, ...actorForResponse } = actor;
+    void _personUuid;
 
     return {
-      ...actor,
+      ...actorForResponse,
       labels: [STUDENT_LABEL],
       virtual_auth_token: virtualAuthToken,
     };
@@ -104,6 +114,7 @@ export class StudentAuthService {
       data_scope: { own_only: true },
       virtual_login: true,
       student_uuid: payload.studentUuid,
+      person_uuid: payload.personUuid,
       auth_source: payload.source,
     };
   }
@@ -121,12 +132,14 @@ export class StudentAuthService {
         SELECT
           s."PersonID_Onec",
           s.student_uuid,
+          s.person_uuid,
           s."FirstName_Onec",
           s."LastName_Onec",
           sc.name AS school_name
         FROM student_term s
         LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
         WHERE REGEXP_REPLACE(COALESCE(TRIM(s."PersonID_Onec"), ''), '[^0-9]', '', 'g') = $1
+        ORDER BY s."AcademicYear_Onec" DESC NULLS LAST, s."Semester_Onec" DESC NULLS LAST
         LIMIT 1
       `,
       [personId],
@@ -138,6 +151,7 @@ export class StudentAuthService {
   private buildStudentActor(
     student: StudentAuthRow,
     studentUuid: string,
+    personUuid?: string,
   ): AuthenticatedRequestUser & {
     FirstName: string | null;
     LastName: string | null;
@@ -151,6 +165,7 @@ export class StudentAuthService {
       data_scope: { own_only: true },
       virtual_login: true,
       student_uuid: studentUuid,
+      person_uuid: personUuid,
       FirstName: normalizeNamePart(student.FirstName_Onec),
       LastName: normalizeNamePart(student.LastName_Onec),
       affiliation: normalizeNamePart(student.school_name),
@@ -158,11 +173,12 @@ export class StudentAuthService {
     };
   }
 
-  private issueVirtualStudentToken(studentUuid: string): string {
+  private issueVirtualStudentToken(studentUuid: string, personUuid?: string): string {
     const issuedAt = Date.now();
     const payload: StudentVirtualTokenPayload = {
       source: 'THAID_MOCK',
       studentUuid,
+      personUuid,
       roles: [STUDENT_ROLE],
       permissions: [...STUDENT_PERMISSIONS],
       issuedAt,
@@ -210,6 +226,7 @@ export class StudentAuthService {
       return {
         source: decoded.source,
         studentUuid: decoded.studentUuid,
+        personUuid: typeof decoded.personUuid === 'string' ? decoded.personUuid : undefined,
         roles: decoded.roles.filter(
           (role): role is string => typeof role === 'string' && role.trim().length > 0,
         ),

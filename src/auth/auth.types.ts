@@ -19,8 +19,13 @@ export interface AuthenticatedRequestUser {
   virtual_login?: boolean;
   PersonID_Onec?: string;
   // Opaque surrogate id for a virtual-login student — what the client uses to
-  // address its own record (keeps the national id off the wire).
+  // address its own record (keeps the national id off the wire). This is the
+  // *current enrollment* snapshot id.
   student_uuid?: string;
+  // Canonical person id (stable across terms/schools). Carried alongside
+  // student_uuid so own-access spans all of this person's enrollments, not just
+  // the current snapshot. Optional during the B2 transition.
+  person_uuid?: string;
   FirstName?: string | null;
   LastName?: string | null;
   affiliation?: string | null;
