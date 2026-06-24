@@ -67,6 +67,8 @@ export const IMPORT_TARGET_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = 
   ]),
 };
 
+export const SERVER_INJECTED_COLUMNS: ReadonlySet<string> = new Set(['person_uuid']);
+
 export interface ManualSchool {
   id: number;
   name: string;

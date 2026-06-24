@@ -32,6 +32,18 @@ export class ImportsService {
     return '';
   }
 
+  private stringifyIdentifierValue(value: unknown): string {
+    if (typeof value === 'string' || typeof value === 'number') {
+      return String(value);
+    }
+
+    return '';
+  }
+
+  private normalizeNationalId(value: unknown): string {
+    return this.normalizeScalar(value).replace(/[^0-9]/g, '');
+  }
+
   private readWorksheetRows(file: Express.Multer.File): SheetRow[] {
     // Validate by content (magic bytes), not the client extension/MIME: a real
     // spreadsheet is a zip (xlsx) and a csv is text. Reject a binary payload
@@ -224,6 +236,12 @@ export class ImportsService {
           skipped++;
           continue;
         }
+
+        dbRow['person_uuid'] = await this.importsRepository.resolveOrCreatePersonByNationalId(
+          this.stringifyIdentifierValue(personId),
+          this.normalizeNationalId(personId),
+          executor,
+        );
 
         const rowCount = await this.importsRepository.insertImportRow(validTarget, dbRow, executor);
         if (rowCount > 0) {

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
-import { IMPORT_TARGET_COLUMNS } from './imports.types';
+import { IMPORT_TARGET_COLUMNS, SERVER_INJECTED_COLUMNS } from './imports.types';
 import type {
   ExistingSchoolIdRow,
   ImportTarget,
@@ -75,6 +75,58 @@ export class ImportsRepository {
     );
   }
 
+  async resolveOrCreatePersonByNationalId(
+    identifierValue: string,
+    identifierNormalized: string,
+    executor?: QueryExecutor,
+  ): Promise<string> {
+    const queryExecutor = this.getExecutor(executor);
+
+    const existing = await queryExecutor.query<{ person_uuid: string }>(
+      `
+        SELECT person_uuid
+        FROM student_person_identifier
+        WHERE identifier_normalized = $1
+          AND identifier_type = 'NATIONAL_ID'
+        ORDER BY is_primary DESC, id ASC
+        LIMIT 1
+      `,
+      [identifierNormalized],
+    );
+    const existingPersonUuid = existing.rows[0]?.person_uuid;
+    if (existingPersonUuid) {
+      return existingPersonUuid;
+    }
+
+    const created = await queryExecutor.query<{ person_uuid: string }>(
+      `
+        INSERT INTO student_person (identity_status)
+        VALUES ('ACTIVE')
+        RETURNING person_uuid
+      `,
+    );
+    const personUuid = created.rows[0]?.person_uuid;
+    if (!personUuid) {
+      throw new Error('Failed to create student_person');
+    }
+
+    await queryExecutor.query(
+      `
+        INSERT INTO student_person_identifier (
+          person_uuid,
+          identifier_type,
+          identifier_value,
+          identifier_normalized,
+          source
+        )
+        VALUES ($1, 'NATIONAL_ID', $2, $3, 'ONEC_IMPORT')
+      `,
+      [personUuid, identifierValue, identifierNormalized],
+    );
+
+    return personUuid;
+  }
+
   async insertImportRow(
     target: ImportTarget,
     row: Record<string, unknown>,
@@ -88,7 +140,7 @@ export class ImportsRepository {
     // already validates the mapping. Fails closed against identifier injection.
     const allowedColumns = IMPORT_TARGET_COLUMNS[target];
     for (const column of columns) {
-      if (!allowedColumns.has(column)) {
+      if (!allowedColumns.has(column) && !SERVER_INJECTED_COLUMNS.has(column)) {
         throw new Error(`Illegal import column for ${target}: ${column}`);
       }
     }
