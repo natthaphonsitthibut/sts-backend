@@ -233,7 +233,7 @@ export class StudentsService {
 
   async findOne(id: string, actor?: AuthenticatedRequestUser, userScope?: DataScope) {
     try {
-      this.assertOwnStudentAccess(id, actor);
+      await this.assertOwnStudentAccess(id, actor);
       const student = await this.studentsRepository.findStudentById(id, userScope);
 
       if (!student) {
@@ -283,9 +283,9 @@ export class StudentsService {
     meta: PiiRevealRequestMeta,
   ): Promise<{ field_group: string; values: Record<string, unknown> }> {
     try {
-      this.assertOwnStudentAccess(id, actor);
+      await this.assertOwnStudentAccess(id, actor);
 
-      const isSelfReveal = isOwnOnlyStudentActor(actor) && actor.student_uuid === id;
+      const isSelfReveal = await this.isOwnEnrollment(id, actor);
       const group = dto.field_group as PiiFieldGroup;
       const subjectRef = this.subjectRefFor(id);
 
@@ -392,7 +392,7 @@ export class StudentsService {
     userScope?: DataScope,
   ) {
     try {
-      this.assertOwnStudentAccess(id, actor);
+      await this.assertOwnStudentAccess(id, actor);
       return await this.studentsRepository.listAttendanceByStudentId(id, userScope);
     } catch (error) {
       const resolvedError = error as Error;
@@ -410,7 +410,35 @@ export class StudentsService {
     return `This action removes a #${id} student`;
   }
 
-  private assertOwnStudentAccess(requestedUuid: string, actor?: AuthenticatedRequestUser): void {
+  /**
+   * True when the requested enrollment snapshot belongs to the own-only student
+   * actor — either the snapshot they logged in with, or any other enrollment of
+   * the same canonical person (B2). Non-student actors return false (their access
+   * is governed by scope, not ownership). The cross-enrollment DB lookup only
+   * runs when the fast student_uuid match fails, so legit own access stays free.
+   */
+  private async isOwnEnrollment(
+    requestedUuid: string,
+    actor?: AuthenticatedRequestUser,
+  ): Promise<boolean> {
+    if (!isOwnOnlyStudentActor(actor)) {
+      return false;
+    }
+    if (actor.student_uuid === requestedUuid) {
+      return true;
+    }
+    if (!actor.person_uuid) {
+      return false;
+    }
+    const requestedPerson =
+      await this.studentsRepository.findPersonUuidByStudentUuid(requestedUuid);
+    return requestedPerson !== null && requestedPerson === actor.person_uuid;
+  }
+
+  private async assertOwnStudentAccess(
+    requestedUuid: string,
+    actor?: AuthenticatedRequestUser,
+  ): Promise<void> {
     if (!isOwnOnlyStudentActor(actor)) {
       return;
     }
@@ -419,7 +447,7 @@ export class StudentsService {
       throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
     }
 
-    if (actor.student_uuid !== requestedUuid) {
+    if (!(await this.isOwnEnrollment(requestedUuid, actor))) {
       throw new NotFoundException('Student not found');
     }
   }

@@ -251,7 +251,31 @@ export class StudentsRepository {
     }
 
     const result = await this.query<StudentDetailRow>(query, params);
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+    // `SELECT s.*` would surface the canonical person_uuid to the client. That
+    // cross-enrollment linkage id must stay server-side (same principle as the
+    // national id) — strip it from the wire shape; internal callers resolve it
+    // via findPersonUuidByStudentUuid instead.
+    delete (row as Record<string, unknown>).person_uuid;
+    return row;
+  }
+
+  /**
+   * Resolve the canonical person that owns an enrollment snapshot. Used by
+   * own-access checks so a student reaches every enrollment of their own person,
+   * not only the current-term snapshot they logged in with. Returns null if the
+   * snapshot is unknown or not yet linked (person_uuid is nullable until B2
+   * CONTRACT).
+   */
+  async findPersonUuidByStudentUuid(studentUuid: string): Promise<string | null> {
+    const result = await this.query<{ person_uuid: string | null }>(
+      `SELECT person_uuid FROM student_term WHERE student_uuid = $1 LIMIT 1`,
+      [studentUuid],
+    );
+    return result.rows[0]?.person_uuid ?? null;
   }
 
   /** Append one immutable PII-reveal record to the access log. */
