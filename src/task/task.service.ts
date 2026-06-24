@@ -1,8 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  GoneException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { hashToken } from '../common/utils/helpers';
 import type { CreateTaskDto, SaveTaskAttendanceDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
 import { TaskReadService } from './task-read.service';
+import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
 import type { CaseListFilters, LoginLinkListFilters } from './task.repository';
@@ -16,7 +24,29 @@ export class TaskService {
     private readonly taskReadService: TaskReadService,
     private readonly taskSubmissionService: TaskSubmissionService,
     private readonly taskStatsService: TaskStatsService,
+    private readonly taskRepository: TaskRepository,
   ) {}
+
+  private async assertOtpLinkUsable(token: string): Promise<void> {
+    const tokenHash = hashToken(token);
+    const link = await this.taskRepository.findTaskLinkByTokenHash(tokenHash);
+
+    if (!link) {
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
+    }
+
+    if (new Date(String(link.expires_at)) < new Date()) {
+      throw new GoneException('ลิงก์หมดอายุ');
+    }
+
+    if (link.admin_locked === true || Number(link.admin_locked) === 1) {
+      throw new ForbiddenException('ลิงก์นี้ถูกปิดโดยผู้ดูแลระบบ');
+    }
+
+    if (link.status !== 'ACTIVE') {
+      throw new ConflictException('ลิงก์นี้ไม่อยู่ในสถานะพร้อมใช้งาน');
+    }
+  }
 
   async createTask(actor: ActorContext | undefined, data: CreateTaskDto, baseUrl: string) {
     return await this.taskLifecycleService.createTask(actor, data, baseUrl);
@@ -72,10 +102,12 @@ export class TaskService {
   }
 
   async requestOtp(token: string) {
+    await this.assertOtpLinkUsable(token);
     return await this.taskAccessService.requestOtp(token);
   }
 
   async verifyOtp(token: string, otp: string) {
+    await this.assertOtpLinkUsable(token);
     return await this.taskAccessService.verifyOtp(token, otp);
   }
 
