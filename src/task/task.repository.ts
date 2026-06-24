@@ -144,6 +144,18 @@ interface CaseReviewInput {
   reviewedBy: string;
 }
 
+interface CaseReferralInput {
+  referralId: string;
+  caseId: number;
+  agencyId: number;
+  agencyName: string;
+  agencyType: string;
+  referredBy: number | null;
+  referredByLabel: string | null;
+  referralNote: string | null;
+  createdBy: number | null;
+}
+
 interface CountRow extends QueryResultRow {
   count: number | string;
 }
@@ -1572,6 +1584,131 @@ export class TaskRepository {
     `,
       [data.reviewId, data.caseId, data.reviewAction, data.reviewNote, data.reviewedBy],
     );
+  }
+
+  async findEligibleReferralAgency(
+    agencyId: number,
+    caseId: number,
+    executor?: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const result = await this.getExecutor(executor).query(
+      `
+      SELECT
+        a.id,
+        a.name,
+        a.agency_type,
+        a.province,
+        a.district,
+        a.sub_district,
+        a.phone,
+        a.contact_person,
+        a.address
+      FROM external_agencies a
+      JOIN cases c ON c.id = $2 AND c.deleted_at IS NULL
+      LEFT JOIN schools s ON s.id = c.school_id
+      WHERE a.id = $1
+        AND a.is_active = TRUE
+        AND a.deleted_at IS NULL
+        AND (a.province IS NULL OR a.province = s.province)
+        AND (a.district IS NULL OR a.district = s.district)
+        AND (a.sub_district IS NULL OR a.sub_district = s.sub_district)
+      LIMIT 1
+    `,
+      [agencyId, caseId],
+    );
+
+    return result.rows[0] || null;
+  }
+
+  async listReferralAgenciesForCase(caseId: number): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        a.id,
+        a.name,
+        a.agency_type,
+        a.province,
+        a.district,
+        a.sub_district,
+        a.phone,
+        a.contact_person,
+        a.address
+      FROM external_agencies a
+      JOIN cases c ON c.id = $1 AND c.deleted_at IS NULL
+      LEFT JOIN schools s ON s.id = c.school_id
+      WHERE a.is_active = TRUE
+        AND a.deleted_at IS NULL
+        AND (a.province IS NULL OR a.province = s.province)
+        AND (a.district IS NULL OR a.district = s.district)
+        AND (a.sub_district IS NULL OR a.sub_district = s.sub_district)
+      ORDER BY a.agency_type ASC, a.name ASC
+    `,
+      [caseId],
+    );
+
+    return result.rows;
+  }
+
+  async insertCaseReferral(data: CaseReferralInput, executor?: QueryExecutor): Promise<void> {
+    await this.getExecutor(executor).query(
+      `
+      INSERT INTO case_referrals (
+        id,
+        case_id,
+        agency_id,
+        agency_name_snapshot,
+        agency_type_snapshot,
+        referred_by,
+        referred_by_label,
+        referral_note,
+        created_by,
+        updated_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+    `,
+      [
+        data.referralId,
+        data.caseId,
+        data.agencyId,
+        data.agencyName,
+        data.agencyType,
+        data.referredBy,
+        data.referredByLabel,
+        data.referralNote,
+        data.createdBy,
+      ],
+    );
+  }
+
+  async listCaseReferrals(caseId: number): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        r.id,
+        r.case_id,
+        r.agency_id,
+        r.agency_name_snapshot,
+        r.agency_type_snapshot,
+        r.referred_by,
+        r.referred_by_label,
+        r.referred_at,
+        r.referral_note,
+        r.status,
+        r.outcome,
+        r.responded_at,
+        a.phone,
+        a.contact_person,
+        a.address
+      FROM case_referrals r
+      LEFT JOIN external_agencies a ON a.id = r.agency_id
+      WHERE r.case_id = $1
+        AND r.deleted_at IS NULL
+      ORDER BY r.referred_at DESC
+    `,
+      [caseId],
+    );
+
+    return result.rows;
   }
 
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {

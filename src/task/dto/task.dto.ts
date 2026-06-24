@@ -211,6 +211,13 @@ export class ReviewCaseDto {
   review_note?: string | null;
 
   @IsOptional()
+  agency_id?: string | number | null;
+
+  @IsOptional()
+  @IsString()
+  referral_note?: string | null;
+
+  @IsOptional()
   @IsString()
   // Legacy clients may still send this, but the service deliberately ignores it.
   // Reviewer attribution must come from the authenticated actor, not the body.

@@ -370,6 +370,42 @@ export const DATABASE_BASELINE_SQL = `
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS external_agencies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    agency_type TEXT NOT NULL,
+    province TEXT,
+    district TEXT,
+    sub_district TEXT,
+    phone TEXT,
+    contact_person TEXT,
+    address TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_external_agencies_type
+      CHECK (agency_type IN ('HOSPITAL', 'POLICE', 'SOCIAL_WELFARE', 'NGO', 'EDUCATION', 'OTHER'))
+  );
+
+  CREATE TABLE IF NOT EXISTS case_referrals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    agency_id INTEGER REFERENCES external_agencies(id) ON DELETE SET NULL,
+    agency_name_snapshot TEXT NOT NULL,
+    agency_type_snapshot TEXT NOT NULL,
+    referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    referred_by_label TEXT,
+    referred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    referral_note TEXT,
+    status TEXT NOT NULL DEFAULT 'SENT',
+    outcome TEXT,
+    responded_at TIMESTAMPTZ,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_case_referrals_status
+      CHECK (status IN ('SENT', 'ACKNOWLEDGED', 'ACCEPTED', 'DECLINED', 'RETURNED')),
+    CONSTRAINT chk_case_referrals_agency_type
+      CHECK (agency_type_snapshot IN ('HOSPITAL', 'POLICE', 'SOCIAL_WELFARE', 'NGO', 'EDUCATION', 'OTHER'))
+  );
+
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "PersonID_Onec" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "FirstName" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "LastName" TEXT;
@@ -406,6 +442,10 @@ export const DATABASE_BASELINE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_task_links_token ON task_links(token_hash);
   CREATE INDEX IF NOT EXISTS idx_task_links_task_id ON task_links(task_id);
   CREATE INDEX IF NOT EXISTS idx_case_reviews_case_id ON case_reviews(case_id);
+  CREATE INDEX IF NOT EXISTS idx_external_agencies_scope ON external_agencies(province, district, sub_district);
+  CREATE INDEX IF NOT EXISTS idx_external_agencies_type_active ON external_agencies(agency_type, is_active);
+  CREATE INDEX IF NOT EXISTS idx_case_referrals_case ON case_referrals(case_id, referred_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_case_referrals_agency ON case_referrals(agency_id);
   CREATE INDEX IF NOT EXISTS idx_cases_school_id ON cases(school_id);
   CREATE INDEX IF NOT EXISTS idx_cases_student_uuid ON cases(student_uuid);
   CREATE INDEX IF NOT EXISTS idx_attendance_person_id ON attendance("PersonID_Onec");
@@ -427,6 +467,23 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS updated_student_address TEXT;
   ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS updated_lat REAL;
   ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS updated_lng REAL;
+  ${auditUpdatedAtTriggerSql('external_agencies')}
+  ${auditUpdatedAtTriggerSql('case_referrals')}
+
+  INSERT INTO external_agencies
+    (name, agency_type, province, district, sub_district, phone, contact_person, address)
+  SELECT *
+  FROM (
+    VALUES
+      ('โรงพยาบาลส่งเสริมสุขภาพตำบลดุสิต', 'HOSPITAL', 'กรุงเทพมหานคร', 'ดุสิต', 'ดุสิต', '02-000-0001', 'เจ้าหน้าที่รับส่งต่อ', 'ดุสิต กรุงเทพมหานคร'),
+      ('สถานีตำรวจนครบาลดุสิต', 'POLICE', 'กรุงเทพมหานคร', 'ดุสิต', 'ดุสิต', '02-000-0002', 'งานป้องกันและปราบปราม', 'ดุสิต กรุงเทพมหานคร'),
+      ('สำนักงานพัฒนาสังคมและความมั่นคงของมนุษย์จังหวัดกรุงเทพมหานคร', 'SOCIAL_WELFARE', 'กรุงเทพมหานคร', NULL, NULL, '02-000-0003', 'ศูนย์ประสานงานเด็กและครอบครัว', 'กรุงเทพมหานคร')
+  ) AS seed(name, agency_type, province, district, sub_district, phone, contact_person, address)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM external_agencies existing
+    WHERE existing.name = seed.name
+      AND existing.agency_type = seed.agency_type
+  );
 
   DO $$
   BEGIN

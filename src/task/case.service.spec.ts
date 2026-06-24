@@ -29,6 +29,9 @@ describe('CaseService', () => {
       | 'findCaseById'
       | 'withTransaction'
       | 'insertCaseReview'
+      | 'findEligibleReferralAgency'
+      | 'insertCaseReferral'
+      | 'listCaseReferrals'
       | 'updateCaseStatus'
       | 'findCaseReviewById'
     >
@@ -42,6 +45,21 @@ describe('CaseService', () => {
         await callback(undefined);
       }),
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
+      findEligibleReferralAgency: jest.fn().mockResolvedValue({
+        id: 20,
+        name: 'โรงพยาบาลทดสอบ',
+        agency_type: 'HOSPITAL',
+      }),
+      insertCaseReferral: jest.fn().mockResolvedValue(undefined),
+      listCaseReferrals: jest.fn().mockResolvedValue([
+        {
+          id: 'referral-id',
+          case_id: 10,
+          agency_id: 20,
+          agency_name_snapshot: 'โรงพยาบาลทดสอบ',
+          agency_type_snapshot: 'HOSPITAL',
+        },
+      ]),
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
@@ -113,11 +131,21 @@ describe('CaseService', () => {
   it('allows FORWARD only with forward-case permission', async () => {
     const result = await service.reviewCase(
       10,
-      { review_action: 'FORWARD', review_note: 'ส่งต่อหน่วยงาน' },
+      { review_action: 'FORWARD', review_note: 'ส่งต่อหน่วยงาน', agency_id: 20 },
       buildActor(['review-cases', 'forward-case']),
     );
 
     expect(result.case_status).toBe('AWAITING_HELP');
+    expect(taskRepository.insertCaseReferral).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caseId: 10,
+        agencyId: 20,
+        agencyName: 'โรงพยาบาลทดสอบ',
+        agencyType: 'HOSPITAL',
+        referralNote: 'ส่งต่อหน่วยงาน',
+      }),
+      undefined,
+    );
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'CASE_FORWARD',
@@ -125,5 +153,18 @@ describe('CaseService', () => {
         targetId: '10',
       }),
     );
+  });
+
+  it('rejects FORWARD without an agency before mutating', async () => {
+    await expect(
+      service.reviewCase(
+        10,
+        { review_action: 'FORWARD', review_note: 'ส่งต่อหน่วยงาน' },
+        buildActor(['review-cases', 'forward-case']),
+      ),
+    ).rejects.toThrow('agency_id is required for FORWARD');
+
+    expect(taskRepository.withTransaction).not.toHaveBeenCalled();
+    expect(taskRepository.insertCaseReferral).not.toHaveBeenCalled();
   });
 });

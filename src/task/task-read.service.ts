@@ -86,6 +86,10 @@ export class TaskReadService {
         typeof task.case_id === 'number'
           ? await this.taskRepository.listCaseReviews(task.case_id)
           : [];
+      const referrals =
+        typeof task.case_id === 'number'
+          ? await this.taskRepository.listCaseReferrals(task.case_id)
+          : [];
 
       return {
         task_id: task.id,
@@ -109,6 +113,7 @@ export class TaskReadService {
         result_summary: task.result_summary,
         chain,
         reviews,
+        referrals,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

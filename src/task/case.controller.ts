@@ -82,4 +82,42 @@ export class CaseController {
       throw new HttpException(message, status);
     }
   }
+
+  @Get(':caseId/referral-agencies')
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('review-cases', 'forward-case')
+  async getReferralAgencies(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    try {
+      return await this.caseService.getReferralAgencies(caseId, actor);
+    } catch (err) {
+      if (hasHttpStatusGetter(err)) {
+        throw err;
+      }
+      const message = getTaskErrorMessage(err);
+      const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+      throw new HttpException(message, status);
+    }
+  }
+
+  @Get(':caseId/referrals')
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('review-cases')
+  async getCaseReferrals(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    try {
+      return await this.caseService.getCaseReferrals(caseId, actor);
+    } catch (err) {
+      if (hasHttpStatusGetter(err)) {
+        throw err;
+      }
+      const message = getTaskErrorMessage(err);
+      const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+      throw new HttpException(message, status);
+    }
+  }
 }

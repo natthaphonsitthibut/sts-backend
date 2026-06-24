@@ -28,6 +28,17 @@ export class CaseService {
     return '';
   }
 
+  private normalizeNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      return Number.isInteger(parsed) ? parsed : null;
+    }
+    return null;
+  }
+
   private normalizeAction(action: unknown): ReviewAction {
     const normalized = this.normalizeText(action).toUpperCase();
     if (normalized === 'ASSIST') return 'ASSIST';
@@ -65,15 +76,29 @@ export class CaseService {
     const reviewAction = this.normalizeAction(body.review_action);
     this.assertCanReviewCaseAction(currentActor, reviewAction);
     const reviewNote = clean(this.normalizeText(body.review_note)) || null;
+    const referralNote = clean(this.normalizeText(body.referral_note)) || reviewNote;
+    const agencyId = this.normalizeNumber(body.agency_id);
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     const reviewedBy = actorName || actor?.username || 'ผอ.';
     const nextStatus = this.getCaseStatusByAction(reviewAction);
     const reviewId = crypto.randomUUID();
+    const referralId = crypto.randomUUID();
 
     try {
       const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
       if (!caseRecord) {
         throw new Error('Case not found');
+      }
+      if (reviewAction === 'FORWARD' && agencyId === null) {
+        throw new Error('agency_id is required for FORWARD');
+      }
+
+      const referralAgency =
+        reviewAction === 'FORWARD' && agencyId !== null
+          ? await this.taskRepository.findEligibleReferralAgency(agencyId, caseId)
+          : null;
+      if (reviewAction === 'FORWARD' && !referralAgency) {
+        throw new Error('Referral agency not found');
       }
 
       await this.taskRepository.withTransaction(async (executor) => {
@@ -87,10 +112,32 @@ export class CaseService {
           },
           executor,
         );
+        if (reviewAction === 'FORWARD' && referralAgency) {
+          await this.taskRepository.insertCaseReferral(
+            {
+              referralId,
+              caseId,
+              agencyId: Number(referralAgency.id),
+              agencyName: String(referralAgency.name),
+              agencyType: String(referralAgency.agency_type),
+              referredBy: resolveAuditActorId(actor),
+              referredByLabel: this.actorLabel(actor),
+              referralNote,
+              createdBy: resolveAuditActorId(actor),
+            },
+            executor,
+          );
+        }
         await this.taskRepository.updateCaseStatus(caseId, nextStatus, executor, currentActor);
       });
 
       const reviewRecord = await this.taskRepository.findCaseReviewById(reviewId);
+      const referralRecord =
+        reviewAction === 'FORWARD'
+          ? (await this.taskRepository.listCaseReferrals(caseId)).find(
+              (referral) => referral.id === referralId,
+            ) || null
+          : null;
       if (reviewAction === 'CLOSE' || reviewAction === 'FORWARD') {
         await this.auditLog.record({
           actorUserId: resolveAuditActorId(actor),
@@ -98,7 +145,11 @@ export class CaseService {
           action: reviewAction === 'CLOSE' ? 'CASE_CLOSE' : 'CASE_FORWARD',
           targetType: 'case',
           targetId: String(caseId),
-          metadata: { reviewAction },
+          metadata: {
+            reviewAction,
+            referralId: referralRecord?.id ?? null,
+            agencyId: referralRecord?.agency_id ?? null,
+          },
           ip: null,
         });
       }
@@ -108,6 +159,7 @@ export class CaseService {
         case_id: caseId,
         case_status: nextStatus,
         review: reviewRecord || null,
+        referral: referralRecord || null,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -150,6 +202,44 @@ export class CaseService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`getCaseReviews error: ${message}`);
+      throw err;
+    }
+  }
+
+  async getReferralAgencies(caseId: number, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    try {
+      const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
+      if (!caseRecord) {
+        throw new Error('Case not found');
+      }
+
+      return {
+        success: true,
+        data: await this.taskRepository.listReferralAgenciesForCase(caseId),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`getReferralAgencies error: ${message}`);
+      throw err;
+    }
+  }
+
+  async getCaseReferrals(caseId: number, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    try {
+      const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
+      if (!caseRecord) {
+        throw new Error('Case not found');
+      }
+
+      return {
+        success: true,
+        data: await this.taskRepository.listCaseReferrals(caseId),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`getCaseReferrals error: ${message}`);
       throw err;
     }
   }
