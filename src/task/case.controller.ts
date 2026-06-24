@@ -18,7 +18,7 @@ import {
 } from '../auth';
 import { CaseService } from './case.service';
 import { ReviewCaseDto } from './dto/task.dto';
-import { getTaskErrorMessage } from './task.types';
+import { getTaskErrorMessage, hasHttpStatusGetter } from './task.types';
 
 @UseGuards(AuthGuard)
 @Controller('api/cases')
@@ -26,7 +26,7 @@ export class CaseController {
   constructor(private readonly caseService: CaseService) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequirePermission('review-cases')
   @Post(':caseId/review')
   async reviewCase(
     @Param('caseId', ParseIntPipe) caseId: number,
@@ -36,6 +36,9 @@ export class CaseController {
     try {
       return await this.caseService.reviewCase(caseId, body, actor);
     } catch (err) {
+      if (hasHttpStatusGetter(err)) {
+        throw err;
+      }
       const message = getTaskErrorMessage(err);
       const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
       throw new HttpException(message, status);
@@ -44,7 +47,7 @@ export class CaseController {
 
   @Get(':caseId/tasks')
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequirePermission('review-cases')
   async getCaseTasks(
     @Param('caseId', ParseIntPipe) caseId: number,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -52,6 +55,9 @@ export class CaseController {
     try {
       return await this.caseService.getTasksByCase(caseId, actor);
     } catch (err) {
+      if (hasHttpStatusGetter(err)) {
+        throw err;
+      }
       const message = getTaskErrorMessage(err);
       const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
       throw new HttpException(message, status);
@@ -60,7 +66,7 @@ export class CaseController {
 
   @Get(':caseId/reviews')
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequirePermission('review-cases')
   async getCaseReviews(
     @Param('caseId', ParseIntPipe) caseId: number,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -68,6 +74,9 @@ export class CaseController {
     try {
       return await this.caseService.getCaseReviews(caseId, actor);
     } catch (err) {
+      if (hasHttpStatusGetter(err)) {
+        throw err;
+      }
       const message = getTaskErrorMessage(err);
       const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
       throw new HttpException(message, status);

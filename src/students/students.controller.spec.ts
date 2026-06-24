@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { AuthGuard } from '../auth';
 import { StudentsController } from './students.controller';
 import { StudentsService } from './students.service';
 
@@ -22,7 +23,10 @@ describe('StudentsController', () => {
           },
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(AuthGuard)
+      .useValue({ canActivate: jest.fn(() => true) })
+      .compile();
 
     controller = module.get<StudentsController>(StudentsController);
   });

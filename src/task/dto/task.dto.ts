@@ -191,6 +191,8 @@ export class ReviewCaseDto {
 
   @IsOptional()
   @IsString()
+  // Legacy clients may still send this, but the service deliberately ignores it.
+  // Reviewer attribution must come from the authenticated actor, not the body.
   reviewed_by?: string | null;
 }
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
@@ -42,6 +42,19 @@ export class CaseService {
     return 'IN_PROGRESS'; // ASSIST — วนกลับเข้ากระบวนการติดตามใหม่
   }
 
+  private assertCanReviewCaseAction(actor: AuthenticatedRequestUser, action: ReviewAction): void {
+    if (!this.taskPolicyService.hasPermission(actor, 'review-cases')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
+    }
+
+    const requiredPermission =
+      action === 'CLOSE' ? 'close-case' : action === 'FORWARD' ? 'forward-case' : 'review-cases';
+
+    if (!this.taskPolicyService.hasPermission(actor, requiredPermission)) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
+    }
+  }
+
   private actorLabel(actor?: AuthenticatedRequestUser): string | null {
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     return actor?.username || actorName || null;
@@ -50,6 +63,7 @@ export class CaseService {
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     const reviewAction = this.normalizeAction(body.review_action);
+    this.assertCanReviewCaseAction(currentActor, reviewAction);
     const reviewNote = clean(this.normalizeText(body.review_note)) || null;
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     const reviewedBy = actorName || actor?.username || 'ผอ.';

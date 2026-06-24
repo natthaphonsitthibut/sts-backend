@@ -1,5 +1,11 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { AuthGuard, CurrentUser, type AuthenticatedRequestUser } from '../auth';
+import {
+  AuthGuard,
+  CurrentUser,
+  PermissionsGuard,
+  RequirePermission,
+  type AuthenticatedRequestUser,
+} from '../auth';
 import { GetCasesQueryDto } from './dto/task.dto';
 import { TaskService } from './task.service';
 
@@ -9,6 +15,8 @@ export class StatsController {
   constructor(private readonly taskService: TaskService) {}
 
   @Get('cases')
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('review-cases')
   async getCases(
     @Query() query: GetCasesQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
