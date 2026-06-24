@@ -40,6 +40,22 @@ export class TaskLifecycleService {
     return 'hours';
   }
 
+  private buildFullName(firstName: string | null, lastName: string | null): string | null {
+    return [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+  }
+
+  private buildFullAddress(
+    line: string | null,
+    subDistrict: string | null,
+    district: string | null,
+    province: string | null,
+    postalCode: string | null,
+  ): string | null {
+    return (
+      [line, subDistrict, district, province, postalCode].filter(Boolean).join(' ').trim() || null
+    );
+  }
+
   private getSingleActorSchoolId(actor: ActorContext): number | null {
     const scope = this.taskPolicyService.normalizeScope(actor.data_scope);
     if (scope.school_ids.length !== 1) {
@@ -227,7 +243,24 @@ export class TaskLifecycleService {
               currentActor,
             );
           } else {
-            const studentName = clean(data.student_name);
+            const studentFirstName = clean(data.student_first_name);
+            const studentLastName = clean(data.student_last_name);
+            const studentName =
+              clean(data.student_name) || this.buildFullName(studentFirstName, studentLastName);
+            const addressLine = clean(data.address_line);
+            const addressProvince = clean(data.address_province);
+            const addressDistrict = clean(data.address_district);
+            const addressSubDistrict = clean(data.address_sub_district);
+            const postalCode = clean(data.postal_code);
+            const studentAddress =
+              clean(data.student_address) ||
+              this.buildFullAddress(
+                addressLine,
+                addressSubDistrict,
+                addressDistrict,
+                addressProvince,
+                postalCode,
+              );
             const studentUuid = clean(data.student_id) || null;
             if (!studentName) {
               throw new Error('student_name is required for Field Visit');
@@ -244,8 +277,15 @@ export class TaskLifecycleService {
             caseId = await this.taskRepository.createCase(
               {
                 studentName,
+                studentFirstName,
+                studentLastName,
                 studentSchool: clean(data.student_school),
-                studentAddress: clean(data.student_address),
+                studentAddress,
+                addressLine,
+                addressProvince,
+                addressDistrict,
+                addressSubDistrict,
+                postalCode,
                 studentLat: this.normalizeNumber(data.student_lat),
                 studentLng: this.normalizeNumber(data.student_lng),
                 reasonFlagged: clean(data.reason_flagged),

@@ -162,10 +162,17 @@ export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS cases (
     id SERIAL PRIMARY KEY,
     student_name TEXT NOT NULL,
+    student_first_name TEXT,
+    student_last_name TEXT,
     student_id TEXT,
     school_id INTEGER,
     student_school TEXT,
     student_address TEXT,
+    address_line TEXT,
+    address_province TEXT,
+    address_district TEXT,
+    address_sub_district TEXT,
+    postal_code TEXT,
     student_lat DOUBLE PRECISION,
     student_lng DOUBLE PRECISION,
     reason_flagged TEXT,
@@ -376,6 +383,13 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "data_scope" JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_first_name TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_last_name TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS address_line TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS address_province TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS address_district TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS address_sub_district TEXT;
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS postal_code TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS school_id INTEGER;
   -- Surrogate-key FK to the opaque student UUID (B1.2). Nullable here: a fresh
   -- seed loads from a dump that lacks the column, so it is backfilled from
@@ -433,6 +447,11 @@ export const DATABASE_BASELINE_SQL = `
           ADD CONSTRAINT fk_student_dropouts_school
           FOREIGN KEY ("SchoolID_Onec") REFERENCES schools(id) ON DELETE SET NULL;
       END IF;
+
+      ALTER TABLE cases DROP CONSTRAINT IF EXISTS chk_cases_postal_code;
+      ALTER TABLE cases
+        ADD CONSTRAINT chk_cases_postal_code
+        CHECK (postal_code IS NULL OR postal_code ~ '^[0-9]{5}$');
 
       -- B1.2 surrogate-key FKs to student_term(student_uuid). Backfill from the
       -- legacy link first since a fresh dump load lacks student_uuid; then add

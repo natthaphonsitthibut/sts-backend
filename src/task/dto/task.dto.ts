@@ -46,6 +46,12 @@ export class CreateTaskDto {
   student_name?: string | null;
 
   @IsOptional()
+  student_first_name?: string | null;
+
+  @IsOptional()
+  student_last_name?: string | null;
+
+  @IsOptional()
   @IsUUID()
   student_id?: string | null;
 
@@ -54,6 +60,21 @@ export class CreateTaskDto {
 
   @IsOptional()
   student_address?: string | null;
+
+  @IsOptional()
+  address_line?: string | null;
+
+  @IsOptional()
+  address_province?: string | null;
+
+  @IsOptional()
+  address_district?: string | null;
+
+  @IsOptional()
+  address_sub_district?: string | null;
+
+  @IsOptional()
+  postal_code?: string | null;
 
   @IsOptional()
   student_lat?: string | number | null;

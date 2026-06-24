@@ -37,8 +37,15 @@ export interface LoginLinkSummary {
 
 interface CreateCaseInput {
   studentName: string;
+  studentFirstName: string | null;
+  studentLastName: string | null;
   studentSchool: string | null;
   studentAddress: string | null;
+  addressLine: string | null;
+  addressProvince: string | null;
+  addressDistrict: string | null;
+  addressSubDistrict: string | null;
+  postalCode: string | null;
   studentLat: number | null;
   studentLng: number | null;
   reasonFlagged: string | null;
@@ -377,8 +384,15 @@ export class TaskRepository {
       `
       INSERT INTO cases (
         student_name,
+        student_first_name,
+        student_last_name,
         student_school,
         student_address,
+        address_line,
+        address_province,
+        address_district,
+        address_sub_district,
+        postal_code,
         student_lat,
         student_lng,
         reason_flagged,
@@ -387,13 +401,20 @@ export class TaskRepository {
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
       RETURNING id
     `,
       [
         data.studentName,
+        data.studentFirstName,
+        data.studentLastName,
         data.studentSchool,
         data.studentAddress,
+        data.addressLine,
+        data.addressProvince,
+        data.addressDistrict,
+        data.addressSubDistrict,
+        data.postalCode,
         data.studentLat,
         data.studentLng,
         data.reasonFlagged,
@@ -785,8 +806,15 @@ export class TaskRepository {
       SELECT
         t.*,
         c.student_name,
+        c.student_first_name,
+        c.student_last_name,
         c.student_school,
         c.student_address,
+        c.address_line,
+        c.address_province,
+        c.address_district,
+        c.address_sub_district,
+        c.postal_code,
         c.reason_flagged,
         c.status AS case_status,
         c.result_summary
@@ -1312,8 +1340,15 @@ export class TaskRepository {
       SELECT
         c.id,
         c.student_name,
+        c.student_first_name,
+        c.student_last_name,
         c.student_school,
         c.student_address,
+        c.address_line,
+        c.address_province,
+        c.address_district,
+        c.address_sub_district,
+        c.postal_code,
         c.reason_flagged,
         c.status,
         c.created_at,
