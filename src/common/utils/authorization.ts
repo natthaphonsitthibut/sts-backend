@@ -2,6 +2,7 @@ import type { DataScope } from '../../auth/auth.types';
 import { normalizeDataScope } from '../../auth/auth.types';
 
 export type { DataScope };
+export { ROLE_BASELINES } from '../../auth/permissions.constants';
 
 export function parseScopeHeader(scopeHeader?: string): DataScope | undefined {
   if (!scopeHeader) {
