@@ -20,6 +20,11 @@ export interface OpenAbsenceCaseRow extends Record<string, unknown> {
   student_uuid: string | null;
 }
 
+export interface CaseAutoCancelAuditEvent {
+  caseId: number;
+  studentUuid: string | null;
+}
+
 export interface ConsecutiveAbsentStudentRow extends Record<string, unknown> {
   student_uuid: string;
   consecutive_days: number;

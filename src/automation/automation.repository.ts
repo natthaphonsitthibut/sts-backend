@@ -57,21 +57,41 @@ export class AutomationRepository {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<ConsecutiveAbsentStudentRow>(
       `
-        WITH ranked_attendance AS (
+        WITH daily_attendance AS (
           SELECT
             student_uuid,
             "AttendanceDate",
-            "AttendanceStatus",
+            BOOL_AND("AttendanceStatus" = 2) AS is_absent_day
+          FROM attendance
+          WHERE student_uuid IS NOT NULL
+          GROUP BY student_uuid, "AttendanceDate"
+        ),
+        ranked_attendance_days AS (
+          SELECT
+            student_uuid,
+            "AttendanceDate",
+            is_absent_day,
             ROW_NUMBER() OVER (
               PARTITION BY student_uuid
-              ORDER BY "AttendanceDate" DESC, "AttendanceID" DESC
+              ORDER BY "AttendanceDate" DESC
             ) AS rn
-          FROM attendance
+          FROM daily_attendance
         ),
-        recent_consecutive_absences AS (
+        streak_boundaries AS (
+          SELECT
+            student_uuid,
+            rn,
+            is_absent_day,
+            MIN(CASE WHEN NOT is_absent_day THEN rn END) OVER (
+              PARTITION BY student_uuid
+            ) AS first_non_absent_rn
+          FROM ranked_attendance_days
+        ),
+        current_absence_streak AS (
           SELECT student_uuid, COUNT(*) AS consecutive_days
-          FROM ranked_attendance
-          WHERE rn <= $1 AND "AttendanceStatus" = 2
+          FROM streak_boundaries
+          WHERE is_absent_day
+            AND (first_non_absent_rn IS NULL OR rn < first_non_absent_rn)
           GROUP BY student_uuid
           HAVING COUNT(*) >= $1
         )
@@ -88,7 +108,7 @@ export class AutomationRepository {
           s."DistrictNameThai_Onec" AS district_name_thai_onec,
           s."ProvinceNameThai_Onec" AS province_name_thai_onec,
           sc.name AS school_name
-        FROM recent_consecutive_absences r
+        FROM current_absence_streak r
         JOIN student_term s ON r.student_uuid = s.student_uuid
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       `,
@@ -113,18 +133,19 @@ export class AutomationRepository {
     return result.rows;
   }
 
-  async deleteOpenCaseById(id: number, executor?: QueryExecutor): Promise<void> {
+  async deleteOpenCaseById(id: number, executor?: QueryExecutor): Promise<boolean> {
     const queryExecutor = this.getExecutor(executor);
     // Soft-delete: a false-positive auto-case (attendance later corrected) is
     // tombstoned, not hard-deleted, so the create/cancel trail survives for
     // audit. deleted_by stays null — this is a system action, not a user.
-    await queryExecutor.query(
+    const result = await queryExecutor.query(
       `UPDATE cases SET deleted_at = now() WHERE id = $1 AND status = $2 AND deleted_at IS NULL`,
       [id, 'OPEN'],
     );
+    return result.rowCount > 0;
   }
 
-  async findOpenAbsenceCaseByStudent(
+  async findActiveAbsenceCaseByStudent(
     studentUuid: string,
     studentName: string,
     schoolId: number | null,
@@ -136,15 +157,21 @@ export class AutomationRepository {
     const result = await queryExecutor.query<CreatedCaseRow>(
       `
         SELECT id FROM cases
-        WHERE status = $1
+        WHERE status = ANY($1::text[])
           AND deleted_at IS NULL
+          AND reason_flagged LIKE 'ขาดเรียนติดต่อกัน%'
           AND ($4::int IS NULL OR school_id = $4)
           AND (
             (student_uuid IS NOT NULL AND student_uuid = $2)
             OR (student_uuid IS NULL AND student_name = $3)
           )
       `,
-      ['OPEN', studentUuid, studentName, schoolId],
+      [
+        ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'],
+        studentUuid,
+        studentName,
+        schoolId,
+      ],
     );
 
     return result.rows[0]?.id ?? null;

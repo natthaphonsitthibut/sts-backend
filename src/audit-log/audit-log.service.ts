@@ -20,6 +20,7 @@ export type AuditAction =
   | 'CASE_CLOSE'
   | 'CASE_FORWARD'
   | 'CASE_REFERRAL_OUTCOME_UPDATE'
+  | 'CASE_AUTO_CANCEL'
   | 'TASK_DELETE'
   | 'DELEGATION'
   | 'DATA_IMPORT'

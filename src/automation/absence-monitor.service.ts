@@ -1,12 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { AutomationRepository } from './automation.repository';
-import type { ConsecutiveAbsentStudentRow, NewCase } from './automation.types';
+import type {
+  CaseAutoCancelAuditEvent,
+  ConsecutiveAbsentStudentRow,
+  NewCase,
+} from './automation.types';
 
 @Injectable()
 export class AbsenceMonitorService {
   private readonly logger = new Logger(AbsenceMonitorService.name);
 
-  constructor(private readonly automationRepository: AutomationRepository) {}
+  constructor(
+    private readonly automationRepository: AutomationRepository,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   private normalizeText(value: unknown): string {
     if (value == null) {
@@ -57,6 +65,7 @@ export class AbsenceMonitorService {
     }
 
     const newCases: NewCase[] = [];
+    const autoCancelAuditEvents: CaseAutoCancelAuditEvent[] = [];
 
     try {
       await this.automationRepository.withTransaction(async (executor) => {
@@ -89,7 +98,16 @@ export class AbsenceMonitorService {
             ? absentUuidSet.has(caseStudentUuid)
             : absentNamesSet.has(caseStudentName);
           if (!stillAbsent) {
-            await this.automationRepository.deleteOpenCaseById(openCase.id, executor);
+            const cancelled = await this.automationRepository.deleteOpenCaseById(
+              openCase.id,
+              executor,
+            );
+            if (cancelled) {
+              autoCancelAuditEvents.push({
+                caseId: openCase.id,
+                studentUuid: caseStudentUuid || null,
+              });
+            }
             this.logger.log(
               `Deleted / Canceled Case ${openCase.id} for ${caseStudentName || caseStudentUuid} due to attendance correction.`,
             );
@@ -116,7 +134,7 @@ export class AbsenceMonitorService {
 
           this.logger.log(`Checking existing cases for: ${studentName}`);
 
-          const existingCaseId = await this.automationRepository.findOpenAbsenceCaseByStudent(
+          const existingCaseId = await this.automationRepository.findActiveAbsenceCaseByStudent(
             studentUuid ?? '',
             studentName,
             schoolId,
@@ -158,6 +176,21 @@ export class AbsenceMonitorService {
           });
         }
       });
+
+      for (const event of autoCancelAuditEvents) {
+        await this.auditLog.record({
+          actorUserId: null,
+          actorLabel: 'system:absence-monitor',
+          action: 'CASE_AUTO_CANCEL',
+          targetType: 'case',
+          targetId: String(event.caseId),
+          metadata: {
+            reason: 'attendance_corrected',
+            studentUuid: event.studentUuid,
+          },
+          ip: null,
+        });
+      }
     } catch (error) {
       this.logger.error('Error in checking consecutive absences', error);
     }
