@@ -122,7 +122,7 @@ export class AutomationRepository {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<OpenAbsenceCaseRow>(
       `
-        SELECT id, student_name, student_uuid
+        SELECT id, student_name, student_uuid, school_id
         FROM cases
         WHERE status = 'OPEN'
           AND deleted_at IS NULL

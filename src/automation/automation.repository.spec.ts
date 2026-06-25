@@ -57,4 +57,24 @@ describe('AutomationRepository', () => {
     expect(queries[0].sql).toContain('status = ANY($1::text[])');
     expect(queries[0].sql).toContain("reason_flagged LIKE 'ขาดเรียนติดต่อกัน%'");
   });
+
+  it('loads school scope for open absence cases used by legacy auto-cancel fallback', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = {
+      createQueryRunner: jest.fn(() => queryRunner),
+    };
+    const repository = new AutomationRepository(dataSource as never);
+
+    await repository.listOpenAbsenceCases();
+
+    expect(queries[0].sql).toContain('SELECT id, student_name, student_uuid, school_id');
+  });
 });

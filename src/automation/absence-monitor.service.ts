@@ -32,6 +32,24 @@ export class AbsenceMonitorService {
     return [firstName, lastName].filter((part) => part.length > 0).join(' ');
   }
 
+  private normalizeSchoolId(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      return Number.isInteger(parsed) ? parsed : null;
+    }
+    return null;
+  }
+
+  private buildLegacyStudentSchoolKey(studentName: string, schoolId: number | null): string | null {
+    if (!studentName || schoolId === null) {
+      return null;
+    }
+    return `${schoolId}:${studentName}`;
+  }
+
   private buildStudentTermAddress(student: ConsecutiveAbsentStudentRow): string {
     const parts: string[] = [];
 
@@ -79,10 +97,15 @@ export class AbsenceMonitorService {
             .map((student) => this.normalizeText(student.student_uuid))
             .filter((uuid) => uuid.length > 0),
         );
-        const absentNamesSet = new Set(
+        const absentLegacySchoolKeys = new Set(
           absentStudents
-            .map((student) => this.buildStudentName(student))
-            .filter((name) => name.length > 0),
+            .map((student) =>
+              this.buildLegacyStudentSchoolKey(
+                this.buildStudentName(student),
+                this.normalizeSchoolId(student.school_id_onec),
+              ),
+            )
+            .filter((key): key is string => key !== null),
         );
 
         const openCases = await this.automationRepository.listOpenAbsenceCases(executor);
@@ -90,13 +113,15 @@ export class AbsenceMonitorService {
         for (const openCase of openCases) {
           const caseStudentUuid = this.normalizeText(openCase.student_uuid);
           const caseStudentName = this.normalizeText(openCase.student_name);
-          if (!caseStudentUuid && !caseStudentName) {
+          const caseSchoolId = this.normalizeSchoolId(openCase.school_id);
+          if (!caseStudentUuid && (!caseStudentName || caseSchoolId === null)) {
             continue; // ระบุตัวไม่ได้ → ไม่แตะ (รักษา guard เดิม)
           }
-          // uuid-first; ใช้ชื่อ fallback เฉพาะเคส legacy ที่ไม่มี student_uuid
+          // uuid-first; legacy name fallback must stay school-scoped.
+          const legacySchoolKey = this.buildLegacyStudentSchoolKey(caseStudentName, caseSchoolId);
           const stillAbsent = caseStudentUuid
             ? absentUuidSet.has(caseStudentUuid)
-            : absentNamesSet.has(caseStudentName);
+            : legacySchoolKey !== null && absentLegacySchoolKeys.has(legacySchoolKey);
           if (!stillAbsent) {
             const cancelled = await this.automationRepository.deleteOpenCaseById(
               openCase.id,

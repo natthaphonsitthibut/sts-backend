@@ -67,6 +67,7 @@ describe('AbsenceMonitorService', () => {
         id: 10,
         student_name: 'สมชาย ใจดี',
         student_uuid: 'student-uuid-1',
+        school_id: 10010002,
       },
     ]);
 
@@ -101,5 +102,26 @@ describe('AbsenceMonitorService', () => {
       undefined,
     );
     expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
+  });
+
+  it('does not retain a legacy case only because the same student name is absent in another school', async () => {
+    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([
+      buildAbsentStudent({
+        student_uuid: 'student-uuid-1',
+        school_id_onec: 10010002,
+      }),
+    ]);
+    automationRepository.listOpenAbsenceCases.mockResolvedValue([
+      {
+        id: 30,
+        student_name: 'สมชาย ใจดี',
+        student_uuid: null,
+        school_id: 20020003,
+      },
+    ]);
+
+    await service.checkConsecutiveAbsences();
+
+    expect(automationRepository.deleteOpenCaseById).toHaveBeenCalledWith(30, undefined);
   });
 });

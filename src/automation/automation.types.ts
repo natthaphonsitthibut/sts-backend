@@ -18,6 +18,7 @@ export interface OpenAbsenceCaseRow extends Record<string, unknown> {
   id: number;
   student_name: string | null;
   student_uuid: string | null;
+  school_id: number | string | null;
 }
 
 export interface CaseAutoCancelAuditEvent {
