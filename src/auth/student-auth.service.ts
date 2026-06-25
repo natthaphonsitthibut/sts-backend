@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
-import { ROLE_BASELINES } from '../common/utils/authorization';
+import { ROLE_BASELINES } from './permissions.constants';
 import { hashToken } from '../common/utils/helpers';
 import { queryDataSource } from '../database/sql-query';
 import { DataSource } from 'typeorm';
