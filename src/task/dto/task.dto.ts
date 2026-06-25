@@ -16,6 +16,14 @@ export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
 export type AttendanceTaskStatus = 'P_PRESENT' | 'P_ABSENT' | 'P_LATE';
 export type CaseReferralOutcomeStatus = 'ACKNOWLEDGED' | 'ACCEPTED' | 'DECLINED' | 'RETURNED';
+export type CaseResolutionOutcome =
+  | 'RETURNED_TO_SCHOOL'
+  | 'TRANSFERRED_SCHOOL'
+  | 'ILLNESS'
+  | 'WORKING'
+  | 'UNREACHABLE'
+  | 'REFERRED_EXTERNAL'
+  | 'OTHER';
 
 // Fields are intentionally loose unions (string | number | null) because the
 // service coerces them downstream. Every property carries at least @IsOptional()
@@ -217,6 +225,18 @@ export class ReviewCaseDto {
   @IsOptional()
   @IsString()
   referral_note?: string | null;
+
+  @IsOptional()
+  @IsIn([
+    'RETURNED_TO_SCHOOL',
+    'TRANSFERRED_SCHOOL',
+    'ILLNESS',
+    'WORKING',
+    'UNREACHABLE',
+    'REFERRED_EXTERNAL',
+    'OTHER',
+  ])
+  resolution_outcome?: CaseResolutionOutcome | null;
 
   @IsOptional()
   @IsString()

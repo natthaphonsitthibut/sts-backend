@@ -141,6 +141,7 @@ interface CaseReviewInput {
   caseId: number;
   reviewAction: string;
   reviewNote: string | null;
+  resolutionOutcome: string | null;
   reviewedBy: string;
 }
 
@@ -1586,10 +1587,24 @@ export class TaskRepository {
   async insertCaseReview(data: CaseReviewInput, executor?: QueryExecutor): Promise<void> {
     await this.getExecutor(executor).query(
       `
-      INSERT INTO case_reviews (id, case_id, review_action, review_note, reviewed_by)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO case_reviews (
+        id,
+        case_id,
+        review_action,
+        review_note,
+        resolution_outcome,
+        reviewed_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
     `,
-      [data.reviewId, data.caseId, data.reviewAction, data.reviewNote, data.reviewedBy],
+      [
+        data.reviewId,
+        data.caseId,
+        data.reviewAction,
+        data.reviewNote,
+        data.resolutionOutcome,
+        data.reviewedBy,
+      ],
     );
   }
 

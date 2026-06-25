@@ -238,6 +238,7 @@ export const DATABASE_BASELINE_SQL = `
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     review_action TEXT NOT NULL,
     review_note TEXT,
+    resolution_outcome VARCHAR(40),
     reviewed_by TEXT,
     reviewed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
@@ -442,6 +443,32 @@ export const DATABASE_BASELINE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_task_links_token ON task_links(token_hash);
   CREATE INDEX IF NOT EXISTS idx_task_links_task_id ON task_links(task_id);
   CREATE INDEX IF NOT EXISTS idx_case_reviews_case_id ON case_reviews(case_id);
+  CREATE INDEX IF NOT EXISTS idx_case_reviews_resolution_outcome
+    ON case_reviews(resolution_outcome)
+    WHERE resolution_outcome IS NOT NULL;
+  DO $case_review_outcome$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conname = 'chk_case_reviews_resolution_outcome'
+    ) THEN
+      ALTER TABLE case_reviews
+      ADD CONSTRAINT chk_case_reviews_resolution_outcome
+      CHECK (
+        resolution_outcome IS NULL
+        OR resolution_outcome IN (
+          'RETURNED_TO_SCHOOL',
+          'TRANSFERRED_SCHOOL',
+          'ILLNESS',
+          'WORKING',
+          'UNREACHABLE',
+          'REFERRED_EXTERNAL',
+          'OTHER'
+        )
+      );
+    END IF;
+  END $case_review_outcome$;
   CREATE INDEX IF NOT EXISTS idx_external_agencies_scope ON external_agencies(province, district, sub_district);
   CREATE INDEX IF NOT EXISTS idx_external_agencies_type_active ON external_agencies(agency_type, is_active);
   CREATE INDEX IF NOT EXISTS idx_case_referrals_case ON case_referrals(case_id, referred_at DESC);

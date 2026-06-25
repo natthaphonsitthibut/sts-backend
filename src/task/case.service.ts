@@ -1,10 +1,14 @@
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
-import { ReviewCaseDto, type CaseReferralOutcomeStatus } from './dto/task.dto';
+import {
+  ReviewCaseDto,
+  type CaseReferralOutcomeStatus,
+  type CaseResolutionOutcome,
+} from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 
@@ -14,6 +18,15 @@ const CASE_REFERRAL_OUTCOME_STATUSES: CaseReferralOutcomeStatus[] = [
   'ACCEPTED',
   'DECLINED',
   'RETURNED',
+];
+const CASE_RESOLUTION_OUTCOMES: CaseResolutionOutcome[] = [
+  'RETURNED_TO_SCHOOL',
+  'TRANSFERRED_SCHOOL',
+  'ILLNESS',
+  'WORKING',
+  'UNREACHABLE',
+  'REFERRED_EXTERNAL',
+  'OTHER',
 ];
 
 @Injectable()
@@ -61,6 +74,17 @@ export class CaseService {
     throw new Error('status must be one of: ACKNOWLEDGED, ACCEPTED, DECLINED, RETURNED');
   }
 
+  private normalizeResolutionOutcome(value: unknown): CaseResolutionOutcome | null {
+    const normalized = this.normalizeText(value).toUpperCase();
+    if (!normalized) {
+      return null;
+    }
+    if (CASE_RESOLUTION_OUTCOMES.includes(normalized as CaseResolutionOutcome)) {
+      return normalized as CaseResolutionOutcome;
+    }
+    throw new BadRequestException('resolution_outcome is invalid');
+  }
+
   private getCaseStatusByAction(action: ReviewAction): string {
     if (action === 'CLOSE') return 'RESOLVED';
     if (action === 'FORWARD') return 'AWAITING_HELP';
@@ -100,6 +124,10 @@ export class CaseService {
     this.assertCanReviewCaseAction(currentActor, reviewAction);
     const reviewNote = clean(this.normalizeText(body.review_note)) || null;
     const referralNote = clean(this.normalizeText(body.referral_note)) || reviewNote;
+    const resolutionOutcome = this.normalizeResolutionOutcome(body.resolution_outcome);
+    if (reviewAction === 'CLOSE' && !resolutionOutcome) {
+      throw new BadRequestException('resolution_outcome is required for CLOSE');
+    }
     const agencyId = this.normalizeNumber(body.agency_id);
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     const reviewedBy = actorName || actor?.username || 'ผอ.';
@@ -131,6 +159,7 @@ export class CaseService {
             caseId,
             reviewAction,
             reviewNote,
+            resolutionOutcome: reviewAction === 'CLOSE' ? resolutionOutcome : null,
             reviewedBy,
           },
           executor,
@@ -170,6 +199,7 @@ export class CaseService {
           targetId: String(caseId),
           metadata: {
             reviewAction,
+            resolutionOutcome: reviewAction === 'CLOSE' ? resolutionOutcome : null,
             referralId: referralRecord?.id ?? null,
             agencyId: referralRecord?.agency_id ?? null,
           },

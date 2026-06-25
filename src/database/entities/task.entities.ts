@@ -212,6 +212,9 @@ export class CaseReviewEntity {
   @Column({ name: 'review_note', type: 'text', nullable: true })
   reviewNote!: string | null;
 
+  @Column({ name: 'resolution_outcome', type: 'varchar', length: 40, nullable: true })
+  resolutionOutcome!: string | null;
+
   @Column({ name: 'reviewed_by', type: 'text', nullable: true })
   reviewedBy!: string | null;
 
