@@ -9,13 +9,16 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  Req,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
+import type { Request } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { TaskService } from './task.service';
 import { appConfig } from '../config/app.config';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { processVisitPhoto } from '../common/file-upload/visit-photo.util';
+import { getHeaderValue } from './task.types';
 
 @Controller('api/tasks')
 export class SubmissionController {
@@ -45,6 +48,7 @@ export class SubmissionController {
     @Param('token') token: string,
     @Body() body: Record<string, string>,
     @UploadedFiles() files: Express.Multer.File[],
+    @Req() req: Request,
   ) {
     this.logger.log(`[submitReport] files=${files?.length || 0}`);
 
@@ -76,7 +80,8 @@ export class SubmissionController {
     };
 
     try {
-      const result = await this.taskService.saveTaskSubmission(token, data);
+      const sessionToken = getHeaderValue(req.headers['x-magic-session']);
+      const result = await this.taskService.saveTaskSubmission(token, data, sessionToken);
       return { ...result, success: true };
     } catch (err: unknown) {
       if (err instanceof HttpException) {

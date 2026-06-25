@@ -123,13 +123,23 @@ export class TaskController {
   }
 
   @Post(':token/attendance')
-  async saveTaskAttendance(@Param('token') token: string, @Body() body: SaveTaskAttendanceDto) {
-    return await this.taskService.saveTaskAttendance(token, body.records);
+  async saveTaskAttendance(
+    @Param('token') token: string,
+    @Body() body: SaveTaskAttendanceDto,
+    @Req() req: Request,
+  ) {
+    const sessionToken = getHeaderValue(req.headers['x-magic-session']);
+    return await this.taskService.saveTaskAttendance(token, body.records, sessionToken);
   }
 
   @Post(':token/submission')
-  async saveTaskSubmission(@Param('token') token: string, @Body() body: SaveTaskSubmissionDto) {
-    return await this.taskService.saveTaskSubmission(token, body);
+  async saveTaskSubmission(
+    @Param('token') token: string,
+    @Body() body: SaveTaskSubmissionDto,
+    @Req() req: Request,
+  ) {
+    const sessionToken = getHeaderValue(req.headers['x-magic-session']);
+    return await this.taskService.saveTaskSubmission(token, body, sessionToken);
   }
 
   @ThrottleOtpRequest()

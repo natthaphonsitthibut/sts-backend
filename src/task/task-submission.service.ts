@@ -89,6 +89,10 @@ export class TaskSubmissionService {
       throw new ForbiddenException('ลิงก์นี้ไม่รองรับการบันทึกประเภทนี้');
     }
 
+    if (link.auth_required === true) {
+      throw new ForbiddenException('กรุณายืนยัน OTP ก่อนบันทึกข้อมูล');
+    }
+
     return link;
   }
 
@@ -113,12 +117,16 @@ export class TaskSubmissionService {
     return 3;
   }
 
-  async saveTaskAttendance(token: string, records: TaskAttendanceRecordDto[] | undefined) {
+  async saveTaskAttendance(
+    token: string,
+    records: TaskAttendanceRecordDto[] | undefined,
+    sessionToken?: string,
+  ) {
     const today = getBangkokDateString();
     const attendanceRecords = Array.isArray(records) ? records : [];
 
     try {
-      const task = await this.taskAccessService.getTaskByToken(token);
+      const task = await this.taskAccessService.getTaskByToken(token, sessionToken);
       const link = this.validateUsableLink(task, 'ATTENDANCE');
       const recorder =
         typeof link.assigned_to_name === 'string' ? link.assigned_to_name : 'Teacher (Magic Link)';
@@ -204,9 +212,9 @@ export class TaskSubmissionService {
     }
   }
 
-  async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto) {
+  async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto, sessionToken?: string) {
     try {
-      const task = await this.taskAccessService.getTaskByToken(token);
+      const task = await this.taskAccessService.getTaskByToken(token, sessionToken);
       this.validateUsableLink(task, 'VISIT');
 
       const tokenHash = hashToken(token);

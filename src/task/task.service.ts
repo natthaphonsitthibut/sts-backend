@@ -93,12 +93,16 @@ export class TaskService {
     return await this.taskReadService.getTaskChain(actor, taskId);
   }
 
-  async saveTaskAttendance(token: string, records: SaveTaskAttendanceDto['records']) {
-    return await this.taskSubmissionService.saveTaskAttendance(token, records);
+  async saveTaskAttendance(
+    token: string,
+    records: SaveTaskAttendanceDto['records'],
+    sessionToken?: string,
+  ) {
+    return await this.taskSubmissionService.saveTaskAttendance(token, records, sessionToken);
   }
 
-  async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto) {
-    return await this.taskSubmissionService.saveTaskSubmission(token, data);
+  async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto, sessionToken?: string) {
+    return await this.taskSubmissionService.saveTaskSubmission(token, data, sessionToken);
   }
 
   async requestOtp(token: string) {
