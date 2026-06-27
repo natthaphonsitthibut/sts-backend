@@ -10,7 +10,9 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   MinLength,
+  Min,
 } from 'class-validator';
 import type { DataScope } from '../users.types';
 
@@ -75,6 +77,35 @@ export class CreateUserDto {
 }
 
 export class UpdateUserDto extends PartialType(CreateUserDto) {}
+
+export class StudentAccountBulkFilterDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+
+  @IsOptional()
+  @IsString()
+  grade?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  room?: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  onlyWithoutAccount?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+}
+
+export class GenerateStudentAccountsDto extends StudentAccountBulkFilterDto {}
 
 export class LoginDto {
   @IsString()

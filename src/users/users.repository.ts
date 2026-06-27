@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { buildDataScopeQuery } from '../common/utils/authorization';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
   DataScope,
@@ -7,6 +8,7 @@ import type {
   QueryExecutor,
   QueryResultLike,
   RoleRow,
+  StudentAccountCandidateRow,
 } from './users.types';
 
 interface CreateUserRecordInput {
@@ -15,6 +17,7 @@ interface CreateUserRecordInput {
   firstName: string;
   lastName: string;
   personIdOnec: string;
+  personUuid?: string | null;
   phone: string | null;
   email: string | null;
   affiliation: string | null;
@@ -58,6 +61,15 @@ export interface UserListFilters {
   actorScope?: DataScope;
   searchTerm?: string;
   page?: number;
+  limit?: number;
+}
+
+export interface StudentAccountCandidateFilters {
+  actorScope?: DataScope;
+  schoolId?: number;
+  grade?: string;
+  room?: number;
+  onlyWithoutAccount?: boolean;
   limit?: number;
 }
 
@@ -349,11 +361,12 @@ export class UsersRepository {
           permissions,
           role,
           data_scope,
+          person_uuid,
           must_change_password,
           created_by,
           updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
         RETURNING id
       `,
       [
@@ -369,12 +382,146 @@ export class UsersRepository {
         JSON.stringify(data.permissions),
         data.role,
         JSON.stringify(data.dataScope),
+        data.personUuid ?? null,
         data.mustChangePassword,
         data.createdBy,
       ],
     );
 
     return result.rows[0].id;
+  }
+
+  private buildStudentAccountCandidateQuery(filters: StudentAccountCandidateFilters): {
+    whereSql: string;
+    params: unknown[];
+  } {
+    const params: unknown[] = [];
+    const conditions = [
+      's.deleted_at IS NULL',
+      's.person_uuid IS NOT NULL',
+      `s."StudentStatusID_Onec" = 10`,
+      `s."SchoolID_Onec" IS NOT NULL`,
+    ];
+
+    if (filters.actorScope) {
+      const scopeResult = buildDataScopeQuery(
+        filters.actorScope,
+        {
+          school_id: `s."SchoolID_Onec"`,
+          grade: `s."GradeLevelID_Onec"`,
+          room: `s."RoomID_Onec"::text`,
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+      if (scopeResult.sql) {
+        conditions.push(`(${scopeResult.sql})`);
+        scopeResult.params.forEach((param) => params.push(param));
+      }
+    }
+
+    if (typeof filters.schoolId === 'number') {
+      params.push(filters.schoolId);
+      conditions.push(`s."SchoolID_Onec" = $${params.length}`);
+    }
+    if (filters.grade) {
+      params.push(filters.grade);
+      conditions.push(`gl.label = $${params.length}`);
+    }
+    if (typeof filters.room === 'number') {
+      params.push(filters.room);
+      conditions.push(`s."RoomID_Onec" = $${params.length}`);
+    }
+    if (filters.onlyWithoutAccount !== false) {
+      conditions.push('existing_user.id IS NULL');
+    }
+
+    return {
+      whereSql: `WHERE ${conditions.join(' AND ')}`,
+      params,
+    };
+  }
+
+  async listStudentAccountCandidates(
+    filters: StudentAccountCandidateFilters,
+    executor?: QueryExecutor,
+  ): Promise<StudentAccountCandidateRow[]> {
+    const queryExecutor = this.getExecutor(executor);
+    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+    const { whereSql, params } = this.buildStudentAccountCandidateQuery(filters);
+    const result = await queryExecutor.query<StudentAccountCandidateRow>(
+      `
+        SELECT
+          s.student_uuid::text,
+          s.person_uuid::text,
+          s."FirstName_Onec" AS first_name,
+          s."LastName_Onec" AS last_name,
+          s."SchoolID_Onec" AS school_id,
+          sc.name AS school_name,
+          gl.label AS grade_label,
+          s."GradeLevelID_Onec" AS grade_level_id,
+          s."RoomID_Onec" AS room_id,
+          s."AcademicYear_Onec" AS academic_year,
+          s."Semester_Onec" AS semester,
+          existing_user.id AS existing_user_id,
+          existing_user.username AS existing_username
+        FROM student_term s
+        JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+        LEFT JOIN users existing_user
+          ON existing_user.person_uuid = s.person_uuid
+         AND existing_user.role = 'STUDENT'
+         AND existing_user.status = 'ACTIVE'
+        ${whereSql}
+        ORDER BY s."SchoolID_Onec", s."GradeLevelID_Onec", s."RoomID_Onec", s."PersonID_Onec"
+        LIMIT $${params.length + 1}
+      `,
+      [...params, limit],
+    );
+    return result.rows;
+  }
+
+  async countStudentAccountCandidates(
+    filters: StudentAccountCandidateFilters,
+  ): Promise<{ totalCount: number; withoutAccountCount: number; existingAccountCount: number }> {
+    const baseFilters = { ...filters, onlyWithoutAccount: false };
+    const { whereSql, params } = this.buildStudentAccountCandidateQuery(baseFilters);
+    const result = await this.query<{
+      total_count: number | string;
+      without_account_count: number | string;
+      existing_account_count: number | string;
+    }>(
+      `
+        SELECT
+          COUNT(*)::int AS total_count,
+          COUNT(*) FILTER (WHERE existing_user.id IS NULL)::int AS without_account_count,
+          COUNT(*) FILTER (WHERE existing_user.id IS NOT NULL)::int AS existing_account_count
+        FROM student_term s
+        JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+        LEFT JOIN users existing_user
+          ON existing_user.person_uuid = s.person_uuid
+         AND existing_user.role = 'STUDENT'
+         AND existing_user.status = 'ACTIVE'
+        ${whereSql}
+      `,
+      params,
+    );
+    return {
+      totalCount: Number(result.rows[0]?.total_count ?? 0),
+      withoutAccountCount: Number(result.rows[0]?.without_account_count ?? 0),
+      existingAccountCount: Number(result.rows[0]?.existing_account_count ?? 0),
+    };
+  }
+
+  async usernameExists(username: string, executor?: QueryExecutor): Promise<boolean> {
+    const result = await this.getExecutor(executor).query<{ exists: boolean }>(
+      `SELECT TRUE AS exists FROM users WHERE username = $1 LIMIT 1`,
+      [username],
+    );
+    return result.rows.length > 0;
   }
 
   async updateUser(data: UpdateUserRecordInput, executor?: QueryExecutor): Promise<void> {

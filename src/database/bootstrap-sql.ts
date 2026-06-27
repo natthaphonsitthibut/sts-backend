@@ -360,6 +360,7 @@ export const DATABASE_BASELINE_SQL = `
     permissions JSONB DEFAULT '[]'::jsonb,
     role TEXT DEFAULT 'TEACHER',
     data_scope JSONB DEFAULT '{}'::jsonb,
+    person_uuid UUID,
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
@@ -418,6 +419,7 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "permissions" JSONB DEFAULT '[]';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "role" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "data_scope" JSONB DEFAULT '{}'::jsonb;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS person_uuid UUID;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_first_name TEXT;
@@ -650,6 +652,22 @@ export const DATABASE_BASELINE_SQL = `
 
   ALTER TABLE users
   ALTER COLUMN data_scope SET DEFAULT '{}'::jsonb;
+
+  DO $users_person_fk$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'student_person')
+      AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_person') THEN
+      ALTER TABLE users
+      ADD CONSTRAINT fk_users_person
+      FOREIGN KEY (person_uuid) REFERENCES student_person(person_uuid)
+      ON DELETE RESTRICT;
+    END IF;
+  END $users_person_fk$;
+
+  CREATE INDEX IF NOT EXISTS idx_users_person_uuid ON users (person_uuid);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_users_active_student_person
+    ON users (person_uuid)
+    WHERE person_uuid IS NOT NULL AND role = 'STUDENT' AND status = 'ACTIVE';
 
   ALTER TABLE users
   ALTER COLUMN role SET DEFAULT 'TEACHER';

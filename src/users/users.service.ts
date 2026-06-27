@@ -1,4 +1,11 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { randomInt } from 'crypto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
   buildPaginationMeta,
@@ -6,10 +13,26 @@ import {
   resolvePage,
 } from '../common/pagination/pagination.util';
 import { PasswordService } from '../auth/password.service';
-import type { ChangePasswordDto, CreateUserDto, UpdateUserDto } from './dto/users.dto';
+import type {
+  ChangePasswordDto,
+  CreateUserDto,
+  GenerateStudentAccountsDto,
+  StudentAccountBulkFilterDto,
+  UpdateUserDto,
+} from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository, type UserListFilters } from './users.repository';
-import type { ActorContext } from './users.types';
+import type {
+  ActorContext,
+  DataScope,
+  QueryExecutor,
+  StudentAccountCandidateRow,
+} from './users.types';
+
+const STUDENT_ACCOUNT_PERMISSIONS = ['home', 'student-self'] as const;
+const STUDENT_ACCOUNT_ROLE = 'STUDENT';
+const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
+const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 @Injectable()
 export class UsersService {
@@ -88,6 +111,7 @@ export class UsersService {
             firstName: data.FirstName,
             lastName: data.LastName,
             personIdOnec: data.PersonID_Onec,
+            personUuid: null,
             phone: data.phone || null,
             email: data.email || null,
             affiliation: data.affiliation || null,
@@ -247,6 +271,112 @@ export class UsersService {
     return { success: true, must_change_password: false };
   }
 
+  async previewStudentAccounts(
+    actor: ActorContext | undefined,
+    filters: StudentAccountBulkFilterDto,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCanManageStudentAccounts(currentActor);
+    const normalizedFilters = this.normalizeStudentAccountFilters(filters, currentActor.data_scope);
+    const [summary, candidates] = await Promise.all([
+      this.usersRepository.countStudentAccountCandidates(normalizedFilters),
+      this.usersRepository.listStudentAccountCandidates(normalizedFilters),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        summary,
+        candidates: candidates.map((candidate) =>
+          this.toStudentAccountCandidateResponse(candidate),
+        ),
+        limit: normalizedFilters.limit,
+      },
+    };
+  }
+
+  async generateStudentAccounts(
+    actor: ActorContext | undefined,
+    filters: GenerateStudentAccountsDto,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCanManageStudentAccounts(currentActor);
+    const normalizedFilters = this.normalizeStudentAccountFilters(
+      {
+        ...filters,
+        onlyWithoutAccount: true,
+      },
+      currentActor.data_scope,
+    );
+    const actorId = resolveAuditActorId(currentActor);
+    const credentials = await this.usersRepository.withTransaction(async (executor) => {
+      const candidates = await this.usersRepository.listStudentAccountCandidates(
+        normalizedFilters,
+        executor,
+      );
+      const created: Array<{
+        userId: number;
+        username: string;
+        tempPassword: string;
+        studentName: string;
+        schoolName: string | null;
+        grade: string | null;
+        room: number | null;
+      }> = [];
+
+      for (const candidate of candidates) {
+        const username = await this.generateUniqueStudentUsername(candidate.school_id, executor);
+        const tempPassword = this.passwordService.generateTempPassword();
+        const passwordHash = await this.passwordService.hash(tempPassword);
+        try {
+          const userId = await this.usersRepository.createUser(
+            {
+              username,
+              passwordHash,
+              firstName: candidate.first_name || '-',
+              lastName: candidate.last_name || '-',
+              personIdOnec: '',
+              personUuid: candidate.person_uuid,
+              phone: null,
+              email: null,
+              affiliation: candidate.school_name || null,
+              status: 'ACTIVE',
+              permissions: [...STUDENT_ACCOUNT_PERMISSIONS],
+              role: STUDENT_ACCOUNT_ROLE,
+              dataScope: { own_only: true },
+              mustChangePassword: true,
+              createdBy: actorId,
+            },
+            executor,
+          );
+          created.push({
+            userId,
+            username,
+            tempPassword,
+            studentName: this.getStudentDisplayName(candidate),
+            schoolName: candidate.school_name,
+            grade: candidate.grade_label,
+            room: candidate.room_id,
+          });
+        } catch (error) {
+          if (!this.isUniqueViolation(error)) {
+            throw error;
+          }
+          this.logger.warn('Skipped duplicate student account during bulk generate');
+        }
+      }
+      return created;
+    });
+
+    this.logger.log(`Generated ${credentials.length} student accounts by actor ${currentActor.id}`);
+
+    return {
+      success: true,
+      createdCount: credentials.length,
+      credentials,
+    };
+  }
+
   async getRoles(actor?: ActorContext) {
     const definitions = await this.usersPolicyService.getRoleDefinitions();
     if (!actor) {
@@ -268,6 +398,82 @@ export class UsersService {
             actorRole,
             roleMap,
           )),
+    );
+  }
+
+  private assertCanManageStudentAccounts(actor: ActorContext): void {
+    const permissions = new Set(actor.permissions || []);
+    if (
+      permissions.has('manage-student-accounts') ||
+      permissions.has('*') ||
+      permissions.has('ALL')
+    ) {
+      return;
+    }
+    throw new ForbiddenException('ไม่มีสิทธิ์สร้างบัญชีนักเรียน');
+  }
+
+  private normalizeStudentAccountFilters(
+    filters: StudentAccountBulkFilterDto,
+    actorScope: DataScope | undefined,
+  ) {
+    if (actorScope?.own_only) {
+      throw new ForbiddenException('บัญชีส่วนตัวไม่สามารถสร้างบัญชีนักเรียนได้');
+    }
+    const limit = Math.min(Math.max(filters.limit ?? 50, 1), STUDENT_ACCOUNT_BATCH_LIMIT);
+    const grade = typeof filters.grade === 'string' ? filters.grade.trim() : '';
+    return {
+      actorScope,
+      schoolId: filters.schoolId,
+      grade: grade || undefined,
+      room: filters.room,
+      onlyWithoutAccount: filters.onlyWithoutAccount !== false,
+      limit,
+    };
+  }
+
+  private async generateUniqueStudentUsername(
+    schoolId: number,
+    executor: QueryExecutor,
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const suffix = Array.from(
+        { length: 5 },
+        () => USERNAME_ALPHABET[randomInt(0, USERNAME_ALPHABET.length)],
+      ).join('');
+      const username = `${schoolId}-${suffix}`;
+      if (!(await this.usersRepository.usernameExists(username, executor))) {
+        return username;
+      }
+    }
+    throw new BadRequestException('ไม่สามารถสุ่ม username ที่ไม่ซ้ำได้ กรุณาลองใหม่');
+  }
+
+  private getStudentDisplayName(candidate: StudentAccountCandidateRow): string {
+    return [candidate.first_name, candidate.last_name].filter(Boolean).join(' ') || '-';
+  }
+
+  private toStudentAccountCandidateResponse(candidate: StudentAccountCandidateRow) {
+    return {
+      studentId: candidate.student_uuid,
+      studentName: this.getStudentDisplayName(candidate),
+      schoolId: candidate.school_id,
+      schoolName: candidate.school_name,
+      grade: candidate.grade_label,
+      room: candidate.room_id,
+      academicYear: candidate.academic_year,
+      semester: candidate.semester,
+      hasActiveAccount: candidate.existing_user_id !== null,
+      username: candidate.existing_username,
+    };
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === '23505'
     );
   }
 }

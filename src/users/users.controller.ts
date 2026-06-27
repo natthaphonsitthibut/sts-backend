@@ -33,7 +33,9 @@ import {
   ChangePasswordDto,
   CreateRoleGroupDto,
   CreateUserDto,
+  GenerateStudentAccountsDto,
   LoginDto,
+  StudentAccountBulkFilterDto,
   UpdateRoleGroupDto,
   UpdateUserDto,
 } from './dto/users.dto';
@@ -180,6 +182,41 @@ export class UsersController {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
     }
     return user;
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/preview')
+  async previewStudentAccounts(
+    @Body() data: StudentAccountBulkFilterDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.previewStudentAccounts(actor, data);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/generate')
+  async generateStudentAccounts(
+    @Body() data: GenerateStudentAccountsDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.usersService.generateStudentAccounts(actor, data);
+    await this.auditLog.record({
+      action: 'STUDENT_ACCOUNT_BULK_GENERATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'student_accounts',
+      metadata: {
+        createdCount: result.createdCount,
+        schoolId: data.schoolId ?? null,
+        grade: data.grade ?? null,
+        room: data.room ?? null,
+      },
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

@@ -69,6 +69,9 @@ export class UserEntity {
   @Column({ name: 'data_scope', type: 'jsonb', default: () => "'{}'::jsonb" })
   dataScope!: Record<string, unknown>;
 
+  @Column({ name: 'person_uuid', type: 'uuid', nullable: true })
+  personUuid!: string | null;
+
   @Column({ name: 'must_change_password', type: 'boolean', default: false })
   mustChangePassword!: boolean;
 

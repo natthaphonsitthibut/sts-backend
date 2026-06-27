@@ -23,6 +23,8 @@ interface UserActorRow extends Record<string, unknown> {
   roles: string[] | null;
   permissions: unknown;
   data_scope?: Record<string, unknown> | null;
+  PersonID_Onec?: string | null;
+  person_uuid?: string | null;
   role_default_permissions?: unknown;
 }
 
@@ -129,6 +131,8 @@ export class AuthActorService {
             END AS roles,
             u.permissions,
             u.data_scope,
+            u."PersonID_Onec",
+            u.person_uuid,
             r.default_permissions AS role_default_permissions
           FROM users u
           LEFT JOIN roles r ON r.name = u.role
@@ -150,6 +154,7 @@ export class AuthActorService {
         permissions: resolvePermissions(row.permissions, row.role_default_permissions),
         data_scope: normalizeDataScope(row.data_scope) || {},
         PersonID_Onec: typeof row['PersonID_Onec'] === 'string' ? row['PersonID_Onec'] : undefined,
+        person_uuid: typeof row.person_uuid === 'string' ? row.person_uuid : undefined,
         auth_source: 'LOCAL',
       };
     } catch {
