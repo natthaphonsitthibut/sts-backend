@@ -1,10 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  GoneException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { hashToken, generateToken, clean } from '../common/utils/helpers';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { DelegateTaskDto } from './dto/task.dto';
+import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
+import type { QueryResultRow } from './task.types';
 
 const MAX_EXPIRY_HOURS = 2160;
 const DEFAULT_EXPIRY_HOURS = 24;
@@ -15,6 +25,7 @@ export class DelegationService {
 
   constructor(
     private readonly taskRepository: TaskRepository,
+    private readonly taskAccessService: TaskAccessService,
     private readonly auditLog: AuditLogService,
   ) {}
 
@@ -31,7 +42,59 @@ export class DelegationService {
     return null;
   }
 
-  async delegateTask(token: string, data: DelegateTaskDto, baseUrl: string) {
+  private validateDelegationAccess(
+    task: Awaited<ReturnType<TaskAccessService['getTaskByToken']>>,
+  ): void {
+    if (!task) {
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
+    }
+
+    if ('error' in task && task.error) {
+      const status = typeof task.status === 'string' ? task.status : '';
+      const message = typeof task.error === 'string' ? task.error : 'ลิงก์ใช้งานไม่ได้';
+      if (status === 'EXPIRED') {
+        throw new GoneException(message);
+      }
+      if (status === 'ADMIN_LOCKED') {
+        throw new ForbiddenException(message);
+      }
+      if (status === 'COMPLETED' || status === 'DELEGATED') {
+        throw new ConflictException(message);
+      }
+      throw new BadRequestException(message);
+    }
+
+    if (task.auth_required === true) {
+      throw new ForbiddenException('กรุณายืนยัน OTP ก่อนส่งต่อภารกิจ');
+    }
+    if (task.can_delegate !== true) {
+      throw new ConflictException('ลิงก์นี้ไม่สามารถส่งต่อได้');
+    }
+  }
+
+  private validateLockedLink(link: QueryResultRow | null): QueryResultRow {
+    if (!link) {
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ถูกลบแล้ว');
+    }
+    if (new Date(String(link.expires_at)) < new Date()) {
+      throw new GoneException('Link expired');
+    }
+    if (link.admin_locked) {
+      throw new ForbiddenException('Link is disabled by admin');
+    }
+    if (link.status !== 'ACTIVE') {
+      throw new ConflictException('Link is no longer active');
+    }
+    if (Number(link.delegation_depth) >= Number(link.max_delegation_depth)) {
+      throw new ForbiddenException('Max delegation depth reached');
+    }
+    return link;
+  }
+
+  async delegateTask(token: string, data: DelegateTaskDto, baseUrl: string, sessionToken?: string) {
+    const accessTask = await this.taskAccessService.getTaskByToken(token, sessionToken);
+    this.validateDelegationAccess(accessTask);
+
     const tokenHash = hashToken(token);
     const newAssigneeName = clean(data.new_assignee_name);
     const newAssigneePhone = clean(data.new_assignee_phone);
@@ -47,23 +110,7 @@ export class DelegationService {
 
     const link = await this.taskRepository.findDelegationLinkByTokenHash(tokenHash);
     if (!link) {
-      throw new Error('Link not found');
-    }
-
-    if (new Date(String(link.expires_at)) < new Date()) {
-      throw new Error('Link expired');
-    }
-
-    if (link.status !== 'ACTIVE') {
-      throw new Error('Link is no longer active');
-    }
-
-    if (link.admin_locked) {
-      throw new Error('Link is disabled by admin');
-    }
-
-    if (Number(link.delegation_depth) >= Number(link.max_delegation_depth)) {
-      throw new Error('Max delegation depth reached');
+      throw new NotFoundException('Link not found');
     }
 
     const newToken = generateToken();
@@ -75,17 +122,29 @@ export class DelegationService {
     const expiresAt = new Date(Date.now() + delegateHours * 60 * 60 * 1000).toISOString();
     const magicLink = `${baseUrl}/task/${newToken}`;
 
-    await this.taskRepository.withTransaction(async (executor) => {
-      await this.taskRepository.updateTaskLinkStatus(String(link.id), 'DELEGATED', executor);
+    const delegation = await this.taskRepository.withTransaction(async (executor) => {
+      const lockedLink = this.validateLockedLink(
+        await this.taskRepository.lockDelegationLinkForUpdate(String(link.id), executor),
+      );
+      const nextDepth = Number(lockedLink.delegation_depth) + 1;
+      const transitioned = await this.taskRepository.transitionTaskLinkStatus(
+        String(lockedLink.id),
+        'ACTIVE',
+        'DELEGATED',
+        executor,
+      );
+      if (!transitioned) {
+        throw new ConflictException('Link is no longer active');
+      }
 
       await this.taskRepository.createDelegatedTaskLink(
         {
           linkId: newLinkId,
-          taskId: String(link.task_id),
-          parentLinkId: String(link.id),
+          taskId: String(lockedLink.task_id),
+          parentLinkId: String(lockedLink.id),
           tokenHash: newTokenHash,
           magicLink,
-          delegationDepth: Number(link.delegation_depth) + 1,
+          delegationDepth: nextDepth,
           assignedToName: newAssigneeName,
           assignedToPhone: newAssigneePhone,
           assignedToEmail: newAssigneeEmail,
@@ -99,29 +158,36 @@ export class DelegationService {
         },
         executor,
       );
+
+      return {
+        actorLabel: clean(lockedLink.assigned_to_name) || 'guest',
+        parentLinkId: String(lockedLink.id),
+        nextDepth,
+      };
     });
     await this.auditLog.record({
       actorUserId: null,
-      actorLabel: clean(link.assigned_to_name) || 'guest',
+      actorLabel: delegation.actorLabel,
       action: 'DELEGATION',
       targetType: 'task_link',
-      targetId: String(link.id),
-      metadata: { toDepth: Number(link.delegation_depth) + 1 },
+      targetId: newLinkId,
+      metadata: { parentLinkId: delegation.parentLinkId, toDepth: delegation.nextDepth },
       ip: null,
     });
+    this.logger.log(`Delegation completed at depth ${delegation.nextDepth}`);
 
     let qrDataUrl: string | null = null;
     try {
       qrDataUrl = await QRCode.toDataURL(magicLink, { width: 300, margin: 2 });
-    } catch (err) {
-      this.logger.warn('Failed to generate QR code', err);
+    } catch {
+      this.logger.warn('Failed to generate delegation QR code');
     }
 
     return {
       magic_link: magicLink,
       qr_code_data: qrDataUrl,
       expires_at: expiresAt,
-      delegation_depth: Number(link.delegation_depth) + 1,
+      delegation_depth: delegation.nextDepth,
     };
   }
 }

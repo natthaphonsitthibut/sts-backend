@@ -2,12 +2,16 @@ import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
+  IsEmail,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
@@ -203,11 +207,16 @@ export class DelegateTaskDto {
   new_assignee_phone?: string | null;
 
   @IsOptional()
+  @IsEmail()
   @IsString()
   new_assignee_email?: string | null;
 
   @IsOptional()
-  expires_in_hours?: string | number | null;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(2160)
+  expires_in_hours?: number | null;
 }
 
 export class ReviewCaseDto {

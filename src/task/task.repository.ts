@@ -1003,6 +1003,47 @@ export class TaskRepository {
     );
   }
 
+  async transitionTaskLinkStatus(
+    linkId: string,
+    expectedStatus: string,
+    nextStatus: string,
+    executor: QueryExecutor,
+  ): Promise<boolean> {
+    const result = await executor.query(
+      `UPDATE task_links
+       SET status = $1
+       WHERE id = $2 AND status = $3 AND deleted_at IS NULL
+       RETURNING id`,
+      [nextStatus, linkId, expectedStatus],
+    );
+    return (result.rowCount ?? result.rows.length) === 1;
+  }
+
+  async lockDelegationLinkForUpdate(
+    linkId: string,
+    executor: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const result = await executor.query(
+      `SELECT
+         tl.id,
+         tl.task_id,
+         tl.assigned_to_name,
+         tl.expires_at,
+         tl.status,
+         tl.admin_locked,
+         tl.delegation_depth,
+         t.max_delegation_depth
+       FROM task_links tl
+       JOIN tasks t ON t.id = tl.task_id
+       WHERE tl.id = $1
+         AND tl.deleted_at IS NULL
+         AND t.deleted_at IS NULL
+       FOR UPDATE OF tl`,
+      [linkId],
+    );
+    return result.rows[0] || null;
+  }
+
   /**
    * Lock a link row and confirm the link + its parent task are both live.
    * Returns null if either is tombstoned. Call at the start of a submit/write
