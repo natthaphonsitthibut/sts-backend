@@ -129,7 +129,15 @@ export interface AttendanceInsertRecord {
   statusCode: number;
   recordedBy: string;
   period: number;
+  sessionId: string;
   metadata: StudentAttendanceMetadataRow;
+}
+
+export interface AttendanceWriteContext {
+  actorUserId: number | null;
+  actorLabel: string;
+  recorder: string;
+  allowedStudentIds?: string[];
 }
 
 export type AttendanceScope = DataScope | undefined;

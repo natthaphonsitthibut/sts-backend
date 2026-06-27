@@ -602,9 +602,10 @@ export class AttendanceRepository {
           "AttendanceDate",
           "Period",
           "AttendanceStatus",
-          "RecordedBy"
+          "RecordedBy",
+          session_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         data.studentUuid,
@@ -617,8 +618,101 @@ export class AttendanceRepository {
         data.period,
         data.statusCode,
         data.recordedBy,
+        data.sessionId,
       ],
     );
+  }
+
+  async upsertAttendanceBatch(
+    input: {
+      studentIds: string[];
+      statusCodes: number[];
+      date: string;
+      period: number;
+      recordedBy: string;
+      sessionId: string;
+      metadata: StudentAttendanceMetadataRow;
+    },
+    executor: QueryExecutor,
+  ): Promise<void> {
+    await executor.query(
+      `
+        INSERT INTO attendance (
+          student_uuid,
+          "SchoolID_Onec",
+          "GradeLevelID_Onec",
+          "RoomID_Onec",
+          "AcademicYear_Onec",
+          "Semester_Onec",
+          "AttendanceDate",
+          "Period",
+          "AttendanceStatus",
+          "RecordedAt",
+          "RecordedBy",
+          session_id
+        )
+        SELECT
+          input.student_uuid,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          input.status_code,
+          now(),
+          $10,
+          $11
+        FROM UNNEST($1::uuid[], $2::smallint[]) AS input(student_uuid, status_code)
+        ON CONFLICT (student_uuid, "AttendanceDate", "Period") DO UPDATE SET
+          "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
+          "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
+          "RoomID_Onec" = EXCLUDED."RoomID_Onec",
+          "AcademicYear_Onec" = EXCLUDED."AcademicYear_Onec",
+          "Semester_Onec" = EXCLUDED."Semester_Onec",
+          "AttendanceStatus" = EXCLUDED."AttendanceStatus",
+          "RecordedAt" = now(),
+          "RecordedBy" = EXCLUDED."RecordedBy",
+          session_id = EXCLUDED.session_id
+      `,
+      [
+        input.studentIds,
+        input.statusCodes,
+        input.metadata.SchoolID_Onec,
+        input.metadata.GradeLevelID_Onec,
+        input.metadata.RoomID_Onec,
+        input.metadata.AcademicYear_Onec,
+        input.metadata.Semester_Onec,
+        input.date,
+        input.period,
+        input.recordedBy,
+        input.sessionId,
+      ],
+    );
+  }
+
+  async listAttendanceStatuses(
+    studentIds: string[],
+    date: string,
+    period: number,
+    executor: QueryExecutor,
+  ): Promise<Array<{ student_uuid: string; attendance_status: number }>> {
+    if (studentIds.length === 0) return [];
+    const result = await executor.query<{
+      student_uuid: string;
+      attendance_status: number;
+    }>(
+      `
+        SELECT student_uuid, "AttendanceStatus"::int AS attendance_status
+        FROM attendance
+        WHERE student_uuid = ANY($1::uuid[])
+          AND "AttendanceDate" = $2
+          AND "Period" = $3
+      `,
+      [studentIds, date, period],
+    );
+    return result.rows;
   }
 
   async getAlertTriggerType(): Promise<string> {

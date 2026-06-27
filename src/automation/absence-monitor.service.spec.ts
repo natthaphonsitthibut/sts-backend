@@ -31,6 +31,7 @@ describe('AbsenceMonitorService', () => {
       | 'getSystemSettingValue'
       | 'withTransaction'
       | 'listConsecutiveAbsentStudents'
+      | 'listEvaluableStudentUuids'
       | 'listOpenAbsenceCases'
       | 'deleteOpenCaseById'
       | 'findActiveAbsenceCaseByStudent'
@@ -46,6 +47,7 @@ describe('AbsenceMonitorService', () => {
         await callback(undefined);
       }),
       listConsecutiveAbsentStudents: jest.fn().mockResolvedValue([]),
+      listEvaluableStudentUuids: jest.fn().mockResolvedValue([]),
       listOpenAbsenceCases: jest.fn().mockResolvedValue([]),
       deleteOpenCaseById: jest.fn().mockResolvedValue(true),
       findActiveAbsenceCaseByStudent: jest.fn().mockResolvedValue(null),
@@ -70,6 +72,7 @@ describe('AbsenceMonitorService', () => {
         school_id: 10010002,
       },
     ]);
+    automationRepository.listEvaluableStudentUuids.mockResolvedValue(['student-uuid-1']);
 
     await service.checkConsecutiveAbsences();
 
@@ -104,7 +107,7 @@ describe('AbsenceMonitorService', () => {
     expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
   });
 
-  it('does not retain a legacy case only because the same student name is absent in another school', async () => {
+  it('does not auto-cancel a legacy case without a stable student uuid', async () => {
     automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([
       buildAbsentStudent({
         student_uuid: 'student-uuid-1',
@@ -122,6 +125,6 @@ describe('AbsenceMonitorService', () => {
 
     await service.checkConsecutiveAbsences();
 
-    expect(automationRepository.deleteOpenCaseById).toHaveBeenCalledWith(30, undefined);
+    expect(automationRepository.deleteOpenCaseById).not.toHaveBeenCalled();
   });
 });

@@ -1,12 +1,21 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { normalizeDataScope, type AuthenticatedRequestUser } from '../auth';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { AutomationService, NewCase } from '../automation/automation.service';
 import { AttendanceRepository } from './attendance.repository';
+import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type {
   AttendanceSaveRecordInput,
   AttendanceSelectionStatus,
+  AttendanceWriteContext,
   AttendanceWriteRecord,
+  QueryExecutor,
 } from './attendance.types';
 
 const STATUS_CODE_MAP: Record<AttendanceSelectionStatus, number> = {
@@ -21,6 +30,7 @@ export class AttendanceWriteService {
 
   constructor(
     private readonly attendanceRepository: AttendanceRepository,
+    private readonly attendanceOperationsRepository: AttendanceOperationsRepository,
     private readonly automationService: AutomationService,
   ) {}
 
@@ -30,62 +40,250 @@ export class AttendanceWriteService {
       return { success: true, newCases: [] as NewCase[] };
     }
 
-    const today = getBangkokDateString();
-    // incoming student_id values are already student_uuid (client sends uuid directly)
-    const studentIds = normalizedRecords.map((record) => record.student_id);
-
-    // Enforce the actor's data scope on the write: every student must be within
-    // the actor's school/area/grade/room (empty scope = global admin = all).
-    // Reject the whole batch if any student is out of scope (fail closed).
-    const scope = normalizeDataScope(actor?.data_scope);
-    const inScopeIds = new Set(
-      await this.attendanceRepository.filterStudentIdsInScope(studentIds, scope),
-    );
-    for (const studentId of studentIds) {
-      if (!inScopeIds.has(studentId)) {
-        throw new ForbiddenException('พบนักเรียนนอกขอบเขตของคุณ');
-      }
-    }
-
-    // Attribute the write to the real actor instead of a hardcoded "Admin".
-    const recordedBy = this.resolveRecorder(actor);
-
-    await this.attendanceRepository.withTransaction(async (executor) => {
-      await this.attendanceRepository.deleteAttendanceBatchForDate(today, studentIds, executor);
-
-      for (const record of normalizedRecords) {
-        const metadata = await this.attendanceRepository.findStudentAttendanceMetadata(
-          record.student_id,
-          executor,
-        );
-
-        if (!metadata) {
-          continue;
-        }
-
-        await this.attendanceRepository.insertAttendanceRecord(
+    const result = await this.attendanceOperationsRepository.withTransaction(
+      async (executor) =>
+        await this.saveAttendanceWithinTransaction(
+          normalizedRecords,
           {
-            studentUuid: record.student_id,
-            date: today,
-            statusCode: STATUS_CODE_MAP[record.status],
-            recordedBy,
-            period: 1,
-            metadata,
+            actorUserId: actor?.id ?? null,
+            actorLabel: actor?.username || (actor?.id ? `user#${actor.id}` : 'unknown-user'),
+            recorder: this.resolveRecorder(actor),
           },
           executor,
-        );
-      }
-    });
+          normalizeDataScope(actor?.data_scope),
+        ),
+    );
 
     const triggerType = await this.attendanceRepository.getAlertTriggerType();
     let newCases: NewCase[] = [];
 
-    if (triggerType === 'IMMEDIATE') {
+    if (triggerType === 'IMMEDIATE' && result.calendarConfigured) {
       this.logger.log('Attendance saved. Trigger Type is IMMEDIATE. Executing absence check...');
       newCases = await this.automationService.checkConsecutiveAbsences();
     }
 
-    return { success: true, newCases };
+    return {
+      success: true,
+      newCases,
+      session: result.session,
+      calendarConfigured: result.calendarConfigured,
+    };
+  }
+
+  async saveAttendanceWithinTransaction(
+    records: AttendanceSaveRecordInput[] | AttendanceWriteRecord[],
+    context: AttendanceWriteContext,
+    executor: QueryExecutor,
+    actorScope?: ReturnType<typeof normalizeDataScope>,
+  ): Promise<{
+    session: { id: string; status: string; revision: number };
+    calendarConfigured: boolean;
+  }> {
+    const normalizedRecords = this.normalizeRecords(records);
+    const studentIds = normalizedRecords.map((record) => record.student_id);
+    const uniqueIds = new Set(studentIds);
+    if (uniqueIds.size !== studentIds.length) {
+      throw new BadRequestException('พบรายชื่อนักเรียนซ้ำในคำขอ');
+    }
+
+    if (context.allowedStudentIds) {
+      const allowed = new Set(context.allowedStudentIds);
+      if (studentIds.some((studentId) => !allowed.has(studentId))) {
+        throw new ForbiddenException('พบนักเรียนนอกขอบเขตที่ได้รับอนุญาต');
+      }
+    } else {
+      const inScope = new Set(
+        await this.attendanceRepository.filterStudentIdsInScope(studentIds, actorScope, executor),
+      );
+      if (studentIds.some((studentId) => !inScope.has(studentId))) {
+        throw new ForbiddenException('พบนักเรียนนอกขอบเขตของคุณ');
+      }
+    }
+
+    const metadataRows = await this.attendanceOperationsRepository.findClassMetadata(
+      studentIds,
+      executor,
+    );
+    if (metadataRows.length !== studentIds.length) {
+      throw new BadRequestException('ไม่พบข้อมูลนักเรียนบางรายการใน roster ปัจจุบัน');
+    }
+    const first = metadataRows[0];
+    const sameClass = metadataRows.every(
+      (row) =>
+        row.school_id === first.school_id &&
+        row.grade_level_id === first.grade_level_id &&
+        row.room_id === first.room_id &&
+        row.academic_year === first.academic_year &&
+        row.semester === first.semester,
+    );
+    if (!sameClass) {
+      throw new BadRequestException('บันทึกเช็คชื่อได้ครั้งละหนึ่งห้องและหนึ่งภาคเรียน');
+    }
+
+    const rosterIds = await this.attendanceOperationsRepository.listRosterIds(first, executor);
+    if (
+      rosterIds.length !== studentIds.length ||
+      rosterIds.some((studentId) => !uniqueIds.has(studentId))
+    ) {
+      throw new ConflictException('รายชื่อที่ส่งไม่ตรงกับ roster ปัจจุบัน กรุณาโหลดรายชื่อใหม่');
+    }
+
+    const today = getBangkokDateString();
+    const term = await this.attendanceOperationsRepository.findOrCreateTermForClass(
+      first,
+      context.actorUserId,
+      executor,
+    );
+    const calendarConfigured = term.status === 'ACTIVE';
+    if (calendarConfigured) {
+      if (!term.starts_on || !term.ends_on || today < term.starts_on || today > term.ends_on) {
+        throw new ConflictException('วันนี้อยู่นอกช่วงภาคเรียนที่เปิดใช้งาน');
+      }
+      const calendarDay = await this.attendanceOperationsRepository.findCalendarDay(
+        term.id,
+        today,
+        executor,
+      );
+      if (!calendarDay) {
+        throw new ConflictException('ปฏิทินภาคเรียนไม่มีข้อมูลสำหรับวันนี้');
+      }
+      if (calendarDay.day_type !== 'SCHOOL_DAY') {
+        throw new ConflictException('วันนี้ไม่ใช่วันเรียนตามปฏิทินโรงเรียน');
+      }
+    }
+
+    const session = await this.attendanceOperationsRepository.findOrCreateSessionForUpdate(
+      {
+        schoolTermId: term.id,
+        schoolId: first.school_id,
+        gradeLevelId: first.grade_level_id,
+        roomId: first.room_id,
+        attendanceDate: today,
+        period: 1,
+      },
+      rosterIds.length,
+      context.actorUserId,
+      executor,
+    );
+    if (session.status === 'SUBMITTED') {
+      throw new ConflictException('รอบนี้ส่งแล้ว กรุณาเปิดแก้ไขพร้อมระบุเหตุผลก่อน');
+    }
+    if (session.status === 'VOIDED') {
+      throw new ConflictException('รอบเช็คชื่อนี้ถูกยกเลิกแล้ว');
+    }
+
+    const statusCodes = normalizedRecords.map((record) => STATUS_CODE_MAP[record.status]);
+    const previousStatuses =
+      session.status === 'REOPENED'
+        ? await this.attendanceRepository.listAttendanceStatuses(studentIds, today, 1, executor)
+        : [];
+    const previousStatusByStudent = new Map(
+      previousStatuses.map((row) => [row.student_uuid, row.attendance_status] as const),
+    );
+    const correctionChanges =
+      session.status === 'REOPENED'
+        ? studentIds.flatMap((studentUuid, index) => {
+            const previousStatusCode = previousStatusByStudent.get(studentUuid) ?? null;
+            const nextStatusCode = statusCodes[index];
+            return previousStatusCode === nextStatusCode
+              ? []
+              : [{ studentUuid, previousStatusCode, nextStatusCode }];
+          })
+        : [];
+
+    await this.attendanceRepository.upsertAttendanceBatch(
+      {
+        studentIds,
+        statusCodes,
+        date: today,
+        period: 1,
+        recordedBy: context.recorder,
+        sessionId: session.id,
+        metadata: {
+          SchoolID_Onec: first.school_id,
+          GradeLevelID_Onec: first.grade_level_id,
+          RoomID_Onec: first.room_id,
+          AcademicYear_Onec: first.academic_year,
+          Semester_Onec: first.semester,
+        },
+      },
+      executor,
+    );
+    await this.attendanceOperationsRepository.updateSessionSubmitted(
+      session.id,
+      studentIds.length,
+      context.actorUserId,
+      executor,
+    );
+    await this.attendanceOperationsRepository.recordSessionAudit(
+      {
+        action: 'ATTENDANCE_SUBMIT',
+        sessionId: session.id,
+        actorUserId: context.actorUserId,
+        actorLabel: context.actorLabel,
+        metadata: {
+          schoolId: first.school_id,
+          gradeLevelId: first.grade_level_id,
+          roomId: first.room_id,
+          attendanceDate: today,
+          expectedRosterCount: rosterIds.length,
+          recordedCount: studentIds.length,
+          revision: session.revision,
+          correctionReason: session.correction_reason,
+          correctionChanges,
+        },
+      },
+      executor,
+    );
+
+    return {
+      session: { id: session.id, status: 'SUBMITTED', revision: session.revision },
+      calendarConfigured,
+    };
+  }
+
+  async saveAttendanceGroupsWithinTransaction(
+    records: AttendanceSaveRecordInput[],
+    context: AttendanceWriteContext,
+    executor: QueryExecutor,
+  ): Promise<Array<{ calendarConfigured: boolean }>> {
+    const normalizedRecords = this.normalizeRecords(records);
+    const studentIds = normalizedRecords.map((record) => record.student_id);
+    const metadataRows = await this.attendanceOperationsRepository.findClassMetadata(
+      studentIds,
+      executor,
+    );
+    if (metadataRows.length !== studentIds.length) {
+      throw new BadRequestException('ไม่พบข้อมูลนักเรียนบางรายการใน roster ปัจจุบัน');
+    }
+    const metadataByStudent = new Map(metadataRows.map((row) => [row.student_uuid, row] as const));
+    const groups = new Map<string, AttendanceSaveRecordInput[]>();
+    for (const record of normalizedRecords) {
+      const metadata = metadataByStudent.get(record.student_id);
+      if (!metadata) throw new BadRequestException('ไม่พบข้อมูลนักเรียนใน roster ปัจจุบัน');
+      const key = [
+        metadata.school_id,
+        metadata.academic_year,
+        metadata.semester,
+        metadata.grade_level_id,
+        metadata.room_id,
+      ].join(':');
+      const group = groups.get(key) ?? [];
+      group.push(record);
+      groups.set(key, group);
+    }
+
+    const results: Array<{ calendarConfigured: boolean }> = [];
+    for (const group of groups.values()) {
+      results.push(
+        await this.saveAttendanceWithinTransaction(
+          group,
+          { ...context, allowedStudentIds: group.map((record) => record.student_id) },
+          executor,
+        ),
+      );
+    }
+    return results;
   }
 
   private resolveRecorder(actor?: AuthenticatedRequestUser): string {
@@ -98,7 +296,9 @@ export class AttendanceWriteService {
     return 'Unknown';
   }
 
-  private normalizeRecords(records: AttendanceSaveRecordInput[]): AttendanceWriteRecord[] {
+  private normalizeRecords(
+    records: AttendanceSaveRecordInput[] | AttendanceWriteRecord[],
+  ): AttendanceWriteRecord[] {
     if (!Array.isArray(records)) {
       throw new BadRequestException('Invalid records');
     }

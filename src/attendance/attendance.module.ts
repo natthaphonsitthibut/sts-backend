@@ -7,6 +7,8 @@ import { AttendanceRepository } from './attendance.repository';
 import { AttendanceLookupService } from './attendance-lookup.service';
 import { AttendanceReadService } from './attendance-read.service';
 import { AttendanceWriteService } from './attendance-write.service';
+import { AttendanceOperationsRepository } from './attendance-operations.repository';
+import { AttendanceOperationsService } from './attendance-operations.service';
 
 @Module({
   imports: [AuthModule, AutomationModule],
@@ -16,8 +18,10 @@ import { AttendanceWriteService } from './attendance-write.service';
     AttendanceLookupService,
     AttendanceReadService,
     AttendanceWriteService,
+    AttendanceOperationsRepository,
+    AttendanceOperationsService,
     AttendanceService,
   ],
-  exports: [AttendanceService],
+  exports: [AttendanceService, AttendanceWriteService],
 })
 export class AttendanceModule {}

@@ -1,8 +1,20 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
+  RequireAnyPermission,
   RequirePermission,
   normalizeDataScope,
   type AuthenticatedRequestUser,
@@ -17,11 +29,25 @@ import {
   SaveAttendanceDto,
 } from './dto/attendance.dto';
 import { resolveLimit, resolvePage } from '../common/pagination/pagination.util';
+import { AttendanceOperationsService } from './attendance-operations.service';
+import {
+  AttendanceReconciliationQueryDto,
+  AttendanceSessionContextQueryDto,
+  GenerateSchoolCalendarDto,
+  ListSchoolCalendarQueryDto,
+  ListSchoolTermsQueryDto,
+  ReopenAttendanceSessionDto,
+  UpdateSchoolCalendarDayDto,
+  UpsertSchoolTermDto,
+} from './dto/attendance-operations.dto';
 
 @UseGuards(AuthGuard)
 @Controller('api/attendance')
 export class AttendanceController {
-  constructor(private readonly attendanceService: AttendanceService) {}
+  constructor(
+    private readonly attendanceService: AttendanceService,
+    private readonly attendanceOperationsService: AttendanceOperationsService,
+  ) {}
 
   @Get('grade-levels')
   async getGradeLevels() {
@@ -110,5 +136,105 @@ export class AttendanceController {
   @Get('rooms')
   async getRooms(@Query() query: GetRoomsQueryDto) {
     return await this.attendanceService.getRooms(query.grade, query.schoolId);
+  }
+
+  @Get('terms')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance-dashboard', 'settings')
+  async listTerms(
+    @Query() query: ListSchoolTermsQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.listTerms(query.schoolId, actor);
+  }
+
+  @Post('terms')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('settings')
+  async upsertTerm(
+    @Body() body: UpsertSchoolTermDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.upsertTerm(body, actor);
+  }
+
+  @Post('terms/:termId/calendar/generate')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('settings')
+  async generateCalendar(
+    @Param('termId', ParseIntPipe) termId: number,
+    @Body() body: GenerateSchoolCalendarDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.generateCalendar(termId, body.schoolDays, actor);
+  }
+
+  @Get('calendar')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance-dashboard', 'settings')
+  async listCalendar(
+    @Query() query: ListSchoolCalendarQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.listCalendar(query.termId, actor);
+  }
+
+  @Patch('calendar-days/:calendarDayId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('settings')
+  async updateCalendarDay(
+    @Param('calendarDayId', ParseIntPipe) calendarDayId: number,
+    @Body() body: UpdateSchoolCalendarDayDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.updateCalendarDay(
+      calendarDayId,
+      body.dayType,
+      body.reason,
+      actor,
+    );
+  }
+
+  @Get('session')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async getSessionContext(
+    @Query() query: AttendanceSessionContextQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.getSessionContext(
+      query.schoolId,
+      query.grade,
+      query.room,
+      query.date,
+      actor,
+    );
+  }
+
+  @Post('sessions/:sessionId/reopen')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async reopenSession(
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Body() body: ReopenAttendanceSessionDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.reopenSession(sessionId, body.reason, actor);
+  }
+
+  @Get('reconciliation')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance-dashboard')
+  async getReconciliation(
+    @Query() query: AttendanceReconciliationQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.getReconciliation(
+      query.termId,
+      query.date,
+      resolvePage(query.page),
+      resolveLimit(query.limit),
+      actor,
+    );
   }
 }

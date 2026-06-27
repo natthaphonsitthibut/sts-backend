@@ -16,14 +16,47 @@ describe('AutomationRepository', () => {
     };
     const repository = new AutomationRepository(dataSource as never);
 
-    await repository.listConsecutiveAbsentStudents(3);
+    await repository.listConsecutiveAbsentStudents(3, '2026-06-27');
 
     expect(queries).toHaveLength(1);
-    expect(queries[0].params).toEqual([3]);
-    expect(queries[0].sql).toContain('GROUP BY student_uuid, "AttendanceDate"');
-    expect(queries[0].sql).toContain('BOOL_AND("AttendanceStatus" = 2)');
-    expect(queries[0].sql).toContain('current_absence_streak');
+    expect(queries[0].params).toEqual([3, '2026-06-27']);
+    expect(queries[0].sql).toContain('configured_evaluation');
+    expect(queries[0].sql).toContain('session.recorded_count = session.expected_roster_count');
+    expect(queries[0].sql).toContain('GROUP BY a.student_uuid, a."AttendanceDate"');
+    expect(queries[0].sql).toContain('BOOL_AND(a."AttendanceStatus" = 2)');
+    expect(queries[0].sql).toContain('fallback_absence_streak');
+    expect(queries[0].sql).toContain('FROM school_terms managed_term');
+    expect(queries[0].sql).toContain(
+      'managed_term.academic_year = current_enrollment."AcademicYear_Onec"',
+    );
     expect(queries[0].sql).not.toContain('ORDER BY "AttendanceDate" DESC, "AttendanceID" DESC');
+  });
+
+  it('does not treat managed draft terms as evaluable legacy attendance', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = {
+      createQueryRunner: jest.fn(() => queryRunner),
+    };
+    const repository = new AutomationRepository(dataSource as never);
+
+    await repository.listEvaluableStudentUuids(
+      ['11111111-1111-4111-8111-111111111111'],
+      3,
+      '2026-06-27',
+    );
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].sql).toContain('fallback_evaluable');
+    expect(queries[0].sql).toContain('FROM school_terms managed_term');
+    expect(queries[0].sql).toContain('managed_term.semester = current_enrollment."Semester_Onec"');
   });
 
   it('deduplicates against active absence cases, not only OPEN cases', async () => {

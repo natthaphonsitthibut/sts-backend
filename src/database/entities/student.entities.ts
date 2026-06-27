@@ -101,8 +101,11 @@ export class AttendanceEntity {
   @PrimaryGeneratedColumn({ name: 'AttendanceID' })
   attendanceId!: number;
 
-  @Column({ name: 'PersonID_Onec', type: 'varchar', length: 20 })
-  personIdOnec!: string;
+  @Column({ name: 'student_uuid', type: 'uuid' })
+  studentUuid!: string;
+
+  @Column({ name: 'session_id', type: 'uuid', nullable: true })
+  sessionId!: string | null;
 
   @Column({ name: 'SchoolID_Onec', type: 'integer' })
   schoolIdOnec!: number;

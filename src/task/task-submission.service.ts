@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
-import { getBangkokDateString } from '../common/utils/date.util';
+import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { hashToken } from '../common/utils/helpers';
 import { SaveTaskSubmissionDto, TaskAttendanceRecordDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
@@ -22,6 +22,7 @@ export class TaskSubmissionService {
     private readonly taskRepository: TaskRepository,
     private readonly taskAccessService: TaskAccessService,
     private readonly automationService: AutomationService,
+    private readonly attendanceWriteService: AttendanceWriteService,
   ) {}
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
@@ -106,23 +107,11 @@ export class TaskSubmissionService {
     return null;
   }
 
-  private resolveAttendanceStatus(status: string | undefined): number {
-    if (status === 'P_PRESENT') {
-      return 1;
-    }
-    if (status === 'P_ABSENT') {
-      return 2;
-    }
-
-    return 3;
-  }
-
   async saveTaskAttendance(
     token: string,
     records: TaskAttendanceRecordDto[] | undefined,
     sessionToken?: string,
   ) {
-    const today = getBangkokDateString();
     const attendanceRecords = Array.isArray(records) ? records : [];
 
     try {
@@ -150,51 +139,44 @@ export class TaskSubmissionService {
         targetSchoolId,
       });
       const allowedStudentIds = new Set(roster.map((student) => String(student.id)));
+      const writerRecords = attendanceRecords.map((record) => ({
+        student_id: typeof record.student_id === 'string' ? record.student_id : '',
+        status: typeof record.status === 'string' ? record.status : '',
+      }));
 
-      for (const record of attendanceRecords) {
-        const studentUuid = typeof record.student_id === 'string' ? record.student_id : '';
+      for (const record of writerRecords) {
+        const studentUuid = record.student_id;
         if (!studentUuid || !allowedStudentIds.has(studentUuid)) {
           throw new ForbiddenException('พบนักเรียนนอกขอบเขตของลิงก์นี้');
         }
       }
 
+      if (attendanceRecords.length === 0) {
+        throw new BadRequestException('กรุณาส่งข้อมูลเช็คชื่ออย่างน้อยหนึ่งรายการ');
+      }
+
+      let calendarConfigured = false;
       await this.taskRepository.withTransaction(async (executor) => {
         const live = await this.taskRepository.lockLiveTaskLink(String(link.link_id), executor);
         if (!live) {
           throw new ConflictException('ลิงก์นี้ถูกลบแล้ว');
         }
-        for (const record of attendanceRecords) {
-          const studentUuid = typeof record.student_id === 'string' ? record.student_id : '';
-          if (!studentUuid) {
-            continue;
-          }
-
-          const student = await this.taskRepository.findStudentTermMetadata(studentUuid, executor);
-
-          if (!student) {
-            continue;
-          }
-
-          await this.taskRepository.replaceAttendanceRecord(
-            {
-              studentUuid,
-              attendanceDate: today,
-              attendanceStatus: this.resolveAttendanceStatus(record.status),
-              recordedBy: recorder,
-              schoolId: Number(student.SchoolID_Onec),
-              gradeLevelId: Number(student.GradeLevelID_Onec),
-              roomId: Number(student.RoomID_Onec),
-              semester: Number(student.Semester_Onec),
-              academicYear: Number(student.AcademicYear_Onec),
-            },
-            executor,
-          );
-        }
+        const results = await this.attendanceWriteService.saveAttendanceGroupsWithinTransaction(
+          writerRecords,
+          {
+            actorUserId: null,
+            actorLabel: `task-link:${String(link.link_id)}`,
+            recorder,
+          },
+          executor,
+        );
+        calendarConfigured =
+          results.length > 0 && results.every((result) => result.calendarConfigured);
       });
 
       const triggerType = await this.taskRepository.getSystemSettingValue('ALERT_TRIGGER_TYPE');
 
-      if (triggerType === 'IMMEDIATE') {
+      if (triggerType === 'IMMEDIATE' && calendarConfigured) {
         this.logger.log(
           'Attendance saved via task link. Trigger Type is IMMEDIATE. Executing absence check...',
         );

@@ -14,6 +14,11 @@ import {
 } from './master-data.entities';
 import { AttendanceEntity, StudentDropoutEntity, StudentTermEntity } from './student.entities';
 import {
+  AttendanceSessionEntity,
+  SchoolCalendarDayEntity,
+  SchoolTermEntity,
+} from './attendance-operations.entities';
+import {
   CaseEntity,
   CaseReviewEntity,
   TaskEntity,
@@ -36,6 +41,9 @@ export const DATABASE_ENTITIES = [
   StudentTermEntity,
   StudentDropoutEntity,
   AttendanceEntity,
+  SchoolTermEntity,
+  SchoolCalendarDayEntity,
+  AttendanceSessionEntity,
   RoleEntity,
   UserEntity,
   RiskFactorEntity,
@@ -48,6 +56,7 @@ export const DATABASE_ENTITIES = [
 export {
   AssistanceMeasureEntity,
   AttendanceEntity,
+  AttendanceSessionEntity,
   CaseEntity,
   CaseReviewEntity,
   DropoutReasonEntity,
@@ -59,6 +68,8 @@ export {
   RoleEntity,
   ScheduleEntity,
   SchoolEntity,
+  SchoolCalendarDayEntity,
+  SchoolTermEntity,
   StudentDropoutEntity,
   StudentTermEntity,
   SystemSettingEntity,

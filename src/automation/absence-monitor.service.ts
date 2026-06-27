@@ -6,6 +6,7 @@ import type {
   ConsecutiveAbsentStudentRow,
   NewCase,
 } from './automation.types';
+import { getBangkokDateString } from '../common/utils/date.util';
 
 @Injectable()
 export class AbsenceMonitorService {
@@ -41,13 +42,6 @@ export class AbsenceMonitorService {
       return Number.isInteger(parsed) ? parsed : null;
     }
     return null;
-  }
-
-  private buildLegacyStudentSchoolKey(studentName: string, schoolId: number | null): string | null {
-    if (!studentName || schoolId === null) {
-      return null;
-    }
-    return `${schoolId}:${studentName}`;
   }
 
   private buildStudentTermAddress(student: ConsecutiveAbsentStudentRow): string {
@@ -87,8 +81,10 @@ export class AbsenceMonitorService {
 
     try {
       await this.automationRepository.withTransaction(async (executor) => {
+        const asOfDate = getBangkokDateString();
         const absentStudents = await this.automationRepository.listConsecutiveAbsentStudents(
           thresholdDays,
+          asOfDate,
           executor,
         );
 
@@ -97,18 +93,17 @@ export class AbsenceMonitorService {
             .map((student) => this.normalizeText(student.student_uuid))
             .filter((uuid) => uuid.length > 0),
         );
-        const absentLegacySchoolKeys = new Set(
-          absentStudents
-            .map((student) =>
-              this.buildLegacyStudentSchoolKey(
-                this.buildStudentName(student),
-                this.normalizeSchoolId(student.school_id_onec),
-              ),
-            )
-            .filter((key): key is string => key !== null),
-        );
-
         const openCases = await this.automationRepository.listOpenAbsenceCases(executor);
+        const evaluableUuidSet = new Set(
+          await this.automationRepository.listEvaluableStudentUuids(
+            openCases
+              .map((openCase) => this.normalizeText(openCase.student_uuid))
+              .filter((uuid) => uuid.length > 0),
+            thresholdDays,
+            asOfDate,
+            executor,
+          ),
+        );
 
         for (const openCase of openCases) {
           const caseStudentUuid = this.normalizeText(openCase.student_uuid);
@@ -117,11 +112,11 @@ export class AbsenceMonitorService {
           if (!caseStudentUuid && (!caseStudentName || caseSchoolId === null)) {
             continue; // ระบุตัวไม่ได้ → ไม่แตะ (รักษา guard เดิม)
           }
+          if (!caseStudentUuid || !evaluableUuidSet.has(caseStudentUuid)) {
+            continue; // ข้อมูลไม่ครบหรือเคส legacy ระบุตัวไม่ได้ → ห้าม auto-cancel
+          }
           // uuid-first; legacy name fallback must stay school-scoped.
-          const legacySchoolKey = this.buildLegacyStudentSchoolKey(caseStudentName, caseSchoolId);
-          const stillAbsent = caseStudentUuid
-            ? absentUuidSet.has(caseStudentUuid)
-            : legacySchoolKey !== null && absentLegacySchoolKeys.has(legacySchoolKey);
+          const stillAbsent = absentUuidSet.has(caseStudentUuid);
           if (!stillAbsent) {
             const cancelled = await this.automationRepository.deleteOpenCaseById(
               openCase.id,

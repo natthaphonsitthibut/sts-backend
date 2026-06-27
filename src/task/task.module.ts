@@ -17,9 +17,10 @@ import { TaskAccessService } from './task-access.service';
 import { TaskReadService } from './task-read.service';
 import { TaskSubmissionService } from './task-submission.service';
 import { TaskStatsService } from './task-stats.service';
+import { AttendanceModule } from '../attendance/attendance.module';
 
 @Module({
-  imports: [AutomationModule],
+  imports: [AutomationModule, AttendanceModule],
   controllers: [
     TaskController,
     AdminController,
