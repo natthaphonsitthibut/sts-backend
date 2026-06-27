@@ -2,7 +2,7 @@ import { applyDecorators, UseGuards } from '@nestjs/common';
 import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
 import type { ThrottleName } from './throttle.config';
 
-const ALL_THROTTLERS: ThrottleName[] = ['login', 'otpRequest', 'otpVerify', 'mockLogin'];
+const ALL_THROTTLERS: ThrottleName[] = ['login', 'otpRequest', 'otpVerify', 'mockLogin', 'geocode'];
 
 /**
  * Apply IP rate limiting to a single route using exactly one named throttler.
@@ -28,3 +28,4 @@ export const ThrottleLogin = () => only('login');
 export const ThrottleOtpRequest = () => only('otpRequest');
 export const ThrottleOtpVerify = () => only('otpVerify');
 export const ThrottleMockLogin = () => only('mockLogin');
+export const ThrottleGeocode = () => only('geocode');

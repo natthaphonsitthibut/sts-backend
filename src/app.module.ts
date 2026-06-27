@@ -21,15 +21,25 @@ import { appConfig } from './config/app.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
+import { geoConfig } from './config/geo.config';
 import { piiConfig } from './config/pii.config';
 import { throttleConfig } from './config/throttle.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
+import { GeoModule } from './geo/geo.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, authConfig, databaseConfig, emailConfig, piiConfig, throttleConfig],
+      load: [
+        appConfig,
+        authConfig,
+        databaseConfig,
+        emailConfig,
+        geoConfig,
+        piiConfig,
+        throttleConfig,
+      ],
     }),
     ScheduleModule.forRoot(),
     // IP rate limiting (in-memory store). Limits come from the runtime config
@@ -45,6 +55,7 @@ import { createTypeOrmOptions } from './database/typeorm.config';
           { name: 'otpRequest', ttl: config.otpRequest.ttlMs, limit: config.otpRequest.limit },
           { name: 'otpVerify', ttl: config.otpVerify.ttlMs, limit: config.otpVerify.limit },
           { name: 'mockLogin', ttl: config.mockLogin.ttlMs, limit: config.mockLogin.limit },
+          { name: 'geocode', ttl: config.geocode.ttlMs, limit: config.geocode.limit },
         ],
       }),
     }),
@@ -63,6 +74,7 @@ import { createTypeOrmOptions } from './database/typeorm.config';
     ImportsModule,
     FilesModule,
     AuditLogModule,
+    GeoModule,
   ],
   controllers: [AppController],
   providers: [AppService],

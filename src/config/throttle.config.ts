@@ -22,7 +22,7 @@ export interface ThrottleRule {
 }
 
 /** Named throttlers, referenced by the per-route decorators in throttle.decorators.ts. */
-export type ThrottleName = 'login' | 'otpRequest' | 'otpVerify' | 'mockLogin';
+export type ThrottleName = 'login' | 'otpRequest' | 'otpVerify' | 'mockLogin' | 'geocode';
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10);
@@ -48,6 +48,7 @@ function rule(
  *  - otpVerify   10 / minute   (IP-level OTP guessing; the per-link DB lockout
  *                               is the primary cap, this caps IP rotation)
  *  - mockLogin   10 / minute   (mock ThaID student login)
+ *  - geocode     30 / minute   (billable Google Maps proxy + address PII)
  */
 export const throttleConfig = registerAs('throttle', () => ({
   login: rule(process.env.RATE_LIMIT_LOGIN, process.env.RATE_LIMIT_LOGIN_TTL, 5, 60),
@@ -59,4 +60,5 @@ export const throttleConfig = registerAs('throttle', () => ({
   ),
   otpVerify: rule(process.env.RATE_LIMIT_OTP_VERIFY, process.env.RATE_LIMIT_OTP_VERIFY_TTL, 10, 60),
   mockLogin: rule(process.env.RATE_LIMIT_MOCK_LOGIN, process.env.RATE_LIMIT_MOCK_LOGIN_TTL, 10, 60),
+  geocode: rule(process.env.RATE_LIMIT_GEOCODE, process.env.RATE_LIMIT_GEOCODE_TTL, 30, 60),
 }));
