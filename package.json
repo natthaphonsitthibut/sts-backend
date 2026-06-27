@@ -20,6 +20,7 @@
     "migration:run": "pnpm typeorm migration:run -d src/database/typeorm.datasource.ts",
     "migration:revert": "pnpm typeorm migration:revert -d src/database/typeorm.datasource.ts",
     "bootstrap:verify-parity": "ts-node -r tsconfig-paths/register src/scripts/verify_bootstrap_parity.ts",
+    "smoke:attendance-operations": "node scripts/smoke-attendance-operations.js",
     "commitlint": "commitlint --edit",
     "prepare": "husky",
     "test": "jest",
