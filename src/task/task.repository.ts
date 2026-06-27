@@ -864,8 +864,14 @@ export class TaskRepository {
         tl.expires_at,
         tl.magic_link,
         tl.admin_locked,
-        tl.delegation_depth
+        tl.delegation_depth,
+        parent.assigned_to_name AS delegated_by_name,
+        CASE WHEN tl.parent_link_id IS NULL THEN NULL ELSE tl.created_at END AS delegated_at
       FROM task_links tl
+      LEFT JOIN task_links parent
+        ON parent.id = tl.parent_link_id
+        AND parent.task_id = tl.task_id
+        AND parent.deleted_at IS NULL
       WHERE tl.task_id = $1
         AND tl.deleted_at IS NULL
       ORDER BY tl.delegation_depth ASC
