@@ -105,6 +105,11 @@ describe('UsersService student accounts', () => {
       tempPassword: 'TEMP123456789',
       studentName: 'สมชาย ใจดี',
     });
+    expect(typeof result.credentials[0].temporaryPasswordIssuedAt).toBe('string');
+    expect(typeof result.credentials[0].temporaryPasswordExpiresAt).toBe('string');
+    expect(new Date(result.credentials[0].temporaryPasswordExpiresAt).getTime()).toBeGreaterThan(
+      new Date(result.credentials[0].temporaryPasswordIssuedAt).getTime(),
+    );
     expect(result.credentials[0].username).toMatch(/^10010002-[A-Z2-9]{5}$/);
     expect(usersRepository.createUser).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -118,6 +123,12 @@ describe('UsersService student accounts', () => {
         createdBy: 5,
       }),
       executor,
+    );
+    expect(usersRepository.createUser.mock.calls[0][0].temporaryPasswordIssuedAt).toBeInstanceOf(
+      Date,
+    );
+    expect(usersRepository.createUser.mock.calls[0][0].temporaryPasswordExpiresAt).toBeInstanceOf(
+      Date,
     );
   });
 });

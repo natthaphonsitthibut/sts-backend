@@ -75,6 +75,12 @@ export class UserEntity {
   @Column({ name: 'must_change_password', type: 'boolean', default: false })
   mustChangePassword!: boolean;
 
+  @Column({ name: 'temporary_password_issued_at', type: 'timestamptz', nullable: true })
+  temporaryPasswordIssuedAt!: Date | null;
+
+  @Column({ name: 'temporary_password_expires_at', type: 'timestamptz', nullable: true })
+  temporaryPasswordExpiresAt!: Date | null;
+
   @Column({ name: 'created_at', type: 'timestamp', nullable: true })
   createdAt!: Date | null;
 }

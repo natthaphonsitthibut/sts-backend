@@ -362,6 +362,8 @@ export const DATABASE_BASELINE_SQL = `
     data_scope JSONB DEFAULT '{}'::jsonb,
     person_uuid UUID,
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+    temporary_password_issued_at TIMESTAMP WITH TIME ZONE,
+    temporary_password_expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -421,6 +423,8 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "data_scope" JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS person_uuid UUID;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_issued_at TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_expires_at TIMESTAMP WITH TIME ZONE;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_first_name TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_last_name TEXT;

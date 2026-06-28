@@ -26,6 +26,8 @@ interface CreateUserRecordInput {
   role: string;
   dataScope: DataScope;
   mustChangePassword: boolean;
+  temporaryPasswordIssuedAt?: Date | null;
+  temporaryPasswordExpiresAt?: Date | null;
   createdBy: number | null;
 }
 
@@ -104,6 +106,8 @@ export class UsersRepository {
     u.role,
     u.data_scope,
     u.must_change_password,
+    u.temporary_password_issued_at,
+    u.temporary_password_expires_at,
     u.created_at,
     CASE
       WHEN u.role IS NOT NULL THEN ARRAY[u.role]::text[]
@@ -403,10 +407,12 @@ export class UsersRepository {
           data_scope,
           person_uuid,
           must_change_password,
+          temporary_password_issued_at,
+          temporary_password_expires_at,
           created_by,
           updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17)
         RETURNING id
       `,
       [
@@ -424,6 +430,8 @@ export class UsersRepository {
         JSON.stringify(data.dataScope),
         data.personUuid ?? null,
         data.mustChangePassword,
+        data.temporaryPasswordIssuedAt ?? null,
+        data.temporaryPasswordExpiresAt ?? null,
         data.createdBy,
       ],
     );
@@ -663,7 +671,14 @@ export class UsersRepository {
   ): Promise<void> {
     const queryExecutor = this.getExecutor(executor);
     await queryExecutor.query(
-      `UPDATE users SET password = $1, must_change_password = FALSE WHERE id = $2`,
+      `
+        UPDATE users
+        SET password = $1,
+            must_change_password = FALSE,
+            temporary_password_issued_at = NULL,
+            temporary_password_expires_at = NULL
+        WHERE id = $2
+      `,
       [passwordHash, id],
     );
   }

@@ -29,6 +29,10 @@ export class UserAuthService {
       return null;
     }
 
+    if (this.isTemporaryPasswordExpired(user)) {
+      return null;
+    }
+
     const isPasswordValid = await this.passwordService.compare(password, user.password);
     if (!isPasswordValid) {
       return null;
@@ -37,5 +41,17 @@ export class UserAuthService {
     const { password: _password, ...safeUser } = user;
     void _password;
     return this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
+  }
+
+  private isTemporaryPasswordExpired(user: {
+    must_change_password?: boolean | null;
+    temporary_password_expires_at?: string | Date | null;
+  }): boolean {
+    if (user.must_change_password !== true || !user.temporary_password_expires_at) {
+      return false;
+    }
+
+    const expiresAt = new Date(user.temporary_password_expires_at);
+    return !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date();
   }
 }

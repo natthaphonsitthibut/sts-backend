@@ -32,6 +32,7 @@ import type {
 const STUDENT_ACCOUNT_PERMISSIONS = ['home', 'student-self'] as const;
 const STUDENT_ACCOUNT_ROLE = 'STUDENT';
 const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
+const STUDENT_TEMP_PASSWORD_TTL_DAYS = 7;
 const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 @Injectable()
@@ -328,12 +329,19 @@ export class UsersService {
         schoolName: string | null;
         grade: string | null;
         room: number | null;
+        temporaryPasswordIssuedAt: string;
+        temporaryPasswordExpiresAt: string;
       }> = [];
 
       for (const candidate of candidates) {
         const username = await this.generateUniqueStudentUsername(candidate.school_id, executor);
         const tempPassword = this.passwordService.generateTempPassword();
         const passwordHash = await this.passwordService.hash(tempPassword);
+        const temporaryPasswordIssuedAt = new Date();
+        const temporaryPasswordExpiresAt = new Date(
+          temporaryPasswordIssuedAt.getTime() +
+            STUDENT_TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
+        );
         try {
           const userId = await this.usersRepository.createUser(
             {
@@ -351,6 +359,8 @@ export class UsersService {
               role: STUDENT_ACCOUNT_ROLE,
               dataScope: { own_only: true },
               mustChangePassword: true,
+              temporaryPasswordIssuedAt,
+              temporaryPasswordExpiresAt,
               createdBy: actorId,
             },
             executor,
@@ -363,6 +373,8 @@ export class UsersService {
             schoolName: candidate.school_name,
             grade: candidate.grade_label,
             room: candidate.room_id,
+            temporaryPasswordIssuedAt: temporaryPasswordIssuedAt.toISOString(),
+            temporaryPasswordExpiresAt: temporaryPasswordExpiresAt.toISOString(),
           });
         } catch (error) {
           if (!this.isUniqueViolation(error)) {

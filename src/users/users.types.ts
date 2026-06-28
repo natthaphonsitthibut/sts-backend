@@ -53,6 +53,8 @@ export interface HydratableUserRow extends Record<string, unknown> {
   role: string | null;
   data_scope: DataScope | null;
   must_change_password?: boolean | null;
+  temporary_password_issued_at?: string | Date | null;
+  temporary_password_expires_at?: string | Date | null;
   created_at?: string | Date | null;
   roles?: string[] | null;
   labels?: string[] | null;
