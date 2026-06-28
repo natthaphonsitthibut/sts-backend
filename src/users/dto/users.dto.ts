@@ -14,7 +14,36 @@ import {
   MinLength,
   Min,
 } from 'class-validator';
+import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 import type { DataScope } from '../users.types';
+
+export class GetUsersQueryDto extends PaginatedSearchQueryDto {
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @IsString()
+  room?: string;
+}
 
 export class CreateUserDto {
   // FE echoes this on save; create/update services must use generated/path ids.

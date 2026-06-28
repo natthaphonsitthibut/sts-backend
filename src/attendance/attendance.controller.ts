@@ -130,6 +130,9 @@ export class AttendanceController {
       limit: resolveLimit(query.limit),
       searchTerm: query.searchTerm?.trim() || undefined,
       status: query.status,
+      schoolId: query.schoolId,
+      grade: query.grade?.trim() || undefined,
+      room: query.room?.trim() || undefined,
     });
   }
 

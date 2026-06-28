@@ -59,6 +59,12 @@ export class UsersService {
       actorRank,
       actorScope: currentActor.data_scope,
       searchTerm: filters.searchTerm,
+      province: filters.province,
+      district: filters.district,
+      subDistrict: filters.subDistrict,
+      schoolId: filters.schoolId,
+      gradeLevelId: filters.gradeLevelId,
+      room: filters.room,
       page,
       limit,
     });

@@ -58,7 +58,15 @@ export class AttendanceService {
 
   async getAttendanceTasksPaginated(
     userScope: DataScope | undefined,
-    filters: { page: number; limit: number; searchTerm?: string; status?: string },
+    filters: {
+      page: number;
+      limit: number;
+      searchTerm?: string;
+      status?: string;
+      schoolId?: number;
+      grade?: string;
+      room?: string;
+    },
   ) {
     return await this.attendanceReadService.getAttendanceTasksPaginated(userScope, filters);
   }

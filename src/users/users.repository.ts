@@ -60,6 +60,12 @@ export interface UserListFilters {
   actorRank: number;
   actorScope?: DataScope;
   searchTerm?: string;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  schoolId?: number;
+  gradeLevelId?: number;
+  room?: string;
   page?: number;
   limit?: number;
 }
@@ -298,6 +304,40 @@ export class UsersRepository {
           OR u.username ILIKE $${params.length}
         )
       `);
+    }
+
+    const addDataScopeFilter = (
+      jsonKey: keyof Omit<DataScope, 'own_only'>,
+      value: string,
+    ): void => {
+      params.push(value);
+      conditions.push(`
+        jsonb_typeof(${scopeSql} -> '${jsonKey}') = 'array'
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(${scopeSql} -> '${jsonKey}') AS filter_scope(value)
+          WHERE filter_scope.value = $${params.length}
+        )
+      `);
+    };
+
+    if (filters.province) {
+      addDataScopeFilter('provinces', filters.province);
+    }
+    if (filters.district) {
+      addDataScopeFilter('districts', filters.district);
+    }
+    if (filters.subDistrict) {
+      addDataScopeFilter('sub_districts', filters.subDistrict);
+    }
+    if (filters.schoolId) {
+      addDataScopeFilter('school_ids', String(filters.schoolId));
+    }
+    if (filters.gradeLevelId) {
+      addDataScopeFilter('grade_levels', String(filters.gradeLevelId));
+    }
+    if (filters.room) {
+      addDataScopeFilter('room_ids', filters.room);
     }
 
     const whereSql = `WHERE ${conditions.join(' AND ')}`;

@@ -70,6 +70,12 @@ export class TaskController {
     return await this.taskService.getLoginLinks(req.user, {
       status: query.status,
       searchTerm: query.searchTerm?.trim() || undefined,
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
+      gradeLevelId: query.gradeLevelId,
+      room: query.room?.trim() || undefined,
       page: query.page,
       limit: query.limit,
     });

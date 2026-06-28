@@ -24,6 +24,9 @@ export class StatsController {
     return await this.taskService.getCases(actor, {
       status: query.status && query.status !== 'ALL' ? query.status : undefined,
       searchTerm: query.searchTerm?.trim() || undefined,
+      schoolId: query.schoolId,
+      grade: query.grade?.trim() || undefined,
+      room: query.room?.trim() || undefined,
       page: query.page,
       limit: query.limit,
     });

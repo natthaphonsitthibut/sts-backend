@@ -43,7 +43,15 @@ export class AttendanceReadService {
 
   async getAttendanceTasksPaginated(
     userScope: DataScope | undefined,
-    filters: { page: number; limit: number; searchTerm?: string; status?: string },
+    filters: {
+      page: number;
+      limit: number;
+      searchTerm?: string;
+      status?: string;
+      schoolId?: number;
+      grade?: string;
+      room?: string;
+    },
   ) {
     const { rows, totalCount, summary } =
       await this.attendanceRepository.listAttendanceTasksPaginated(userScope, filters);

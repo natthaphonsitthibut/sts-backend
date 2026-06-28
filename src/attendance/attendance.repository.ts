@@ -347,7 +347,15 @@ export class AttendanceRepository {
    */
   async listAttendanceTasksPaginated(
     userScope: DataScope | undefined,
-    filters: { page: number; limit: number; searchTerm?: string; status?: string },
+    filters: {
+      page: number;
+      limit: number;
+      searchTerm?: string;
+      status?: string;
+      schoolId?: number;
+      grade?: string;
+      room?: string;
+    },
   ): Promise<{
     rows: AttendanceTaskRow[];
     totalCount: number;
@@ -415,6 +423,18 @@ export class AttendanceRepository {
       filteredConditions.push(
         `(sc.name ILIKE $${p} OR t.target_grade ILIKE $${p} OR t.target_room ILIKE $${p} OR tl.assigned_to_name ILIKE $${p})`,
       );
+    }
+    if (filters.schoolId) {
+      params.push(filters.schoolId);
+      filteredConditions.push(`t.target_school_id = $${params.length}`);
+    }
+    if (filters.grade) {
+      params.push(filters.grade);
+      filteredConditions.push(`t.target_grade = $${params.length}`);
+    }
+    if (filters.room) {
+      params.push(filters.room);
+      filteredConditions.push(`t.target_room = $${params.length}`);
     }
     if (filters.status && filters.status !== 'ALL') {
       params.push(filters.status);

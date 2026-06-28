@@ -272,6 +272,19 @@ export class GetCasesQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   searchTerm?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+
+  @IsOptional()
+  @IsString()
+  grade?: string;
+
+  @IsOptional()
+  @IsString()
+  room?: string;
 }
 
 export class GetLoginLinksQueryDto extends PaginationQueryDto {
@@ -282,6 +295,32 @@ export class GetLoginLinksQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   searchTerm?: string;
+
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @IsString()
+  room?: string;
 }
 
 export class AdminLockLinkDto {

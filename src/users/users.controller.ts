@@ -34,6 +34,7 @@ import {
   CreateRoleGroupDto,
   CreateUserDto,
   GenerateStudentAccountsDto,
+  GetUsersQueryDto,
   LoginDto,
   StudentAccountBulkFilterDto,
   UpdateRoleGroupDto,
@@ -67,11 +68,17 @@ export class UsersController {
   @RequirePermission('manage-users-list')
   @Get()
   async getAllUsers(
-    @Query() query: PaginatedSearchQueryDto,
+    @Query() query: GetUsersQueryDto,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
     return await this.usersService.getAllUsers(actor, {
       searchTerm: query.searchTerm?.trim() || undefined,
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
+      gradeLevelId: query.gradeLevelId,
+      room: query.room?.trim() || undefined,
       page: query.page,
       limit: query.limit,
     });

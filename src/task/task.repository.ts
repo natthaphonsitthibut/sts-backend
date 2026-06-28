@@ -14,6 +14,9 @@ import type {
 export interface CaseListFilters {
   status?: string;
   searchTerm?: string;
+  schoolId?: number;
+  grade?: string;
+  room?: string;
   page?: number;
   limit?: number;
 }
@@ -24,6 +27,12 @@ export interface LoginLinkListFilters {
   actorScope?: DataScope;
   status?: string;
   searchTerm?: string;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  schoolId?: number;
+  gradeLevelId?: number;
+  room?: string;
   page?: number;
   limit?: number;
 }
@@ -655,6 +664,40 @@ export class TaskRepository {
           END ILIKE $${searchPlaceholder}
         )
       `);
+    }
+
+    const addLoginScopeFilter = (
+      jsonKey: keyof Omit<DataScope, 'own_only'>,
+      value: string,
+    ): void => {
+      params.push(value);
+      filteredConditions.push(`
+        jsonb_typeof(${scopeSql} -> '${jsonKey}') = 'array'
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(${scopeSql} -> '${jsonKey}') AS filter_scope(value)
+          WHERE filter_scope.value = $${params.length}
+        )
+      `);
+    };
+
+    if (filters.province) {
+      addLoginScopeFilter('provinces', filters.province);
+    }
+    if (filters.district) {
+      addLoginScopeFilter('districts', filters.district);
+    }
+    if (filters.subDistrict) {
+      addLoginScopeFilter('sub_districts', filters.subDistrict);
+    }
+    if (filters.schoolId) {
+      addLoginScopeFilter('school_ids', String(filters.schoolId));
+    }
+    if (filters.gradeLevelId) {
+      addLoginScopeFilter('grade_levels', String(filters.gradeLevelId));
+    }
+    if (filters.room) {
+      addLoginScopeFilter('room_ids', filters.room);
     }
 
     const fromSql = `
@@ -1374,6 +1417,38 @@ export class TaskRepository {
     if (filters.searchTerm) {
       params.push(`%${filters.searchTerm}%`);
       conditions.push(`c.student_name ILIKE $${params.length}`);
+    }
+
+    if (filters.schoolId) {
+      params.push(filters.schoolId);
+      conditions.push(`c.school_id = $${params.length}`);
+    }
+
+    if (filters.grade || filters.room) {
+      const classConditions = [
+        `LOWER(TRIM(CONCAT_WS(' ', case_student."FirstName_Onec", case_student."LastName_Onec"))) = LOWER(TRIM(c.student_name))`,
+        `(
+          NULLIF(TRIM(COALESCE(c.student_school, '')), '') IS NULL
+          OR LOWER(COALESCE(case_school.name, '')) = LOWER(COALESCE(c.student_school, ''))
+        )`,
+      ];
+      if (filters.grade) {
+        params.push(filters.grade);
+        classConditions.push(`case_grade.label = $${params.length}`);
+      }
+      if (filters.room) {
+        params.push(filters.room);
+        classConditions.push(`case_student."RoomID_Onec"::text = $${params.length}`);
+      }
+      conditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM student_term case_student
+          LEFT JOIN schools case_school ON case_school.id = case_student."SchoolID_Onec"
+          LEFT JOIN grade_levels case_grade ON case_grade.id = case_student."GradeLevelID_Onec"
+          WHERE ${classConditions.join(' AND ')}
+        )
+      `);
     }
 
     const scopeQuery = this.buildCaseScopeQuery(actor, params.length + 1);
