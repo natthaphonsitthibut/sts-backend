@@ -80,6 +80,21 @@ export class StudentsRepository {
       conditions.push(`s."SchoolID_Onec" = $${params.length}`);
     }
 
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(`sc.province = $${params.length}`);
+    }
+
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(`sc.district = $${params.length}`);
+    }
+
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(`sc.sub_district = $${params.length}`);
+    }
+
     if (filters.searchTerm) {
       // Match name OR student code, preserving the previous client-side filter
       // which searched both the full name and the PersonID_Onec ("รหัส").
@@ -146,7 +161,13 @@ export class StudentsRepository {
    * grade so the two dropdowns can cascade. Both stay within the actor's scope.
    */
   async getStudentFilterOptions(
-    filters: { schoolId?: number; grade?: string },
+    filters: {
+      schoolId?: number;
+      province?: string;
+      district?: string;
+      subDistrict?: string;
+      grade?: string;
+    },
     userScope?: DataScope,
   ): Promise<StudentFilterOptions> {
     const buildConditions = (params: unknown[], withGrade: boolean): string => {
@@ -167,6 +188,21 @@ export class StudentsRepository {
       if (typeof filters.schoolId === 'number') {
         params.push(filters.schoolId);
         conditions.push(`s."SchoolID_Onec" = $${params.length}`);
+      }
+
+      if (filters.province) {
+        params.push(filters.province);
+        conditions.push(`sc.province = $${params.length}`);
+      }
+
+      if (filters.district) {
+        params.push(filters.district);
+        conditions.push(`sc.district = $${params.length}`);
+      }
+
+      if (filters.subDistrict) {
+        params.push(filters.subDistrict);
+        conditions.push(`sc.sub_district = $${params.length}`);
       }
 
       if (withGrade && filters.grade) {

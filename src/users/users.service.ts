@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -298,6 +299,11 @@ export class UsersService {
           this.toStudentAccountCandidateResponse(candidate),
         ),
         limit: normalizedFilters.limit,
+        meta: buildPaginationMeta(
+          normalizedFilters.page,
+          normalizedFilters.limit,
+          summary.withoutAccountCount,
+        ),
       },
     };
   }
@@ -386,6 +392,10 @@ export class UsersService {
       return created;
     });
 
+    if (credentials.length === 0) {
+      throw new ConflictException('ไม่มีนักเรียนที่ต้องสร้างบัญชี');
+    }
+
     this.logger.log(`Generated ${credentials.length} student accounts by actor ${currentActor.id}`);
 
     return {
@@ -439,13 +449,20 @@ export class UsersService {
       throw new ForbiddenException('บัญชีส่วนตัวไม่สามารถสร้างบัญชีนักเรียนได้');
     }
     const limit = Math.min(Math.max(filters.limit ?? 50, 1), STUDENT_ACCOUNT_BATCH_LIMIT);
-    const grade = typeof filters.grade === 'string' ? filters.grade.trim() : '';
+    const page = Math.max(filters.page ?? 1, 1);
+    const cleanString = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const grade = cleanString(filters.grade);
     return {
       actorScope,
       schoolId: filters.schoolId,
-      grade: grade || undefined,
+      province: cleanString(filters.province),
+      district: cleanString(filters.district),
+      subDistrict: cleanString(filters.subDistrict),
+      grade,
       room: filters.room,
       onlyWithoutAccount: filters.onlyWithoutAccount !== false,
+      page,
       limit,
     };
   }

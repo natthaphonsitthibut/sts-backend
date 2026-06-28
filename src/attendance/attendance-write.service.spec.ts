@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { getBangkokDateString } from '../common/utils/date.util';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { AttendanceSessionRow } from './attendance-operations.types';
 import { AttendanceRepository } from './attendance.repository';
@@ -8,6 +9,7 @@ const STUDENT_IDS = [
   '00000000-0000-4000-8000-000000000001',
   '00000000-0000-4000-8000-000000000002',
 ];
+const TEST_ATTENDANCE_DATE = getBangkokDateString();
 
 const buildSession = (overrides: Partial<AttendanceSessionRow> = {}): AttendanceSessionRow => ({
   id: '10000000-0000-4000-8000-000000000001',
@@ -15,7 +17,7 @@ const buildSession = (overrides: Partial<AttendanceSessionRow> = {}): Attendance
   school_id: 10010002,
   grade_level_id: 6,
   room_id: 1,
-  attendance_date: '2026-06-27',
+  attendance_date: TEST_ATTENDANCE_DATE,
   period: 1,
   session_kind: 'DAILY',
   status: 'OPEN',
@@ -175,7 +177,7 @@ describe('AttendanceWriteService', () => {
           schoolId: 10010002,
           gradeLevelId: 6,
           roomId: 1,
-          attendanceDate: '2026-06-27',
+          attendanceDate: TEST_ATTENDANCE_DATE,
           expectedRosterCount: 2,
           recordedCount: 2,
           revision: 2,

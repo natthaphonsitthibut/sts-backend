@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { PasswordService } from '../auth/password.service';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
@@ -82,6 +82,35 @@ describe('UsersService student accounts', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('passes geo filters and pagination to student account preview queries', async () => {
+    await service.previewStudentAccounts(actor, {
+      province: 'กรุงเทพมหานคร',
+      district: 'ดอนเมือง',
+      subDistrict: 'สีกัน',
+      page: 2,
+      limit: 20,
+    });
+
+    expect(usersRepository.countStudentAccountCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        province: 'กรุงเทพมหานคร',
+        district: 'ดอนเมือง',
+        subDistrict: 'สีกัน',
+        page: 2,
+        limit: 20,
+      }),
+    );
+    expect(usersRepository.listStudentAccountCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        province: 'กรุงเทพมหานคร',
+        district: 'ดอนเมือง',
+        subDistrict: 'สีกัน',
+        page: 2,
+        limit: 20,
+      }),
+    );
+  });
+
   it('previews scoped candidates without exposing canonical person identifiers', async () => {
     const result = await service.previewStudentAccounts(actor, { schoolId: 10010002 });
 
@@ -94,6 +123,15 @@ describe('UsersService student accounts', () => {
       hasActiveAccount: false,
     });
     expect(JSON.stringify(result)).not.toContain(candidate.person_uuid);
+  });
+
+  it('rejects generation when there are no accounts to create', async () => {
+    usersRepository.listStudentAccountCandidates.mockResolvedValueOnce([]);
+
+    await expect(
+      service.generateStudentAccounts(actor, { schoolId: 10010002, limit: 1 }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(usersRepository.createUser).not.toHaveBeenCalled();
   });
 
   it('generates student users with own-only scope and one-time temporary passwords', async () => {

@@ -217,6 +217,13 @@ export class UsersController {
       targetType: 'student_accounts',
       metadata: {
         createdCount: result.createdCount,
+        scopeLabel:
+          !data.province && !data.district && !data.subDistrict && !data.schoolId
+            ? 'ทุกโรงเรียน'
+            : null,
+        province: data.province ?? null,
+        district: data.district ?? null,
+        subDistrict: data.subDistrict ?? null,
         schoolId: data.schoolId ?? null,
         grade: data.grade ?? null,
         room: data.room ?? null,

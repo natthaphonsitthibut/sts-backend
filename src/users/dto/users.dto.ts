@@ -109,6 +109,18 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {}
 
 export class StudentAccountBulkFilterDto {
   @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   schoolId?: number;
@@ -125,6 +137,12 @@ export class StudentAccountBulkFilterDto {
   @IsOptional()
   @Type(() => Boolean)
   onlyWithoutAccount?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
 
   @IsOptional()
   @Type(() => Number)

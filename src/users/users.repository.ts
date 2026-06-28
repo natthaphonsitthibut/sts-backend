@@ -75,9 +75,13 @@ export interface UserListFilters {
 export interface StudentAccountCandidateFilters {
   actorScope?: DataScope;
   schoolId?: number;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
   grade?: string;
   room?: number;
   onlyWithoutAccount?: boolean;
+  page?: number;
   limit?: number;
 }
 
@@ -474,6 +478,18 @@ export class UsersRepository {
       params.push(filters.schoolId);
       conditions.push(`s."SchoolID_Onec" = $${params.length}`);
     }
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(`sc.province = $${params.length}`);
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(`sc.district = $${params.length}`);
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(`sc.sub_district = $${params.length}`);
+    }
     if (filters.grade) {
       params.push(filters.grade);
       conditions.push(`gl.label = $${params.length}`);
@@ -498,7 +514,11 @@ export class UsersRepository {
   ): Promise<StudentAccountCandidateRow[]> {
     const queryExecutor = this.getExecutor(executor);
     const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+    const page = Math.max(filters.page ?? 1, 1);
     const { whereSql, params } = this.buildStudentAccountCandidateQuery(filters);
+    const selectParams = [...params, limit, (page - 1) * limit];
+    const limitPlaceholder = selectParams.length - 1;
+    const offsetPlaceholder = selectParams.length;
     const result = await queryExecutor.query<StudentAccountCandidateRow>(
       `
         SELECT
@@ -524,9 +544,9 @@ export class UsersRepository {
          AND existing_user.status = 'ACTIVE'
         ${whereSql}
         ORDER BY s."SchoolID_Onec", s."GradeLevelID_Onec", s."RoomID_Onec", s."PersonID_Onec"
-        LIMIT $${params.length + 1}
+        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
       `,
-      [...params, limit],
+      selectParams,
     );
     return result.rows;
   }

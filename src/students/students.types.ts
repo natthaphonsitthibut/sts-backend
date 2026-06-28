@@ -4,6 +4,9 @@ export interface StudentListFilters {
   grade?: string;
   room?: number;
   schoolId?: number;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
   searchTerm?: string;
   page?: number;
   limit?: number;

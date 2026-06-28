@@ -83,6 +83,11 @@ function parseOptionalInteger(value?: string): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+function normalizeOptionalString(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
 function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): StudentListFilters {
   if (!queryParams) {
     return {};
@@ -94,6 +99,9 @@ function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): Student
     grade: queryParams.grade && queryParams.grade !== 'ALL' ? queryParams.grade : undefined,
     room: parseOptionalInteger(queryParams.room),
     schoolId: parseOptionalInteger(queryParams.schoolId),
+    province: normalizeOptionalString(queryParams.province),
+    district: normalizeOptionalString(queryParams.district),
+    subDistrict: normalizeOptionalString(queryParams.subDistrict),
     searchTerm: searchTerm && searchTerm.length > 0 ? searchTerm : undefined,
     page: queryParams.page && queryParams.page > 0 ? queryParams.page : 1,
     limit:
@@ -210,6 +218,9 @@ export class StudentsService {
       const options = await this.studentsRepository.getStudentFilterOptions(
         {
           schoolId: parseOptionalInteger(query.schoolId),
+          province: normalizeOptionalString(query.province),
+          district: normalizeOptionalString(query.district),
+          subDistrict: normalizeOptionalString(query.subDistrict),
           grade: query.grade && query.grade !== 'ALL' ? query.grade : undefined,
         },
         userScope,

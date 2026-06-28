@@ -95,6 +95,8 @@ export interface AttendanceTaskRow extends Record<string, unknown> {
   created_at?: string | Date;
   active_link_id?: string | null;
   active_link?: string | null;
+  active_link_created_at?: string | Date | null;
+  active_link_expires_at?: string | Date | null;
   link_assigned_to?: string | null;
   active_link_locked?: boolean | number | null;
   active_link_lock_reason?: string | null;

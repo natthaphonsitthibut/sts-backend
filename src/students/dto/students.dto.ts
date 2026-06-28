@@ -20,6 +20,18 @@ export class GetStudentsQueryDto {
 
   @IsOptional()
   @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
   searchTerm?: string;
 
   @IsOptional()
@@ -40,6 +52,18 @@ export class GetStudentFilterOptionsQueryDto {
   @IsOptional()
   @IsString()
   schoolId?: string;
+
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
 
   @IsOptional()
   @IsString()
