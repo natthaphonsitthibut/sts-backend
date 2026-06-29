@@ -154,6 +154,9 @@ export class TaskLinkEntity {
     default: () => "'{}'::jsonb",
   })
   loginDataScope!: Record<string, unknown>;
+
+  @Column({ name: 'first_used_at', type: 'timestamptz', nullable: true })
+  firstUsedAt!: Date | null;
 }
 
 @Entity({ name: 'task_submissions' })

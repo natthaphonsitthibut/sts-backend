@@ -189,6 +189,7 @@ export class TaskAccessService {
         roleMap,
       );
       const resolvedScope = this.taskPolicyService.normalizeScope(link.login_data_scope);
+      await this.taskRepository.markLoginLinkUsed(String(link.link_id));
 
       return {
         id: this.buildVirtualUserId(String(link.link_id)),
@@ -476,7 +477,7 @@ export class TaskAccessService {
       }
 
       const isExpired = new Date(String(link.expires_at)) < new Date();
-      const status = link.admin_locked ? 'LOCKED' : isExpired ? 'EXPIRED' : 'ACTIVE';
+      const status = isExpired ? 'EXPIRED' : link.admin_locked ? 'LOCKED' : 'ACTIVE';
 
       const schoolId =
         typeof link.target_school_id === 'number'
@@ -506,6 +507,7 @@ export class TaskAccessService {
         magic_link: link.magic_link ?? null,
         expires_at: link.expires_at,
         created_at: link.created_at ?? null,
+        first_used_at: link.first_used_at ?? null,
         subject: link.subject ?? null,
         assigned_to_name: link.assigned_to_name ?? null,
         assigned_to_email: link.assigned_to_email ?? null,
