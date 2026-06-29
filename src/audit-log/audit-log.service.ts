@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { AuthenticatedRequestUser, DataScope } from '../auth';
 import { hasPermission } from '../auth/permissions.constants';
@@ -87,6 +93,18 @@ interface AuditLogListFilters {
   schoolId?: number;
   page?: number;
   limit?: number;
+}
+
+export interface AuditLogEntryResponse {
+  id: string;
+  domain: AuditLogDomain;
+  action: AuditAction;
+  actionLabel: string;
+  actorLabel: string;
+  targetType: string | null;
+  targetId: string | null;
+  createdAt: string;
+  details: Array<{ label: string; value: string | number }>;
 }
 
 const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
@@ -421,6 +439,24 @@ export class AuditLogService {
     });
   }
 
+  private toAuditLogEntry(row: AuditLogRow): AuditLogEntryResponse {
+    const definition = ACTION_DEFINITIONS[row.action];
+    return {
+      id: String(row.id),
+      domain: definition.domain,
+      action: row.action,
+      actionLabel: definition.label,
+      actorLabel: row.actor_label || 'ระบบ',
+      targetType: row.target_type,
+      targetId: row.target_id,
+      createdAt:
+        row.created_at instanceof Date
+          ? row.created_at.toISOString()
+          : new Date(String(row.created_at)).toISOString(),
+      details: this.toSafeDetails(definition, row.metadata),
+    };
+  }
+
   async list(actor: AuthenticatedRequestUser, filters: AuditLogListFilters) {
     this.assertDomainPermission(actor, filters.domain);
     if (filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo) {
@@ -554,25 +590,88 @@ export class AuditLogService {
     const totalCount = result.rows[0] ? Number(result.rows[0].total_count) || 0 : 0;
 
     return {
-      data: result.rows.map((row) => {
-        const definition = ACTION_DEFINITIONS[row.action];
-        return {
-          id: String(row.id),
-          domain: definition.domain,
-          action: row.action,
-          actionLabel: definition.label,
-          actorLabel: row.actor_label || 'ระบบ',
-          targetType: row.target_type,
-          targetId: row.target_id,
-          createdAt:
-            row.created_at instanceof Date
-              ? row.created_at.toISOString()
-              : new Date(String(row.created_at)).toISOString(),
-          details: this.toSafeDetails(definition, row.metadata),
-        };
-      }),
+      data: result.rows.map((row) => this.toAuditLogEntry(row)),
       meta: buildPaginationMeta(page, limit, totalCount),
     };
+  }
+
+  async getById(actor: AuthenticatedRequestUser, id: string) {
+    if (!/^\d+$/.test(id)) {
+      throw new BadRequestException('id ไม่ถูกต้อง');
+    }
+
+    const found = (
+      await queryDataSource<AuditLogRow>(
+        this.dataSource,
+        `
+          SELECT
+            a.id,
+            a.actor_label,
+            a.action,
+            a.target_type,
+            a.target_id,
+            a.metadata,
+            a.created_at,
+            1 AS total_count
+          FROM audit_log a
+          WHERE a.id = $1::bigint
+        `,
+        [id],
+      )
+    ).rows[0];
+    const definition = found ? ACTION_DEFINITIONS[found.action] : undefined;
+    if (!found || !definition) {
+      throw new NotFoundException('ไม่พบประวัติรายการนี้');
+    }
+
+    this.assertDomainPermission(actor, definition.domain);
+
+    const conditions = [`a.id = $1::bigint`];
+    const params: unknown[] = [id];
+    if (definition.domain === 'student_accounts') {
+      conditions.push(
+        `NOT (a.action = 'STUDENT_ACCOUNT_BULK_GENERATE' AND a.metadata ->> 'createdCount' = '0')`,
+      );
+      conditions.push(`(
+        COALESCE(
+          NULLIF(a.metadata ->> 'scopeLabel', ''),
+          NULLIF(a.metadata ->> 'province', ''),
+          NULLIF(a.metadata ->> 'district', ''),
+          NULLIF(a.metadata ->> 'subDistrict', ''),
+          NULLIF(a.metadata ->> 'schoolId', ''),
+          NULLIF(a.metadata ->> 'grade', ''),
+          NULLIF(a.metadata ->> 'room', '')
+        ) IS NOT NULL
+        OR COALESCE(a.metadata -> 'scope', '{}'::jsonb) <> '{}'::jsonb
+      )`);
+    }
+    this.appendScopeConditions(conditions, params, actor.data_scope);
+
+    const scoped = (
+      await queryDataSource<AuditLogRow>(
+        this.dataSource,
+        `
+          SELECT
+            a.id,
+            a.actor_label,
+            a.action,
+            a.target_type,
+            a.target_id,
+            a.metadata,
+            a.created_at,
+            1 AS total_count
+          FROM audit_log a
+          WHERE ${conditions.join(' AND ')}
+          LIMIT 1
+        `,
+        params,
+      )
+    ).rows[0];
+    if (!scoped) {
+      throw new NotFoundException('ไม่พบประวัติรายการนี้');
+    }
+
+    return { data: this.toAuditLogEntry(scoped) };
   }
 
   async record(event: AuditLogRecordInput): Promise<void> {

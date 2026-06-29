@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard, CurrentUser, type AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from './audit-log.service';
 import { GetAuditLogQueryDto } from './dto/audit-log.dto';
@@ -7,6 +7,11 @@ import { GetAuditLogQueryDto } from './dto/audit-log.dto';
 @Controller('api/audit-log')
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
+
+  @Get(':id')
+  async getById(@Param('id') id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
+    return await this.auditLogService.getById(actor, id);
+  }
 
   @Get()
   async list(@Query() query: GetAuditLogQueryDto, @CurrentUser() actor: AuthenticatedRequestUser) {

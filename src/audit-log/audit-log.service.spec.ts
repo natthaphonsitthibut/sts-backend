@@ -63,4 +63,55 @@ describe('AuditLogService', () => {
     expect(queries[0].sql).toContain("a.metadata -> 'scope' -> 'provinces'");
     expect(queries[0].params).toContain('กรุงเทพมหานคร');
   });
+
+  it('loads one audit log through the same permission and scope gate', async () => {
+    const scopedActor: AuthenticatedRequestUser = {
+      ...actor,
+      data_scope: { school_ids: [10010003] },
+    };
+    const row = {
+      id: '42',
+      actor_label: 'newnew',
+      action: 'STUDENT_ACCOUNT_BULK_GENERATE',
+      target_type: 'student_accounts',
+      target_id: 'batch-42',
+      metadata: {
+        createdCount: 42,
+        schoolId: 10010003,
+        grade: 'ป.3',
+        scope: { school_ids: [10010003] },
+      },
+      created_at: new Date('2026-06-29T06:28:00.000Z'),
+      total_count: 1,
+    };
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [row], affected: 1 };
+      }),
+    };
+    const dataSource = {
+      createQueryRunner: jest.fn(() => queryRunner),
+    };
+    const service = new AuditLogService(dataSource as never);
+
+    const result = await service.getById(scopedActor, '42');
+
+    expect(result.data).toMatchObject({
+      id: '42',
+      domain: 'student_accounts',
+      actionLabel: 'สร้างบัญชีนักเรียนแบบชุด',
+      actorLabel: 'newnew',
+      targetType: 'student_accounts',
+      targetId: 'batch-42',
+    });
+    expect(result.data.details).toContainEqual({ label: 'สร้างสำเร็จ', value: 42 });
+    expect(queries).toHaveLength(2);
+    expect(queries[1].sql).toContain('a.id = $1::bigint');
+    expect(queries[1].sql).toContain("-> 'school_ids'");
+    expect(queries[1].params).toContainEqual(['10010003']);
+  });
 });
