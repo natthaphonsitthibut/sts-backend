@@ -119,6 +119,13 @@ export class AttendanceReconciliationQueryDto extends PaginatedSearchQueryDto {
   date!: string;
 }
 
+export class AttendanceReconciliationAnomaliesQueryDto extends PaginatedSearchQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  termId!: number;
+}
+
 export class ReopenAttendanceSessionDto {
   @IsString()
   @IsNotEmpty()

@@ -6,6 +6,7 @@ import type { QueryExecutor } from './attendance.types';
 import type {
   AttendanceClassMetadataRow,
   AttendanceReconciliationRow,
+  AttendanceSessionAnomalyRow,
   AttendanceSessionIdentity,
   AttendanceSessionRow,
   CalendarDayRow,
@@ -792,6 +793,129 @@ export class AttendanceOperationsRepository {
         completed: Number(summaryResult.rows[0]?.completed ?? 0),
         missing: Number(summaryResult.rows[0]?.missing ?? 0),
         incomplete: Number(summaryResult.rows[0]?.incomplete ?? 0),
+      },
+    };
+  }
+
+  async listSessionAnomalies(
+    term: SchoolTermRow,
+    scope: DataScope | undefined,
+    page: number,
+    limit: number,
+  ): Promise<{
+    rows: AttendanceSessionAnomalyRow[];
+    totalCount: number;
+    summary: {
+      holidayAttendance: number;
+      cancelledAttendance: number;
+      outOfTerm: number;
+      missingCalendarDay: number;
+    };
+  }> {
+    const params: unknown[] = [term.id, term.school_id];
+    const conditions = [
+      'sess.school_term_id = $1',
+      'sess.school_id = $2',
+      "sess.session_kind = 'DAILY'",
+      'sess.deleted_at IS NULL',
+    ];
+    if (scope) {
+      const scoped = buildDataScopeQuery(
+        scope,
+        {
+          school_id: 'sess.school_id',
+          grade: 'sess.grade_level_id',
+          room: 'sess.room_id::text',
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+      if (scoped.sql) {
+        conditions.push(`(${scoped.sql})`);
+        pushParams(params, scoped.params);
+      }
+    }
+    const baseSql = `
+      SELECT
+        sess.id AS session_id,
+        sess.attendance_date::text,
+        sess.grade_level_id,
+        gl.label AS grade_label,
+        sess.room_id,
+        sess.expected_roster_count,
+        sess.recorded_count,
+        sess.status AS session_status,
+        sess.revision,
+        day.day_type,
+        day.reason AS calendar_reason,
+        CASE
+          WHEN st.starts_on IS NOT NULL AND st.ends_on IS NOT NULL
+            AND (sess.attendance_date < st.starts_on OR sess.attendance_date > st.ends_on)
+            THEN 'OUT_OF_TERM'
+          WHEN day.id IS NULL THEN 'MISSING_CALENDAR_DAY'
+          WHEN day.day_type = 'HOLIDAY' THEN 'HOLIDAY_ATTENDANCE'
+          WHEN day.day_type = 'CANCELLED' THEN 'CANCELLED_ATTENDANCE'
+        END AS anomaly_type
+      FROM attendance_sessions sess
+      JOIN school_terms st ON st.id = sess.school_term_id AND st.deleted_at IS NULL
+      JOIN schools sc ON sc.id = sess.school_id
+      LEFT JOIN grade_levels gl ON gl.id = sess.grade_level_id
+      LEFT JOIN school_calendar_days day
+        ON day.school_term_id = sess.school_term_id
+       AND day.calendar_date = sess.attendance_date
+       AND day.deleted_at IS NULL
+      WHERE ${conditions.join(' AND ')}
+        AND (
+          (st.starts_on IS NOT NULL AND st.ends_on IS NOT NULL
+            AND (sess.attendance_date < st.starts_on OR sess.attendance_date > st.ends_on))
+          OR day.id IS NULL
+          OR day.day_type IN ('HOLIDAY', 'CANCELLED')
+        )
+    `;
+    const summaryResult = await queryDataSource<{
+      count: string;
+      holiday_attendance: number | string;
+      cancelled_attendance: number | string;
+      out_of_term: number | string;
+      missing_calendar_day: number | string;
+    }>(
+      this.dataSource,
+      `
+        WITH anomalies AS (${baseSql})
+        SELECT
+          COUNT(*)::text AS count,
+          COUNT(*) FILTER (WHERE anomaly_type = 'HOLIDAY_ATTENDANCE')::int AS holiday_attendance,
+          COUNT(*) FILTER (WHERE anomaly_type = 'CANCELLED_ATTENDANCE')::int AS cancelled_attendance,
+          COUNT(*) FILTER (WHERE anomaly_type = 'OUT_OF_TERM')::int AS out_of_term,
+          COUNT(*) FILTER (WHERE anomaly_type = 'MISSING_CALENDAR_DAY')::int AS missing_calendar_day
+        FROM anomalies
+      `,
+      params,
+    );
+    const offset = (page - 1) * limit;
+    const limitPlaceholder = params.length + 1;
+    const offsetPlaceholder = params.length + 2;
+    const result = await queryDataSource<AttendanceSessionAnomalyRow>(
+      this.dataSource,
+      `
+        WITH anomalies AS (${baseSql})
+        SELECT *
+        FROM anomalies
+        ORDER BY attendance_date DESC, grade_level_id, room_id
+        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+      `,
+      [...params, limit, offset],
+    );
+    return {
+      rows: result.rows,
+      totalCount: Number.parseInt(summaryResult.rows[0]?.count ?? '0', 10),
+      summary: {
+        holidayAttendance: Number(summaryResult.rows[0]?.holiday_attendance ?? 0),
+        cancelledAttendance: Number(summaryResult.rows[0]?.cancelled_attendance ?? 0),
+        outOfTerm: Number(summaryResult.rows[0]?.out_of_term ?? 0),
+        missingCalendarDay: Number(summaryResult.rows[0]?.missing_calendar_day ?? 0),
       },
     };
   }

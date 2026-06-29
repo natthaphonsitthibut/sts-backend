@@ -29,6 +29,8 @@ describe('AttendanceRepository', () => {
     expect(queries).toHaveLength(1);
     expect(queries[0].sql).toContain('tl.created_at as active_link_created_at');
     expect(queries[0].sql).toContain('tl.expires_at as active_link_expires_at');
+    expect(queries[0].sql).toContain("WHEN sess.status = 'SUBMITTED' THEN 'COMPLETED'");
+    expect(queries[0].sql).toContain('FROM attendance_sessions attendance_session');
   });
 
   it('includes the active link time range in the paginated task list', async () => {
@@ -42,5 +44,9 @@ describe('AttendanceRepository', () => {
     const listQuery = queries.at(-1);
     expect(listQuery?.sql).toContain('tl.created_at as active_link_created_at');
     expect(listQuery?.sql).toContain('tl.expires_at as active_link_expires_at');
+    expect(listQuery?.sql).toContain('tl.expires_at <= NOW()');
+    expect(listQuery?.sql).toContain('AS link_state');
+    expect(listQuery?.sql).toContain("WHEN sess.status = 'SUBMITTED' THEN 'COMPLETED'");
+    expect(listQuery?.sql).toContain('FROM attendance_sessions attendance_session');
   });
 });

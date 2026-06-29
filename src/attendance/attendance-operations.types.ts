@@ -1,6 +1,11 @@
 export type SchoolTermStatus = 'DRAFT' | 'ACTIVE' | 'CLOSED';
 export type CalendarDayType = 'SCHOOL_DAY' | 'HOLIDAY' | 'CANCELLED';
 export type AttendanceSessionStatus = 'OPEN' | 'SUBMITTED' | 'REOPENED' | 'VOIDED';
+export type AttendanceSessionAnomalyType =
+  | 'HOLIDAY_ATTENDANCE'
+  | 'CANCELLED_ATTENDANCE'
+  | 'OUT_OF_TERM'
+  | 'MISSING_CALENDAR_DAY';
 
 export interface SchoolTermRow extends Record<string, unknown> {
   id: string;
@@ -61,6 +66,21 @@ export interface AttendanceReconciliationRow extends Record<string, unknown> {
   session_status: AttendanceSessionStatus | null;
   revision: number | null;
   operational_status: 'COMPLETED' | 'MISSING' | 'INCOMPLETE';
+}
+
+export interface AttendanceSessionAnomalyRow extends Record<string, unknown> {
+  session_id: string;
+  attendance_date: string;
+  grade_level_id: number;
+  grade_label: string | null;
+  room_id: number;
+  expected_roster_count: number;
+  recorded_count: number;
+  session_status: AttendanceSessionStatus;
+  revision: number;
+  day_type: CalendarDayType | null;
+  calendar_reason: string | null;
+  anomaly_type: AttendanceSessionAnomalyType;
 }
 
 export interface SchoolTermInput {

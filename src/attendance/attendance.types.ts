@@ -98,9 +98,16 @@ export interface AttendanceTaskRow extends Record<string, unknown> {
   active_link_created_at?: string | Date | null;
   active_link_expires_at?: string | Date | null;
   link_assigned_to?: string | null;
+  link_assigned_to_email?: string | null;
   active_link_locked?: boolean | number | null;
   active_link_lock_reason?: string | null;
   active_link_lock_at?: string | Date | null;
+  link_state?: 'ACTIVE' | 'LOCKED' | 'EXPIRED' | null;
+  attendance_session_id?: string | null;
+  attendance_session_status?: string | null;
+  attendance_expected_roster_count?: number | string | null;
+  attendance_recorded_count?: number | string | null;
+  attendance_check_status?: 'COMPLETED' | 'NOT_CHECKED' | null;
 }
 
 export interface StudentAttendanceMetadataRow extends Record<string, unknown> {

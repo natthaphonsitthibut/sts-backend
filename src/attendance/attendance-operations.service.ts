@@ -278,6 +278,45 @@ export class AttendanceOperationsService {
     };
   }
 
+  async getReconciliationAnomalies(
+    termId: number,
+    page: number,
+    limit: number,
+    actor?: AuthenticatedRequestUser,
+  ) {
+    const term = await this.getTerm(termId);
+    await this.assertSchoolAccess(term.school_id, actor);
+    if (term.status !== 'ACTIVE') {
+      throw new ConflictException('ต้องเปิดใช้งานภาคเรียนก่อนตรวจรายการผิดปกติ');
+    }
+    const result = await this.repository.listSessionAnomalies(
+      term,
+      normalizeDataScope(actor?.data_scope),
+      page,
+      limit,
+    );
+    return {
+      rows: result.rows.map((row) => ({
+        sessionId: row.session_id,
+        date: row.attendance_date,
+        gradeLevelId: row.grade_level_id,
+        grade: row.grade_label ?? `ชั้น ${row.grade_level_id}`,
+        room: row.room_id,
+        expectedRosterCount: row.expected_roster_count,
+        recordedCount: row.recorded_count,
+        sessionStatus: row.session_status,
+        revision: row.revision,
+        dayType: row.day_type,
+        calendarReason: row.calendar_reason,
+        anomalyType: row.anomaly_type,
+      })),
+      totalCount: result.totalCount,
+      page,
+      limit,
+      summary: result.summary,
+    };
+  }
+
   private async getTerm(termId: number) {
     const term = await this.repository.findTermById(termId);
     if (!term) throw new NotFoundException('ไม่พบภาคเรียน');

@@ -32,6 +32,7 @@ import { resolveLimit, resolvePage } from '../common/pagination/pagination.util'
 import { AttendanceOperationsService } from './attendance-operations.service';
 import {
   AttendanceReconciliationQueryDto,
+  AttendanceReconciliationAnomaliesQueryDto,
   AttendanceSessionContextQueryDto,
   GenerateSchoolCalendarDto,
   ListSchoolCalendarQueryDto,
@@ -235,6 +236,21 @@ export class AttendanceController {
     return await this.attendanceOperationsService.getReconciliation(
       query.termId,
       query.date,
+      resolvePage(query.page),
+      resolveLimit(query.limit),
+      actor,
+    );
+  }
+
+  @Get('reconciliation/anomalies')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance-dashboard')
+  async getReconciliationAnomalies(
+    @Query() query: AttendanceReconciliationAnomaliesQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceOperationsService.getReconciliationAnomalies(
+      query.termId,
       resolvePage(query.page),
       resolveLimit(query.limit),
       actor,
