@@ -8,12 +8,16 @@ export type RoleScopeMode =
   | 'sub_district'
   | 'school';
 
+export type RoleScopePolicy = 'ASSIGNABLE' | 'OWN_ONLY';
+
 export interface SystemRoleDefinition {
   name: string;
   label: string;
   rank: number;
   default_permissions: string[];
   scope_mode: RoleScopeMode;
+  scope_policy: RoleScopePolicy;
+  is_assignable: boolean;
   is_system: boolean;
 }
 
@@ -63,7 +67,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'ADMIN',
     label: 'ผู้ดูแลระบบ',
-    rank: 9,
+    rank: 5,
     default_permissions: [
       'home',
       'dashboard',
@@ -81,91 +85,9 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'settings',
       'import-data',
     ],
-    scope_mode: 'global',
-    is_system: true,
-  },
-  {
-    name: 'ADMIN_PROVINCE',
-    label: 'แอดมินระดับจังหวัด',
-    rank: 8,
-    default_permissions: [
-      'home',
-      'dashboard',
-      'students',
-      'review-cases',
-      'close-case',
-      'forward-case',
-      'create',
-      'attendance',
-      'attendance-dashboard',
-      'manage-users-list',
-      'manage-student-accounts',
-      'login-links',
-    ],
-    scope_mode: 'province',
-    is_system: true,
-  },
-  {
-    name: 'ADMIN_DISTRICT',
-    label: 'แอดมินระดับอำเภอ',
-    rank: 7,
-    default_permissions: [
-      'home',
-      'dashboard',
-      'students',
-      'review-cases',
-      'close-case',
-      'forward-case',
-      'create',
-      'attendance',
-      'attendance-dashboard',
-      'manage-users-list',
-      'manage-student-accounts',
-      'login-links',
-    ],
-    scope_mode: 'district',
-    is_system: true,
-  },
-  {
-    name: 'ADMIN_SUBDISTRICT',
-    label: 'แอดมินระดับตำบล',
-    rank: 6,
-    default_permissions: [
-      'home',
-      'dashboard',
-      'students',
-      'review-cases',
-      'close-case',
-      'forward-case',
-      'create',
-      'attendance',
-      'attendance-dashboard',
-      'manage-users-list',
-      'manage-student-accounts',
-      'login-links',
-    ],
-    scope_mode: 'sub_district',
-    is_system: true,
-  },
-  {
-    name: 'ADMIN_SCHOOL',
-    label: 'แอดมินระดับโรงเรียน',
-    rank: 5,
-    default_permissions: [
-      'home',
-      'dashboard',
-      'students',
-      'review-cases',
-      'close-case',
-      'forward-case',
-      'create',
-      'attendance',
-      'attendance-dashboard',
-      'manage-users-list',
-      'manage-student-accounts',
-      'login-links',
-    ],
-    scope_mode: 'school',
+    scope_mode: 'flexible',
+    scope_policy: 'ASSIGNABLE',
+    is_assignable: true,
     is_system: true,
   },
   {
@@ -187,6 +109,8 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'settings',
     ],
     scope_mode: 'flexible',
+    scope_policy: 'ASSIGNABLE',
+    is_assignable: true,
     is_system: true,
   },
   {
@@ -195,6 +119,8 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     rank: 3,
     default_permissions: ['home', 'dashboard', 'students', 'review-cases', 'attendance-dashboard'],
     scope_mode: 'flexible',
+    scope_policy: 'ASSIGNABLE',
+    is_assignable: true,
     is_system: true,
   },
   {
@@ -203,6 +129,8 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     rank: 2,
     default_permissions: ['home', 'students', 'attendance'],
     scope_mode: 'flexible',
+    scope_policy: 'ASSIGNABLE',
+    is_assignable: true,
     is_system: true,
   },
   {
@@ -211,6 +139,8 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     rank: 1,
     default_permissions: ['home', 'student-self'],
     scope_mode: 'flexible',
+    scope_policy: 'OWN_ONLY',
+    is_assignable: true,
     is_system: true,
   },
 ];
@@ -246,11 +176,13 @@ export function getRoleScopeValidationError(
   scope: unknown,
   options?: {
     scopeMode?: RoleScopeMode | null;
+    scopePolicy?: RoleScopePolicy | null;
     roleLabel?: string | null;
   },
 ): string | null {
   const source = scope && typeof scope === 'object' ? (scope as DataScope) : {};
   const normalized = {
+    global: source.global === true,
     provinces: normalizeScopeArray(source.provinces),
     districts: normalizeScopeArray(source.districts),
     sub_districts: normalizeScopeArray(source.sub_districts),
@@ -263,9 +195,27 @@ export function getRoleScopeValidationError(
     normalized.grade_levels.length > 0 || normalized.room_ids.length > 0;
   const scopeMode = options?.scopeMode || ROLE_SCOPE_MODES[role] || 'flexible';
   const roleLabel = options?.roleLabel || ROLE_LABELS[role] || role;
+  const scopePolicy = options?.scopePolicy || 'ASSIGNABLE';
+
+  if (scopePolicy === 'OWN_ONLY') {
+    return source.own_only === true ? null : `${roleLabel}ต้องใช้ขอบเขตข้อมูลเฉพาะตนเอง`;
+  }
 
   if (scopeMode === 'flexible') {
-    return null;
+    const hasAreaScope =
+      normalized.provinces.length > 0 ||
+      normalized.districts.length > 0 ||
+      normalized.sub_districts.length > 0 ||
+      normalized.school_ids.length > 0 ||
+      hasExtraSchoolFiltering;
+    const hasAssignedScope = normalized.global || hasAreaScope;
+    if (!hasAssignedScope) {
+      return `${roleLabel}ต้องเลือกขอบเขตข้อมูล หรือเลือกทั้งระบบ`;
+    }
+    if (normalized.global && hasAreaScope) {
+      return `${roleLabel}ห้ามเลือกทั้งระบบพร้อมกับพื้นที่`;
+    }
+    return source.own_only === true ? `${roleLabel}ไม่สามารถใช้ขอบเขตเฉพาะตนเองได้` : null;
   }
 
   if (scopeMode === 'global') {

@@ -34,8 +34,10 @@ function escapeSqlLiteral(value: string): string {
 
 const SYSTEM_ROLE_BASELINE_SQL = SYSTEM_ROLE_DEFINITIONS.map(
   (role) => `
-  INSERT INTO roles (name, label, rank, default_permissions, scope_mode, is_system)
-  VALUES ('${escapeSqlLiteral(role.name)}', '${escapeSqlLiteral(role.label)}', ${role.rank}, '${escapeSqlLiteral(JSON.stringify(role.default_permissions))}'::jsonb, '${escapeSqlLiteral(role.scope_mode)}', ${role.is_system ? 'TRUE' : 'FALSE'})
+  INSERT INTO roles (
+    name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+  )
+  VALUES ('${escapeSqlLiteral(role.name)}', '${escapeSqlLiteral(role.label)}', ${role.rank}, '${escapeSqlLiteral(JSON.stringify(role.default_permissions))}'::jsonb, '${escapeSqlLiteral(role.scope_mode)}', '${role.scope_policy}', ${role.is_assignable ? 'TRUE' : 'FALSE'}, ${role.is_system ? 'TRUE' : 'FALSE'})
   ON CONFLICT (name) DO NOTHING;`,
 ).join('\n');
 
@@ -337,15 +339,23 @@ export const DATABASE_BASELINE_SQL = `
     rank INTEGER NOT NULL DEFAULT 0,
     default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
     scope_mode TEXT NOT NULL DEFAULT 'flexible',
+    scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE',
+    is_assignable BOOLEAN NOT NULL DEFAULT TRUE,
     is_system BOOLEAN NOT NULL DEFAULT FALSE
   );
 
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
+  ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
+  ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_assignable BOOLEAN NOT NULL DEFAULT TRUE;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
 
   ${SYSTEM_ROLE_BASELINE_SQL}
+
+  UPDATE roles
+  SET is_assignable = FALSE
+  WHERE name IN ('ADMIN_PROVINCE', 'ADMIN_DISTRICT', 'ADMIN_SUBDISTRICT', 'ADMIN_SCHOOL');
 
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -444,6 +454,8 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
+  ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
+  ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_assignable BOOLEAN NOT NULL DEFAULT TRUE;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
 
   CREATE INDEX IF NOT EXISTS idx_task_links_token ON task_links(token_hash);
@@ -493,6 +505,7 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_role TEXT;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_permissions JSONB DEFAULT '[]'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
+  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMP WITH TIME ZONE;
 
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS result_summary TEXT;
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_school_id INTEGER;
@@ -727,8 +740,10 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
   for (const role of SYSTEM_ROLE_DEFINITIONS) {
     await executor.query(
       `
-        INSERT INTO roles (name, label, rank, default_permissions, scope_mode, is_system)
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+        INSERT INTO roles (
+          name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+        )
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
         ON CONFLICT (name) DO NOTHING
       `,
       [
@@ -737,6 +752,8 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
         role.rank,
         JSON.stringify(role.default_permissions),
         role.scope_mode,
+        role.scope_policy,
+        role.is_assignable,
         role.is_system,
       ],
     );
@@ -749,7 +766,9 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
           rank = $3,
           default_permissions = $4::jsonb,
           scope_mode = $5,
-          is_system = $6
+          scope_policy = $6,
+          is_assignable = $7,
+          is_system = $8
         WHERE name = $1
       `,
       [
@@ -758,10 +777,17 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
         role.rank,
         JSON.stringify(role.default_permissions),
         role.scope_mode,
+        role.scope_policy,
+        role.is_assignable,
         role.is_system,
       ],
     );
   }
+  await executor.query(`
+    UPDATE roles
+    SET is_assignable = FALSE
+    WHERE name IN ('ADMIN_PROVINCE', 'ADMIN_DISTRICT', 'ADMIN_SUBDISTRICT', 'ADMIN_SCHOOL')
+  `);
 }
 
 export async function syncSystemSettings(executor: SqlExecutor): Promise<void> {

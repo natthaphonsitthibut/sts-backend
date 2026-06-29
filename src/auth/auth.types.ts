@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 
 export interface DataScope {
+  global?: boolean;
   provinces?: string[];
   districts?: string[];
   sub_districts?: string[];
@@ -66,6 +67,10 @@ export function normalizeDataScope(value: unknown): DataScope | undefined {
 
   const source = value as DataScope;
   const normalized: DataScope = {};
+
+  if (source.global === true) {
+    normalized.global = true;
+  }
 
   const provinces = normalizeScopeList(source.provinces);
   if (provinces) {

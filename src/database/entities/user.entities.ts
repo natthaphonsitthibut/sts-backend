@@ -24,6 +24,12 @@ export class RoleEntity {
   @Column({ name: 'scope_mode', type: 'text', default: 'flexible' })
   scopeMode!: string;
 
+  @Column({ name: 'scope_policy', type: 'text', default: 'ASSIGNABLE' })
+  scopePolicy!: string;
+
+  @Column({ name: 'is_assignable', type: 'boolean', default: true })
+  isAssignable!: boolean;
+
   @Column({ name: 'is_system', type: 'boolean', default: false })
   isSystem!: boolean;
 }

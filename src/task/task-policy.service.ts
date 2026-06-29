@@ -7,6 +7,7 @@ import {
   ROLE_RANKS,
   VALID_PERMISSION_IDS,
   type RoleScopeMode,
+  type RoleScopePolicy,
 } from '../auth/permissions.constants';
 import { TaskRepository } from './task.repository';
 import type { ActorContext, DataScope, NormalizedDataScope, RoleDefinition } from './task.types';
@@ -43,6 +44,7 @@ export class TaskPolicyService {
     };
 
     return {
+      global: source.global === true,
       provinces: normalizeArray(source.provinces),
       districts: normalizeArray(source.districts),
       sub_districts: normalizeArray(source.sub_districts),
@@ -72,7 +74,7 @@ export class TaskPolicyService {
       return dbRank;
     }
 
-    return ROLE_RANKS[role] || 0;
+    return roleMap ? 0 : ROLE_RANKS[role] || 0;
   }
 
   getRoleLabel(role?: string | null, roleMap?: Map<string, RoleDefinition>): string {
@@ -80,7 +82,7 @@ export class TaskPolicyService {
       return '';
     }
 
-    return roleMap?.get(role)?.label || ROLE_LABELS[role] || role;
+    return roleMap?.get(role)?.label || (roleMap ? role : ROLE_LABELS[role] || role);
   }
 
   getRoleDefaultPermissions(role?: string | null, roleMap?: Map<string, RoleDefinition>): string[] {
@@ -93,7 +95,7 @@ export class TaskPolicyService {
       return dbPermissions;
     }
 
-    return Array.from(new Set(ROLE_BASELINES[role] || []));
+    return roleMap ? [] : Array.from(new Set(ROLE_BASELINES[role] || []));
   }
 
   getRoleScopeMode(role?: string | null, roleMap?: Map<string, RoleDefinition>): RoleScopeMode {
@@ -103,6 +105,13 @@ export class TaskPolicyService {
 
     const scopeMode = roleMap?.get(role)?.scope_mode;
     return (typeof scopeMode === 'string' ? scopeMode : 'flexible') as RoleScopeMode;
+  }
+
+  getRoleScopePolicy(role?: string | null, roleMap?: Map<string, RoleDefinition>): RoleScopePolicy {
+    if (!role) {
+      return 'ASSIGNABLE';
+    }
+    return roleMap?.get(role)?.scope_policy || 'ASSIGNABLE';
   }
 
   assertValidPermissionList(permissionIds: string[]): void {
@@ -166,15 +175,7 @@ export class TaskPolicyService {
 
   isScopeGlobal(scope: unknown): boolean {
     const normalized = this.normalizeScope(scope);
-    return (
-      normalized.provinces.length === 0 &&
-      normalized.districts.length === 0 &&
-      normalized.sub_districts.length === 0 &&
-      normalized.school_ids.length === 0 &&
-      normalized.grade_levels.length === 0 &&
-      normalized.room_ids.length === 0 &&
-      normalized.own_only !== true
-    );
+    return normalized.global === true;
   }
 
   isScopeSubsetOfActor(targetScope: unknown, actorScope: unknown): boolean {
@@ -184,7 +185,10 @@ export class TaskPolicyService {
 
     const actor = this.normalizeScope(actorScope);
     const target = this.normalizeScope(targetScope);
-    const keys: Array<keyof Omit<DataScope, 'own_only'>> = [
+    if (target.global === true) {
+      return false;
+    }
+    const keys: Array<keyof Omit<DataScope, 'own_only' | 'global'>> = [
       'provinces',
       'districts',
       'sub_districts',
@@ -324,6 +328,7 @@ export class TaskPolicyService {
 
     const roleScopeError = getRoleScopeValidationError(requestedRole, payload.data_scope, {
       scopeMode: this.getRoleScopeMode(requestedRole, currentRoleMap),
+      scopePolicy: this.getRoleScopePolicy(requestedRole, currentRoleMap),
       roleLabel: this.getRoleLabel(requestedRole, currentRoleMap),
     });
     if (roleScopeError) {

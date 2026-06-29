@@ -54,6 +54,7 @@ interface CreateRoleRecordInput {
   rank: number;
   default_permissions: string[];
   scope_mode: string;
+  scope_policy: string;
 }
 
 export interface UserListFilters {
@@ -227,6 +228,8 @@ export class UsersRepository {
             r.rank,
             r.default_permissions,
             r.scope_mode,
+            r.scope_policy,
+            r.is_assignable,
             r.is_system,
             COALESCE(u.user_count, 0)::int AS user_count,
             COALESCE(tl.login_link_count, 0)::int AS login_link_count
@@ -245,6 +248,7 @@ export class UsersRepository {
               AND t.deleted_at IS NULL
             GROUP BY tl.login_role
           ) tl ON tl.login_role = r.name
+          WHERE r.is_assignable = TRUE
           ORDER BY r.rank DESC, r.name ASC
         `
       : `
@@ -255,8 +259,11 @@ export class UsersRepository {
             rank,
             default_permissions,
             scope_mode,
+            scope_policy,
+            is_assignable,
             is_system
           FROM roles
+          WHERE is_assignable = TRUE
           ORDER BY rank DESC, name ASC
         `;
 
@@ -703,15 +710,47 @@ export class UsersRepository {
     );
   }
 
+  async reissueTemporaryPassword(
+    id: number,
+    passwordHash: string,
+    issuedAt: Date,
+    expiresAt: Date,
+  ): Promise<boolean> {
+    const result = await this.query(
+      `
+        UPDATE users
+        SET password = $2,
+            must_change_password = TRUE,
+            temporary_password_issued_at = $3,
+            temporary_password_expires_at = $4
+        WHERE id = $1
+          AND role = 'STUDENT'
+          AND status = 'ACTIVE'
+      `,
+      [id, passwordHash, issuedAt, expiresAt],
+    );
+    return (result.rowCount || 0) > 0;
+  }
+
   async createRole(data: CreateRoleRecordInput, executor?: QueryExecutor): Promise<RoleRow> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<RoleRow>(
       `
-        INSERT INTO roles (name, label, rank, default_permissions, scope_mode, is_system)
-        VALUES ($1, $2, $3, $4::jsonb, $5, FALSE)
-        RETURNING id, name, label, rank, default_permissions, scope_mode, is_system
+        INSERT INTO roles (
+          name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+        )
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, TRUE, FALSE)
+        RETURNING id, name, label, rank, default_permissions, scope_mode,
+          scope_policy, is_assignable, is_system
       `,
-      [data.name, data.label, data.rank, JSON.stringify(data.default_permissions), data.scope_mode],
+      [
+        data.name,
+        data.label,
+        data.rank,
+        JSON.stringify(data.default_permissions),
+        data.scope_mode,
+        data.scope_policy,
+      ],
     );
 
     return result.rows[0];
@@ -729,11 +768,20 @@ export class UsersRepository {
         SET label = $2,
             rank = $3,
             default_permissions = $4::jsonb,
-            scope_mode = $5
+            scope_mode = $5,
+            scope_policy = $6
         WHERE name = $1
-        RETURNING id, name, label, rank, default_permissions, scope_mode, is_system
+        RETURNING id, name, label, rank, default_permissions, scope_mode,
+          scope_policy, is_assignable, is_system
       `,
-      [name, data.label, data.rank, JSON.stringify(data.default_permissions), data.scope_mode],
+      [
+        name,
+        data.label,
+        data.rank,
+        JSON.stringify(data.default_permissions),
+        data.scope_mode,
+        data.scope_policy,
+      ],
     );
 
     return result.rows[0];

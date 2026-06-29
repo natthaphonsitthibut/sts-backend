@@ -27,6 +27,12 @@ export class RoleGroupsService {
     private readonly usersPolicyService: UsersPolicyService,
   ) {}
 
+  private assertGlobalRoleManagement(actor: ActorContext): void {
+    if (!this.usersPolicyService.isScopeGlobal(actor.data_scope)) {
+      throw new ForbiddenException('จัดการกลุ่มสิทธิ์ได้เฉพาะผู้ดูแลขอบเขตทั้งระบบ');
+    }
+  }
+
   // Role definitions are a small, bounded *config* set (tens of rows, bounded by
   // design — not by population), so this is intentionally a Class-B bounded
   // management catalog: the policy filter runs in memory and the page is sliced
@@ -82,6 +88,7 @@ export class RoleGroupsService {
 
   async createRoleGroup(actor: ActorContext | undefined, data: CreateRoleGroupDto) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertGlobalRoleManagement(currentActor);
     const definitions = await this.usersPolicyService.getRoleDefinitions();
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const payload = this.usersPolicyService.normalizeRoleGroupPayload(data);
@@ -125,6 +132,7 @@ export class RoleGroupsService {
     data: UpdateRoleGroupDto,
   ) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertGlobalRoleManagement(currentActor);
     const normalizedRoleName = this.usersPolicyService.normalizeRoleName(roleName);
     const definitions = await this.usersPolicyService.getRoleDefinitions(true);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
@@ -167,6 +175,7 @@ export class RoleGroupsService {
 
   async deleteRoleGroup(actor: ActorContext | undefined, roleName: string) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertGlobalRoleManagement(currentActor);
     const normalizedRoleName = this.usersPolicyService.normalizeRoleName(roleName);
     const definitions = await this.usersPolicyService.getRoleDefinitions(true);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));

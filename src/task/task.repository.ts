@@ -368,8 +368,11 @@ export class TaskRepository {
         rank,
         default_permissions,
         scope_mode,
+        scope_policy,
+        is_assignable,
         is_system
       FROM roles
+      WHERE is_assignable = TRUE
       ORDER BY rank DESC, name ASC
     `);
 
@@ -385,6 +388,8 @@ export class TaskRepository {
           )
         : [],
       scope_mode: typeof row.scope_mode === 'string' ? row.scope_mode : 'flexible',
+      scope_policy: row.scope_policy === 'OWN_ONLY' ? 'OWN_ONLY' : 'ASSIGNABLE',
+      is_assignable: row.is_assignable !== false,
       is_system: row.is_system === true,
     }));
   }
@@ -561,6 +566,18 @@ export class TaskRepository {
     );
   }
 
+  async markLoginLinkUsed(linkId: string): Promise<void> {
+    await this.query(
+      `
+        UPDATE task_links
+        SET first_used_at = COALESCE(first_used_at, NOW())
+        WHERE id = $1
+          AND first_used_at IS NULL
+      `,
+      [linkId],
+    );
+  }
+
   async findTaskLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
@@ -611,8 +628,8 @@ export class TaskRepository {
     ];
     const linkStateSql = `
       CASE
+        WHEN tl.expires_at <= NOW() THEN 'EXPIRED'
         WHEN tl.admin_locked = 1 THEN 'LOCKED'
-        WHEN tl.expires_at < NOW() THEN 'EXPIRED'
         ELSE 'ACTIVE'
       END
     `;
@@ -658,9 +675,9 @@ export class TaskRepository {
           OR r.label ILIKE $${searchPlaceholder}
           OR tl.magic_link ILIKE $${searchPlaceholder}
           OR CASE (${linkStateSql})
-            WHEN 'LOCKED' THEN 'ถูกปิด'
+            WHEN 'LOCKED' THEN 'ปิดอยู่'
             WHEN 'EXPIRED' THEN 'หมดอายุ'
-            ELSE 'ใช้งานอยู่'
+            ELSE 'ใช้งานได้'
           END ILIKE $${searchPlaceholder}
         )
       `);
@@ -751,6 +768,7 @@ export class TaskRepository {
         tl.login_role,
         tl.login_permissions,
         tl.login_data_scope,
+        tl.first_used_at,
         tl.created_by,
         r.label AS login_role_label,
         t.created_at,
@@ -1358,6 +1376,7 @@ export class TaskRepository {
         tl.login_role,
         tl.login_permissions,
         tl.login_data_scope,
+        tl.first_used_at,
         r.label AS login_role_label,
         t.created_at,
         t.task_type,
@@ -1500,6 +1519,7 @@ export class TaskRepository {
         tl.magic_link AS active_link,
         tl.admin_locked AS active_link_locked,
         tl.admin_lock_reason AS active_link_lock_reason,
+        tl.created_at AS active_link_created_at,
         tl.expires_at AS active_link_expires_at,
         tl.assigned_to_name AS active_link_assigned_to,
         tl.delegation_depth AS active_link_depth,
@@ -1526,8 +1546,8 @@ export class TaskRepository {
       LEFT JOIN LATERAL (
         SELECT
           CASE
-            WHEN latest_active_link.admin_locked = 1 THEN 'LOCKED'
             WHEN latest_active_link.expires_at <= NOW() THEN 'EXPIRED'
+            WHEN latest_active_link.admin_locked = 1 THEN 'LOCKED'
             ELSE 'ACTIVE'
           END AS link_state
         FROM task_links latest_active_link
@@ -1542,7 +1562,6 @@ export class TaskRepository {
         FROM task_links
         WHERE task_id = t.id
           AND status = 'ACTIVE'
-          AND expires_at > NOW()
           AND deleted_at IS NULL
         ORDER BY delegation_depth DESC
         LIMIT 1

@@ -12,6 +12,8 @@ export interface RoleDefinition {
   rank: number;
   default_permissions: string[];
   scope_mode: string;
+  scope_policy: 'ASSIGNABLE' | 'OWN_ONLY';
+  is_assignable: boolean;
   is_system: boolean;
 }
 

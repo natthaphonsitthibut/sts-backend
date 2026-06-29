@@ -1,5 +1,5 @@
 import type { ActorContext, DataScope } from '../auth/auth.types';
-import type { RoleScopeMode } from '../auth/permissions.constants';
+import type { RoleScopeMode, RoleScopePolicy } from '../auth/permissions.constants';
 
 export type { ActorContext, DataScope };
 
@@ -10,6 +10,8 @@ export interface RoleDefinition {
   rank: number;
   default_permissions: string[];
   scope_mode: RoleScopeMode;
+  scope_policy: RoleScopePolicy;
+  is_assignable: boolean;
   is_system: boolean;
   user_count?: number;
   login_link_count?: number;
@@ -34,6 +36,8 @@ export interface RoleRow extends Record<string, unknown> {
   rank: number;
   default_permissions: unknown;
   scope_mode: unknown;
+  scope_policy: unknown;
+  is_assignable: boolean;
   is_system: boolean;
   user_count?: number;
   login_link_count?: number;
