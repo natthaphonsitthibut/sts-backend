@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import { AttendanceOperationsService } from './attendance-operations.service';
 import type { QueryExecutor } from './attendance.types';
@@ -70,5 +70,37 @@ describe('AttendanceOperationsService', () => {
         },
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('does not reconcile attendance for a draft term', async () => {
+    const repository = {
+      isSchoolInScope: jest.fn().mockResolvedValue(true),
+      findTermById: jest.fn().mockResolvedValue({
+        id: '10',
+        school_id: 10010002,
+        academic_year: 2569,
+        semester: 1,
+        starts_on: '2026-05-01',
+        ends_on: '2026-05-31',
+        status: 'DRAFT',
+      }),
+      findCalendarDay: jest.fn(),
+      listReconciliation: jest.fn(),
+    };
+    const service = new AttendanceOperationsService(
+      repository as unknown as AttendanceOperationsRepository,
+    );
+
+    await expect(
+      service.getReconciliation(10, '2026-05-15', 1, 20, {
+        id: 5,
+        username: 'school-admin',
+        roles: ['ADMIN'],
+        permissions: ['attendance-dashboard'],
+        data_scope: { school_ids: [10010002] },
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(repository.findCalendarDay).not.toHaveBeenCalled();
+    expect(repository.listReconciliation).not.toHaveBeenCalled();
   });
 });

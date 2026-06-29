@@ -234,8 +234,11 @@ export class AttendanceOperationsService {
     if (term.starts_on && term.ends_on && (date < term.starts_on || date > term.ends_on)) {
       throw new BadRequestException('วันที่อยู่นอกช่วงภาคเรียน');
     }
+    if (term.status !== 'ACTIVE') {
+      throw new ConflictException('ต้องเปิดใช้งานภาคเรียนก่อนตรวจความครบถ้วน');
+    }
     const calendarDay = await this.repository.findCalendarDay(term.id, date);
-    if (term.status === 'ACTIVE' && !calendarDay) {
+    if (!calendarDay) {
       throw new ConflictException('ปฏิทินภาคเรียนไม่ครบสำหรับวันที่เลือก');
     }
     if (calendarDay && calendarDay.day_type !== 'SCHOOL_DAY') {
