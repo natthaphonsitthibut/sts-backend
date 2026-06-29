@@ -21,6 +21,7 @@
     "migration:revert": "pnpm typeorm migration:revert -d src/database/typeorm.datasource.ts",
     "bootstrap:verify-parity": "ts-node -r tsconfig-paths/register src/scripts/verify_bootstrap_parity.ts",
     "smoke:attendance-operations": "node scripts/smoke-attendance-operations.js",
+    "seed:attendance-anomalies": "node scripts/seed-attendance-anomalies.js",
     "commitlint": "commitlint --edit",
     "prepare": "husky",
     "test": "jest",
