@@ -8,7 +8,7 @@ import type { ActorContext, QueryExecutor, StudentAccountCandidateRow } from './
 const actor: ActorContext = {
   id: 5,
   username: 'school-admin',
-  roles: ['ADMIN_SCHOOL'],
+  roles: ['ADMIN'],
   permissions: ['manage-student-accounts'],
   data_scope: { school_ids: [10010002] },
 };
@@ -39,9 +39,16 @@ describe('UsersService student accounts', () => {
       | 'withTransaction'
       | 'usernameExists'
       | 'createUser'
+      | 'findUserById'
+      | 'reissueTemporaryPassword'
     >
   >;
-  let usersPolicyService: jest.Mocked<Pick<UsersPolicyService, 'ensureActor'>>;
+  let usersPolicyService: jest.Mocked<
+    Pick<
+      UsersPolicyService,
+      'ensureActor' | 'getRoleMap' | 'hydrateUserPermissions' | 'canManageUser'
+    >
+  >;
   let passwordService: jest.Mocked<Pick<PasswordService, 'generateTempPassword' | 'hash'>>;
   let service: UsersService;
 
@@ -58,12 +65,33 @@ describe('UsersService student accounts', () => {
       ),
       usernameExists: jest.fn().mockResolvedValue(false),
       createUser: jest.fn().mockResolvedValue(77),
+      findUserById: jest.fn().mockResolvedValue({
+        id: 77,
+        username: '10010002-ABCDE',
+        role: 'STUDENT',
+        roles: ['STUDENT'],
+        permissions: ['home', 'student-self'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002], own_only: true },
+      }),
+      reissueTemporaryPassword: jest.fn().mockResolvedValue(true),
     };
     usersPolicyService = {
       ensureActor: jest.fn().mockImplementation((value: ActorContext | undefined) => {
         if (!value) throw new ForbiddenException('ไม่ได้เข้าสู่ระบบ');
         return value;
       }),
+      getRoleMap: jest.fn().mockResolvedValue(new Map()),
+      hydrateUserPermissions: jest.fn().mockReturnValue({
+        id: 77,
+        username: '10010002-ABCDE',
+        role: 'STUDENT',
+        roles: ['STUDENT'],
+        permissions: ['home', 'student-self'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002], own_only: true },
+      }),
+      canManageUser: jest.fn().mockReturnValue(true),
     };
     passwordService = {
       generateTempPassword: jest.fn().mockReturnValue('TEMP123456789'),
@@ -168,5 +196,23 @@ describe('UsersService student accounts', () => {
     expect(usersRepository.createUser.mock.calls[0][0].temporaryPasswordExpiresAt).toBeInstanceOf(
       Date,
     );
+  });
+
+  it('reissues a temporary password on the existing scoped student account', async () => {
+    const result = await service.reissueStudentTemporaryPassword(actor, 77);
+
+    expect(result).toMatchObject({
+      success: true,
+      userId: 77,
+      username: '10010002-ABCDE',
+      tempPassword: 'TEMP123456789',
+    });
+    expect(usersRepository.reissueTemporaryPassword).toHaveBeenCalledWith(
+      77,
+      'hashed-temp-password',
+      expect.any(Date),
+      expect.any(Date),
+    );
+    expect(usersRepository.createUser).not.toHaveBeenCalled();
   });
 });

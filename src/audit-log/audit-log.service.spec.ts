@@ -34,7 +34,9 @@ describe('AuditLogService', () => {
     expect(queries).toHaveLength(1);
     expect(queries[0].sql).toContain('a.action = ANY($1::text[])');
     expect(queries[0].sql).toContain("NULLIF(a.metadata ->> 'scopeLabel', '')");
-    expect(queries[0].params?.[0]).toEqual(['STUDENT_ACCOUNT_BULK_GENERATE']);
+    expect(queries[0].params?.[0]).toEqual(
+      expect.arrayContaining(['STUDENT_ACCOUNT_BULK_GENERATE', 'STUDENT_TEMP_PASSWORD_REISSUE']),
+    );
   });
 
   it('filters student account history by province scope', async () => {

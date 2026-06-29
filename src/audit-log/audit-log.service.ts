@@ -29,6 +29,7 @@ export type AuditAction =
   | 'USER_UPDATE'
   | 'USER_DELETE'
   | 'STUDENT_ACCOUNT_BULK_GENERATE'
+  | 'STUDENT_TEMP_PASSWORD_REISSUE'
   | 'ROLE_GROUP_CREATE'
   | 'ROLE_GROUP_UPDATE'
   | 'ROLE_GROUP_DELETE'
@@ -108,6 +109,11 @@ export interface AuditLogEntryResponse {
 }
 
 const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
+  STUDENT_TEMP_PASSWORD_REISSUE: {
+    domain: 'student_accounts',
+    label: 'ออกรหัสชั่วคราวใหม่',
+    detailKeys: [{ key: 'expiresAt', label: 'รหัสหมดอายุ' }],
+  },
   STUDENT_ACCOUNT_BULK_GENERATE: {
     domain: 'student_accounts',
     label: 'สร้างบัญชีนักเรียนแบบชุด',

@@ -279,6 +279,51 @@ export class UsersService {
     return { success: true, must_change_password: false };
   }
 
+  async reissueStudentTemporaryPassword(actor: ActorContext | undefined, userId: number) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCanManageStudentAccounts(currentActor);
+    const roleMap = await this.usersPolicyService.getRoleMap();
+    const row = await this.usersRepository.findUserById(userId);
+    if (!row) {
+      throw new NotFoundException('ไม่พบบัญชีนักเรียน');
+    }
+    const user = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
+    if (user.role !== 'STUDENT') {
+      throw new BadRequestException('ออกวิธีเข้าใช้ชั่วคราวใหม่ได้เฉพาะบัญชีนักเรียน');
+    }
+    if (user.status !== 'ACTIVE') {
+      throw new ConflictException('บัญชีนักเรียนนี้ถูกปิดการใช้งาน');
+    }
+    if (!this.usersPolicyService.canManageUser(currentActor, user, roleMap)) {
+      throw new ForbiddenException('ไม่มีสิทธิ์จัดการบัญชีนักเรียนนี้');
+    }
+
+    const tempPassword = this.passwordService.generateTempPassword();
+    const passwordHash = await this.passwordService.hash(tempPassword);
+    const issuedAt = new Date();
+    const expiresAt = new Date(
+      issuedAt.getTime() + STUDENT_TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const updated = await this.usersRepository.reissueTemporaryPassword(
+      userId,
+      passwordHash,
+      issuedAt,
+      expiresAt,
+    );
+    if (!updated) {
+      throw new ConflictException('ไม่สามารถออกรหัสชั่วคราวใหม่ให้บัญชีนี้ได้');
+    }
+
+    return {
+      success: true,
+      userId,
+      username: user.username,
+      tempPassword,
+      temporaryPasswordIssuedAt: issuedAt.toISOString(),
+      temporaryPasswordExpiresAt: expiresAt.toISOString(),
+    };
+  }
+
   async previewStudentAccounts(
     actor: ActorContext | undefined,
     filters: StudentAccountBulkFilterDto,

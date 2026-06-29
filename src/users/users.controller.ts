@@ -234,6 +234,27 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/:id/reissue-temporary-password')
+  async reissueStudentTemporaryPassword(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.usersService.reissueStudentTemporaryPassword(actor, id);
+    await this.auditLog.record({
+      action: 'STUDENT_TEMP_PASSWORD_REISSUE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'user',
+      targetId: String(id),
+      metadata: { expiresAt: result.temporaryPasswordExpiresAt },
+      ip: requestIp(req),
+    });
+    return result;
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-users-list')
   @Post()
   async createUser(
