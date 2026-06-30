@@ -15,18 +15,22 @@ export function buildStudentTermAddress(row: Record<string, unknown>): string {
   const parts: string[] = [];
 
   const village = text(row['VillageNumber_Onec']);
+  const trok = text(row['Trok_Onec']);
   const soi = text(row['Soi_Onec']);
   const street = text(row['Street_Onec']);
   const subDistrict = text(row['SubDistrictNameThai_Onec']);
   const district = text(row['DistrictNameThai_Onec']);
   const province = text(row['ProvinceNameThai_Onec']);
+  const postalCode = text(row['PostalCode_Onec']);
 
   if (village) parts.push(`หมู่ ${village}`);
+  if (trok) parts.push(`ตรอก${trok}`);
   if (soi) parts.push(`ซอย${soi}`);
   if (street) parts.push(`ถนน${street}`);
   if (subDistrict) parts.push(`ตำบล/แขวง${subDistrict}`);
   if (district) parts.push(`อำเภอ/เขต${district}`);
   if (province) parts.push(`จังหวัด${province}`);
+  if (postalCode) parts.push(postalCode);
 
   return parts.join(' ');
 }

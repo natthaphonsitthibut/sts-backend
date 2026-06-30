@@ -7,7 +7,13 @@ interface GoogleGeocodeLocation {
   lng: number;
 }
 
+interface GoogleAddressComponent {
+  long_name?: string;
+  types?: string[];
+}
+
 interface GoogleGeocodeResult {
+  address_components?: GoogleAddressComponent[];
   formatted_address?: string;
   geometry?: {
     location?: GoogleGeocodeLocation;
@@ -27,6 +33,7 @@ export interface GeocodeResult {
   formattedAddress: string | null;
   locationType: string | null;
   placeId: string | null;
+  postalCode: string | null;
   provider: 'google';
 }
 
@@ -98,12 +105,17 @@ export class GeoService {
       return null;
     }
 
+    const postalCode =
+      firstResult.address_components?.find((component) => component.types?.includes('postal_code'))
+        ?.long_name ?? null;
+
     return {
       lat: location.lat,
       lng: location.lng,
       formattedAddress: firstResult.formatted_address ?? null,
       locationType: firstResult.geometry?.location_type ?? null,
       placeId: firstResult.place_id ?? null,
+      postalCode,
       provider: 'google',
     };
   }

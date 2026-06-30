@@ -28,6 +28,68 @@ export const SYSTEM_SETTING_DEFINITIONS: SystemSettingDefinition[] = [
   },
 ];
 
+/**
+ * Deterministic postal-code backfill for the demo roster locations. The match
+ * includes province + district + sub-district so production rows outside the
+ * verified seed locations stay NULL instead of receiving a guessed value.
+ */
+export const STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL = `
+  UPDATE student_term AS student
+  SET "PostalCode_Onec" = postal.postal_code
+  FROM (
+    VALUES
+      ('กรุงเทพมหานคร', 'ดอนเมือง', 'ดอนเมือง', '10210'),
+      ('กรุงเทพมหานคร', 'ดอนเมือง', 'สนามบิน', '10210'),
+      ('กรุงเทพมหานคร', 'ดอนเมือง', 'สีกัน', '10210'),
+      ('กรุงเทพมหานคร', 'พระนคร', 'พระบรมมหาราชวัง', '10200'),
+      ('กรุงเทพมหานคร', 'พระนคร', 'วังบูรพาภิรมย์', '10200'),
+      ('กรุงเทพมหานคร', 'พระนคร', 'วัดราชบพิธ', '10200'),
+      ('กรุงเทพมหานคร', 'พระนคร', 'สำราญราษฎร์', '10200'),
+      ('ขอนแก่น', 'เมืองขอนแก่น', 'บ้านทุ่ม', '40000'),
+      ('ขอนแก่น', 'เมืองขอนแก่น', 'พระลับ', '40000'),
+      ('ขอนแก่น', 'เมืองขอนแก่น', 'สาวะถี', '40000'),
+      ('ขอนแก่น', 'เมืองขอนแก่น', 'เมืองเก่า', '40000'),
+      ('ขอนแก่น', 'เมืองขอนแก่น', 'ในเมือง', '40000'),
+      ('ตรัง', 'เมืองตรัง', 'ทับเที่ยง', '92000'),
+      ('ตรัง', 'เมืองตรัง', 'นาตาล่วง', '92000'),
+      ('ตรัง', 'เมืองตรัง', 'นาพละ', '92000'),
+      ('ตรัง', 'เมืองตรัง', 'บ้านควน', '92000'),
+      ('นครปฐม', 'เมืองนครปฐม', 'บางแขม', '73000'),
+      ('นครปฐม', 'เมืองนครปฐม', 'พระปฐมเจดีย์', '73000'),
+      ('นครปฐม', 'เมืองนครปฐม', 'พระประโทน', '73000'),
+      ('นครปฐม', 'เมืองนครปฐม', 'สามควายเผือก', '73000'),
+      ('นครราชสีมา', 'เมืองนครราชสีมา', 'มะเริง', '30000'),
+      ('นครราชสีมา', 'เมืองนครราชสีมา', 'หนองจะบก', '30000'),
+      ('นครราชสีมา', 'เมืองนครราชสีมา', 'โคกสูง', '30000'),
+      ('นครราชสีมา', 'เมืองนครราชสีมา', 'โพธิ์กลาง', '30000'),
+      ('นครราชสีมา', 'เมืองนครราชสีมา', 'ในเมือง', '30000'),
+      ('อุดรธานี', 'เมืองอุดรธานี', 'นิคมสงเคราะห์', '41000'),
+      ('อุดรธานี', 'เมืองอุดรธานี', 'บ้านขาว', '41000'),
+      ('อุดรธานี', 'เมืองอุดรธานี', 'บ้านจั่น', '41000'),
+      ('อุดรธานี', 'เมืองอุดรธานี', 'หนองบัว', '41000'),
+      ('อุดรธานี', 'เมืองอุดรธานี', 'หมากแข้ง', '41000'),
+      ('อุบลราชธานี', 'เมืองอุบลราชธานี', 'ขามใหญ่', '34000'),
+      ('อุบลราชธานี', 'เมืองอุบลราชธานี', 'ปทุม', '34000'),
+      ('อุบลราชธานี', 'เมืองอุบลราชธานี', 'หนองขอน', '34000'),
+      ('อุบลราชธานี', 'เมืองอุบลราชธานี', 'หัวเรือ', '34000'),
+      ('อุบลราชธานี', 'เมืองอุบลราชธานี', 'ในเมือง', '34000'),
+      ('เชียงราย', 'เมืองเชียงราย', 'นางแล', '57000'),
+      ('เชียงราย', 'เมืองเชียงราย', 'บ้านดู่', '57000'),
+      ('เชียงราย', 'เมืองเชียงราย', 'รอบเวียง', '57000'),
+      ('เชียงราย', 'เมืองเชียงราย', 'เวียง', '57000'),
+      ('เชียงราย', 'เมืองเชียงราย', 'แม่กรณ์', '57000'),
+      ('เชียงใหม่', 'เมืองเชียงใหม่', 'ช้างมอย', '50000'),
+      ('เชียงใหม่', 'เมืองเชียงใหม่', 'พระสิงห์', '50000'),
+      ('เชียงใหม่', 'เมืองเชียงใหม่', 'ศรีภูมิ', '50000'),
+      ('เชียงใหม่', 'เมืองเชียงใหม่', 'สุเทพ', '50000'),
+      ('เชียงใหม่', 'เมืองเชียงใหม่', 'หายยา', '50000')
+  ) AS postal(province, district, sub_district, postal_code)
+  WHERE student."PostalCode_Onec" IS NULL
+    AND student."ProvinceNameThai_Onec" = postal.province
+    AND student."DistrictNameThai_Onec" = postal.district
+    AND student."SubDistrictNameThai_Onec" = postal.sub_district;
+`;
+
 function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
@@ -274,7 +336,8 @@ export const DATABASE_BASELINE_SQL = `
     "StudentStatusID_Onec" INTEGER,
     "ProvinceNameThai_Onec" TEXT,
     "DistrictNameThai_Onec" TEXT,
-    "SubDistrictNameThai_Onec" TEXT
+    "SubDistrictNameThai_Onec" TEXT,
+    "PostalCode_Onec" VARCHAR(5)
   );
 
   CREATE TABLE IF NOT EXISTS student_dropouts (
@@ -443,6 +506,18 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by INTEGER;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivation_reason_code VARCHAR(32);
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivation_note VARCHAR(255);
+  ALTER TABLE student_term ADD COLUMN IF NOT EXISTS "PostalCode_Onec" VARCHAR(5);
+  ${STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL}
+  DO $student_term_postal_code_constraint$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_student_term_postal_code'
+    ) THEN
+      ALTER TABLE student_term
+      ADD CONSTRAINT chk_student_term_postal_code
+      CHECK ("PostalCode_Onec" IS NULL OR "PostalCode_Onec" ~ '^[0-9]{5}$');
+    END IF;
+  END $student_term_postal_code_constraint$;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_first_name TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_last_name TEXT;

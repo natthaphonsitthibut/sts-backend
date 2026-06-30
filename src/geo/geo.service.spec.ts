@@ -35,6 +35,7 @@ describe('GeoService', () => {
         status: 'OK',
         results: [
           {
+            address_components: [{ long_name: '10210', types: ['postal_code'] }],
             formatted_address: 'Bangkok, Thailand',
             geometry: {
               location: { lat: 13.7563, lng: 100.5018 },
@@ -54,6 +55,7 @@ describe('GeoService', () => {
       lng: 100.5018,
       locationType: 'ROOFTOP',
       placeId: 'place-1',
+      postalCode: '10210',
       provider: 'google',
     });
     const [requestedUrl, requestInit] = fetchMock.mock.calls[0] ?? [];

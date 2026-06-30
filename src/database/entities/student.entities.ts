@@ -60,6 +60,9 @@ export class StudentTermEntity {
 
   @Column({ name: 'SubDistrictNameThai_Onec', type: 'text', nullable: true })
   subDistrictNameThaiOnec!: string | null;
+
+  @Column({ name: 'PostalCode_Onec', type: 'varchar', length: 5, nullable: true })
+  postalCodeOnec!: string | null;
 }
 
 @Entity({ name: 'student_dropouts' })
