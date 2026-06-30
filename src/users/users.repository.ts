@@ -880,6 +880,27 @@ export class UsersRepository {
     return result.rows[0] || null;
   }
 
+  async findCurrentStudentUuidByUserId(userId: number): Promise<string | null> {
+    const result = await this.query<{ student_uuid: string }>(
+      `
+      SELECT enrollment.student_uuid
+      FROM users u
+      JOIN student_term enrollment ON enrollment.person_uuid = u.person_uuid
+      WHERE u.id = $1
+        AND u.role = 'STUDENT'
+        AND u.status = 'ACTIVE'
+        AND enrollment.deleted_at IS NULL
+        AND enrollment."StudentStatusID_Onec" = 10
+      ORDER BY enrollment."AcademicYear_Onec" DESC NULLS LAST,
+               enrollment."Semester_Onec" DESC NULLS LAST,
+               enrollment.student_uuid DESC
+      LIMIT 1
+    `,
+      [userId],
+    );
+    return result.rows[0]?.student_uuid ?? null;
+  }
+
   async listPlaintextPasswordUsers(): Promise<Array<{ id: number; password: string }>> {
     const result = await this.query<{ id: number; password: string }>(
       `SELECT id, password FROM users WHERE password NOT LIKE '$2%'`,

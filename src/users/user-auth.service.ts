@@ -25,7 +25,7 @@ export class UserAuthService {
     const roleMap = await this.usersPolicyService.getRoleMap();
     const user = await this.usersRepository.findUserByUsername(username.trim());
 
-    if (!user || typeof user.password !== 'string') {
+    if (!user || user.status !== 'ACTIVE' || typeof user.password !== 'string') {
       return null;
     }
 
@@ -40,7 +40,11 @@ export class UserAuthService {
 
     const { password: _password, ...safeUser } = user;
     void _password;
-    return this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
+    const hydratedUser = this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
+    const studentUuid = hydratedUser.roles?.includes('STUDENT')
+      ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
+      : null;
+    return studentUuid ? { ...hydratedUser, student_uuid: studentUuid } : hydratedUser;
   }
 
   private isTemporaryPasswordExpired(user: {

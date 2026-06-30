@@ -100,7 +100,10 @@ export class UsersService {
       throw new ForbiddenException('ไม่มีสิทธิ์เข้าถึงข้อมูลผู้ใช้งานนี้');
     }
 
-    return user;
+    const studentUuid = user.roles?.includes('STUDENT')
+      ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
+      : null;
+    return studentUuid ? { ...user, student_uuid: studentUuid } : user;
   }
 
   async createUser(actor: ActorContext | undefined, data: CreateUserDto) {

@@ -120,13 +120,8 @@ function buildPaginationMeta(page: number, limit: number, totalCount: number) {
 
 function isOwnOnlyStudentActor(
   actor?: AuthenticatedRequestUser,
-): actor is AuthenticatedRequestUser & { student_uuid: string } {
-  return Boolean(
-    actor?.roles.includes('STUDENT') &&
-    actor.virtual_login &&
-    actor.student_uuid &&
-    actor.data_scope?.own_only,
-  );
+): actor is AuthenticatedRequestUser {
+  return Boolean(actor?.roles.includes('STUDENT') && actor.data_scope?.own_only);
 }
 
 function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
@@ -189,6 +184,9 @@ export class StudentsService {
 
     try {
       if (isOwnOnlyStudentActor(actor)) {
+        if (!actor.student_uuid) {
+          throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
+        }
         const ownStudent = await this.studentsRepository.findStudentById(actor.student_uuid);
         const data = ownStudent ? [mapDetailRowToListRow(ownStudent)] : [];
 

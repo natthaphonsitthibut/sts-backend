@@ -30,7 +30,9 @@ function buildUser(overrides: Partial<HydratableUserRow> = {}): HydratableUserRo
 }
 
 describe('UserAuthService temporary password expiry', () => {
-  let usersRepository: jest.Mocked<Pick<UsersRepository, 'findUserByUsername'>>;
+  let usersRepository: jest.Mocked<
+    Pick<UsersRepository, 'findUserByUsername' | 'findCurrentStudentUuidByUserId'>
+  >;
   let usersPolicyService: jest.Mocked<
     Pick<UsersPolicyService, 'getRoleMap' | 'hydrateUserPermissions'>
   >;
@@ -40,6 +42,7 @@ describe('UserAuthService temporary password expiry', () => {
   beforeEach(() => {
     usersRepository = {
       findUserByUsername: jest.fn(),
+      findCurrentStudentUuidByUserId: jest.fn().mockResolvedValue('student-uuid-1'),
     };
     usersPolicyService = {
       getRoleMap: jest.fn().mockResolvedValue(new Map()),
@@ -71,8 +74,16 @@ describe('UserAuthService temporary password expiry', () => {
     await expect(service.validateUser('student-temp', 'TEMP123')).resolves.toMatchObject({
       id: 77,
       username: 'student-temp',
+      student_uuid: 'student-uuid-1',
     });
     expect(passwordService.compare).toHaveBeenCalledWith('TEMP123', 'hashed-password');
     expect(usersPolicyService.hydrateUserPermissions).toHaveBeenCalled();
+  });
+
+  it('rejects a disabled account before checking its password', async () => {
+    usersRepository.findUserByUsername.mockResolvedValue(buildUser({ status: 'DISABLED' }));
+
+    await expect(service.validateUser('student-temp', 'TEMP123')).resolves.toBeNull();
+    expect(passwordService.compare).not.toHaveBeenCalled();
   });
 });
