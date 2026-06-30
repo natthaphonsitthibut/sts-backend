@@ -409,6 +409,31 @@ export class UsersController {
     return result;
   }
 
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
+  @Post(':id/reissue-temporary-password')
+  async reissueTemporaryPassword(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.usersService.reissueTemporaryPassword(actor, id);
+    try {
+      await this.auditLog.record({
+        action: 'USER_TEMP_PASSWORD_REISSUE',
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: actor?.username,
+        targetType: 'user',
+        targetId: String(id),
+        metadata: { expiresAt: result.temporaryPasswordExpiresAt },
+        ip: requestIp(req),
+      });
+    } catch (error) {
+      this.logAuditFailure('USER_TEMP_PASSWORD_REISSUE', error);
+    }
+    return result;
+  }
+
   @ThrottleLogin()
   @Post('login')
   async login(

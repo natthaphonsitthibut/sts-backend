@@ -63,28 +63,32 @@ export class UsersService {
     const actorRank = this.usersPolicyService.getRoleRank(actorRole, roleMap);
     const page = resolvePage(filters.page);
     const limit = resolveLimit(filters.limit);
-    const { rows, totalCount } = await this.usersRepository.listUsersPaginated({
-      actorId: currentActor.id,
-      actorRole,
-      actorRank,
-      actorScope: currentActor.data_scope,
-      excludeRole: filters.excludeRole,
-      searchTerm: filters.searchTerm,
-      province: filters.province,
-      district: filters.district,
-      subDistrict: filters.subDistrict,
-      schoolId: filters.schoolId,
-      gradeLevelId: filters.gradeLevelId,
-      room: filters.room,
-      page,
-      limit,
-    });
+    const { rows, totalCount, lifecycleStatusCounts } =
+      await this.usersRepository.listUsersPaginated({
+        actorId: currentActor.id,
+        actorRole,
+        actorRank,
+        actorScope: currentActor.data_scope,
+        excludeRole: filters.excludeRole,
+        searchTerm: filters.searchTerm,
+        province: filters.province,
+        district: filters.district,
+        subDistrict: filters.subDistrict,
+        schoolId: filters.schoolId,
+        gradeLevelId: filters.gradeLevelId,
+        room: filters.room,
+        page,
+        limit,
+      });
     const users = rows.map((row) => this.usersPolicyService.hydrateUserPermissions(row, roleMap));
 
     return {
       success: true,
       data: users,
-      meta: buildPaginationMeta(page, limit, totalCount),
+      meta: {
+        ...buildPaginationMeta(page, limit, totalCount),
+        lifecycleStatusCounts,
+      },
     };
   }
 
@@ -339,6 +343,49 @@ export class UsersService {
     };
   }
 
+  // General reissue for any role the actor may manage (Manage Users page),
+  // guarded by the same role-hierarchy/scope check as edit/delete — unlike
+  // reissueStudentTemporaryPassword which is scoped to student-account management.
+  async reissueTemporaryPassword(actor: ActorContext | undefined, userId: number) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    const roleMap = await this.usersPolicyService.getRoleMap();
+    const existingRow = await this.usersRepository.findUserById(userId);
+    if (!existingRow) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+
+    const existingUser = this.usersPolicyService.hydrateUserPermissions(existingRow, roleMap);
+    if (!this.usersPolicyService.canManageUser(currentActor, existingUser, roleMap)) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ออกรหัสชั่วคราวใหม่ให้ผู้ใช้งานนี้');
+    }
+    if (existingUser.status !== 'ACTIVE') {
+      throw new ConflictException('บัญชีนี้ถูกปิดการใช้งาน');
+    }
+
+    const tempPassword = this.passwordService.generateTempPassword();
+    const passwordHash = await this.passwordService.hash(tempPassword);
+    const issuedAt = new Date();
+    const expiresAt = new Date(issuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000);
+    const updated = await this.usersRepository.reissueTemporaryPassword(
+      userId,
+      passwordHash,
+      issuedAt,
+      expiresAt,
+    );
+    if (!updated) {
+      throw new ConflictException('ไม่สามารถออกรหัสชั่วคราวใหม่ให้บัญชีนี้ได้');
+    }
+
+    return {
+      success: true,
+      userId,
+      username: existingUser.username,
+      tempPassword,
+      temporaryPasswordIssuedAt: issuedAt.toISOString(),
+      temporaryPasswordExpiresAt: expiresAt.toISOString(),
+    };
+  }
+
   async listStudentAccounts(actor: ActorContext | undefined, filters: StudentAccountListQueryDto) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     this.assertCanManageStudentAccounts(currentActor);
@@ -346,17 +393,22 @@ export class UsersService {
       filters,
       currentActor.data_scope,
     );
-    const { rows, totalCount } =
-      await this.usersRepository.listStudentAccountsPaginated(normalizedFilters);
+    const [{ rows, totalCount }, statusCounts] = await Promise.all([
+      this.usersRepository.listStudentAccountsPaginated(normalizedFilters),
+      this.usersRepository.countStudentAccountStatuses(normalizedFilters),
+    ]);
 
     return {
       success: true,
       data: rows.map((row) => this.toStudentAccountManagementResponse(row)),
-      meta: buildPaginationMeta(
-        normalizedFilters.page ?? 1,
-        normalizedFilters.limit ?? 20,
-        totalCount,
-      ),
+      meta: {
+        ...buildPaginationMeta(
+          normalizedFilters.page ?? 1,
+          normalizedFilters.limit ?? 20,
+          totalCount,
+        ),
+        statusCounts,
+      },
     };
   }
 

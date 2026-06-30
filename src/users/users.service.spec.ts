@@ -65,7 +65,9 @@ describe('UsersService student accounts', () => {
       | 'withTransaction'
       | 'usernameExists'
       | 'createUser'
+      | 'findUserById'
       | 'listStudentAccountsPaginated'
+      | 'countStudentAccountStatuses'
       | 'findStudentAccountForManagement'
       | 'reissueTemporaryPassword'
       | 'deactivateStudentAccount'
@@ -93,9 +95,16 @@ describe('UsersService student accounts', () => {
       ),
       usernameExists: jest.fn().mockResolvedValue(false),
       createUser: jest.fn().mockResolvedValue(77),
+      findUserById: jest.fn().mockResolvedValue({ id: 77 }),
       listStudentAccountsPaginated: jest
         .fn()
         .mockResolvedValue({ rows: [studentAccount], totalCount: 1 }),
+      countStudentAccountStatuses: jest.fn().mockResolvedValue({
+        PENDING_FIRST_LOGIN: 1,
+        ACTIVE: 0,
+        TEMP_PASSWORD_EXPIRED: 0,
+        DISABLED: 0,
+      }),
       findStudentAccountForManagement: jest.fn().mockResolvedValue(studentAccount),
       reissueTemporaryPassword: jest.fn().mockResolvedValue(true),
       deactivateStudentAccount: jest.fn().mockResolvedValue(true),
@@ -188,6 +197,12 @@ describe('UsersService student accounts', () => {
         limit: 20,
       }),
     );
+    expect(usersRepository.countStudentAccountStatuses).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorScope: actor.data_scope,
+        schoolId: 10010002,
+      }),
+    );
     expect(result.data[0]).toMatchObject({
       userId: 77,
       username: '10010002-ABCDE',
@@ -196,6 +211,12 @@ describe('UsersService student accounts', () => {
       status: 'PENDING_FIRST_LOGIN',
       accountStatus: 'ACTIVE',
       mustChangePassword: true,
+    });
+    expect(result.meta.statusCounts).toMatchObject({
+      PENDING_FIRST_LOGIN: 1,
+      ACTIVE: 0,
+      TEMP_PASSWORD_EXPIRED: 0,
+      DISABLED: 0,
     });
     expect(JSON.stringify(result)).not.toContain(candidate.person_uuid);
   });
@@ -261,6 +282,43 @@ describe('UsersService student accounts', () => {
       expect.any(Date),
     );
     expect(usersRepository.createUser).not.toHaveBeenCalled();
+  });
+
+  it('reissues a temporary password for a manageable non-student account', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher-one',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['home', 'attendance'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    });
+
+    const result = await service.reissueTemporaryPassword(actor, 77);
+
+    expect(usersPolicyService.canManageUser).toHaveBeenCalled();
+    expect(usersRepository.reissueTemporaryPassword).toHaveBeenCalledWith(
+      77,
+      'hashed-temp-password',
+      expect.any(Date),
+      expect.any(Date),
+    );
+    expect(result).toMatchObject({
+      success: true,
+      userId: 77,
+      username: 'teacher-one',
+      tempPassword: 'TEMP123456789',
+    });
+  });
+
+  it('rejects temporary-password reissue outside the actor management scope', async () => {
+    usersPolicyService.canManageUser.mockReturnValueOnce(false);
+
+    await expect(service.reissueTemporaryPassword(actor, 77)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(usersRepository.reissueTemporaryPassword).not.toHaveBeenCalled();
   });
 
   it('bulk reissues selected student accounts and returns one-time credentials', async () => {

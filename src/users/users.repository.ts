@@ -113,6 +113,16 @@ interface CountRow extends Record<string, unknown> {
   count: number | string;
 }
 
+interface UserLifecycleStatusCountRow extends Record<string, unknown> {
+  status: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  count: number | string;
+}
+
+interface StudentAccountStatusCountRow extends Record<string, unknown> {
+  status: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  count: number | string;
+}
+
 @Injectable()
 export class UsersRepository {
   private readonly userFieldsSql = `
@@ -289,9 +299,14 @@ export class UsersRepository {
     return result.rows;
   }
 
-  async listUsersPaginated(
-    filters: UserListFilters,
-  ): Promise<{ rows: HydratableUserRow[]; totalCount: number }> {
+  async listUsersPaginated(filters: UserListFilters): Promise<{
+    rows: HydratableUserRow[];
+    totalCount: number;
+    lifecycleStatusCounts: Record<
+      'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED',
+      number
+    >;
+  }> {
     const params: unknown[] = [];
     const conditions: string[] = [];
     const roleRankSql = 'COALESCE(r.rank, 0)';
@@ -388,6 +403,40 @@ export class UsersRepository {
       params,
     );
     const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
+    const lifecycleCountsResult = await this.query<UserLifecycleStatusCountRow>(
+      `
+        SELECT lifecycle_status AS status, COUNT(*)::int AS count
+        FROM (
+          SELECT
+            CASE
+              WHEN u.status <> 'ACTIVE' THEN 'DISABLED'
+              WHEN u.must_change_password IS TRUE
+                AND u.temporary_password_expires_at IS NOT NULL
+                AND u.temporary_password_expires_at <= NOW()
+                THEN 'TEMP_PASSWORD_EXPIRED'
+              WHEN u.must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'
+              ELSE 'ACTIVE'
+            END AS lifecycle_status
+          FROM users u
+          LEFT JOIN roles r ON r.name = u.role
+          ${whereSql}
+        ) scoped_users
+        GROUP BY lifecycle_status
+      `,
+      params,
+    );
+    const lifecycleStatusCounts = lifecycleCountsResult.rows.reduce(
+      (counts, row) => ({
+        ...counts,
+        [row.status]: Number.parseInt(String(row.count || '0'), 10),
+      }),
+      {
+        PENDING_FIRST_LOGIN: 0,
+        ACTIVE: 0,
+        TEMP_PASSWORD_EXPIRED: 0,
+        DISABLED: 0,
+      },
+    );
 
     const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
     const page = filters.page && filters.page > 0 ? filters.page : 1;
@@ -406,7 +455,7 @@ export class UsersRepository {
       selectParams,
     );
 
-    return { rows: result.rows, totalCount };
+    return { rows: result.rows, totalCount, lifecycleStatusCounts };
   }
 
   async findUserById(id: number): Promise<HydratableUserRow | null> {
@@ -769,6 +818,58 @@ export class UsersRepository {
     return { rows: result.rows, totalCount };
   }
 
+  async countStudentAccountStatuses(
+    filters: StudentAccountManagementFilters,
+  ): Promise<
+    Record<'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED', number>
+  > {
+    const statusFilters = {
+      ...filters,
+      accountStatus: undefined,
+      onlyExpired: undefined,
+      page: undefined,
+      limit: undefined,
+    };
+    const { whereSql, params } = this.buildStudentAccountManagementQuery(statusFilters);
+    const result = await this.query<StudentAccountStatusCountRow>(
+      `
+        SELECT status, COUNT(*)::int AS count
+        FROM (
+          SELECT DISTINCT ON (u.id)
+            CASE
+              WHEN u.status <> 'ACTIVE' THEN 'DISABLED'
+              WHEN u.must_change_password IS TRUE
+                AND u.temporary_password_expires_at IS NOT NULL
+                AND u.temporary_password_expires_at <= NOW()
+                THEN 'TEMP_PASSWORD_EXPIRED'
+              WHEN u.must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'
+              ELSE 'ACTIVE'
+            END AS status
+          FROM users u
+          JOIN student_term s ON s.person_uuid = u.person_uuid
+          JOIN schools sc ON sc.id = s."SchoolID_Onec"
+          LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+          ${whereSql}
+          ORDER BY u.id, s."AcademicYear_Onec" DESC NULLS LAST, s."Semester_Onec" DESC NULLS LAST
+        ) scoped_accounts
+        GROUP BY status
+      `,
+      params,
+    );
+    return result.rows.reduce(
+      (counts, row) => ({
+        ...counts,
+        [row.status]: Number.parseInt(String(row.count || '0'), 10),
+      }),
+      {
+        PENDING_FIRST_LOGIN: 0,
+        ACTIVE: 0,
+        TEMP_PASSWORD_EXPIRED: 0,
+        DISABLED: 0,
+      },
+    );
+  }
+
   async findStudentAccountForManagement(
     userId: number,
     actorScope?: DataScope,
@@ -951,7 +1052,6 @@ export class UsersRepository {
             temporary_password_issued_at = $3,
             temporary_password_expires_at = $4
         WHERE id = $1
-          AND role = 'STUDENT'
           AND status = 'ACTIVE'
       `,
       [id, passwordHash, issuedAt, expiresAt],
