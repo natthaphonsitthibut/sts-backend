@@ -87,6 +87,18 @@ export class UserEntity {
   @Column({ name: 'temporary_password_expires_at', type: 'timestamptz', nullable: true })
   temporaryPasswordExpiresAt!: Date | null;
 
+  @Column({ name: 'deactivated_at', type: 'timestamptz', nullable: true })
+  deactivatedAt!: Date | null;
+
+  @Column({ name: 'deactivated_by', type: 'integer', nullable: true })
+  deactivatedBy!: number | null;
+
+  @Column({ name: 'deactivation_reason_code', type: 'varchar', length: 32, nullable: true })
+  deactivationReasonCode!: string | null;
+
+  @Column({ name: 'deactivation_note', type: 'varchar', length: 255, nullable: true })
+  deactivationNote!: string | null;
+
   @Column({ name: 'created_at', type: 'timestamp', nullable: true })
   createdAt!: Date | null;
 }

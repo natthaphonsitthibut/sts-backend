@@ -374,6 +374,10 @@ export const DATABASE_BASELINE_SQL = `
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     temporary_password_issued_at TIMESTAMP WITH TIME ZONE,
     temporary_password_expires_at TIMESTAMP WITH TIME ZONE,
+    deactivated_at TIMESTAMP WITH TIME ZONE,
+    deactivated_by INTEGER,
+    deactivation_reason_code VARCHAR(32),
+    deactivation_note VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -435,6 +439,10 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_issued_at TIMESTAMP WITH TIME ZONE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_expires_at TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by INTEGER;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivation_reason_code VARCHAR(32);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivation_note VARCHAR(255);
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_id TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_first_name TEXT;
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_last_name TEXT;
@@ -669,6 +677,41 @@ export const DATABASE_BASELINE_SQL = `
 
   ALTER TABLE users
   ALTER COLUMN data_scope SET DEFAULT '{}'::jsonb;
+
+  UPDATE users
+  SET status = 'DISABLED'
+  WHERE status NOT IN ('ACTIVE', 'DISABLED');
+
+  DO $users_lifecycle_constraints$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_deactivated_by'
+    ) THEN
+      ALTER TABLE users
+      ADD CONSTRAINT fk_users_deactivated_by
+      FOREIGN KEY (deactivated_by) REFERENCES users(id)
+      ON DELETE SET NULL;
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_users_deactivation_reason_code'
+    ) THEN
+      ALTER TABLE users
+      ADD CONSTRAINT chk_users_deactivation_reason_code
+      CHECK (
+        deactivation_reason_code IS NULL
+        OR deactivation_reason_code IN ('STAFF_LEFT', 'TRANSFERRED', 'DUPLICATE', 'SECURITY', 'OTHER')
+      );
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_users_status'
+    ) THEN
+      ALTER TABLE users
+      ADD CONSTRAINT chk_users_status
+      CHECK (status IN ('ACTIVE', 'DISABLED'));
+    END IF;
+  END $users_lifecycle_constraints$;
 
   DO $users_person_fk$
   BEGIN
