@@ -35,7 +35,11 @@ describe('AuditLogService', () => {
     expect(queries[0].sql).toContain('a.action = ANY($1::text[])');
     expect(queries[0].sql).toContain("NULLIF(a.metadata ->> 'scopeLabel', '')");
     expect(queries[0].params?.[0]).toEqual(
-      expect.arrayContaining(['STUDENT_ACCOUNT_BULK_GENERATE', 'STUDENT_TEMP_PASSWORD_REISSUE']),
+      expect.arrayContaining([
+        'STUDENT_ACCOUNT_BULK_GENERATE',
+        'STUDENT_ACCOUNT_DEACTIVATE',
+        'STUDENT_TEMP_PASSWORD_REISSUE',
+      ]),
     );
   });
 

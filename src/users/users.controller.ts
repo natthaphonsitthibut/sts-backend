@@ -11,6 +11,7 @@ import {
   Query,
   Req,
   Res,
+  Logger,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -30,13 +31,16 @@ import {
 } from '../auth';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
+  BulkReissueStudentAccountsDto,
   ChangePasswordDto,
   CreateRoleGroupDto,
   CreateUserDto,
+  DeactivateStudentAccountDto,
   GenerateStudentAccountsDto,
   GetUsersQueryDto,
   LoginDto,
   StudentAccountBulkFilterDto,
+  StudentAccountListQueryDto,
   UpdateRoleGroupDto,
   UpdateUserDto,
 } from './dto/users.dto';
@@ -55,6 +59,8 @@ function requestIp(req: Request): string | null {
 
 @Controller('api/users')
 export class UsersController {
+  private readonly logger = new Logger(UsersController.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly roleGroupsService: RoleGroupsService,
@@ -63,6 +69,11 @@ export class UsersController {
     private readonly sessionCookieService: SessionCookieService,
     private readonly auditLog: AuditLogService,
   ) {}
+
+  private logAuditFailure(action: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.error(`${action} audit failed: ${message}`);
+  }
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-users-list')
@@ -73,6 +84,7 @@ export class UsersController {
   ) {
     return await this.usersService.getAllUsers(actor, {
       searchTerm: query.searchTerm?.trim() || undefined,
+      excludeRole: query.excludeRole?.trim() || undefined,
       province: query.province?.trim() || undefined,
       district: query.district?.trim() || undefined,
       subDistrict: query.subDistrict?.trim() || undefined,
@@ -178,6 +190,28 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Get('student-accounts')
+  async listStudentAccounts(
+    @Query() query: StudentAccountListQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.listStudentAccounts(actor, {
+      searchTerm: query.searchTerm?.trim() || undefined,
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
+      grade: query.grade?.trim() || undefined,
+      room: query.room,
+      accountStatus: query.accountStatus,
+      onlyExpired: query.onlyExpired,
+      page: query.page,
+      limit: query.limit,
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-users-list')
   @Get(':id')
   async getUserById(
@@ -235,6 +269,39 @@ export class UsersController {
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/bulk-reissue-temporary-password')
+  async bulkReissueStudentTemporaryPasswords(
+    @Body() data: BulkReissueStudentAccountsDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.usersService.bulkReissueStudentTemporaryPasswords(actor, data);
+    const auditResults = await Promise.allSettled(
+      result.credentials.map((credential) =>
+        this.auditLog.record({
+          action: 'STUDENT_TEMP_PASSWORD_REISSUE',
+          actorUserId: resolveAuditActorId(actor),
+          actorLabel: actor?.username,
+          targetType: 'user',
+          targetId: String(credential.userId),
+          metadata: {
+            op: 'bulk-reissue',
+            expiresAt: credential.temporaryPasswordExpiresAt,
+          },
+          ip: requestIp(req),
+        }),
+      ),
+    );
+    for (const auditResult of auditResults) {
+      if (auditResult.status === 'rejected') {
+        this.logAuditFailure('STUDENT_TEMP_PASSWORD_REISSUE', auditResult.reason);
+      }
+    }
+    return result;
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
   @Post('student-accounts/:id/reissue-temporary-password')
   async reissueStudentTemporaryPassword(
     @Param('id', ParseIntPipe) id: number,
@@ -242,13 +309,39 @@ export class UsersController {
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
     const result = await this.usersService.reissueStudentTemporaryPassword(actor, id);
+    try {
+      await this.auditLog.record({
+        action: 'STUDENT_TEMP_PASSWORD_REISSUE',
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: actor?.username,
+        targetType: 'user',
+        targetId: String(id),
+        metadata: { expiresAt: result.temporaryPasswordExpiresAt },
+        ip: requestIp(req),
+      });
+    } catch (error) {
+      this.logAuditFailure('STUDENT_TEMP_PASSWORD_REISSUE', error);
+    }
+    return result;
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/:id/deactivate')
+  async deactivateStudentAccount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: DeactivateStudentAccountDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.usersService.deactivateStudentAccount(actor, id, data);
     await this.auditLog.record({
-      action: 'STUDENT_TEMP_PASSWORD_REISSUE',
+      action: 'STUDENT_ACCOUNT_DEACTIVATE',
       actorUserId: resolveAuditActorId(actor),
       actorLabel: actor?.username,
       targetType: 'user',
       targetId: String(id),
-      metadata: { expiresAt: result.temporaryPasswordExpiresAt },
+      metadata: { reason: data.reason?.trim() || null },
       ip: requestIp(req),
     });
     return result;

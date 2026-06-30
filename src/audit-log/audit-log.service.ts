@@ -29,6 +29,7 @@ export type AuditAction =
   | 'USER_UPDATE'
   | 'USER_DELETE'
   | 'STUDENT_ACCOUNT_BULK_GENERATE'
+  | 'STUDENT_ACCOUNT_DEACTIVATE'
   | 'STUDENT_TEMP_PASSWORD_REISSUE'
   | 'ROLE_GROUP_CREATE'
   | 'ROLE_GROUP_UPDATE'
@@ -127,6 +128,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'grade', label: 'ชั้นเรียน' },
       { key: 'room', label: 'ห้อง' },
     ],
+  },
+  STUDENT_ACCOUNT_DEACTIVATE: {
+    domain: 'student_accounts',
+    label: 'ปิดใช้งานบัญชีนักเรียน',
+    detailKeys: [{ key: 'reason', label: 'เหตุผล' }],
   },
   DATA_IMPORT: {
     domain: 'imports',

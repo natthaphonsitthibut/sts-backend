@@ -1,9 +1,11 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   Allow,
+  ArrayMaxSize,
   IsArray,
   IsEmail,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsObject,
@@ -17,7 +19,15 @@ import {
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 import type { DataScope } from '../users.types';
 
+function toBoolean(value: unknown): boolean {
+  return value === true || value === 'true';
+}
+
 export class GetUsersQueryDto extends PaginatedSearchQueryDto {
+  @IsOptional()
+  @IsString()
+  excludeRole?: string;
+
   @IsOptional()
   @IsString()
   province?: string;
@@ -135,7 +145,7 @@ export class StudentAccountBulkFilterDto {
   room?: number;
 
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(({ value }) => toBoolean(value))
   onlyWithoutAccount?: boolean;
 
   @IsOptional()
@@ -153,6 +163,35 @@ export class StudentAccountBulkFilterDto {
 }
 
 export class GenerateStudentAccountsDto extends StudentAccountBulkFilterDto {}
+
+export class StudentAccountListQueryDto extends StudentAccountBulkFilterDto {
+  @IsOptional()
+  @IsString()
+  searchTerm?: string;
+
+  @IsOptional()
+  @IsIn(['PENDING_FIRST_LOGIN', 'ACTIVE', 'TEMP_PASSWORD_EXPIRED', 'DISABLED'])
+  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+
+  @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  onlyExpired?: boolean;
+}
+
+export class BulkReissueStudentAccountsDto extends StudentAccountListQueryDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  userIds?: number[];
+}
+
+export class DeactivateStudentAccountDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
 
 export class LoginDto {
   @IsString()

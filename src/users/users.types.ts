@@ -81,3 +81,24 @@ export interface StudentAccountCandidateRow extends Record<string, unknown> {
   existing_user_id: number | null;
   existing_username: string | null;
 }
+
+export interface StudentAccountManagementRow extends Record<string, unknown> {
+  user_id: number;
+  username: string;
+  status: string | null;
+  must_change_password: boolean | null;
+  temporary_password_issued_at: string | Date | null;
+  temporary_password_expires_at: string | Date | null;
+  created_at: string | Date | null;
+  person_uuid: string | null;
+  student_uuid: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  school_id: number | null;
+  school_name: string | null;
+  grade_label: string | null;
+  grade_level_id: number | null;
+  room_id: number | null;
+  academic_year: number | null;
+  semester: number | null;
+}

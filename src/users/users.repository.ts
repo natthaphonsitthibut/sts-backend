@@ -9,6 +9,7 @@ import type {
   QueryResultLike,
   RoleRow,
   StudentAccountCandidateRow,
+  StudentAccountManagementRow,
 } from './users.types';
 
 interface CreateUserRecordInput {
@@ -62,6 +63,7 @@ export interface UserListFilters {
   actorRole: string | null;
   actorRank: number;
   actorScope?: DataScope;
+  excludeRole?: string;
   searchTerm?: string;
   province?: string;
   district?: string;
@@ -69,6 +71,22 @@ export interface UserListFilters {
   schoolId?: number;
   gradeLevelId?: number;
   room?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface StudentAccountManagementFilters {
+  actorScope?: DataScope;
+  userIds?: number[];
+  searchTerm?: string;
+  schoolId?: number;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  grade?: string;
+  room?: number;
+  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  onlyExpired?: boolean;
   page?: number;
   limit?: number;
 }
@@ -319,6 +337,10 @@ export class UsersRepository {
           OR u.username ILIKE $${params.length}
         )
       `);
+    }
+    if (filters.excludeRole) {
+      params.push(filters.excludeRole);
+      conditions.push(`(u.role IS NULL OR u.role <> $${params.length})`);
     }
 
     const addDataScopeFilter = (
@@ -589,6 +611,190 @@ export class UsersRepository {
       withoutAccountCount: Number(result.rows[0]?.without_account_count ?? 0),
       existingAccountCount: Number(result.rows[0]?.existing_account_count ?? 0),
     };
+  }
+
+  private buildStudentAccountManagementQuery(filters: StudentAccountManagementFilters): {
+    whereSql: string;
+    params: unknown[];
+  } {
+    const params: unknown[] = [];
+    const conditions = [
+      `u.role = 'STUDENT'`,
+      'u.person_uuid IS NOT NULL',
+      's.deleted_at IS NULL',
+      's.person_uuid IS NOT NULL',
+      `s."StudentStatusID_Onec" = 10`,
+      `s."SchoolID_Onec" IS NOT NULL`,
+    ];
+
+    if (filters.actorScope) {
+      const scopeResult = buildDataScopeQuery(
+        filters.actorScope,
+        {
+          school_id: `s."SchoolID_Onec"`,
+          grade: `s."GradeLevelID_Onec"`,
+          room: `s."RoomID_Onec"::text`,
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+      if (scopeResult.sql) {
+        conditions.push(`(${scopeResult.sql})`);
+        scopeResult.params.forEach((param) => params.push(param));
+      }
+    }
+
+    if (filters.userIds && filters.userIds.length > 0) {
+      params.push(filters.userIds);
+      conditions.push(`u.id = ANY($${params.length}::int[])`);
+    }
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      conditions.push(`
+        (
+          CONCAT_WS(' ', u."FirstName", u."LastName") ILIKE $${params.length}
+          OR CONCAT_WS(' ', s."FirstName_Onec", s."LastName_Onec") ILIKE $${params.length}
+          OR u.username ILIKE $${params.length}
+        )
+      `);
+    }
+    if (typeof filters.schoolId === 'number') {
+      params.push(filters.schoolId);
+      conditions.push(`s."SchoolID_Onec" = $${params.length}`);
+    }
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(`sc.province = $${params.length}`);
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(`sc.district = $${params.length}`);
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(`sc.sub_district = $${params.length}`);
+    }
+    if (filters.grade) {
+      params.push(filters.grade);
+      conditions.push(`gl.label = $${params.length}`);
+    }
+    if (typeof filters.room === 'number') {
+      params.push(filters.room);
+      conditions.push(`s."RoomID_Onec" = $${params.length}`);
+    }
+
+    const expiredCondition = `
+      u.status = 'ACTIVE'
+      AND u.must_change_password IS TRUE
+      AND u.temporary_password_expires_at IS NOT NULL
+      AND u.temporary_password_expires_at <= NOW()
+    `;
+    if (filters.onlyExpired === true || filters.accountStatus === 'TEMP_PASSWORD_EXPIRED') {
+      conditions.push(`(${expiredCondition})`);
+    } else if (filters.accountStatus === 'PENDING_FIRST_LOGIN') {
+      conditions.push(`
+        u.status = 'ACTIVE'
+        AND u.must_change_password IS TRUE
+        AND (
+          u.temporary_password_expires_at IS NULL
+          OR u.temporary_password_expires_at > NOW()
+        )
+      `);
+    } else if (filters.accountStatus === 'ACTIVE') {
+      conditions.push(`u.status = 'ACTIVE' AND COALESCE(u.must_change_password, FALSE) = FALSE`);
+    } else if (filters.accountStatus === 'DISABLED') {
+      conditions.push(`u.status <> 'ACTIVE'`);
+    }
+
+    return {
+      whereSql: `WHERE ${conditions.join(' AND ')}`,
+      params,
+    };
+  }
+
+  async listStudentAccountsPaginated(
+    filters: StudentAccountManagementFilters,
+  ): Promise<{ rows: StudentAccountManagementRow[]; totalCount: number }> {
+    const limit = Math.min(Math.max(filters.limit ?? 20, 1), 200);
+    const page = Math.max(filters.page ?? 1, 1);
+    const { whereSql, params } = this.buildStudentAccountManagementQuery(filters);
+    const countResult = await this.query<CountRow>(
+      `
+        SELECT COUNT(DISTINCT u.id)::int AS count
+        FROM users u
+        JOIN student_term s ON s.person_uuid = u.person_uuid
+        JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+        ${whereSql}
+      `,
+      params,
+    );
+    const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
+    const selectParams = [...params, limit, (page - 1) * limit];
+    const limitPlaceholder = selectParams.length - 1;
+    const offsetPlaceholder = selectParams.length;
+    const result = await this.query<StudentAccountManagementRow>(
+      `
+        SELECT DISTINCT ON (u.id)
+          u.id AS user_id,
+          u.username,
+          u.status,
+          u.must_change_password,
+          u.temporary_password_issued_at,
+          u.temporary_password_expires_at,
+          u.created_at,
+          u.person_uuid::text,
+          s.student_uuid::text,
+          COALESCE(s."FirstName_Onec", u."FirstName") AS first_name,
+          COALESCE(s."LastName_Onec", u."LastName") AS last_name,
+          s."SchoolID_Onec" AS school_id,
+          sc.name AS school_name,
+          gl.label AS grade_label,
+          s."GradeLevelID_Onec" AS grade_level_id,
+          s."RoomID_Onec" AS room_id,
+          s."AcademicYear_Onec" AS academic_year,
+          s."Semester_Onec" AS semester
+        FROM users u
+        JOIN student_term s ON s.person_uuid = u.person_uuid
+        JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+        ${whereSql}
+        ORDER BY u.id, s."AcademicYear_Onec" DESC NULLS LAST, s."Semester_Onec" DESC NULLS LAST
+        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+      `,
+      selectParams,
+    );
+    return { rows: result.rows, totalCount };
+  }
+
+  async findStudentAccountForManagement(
+    userId: number,
+    actorScope?: DataScope,
+  ): Promise<StudentAccountManagementRow | null> {
+    const { rows } = await this.listStudentAccountsPaginated({
+      actorScope,
+      userIds: [userId],
+      page: 1,
+      limit: 1,
+    });
+    return rows[0] || null;
+  }
+
+  async deactivateStudentAccount(id: number, executor?: QueryExecutor): Promise<boolean> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query(
+      `
+        UPDATE users
+        SET status = 'DISABLED'
+        WHERE id = $1
+          AND role = 'STUDENT'
+          AND status = 'ACTIVE'
+      `,
+      [id],
+    );
+    return (result.rowCount || 0) > 0;
   }
 
   async usernameExists(username: string, executor?: QueryExecutor): Promise<boolean> {

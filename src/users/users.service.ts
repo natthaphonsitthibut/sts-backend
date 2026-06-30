@@ -15,19 +15,27 @@ import {
 } from '../common/pagination/pagination.util';
 import { PasswordService } from '../auth/password.service';
 import type {
+  BulkReissueStudentAccountsDto,
   ChangePasswordDto,
   CreateUserDto,
+  DeactivateStudentAccountDto,
   GenerateStudentAccountsDto,
   StudentAccountBulkFilterDto,
+  StudentAccountListQueryDto,
   UpdateUserDto,
 } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
-import { UsersRepository, type UserListFilters } from './users.repository';
+import {
+  UsersRepository,
+  type StudentAccountManagementFilters,
+  type UserListFilters,
+} from './users.repository';
 import type {
   ActorContext,
   DataScope,
   QueryExecutor,
   StudentAccountCandidateRow,
+  StudentAccountManagementRow,
 } from './users.types';
 
 const STUDENT_ACCOUNT_PERMISSIONS = ['home', 'student-self'] as const;
@@ -60,6 +68,7 @@ export class UsersService {
       actorRole,
       actorRank,
       actorScope: currentActor.data_scope,
+      excludeRole: filters.excludeRole,
       searchTerm: filters.searchTerm,
       province: filters.province,
       district: filters.district,
@@ -282,20 +291,15 @@ export class UsersService {
   async reissueStudentTemporaryPassword(actor: ActorContext | undefined, userId: number) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     this.assertCanManageStudentAccounts(currentActor);
-    const roleMap = await this.usersPolicyService.getRoleMap();
-    const row = await this.usersRepository.findUserById(userId);
+    const row = await this.usersRepository.findStudentAccountForManagement(
+      userId,
+      currentActor.data_scope,
+    );
     if (!row) {
       throw new NotFoundException('ไม่พบบัญชีนักเรียน');
     }
-    const user = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
-    if (user.role !== 'STUDENT') {
-      throw new BadRequestException('ออกวิธีเข้าใช้ชั่วคราวใหม่ได้เฉพาะบัญชีนักเรียน');
-    }
-    if (user.status !== 'ACTIVE') {
+    if (row.status !== 'ACTIVE') {
       throw new ConflictException('บัญชีนักเรียนนี้ถูกปิดการใช้งาน');
-    }
-    if (!this.usersPolicyService.canManageUser(currentActor, user, roleMap)) {
-      throw new ForbiddenException('ไม่มีสิทธิ์จัดการบัญชีนักเรียนนี้');
     }
 
     const tempPassword = this.passwordService.generateTempPassword();
@@ -317,10 +321,144 @@ export class UsersService {
     return {
       success: true,
       userId,
-      username: user.username,
+      username: row.username,
       tempPassword,
       temporaryPasswordIssuedAt: issuedAt.toISOString(),
       temporaryPasswordExpiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  async listStudentAccounts(actor: ActorContext | undefined, filters: StudentAccountListQueryDto) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCanManageStudentAccounts(currentActor);
+    const normalizedFilters = this.normalizeStudentAccountManagementFilters(
+      filters,
+      currentActor.data_scope,
+    );
+    const { rows, totalCount } =
+      await this.usersRepository.listStudentAccountsPaginated(normalizedFilters);
+
+    return {
+      success: true,
+      data: rows.map((row) => this.toStudentAccountManagementResponse(row)),
+      meta: buildPaginationMeta(
+        normalizedFilters.page ?? 1,
+        normalizedFilters.limit ?? 20,
+        totalCount,
+      ),
+    };
+  }
+
+  async bulkReissueStudentTemporaryPasswords(
+    actor: ActorContext | undefined,
+    filters: BulkReissueStudentAccountsDto,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCanManageStudentAccounts(currentActor);
+    const userIds = Array.isArray(filters.userIds)
+      ? Array.from(new Set(filters.userIds.filter((id) => Number.isInteger(id) && id > 0)))
+      : [];
+    const normalizedFilters = this.normalizeStudentAccountManagementFilters(
+      {
+        ...filters,
+        userIds,
+        page: userIds.length > 0 ? 1 : filters.page,
+        onlyExpired: userIds.length > 0 ? filters.onlyExpired : true,
+        limit: Math.min(filters.limit ?? STUDENT_ACCOUNT_BATCH_LIMIT, STUDENT_ACCOUNT_BATCH_LIMIT),
+      },
+      currentActor.data_scope,
+    );
+    const { rows } = await this.usersRepository.listStudentAccountsPaginated(normalizedFilters);
+    if (rows.length === 0) {
+      throw new ConflictException('ไม่มีบัญชีนักเรียนที่ต้องออกรหัสใหม่');
+    }
+
+    const credentials: Array<{
+      userId: number;
+      username: string;
+      tempPassword: string;
+      studentName: string;
+      schoolName: string | null;
+      grade: string | null;
+      room: number | null;
+      temporaryPasswordIssuedAt: string;
+      temporaryPasswordExpiresAt: string;
+    }> = [];
+    const skipped: Array<{ userId: number; reason: string }> = [];
+    for (const row of rows) {
+      if (row.status !== 'ACTIVE') {
+        skipped.push({ userId: row.user_id, reason: 'บัญชีถูกปิดการใช้งาน' });
+        continue;
+      }
+      const tempPassword = this.passwordService.generateTempPassword();
+      const passwordHash = await this.passwordService.hash(tempPassword);
+      const issuedAt = new Date();
+      const expiresAt = new Date(
+        issuedAt.getTime() + STUDENT_TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
+      );
+      const updated = await this.usersRepository.reissueTemporaryPassword(
+        row.user_id,
+        passwordHash,
+        issuedAt,
+        expiresAt,
+      );
+      if (!updated) {
+        skipped.push({ userId: row.user_id, reason: 'ไม่สามารถออกรหัสใหม่ได้' });
+        continue;
+      }
+      credentials.push({
+        userId: row.user_id,
+        username: row.username,
+        tempPassword,
+        studentName: this.getStudentAccountManagementName(row),
+        schoolName: row.school_name,
+        grade: row.grade_label,
+        room: row.room_id,
+        temporaryPasswordIssuedAt: issuedAt.toISOString(),
+        temporaryPasswordExpiresAt: expiresAt.toISOString(),
+      });
+    }
+
+    if (credentials.length === 0) {
+      throw new ConflictException('ไม่สามารถออกรหัสใหม่ให้บัญชีนักเรียนในรายการนี้ได้');
+    }
+
+    return {
+      success: true,
+      requestedCount: rows.length,
+      reissuedCount: credentials.length,
+      skippedCount: skipped.length,
+      credentials,
+      skipped,
+    };
+  }
+
+  async deactivateStudentAccount(
+    actor: ActorContext | undefined,
+    userId: number,
+    data: DeactivateStudentAccountDto,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCanManageStudentAccounts(currentActor);
+    const row = await this.usersRepository.findStudentAccountForManagement(
+      userId,
+      currentActor.data_scope,
+    );
+    if (!row) {
+      throw new NotFoundException('ไม่พบบัญชีนักเรียน');
+    }
+    if (row.status !== 'ACTIVE') {
+      throw new ConflictException('บัญชีนักเรียนนี้ถูกปิดการใช้งานแล้ว');
+    }
+    const updated = await this.usersRepository.deactivateStudentAccount(userId);
+    if (!updated) {
+      throw new ConflictException('ไม่สามารถปิดใช้งานบัญชีนักเรียนนี้ได้');
+    }
+    return {
+      success: true,
+      userId,
+      status: 'DISABLED',
+      reason: data.reason?.trim() || null,
     };
   }
 
@@ -512,6 +650,34 @@ export class UsersService {
     };
   }
 
+  private normalizeStudentAccountManagementFilters(
+    filters: StudentAccountListQueryDto & { userIds?: number[] },
+    actorScope: DataScope | undefined,
+  ): StudentAccountManagementFilters {
+    if (actorScope?.own_only) {
+      throw new ForbiddenException('บัญชีส่วนตัวไม่สามารถจัดการบัญชีนักเรียนได้');
+    }
+    const limit = Math.min(Math.max(filters.limit ?? 20, 1), STUDENT_ACCOUNT_BATCH_LIMIT);
+    const page = Math.max(filters.page ?? 1, 1);
+    const cleanString = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    return {
+      actorScope,
+      userIds: filters.userIds,
+      searchTerm: cleanString(filters.searchTerm),
+      schoolId: filters.schoolId,
+      province: cleanString(filters.province),
+      district: cleanString(filters.district),
+      subDistrict: cleanString(filters.subDistrict),
+      grade: cleanString(filters.grade),
+      room: filters.room,
+      accountStatus: filters.accountStatus,
+      onlyExpired: filters.onlyExpired === true,
+      page,
+      limit,
+    };
+  }
+
   private async generateUniqueStudentUsername(
     schoolId: number,
     executor: QueryExecutor,
@@ -531,6 +697,68 @@ export class UsersService {
 
   private getStudentDisplayName(candidate: StudentAccountCandidateRow): string {
     return [candidate.first_name, candidate.last_name].filter(Boolean).join(' ') || '-';
+  }
+
+  private getStudentAccountManagementName(row: StudentAccountManagementRow): string {
+    return [row.first_name, row.last_name].filter(Boolean).join(' ') || '-';
+  }
+
+  private getStudentAccountStatus(
+    row: StudentAccountManagementRow,
+  ): 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED' {
+    if (row.status !== 'ACTIVE') {
+      return 'DISABLED';
+    }
+    if (row.must_change_password === true) {
+      const expiresAt = row.temporary_password_expires_at
+        ? new Date(row.temporary_password_expires_at)
+        : null;
+      if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now()) {
+        return 'TEMP_PASSWORD_EXPIRED';
+      }
+      return 'PENDING_FIRST_LOGIN';
+    }
+    return 'ACTIVE';
+  }
+
+  private toIsoString(value: string | Date | null | undefined): string | null {
+    if (!value) {
+      return null;
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    return date.toISOString();
+  }
+
+  private toStudentAccountManagementResponse(row: StudentAccountManagementRow) {
+    const expiresAt = row.temporary_password_expires_at
+      ? new Date(row.temporary_password_expires_at)
+      : null;
+    const remainingSeconds =
+      expiresAt && !Number.isNaN(expiresAt.getTime())
+        ? Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000))
+        : null;
+    return {
+      userId: row.user_id,
+      username: row.username,
+      studentName: this.getStudentAccountManagementName(row),
+      schoolId: row.school_id,
+      schoolName: row.school_name,
+      grade: row.grade_label,
+      gradeLevelId: row.grade_level_id,
+      room: row.room_id,
+      academicYear: row.academic_year,
+      semester: row.semester,
+      status: this.getStudentAccountStatus(row),
+      accountStatus: row.status || null,
+      mustChangePassword: row.must_change_password === true,
+      temporaryPasswordIssuedAt: this.toIsoString(row.temporary_password_issued_at),
+      temporaryPasswordExpiresAt: this.toIsoString(row.temporary_password_expires_at),
+      temporaryPasswordRemainingSeconds: remainingSeconds,
+      createdAt: this.toIsoString(row.created_at),
+    };
   }
 
   private toStudentAccountCandidateResponse(candidate: StudentAccountCandidateRow) {
