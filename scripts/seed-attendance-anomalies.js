@@ -312,7 +312,7 @@ async function main() {
         fixture.term_id,
         holidayDate,
         'HOLIDAY',
-        'seed: เช็คชื่อในวันหยุด',
+        'วันหยุดตามปฏิทินโรงเรียน',
         actor.id,
       );
       await markCalendarDay(
@@ -320,7 +320,7 @@ async function main() {
         fixture.term_id,
         cancelledDate,
         'CANCELLED',
-        'seed: วันยกเลิกเรียน',
+        'ยกเลิกการเรียนการสอน',
         actor.id,
       );
       await manager.query(
