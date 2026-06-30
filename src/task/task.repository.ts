@@ -177,6 +177,11 @@ interface CountRow extends QueryResultRow {
   count: number | string;
 }
 
+interface CaseStatusCountRow extends QueryResultRow {
+  status: string;
+  count: number | string;
+}
+
 interface ScopeQuery {
   sql: string;
   params: unknown[];
@@ -675,9 +680,9 @@ export class TaskRepository {
           OR r.label ILIKE $${searchPlaceholder}
           OR tl.magic_link ILIKE $${searchPlaceholder}
           OR CASE (${linkStateSql})
-            WHEN 'LOCKED' THEN 'ปิดอยู่'
+            WHEN 'LOCKED' THEN 'ปิดใช้งาน'
             WHEN 'EXPIRED' THEN 'หมดอายุ'
-            ELSE 'ใช้งานได้'
+            ELSE 'ใช้งาน'
           END ILIKE $${searchPlaceholder}
         )
       `);
@@ -1424,7 +1429,7 @@ export class TaskRepository {
   async listCasesWithActiveLinks(
     actor?: ActorContext,
     filters: CaseListFilters = {},
-  ): Promise<{ rows: QueryResultRow[]; totalCount: number }> {
+  ): Promise<{ rows: QueryResultRow[]; totalCount: number; statusCounts: Record<string, number> }> {
     const params: unknown[] = [];
     const conditions: string[] = [];
 
@@ -1573,7 +1578,79 @@ export class TaskRepository {
       selectParams,
     );
 
-    return { rows: result.rows, totalCount };
+    const statusCounts = await this.countCaseStatuses(actor, { ...filters, status: undefined });
+
+    return { rows: result.rows, totalCount, statusCounts };
+  }
+
+  async countCaseStatuses(
+    actor?: ActorContext,
+    filters: CaseListFilters = {},
+  ): Promise<Record<string, number>> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      conditions.push(`c.student_name ILIKE $${params.length}`);
+    }
+
+    if (filters.schoolId) {
+      params.push(filters.schoolId);
+      conditions.push(`c.school_id = $${params.length}`);
+    }
+
+    if (filters.grade || filters.room) {
+      const classConditions = [
+        `LOWER(TRIM(CONCAT_WS(' ', case_student."FirstName_Onec", case_student."LastName_Onec"))) = LOWER(TRIM(c.student_name))`,
+        `(
+          NULLIF(TRIM(COALESCE(c.student_school, '')), '') IS NULL
+          OR LOWER(COALESCE(case_school.name, '')) = LOWER(COALESCE(c.student_school, ''))
+        )`,
+      ];
+      if (filters.grade) {
+        params.push(filters.grade);
+        classConditions.push(`case_grade.label = $${params.length}`);
+      }
+      if (filters.room) {
+        params.push(filters.room);
+        classConditions.push(`case_student."RoomID_Onec"::text = $${params.length}`);
+      }
+      conditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM student_term case_student
+          LEFT JOIN schools case_school ON case_school.id = case_student."SchoolID_Onec"
+          LEFT JOIN grade_levels case_grade ON case_grade.id = case_student."GradeLevelID_Onec"
+          WHERE ${classConditions.join(' AND ')}
+        )
+      `);
+    }
+
+    const scopeQuery = this.buildCaseScopeQuery(actor, params.length + 1);
+    if (scopeQuery.sql) {
+      conditions.push(scopeQuery.sql);
+      params.push(...scopeQuery.params);
+    }
+
+    conditions.push('c.deleted_at IS NULL');
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await this.query<CaseStatusCountRow>(
+      `
+        SELECT c.status, COUNT(*)::int AS count
+        FROM cases c
+        ${whereSql}
+        GROUP BY c.status
+      `,
+      params,
+    );
+    return result.rows.reduce<Record<string, number>>(
+      (counts, row) => ({
+        ...counts,
+        [row.status]: Number.parseInt(String(row.count || '0'), 10),
+      }),
+      {},
+    );
   }
 
   async countCases(status?: string, actor?: ActorContext): Promise<number> {

@@ -23,7 +23,7 @@ export class TaskStatsService {
     try {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);
-      const { rows, totalCount } = await this.taskRepository.listCasesWithActiveLinks(
+      const { rows, totalCount, statusCounts } = await this.taskRepository.listCasesWithActiveLinks(
         currentActor,
         { ...filters, page, limit },
       );
@@ -31,7 +31,10 @@ export class TaskStatsService {
       return {
         success: true,
         data: rows,
-        meta: buildPaginationMeta(page, limit, totalCount),
+        meta: {
+          ...buildPaginationMeta(page, limit, totalCount),
+          statusCounts,
+        },
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
