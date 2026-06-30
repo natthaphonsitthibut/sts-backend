@@ -51,6 +51,7 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
     ],
   },
   { id: 'settings' },
+  { id: 'audit-log' },
 ];
 
 function collectLeafPermissionIds(items: PermissionMenuItem[]): string[] {
@@ -84,6 +85,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'login-links',
       'settings',
       'import-data',
+      'audit-log',
     ],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
@@ -107,6 +109,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'manage-users-list',
       'login-links',
       'settings',
+      'audit-log',
     ],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',

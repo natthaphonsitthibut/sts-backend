@@ -1,19 +1,27 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { AuthGuard, CurrentUser, type AuthenticatedRequestUser } from '../auth';
+import {
+  AuthGuard,
+  CurrentUser,
+  PermissionsGuard,
+  RequirePermission,
+  type AuthenticatedRequestUser,
+} from '../auth';
 import { AuditLogService } from './audit-log.service';
 import { GetAuditLogQueryDto } from './dto/audit-log.dto';
 
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PermissionsGuard)
 @Controller('api/audit-log')
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
 
   @Get(':id')
+  @RequirePermission('audit-log')
   async getById(@Param('id') id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
     return await this.auditLogService.getById(actor, id);
   }
 
   @Get()
+  @RequirePermission('audit-log')
   async list(@Query() query: GetAuditLogQueryDto, @CurrentUser() actor: AuthenticatedRequestUser) {
     return await this.auditLogService.list(actor, {
       ...query,
