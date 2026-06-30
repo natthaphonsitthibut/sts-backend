@@ -274,6 +274,18 @@ export class GetCasesQueryDto extends PaginationQueryDto {
   searchTerm?: string;
 
   @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   schoolId?: number;

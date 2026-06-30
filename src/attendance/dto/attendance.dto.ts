@@ -25,6 +25,18 @@ export class GetAttendanceTasksQueryDto extends PaginatedSearchQueryDto {
   status?: (typeof ATTENDANCE_LINK_STATE_VALUES)[number];
 
   @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   schoolId?: number;

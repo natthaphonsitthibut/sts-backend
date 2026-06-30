@@ -43,4 +43,34 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('c.created_by = $4');
     expect(queries[0].sql).toContain('c.deleted_at IS NULL');
   });
+
+  it('applies every selected school area filter to cases and status counts', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [{ count: '0' }], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new TaskRepository(dataSource as never);
+
+    await repository.listCasesWithActiveLinks(undefined, {
+      province: 'ขอนแก่น',
+      district: 'เมืองขอนแก่น',
+      subDistrict: 'ในเมือง',
+      page: 1,
+      limit: 20,
+    });
+
+    expect(queries).toHaveLength(3);
+    for (const query of queries) {
+      expect(query.sql).toContain('area_school.province = $1');
+      expect(query.sql).toContain('area_school.district = $2');
+      expect(query.sql).toContain('area_school.sub_district = $3');
+      expect(query.params?.slice(0, 3)).toEqual(['ขอนแก่น', 'เมืองขอนแก่น', 'ในเมือง']);
+    }
+  });
 });

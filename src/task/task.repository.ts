@@ -14,6 +14,9 @@ import type {
 export interface CaseListFilters {
   status?: string;
   searchTerm?: string;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
   schoolId?: number;
   grade?: string;
   room?: string;
@@ -1443,6 +1446,25 @@ export class TaskRepository {
       conditions.push(`c.student_name ILIKE $${params.length}`);
     }
 
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.province = $${params.length})`,
+      );
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.district = $${params.length})`,
+      );
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.sub_district = $${params.length})`,
+      );
+    }
+
     if (filters.schoolId) {
       params.push(filters.schoolId);
       conditions.push(`c.school_id = $${params.length}`);
@@ -1593,6 +1615,25 @@ export class TaskRepository {
     if (filters.searchTerm) {
       params.push(`%${filters.searchTerm}%`);
       conditions.push(`c.student_name ILIKE $${params.length}`);
+    }
+
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.province = $${params.length})`,
+      );
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.district = $${params.length})`,
+      );
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.sub_district = $${params.length})`,
+      );
     }
 
     if (filters.schoolId) {

@@ -49,4 +49,25 @@ describe('AttendanceRepository', () => {
     expect(listQuery?.sql).toContain("WHEN sess.status = 'SUBMITTED' THEN 'COMPLETED'");
     expect(listQuery?.sql).toContain('FROM attendance_sessions attendance_session');
   });
+
+  it('applies every selected school area filter to paginated tasks', async () => {
+    const { queries, repository } = createRepository();
+
+    await repository.listAttendanceTasksPaginated(undefined, {
+      page: 1,
+      limit: 20,
+      province: 'ขอนแก่น',
+      district: 'เมืองขอนแก่น',
+      subDistrict: 'ในเมือง',
+    });
+
+    const filteredQueries = queries.slice(1);
+    expect(filteredQueries).toHaveLength(2);
+    for (const query of filteredQueries) {
+      expect(query.sql).toContain('sc.province = $1');
+      expect(query.sql).toContain('sc.district = $2');
+      expect(query.sql).toContain('sc.sub_district = $3');
+    }
+    expect(filteredQueries[0].params).toEqual(['ขอนแก่น', 'เมืองขอนแก่น', 'ในเมือง']);
+  });
 });

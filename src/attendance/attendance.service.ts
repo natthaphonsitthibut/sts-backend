@@ -63,6 +63,9 @@ export class AttendanceService {
       limit: number;
       searchTerm?: string;
       status?: string;
+      province?: string;
+      district?: string;
+      subDistrict?: string;
       schoolId?: number;
       grade?: string;
       room?: string;

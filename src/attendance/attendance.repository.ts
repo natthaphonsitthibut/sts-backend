@@ -385,6 +385,9 @@ export class AttendanceRepository {
       limit: number;
       searchTerm?: string;
       status?: string;
+      province?: string;
+      district?: string;
+      subDistrict?: string;
       schoolId?: number;
       grade?: string;
       room?: string;
@@ -464,6 +467,18 @@ export class AttendanceRepository {
     );
 
     const filteredConditions = [...policyConditions];
+    if (filters.province) {
+      params.push(filters.province);
+      filteredConditions.push(`sc.province = $${params.length}`);
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      filteredConditions.push(`sc.district = $${params.length}`);
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      filteredConditions.push(`sc.sub_district = $${params.length}`);
+    }
     if (filters.searchTerm) {
       params.push(`%${filters.searchTerm}%`);
       const p = params.length;
