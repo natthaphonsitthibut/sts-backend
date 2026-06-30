@@ -1599,6 +1599,28 @@ export class TaskRepository {
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
+  async countAtRiskStudents(actor?: ActorContext): Promise<number> {
+    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'];
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await this.query<CountRow>(
+      `
+      SELECT count(DISTINCT CASE
+        WHEN c.student_uuid IS NOT NULL THEN 'uuid:' || c.student_uuid::text
+        WHEN NULLIF(TRIM(COALESCE(c.student_name, '')), '') IS NOT NULL THEN
+          CONCAT('legacy:', COALESCE(c.school_id::text, 'unknown'), ':', LOWER(TRIM(c.student_name)))
+        ELSE 'case:' || c.id::text
+      END)
+      FROM cases c
+      WHERE c.status = ANY($1::text[])
+        AND c.deleted_at IS NULL${scopeSql}
+    `,
+      [activeStatuses, ...scopeQuery.params],
+    );
+
+    return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
+  }
+
   async countCasesCreatedOn(date: string, actor?: ActorContext): Promise<number> {
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';

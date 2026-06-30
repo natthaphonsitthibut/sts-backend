@@ -47,6 +47,7 @@ export class TaskStatsService {
 
       return {
         total: await this.taskRepository.countCases(undefined, currentActor),
+        atRiskStudents: await this.taskRepository.countAtRiskStudents(currentActor),
         open: await this.taskRepository.countCases('OPEN', currentActor),
         inProgress: await this.taskRepository.countCases('IN_PROGRESS', currentActor),
         awaitingHelp: await this.taskRepository.countCases('AWAITING_HELP', currentActor),
@@ -71,7 +72,7 @@ export class TaskStatsService {
         data: {
           totalStudents: await this.taskRepository.countStudents(currentActor),
           dropoutStudents: await this.taskRepository.countStudentDropouts(currentActor),
-          atRiskStudents: 0,
+          atRiskStudents: await this.taskRepository.countAtRiskStudents(currentActor),
           helpStats: {
             waiting: await this.taskRepository.countCases('OPEN', currentActor),
             inProgress: await this.taskRepository.countCases('IN_PROGRESS', currentActor),
