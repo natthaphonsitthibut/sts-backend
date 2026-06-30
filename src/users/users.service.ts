@@ -41,7 +41,7 @@ import type {
 const STUDENT_ACCOUNT_PERMISSIONS = ['home', 'student-self'] as const;
 const STUDENT_ACCOUNT_ROLE = 'STUDENT';
 const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
-const STUDENT_TEMP_PASSWORD_TTL_DAYS = 7;
+const TEMP_PASSWORD_TTL_DAYS = 7;
 const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 @Injectable()
@@ -120,6 +120,14 @@ export class UsersService {
       const password = data.password || this.passwordService.generateTempPassword();
       const generatedTempPassword = data.password ? undefined : password;
 
+      // New accounts start in "awaiting first login" with a temporary password:
+      // they must change it within the window before it expires (login is then
+      // blocked until an admin reissues). Same lifecycle/TTL as bulk-generate.
+      const temporaryPasswordIssuedAt = new Date();
+      const temporaryPasswordExpiresAt = new Date(
+        temporaryPasswordIssuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
+      );
+
       const userId = await this.usersRepository.withTransaction(async (executor) => {
         const passwordHash = await this.passwordService.hash(password);
         const primaryRole = this.usersPolicyService.normalizeRole(data);
@@ -140,6 +148,8 @@ export class UsersService {
             role: primaryRole,
             dataScope: data.data_scope || {},
             mustChangePassword: true,
+            temporaryPasswordIssuedAt,
+            temporaryPasswordExpiresAt,
             createdBy: resolveAuditActorId(currentActor),
           },
           executor,
@@ -308,9 +318,7 @@ export class UsersService {
     const tempPassword = this.passwordService.generateTempPassword();
     const passwordHash = await this.passwordService.hash(tempPassword);
     const issuedAt = new Date();
-    const expiresAt = new Date(
-      issuedAt.getTime() + STUDENT_TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
-    );
+    const expiresAt = new Date(issuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000);
     const updated = await this.usersRepository.reissueTemporaryPassword(
       userId,
       passwordHash,
@@ -396,9 +404,7 @@ export class UsersService {
       const tempPassword = this.passwordService.generateTempPassword();
       const passwordHash = await this.passwordService.hash(tempPassword);
       const issuedAt = new Date();
-      const expiresAt = new Date(
-        issuedAt.getTime() + STUDENT_TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
-      );
+      const expiresAt = new Date(issuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000);
       const updated = await this.usersRepository.reissueTemporaryPassword(
         row.user_id,
         passwordHash,
@@ -531,8 +537,7 @@ export class UsersService {
         const passwordHash = await this.passwordService.hash(tempPassword);
         const temporaryPasswordIssuedAt = new Date();
         const temporaryPasswordExpiresAt = new Date(
-          temporaryPasswordIssuedAt.getTime() +
-            STUDENT_TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
+          temporaryPasswordIssuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
         );
         try {
           const userId = await this.usersRepository.createUser(
