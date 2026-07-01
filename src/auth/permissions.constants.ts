@@ -23,44 +23,65 @@ export interface SystemRoleDefinition {
 
 interface PermissionMenuItem {
   id: string;
+  label: string;
   children?: PermissionMenuItem[];
 }
 
+// Canonical permission tree — the single source of truth for both the valid
+// permission ids and their Thai labels. The frontend fetches this (GET
+// /users/permissions) instead of hardcoding its own list, so the checkbox
+// editor and review dialog never drift from what the backend accepts.
 export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
-  { id: 'home' },
-  { id: 'dashboard' },
-  { id: 'students' },
+  { id: 'home', label: 'หน้าหลัก' },
+  { id: 'dashboard', label: 'รายงานนักเรียน' },
+  { id: 'students', label: 'รายชื่อนักเรียน' },
   {
     id: 'case-management',
-    children: [{ id: 'review-cases' }, { id: 'close-case' }, { id: 'forward-case' }],
+    label: 'จัดการเคสช่วยเหลือ',
+    children: [
+      { id: 'review-cases', label: 'ดูเคสช่วยเหลือ' },
+      { id: 'close-case', label: 'ปิดเคส' },
+      { id: 'forward-case', label: 'ส่งต่อเคส' },
+    ],
   },
-  { id: 'student-self' },
-  { id: 'create' },
-  { id: 'import-data' },
+  { id: 'student-self', label: 'ข้อมูลตัวเอง' },
+  { id: 'create', label: 'สร้างลิงก์' },
+  { id: 'import-data', label: 'นำเข้าข้อมูล' },
   {
     id: 'attendance-system',
-    children: [{ id: 'attendance-dashboard' }, { id: 'attendance' }],
+    label: 'ระบบเช็คชื่อ',
+    children: [
+      { id: 'attendance-dashboard', label: 'ลิงก์เช็คชื่อ' },
+      { id: 'attendance', label: 'เช็คชื่อ' },
+    ],
   },
   {
     id: 'manage-users',
+    label: 'จัดการสิทธิ์ผู้ใช้งาน',
     children: [
-      { id: 'manage-users-list' },
-      { id: 'manage-student-accounts' },
-      { id: 'manage-role-groups' },
-      { id: 'login-links' },
+      { id: 'manage-users-list', label: 'จัดการรายชื่อผู้ใช้งาน' },
+      { id: 'manage-users-hard-delete', label: 'ลบบัญชีถาวร' },
+      { id: 'manage-student-accounts', label: 'บัญชีนักเรียน' },
+      { id: 'manage-role-groups', label: 'จัดการกลุ่มผู้ใช้งาน' },
+      { id: 'login-links', label: 'ลิงก์เข้าสู่ระบบ' },
     ],
   },
-  { id: 'settings' },
-  { id: 'audit-log' },
+  { id: 'settings', label: 'ตั้งค่าระบบ' },
+  { id: 'audit-log', label: 'บันทึกการใช้งาน' },
 ];
 
-function collectLeafPermissionIds(items: PermissionMenuItem[]): string[] {
+function collectLeafPermissions(items: PermissionMenuItem[]): Array<{ id: string; label: string }> {
   return items.flatMap((item) =>
-    item.children && item.children.length > 0 ? collectLeafPermissionIds(item.children) : [item.id],
+    item.children && item.children.length > 0
+      ? collectLeafPermissions(item.children)
+      : [{ id: item.id, label: item.label }],
   );
 }
 
-export const VALID_PERMISSION_IDS = collectLeafPermissionIds(PERMISSION_MENU_ITEMS);
+/** Flat catalog of grantable permissions with Thai labels (leaves only). */
+export const PERMISSION_CATALOG = collectLeafPermissions(PERMISSION_MENU_ITEMS);
+
+export const VALID_PERMISSION_IDS = PERMISSION_CATALOG.map((item) => item.id);
 
 export const GRANT_EXEMPT_PERMISSION_IDS = ['student-self'];
 
@@ -211,10 +232,11 @@ export function getRoleScopeValidationError(
       normalized.sub_districts.length > 0 ||
       normalized.school_ids.length > 0 ||
       hasExtraSchoolFiltering;
-    const hasAssignedScope = normalized.global || hasAreaScope;
-    if (!hasAssignedScope) {
-      return `${roleLabel}ต้องเลือกขอบเขตข้อมูล หรือเลือกทั้งระบบ`;
-    }
+    // Empty flexible scope = nationwide (valid). "ทุกจังหวัด/ทุกอำเภอ..." left
+    // unselected means no narrowing at that level, so leaving them all empty is
+    // country-wide. The UI adds an explicit confirm before saving a nationwide
+    // account, and a scoped admin still cannot assign broader-than-self scope
+    // (enforced by isScopeSubsetOfActor).
     if (normalized.global && hasAreaScope) {
       return `${roleLabel}ห้ามเลือกทั้งระบบพร้อมกับพื้นที่`;
     }
