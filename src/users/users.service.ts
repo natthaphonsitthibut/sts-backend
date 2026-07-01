@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { randomInt } from 'crypto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
+import { hasPermission } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
   resolveLimit,
@@ -15,6 +17,7 @@ import {
 } from '../common/pagination/pagination.util';
 import { PasswordService } from '../auth/password.service';
 import type {
+  AccountDeactivationReasonCode,
   BulkReissueStudentAccountsDto,
   ChangePasswordDto,
   CreateUserDto,
@@ -38,11 +41,20 @@ import type {
   StudentAccountManagementRow,
 } from './users.types';
 
-const STUDENT_ACCOUNT_PERMISSIONS = ['home', 'student-self'] as const;
-const STUDENT_ACCOUNT_ROLE = 'STUDENT';
+interface LifecycleAuditMeta {
+  ip?: string | null;
+  action: AuditAction;
+}
+
+// Shared with StudentAccountBatchService so the async batch path can't drift
+// from the synchronous generate/reissue path (same TTL, alphabet, role, perms).
+export const STUDENT_ACCOUNT_PERMISSIONS = ['home', 'student-self'] as const;
+export const STUDENT_ACCOUNT_ROLE = 'STUDENT';
+const SUPER_ADMIN_ROLE = 'ADMIN';
 const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
-const TEMP_PASSWORD_TTL_DAYS = 7;
-const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const TEMP_PASSWORD_TTL_DAYS = 7;
+export const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const HARD_DELETE_PERMISSION = 'manage-users-hard-delete';
 
 @Injectable()
 export class UsersService {
@@ -52,6 +64,7 @@ export class UsersService {
     private readonly usersRepository: UsersRepository,
     private readonly usersPolicyService: UsersPolicyService,
     private readonly passwordService: PasswordService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async getAllUsers(actor?: ActorContext, filters: Partial<UserListFilters> = {}) {
@@ -189,6 +202,12 @@ export class UsersService {
         throw new ForbiddenException('ไม่มีสิทธิ์แก้ไขผู้ใช้งานนี้');
       }
 
+      if (data.status !== undefined && data.status !== existingUser.status) {
+        throw new BadRequestException(
+          'กรุณาใช้คำสั่งปิดหรือเปิดใช้งานบัญชีเพื่อเปลี่ยนสถานะผู้ใช้',
+        );
+      }
+
       const isSelf = currentActor.id === id;
       const existingRole = this.usersPolicyService.getPrimaryRole(existingUser);
       const requestedRole = this.usersPolicyService.normalizeRole(data);
@@ -261,7 +280,23 @@ export class UsersService {
         throw new ForbiddenException('ไม่มีสิทธิ์ลบผู้ใช้งานนี้');
       }
 
+      if (!hasPermission(currentActor.roles, currentActor.permissions, HARD_DELETE_PERMISSION)) {
+        throw new ForbiddenException('ไม่มีสิทธิ์ลบบัญชีผู้ใช้ถาวร');
+      }
+
+      if (existingUser.status === 'ACTIVE') {
+        throw new ConflictException('ต้องปิดใช้งานบัญชีก่อนลบถาวร');
+      }
+
       const rowCount = await this.usersRepository.withTransaction(async (executor) => {
+        const references = await this.usersRepository.listUserOperationalReferences(id, executor);
+        if (references.length > 0) {
+          const sample = references.slice(0, 5).join(', ');
+          throw new ConflictException(
+            `ไม่สามารถลบบัญชีถาวรได้เนื่องจากยังมีประวัติการใช้งาน: ${sample}`,
+          );
+        }
+
         return await this.usersRepository.deleteUser(id, executor);
       });
 
@@ -275,6 +310,134 @@ export class UsersService {
       this.logger.error(`deleteUser error: ${message}`);
       throw err;
     }
+  }
+
+  async deactivateAccount(
+    actor: ActorContext | undefined,
+    userId: number,
+    data: DeactivateStudentAccountDto,
+    auditMeta: LifecycleAuditMeta,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    const roleMap = await this.usersPolicyService.getRoleMap();
+    const existingRow = await this.usersRepository.findUserById(userId);
+    if (!existingRow) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+
+    const existingUser = this.usersPolicyService.hydrateUserPermissions(existingRow, roleMap);
+    if (currentActor.id === userId) {
+      throw new ForbiddenException('ไม่สามารถปิดใช้งานบัญชีของตัวเองได้');
+    }
+    if (!this.usersPolicyService.canManageUser(currentActor, existingUser, roleMap)) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ปิดใช้งานผู้ใช้งานนี้');
+    }
+    if (existingUser.status !== 'ACTIVE') {
+      throw new ConflictException('บัญชีนี้ถูกปิดการใช้งานแล้ว');
+    }
+
+    const reason = this.normalizeDeactivationReason(data);
+    await this.usersRepository.withTransaction(async (executor) => {
+      if (existingUser.role === SUPER_ADMIN_ROLE) {
+        const activeAdmins = await this.usersRepository.countActiveUsersByRole(
+          SUPER_ADMIN_ROLE,
+          executor,
+          { lockRows: true },
+        );
+        if (activeAdmins <= 1) {
+          throw new ConflictException('ไม่สามารถปิดใช้งานผู้ดูแลระบบคนสุดท้ายได้');
+        }
+      }
+
+      const updated = await this.usersRepository.deactivateUser(
+        {
+          id: userId,
+          actorId: resolveAuditActorId(currentActor),
+          reasonCode: reason.reasonCode,
+          note: reason.note,
+        },
+        executor,
+      );
+      if (!updated) {
+        throw new ConflictException('ไม่สามารถปิดใช้งานบัญชีนี้ได้');
+      }
+      await this.auditLog.recordAtomic(
+        {
+          action: auditMeta.action,
+          actorUserId: resolveAuditActorId(currentActor),
+          actorLabel: currentActor.username,
+          targetType: 'user',
+          targetId: String(userId),
+          metadata: {
+            username: existingUser.username,
+            reasonCode: reason.reasonCode,
+            note: reason.note,
+            reason: reason.note,
+          },
+          ip: auditMeta.ip ?? null,
+        },
+        executor,
+      );
+    });
+
+    return {
+      success: true,
+      userId,
+      status: 'DISABLED',
+      reasonCode: reason.reasonCode,
+      note: reason.note,
+      reason: reason.note,
+    };
+  }
+
+  async reactivateAccount(
+    actor: ActorContext | undefined,
+    userId: number,
+    auditMeta: LifecycleAuditMeta,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    const roleMap = await this.usersPolicyService.getRoleMap();
+    const existingRow = await this.usersRepository.findUserById(userId);
+    if (!existingRow) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+
+    const existingUser = this.usersPolicyService.hydrateUserPermissions(existingRow, roleMap);
+    if (currentActor.id === userId) {
+      throw new ForbiddenException('ไม่สามารถเปิดใช้งานบัญชีของตัวเองได้');
+    }
+    if (!this.usersPolicyService.canManageUser(currentActor, existingUser, roleMap)) {
+      throw new ForbiddenException('ไม่มีสิทธิ์เปิดใช้งานผู้ใช้งานนี้');
+    }
+    if (existingUser.status === 'ACTIVE') {
+      throw new ConflictException('บัญชีนี้เปิดใช้งานอยู่แล้ว');
+    }
+
+    await this.usersRepository.withTransaction(async (executor) => {
+      const updated = await this.usersRepository.reactivateUser(userId, executor);
+      if (!updated) {
+        throw new ConflictException('ไม่สามารถเปิดใช้งานบัญชีนี้ได้');
+      }
+      await this.auditLog.recordAtomic(
+        {
+          action: auditMeta.action,
+          actorUserId: resolveAuditActorId(currentActor),
+          actorLabel: currentActor.username,
+          targetType: 'user',
+          targetId: String(userId),
+          metadata: { username: existingUser.username },
+          ip: auditMeta.ip ?? null,
+        },
+        executor,
+      );
+    });
+
+    return {
+      success: true,
+      userId,
+      status: 'ACTIVE',
+      needsReissue: this.needsTemporaryPasswordReissue(existingUser),
+    };
   }
 
   async changeOwnPassword(actor: ActorContext | undefined, data: ChangePasswordDto) {
@@ -498,6 +661,7 @@ export class UsersService {
     actor: ActorContext | undefined,
     userId: number,
     data: DeactivateStudentAccountDto,
+    auditMeta: Omit<LifecycleAuditMeta, 'action'> = {},
   ) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     this.assertCanManageStudentAccounts(currentActor);
@@ -511,16 +675,33 @@ export class UsersService {
     if (row.status !== 'ACTIVE') {
       throw new ConflictException('บัญชีนักเรียนนี้ถูกปิดการใช้งานแล้ว');
     }
-    const updated = await this.usersRepository.deactivateStudentAccount(userId);
-    if (!updated) {
-      throw new ConflictException('ไม่สามารถปิดใช้งานบัญชีนักเรียนนี้ได้');
-    }
-    return {
-      success: true,
+    return await this.deactivateAccount(actor, userId, data, {
+      action: 'STUDENT_ACCOUNT_DEACTIVATE',
+      ip: auditMeta.ip ?? null,
+    });
+  }
+
+  async reactivateStudentAccount(
+    actor: ActorContext | undefined,
+    userId: number,
+    auditMeta: Omit<LifecycleAuditMeta, 'action'> = {},
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCanManageStudentAccounts(currentActor);
+    const row = await this.usersRepository.findStudentAccountForManagement(
       userId,
-      status: 'DISABLED',
-      reason: data.reason?.trim() || null,
-    };
+      currentActor.data_scope,
+    );
+    if (!row) {
+      throw new NotFoundException('ไม่พบบัญชีนักเรียน');
+    }
+    if (row.status === 'ACTIVE') {
+      throw new ConflictException('บัญชีนักเรียนนี้เปิดใช้งานอยู่แล้ว');
+    }
+    return await this.reactivateAccount(actor, userId, {
+      action: 'STUDENT_ACCOUNT_REACTIVATE',
+      ip: auditMeta.ip ?? null,
+    });
   }
 
   async previewStudentAccounts(
@@ -781,6 +962,28 @@ export class UsersService {
     return 'ACTIVE';
   }
 
+  private normalizeDeactivationReason(data: DeactivateStudentAccountDto): {
+    reasonCode: AccountDeactivationReasonCode;
+    note: string | null;
+  } {
+    const note = (data.note ?? data.reason)?.trim() || null;
+    return {
+      reasonCode: data.reasonCode ?? 'OTHER',
+      note,
+    };
+  }
+
+  private needsTemporaryPasswordReissue(user: {
+    must_change_password?: boolean | null;
+    temporary_password_expires_at?: string | Date | null;
+  }): boolean {
+    if (user.must_change_password !== true || !user.temporary_password_expires_at) {
+      return false;
+    }
+    const expiresAt = new Date(user.temporary_password_expires_at);
+    return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now();
+  }
+
   private toIsoString(value: string | Date | null | undefined): string | null {
     if (!value) {
       return null;
@@ -817,6 +1020,10 @@ export class UsersService {
       temporaryPasswordIssuedAt: this.toIsoString(row.temporary_password_issued_at),
       temporaryPasswordExpiresAt: this.toIsoString(row.temporary_password_expires_at),
       temporaryPasswordRemainingSeconds: remainingSeconds,
+      deactivatedAt: this.toIsoString(row.deactivated_at),
+      deactivatedBy: row.deactivated_by ?? null,
+      deactivationReasonCode: row.deactivation_reason_code ?? null,
+      deactivationNote: row.deactivation_note ?? null,
       createdAt: this.toIsoString(row.created_at),
     };
   }

@@ -13,11 +13,22 @@ import {
   IsString,
   Matches,
   Max,
+  MaxLength,
   MinLength,
   Min,
 } from 'class-validator';
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 import type { DataScope } from '../users.types';
+
+export const ACCOUNT_DEACTIVATION_REASON_CODES = [
+  'STAFF_LEFT',
+  'TRANSFERRED',
+  'DUPLICATE',
+  'SECURITY',
+  'OTHER',
+] as const;
+
+export type AccountDeactivationReasonCode = (typeof ACCOUNT_DEACTIVATION_REASON_CODES)[number];
 
 function toBoolean(value: unknown): boolean {
   return value === true || value === 'true';
@@ -187,9 +198,62 @@ export class BulkReissueStudentAccountsDto extends StudentAccountListQueryDto {
   userIds?: number[];
 }
 
+export const STUDENT_ACCOUNT_BATCH_JOB_STATUSES = [
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'FAILED',
+  'INTERRUPTED',
+  'CANCELED',
+] as const;
+
+export class StudentAccountBatchListQueryDto {
+  @IsOptional()
+  @IsIn(STUDENT_ACCOUNT_BATCH_JOB_STATUSES)
+  status?: (typeof STUDENT_ACCOUNT_BATCH_JOB_STATUSES)[number];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
+export class StudentAccountBatchCredentialQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+}
+
 export class DeactivateStudentAccountDto {
   @IsOptional()
+  @IsIn(ACCOUNT_DEACTIVATION_REASON_CODES)
+  reasonCode?: AccountDeactivationReasonCode;
+
+  @IsOptional()
   @IsString()
+  @MaxLength(255)
+  note?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
   reason?: string;
 }
 

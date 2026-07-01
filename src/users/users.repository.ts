@@ -49,6 +49,22 @@ interface UpdateUserRecordInput {
   updatedBy: number | null;
 }
 
+interface DeactivateUserInput {
+  id: number;
+  actorId: number | null;
+  reasonCode: string | null;
+  note: string | null;
+}
+
+interface UserReferenceColumnRow extends Record<string, unknown> {
+  table_name: string;
+  column_name: string;
+}
+
+interface UserReferenceExistsRow extends Record<string, unknown> {
+  exists: boolean;
+}
+
 interface CreateRoleRecordInput {
   name: string;
   label: string;
@@ -73,6 +89,79 @@ export interface UserListFilters {
   room?: string;
   page?: number;
   limit?: number;
+}
+
+const USER_OPERATIONAL_REFERENCE_CHECKS = [
+  { table: 'audit_log', column: 'actor_user_id' },
+  { table: 'pii_access_events', column: 'actor_user_id' },
+  { table: 'users', column: 'created_by' },
+  { table: 'users', column: 'updated_by' },
+  { table: 'users', column: 'deleted_by' },
+  { table: 'users', column: 'deactivated_by' },
+  { table: 'roles', column: 'created_by' },
+  { table: 'roles', column: 'updated_by' },
+  { table: 'cases', column: 'created_by' },
+  { table: 'cases', column: 'updated_by' },
+  { table: 'cases', column: 'deleted_by' },
+  { table: 'tasks', column: 'created_by' },
+  { table: 'tasks', column: 'updated_by' },
+  { table: 'tasks', column: 'deleted_by' },
+  { table: 'task_links', column: 'created_by' },
+  { table: 'task_links', column: 'updated_by' },
+  { table: 'task_links', column: 'deleted_by' },
+  { table: 'task_submissions', column: 'created_by' },
+  { table: 'task_submissions', column: 'updated_by' },
+  { table: 'task_submissions', column: 'deleted_by' },
+  { table: 'case_reviews', column: 'created_by' },
+  { table: 'case_reviews', column: 'updated_by' },
+  { table: 'attendance', column: 'created_by' },
+  { table: 'attendance', column: 'updated_by' },
+  { table: 'system_settings', column: 'created_by' },
+  { table: 'system_settings', column: 'updated_by' },
+  { table: 'schools', column: 'created_by' },
+  { table: 'schools', column: 'updated_by' },
+  { table: 'student_term', column: 'created_by' },
+  { table: 'student_term', column: 'updated_by' },
+  { table: 'student_term', column: 'deleted_by' },
+  { table: 'student_dropouts', column: 'created_by' },
+  { table: 'student_dropouts', column: 'updated_by' },
+  { table: 'student_dropouts', column: 'deleted_by' },
+  { table: 'risk_factors', column: 'created_by' },
+  { table: 'risk_factors', column: 'updated_by' },
+  { table: 'dropout_reasons', column: 'created_by' },
+  { table: 'dropout_reasons', column: 'updated_by' },
+  { table: 'assistance_measures', column: 'created_by' },
+  { table: 'assistance_measures', column: 'updated_by' },
+  { table: 'related_agencies', column: 'created_by' },
+  { table: 'related_agencies', column: 'updated_by' },
+  { table: 'educational_areas', column: 'created_by' },
+  { table: 'educational_areas', column: 'updated_by' },
+  { table: 'grade_levels', column: 'created_by' },
+  { table: 'grade_levels', column: 'updated_by' },
+  { table: 'schedules', column: 'created_by' },
+  { table: 'schedules', column: 'updated_by' },
+  { table: 'external_users', column: 'created_by' },
+  { table: 'external_users', column: 'updated_by' },
+  { table: 'case_referrals', column: 'referred_by' },
+  { table: 'school_terms', column: 'created_by' },
+  { table: 'school_terms', column: 'updated_by' },
+  { table: 'school_terms', column: 'deleted_by' },
+  { table: 'school_calendar_days', column: 'created_by' },
+  { table: 'school_calendar_days', column: 'updated_by' },
+  { table: 'school_calendar_days', column: 'deleted_by' },
+  { table: 'attendance_sessions', column: 'submitted_by' },
+  { table: 'attendance_sessions', column: 'reopened_by' },
+  { table: 'attendance_sessions', column: 'created_by' },
+  { table: 'attendance_sessions', column: 'updated_by' },
+  { table: 'attendance_sessions', column: 'deleted_by' },
+] as const;
+
+function quoteIdentifier(identifier: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(identifier)) {
+    throw new Error(`Unsafe SQL identifier: ${identifier}`);
+  }
+
+  return `"${identifier}"`;
 }
 
 export interface StudentAccountManagementFilters {
@@ -100,6 +189,13 @@ export interface StudentAccountCandidateFilters {
   grade?: string;
   room?: number;
   onlyWithoutAccount?: boolean;
+  /**
+   * When set, excludes candidates that already have a batch-job item for this
+   * job. Lets the async batch processor fetch the next unprocessed chunk with a
+   * fixed page/limit even when some candidates were skipped/failed (they keep an
+   * item row), so chunked resume always terminates.
+   */
+  excludeProcessedForJobId?: string;
   page?: number;
   limit?: number;
 }
@@ -141,6 +237,10 @@ export class UsersRepository {
     u.must_change_password,
     u.temporary_password_issued_at,
     u.temporary_password_expires_at,
+    u.deactivated_at,
+    u.deactivated_by,
+    u.deactivation_reason_code,
+    u.deactivation_note,
     u.created_at,
     CASE
       WHEN u.role IS NOT NULL THEN ARRAY[u.role]::text[]
@@ -579,6 +679,15 @@ export class UsersRepository {
     if (filters.onlyWithoutAccount !== false) {
       conditions.push('existing_user.id IS NULL');
     }
+    if (filters.excludeProcessedForJobId) {
+      params.push(filters.excludeProcessedForJobId);
+      conditions.push(
+        `NOT EXISTS (
+          SELECT 1 FROM student_account_batch_job_item i
+          WHERE i.job_id = $${params.length}::uuid AND i.person_uuid = s.person_uuid
+        )`,
+      );
+    }
 
     return {
       whereSql: `WHERE ${conditions.join(' AND ')}`,
@@ -793,6 +902,10 @@ export class UsersRepository {
           u.must_change_password,
           u.temporary_password_issued_at,
           u.temporary_password_expires_at,
+          u.deactivated_at,
+          u.deactivated_by,
+          u.deactivation_reason_code,
+          u.deactivation_note,
           u.created_at,
           u.person_uuid::text,
           s.student_uuid::text,
@@ -883,19 +996,60 @@ export class UsersRepository {
     return rows[0] || null;
   }
 
-  async deactivateStudentAccount(id: number, executor?: QueryExecutor): Promise<boolean> {
+  async deactivateUser(data: DeactivateUserInput, executor?: QueryExecutor): Promise<boolean> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query(
       `
         UPDATE users
-        SET status = 'DISABLED'
+        SET status = 'DISABLED',
+            deactivated_at = NOW(),
+            deactivated_by = $2,
+            deactivation_reason_code = $3,
+            deactivation_note = $4
         WHERE id = $1
-          AND role = 'STUDENT'
           AND status = 'ACTIVE'
+      `,
+      [data.id, data.actorId, data.reasonCode, data.note],
+    );
+    return (result.rowCount || 0) > 0;
+  }
+
+  async reactivateUser(id: number, executor?: QueryExecutor): Promise<boolean> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query(
+      `
+        UPDATE users
+        SET status = 'ACTIVE',
+            deactivated_at = NULL,
+            deactivated_by = NULL,
+            deactivation_reason_code = NULL,
+            deactivation_note = NULL
+        WHERE id = $1
+          AND status <> 'ACTIVE'
       `,
       [id],
     );
     return (result.rowCount || 0) > 0;
+  }
+
+  async countActiveUsersByRole(
+    role: string,
+    executor?: QueryExecutor,
+    options: { lockRows?: boolean } = {},
+  ): Promise<number> {
+    const queryExecutor = this.getExecutor(executor);
+    if (options.lockRows === true) {
+      const result = await queryExecutor.query<{ id: number }>(
+        `SELECT id FROM users WHERE role = $1 AND status = 'ACTIVE' FOR UPDATE`,
+        [role],
+      );
+      return result.rows.length;
+    }
+    const result = await queryExecutor.query<CountRow>(
+      `SELECT COUNT(*)::int AS count FROM users WHERE role = $1 AND status = 'ACTIVE'`,
+      [role],
+    );
+    return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
   async usernameExists(username: string, executor?: QueryExecutor): Promise<boolean> {
@@ -963,6 +1117,42 @@ export class UsersRepository {
     const result = await queryExecutor.query(`DELETE FROM users WHERE id = $1`, [id]);
 
     return result.rowCount || 0;
+  }
+
+  async listUserOperationalReferences(id: number, executor?: QueryExecutor): Promise<string[]> {
+    const queryExecutor = this.getExecutor(executor);
+    const pairs = Array.from(
+      { length: USER_OPERATIONAL_REFERENCE_CHECKS.length },
+      (_, index) => `($${index * 2 + 1}, $${index * 2 + 2})`,
+    ).join(', ');
+    const columnsResult = await queryExecutor.query<UserReferenceColumnRow>(
+      `
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND (table_name, column_name) IN (${pairs})
+      `,
+      USER_OPERATIONAL_REFERENCE_CHECKS.flatMap(({ table, column }) => [table, column]),
+    );
+
+    const references: string[] = [];
+    for (const { table_name: tableName, column_name: columnName } of columnsResult.rows) {
+      const result = await queryExecutor.query<UserReferenceExistsRow>(
+        `
+          SELECT TRUE AS exists
+          FROM ${quoteIdentifier(tableName)}
+          WHERE ${quoteIdentifier(columnName)} = $1
+          LIMIT 1
+        `,
+        [id],
+      );
+
+      if (result.rows.length > 0) {
+        references.push(`${tableName}.${columnName}`);
+      }
+    }
+
+    return references.sort();
   }
 
   async findUserByUsername(username: string): Promise<HydratableUserRow | null> {

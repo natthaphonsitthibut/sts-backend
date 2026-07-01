@@ -30,6 +30,7 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { PERMISSION_CATALOG } from '../auth/permissions.constants';
 import {
   BulkReissueStudentAccountsDto,
   ChangePasswordDto,
@@ -39,6 +40,8 @@ import {
   GenerateStudentAccountsDto,
   GetUsersQueryDto,
   LoginDto,
+  StudentAccountBatchCredentialQueryDto,
+  StudentAccountBatchListQueryDto,
   StudentAccountBulkFilterDto,
   StudentAccountListQueryDto,
   UpdateRoleGroupDto,
@@ -47,6 +50,7 @@ import {
 import { RoleGroupsService } from './role-groups.service';
 import { UserAuthService } from './user-auth.service';
 import { PasswordMigrationService } from './password-migration.service';
+import { StudentAccountBatchService } from './student-account-batch.service';
 
 /**
  * Client IP for audit. Relies on `req.ip`, which Express resolves through the
@@ -68,6 +72,7 @@ export class UsersController {
     private readonly passwordMigrationService: PasswordMigrationService,
     private readonly sessionCookieService: SessionCookieService,
     private readonly auditLog: AuditLogService,
+    private readonly studentAccountBatchService: StudentAccountBatchService,
   ) {}
 
   private logAuditFailure(action: string, error: unknown): void {
@@ -100,6 +105,12 @@ export class UsersController {
   @Get('roles')
   async getRoles(@CurrentUser() actor: AuthenticatedRequestUser | undefined) {
     return await this.usersService.getRoles(actor);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('permissions')
+  getPermissionCatalog() {
+    return { success: true, data: PERMISSION_CATALOG };
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -269,6 +280,67 @@ export class UsersController {
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/batch-jobs')
+  async enqueueStudentAccountBatch(
+    @Body() data: GenerateStudentAccountsDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.studentAccountBatchService.enqueue(actor, data);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Get('student-accounts/batch-jobs')
+  async listStudentAccountBatches(
+    @Query() query: StudentAccountBatchListQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.studentAccountBatchService.listJobs(actor, query);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Get('student-accounts/batch-jobs/:id')
+  async getStudentAccountBatch(
+    @Param('id') id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.studentAccountBatchService.getJob(actor, id);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/batch-jobs/:id/resume')
+  async resumeStudentAccountBatch(
+    @Param('id') id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.studentAccountBatchService.resume(actor, id);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/batch-jobs/:id/cancel')
+  async cancelStudentAccountBatch(
+    @Param('id') id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.studentAccountBatchService.cancel(actor, id);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/batch-jobs/:id/credentials')
+  async downloadStudentAccountBatchCredentials(
+    @Param('id') id: string,
+    @Query() query: StudentAccountBatchCredentialQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.studentAccountBatchService.downloadCredentials(actor, id, query);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
   @Post('student-accounts/bulk-reissue-temporary-password')
   async bulkReissueStudentTemporaryPasswords(
     @Body() data: BulkReissueStudentAccountsDto,
@@ -334,17 +406,51 @@ export class UsersController {
     @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
-    const result = await this.usersService.deactivateStudentAccount(actor, id, data);
-    await this.auditLog.record({
-      action: 'STUDENT_ACCOUNT_DEACTIVATE',
-      actorUserId: resolveAuditActorId(actor),
-      actorLabel: actor?.username,
-      targetType: 'user',
-      targetId: String(id),
-      metadata: { reason: data.reason?.trim() || null },
+    return await this.usersService.deactivateStudentAccount(actor, id, data, {
       ip: requestIp(req),
     });
-    return result;
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-student-accounts')
+  @Post('student-accounts/:id/reactivate')
+  async reactivateStudentAccount(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.reactivateStudentAccount(actor, id, {
+      ip: requestIp(req),
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
+  @Post(':id/deactivate')
+  async deactivateAccount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: DeactivateStudentAccountDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.deactivateAccount(actor, id, data, {
+      action: 'USER_DEACTIVATE',
+      ip: requestIp(req),
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
+  @Post(':id/reactivate')
+  async reactivateAccount(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.reactivateAccount(actor, id, {
+      action: 'USER_REACTIVATE',
+      ip: requestIp(req),
+    });
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -390,7 +496,7 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-users-list')
+  @RequirePermission('manage-users-list', 'manage-users-hard-delete')
   @Delete(':id')
   async deleteUser(
     @Param('id', ParseIntPipe) id: number,

@@ -59,6 +59,10 @@ export interface HydratableUserRow extends Record<string, unknown> {
   must_change_password?: boolean | null;
   temporary_password_issued_at?: string | Date | null;
   temporary_password_expires_at?: string | Date | null;
+  deactivated_at?: string | Date | null;
+  deactivated_by?: number | null;
+  deactivation_reason_code?: string | null;
+  deactivation_note?: string | null;
   created_at?: string | Date | null;
   roles?: string[] | null;
   labels?: string[] | null;
@@ -90,6 +94,10 @@ export interface StudentAccountManagementRow extends Record<string, unknown> {
   must_change_password: boolean | null;
   temporary_password_issued_at: string | Date | null;
   temporary_password_expires_at: string | Date | null;
+  deactivated_at?: string | Date | null;
+  deactivated_by?: number | null;
+  deactivation_reason_code?: string | null;
+  deactivation_note?: string | null;
   created_at: string | Date | null;
   person_uuid: string | null;
   student_uuid: string | null;

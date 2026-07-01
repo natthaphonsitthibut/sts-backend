@@ -7,6 +7,8 @@ import { UsersPolicyService } from './users-policy.service';
 import { RoleGroupsService } from './role-groups.service';
 import { UserAuthService } from './user-auth.service';
 import { PasswordMigrationService } from './password-migration.service';
+import { StudentAccountBatchRepository } from './student-account-batch.repository';
+import { StudentAccountBatchService } from './student-account-batch.service';
 
 @Module({
   imports: [AuthModule],
@@ -18,6 +20,8 @@ import { PasswordMigrationService } from './password-migration.service';
     RoleGroupsService,
     UserAuthService,
     PasswordMigrationService,
+    StudentAccountBatchRepository,
+    StudentAccountBatchService,
   ],
   exports: [UsersService, RoleGroupsService, UserAuthService, PasswordMigrationService],
 })

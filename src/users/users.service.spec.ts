@@ -1,4 +1,5 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { PasswordService } from '../auth/password.service';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
@@ -70,7 +71,11 @@ describe('UsersService student accounts', () => {
       | 'countStudentAccountStatuses'
       | 'findStudentAccountForManagement'
       | 'reissueTemporaryPassword'
-      | 'deactivateStudentAccount'
+      | 'deactivateUser'
+      | 'reactivateUser'
+      | 'countActiveUsersByRole'
+      | 'listUserOperationalReferences'
+      | 'deleteUser'
     >
   >;
   let usersPolicyService: jest.Mocked<
@@ -80,6 +85,7 @@ describe('UsersService student accounts', () => {
     >
   >;
   let passwordService: jest.Mocked<Pick<PasswordService, 'generateTempPassword' | 'hash'>>;
+  let auditLog: jest.Mocked<Pick<AuditLogService, 'recordAtomic'>>;
   let service: UsersService;
 
   beforeEach(() => {
@@ -107,7 +113,11 @@ describe('UsersService student accounts', () => {
       }),
       findStudentAccountForManagement: jest.fn().mockResolvedValue(studentAccount),
       reissueTemporaryPassword: jest.fn().mockResolvedValue(true),
-      deactivateStudentAccount: jest.fn().mockResolvedValue(true),
+      deactivateUser: jest.fn().mockResolvedValue(true),
+      reactivateUser: jest.fn().mockResolvedValue(true),
+      countActiveUsersByRole: jest.fn().mockResolvedValue(2),
+      listUserOperationalReferences: jest.fn().mockResolvedValue([]),
+      deleteUser: jest.fn().mockResolvedValue(1),
     };
     usersPolicyService = {
       ensureActor: jest.fn().mockImplementation((value: ActorContext | undefined) => {
@@ -130,10 +140,14 @@ describe('UsersService student accounts', () => {
       generateTempPassword: jest.fn().mockReturnValue('TEMP123456789'),
       hash: jest.fn().mockResolvedValue('hashed-temp-password'),
     };
+    auditLog = {
+      recordAtomic: jest.fn().mockResolvedValue(undefined),
+    };
     service = new UsersService(
       usersRepository as unknown as UsersRepository,
       usersPolicyService as unknown as UsersPolicyService,
       passwordService as unknown as PasswordService,
+      auditLog as unknown as AuditLogService,
     );
   });
 
@@ -321,6 +335,73 @@ describe('UsersService student accounts', () => {
     expect(usersRepository.reissueTemporaryPassword).not.toHaveBeenCalled();
   });
 
+  it('rejects lifecycle status changes through the generic user update path', async () => {
+    await expect(service.updateUser(actor, 77, { status: 'DISABLED' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(usersRepository.withTransaction).not.toHaveBeenCalled();
+  });
+
+  it('blocks hard delete without the break-glass permission', async () => {
+    await expect(service.deleteUser(actor, 77)).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(usersRepository.listUserOperationalReferences).not.toHaveBeenCalled();
+    expect(usersRepository.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('blocks hard delete of an active account', async () => {
+    await expect(
+      service.deleteUser({ ...actor, permissions: ['manage-users-hard-delete'] }, 77),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(usersRepository.listUserOperationalReferences).not.toHaveBeenCalled();
+    expect(usersRepository.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('blocks hard delete when operational references exist', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher-one',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['home', 'attendance'],
+      status: 'DISABLED',
+      data_scope: { school_ids: [10010002] },
+    });
+    usersRepository.listUserOperationalReferences.mockResolvedValueOnce([
+      'audit_log.actor_user_id',
+    ]);
+
+    await expect(
+      service.deleteUser({ ...actor, permissions: ['manage-users-hard-delete'] }, 77),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(usersRepository.listUserOperationalReferences).toHaveBeenCalledWith(77, executor);
+    expect(usersRepository.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('hard deletes a disabled account with no operational references', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher-one',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['home', 'attendance'],
+      status: 'DISABLED',
+      data_scope: { school_ids: [10010002] },
+    });
+
+    const result = await service.deleteUser(
+      { ...actor, permissions: ['manage-users-hard-delete'] },
+      77,
+    );
+
+    expect(usersRepository.listUserOperationalReferences).toHaveBeenCalledWith(77, executor);
+    expect(usersRepository.deleteUser).toHaveBeenCalledWith(77, executor);
+    expect(result).toEqual({ success: true, rowCount: 1 });
+  });
+
   it('bulk reissues selected student accounts and returns one-time credentials', async () => {
     const result = await service.bulkReissueStudentTemporaryPasswords(actor, {
       userIds: [77],
@@ -357,19 +438,130 @@ describe('UsersService student accounts', () => {
 
   it('soft-deactivates a scoped active student account', async () => {
     const result = await service.deactivateStudentAccount(actor, 77, {
-      reason: 'ย้ายโรงเรียน',
+      reasonCode: 'TRANSFERRED',
+      note: 'ย้ายโรงเรียน',
     });
 
     expect(usersRepository.findStudentAccountForManagement).toHaveBeenCalledWith(
       77,
       actor.data_scope,
     );
-    expect(usersRepository.deactivateStudentAccount).toHaveBeenCalledWith(77);
-    expect(result).toEqual({
+    expect(usersRepository.deactivateUser).toHaveBeenCalledWith(
+      {
+        id: 77,
+        actorId: 5,
+        reasonCode: 'TRANSFERRED',
+        note: 'ย้ายโรงเรียน',
+      },
+      executor,
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'STUDENT_ACCOUNT_DEACTIVATE',
+        actorUserId: 5,
+        targetId: '77',
+        metadata: {
+          username: '10010002-ABCDE',
+          reasonCode: 'TRANSFERRED',
+          note: 'ย้ายโรงเรียน',
+          reason: 'ย้ายโรงเรียน',
+        },
+      }),
+      executor,
+    );
+    expect(result).toMatchObject({
       success: true,
       userId: 77,
       status: 'DISABLED',
-      reason: 'ย้ายโรงเรียน',
+      reasonCode: 'TRANSFERRED',
+      note: 'ย้ายโรงเรียน',
+    });
+  });
+
+  it('blocks self-deactivation before mutating', async () => {
+    await expect(
+      service.deactivateAccount(
+        { ...actor, id: 77 },
+        77,
+        { reasonCode: 'OTHER' },
+        {
+          action: 'USER_DEACTIVATE',
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(usersRepository.deactivateUser).not.toHaveBeenCalled();
+    expect(auditLog.recordAtomic).not.toHaveBeenCalled();
+  });
+
+  it('blocks account deactivation outside the actor management scope', async () => {
+    usersPolicyService.canManageUser.mockReturnValueOnce(false);
+
+    await expect(
+      service.deactivateAccount(actor, 77, { reasonCode: 'OTHER' }, { action: 'USER_DEACTIVATE' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(usersRepository.deactivateUser).not.toHaveBeenCalled();
+  });
+
+  it('blocks deactivating the last active super admin', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'admin-one',
+      role: 'ADMIN',
+      roles: ['ADMIN'],
+      permissions: ['manage-users-list'],
+      status: 'ACTIVE',
+      data_scope: {},
+    });
+    usersRepository.countActiveUsersByRole.mockResolvedValueOnce(1);
+
+    await expect(
+      service.deactivateAccount(
+        actor,
+        77,
+        { reasonCode: 'SECURITY' },
+        {
+          action: 'USER_DEACTIVATE',
+        },
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(usersRepository.countActiveUsersByRole).toHaveBeenCalledWith('ADMIN', executor, {
+      lockRows: true,
+    });
+    expect(usersRepository.deactivateUser).not.toHaveBeenCalled();
+  });
+
+  it('reactivates a disabled manageable account and signals expired temporary password', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher-one',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['home', 'attendance'],
+      status: 'DISABLED',
+      data_scope: { school_ids: [10010002] },
+      must_change_password: true,
+      temporary_password_expires_at: new Date('2026-01-01T00:00:00.000Z'),
+    });
+
+    const result = await service.reactivateAccount(actor, 77, { action: 'USER_REACTIVATE' });
+
+    expect(usersRepository.reactivateUser).toHaveBeenCalledWith(77, executor);
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'USER_REACTIVATE',
+        actorUserId: 5,
+        targetId: '77',
+      }),
+      executor,
+    );
+    expect(result).toEqual({
+      success: true,
+      userId: 77,
+      status: 'ACTIVE',
+      needsReissue: true,
     });
   });
 });

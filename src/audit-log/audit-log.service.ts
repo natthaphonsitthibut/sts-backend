@@ -16,6 +16,13 @@ import {
 import { queryDataSource } from '../database/sql-query';
 import type { AuditLogDomain } from './dto/audit-log.dto';
 
+interface AuditQueryExecutor {
+  query<T extends Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<{ rows: T[]; rowCount?: number | null }>;
+}
+
 /**
  * Closed vocabulary of audited sensitive actions. Centralised so both the
  * users/auth wiring and the task/imports/master-data wiring stay in sync and
@@ -28,9 +35,15 @@ export type AuditAction =
   | 'USER_CREATE'
   | 'USER_UPDATE'
   | 'USER_DELETE'
+  | 'USER_DEACTIVATE'
+  | 'USER_REACTIVATE'
   | 'USER_TEMP_PASSWORD_REISSUE'
   | 'STUDENT_ACCOUNT_BULK_GENERATE'
+  | 'STUDENT_ACCOUNT_BATCH_ENQUEUE'
+  | 'STUDENT_ACCOUNT_BATCH_RESUME'
+  | 'STUDENT_ACCOUNT_BATCH_CANCEL'
   | 'STUDENT_ACCOUNT_DEACTIVATE'
+  | 'STUDENT_ACCOUNT_REACTIVATE'
   | 'STUDENT_TEMP_PASSWORD_REISSUE'
   | 'ROLE_GROUP_CREATE'
   | 'ROLE_GROUP_UPDATE'
@@ -138,7 +151,39 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   STUDENT_ACCOUNT_DEACTIVATE: {
     domain: 'student_accounts',
     label: 'ปิดใช้งานบัญชีนักเรียน',
-    detailKeys: [{ key: 'reason', label: 'เหตุผล' }],
+    detailKeys: [
+      { key: 'reasonCode', label: 'รหัสเหตุผล' },
+      { key: 'note', label: 'หมายเหตุ' },
+    ],
+  },
+  STUDENT_ACCOUNT_REACTIVATE: {
+    domain: 'student_accounts',
+    label: 'เปิดใช้งานบัญชีนักเรียนอีกครั้ง',
+    detailKeys: [{ key: 'username', label: 'ชื่อผู้ใช้' }],
+  },
+  STUDENT_ACCOUNT_BATCH_ENQUEUE: {
+    domain: 'student_accounts',
+    label: 'สั่งงานสร้างบัญชีนักเรียนแบบชุดใหญ่',
+    detailKeys: [
+      { key: 'totalCandidates', label: 'จำนวนที่ต้องสร้าง' },
+      { key: 'scopeLabel', label: 'ขอบเขต' },
+      { key: 'province', label: 'จังหวัด' },
+      { key: 'district', label: 'อำเภอ' },
+      { key: 'subDistrict', label: 'ตำบล' },
+      { key: 'schoolId', label: 'รหัสโรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
+    ],
+  },
+  STUDENT_ACCOUNT_BATCH_RESUME: {
+    domain: 'student_accounts',
+    label: 'ทำงานสร้างบัญชีนักเรียนแบบชุดต่อ',
+    detailKeys: [{ key: 'previousStatus', label: 'สถานะเดิม' }],
+  },
+  STUDENT_ACCOUNT_BATCH_CANCEL: {
+    domain: 'student_accounts',
+    label: 'ยกเลิกงานสร้างบัญชีนักเรียนแบบชุด',
+    detailKeys: [{ key: 'previousStatus', label: 'สถานะเดิม' }],
   },
   DATA_IMPORT: {
     domain: 'imports',
@@ -163,6 +208,20 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   USER_DELETE: {
     domain: 'users',
     label: 'ปิดหรือลบผู้ใช้งาน',
+    detailKeys: [{ key: 'username', label: 'ชื่อผู้ใช้' }],
+  },
+  USER_DEACTIVATE: {
+    domain: 'users',
+    label: 'ปิดใช้งานผู้ใช้งาน',
+    detailKeys: [
+      { key: 'username', label: 'ชื่อผู้ใช้' },
+      { key: 'reasonCode', label: 'รหัสเหตุผล' },
+      { key: 'note', label: 'หมายเหตุ' },
+    ],
+  },
+  USER_REACTIVATE: {
+    domain: 'users',
+    label: 'เปิดใช้งานผู้ใช้งานอีกครั้ง',
     detailKeys: [{ key: 'username', label: 'ชื่อผู้ใช้' }],
   },
   TASK_CREATE: {
@@ -275,6 +334,7 @@ export class AuditLogService {
 
   private async addScopeSnapshot(
     metadata: Record<string, unknown> | null | undefined,
+    executor?: AuditQueryExecutor,
   ): Promise<Record<string, unknown> | null> {
     if (!metadata) {
       return null;
@@ -294,11 +354,14 @@ export class AuditLogService {
       .map(Number)
       .filter((value) => Number.isInteger(value) && value > 0);
 
+    const query = async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
+      executor
+        ? await executor.query<T>(sql, params)
+        : await queryDataSource<T>(this.dataSource, sql, params);
     const schools =
       schoolIds.length > 0
         ? (
-            await queryDataSource<SchoolScopeRow>(
-              this.dataSource,
+            await query<SchoolScopeRow>(
               `SELECT id, province, district, sub_district FROM schools WHERE id = ANY($1::int[])`,
               [schoolIds],
             )
@@ -692,36 +755,50 @@ export class AuditLogService {
     return { data: this.toAuditLogEntry(scoped) };
   }
 
+  private async writeRecord(
+    event: AuditLogRecordInput,
+    executor?: AuditQueryExecutor,
+  ): Promise<void> {
+    const metadata = await this.addScopeSnapshot(event.metadata, executor);
+    const query = async (sql: string, params?: unknown[]) =>
+      executor
+        ? await executor.query(sql, params)
+        : await queryDataSource(this.dataSource, sql, params);
+    await query(
+      `
+        INSERT INTO audit_log (
+          actor_user_id,
+          actor_label,
+          action,
+          target_type,
+          target_id,
+          metadata,
+          ip
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+      `,
+      [
+        event.actorUserId ?? null,
+        event.actorLabel ?? null,
+        event.action,
+        event.targetType ?? null,
+        event.targetId ?? null,
+        metadata == null ? null : JSON.stringify(metadata),
+        event.ip ?? null,
+      ],
+    );
+  }
+
   async record(event: AuditLogRecordInput): Promise<void> {
     try {
-      const metadata = await this.addScopeSnapshot(event.metadata);
-      await queryDataSource(
-        this.dataSource,
-        `
-          INSERT INTO audit_log (
-            actor_user_id,
-            actor_label,
-            action,
-            target_type,
-            target_id,
-            metadata,
-            ip
-          )
-          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-        `,
-        [
-          event.actorUserId ?? null,
-          event.actorLabel ?? null,
-          event.action,
-          event.targetType ?? null,
-          event.targetId ?? null,
-          metadata == null ? null : JSON.stringify(metadata),
-          event.ip ?? null,
-        ],
-      );
+      await this.writeRecord(event);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Audit log write failed for action "${event.action}": ${message}`);
     }
+  }
+
+  async recordAtomic(event: AuditLogRecordInput, executor: AuditQueryExecutor): Promise<void> {
+    await this.writeRecord(event, executor);
   }
 }
