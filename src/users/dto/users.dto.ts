@@ -8,6 +8,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -127,6 +128,92 @@ export class CreateUserDto {
 }
 
 export class UpdateUserDto extends PartialType(CreateUserDto) {}
+
+function trimOptionalText(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export class UpdateOwnProfileDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  FirstName?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  LastName?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @Matches(/^\d{9,10}$/, { message: 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก' })
+  phone?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsEmail()
+  @MaxLength(255)
+  email?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(255)
+  affiliation?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(64)
+  line_id?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(255)
+  address_line?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_sub_district?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_district?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_province?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @Matches(/^\d{5}$/, { message: 'รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก' })
+  address_postal_code?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  address_latitude?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  address_longitude?: number | null;
+}
 
 export class StudentAccountBulkFilterDto {
   @IsOptional()

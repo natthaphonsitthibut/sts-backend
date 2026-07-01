@@ -16,4 +16,18 @@ describe('GeoController', () => {
     expect(methodGuards).toContain(ThrottlerGuard);
     expect(permissions).toEqual(['create']);
   });
+
+  it('allows authenticated profile geocoding without the create permission', () => {
+    const handler = Object.getOwnPropertyDescriptor(
+      GeoController.prototype,
+      'geocodeProfileAddress',
+    )?.value as () => unknown;
+    const classGuards = Reflect.getMetadata(GUARDS_METADATA, GeoController) as unknown[];
+    const methodGuards = Reflect.getMetadata(GUARDS_METADATA, handler) as unknown[];
+    const permissions = Reflect.getMetadata(PERMISSIONS_KEY, handler) as string[] | undefined;
+
+    expect(classGuards).toEqual([AuthGuard, PermissionsGuard]);
+    expect(methodGuards).toContain(ThrottlerGuard);
+    expect(permissions).toBeUndefined();
+  });
 });

@@ -49,6 +49,24 @@ interface UpdateUserRecordInput {
   updatedBy: number | null;
 }
 
+interface UpdateOwnProfileRecordInput {
+  id: number;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  email: string | null;
+  affiliation: string | null;
+  lineId: string | null;
+  addressLine: string | null;
+  addressSubDistrict: string | null;
+  addressDistrict: string | null;
+  addressProvince: string | null;
+  addressPostalCode: string | null;
+  addressLatitude: number | null;
+  addressLongitude: number | null;
+  updatedBy: number | null;
+}
+
 interface DeactivateUserInput {
   id: number;
   actorId: number | null;
@@ -230,6 +248,14 @@ export class UsersRepository {
     u.phone,
     u.email,
     u.affiliation,
+    u.line_id,
+    u.address_line,
+    u.address_sub_district,
+    u.address_district,
+    u.address_province,
+    u.address_postal_code,
+    u.address_latitude,
+    u.address_longitude,
     u.status,
     u.permissions,
     u.role,
@@ -1109,6 +1135,50 @@ export class UsersRepository {
         WHERE id = $${idParamIndex}
       `,
       params,
+    );
+  }
+
+  async updateOwnProfile(
+    data: UpdateOwnProfileRecordInput,
+    executor?: QueryExecutor,
+  ): Promise<void> {
+    await this.getExecutor(executor).query(
+      `
+        UPDATE users
+        SET
+          "FirstName" = $1,
+          "LastName" = $2,
+          phone = $3,
+          email = $4,
+          affiliation = $5,
+          line_id = $6,
+          address_line = $7,
+          address_sub_district = $8,
+          address_district = $9,
+          address_province = $10,
+          address_postal_code = $11,
+          address_latitude = $12,
+          address_longitude = $13,
+          updated_by = $14
+        WHERE id = $15
+      `,
+      [
+        data.firstName,
+        data.lastName,
+        data.phone,
+        data.email,
+        data.affiliation,
+        data.lineId,
+        data.addressLine,
+        data.addressSubDistrict,
+        data.addressDistrict,
+        data.addressProvince,
+        data.addressPostalCode,
+        data.addressLatitude,
+        data.addressLongitude,
+        data.updatedBy,
+        data.id,
+      ],
     );
   }
 

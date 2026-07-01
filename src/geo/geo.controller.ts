@@ -15,4 +15,10 @@ export class GeoController {
   async geocode(@Query() query: GeocodeQueryDto) {
     return await this.geoService.geocodeAddress(query.address, query.language);
   }
+
+  @ThrottleGeocode()
+  @Get('profile-geocode')
+  async geocodeProfileAddress(@Query() query: GeocodeQueryDto) {
+    return await this.geoService.geocodeAddress(query.address, query.language);
+  }
 }

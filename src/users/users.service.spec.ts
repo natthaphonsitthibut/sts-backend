@@ -76,6 +76,7 @@ describe('UsersService student accounts', () => {
       | 'countActiveUsersByRole'
       | 'listUserOperationalReferences'
       | 'deleteUser'
+      | 'updateOwnProfile'
     >
   >;
   let usersPolicyService: jest.Mocked<
@@ -118,6 +119,7 @@ describe('UsersService student accounts', () => {
       countActiveUsersByRole: jest.fn().mockResolvedValue(2),
       listUserOperationalReferences: jest.fn().mockResolvedValue([]),
       deleteUser: jest.fn().mockResolvedValue(1),
+      updateOwnProfile: jest.fn().mockResolvedValue(undefined),
     };
     usersPolicyService = {
       ensureActor: jest.fn().mockImplementation((value: ActorContext | undefined) => {
@@ -128,6 +130,19 @@ describe('UsersService student accounts', () => {
       hydrateUserPermissions: jest.fn().mockReturnValue({
         id: 77,
         username: '10010002-ABCDE',
+        FirstName: 'สมชาย',
+        LastName: 'ใจดี',
+        phone: null,
+        email: null,
+        affiliation: 'โรงเรียนทดสอบ',
+        line_id: null,
+        address_line: null,
+        address_sub_district: null,
+        address_district: null,
+        address_province: null,
+        address_postal_code: null,
+        address_latitude: null,
+        address_longitude: null,
         role: 'STUDENT',
         roles: ['STUDENT'],
         permissions: ['home', 'student-self'],
@@ -155,6 +170,113 @@ describe('UsersService student accounts', () => {
     await expect(
       service.previewStudentAccounts({ ...actor, permissions: ['manage-users-list'] }, {}),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('updates only the authenticated user profile fields', async () => {
+    const selfActor = { ...actor, id: 77, permissions: ['home'] };
+    usersRepository.findUserById.mockResolvedValueOnce({ id: 77 } as never).mockResolvedValueOnce({
+      id: 77,
+    } as never);
+    usersPolicyService.hydrateUserPermissions
+      .mockReturnValueOnce({
+        id: 77,
+        username: 'teacher-one',
+        FirstName: 'ครู',
+        LastName: 'เดิม',
+        phone: null,
+        email: null,
+        affiliation: 'โรงเรียนเดิม',
+        line_id: null,
+        address_line: null,
+        address_sub_district: null,
+        address_district: null,
+        address_province: null,
+        address_postal_code: null,
+        address_latitude: null,
+        address_longitude: null,
+        roles: ['TEACHER'],
+        permissions: ['home'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002] },
+      })
+      .mockReturnValueOnce({
+        id: 77,
+        username: 'teacher-one',
+        FirstName: 'ครู',
+        LastName: 'ใหม่',
+        line_id: 'teacher.line',
+        roles: ['TEACHER'],
+        permissions: ['home'],
+        status: 'ACTIVE',
+      });
+
+    await expect(
+      service.updateOwnProfile(selfActor, {
+        FirstName: ' ครู ',
+        LastName: ' ใหม่ ',
+        phone: '0812345678',
+        email: 'teacher@example.test',
+        affiliation: ' โรงเรียนทดสอบ ',
+        line_id: ' teacher.line ',
+        address_line: ' 99/1 ',
+        address_sub_district: ' บ้านสวน ',
+        address_district: ' เมืองชลบุรี ',
+        address_province: ' ชลบุรี ',
+        address_postal_code: '20000',
+        address_latitude: 13.3611,
+        address_longitude: 100.9847,
+      }),
+    ).resolves.toMatchObject({
+      id: 77,
+      FirstName: 'ครู',
+      LastName: 'ใหม่',
+      line_id: 'teacher.line',
+    });
+
+    expect(usersRepository.updateOwnProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 77,
+        firstName: 'ครู',
+        lastName: 'ใหม่',
+        phone: '0812345678',
+        email: 'teacher@example.test',
+        affiliation: 'โรงเรียนทดสอบ',
+        lineId: 'teacher.line',
+        addressLine: '99/1',
+        addressSubDistrict: 'บ้านสวน',
+        addressDistrict: 'เมืองชลบุรี',
+        addressProvince: 'ชลบุรี',
+        addressPostalCode: '20000',
+        addressLatitude: 13.3611,
+        addressLongitude: 100.9847,
+        updatedBy: 77,
+      }),
+    );
+  });
+
+  it('rejects self profile updates that clear required display names', async () => {
+    usersRepository.findUserById.mockResolvedValueOnce({ id: 77 } as never);
+
+    await expect(
+      service.updateOwnProfile({ ...actor, id: 77 }, { FirstName: '   ' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(usersRepository.updateOwnProfile).not.toHaveBeenCalled();
+  });
+
+  it('rejects self profile updates with an incomplete coordinate pair', async () => {
+    usersRepository.findUserById.mockResolvedValueOnce({ id: 77 } as never);
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      FirstName: 'ครู',
+      LastName: 'ทดสอบ',
+      address_latitude: null,
+      address_longitude: null,
+    });
+
+    await expect(
+      service.updateOwnProfile({ ...actor, id: 77 }, { address_latitude: 13.7563 }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(usersRepository.updateOwnProfile).not.toHaveBeenCalled();
   });
 
   it('passes geo filters and pagination to student account preview queries', async () => {

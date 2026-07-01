@@ -34,6 +34,7 @@ export type AuditAction =
   | 'LOGOUT'
   | 'USER_CREATE'
   | 'USER_UPDATE'
+  | 'USER_PROFILE_UPDATE'
   | 'USER_DELETE'
   | 'USER_DEACTIVATE'
   | 'USER_REACTIVATE'
@@ -203,6 +204,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   USER_UPDATE: {
     domain: 'users',
     label: 'แก้ไขผู้ใช้งาน',
+    detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
+  },
+  USER_PROFILE_UPDATE: {
+    domain: 'users',
+    label: 'แก้ไขข้อมูลส่วนตัว',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
   },
   USER_DELETE: {

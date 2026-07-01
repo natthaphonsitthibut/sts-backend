@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -45,6 +46,7 @@ import {
   StudentAccountBulkFilterDto,
   StudentAccountListQueryDto,
   UpdateRoleGroupDto,
+  UpdateOwnProfileDto,
   UpdateUserDto,
 } from './dto/users.dto';
 import { RoleGroupsService } from './role-groups.service';
@@ -198,6 +200,32 @@ export class UsersController {
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
     return await this.usersService.changeOwnPassword(actor, data);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('me')
+  async getOwnProfile(@CurrentUser() actor: AuthenticatedRequestUser | undefined) {
+    return await this.usersService.getOwnProfile(actor);
+  }
+
+  @UseGuards(AuthGuard)
+  @Patch('me')
+  async updateOwnProfile(
+    @Body() data: UpdateOwnProfileDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.usersService.updateOwnProfile(actor, data);
+    await this.auditLog.record({
+      action: 'USER_PROFILE_UPDATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'user',
+      targetId: actor?.id ? String(actor.id) : null,
+      metadata: { fields: Object.keys(data), fieldCount: Object.keys(data).length },
+      ip: requestIp(req),
+    });
+    return result;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

@@ -25,6 +25,7 @@ import type {
   GenerateStudentAccountsDto,
   StudentAccountBulkFilterDto,
   StudentAccountListQueryDto,
+  UpdateOwnProfileDto,
   UpdateUserDto,
 } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
@@ -55,6 +56,10 @@ const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
 export const TEMP_PASSWORD_TTL_DAYS = 7;
 export const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const HARD_DELETE_PERMISSION = 'manage-users-hard-delete';
+
+function cleanNullableText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
 
 @Injectable()
 export class UsersService {
@@ -121,6 +126,89 @@ export class UsersService {
       ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
       : null;
     return studentUuid ? { ...user, student_uuid: studentUuid } : user;
+  }
+
+  async getOwnProfile(actor: ActorContext | undefined) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    const user = await this.getUserById(currentActor.id);
+    if (!user) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+    return user;
+  }
+
+  async updateOwnProfile(actor: ActorContext | undefined, data: UpdateOwnProfileDto) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    const roleMap = await this.usersPolicyService.getRoleMap();
+    const existingRow = await this.usersRepository.findUserById(currentActor.id);
+
+    if (!existingRow) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+
+    const existingUser = this.usersPolicyService.hydrateUserPermissions(existingRow, roleMap);
+    const firstName =
+      data.FirstName !== undefined ? cleanNullableText(data.FirstName) : existingUser.FirstName;
+    const lastName =
+      data.LastName !== undefined ? cleanNullableText(data.LastName) : existingUser.LastName;
+    const addressLatitude =
+      data.address_latitude !== undefined
+        ? data.address_latitude
+        : (existingUser.address_latitude ?? null);
+    const addressLongitude =
+      data.address_longitude !== undefined
+        ? data.address_longitude
+        : (existingUser.address_longitude ?? null);
+
+    if (!firstName || !lastName) {
+      throw new BadRequestException('กรุณาระบุชื่อและนามสกุล');
+    }
+    if ((addressLatitude === null) !== (addressLongitude === null)) {
+      throw new BadRequestException('กรุณาระบุ latitude และ longitude ให้ครบทั้งคู่');
+    }
+
+    await this.usersRepository.updateOwnProfile({
+      id: currentActor.id,
+      firstName,
+      lastName,
+      phone:
+        data.phone !== undefined ? cleanNullableText(data.phone) : (existingUser.phone ?? null),
+      email:
+        data.email !== undefined ? cleanNullableText(data.email) : (existingUser.email ?? null),
+      affiliation:
+        data.affiliation !== undefined
+          ? cleanNullableText(data.affiliation)
+          : (existingUser.affiliation ?? null),
+      lineId:
+        data.line_id !== undefined
+          ? cleanNullableText(data.line_id)
+          : (existingUser.line_id ?? null),
+      addressLine:
+        data.address_line !== undefined
+          ? cleanNullableText(data.address_line)
+          : (existingUser.address_line ?? null),
+      addressSubDistrict:
+        data.address_sub_district !== undefined
+          ? cleanNullableText(data.address_sub_district)
+          : (existingUser.address_sub_district ?? null),
+      addressDistrict:
+        data.address_district !== undefined
+          ? cleanNullableText(data.address_district)
+          : (existingUser.address_district ?? null),
+      addressProvince:
+        data.address_province !== undefined
+          ? cleanNullableText(data.address_province)
+          : (existingUser.address_province ?? null),
+      addressPostalCode:
+        data.address_postal_code !== undefined
+          ? cleanNullableText(data.address_postal_code)
+          : (existingUser.address_postal_code ?? null),
+      addressLatitude,
+      addressLongitude,
+      updatedBy: resolveAuditActorId(currentActor),
+    });
+
+    return await this.getOwnProfile(currentActor);
   }
 
   async createUser(actor: ActorContext | undefined, data: CreateUserDto) {

@@ -506,6 +506,14 @@ export const DATABASE_BASELINE_SQL = `
     phone TEXT,
     email TEXT,
     affiliation TEXT,
+    line_id TEXT,
+    address_line TEXT,
+    address_sub_district TEXT,
+    address_district TEXT,
+    address_province TEXT,
+    address_postal_code TEXT,
+    address_latitude DOUBLE PRECISION,
+    address_longitude DOUBLE PRECISION,
     status TEXT DEFAULT 'ACTIVE',
     permissions JSONB DEFAULT '[]'::jsonb,
     role TEXT DEFAULT 'TEACHER',
@@ -571,6 +579,14 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "phone" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "email" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "affiliation" TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_line TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_sub_district TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_district TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_province TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_postal_code TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_latitude DOUBLE PRECISION;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_longitude DOUBLE PRECISION;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "status" TEXT DEFAULT 'ACTIVE';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "permissions" JSONB DEFAULT '[]';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "role" TEXT;
@@ -583,6 +599,22 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by INTEGER;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivation_reason_code VARCHAR(32);
   ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivation_note VARCHAR(255);
+  ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_address_postal_code;
+  ALTER TABLE users
+    ADD CONSTRAINT chk_users_address_postal_code
+    CHECK (address_postal_code IS NULL OR address_postal_code ~ '^[0-9]{5}$') NOT VALID;
+  ALTER TABLE users VALIDATE CONSTRAINT chk_users_address_postal_code;
+  ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_address_coordinates;
+  ALTER TABLE users
+    ADD CONSTRAINT chk_users_address_coordinates
+    CHECK (
+      (address_latitude IS NULL AND address_longitude IS NULL)
+      OR (
+        address_latitude BETWEEN -90 AND 90
+        AND address_longitude BETWEEN -180 AND 180
+      )
+    ) NOT VALID;
+  ALTER TABLE users VALIDATE CONSTRAINT chk_users_address_coordinates;
   ALTER TABLE student_term ADD COLUMN IF NOT EXISTS "PostalCode_Onec" VARCHAR(5);
   ${STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL}
   DO $student_term_postal_code_constraint$
