@@ -67,6 +67,8 @@ describe('UsersService student accounts', () => {
       | 'usernameExists'
       | 'createUser'
       | 'findUserById'
+      | 'findOwnProfileById'
+      | 'findCurrentStudentUuidByUserId'
       | 'listStudentAccountsPaginated'
       | 'countStudentAccountStatuses'
       | 'findStudentAccountForManagement'
@@ -103,6 +105,8 @@ describe('UsersService student accounts', () => {
       usernameExists: jest.fn().mockResolvedValue(false),
       createUser: jest.fn().mockResolvedValue(77),
       findUserById: jest.fn().mockResolvedValue({ id: 77 }),
+      findOwnProfileById: jest.fn().mockResolvedValue({ id: 77 }),
+      findCurrentStudentUuidByUserId: jest.fn().mockResolvedValue(null),
       listStudentAccountsPaginated: jest
         .fn()
         .mockResolvedValue({ rows: [studentAccount], totalCount: 1 }),
@@ -174,9 +178,9 @@ describe('UsersService student accounts', () => {
 
   it('updates only the authenticated user profile fields', async () => {
     const selfActor = { ...actor, id: 77, permissions: ['home'] };
-    usersRepository.findUserById.mockResolvedValueOnce({ id: 77 } as never).mockResolvedValueOnce({
-      id: 77,
-    } as never);
+    usersRepository.findOwnProfileById
+      .mockResolvedValueOnce({ id: 77 } as never)
+      .mockResolvedValueOnce({ id: 77 } as never);
     usersPolicyService.hydrateUserPermissions
       .mockReturnValueOnce({
         id: 77,
@@ -255,7 +259,7 @@ describe('UsersService student accounts', () => {
   });
 
   it('rejects self profile updates that clear required display names', async () => {
-    usersRepository.findUserById.mockResolvedValueOnce({ id: 77 } as never);
+    usersRepository.findOwnProfileById.mockResolvedValueOnce({ id: 77 } as never);
 
     await expect(
       service.updateOwnProfile({ ...actor, id: 77 }, { FirstName: '   ' }),
@@ -264,7 +268,7 @@ describe('UsersService student accounts', () => {
   });
 
   it('rejects self profile updates with an incomplete coordinate pair', async () => {
-    usersRepository.findUserById.mockResolvedValueOnce({ id: 77 } as never);
+    usersRepository.findOwnProfileById.mockResolvedValueOnce({ id: 77 } as never);
     usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
       id: 77,
       FirstName: 'ครู',

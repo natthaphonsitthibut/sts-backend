@@ -130,17 +130,22 @@ export class UsersService {
 
   async getOwnProfile(actor: ActorContext | undefined) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
-    const user = await this.getUserById(currentActor.id);
-    if (!user) {
+    const roleMap = await this.usersPolicyService.getRoleMap();
+    const row = await this.usersRepository.findOwnProfileById(currentActor.id);
+    if (!row) {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
     }
-    return user;
+    const user = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
+    const studentUuid = user.roles?.includes('STUDENT')
+      ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
+      : null;
+    return studentUuid ? { ...user, student_uuid: studentUuid } : user;
   }
 
   async updateOwnProfile(actor: ActorContext | undefined, data: UpdateOwnProfileDto) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     const roleMap = await this.usersPolicyService.getRoleMap();
-    const existingRow = await this.usersRepository.findUserById(currentActor.id);
+    const existingRow = await this.usersRepository.findOwnProfileById(currentActor.id);
 
     if (!existingRow) {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');

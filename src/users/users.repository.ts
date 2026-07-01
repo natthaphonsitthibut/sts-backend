@@ -248,14 +248,6 @@ export class UsersRepository {
     u.phone,
     u.email,
     u.affiliation,
-    u.line_id,
-    u.address_line,
-    u.address_sub_district,
-    u.address_district,
-    u.address_province,
-    u.address_postal_code,
-    u.address_latitude,
-    u.address_longitude,
     u.status,
     u.permissions,
     u.role,
@@ -282,6 +274,21 @@ export class UsersRepository {
   private readonly userSelectSql = `
     SELECT
       ${this.userFieldsSql}
+    FROM users u
+    LEFT JOIN roles r ON r.name = u.role
+  `;
+
+  private readonly ownProfileSelectSql = `
+    SELECT
+      ${this.userFieldsSql},
+      u.line_id,
+      u.address_line,
+      u.address_sub_district,
+      u.address_district,
+      u.address_province,
+      u.address_postal_code,
+      u.address_latitude,
+      u.address_longitude
     FROM users u
     LEFT JOIN roles r ON r.name = u.role
   `;
@@ -588,6 +595,18 @@ export class UsersRepository {
     const result = await this.query<HydratableUserRow>(
       `
         ${this.userSelectSql}
+        WHERE u.id = $1
+      `,
+      [id],
+    );
+
+    return result.rows[0] || null;
+  }
+
+  async findOwnProfileById(id: number): Promise<HydratableUserRow | null> {
+    const result = await this.query<HydratableUserRow>(
+      `
+        ${this.ownProfileSelectSql}
         WHERE u.id = $1
       `,
       [id],
