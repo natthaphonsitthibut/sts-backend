@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import { IMPORT_TARGET_COLUMNS, SERVER_INJECTED_COLUMNS } from './imports.types';
 import type {
+  ExistingImportPersonIdRow,
   ExistingSchoolIdRow,
   ImportTarget,
   ManualSchool,
@@ -50,6 +51,23 @@ export class ImportsRepository {
     );
 
     return result.rows.map((row) => Number(row.id));
+  }
+
+  async findExistingImportPersonIds(target: ImportTarget, personIds: string[]): Promise<string[]> {
+    if (personIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.query<ExistingImportPersonIdRow>(
+      `
+        SELECT "PersonID_Onec" AS person_id
+        FROM ${target}
+        WHERE "PersonID_Onec" = ANY($1::text[])
+      `,
+      [personIds],
+    );
+
+    return result.rows.map((row) => String(row.person_id));
   }
 
   async upsertManualSchool(school: ManualSchool, executor?: QueryExecutor): Promise<void> {

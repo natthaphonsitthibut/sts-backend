@@ -83,6 +83,10 @@ export interface ExistingSchoolIdRow extends Record<string, unknown> {
   id: number;
 }
 
+export interface ExistingImportPersonIdRow extends Record<string, unknown> {
+  person_id: string;
+}
+
 export interface QueryResultLike<T extends Record<string, unknown>> {
   rows: T[];
   rowCount: number;

@@ -14,11 +14,61 @@ import {
 } from './imports.types';
 
 const MAX_IMPORT_ROWS = 10_000;
+const IMPORT_PREVIEW_SAMPLE_LIMIT = 20;
 
 const IMPORT_TARGET_LABELS: Record<ImportTarget, string> = {
   student_dropouts: 'ข้อมูลนักเรียนออกกลางคัน',
   student_term: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
 };
+
+const REQUIRED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
+  student_dropouts: ['PersonID_Onec'],
+  student_term: ['PersonID_Onec'],
+};
+
+const RECOMMENDED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
+  student_dropouts: ['SchoolID_Onec', 'GradeLevelID_Onec', 'RoomID_Onec'],
+  student_term: [
+    'AcademicYear_Onec',
+    'Semester_Onec',
+    'SchoolID_Onec',
+    'GradeLevelID_Onec',
+    'RoomID_Onec',
+  ],
+};
+
+export interface ImportPreviewRow {
+  rowNumber: number;
+  status: 'ready' | 'skipped';
+  issues: string[];
+  personIdMasked: string;
+  firstName: string;
+  lastName: string;
+  schoolId: string;
+  academicYear: string;
+  semester: string;
+  gradeLevelId: string;
+  roomId: string;
+}
+
+export interface ImportPreviewResult {
+  target: ImportTarget;
+  targetLabel: string;
+  canImport: boolean;
+  headers: string[];
+  mapping: Record<string, string>;
+  rowsProcessed: number;
+  rowsReady: number;
+  rowsSkipped: number;
+  duplicateRows: number;
+  existingRows: number;
+  missingPersonIdRows: number;
+  mappedColumns: string[];
+  missingRequiredColumns: string[];
+  missingRecommendedColumns: string[];
+  unmappedHeaders: string[];
+  sampleRows: ImportPreviewRow[];
+}
 
 @Injectable()
 export class ImportsService {
@@ -47,6 +97,15 @@ export class ImportsService {
 
   private normalizeNationalId(value: unknown): string {
     return this.normalizeScalar(value).replace(/[^0-9]/g, '');
+  }
+
+  private maskIdentifier(value: unknown): string {
+    const normalized = this.normalizeNationalId(value);
+    if (normalized.length >= 4) {
+      return `••••${normalized.slice(-4)}`;
+    }
+
+    return '-';
   }
 
   private readWorksheetRows(file: Express.Multer.File): SheetRow[] {
@@ -155,6 +214,62 @@ export class ImportsService {
     return IMPORT_TARGET_LABELS[target] ?? target;
   }
 
+  private getWorksheetHeaders(data: SheetRow[]): string[] {
+    const headers = new Set<string>();
+    for (const row of data) {
+      for (const header of Object.keys(row)) {
+        headers.add(header);
+      }
+    }
+
+    return [...headers];
+  }
+
+  private resolveImportMapping(
+    target: ImportTarget,
+    mapping: Record<string, string>,
+    data: SheetRow[],
+  ): Record<string, string> {
+    if (Object.keys(mapping).length > 0) {
+      return mapping;
+    }
+
+    const headers = new Set(this.getWorksheetHeaders(data));
+    const allowedColumns = IMPORT_TARGET_COLUMNS[target];
+    return Object.fromEntries(
+      [...allowedColumns].filter((column) => headers.has(column)).map((column) => [column, column]),
+    );
+  }
+
+  private getUnmappedHeaders(
+    target: ImportTarget,
+    mapping: Record<string, string>,
+    data: SheetRow[],
+  ): string[] {
+    const mappedHeaders = new Set(Object.values(mapping));
+    const allowedColumns = IMPORT_TARGET_COLUMNS[target];
+    return this.getWorksheetHeaders(data).filter(
+      (header) => !mappedHeaders.has(header) && !allowedColumns.has(header),
+    );
+  }
+
+  private buildImportDbRow(
+    mapping: Record<string, string>,
+    row: SheetRow,
+  ): Record<string, unknown> {
+    const dbRow: Record<string, unknown> = {};
+    for (const dbCol of Object.keys(mapping)) {
+      const csvHeader = mapping[dbCol];
+      if (csvHeader && row[csvHeader] !== undefined) {
+        dbRow[dbCol] = row[csvHeader];
+      } else {
+        dbRow[dbCol] = null;
+      }
+    }
+
+    return dbRow;
+  }
+
   private actorLabel(actor?: AuthenticatedRequestUser): string | null {
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     return actor?.username || actorName || null;
@@ -164,8 +279,9 @@ export class ImportsService {
     file: Express.Multer.File,
     mappingStr: string,
   ): Promise<{ missingSchools: Array<{ id: number }> }> {
-    const mapping = this.parseMapping(mappingStr);
+    const parsedMapping = this.parseMapping(mappingStr);
     const data = this.readWorksheetRows(file);
+    const mapping = this.resolveImportMapping('student_term', parsedMapping, data);
 
     const schoolIdCsvHeader = mapping['SchoolID_Onec'];
     if (!schoolIdCsvHeader) {
@@ -196,6 +312,120 @@ export class ImportsService {
     return { missingSchools: missingIds.map((id) => ({ id: Number(id) })) };
   }
 
+  async previewImport(
+    file: Express.Multer.File,
+    target: string,
+    mappingStr: string,
+  ): Promise<ImportPreviewResult> {
+    const validTarget = this.parseTarget(target);
+    const parsedMapping = this.parseMapping(mappingStr);
+    const data = this.readWorksheetRows(file);
+
+    if (!data || data.length === 0) {
+      throw new BadRequestException('The uploaded file is empty or unreadable');
+    }
+
+    const mapping = this.resolveImportMapping(validTarget, parsedMapping, data);
+    this.assertMappedColumnsAllowed(validTarget, mapping);
+
+    const requiredColumns = REQUIRED_IMPORT_COLUMNS[validTarget];
+    const recommendedColumns = RECOMMENDED_IMPORT_COLUMNS[validTarget];
+    const missingRequiredColumns = requiredColumns.filter((column) => !mapping[column]);
+    const missingRecommendedColumns = recommendedColumns.filter((column) => !mapping[column]);
+    const personIdHeader = mapping['PersonID_Onec'];
+    const rawPersonIds = data.map((row) =>
+      personIdHeader ? this.normalizeScalar(row[personIdHeader]) : '',
+    );
+    const nonBlankPersonIds = rawPersonIds.filter((value) => value.length > 0);
+    const existingPersonIds = new Set(
+      await this.importsRepository.findExistingImportPersonIds(validTarget, [
+        ...new Set(nonBlankPersonIds),
+      ]),
+    );
+    const seenPersonIds = new Set<string>();
+
+    let rowsReady = 0;
+    let duplicateRows = 0;
+    let existingRows = 0;
+    let missingPersonIdRows = 0;
+
+    const sampleRows: ImportPreviewRow[] = data
+      .slice(0, IMPORT_PREVIEW_SAMPLE_LIMIT)
+      .map((row, index) => {
+        const dbRow = this.buildImportDbRow(mapping, row);
+        const personId = this.normalizeScalar(dbRow['PersonID_Onec']);
+        const issues: string[] = [];
+
+        if (missingRequiredColumns.length > 0) {
+          issues.push(`ไม่พบคอลัมน์บังคับ: ${missingRequiredColumns.join(', ')}`);
+        }
+        if (personId.length === 0) {
+          issues.push('ไม่มี PersonID_Onec');
+        } else if (seenPersonIds.has(personId)) {
+          issues.push('ซ้ำในไฟล์เดียวกัน');
+        } else if (existingPersonIds.has(personId)) {
+          issues.push('มีอยู่ในระบบแล้ว จะถูกข้าม');
+        }
+
+        if (personId.length > 0) {
+          seenPersonIds.add(personId);
+        }
+
+        return {
+          rowNumber: index + 2,
+          status: issues.length === 0 ? 'ready' : 'skipped',
+          issues,
+          personIdMasked: this.maskIdentifier(dbRow['PersonID_Onec']),
+          firstName: this.normalizeScalar(dbRow['FirstName_Onec']) || '-',
+          lastName: this.normalizeScalar(dbRow['LastName_Onec']) || '-',
+          schoolId: this.normalizeScalar(dbRow['SchoolID_Onec']) || '-',
+          academicYear: this.normalizeScalar(dbRow['AcademicYear_Onec']) || '-',
+          semester: this.normalizeScalar(dbRow['Semester_Onec']) || '-',
+          gradeLevelId: this.normalizeScalar(dbRow['GradeLevelID_Onec']) || '-',
+          roomId: this.normalizeScalar(dbRow['RoomID_Onec']) || '-',
+        };
+      });
+
+    seenPersonIds.clear();
+    for (const personId of rawPersonIds) {
+      if (missingRequiredColumns.length > 0 || personId.length === 0) {
+        missingPersonIdRows++;
+        continue;
+      }
+      if (seenPersonIds.has(personId)) {
+        duplicateRows++;
+        continue;
+      }
+      seenPersonIds.add(personId);
+      if (existingPersonIds.has(personId)) {
+        existingRows++;
+        continue;
+      }
+      rowsReady++;
+    }
+
+    const rowsSkipped = data.length - rowsReady;
+
+    return {
+      target: validTarget,
+      targetLabel: this.getTargetLabel(validTarget),
+      canImport: missingRequiredColumns.length === 0 && rowsReady > 0,
+      headers: this.getWorksheetHeaders(data),
+      mapping,
+      rowsProcessed: data.length,
+      rowsReady,
+      rowsSkipped,
+      duplicateRows,
+      existingRows,
+      missingPersonIdRows,
+      mappedColumns: Object.keys(mapping),
+      missingRequiredColumns,
+      missingRecommendedColumns,
+      unmappedHeaders: this.getUnmappedHeaders(validTarget, mapping, data),
+      sampleRows,
+    };
+  }
+
   async processImport(
     file: Express.Multer.File,
     target: string,
@@ -205,8 +435,7 @@ export class ImportsService {
     auditMeta: { ip?: string | null } = {},
   ) {
     const validTarget = this.parseTarget(target);
-    const mapping = this.parseMapping(mappingStr);
-    this.assertMappedColumnsAllowed(validTarget, mapping);
+    const parsedMapping = this.parseMapping(mappingStr);
     const manualSchools = this.parseManualSchools(schoolsStr);
 
     this.logger.log(`Parsing import file for target: ${validTarget}`);
@@ -216,9 +445,16 @@ export class ImportsService {
       throw new BadRequestException('The uploaded file is empty or unreadable');
     }
 
-    this.logger.log(`Found ${data.length} rows. Mapping to ${validTarget}...`);
+    const mapping = this.resolveImportMapping(validTarget, parsedMapping, data);
+    this.assertMappedColumnsAllowed(validTarget, mapping);
+    const missingRequiredColumns = REQUIRED_IMPORT_COLUMNS[validTarget].filter(
+      (column) => !mapping[column],
+    );
+    if (missingRequiredColumns.length > 0) {
+      throw new BadRequestException(`ไม่พบคอลัมน์บังคับ: ${missingRequiredColumns.join(', ')}`);
+    }
 
-    const validDbColumns = Object.keys(mapping);
+    this.logger.log(`Found ${data.length} rows. Mapping to ${validTarget}...`);
 
     const result = await this.importsRepository.withTransaction(async (executor) => {
       for (const school of manualSchools) {
@@ -229,16 +465,7 @@ export class ImportsService {
       let skipped = 0;
 
       for (const row of data) {
-        const dbRow: Record<string, unknown> = {};
-
-        for (const dbCol of validDbColumns) {
-          const csvHeader = mapping[dbCol];
-          if (csvHeader && row[csvHeader] !== undefined) {
-            dbRow[dbCol] = row[csvHeader];
-          } else {
-            dbRow[dbCol] = null;
-          }
-        }
+        const dbRow = this.buildImportDbRow(mapping, row);
 
         const personId = dbRow['PersonID_Onec'];
         if (this.normalizeScalar(personId).length === 0) {

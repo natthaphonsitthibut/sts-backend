@@ -13,7 +13,11 @@ import type { Request } from 'express';
 import { extname } from 'path';
 import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
 import type { AuthenticatedRequestUser } from '../auth';
-import { BulkImportUploadDto, CheckSchoolsUploadDto } from './dto/imports.dto';
+import {
+  BulkImportUploadDto,
+  CheckSchoolsUploadDto,
+  PreviewImportUploadDto,
+} from './dto/imports.dto';
 import { ImportsService } from './imports.service';
 
 const ALLOWED_IMPORT_EXTENSIONS = ['.xlsx', '.csv'];
@@ -70,5 +74,16 @@ export class ImportsController {
     return this.importsService.processImport(file, body.target, body.mapping, body.schools, actor, {
       ip: req.ip ?? null,
     });
+  }
+
+  @Post('preview')
+  @UseInterceptors(FileInterceptor('file', importMulterOptions))
+  async previewImport(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: PreviewImportUploadDto,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded');
+
+    return this.importsService.previewImport(file, body.target, body.mapping);
   }
 }

@@ -19,3 +19,13 @@ export class BulkImportUploadDto {
   @IsString()
   schools?: string;
 }
+
+export class PreviewImportUploadDto {
+  @IsString()
+  @IsNotEmpty()
+  target!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  mapping!: string;
+}
