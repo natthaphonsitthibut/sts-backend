@@ -69,6 +69,39 @@ export const IMPORT_TARGET_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = 
 
 export const SERVER_INJECTED_COLUMNS: ReadonlySet<string> = new Set(['person_uuid']);
 
+export const STUDENT_TERM_NATURAL_KEY_COLUMNS: readonly string[] = [
+  'person_uuid',
+  'AcademicYear_Onec',
+  'Semester_Onec',
+  'SchoolID_Onec',
+];
+
+export const STUDENT_TERM_MUTABLE_IMPORT_COLUMNS: ReadonlySet<string> = new Set([
+  'DepartmentID_Onec',
+  'PassportNumber_Onec',
+  'PrefixID_Onec',
+  'FirstName_Onec',
+  'MiddleName_Onec',
+  'LastName_Onec',
+  'GenderID_Onec',
+  'NationalityID_Onec',
+  'DisabilityID_Onec',
+  'DisadvantageEducationID_Onec',
+  'VillageNumber_Onec',
+  'Street_Onec',
+  'Soi_Onec',
+  'Trok_Onec',
+  'SubDistrictID_Onec',
+  'SchoolAdmissionYear_Onec',
+  'GradeLevelID_Onec',
+  'RoomID_Onec',
+  'GPAX_Onec',
+  'StudentStatusID_Onec',
+  'ProvinceNameThai_Onec',
+  'DistrictNameThai_Onec',
+  'SubDistrictNameThai_Onec',
+]);
+
 export interface ManualSchool {
   id: number;
   name: string;
@@ -86,6 +119,19 @@ export interface ExistingSchoolIdRow extends Record<string, unknown> {
 export interface ExistingImportPersonIdRow extends Record<string, unknown> {
   person_id: string;
 }
+
+export interface ExistingStudentTermRow extends ExistingImportPersonIdRow {
+  academic_year: string;
+  semester: string;
+  school_id: string;
+}
+
+export interface ImportReferenceRow extends Record<string, unknown> {
+  id: number;
+  label: string;
+}
+
+export type ImportWriteAction = 'inserted' | 'updated' | 'skipped';
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
   rows: T[];

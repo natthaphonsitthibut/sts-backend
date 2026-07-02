@@ -23,7 +23,7 @@ const IMPORT_TARGET_LABELS: Record<ImportTarget, string> = {
 
 const REQUIRED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
   student_dropouts: ['PersonID_Onec'],
-  student_term: ['PersonID_Onec'],
+  student_term: ['PersonID_Onec', 'AcademicYear_Onec', 'Semester_Onec', 'SchoolID_Onec'],
 };
 
 const RECOMMENDED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
@@ -40,14 +40,17 @@ const RECOMMENDED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
 export interface ImportPreviewRow {
   rowNumber: number;
   status: 'ready' | 'skipped';
+  action: 'insert' | 'update' | 'skip';
   issues: string[];
   personIdMasked: string;
   firstName: string;
   lastName: string;
   schoolId: string;
+  schoolName: string;
   academicYear: string;
   semester: string;
   gradeLevelId: string;
+  gradeLabel: string;
   roomId: string;
 }
 
@@ -63,7 +66,11 @@ export interface ImportPreviewResult {
   duplicateRows: number;
   existingRows: number;
   missingPersonIdRows: number;
+  missingNaturalKeyRows: number;
+  rowsToInsert: number;
+  rowsToUpdate: number;
   mappedColumns: string[];
+  mappedColumnSamples: Record<string, string[]>;
   missingRequiredColumns: string[];
   missingRecommendedColumns: string[];
   unmappedHeaders: string[];
@@ -261,13 +268,72 @@ export class ImportsService {
     for (const dbCol of Object.keys(mapping)) {
       const csvHeader = mapping[dbCol];
       if (csvHeader && row[csvHeader] !== undefined) {
-        dbRow[dbCol] = row[csvHeader];
+        const value = row[csvHeader];
+        dbRow[dbCol] = typeof value === 'string' && value.trim().length === 0 ? null : value;
       } else {
         dbRow[dbCol] = null;
       }
     }
 
     return dbRow;
+  }
+
+  private studentTermKey(row: Record<string, unknown>): string | null {
+    const personId = this.normalizeNationalId(row['PersonID_Onec']);
+    const academicYear = this.normalizeScalar(row['AcademicYear_Onec']);
+    const semester = this.normalizeScalar(row['Semester_Onec']);
+    const schoolId = this.normalizeScalar(row['SchoolID_Onec']);
+    if (!personId || !academicYear || !semester || !schoolId) {
+      return null;
+    }
+
+    return JSON.stringify([personId, academicYear, semester, schoolId]);
+  }
+
+  private existingStudentTermKey(row: {
+    person_id: string;
+    academic_year: string;
+    semester: string;
+    school_id: string;
+  }): string {
+    return JSON.stringify([
+      this.normalizeNationalId(row.person_id),
+      this.normalizeScalar(row.academic_year),
+      this.normalizeScalar(row.semester),
+      this.normalizeScalar(row.school_id),
+    ]);
+  }
+
+  private numericReferenceIds(data: SheetRow[], header?: string): number[] {
+    if (!header) {
+      return [];
+    }
+
+    return [
+      ...new Set(data.map((row) => Number(row[header])).filter((value) => Number.isInteger(value))),
+    ];
+  }
+
+  private mappedColumnSamples(
+    mapping: Record<string, string>,
+    data: SheetRow[],
+  ): Record<string, string[]> {
+    return Object.fromEntries(
+      Object.entries(mapping).map(([column, header]) => {
+        const values = [
+          ...new Set(
+            data
+              .map((row) =>
+                column === 'PersonID_Onec'
+                  ? this.maskIdentifier(row[header])
+                  : this.normalizeScalar(row[header]).slice(0, 80),
+              )
+              .filter((value) => value.length > 0 && value !== '-'),
+          ),
+        ].slice(0, 3);
+        return [column, values];
+      }),
+    );
   }
 
   private actorLabel(actor?: AuthenticatedRequestUser): string | null {
@@ -332,76 +398,136 @@ export class ImportsService {
     const recommendedColumns = RECOMMENDED_IMPORT_COLUMNS[validTarget];
     const missingRequiredColumns = requiredColumns.filter((column) => !mapping[column]);
     const missingRecommendedColumns = recommendedColumns.filter((column) => !mapping[column]);
-    const personIdHeader = mapping['PersonID_Onec'];
-    const rawPersonIds = data.map((row) =>
-      personIdHeader ? this.normalizeScalar(row[personIdHeader]) : '',
+    const dbRows = data.map((row) => this.buildImportDbRow(mapping, row));
+    const rawPersonIds = dbRows.map((row) =>
+      validTarget === 'student_term'
+        ? this.normalizeNationalId(row['PersonID_Onec'])
+        : this.normalizeScalar(row['PersonID_Onec']),
     );
     const nonBlankPersonIds = rawPersonIds.filter((value) => value.length > 0);
-    const existingPersonIds = new Set(
-      await this.importsRepository.findExistingImportPersonIds(validTarget, [
-        ...new Set(nonBlankPersonIds),
-      ]),
+    const uniquePersonIds = [...new Set(nonBlankPersonIds)];
+    const existingStudentTerms =
+      validTarget === 'student_term'
+        ? await this.importsRepository.findExistingStudentTerms(uniquePersonIds)
+        : [];
+    const existingStudentTermKeys = new Set(
+      existingStudentTerms.map((row) => this.existingStudentTermKey(row)),
     );
-    const seenPersonIds = new Set<string>();
+    const existingPersonIds = new Set(
+      validTarget === 'student_term'
+        ? []
+        : await this.importsRepository.findExistingImportPersonIds(validTarget, uniquePersonIds),
+    );
+    const schoolIds = this.numericReferenceIds(data, mapping['SchoolID_Onec']);
+    const gradeIds = this.numericReferenceIds(data, mapping['GradeLevelID_Onec']);
+    const [schools, grades] =
+      validTarget === 'student_term'
+        ? await Promise.all([
+            this.importsRepository.findSchoolNames(schoolIds),
+            this.importsRepository.findGradeLabels(gradeIds),
+          ])
+        : [[], []];
+    const schoolNames = new Map(schools.map((row) => [Number(row.id), row.label]));
+    const gradeLabels = new Map(grades.map((row) => [Number(row.id), row.label]));
+    const seenKeys = new Set<string>();
 
     let rowsReady = 0;
     let duplicateRows = 0;
     let existingRows = 0;
     let missingPersonIdRows = 0;
+    let missingNaturalKeyRows = 0;
+    let rowsToInsert = 0;
+    let rowsToUpdate = 0;
 
-    const sampleRows: ImportPreviewRow[] = data
+    const sampleRows: ImportPreviewRow[] = dbRows
       .slice(0, IMPORT_PREVIEW_SAMPLE_LIMIT)
-      .map((row, index) => {
-        const dbRow = this.buildImportDbRow(mapping, row);
+      .map((dbRow, index) => {
         const personId = this.normalizeScalar(dbRow['PersonID_Onec']);
+        const rowKey =
+          validTarget === 'student_term'
+            ? this.studentTermKey(dbRow)
+            : this.normalizeScalar(dbRow['PersonID_Onec']) || null;
         const issues: string[] = [];
+        let action: ImportPreviewRow['action'] = 'insert';
 
         if (missingRequiredColumns.length > 0) {
           issues.push(`ไม่พบคอลัมน์บังคับ: ${missingRequiredColumns.join(', ')}`);
+          action = 'skip';
         }
         if (personId.length === 0) {
           issues.push('ไม่มี PersonID_Onec');
-        } else if (seenPersonIds.has(personId)) {
+          action = 'skip';
+        } else if (!rowKey) {
+          issues.push('ปีการศึกษา เทอม หรือโรงเรียนไม่ครบ');
+          action = 'skip';
+        } else if (seenKeys.has(rowKey)) {
           issues.push('ซ้ำในไฟล์เดียวกัน');
-        } else if (existingPersonIds.has(personId)) {
-          issues.push('มีอยู่ในระบบแล้ว จะถูกข้าม');
+          action = 'skip';
+        } else if (existingStudentTermKeys.has(rowKey) || existingPersonIds.has(personId)) {
+          if (validTarget === 'student_term') {
+            issues.push('มีข้อมูลภาคเรียนนี้แล้ว จะอัปเดต');
+            action = 'update';
+          } else {
+            issues.push('มีอยู่ในระบบแล้ว จะถูกข้าม');
+            action = 'skip';
+          }
         }
 
-        if (personId.length > 0) {
-          seenPersonIds.add(personId);
+        if (rowKey) {
+          seenKeys.add(rowKey);
         }
+
+        const schoolId = this.normalizeScalar(dbRow['SchoolID_Onec']);
+        const gradeLevelId = this.normalizeScalar(dbRow['GradeLevelID_Onec']);
 
         return {
           rowNumber: index + 2,
-          status: issues.length === 0 ? 'ready' : 'skipped',
+          status: action === 'skip' ? 'skipped' : 'ready',
+          action,
           issues,
           personIdMasked: this.maskIdentifier(dbRow['PersonID_Onec']),
           firstName: this.normalizeScalar(dbRow['FirstName_Onec']) || '-',
           lastName: this.normalizeScalar(dbRow['LastName_Onec']) || '-',
-          schoolId: this.normalizeScalar(dbRow['SchoolID_Onec']) || '-',
+          schoolId: schoolId || '-',
+          schoolName: schoolNames.get(Number(schoolId)) ?? '-',
           academicYear: this.normalizeScalar(dbRow['AcademicYear_Onec']) || '-',
           semester: this.normalizeScalar(dbRow['Semester_Onec']) || '-',
-          gradeLevelId: this.normalizeScalar(dbRow['GradeLevelID_Onec']) || '-',
+          gradeLevelId: gradeLevelId || '-',
+          gradeLabel: gradeLabels.get(Number(gradeLevelId)) ?? '-',
           roomId: this.normalizeScalar(dbRow['RoomID_Onec']) || '-',
         };
       });
 
-    seenPersonIds.clear();
-    for (const personId of rawPersonIds) {
-      if (missingRequiredColumns.length > 0 || personId.length === 0) {
-        missingPersonIdRows++;
+    seenKeys.clear();
+    for (const [index, dbRow] of dbRows.entries()) {
+      const personId = rawPersonIds[index];
+      const rowKey = validTarget === 'student_term' ? this.studentTermKey(dbRow) : personId || null;
+      if (personId.length === 0) {
+        missingPersonIdRows += 1;
+      }
+      if (missingRequiredColumns.length > 0 || !rowKey) {
+        if (validTarget === 'student_term' && personId.length > 0) {
+          missingNaturalKeyRows += 1;
+        }
         continue;
       }
-      if (seenPersonIds.has(personId)) {
-        duplicateRows++;
+      if (seenKeys.has(rowKey)) {
+        duplicateRows += 1;
         continue;
       }
-      seenPersonIds.add(personId);
+      seenKeys.add(rowKey);
+      if (existingStudentTermKeys.has(rowKey)) {
+        existingRows += 1;
+        rowsToUpdate += 1;
+        rowsReady += 1;
+        continue;
+      }
       if (existingPersonIds.has(personId)) {
-        existingRows++;
+        existingRows += 1;
         continue;
       }
-      rowsReady++;
+      rowsToInsert += 1;
+      rowsReady += 1;
     }
 
     const rowsSkipped = data.length - rowsReady;
@@ -418,7 +544,11 @@ export class ImportsService {
       duplicateRows,
       existingRows,
       missingPersonIdRows,
+      missingNaturalKeyRows,
+      rowsToInsert,
+      rowsToUpdate,
       mappedColumns: Object.keys(mapping),
+      mappedColumnSamples: this.mappedColumnSamples(mapping, data),
       missingRequiredColumns,
       missingRecommendedColumns,
       unmappedHeaders: this.getUnmappedHeaders(validTarget, mapping, data),
@@ -462,7 +592,9 @@ export class ImportsService {
       }
 
       let inserted = 0;
+      let updated = 0;
       let skipped = 0;
+      const seenKeys = new Set<string>();
 
       for (const row of data) {
         const dbRow = this.buildImportDbRow(mapping, row);
@@ -473,27 +605,39 @@ export class ImportsService {
           continue;
         }
 
+        if (validTarget === 'student_term') {
+          const rowKey = this.studentTermKey(dbRow);
+          if (!rowKey || seenKeys.has(rowKey)) {
+            skipped++;
+            continue;
+          }
+          seenKeys.add(rowKey);
+        }
+
         dbRow['person_uuid'] = await this.importsRepository.resolveOrCreatePersonByNationalId(
           this.stringifyIdentifierValue(personId),
           this.normalizeNationalId(personId),
           executor,
         );
 
-        const rowCount = await this.importsRepository.insertImportRow(validTarget, dbRow, executor);
-        if (rowCount > 0) {
+        const action = await this.importsRepository.insertImportRow(validTarget, dbRow, executor);
+        if (action === 'inserted') {
           inserted++;
+        } else if (action === 'updated') {
+          updated++;
         } else {
           skipped++;
         }
       }
 
       this.logger.log(
-        `Successfully completed import of ${inserted} rows into ${validTarget} (skipped: ${skipped})`,
+        `Successfully completed import into ${validTarget} (inserted: ${inserted}, updated: ${updated}, skipped: ${skipped})`,
       );
       return {
         success: true,
         rowsProcessed: data.length,
         rowsInserted: inserted,
+        rowsUpdated: updated,
         rowsSkipped: skipped,
       };
     });
@@ -507,6 +651,7 @@ export class ImportsService {
         target: this.getTargetLabel(validTarget),
         rowCount: result.rowsProcessed,
         rowsInserted: result.rowsInserted,
+        rowsUpdated: result.rowsUpdated,
         rowsSkipped: result.rowsSkipped,
         manualSchools: manualSchools.length,
       },

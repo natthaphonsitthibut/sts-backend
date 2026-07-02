@@ -1,26 +1,34 @@
-import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity({ name: 'student_term' })
+@Index(
+  'uq_student_term_enrollment_natural',
+  ['personUuid', 'academicYearOnec', 'semesterOnec', 'schoolIdOnec'],
+  { unique: true },
+)
 export class StudentTermEntity {
-  @PrimaryColumn({ name: 'PersonID_Onec', type: 'text' })
+  @Column({ name: 'PersonID_Onec', type: 'text' })
   personIdOnec!: string;
 
-  // B1.1 surrogate — DB default gen_random_uuid() populates it; becomes the
-  // public identifier and PK in B1.4. PersonID_Onec stays PK until then.
-  @Column({ name: 'student_uuid', type: 'uuid', unique: true, default: () => 'gen_random_uuid()' })
+  // Enrollment snapshot identifier. The same person receives a new UUID for a
+  // different academic year/semester/school natural key.
+  @PrimaryColumn({ name: 'student_uuid', type: 'uuid', default: () => 'gen_random_uuid()' })
   studentUuid!: string;
 
-  @Column({ name: 'AcademicYear_Onec', type: 'integer', nullable: true })
-  academicYearOnec!: number | null;
+  @Column({ name: 'person_uuid', type: 'uuid' })
+  personUuid!: string;
 
-  @Column({ name: 'Semester_Onec', type: 'integer', nullable: true })
-  semesterOnec!: number | null;
+  @Column({ name: 'AcademicYear_Onec', type: 'integer' })
+  academicYearOnec!: number;
+
+  @Column({ name: 'Semester_Onec', type: 'integer' })
+  semesterOnec!: number;
 
   @Column({ name: 'DepartmentID_Onec', type: 'integer', nullable: true })
   departmentIdOnec!: number | null;
 
-  @Column({ name: 'SchoolID_Onec', type: 'integer', nullable: true })
-  schoolIdOnec!: number | null;
+  @Column({ name: 'SchoolID_Onec', type: 'integer' })
+  schoolIdOnec!: number;
 
   @Column({ name: 'FirstName_Onec', type: 'text', nullable: true })
   firstNameOnec!: string | null;

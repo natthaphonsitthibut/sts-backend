@@ -1,11 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
-import { IMPORT_TARGET_COLUMNS, SERVER_INJECTED_COLUMNS } from './imports.types';
+import {
+  IMPORT_TARGET_COLUMNS,
+  SERVER_INJECTED_COLUMNS,
+  STUDENT_TERM_MUTABLE_IMPORT_COLUMNS,
+  STUDENT_TERM_NATURAL_KEY_COLUMNS,
+} from './imports.types';
 import type {
   ExistingImportPersonIdRow,
   ExistingSchoolIdRow,
+  ExistingStudentTermRow,
+  ImportReferenceRow,
   ImportTarget,
+  ImportWriteAction,
   ManualSchool,
   QueryExecutor,
   QueryResultLike,
@@ -68,6 +76,54 @@ export class ImportsRepository {
     );
 
     return result.rows.map((row) => String(row.person_id));
+  }
+
+  async findExistingStudentTerms(personIds: string[]): Promise<ExistingStudentTermRow[]> {
+    if (personIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.query<ExistingStudentTermRow>(
+      `
+        SELECT
+          identifier.identifier_normalized AS person_id,
+          enrollment."AcademicYear_Onec"::text AS academic_year,
+          enrollment."Semester_Onec"::text AS semester,
+          enrollment."SchoolID_Onec"::text AS school_id
+        FROM student_term enrollment
+        JOIN student_person_identifier identifier
+          ON identifier.person_uuid = enrollment.person_uuid
+         AND identifier.identifier_type = 'NATIONAL_ID'
+        WHERE identifier.identifier_normalized = ANY($1::text[])
+      `,
+      [personIds],
+    );
+
+    return result.rows;
+  }
+
+  async findSchoolNames(schoolIds: number[]): Promise<ImportReferenceRow[]> {
+    if (schoolIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.query<ImportReferenceRow>(
+      'SELECT id, name AS label FROM schools WHERE id = ANY($1::int[])',
+      [schoolIds],
+    );
+    return result.rows;
+  }
+
+  async findGradeLabels(gradeIds: number[]): Promise<ImportReferenceRow[]> {
+    if (gradeIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.query<ImportReferenceRow>(
+      'SELECT id, label FROM grade_levels WHERE id = ANY($1::int[])',
+      [gradeIds],
+    );
+    return result.rows;
   }
 
   async upsertManualSchool(school: ManualSchool, executor?: QueryExecutor): Promise<void> {
@@ -149,7 +205,7 @@ export class ImportsRepository {
     target: ImportTarget,
     row: Record<string, unknown>,
     executor?: QueryExecutor,
-  ): Promise<number> {
+  ): Promise<ImportWriteAction> {
     const queryExecutor = this.getExecutor(executor);
     const columns = Object.keys(row);
 
@@ -166,6 +222,33 @@ export class ImportsRepository {
     const values = Object.values(row);
     const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ');
 
+    if (target === 'student_term') {
+      const mutableColumns = columns.filter((column) =>
+        STUDENT_TERM_MUTABLE_IMPORT_COLUMNS.has(column),
+      );
+      const updateAssignments = mutableColumns.map(
+        (column) => `"${column}" = COALESCE(EXCLUDED."${column}", student_term."${column}")`,
+      );
+      // Always execute the conflict branch so repeated imports are observable as
+      // updates even when the file contains only natural-key columns.
+      if (updateAssignments.length === 0) {
+        updateAssignments.push('"PersonID_Onec" = student_term."PersonID_Onec"');
+      }
+
+      const result = await queryExecutor.query<{ inserted: boolean }>(
+        `
+          INSERT INTO student_term (${columns.map((column) => `"${column}"`).join(', ')})
+          VALUES (${placeholders})
+          ON CONFLICT (${STUDENT_TERM_NATURAL_KEY_COLUMNS.map((column) => `"${column}"`).join(', ')})
+          DO UPDATE SET ${updateAssignments.join(', ')}
+          RETURNING (xmax = 0) AS inserted
+        `,
+        values,
+      );
+
+      return result.rows[0]?.inserted ? 'inserted' : 'updated';
+    }
+
     const result = await queryExecutor.query(
       `
         INSERT INTO ${target} (${columns.map((column) => `"${column}"`).join(', ')})
@@ -175,6 +258,6 @@ export class ImportsRepository {
       values,
     );
 
-    return result.rowCount;
+    return result.rowCount > 0 ? 'inserted' : 'skipped';
   }
 }
