@@ -51,11 +51,15 @@ export class AttendanceController {
   ) {}
 
   @Get('grade-levels')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
   async getGradeLevels() {
     return await this.attendanceService.getGradeLevels();
   }
 
   @Get('schools')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
   async getSchools(
     @Query() query: GetSchoolsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -71,11 +75,15 @@ export class AttendanceController {
   }
 
   @Get('locations')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
   async getLocations() {
     return await this.attendanceService.getLocations();
   }
 
   @Get('students')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
   async getStudents(
     @Query() query: GetStudentsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -89,6 +97,8 @@ export class AttendanceController {
   }
 
   @Get('history')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
   async getHistory(
     @Query() query: GetHistoryQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -116,6 +126,8 @@ export class AttendanceController {
   }
 
   @Get('tasks')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
   async getAttendanceTasks(
     @Query() query: GetAttendanceTasksQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -141,6 +153,8 @@ export class AttendanceController {
   }
 
   @Get('rooms')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
   async getRooms(@Query() query: GetRoomsQueryDto) {
     return await this.attendanceService.getRooms(query.grade, query.schoolId);
   }

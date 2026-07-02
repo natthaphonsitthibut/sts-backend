@@ -1,0 +1,84 @@
+import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { Reflector } from '@nestjs/core';
+import { AuthGuard, PermissionsGuard } from '../auth';
+import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY } from '../auth/permissions.decorator';
+import { AttendanceController } from './attendance.controller';
+
+function handler(name: keyof AttendanceController): () => unknown {
+  return Object.getOwnPropertyDescriptor(AttendanceController.prototype, name)
+    ?.value as () => unknown;
+}
+
+function contextWithPermissions(
+  method: keyof AttendanceController,
+  permissions: string[],
+): ExecutionContext {
+  return {
+    getHandler: () => handler(method),
+    getClass: () => AttendanceController,
+    switchToHttp: () => ({
+      getRequest: () => ({
+        user: { id: 1, username: 'user', roles: [], permissions },
+      }),
+    }),
+  } as ExecutionContext;
+}
+
+describe('AttendanceController access', () => {
+  const guardedReadMethods: Array<keyof AttendanceController> = [
+    'getGradeLevels',
+    'getSchools',
+    'getLocations',
+    'getStudents',
+    'getHistory',
+    'getAttendanceTasks',
+    'getRooms',
+  ];
+
+  it('keeps every attendance read route behind auth and permissions guards', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, AttendanceController)).toEqual([AuthGuard]);
+
+    for (const method of guardedReadMethods) {
+      expect(Reflect.getMetadata(GUARDS_METADATA, handler(method))).toEqual([PermissionsGuard]);
+    }
+  });
+
+  it('allows attendance lookup/task reads to attendance or attendance-dashboard actors only', () => {
+    const guard = new PermissionsGuard(new Reflector());
+    const lookupMethods: Array<keyof AttendanceController> = [
+      'getGradeLevels',
+      'getSchools',
+      'getLocations',
+      'getAttendanceTasks',
+      'getRooms',
+    ];
+
+    for (const method of lookupMethods) {
+      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
+        'attendance',
+        'attendance-dashboard',
+      ]);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance']))).toBe(true);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
+        true,
+      );
+      expect(() => guard.canActivate(contextWithPermissions(method, ['home']))).toThrow(
+        ForbiddenException,
+      );
+    }
+  });
+
+  it('allows roster and history reads to attendance actors only', () => {
+    const guard = new PermissionsGuard(new Reflector());
+    const attendanceOnlyMethods: Array<keyof AttendanceController> = ['getStudents', 'getHistory'];
+
+    for (const method of attendanceOnlyMethods) {
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual(['attendance']);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance']))).toBe(true);
+      expect(() =>
+        guard.canActivate(contextWithPermissions(method, ['attendance-dashboard'])),
+      ).toThrow(ForbiddenException);
+    }
+  });
+});
