@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Of27xE4X9vlZBFi98QTXl3cnXVej2FX1KEo7PddoAbDdIZ8tmG1E4j8zgCxWlQl
+\restrict hepZhfzga8jNWLtybVdUcEMfL2Uelhn7UudkihTbZq2S5ZKbRbHoTtK3Zjmzgul
 
 -- Dumped from database version 15.18
 -- Dumped by pg_dump version 15.18
@@ -97,6 +97,95 @@ ALTER FUNCTION public.set_updated_at() OWNER TO postgres;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: absence_reason_categories; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.absence_reason_categories (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    name text NOT NULL,
+    note text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_absence_reason_categories_code CHECK ((length(TRIM(BOTH FROM code)) > 0)),
+    CONSTRAINT chk_absence_reason_categories_name CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+ALTER TABLE public.absence_reason_categories OWNER TO postgres;
+
+--
+-- Name: absence_reason_categories_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.absence_reason_categories_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.absence_reason_categories_id_seq OWNER TO postgres;
+
+--
+-- Name: absence_reason_categories_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.absence_reason_categories_id_seq OWNED BY public.absence_reason_categories.id;
+
+
+--
+-- Name: absence_reasons; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.absence_reasons (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    name text NOT NULL,
+    category_id bigint NOT NULL,
+    note text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_absence_reasons_code CHECK ((length(TRIM(BOTH FROM code)) > 0)),
+    CONSTRAINT chk_absence_reasons_name CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+ALTER TABLE public.absence_reasons OWNER TO postgres;
+
+--
+-- Name: absence_reasons_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.absence_reasons_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.absence_reasons_id_seq OWNER TO postgres;
+
+--
+-- Name: absence_reasons_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.absence_reasons_id_seq OWNED BY public.absence_reasons.id;
+
 
 --
 -- Name: assistance_measures; Type: TABLE; Schema: public; Owner: postgres
@@ -317,6 +406,21 @@ CREATE TABLE public.case_reviews (
 ALTER TABLE public.case_reviews OWNER TO postgres;
 
 --
+-- Name: case_student_uuid_backfill_20260702_backup; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.case_student_uuid_backfill_20260702_backup (
+    case_id integer NOT NULL,
+    old_student_uuid uuid,
+    new_student_uuid uuid NOT NULL,
+    matched_student_count integer NOT NULL,
+    CONSTRAINT case_student_uuid_backfill_20260702_matched_student_count_check CHECK ((matched_student_count = 1))
+);
+
+
+ALTER TABLE public.case_student_uuid_backfill_20260702_backup OWNER TO postgres;
+
+--
 -- Name: cases; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -372,6 +476,51 @@ ALTER TABLE public.cases_id_seq OWNER TO postgres;
 --
 
 ALTER SEQUENCE public.cases_id_seq OWNED BY public.cases.id;
+
+
+--
+-- Name: disability_types; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.disability_types (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    name text NOT NULL,
+    note text,
+    is_active boolean DEFAULT true NOT NULL,
+    legal_category text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_disability_types_code CHECK ((length(TRIM(BOTH FROM code)) > 0)),
+    CONSTRAINT chk_disability_types_name CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+ALTER TABLE public.disability_types OWNER TO postgres;
+
+--
+-- Name: disability_types_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.disability_types_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.disability_types_id_seq OWNER TO postgres;
+
+--
+-- Name: disability_types_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.disability_types_id_seq OWNED BY public.disability_types.id;
 
 
 --
@@ -588,6 +737,50 @@ ALTER TABLE public.migrations_id_seq OWNER TO postgres;
 --
 
 ALTER SEQUENCE public.migrations_id_seq OWNED BY public.migrations.id;
+
+
+--
+-- Name: non_follow_up_reasons; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.non_follow_up_reasons (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    name text NOT NULL,
+    note text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_non_follow_up_reasons_code CHECK ((length(TRIM(BOTH FROM code)) > 0)),
+    CONSTRAINT chk_non_follow_up_reasons_name CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+ALTER TABLE public.non_follow_up_reasons OWNER TO postgres;
+
+--
+-- Name: non_follow_up_reasons_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.non_follow_up_reasons_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.non_follow_up_reasons_id_seq OWNER TO postgres;
+
+--
+-- Name: non_follow_up_reasons_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.non_follow_up_reasons_id_seq OWNED BY public.non_follow_up_reasons.id;
 
 
 --
@@ -817,6 +1010,50 @@ ALTER TABLE public.schedules_id_seq OWNER TO postgres;
 --
 
 ALTER SEQUENCE public.schedules_id_seq OWNED BY public.schedules.id;
+
+
+--
+-- Name: school_affiliations; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.school_affiliations (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    name text NOT NULL,
+    note text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_school_affiliations_code CHECK ((length(TRIM(BOTH FROM code)) > 0)),
+    CONSTRAINT chk_school_affiliations_name CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+ALTER TABLE public.school_affiliations OWNER TO postgres;
+
+--
+-- Name: school_affiliations_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.school_affiliations_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.school_affiliations_id_seq OWNER TO postgres;
+
+--
+-- Name: school_affiliations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.school_affiliations_id_seq OWNED BY public.school_affiliations.id;
 
 
 --
@@ -1446,6 +1683,20 @@ ALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;
 
 
 --
+-- Name: absence_reason_categories id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reason_categories ALTER COLUMN id SET DEFAULT nextval('public.absence_reason_categories_id_seq'::regclass);
+
+
+--
+-- Name: absence_reasons id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reasons ALTER COLUMN id SET DEFAULT nextval('public.absence_reasons_id_seq'::regclass);
+
+
+--
 -- Name: assistance_measures id; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
@@ -1471,6 +1722,13 @@ ALTER TABLE ONLY public.audit_log ALTER COLUMN id SET DEFAULT nextval('public.au
 --
 
 ALTER TABLE ONLY public.cases ALTER COLUMN id SET DEFAULT nextval('public.cases_id_seq'::regclass);
+
+
+--
+-- Name: disability_types id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.disability_types ALTER COLUMN id SET DEFAULT nextval('public.disability_types_id_seq'::regclass);
 
 
 --
@@ -1509,6 +1767,13 @@ ALTER TABLE ONLY public.migrations ALTER COLUMN id SET DEFAULT nextval('public.m
 
 
 --
+-- Name: non_follow_up_reasons id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.non_follow_up_reasons ALTER COLUMN id SET DEFAULT nextval('public.non_follow_up_reasons_id_seq'::regclass);
+
+
+--
 -- Name: pii_access_events id; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
@@ -1541,6 +1806,13 @@ ALTER TABLE ONLY public.roles ALTER COLUMN id SET DEFAULT nextval('public.roles_
 --
 
 ALTER TABLE ONLY public.schedules ALTER COLUMN id SET DEFAULT nextval('public.schedules_id_seq'::regclass);
+
+
+--
+-- Name: school_affiliations id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_affiliations ALTER COLUMN id SET DEFAULT nextval('public.school_affiliations_id_seq'::regclass);
 
 
 --
@@ -1583,6 +1855,22 @@ ALTER TABLE ONLY public.task_submissions ALTER COLUMN id SET DEFAULT nextval('pu
 --
 
 ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
+
+
+--
+-- Data for Name: absence_reason_categories; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.absence_reason_categories (id, code, name, note, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+\.
+
+
+--
+-- Data for Name: absence_reasons; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.absence_reasons (id, code, name, category_id, note, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+\.
 
 
 --
@@ -1935,6 +2223,73 @@ COPY public.audit_log (id, actor_user_id, actor_label, action, target_type, targ
 179	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 09:05:44.2516+00
 189	1	newnew	DATA_IMPORT	import	\N	{"rowCount": 4950, "rowsSkipped": 4950, "rowsInserted": 0, "manualSchools": 0}	::1	2026-07-02 01:20:42.117789+00
 190	1	newnew	DATA_IMPORT	import	\N	{"target": "ข้อมูลนักเรียนในระบบ (รายภาคเรียน)", "rowCount": 4950, "rowsSkipped": 4950, "rowsInserted": 0, "manualSchools": 0}	::1	2026-07-02 01:34:13.399654+00
+191	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:34.553802+00
+192	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:34.786707+00
+193	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782998733824_g9pa6h"}	127.0.0.1	2026-07-02 13:25:35.032493+00
+194	428	role_scope_smoke_school_admin	USER_UPDATE	user	436	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 13:25:35.259348+00
+195	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:44.876979+00
+196	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.104018+00
+197	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:25:45.115342+00
+198	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.121077+00
+199	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 13:25:45.125655+00
+200	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.345793+00
+201	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:46.591908+00
+202	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 13:25:46.849427+00
+203	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	437	{"expiresAt": "2026-07-09T13:25:47.078Z"}	127.0.0.1	2026-07-02 13:25:47.082838+00
+204	\N	10010002-9NBXU	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.301622+00
+205	437	10010002-9NBXU	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.52612+00
+206	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	437	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-9NBXU", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:25:47.536548+00
+207	\N	10010002-9NBXU	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.542808+00
+208	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	437	{"username": "10010002-9NBXU"}	127.0.0.1	2026-07-02 13:25:47.550193+00
+209	437	10010002-9NBXU	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.772163+00
+210	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:36.407744+00
+211	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:36.661741+00
+212	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782999215637_paj37r"}	127.0.0.1	2026-07-02 13:33:36.923772+00
+213	428	role_scope_smoke_school_admin	USER_UPDATE	user	438	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 13:33:37.200715+00
+214	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.036632+00
+215	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.315314+00
+216	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:33:39.323256+00
+217	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.328624+00
+218	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 13:33:39.335038+00
+219	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.577989+00
+220	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:41.302185+00
+221	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 13:33:41.582272+00
+222	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	439	{"expiresAt": "2026-07-09T13:33:41.843Z"}	127.0.0.1	2026-07-02 13:33:41.850561+00
+223	\N	10010002-QLKT2	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.090208+00
+224	439	10010002-QLKT2	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.342609+00
+225	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	439	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-QLKT2", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:33:42.35397+00
+226	\N	10010002-QLKT2	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.36053+00
+227	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	439	{"username": "10010002-QLKT2"}	127.0.0.1	2026-07-02 13:33:42.369214+00
+228	439	10010002-QLKT2	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.621204+00
+229	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:22.526883+00
+230	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:22.764639+00
+231	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1783001301751_7uisi1"}	127.0.0.1	2026-07-02 14:08:23.009566+00
+232	428	role_scope_smoke_school_admin	USER_UPDATE	user	440	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 14:08:23.245159+00
+233	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:27.810771+00
+234	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.041598+00
+235	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:08:28.051478+00
+236	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.056778+00
+237	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 14:08:28.06121+00
+238	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.282856+00
+239	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:17:53.249198+00
+240	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:17:53.483186+00
+241	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1783001872531_bdpic6"}	127.0.0.1	2026-07-02 14:17:53.727423+00
+242	428	role_scope_smoke_school_admin	USER_UPDATE	user	441	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 14:17:53.952574+00
+243	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.373471+00
+244	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.601349+00
+245	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:18:00.612772+00
+246	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.618612+00
+247	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 14:18:00.623362+00
+248	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.84579+00
+249	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:24.306045+00
+250	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 14:18:24.55654+00
+251	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	442	{"expiresAt": "2026-07-09T14:18:24.784Z"}	127.0.0.1	2026-07-02 14:18:24.790152+00
+252	\N	10010002-C37GN	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.009502+00
+253	442	10010002-C37GN	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.23408+00
+254	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	442	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-C37GN", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:18:25.243979+00
+255	\N	10010002-C37GN	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.249569+00
+256	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	442	{"username": "10010002-C37GN"}	127.0.0.1	2026-07-02 14:18:25.256296+00
+257	442	10010002-C37GN	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.479152+00
 \.
 
 
@@ -1958,16 +2313,48 @@ seed-review-1004	1004	ASSIST	เห็นควรให้ความช่ว
 
 
 --
+-- Data for Name: case_student_uuid_backfill_20260702_backup; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.case_student_uuid_backfill_20260702_backup (case_id, old_student_uuid, new_student_uuid, matched_student_count) FROM stdin;
+1002	\N	1e94a5b9-2072-4f6e-a4bf-a16bf366c7b8	1
+1003	\N	4d3b01e5-b425-4f58-9a36-267076c427d3	1
+1005	\N	2e02b21d-130d-453b-8891-dfbe6b1110f7	1
+1006	\N	7ef66068-ab91-47b7-bae2-b2718653c2af	1
+1001	\N	792aed48-a4be-424b-8bda-3e248e26826b	1
+1004	\N	a25932f0-ccc1-4476-b69d-c6ea755336b8	1
+\.
+
+
+--
 -- Data for Name: cases; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
 COPY public.cases (id, student_name, student_school, student_address, student_lat, student_lng, reason_flagged, status, created_at, result_summary, updated_at, created_by, updated_by, school_id, deleted_at, deleted_by, student_uuid, student_first_name, student_last_name, address_line, address_province, address_district, address_sub_district, postal_code) FROM stdin;
-1002	จันทร์เพ็ญ พรประเสริฐ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.798999786376953	98.95600128173828	มาเรียนไม่สม่ำเสมอและมีความเสี่ยงด้านเศรษฐกิจ	IN_PROGRESS	2026-06-08 16:30:26.906096+00	\N	2026-06-24 14:29:20.72756+00	\N	\N	10010002	\N	\N	\N	จันทร์เพ็ญ	พรประเสริฐ	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1003	ณัฐวรรธน์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.801000595092773	98.95800018310547	ได้รับการช่วยเหลือค่าเดินทางและกลับมาเรียนปกติ	RESOLVED	2026-06-07 16:30:26.906096+00	ปิดเคสหลังติดตามครบถ้วน นักเรียนกลับมาเรียนต่อเนื่อง	2026-06-24 14:29:20.72756+00	\N	\N	10010002	\N	\N	\N	ณัฐวรรธน์	จันทร์แก้ว	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1005	ดิศรณ์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80500030517578	98.96199798583984	รอประสานหน่วยงานสวัสดิการในพื้นที่	AWAITING_HELP	2026-06-05 16:30:26.906096+00	\N	2026-06-24 14:29:20.72756+00	\N	\N	10010002	\N	\N	\N	ดิศรณ์	จันทร์แก้ว	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1006	ภูมิพัฒน์ สกุลดี	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80699920654297	98.96399688720703	ครูประจำชั้นแจ้งพฤติกรรมเสี่ยงหลุดจากระบบ	OPEN	2026-06-04 16:30:26.906096+00	\N	2026-06-24 14:29:20.72756+00	\N	\N	10010002	\N	\N	\N	ภูมิพัฒน์	สกุลดี	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1001	ประภา วิริยะ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.797000885009766	98.9540023803711	ขาดเรียนต่อเนื่อง 3 วันและติดต่อผู้ปกครองไม่ได้	OPEN	2026-06-09 16:30:26.906096+00	\N	2026-06-24 14:29:20.72756+00	\N	\N	10010002	\N	\N	\N	ประภา	วิริยะ	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1004	ปัณณทัต ลือชา	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80299949645996	98.95999908447266	รอผู้อำนวยการประเมินแนวทางช่วยเหลือ	AWAITING_HELP	2026-06-06 16:30:26.906096+00	เจ้าหน้าที่ลงพื้นที่แล้ว รอผลประเมิน	2026-06-24 14:29:20.72756+00	\N	\N	10010002	\N	\N	\N	ปัณณทัต	ลือชา	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+1002	จันทร์เพ็ญ พรประเสริฐ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.798999786376953	98.95600128173828	มาเรียนไม่สม่ำเสมอและมีความเสี่ยงด้านเศรษฐกิจ	IN_PROGRESS	2026-06-08 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	1e94a5b9-2072-4f6e-a4bf-a16bf366c7b8	จันทร์เพ็ญ	พรประเสริฐ	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+1003	ณัฐวรรธน์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.801000595092773	98.95800018310547	ได้รับการช่วยเหลือค่าเดินทางและกลับมาเรียนปกติ	RESOLVED	2026-06-07 16:30:26.906096+00	ปิดเคสหลังติดตามครบถ้วน นักเรียนกลับมาเรียนต่อเนื่อง	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	4d3b01e5-b425-4f58-9a36-267076c427d3	ณัฐวรรธน์	จันทร์แก้ว	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+1005	ดิศรณ์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80500030517578	98.96199798583984	รอประสานหน่วยงานสวัสดิการในพื้นที่	AWAITING_HELP	2026-06-05 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	2e02b21d-130d-453b-8891-dfbe6b1110f7	ดิศรณ์	จันทร์แก้ว	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+1006	ภูมิพัฒน์ สกุลดี	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80699920654297	98.96399688720703	ครูประจำชั้นแจ้งพฤติกรรมเสี่ยงหลุดจากระบบ	OPEN	2026-06-04 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	7ef66068-ab91-47b7-bae2-b2718653c2af	ภูมิพัฒน์	สกุลดี	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+1001	ประภา วิริยะ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.797000885009766	98.9540023803711	ขาดเรียนต่อเนื่อง 3 วันและติดต่อผู้ปกครองไม่ได้	OPEN	2026-06-09 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	792aed48-a4be-424b-8bda-3e248e26826b	ประภา	วิริยะ	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+1004	ปัณณทัต ลือชา	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80299949645996	98.95999908447266	รอผู้อำนวยการประเมินแนวทางช่วยเหลือ	AWAITING_HELP	2026-06-06 16:30:26.906096+00	เจ้าหน้าที่ลงพื้นที่แล้ว รอผลประเมิน	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	a25932f0-ccc1-4476-b69d-c6ea755336b8	ปัณณทัต	ลือชา	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: disability_types; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.disability_types (id, code, name, note, is_active, legal_category, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+1	NONE	ไม่มีความพิการ	\N	t	\N	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+2	VISUAL	ความบกพร่องทางการเห็น	\N	t	ความพิการทางการเห็น	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+3	HEARING	ความบกพร่องทางการได้ยินหรือสื่อความหมาย	\N	t	ความพิการทางการได้ยินหรือสื่อความหมาย	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+4	INTELLECTUAL	ความบกพร่องทางสติปัญญา	\N	t	ความพิการทางสติปัญญา	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+5	PHYSICAL_HEALTH	ความบกพร่องทางร่างกายหรือสุขภาพ	\N	t	ความพิการทางร่างกายหรือการเคลื่อนไหว	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+6	LEARNING	ความบกพร่องทางการเรียนรู้	\N	t	ความพิการทางการเรียนรู้	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+7	SPEECH_LANGUAGE	ความบกพร่องทางการพูดและภาษา	\N	t	ความพิการทางการพูดและภาษา	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+8	BEHAVIOR_EMOTION	ความบกพร่องทางพฤติกรรมหรืออารมณ์	\N	t	ความพิการทางพฤติกรรมหรืออารมณ์	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+9	AUTISM	ออทิสติก	\N	t	ออทิสติก	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+10	MULTIPLE	ความพิการซ้อน	\N	t	ความพิการซ้อน	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
 \.
 
 
@@ -2075,6 +2462,16 @@ COPY public.migrations (id, "timestamp", name) FROM stdin;
 52	260702120000	UseStudentTermNaturalKey20260702120000
 54	260702130000	AddStudentStatusLookup20260702130000
 56	260702150000	BackfillExplicitGlobalScope20260702150000
+58	260702153000	BackfillLegacyCaseStudentUuid20260702153000
+60	260702160000	CreateAdditionalMasterDataLookups20260702160000
+\.
+
+
+--
+-- Data for Name: non_follow_up_reasons; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.non_follow_up_reasons (id, code, name, note, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
 \.
 
 
@@ -2144,6 +2541,19 @@ COPY public.roles (id, name, label, rank, default_permissions, scope_mode, is_sy
 --
 
 COPY public.schedules (id, grade, room, day_of_week, subject, start_time, end_time, teacher, created_at, updated_at, created_by, updated_by) FROM stdin;
+\.
+
+
+--
+-- Data for Name: school_affiliations; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.school_affiliations (id, code, name, note, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+1	สพฐ	สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+2	สช	สำนักงานคณะกรรมการส่งเสริมการศึกษาเอกชน	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+3	อปท	องค์กรปกครองส่วนท้องถิ่น	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+4	กทม	กรุงเทพมหานคร	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+5	มกท	เมืองพัทยา	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
 \.
 
 
@@ -8290,7 +8700,7 @@ dcae42d1-016a-4d0f-8839-a788d3fb8311	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	
 dd521eaa-765f-4e88-bbce-f0a8ed758b8d	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
 f7b53cd6-62e3-47b8-b469-58678999c194	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
 02563963-a8a2-42c6-b535-0be1b36790a9	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
-10000000-0000-4000-8000-000000000001	ACTIVE	\N	2026-07-01 08:24:06.405543+00	\N	2026-07-01 09:05:43.519525+00	\N	\N	\N
+10000000-0000-4000-8000-000000000001	ACTIVE	\N	2026-07-01 08:24:06.405543+00	\N	2026-07-02 14:18:23.835472+00	\N	\N	\N
 \.
 
 
@@ -13819,7 +14229,7 @@ COPY public.student_status (code, label_th, category, is_active_for_login, is_te
 --
 
 COPY public.student_term ("AcademicYear_Onec", "Semester_Onec", "DepartmentID_Onec", "SchoolID_Onec", "PersonID_Onec", "PassportNumber_Onec", "PrefixID_Onec", "FirstName_Onec", "MiddleName_Onec", "LastName_Onec", "GenderID_Onec", "NationalityID_Onec", "DisabilityID_Onec", "DisadvantageEducationID_Onec", "VillageNumber_Onec", "Street_Onec", "Soi_Onec", "Trok_Onec", "SubDistrictID_Onec", "SchoolAdmissionYear_Onec", "GradeLevelID_Onec", "RoomID_Onec", "GPAX_Onec", "StudentStatusID_Onec", "ProvinceNameThai_Onec", "DistrictNameThai_Onec", "SubDistrictNameThai_Onec", created_at, updated_at, created_by, updated_by, deleted_at, deleted_by, student_uuid, person_uuid, "PostalCode_Onec", address_house_no, address_latitude, address_longitude, student_status_code) FROM stdin;
-2569	1	\N	10010002	SMOKE-STUDENT-ACCT-001	\N	\N	Smoke	\N	Student Account	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	6	1	\N	10	กรุงเทพมหานคร	ดอนเมือง	สีกัน	2026-07-01 08:24:06.411086+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	10000000-0000-4000-8000-000000000002	10000000-0000-4000-8000-000000000001	\N	\N	\N	\N	10
+2569	1	\N	10010002	SMOKE-STUDENT-ACCT-001	\N	\N	Smoke	\N	Student Account	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	6	1	\N	10	กรุงเทพมหานคร	ดอนเมือง	สีกัน	2026-07-01 08:24:06.411086+00	2026-07-02 14:18:23.840181+00	\N	\N	\N	\N	10000000-0000-4000-8000-000000000002	10000000-0000-4000-8000-000000000001	\N	\N	\N	\N	10
 2569	1	3	10010005	1-1300-57635-20-1	\N	1	ทักษิณ	\N	สีดา	1	1	0	0	9	รามคำแหง	\N	\N	4103	2563	105	2	2.18	10	อุดรธานี	เมืองอุดรธานี	บ้านขาว	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	79190d7d-2e7e-4faa-9626-21a206bfdba1	c07a8772-4de3-412c-8fb2-729cd576692c	41000	\N	\N	\N	10
 2569	1	4	10010003	1-1314-62138-83-7	\N	2	นภาพร	\N	ทองดี	2	1	0	0	9	รัตนาธิเบศร์	\N	\N	4001	2561	111	2	3.22	10	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	316b994f-fe07-49b7-9380-af5a89c8a802	0c16dabe-954c-48e8-bd09-199a240b955c	40000	\N	\N	\N	10
 2569	1	3	10010004	1-1315-69984-28-9	\N	2	กัญญา	\N	อ่อนน้อม	2	1	0	0	9	ช้างเผือก	\N	\N	1002	2567	103	3	2.79	10	กรุงเทพมหานคร	ดอนเมือง	ดอนเมือง	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	c07478d1-4839-4efa-ad24-0e6111cd3598	96a0807f-429f-4903-bfc8-4eb5329f2b6d	10210	\N	\N	\N	10
@@ -18931,6 +19341,7 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 20	referral-smoke-1782320710520	smoke	\N	DISABLED	2026-06-24 17:05:10.519599+00	\N	\N	\N	[]	\N	\N	ADMIN	{"school_ids": [10010002]}	f	2026-06-30 14:36:11.249592+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 25	auth_smoke_cleaned_25	$2b$12$o04BnDcuZ1.RO/Gy.fMCv.fxsLVsKi.IsJAeCpQ0edK.8.O5HU.A2	API smoke cleaned	DISABLED	2026-06-25 17:57:21.67544+00	7824102414597	\N	\N	[]	Cleaned	Smoke	STUDENT	{"own_only": true}	f	2026-06-30 14:36:11.291434+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 26	exec_smoke_cleaned_26	$2b$12$tkS95axCQBuuosSwQd.kkuoHOIbUNt5kdMMItFkoqUaC1kbIjdmba	API smoke cleaned	DISABLED	2026-06-25 18:03:41.091924+00	7824106210908	\N	\N	[]	Cleaned	ExecutiveSmoke	STUDENT	{"own_only": true}	f	2026-06-30 14:36:11.294527+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+436	role_scope_smoke_teacher_1782998733824_g9pa6h	$2b$12$3AGjn3591Zl/.LkGjbrF4OWppEXjh.1FY5Zb/ZERzcxeSCbZGiuly	Automated role scope smoke	DISABLED	2026-07-02 13:25:34.806075+00	9982998733824	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 13:25:35.270503+00	428	428	\N	2026-07-02 13:25:34.807+00	2026-07-09 13:25:34.807+00	2026-07-02 13:25:35.270503+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 6	seed_admin_province_cm	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	จังหวัดเชียงใหม่	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-province-001	0800000002	seed.admin.province@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	มณีรัตน์	ดูแลจังหวัด	ADMIN	{"provinces": ["เชียงใหม่"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 7	seed_admin_district_cm	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	อำเภอเมืองเชียงใหม่	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-district-001	0800000003	seed.admin.district@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	กิตติชัย	ดูแลอำเภอ	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 412	กฟกฟกฟกฟกฟก	$2b$12$wCGLHOMsJmaeihz1wpl1UOYNtXvGKe/aAnQIx.1gH/SIRJWYnUk4O	\N	ACTIVE	2026-07-01 05:33:10.736357+00	1231212312312	1231231231	adadad@dada.dad	[]	ก	ก	DIRECTOR	{"global": true}	t	2026-07-02 08:36:21.793227+00	1	1	\N	2026-07-01 05:33:10.736+00	2026-07-08 05:33:10.736+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
@@ -18938,15 +19349,21 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 27	10010001-3N5BY	$2b$12$ESeIEaD5N1b7Ewc7nNI6veim7iNhRPI83rq2yw/yNdWupwrcPQr6S	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	82b4aa6f-2691-4dc9-8e2c-b5a65f6a384b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 28	10010001-MTAG3	$2b$12$ULkMPswaHEIGMDzLtyGF1.WSMsKfvA/DBqWPpO.HtLjJSt1eUkyaa	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อภิวัฒน์	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	43fb4bc2-ea62-4eb9-b9ea-34edade019d2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 413	test	$2b$12$YTUqexjKze.fnGO7tbHSQ.pOshMqMt9YdhDspmk0XwjMcQQ2n2Ki.	\N	ACTIVE	2026-07-01 05:34:19.058212+00	1231231212312	1212312312	12daa@dada.dawd	[]	rtadawd	adadada	ADMIN	{"global": true}	t	2026-07-02 08:36:21.793227+00	1	1	\N	2026-07-01 05:34:19.058+00	2026-07-08 05:34:19.058+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+437	10010002-9NBXU	$2b$12$Wpv0leAgIYFdsD6c2567huzYEUzOciSMvrmGDH8ncbjX3gPHqVwj.	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 13:25:46.621062+00		\N	\N	["home", "student-self"]	ปัณฑิตา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-07-02 13:25:47.550193+00	422	422	7aa9e543-785b-4f01-8983-818f035c22a4	2026-07-02 13:25:47.078+00	2026-07-09 13:25:47.078+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 414	account_lifecycle_smoke_archived_414	$2b$12$9h4vjtIOFEfnerB.tKAf9eIPupZrsGzEUAzw0fz50cvd7pVLaGnRu	Automated account lifecycle smoke	DISABLED	2026-07-01 08:13:39.541898+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 08:14:08.304332+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+438	role_scope_smoke_teacher_1782999215637_paj37r	$2b$12$h75UV/M2iladedrHiUGFDOuMkajQgSkTzJn2tG8pFyWJGl2/kjgGi	Automated role scope smoke	DISABLED	2026-07-02 13:33:36.681866+00	9982999215637	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 13:33:37.214121+00	428	428	\N	2026-07-02 13:33:36.682+00	2026-07-09 13:33:36.682+00	2026-07-02 13:33:37.214121+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 415	account_lifecycle_smoke_archived_415	$2b$12$8OfGrie1fLB.a2YAcc3c9OmwT1u8yy97Wt7pAWcrYnsDEV7DZXQ5G	Automated account lifecycle smoke	DISABLED	2026-07-01 08:13:39.545161+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-01 08:14:08.304332+00	\N	\N	\N	\N	\N	2026-07-01 08:14:08.304332+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 416	account_lifecycle_smoke_archived_416	$2b$12$qr0e0peFQ8/qjOyC2DPA/O1vqMAe0JS22oTEV0Kn0Sv47iiCUabGW	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:08.741212+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 08:14:09.491077+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 417	account_lifecycle_smoke_archived_417	$2b$12$ZCtqqwM8u2zzZab/qTTh0eWyg5pZgKM6DgijZDR6nt6908jJ6QyL2	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:08.744898+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-01 08:14:09.491077+00	\N	\N	\N	\N	\N	2026-07-01 08:14:09.491077+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+439	10010002-QLKT2	$2b$12$4ZqPqnyTxJ2kSLb5dqOx..zoaR2p3Djh5AUPEGYMXXhhr0qcikKh6	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 13:33:41.330649+00		\N	\N	["home", "student-self"]	มณีรัตน์	ลือชา	STUDENT	{"own_only": true}	t	2026-07-02 13:33:42.369214+00	422	422	69c0c792-a464-4101-934f-ba7eb2ed0377	2026-07-02 13:33:41.843+00	2026-07-09 13:33:41.843+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 418	account_lifecycle_smoke_archived_418	$2b$12$qI6nR65ey7PjriphABFZi.wL.MbCVGFuNYDYd8boLVv3LplZgESBu	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:54.231447+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 08:14:54.973837+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+440	role_scope_smoke_teacher_1783001301751_7uisi1	$2b$12$7rhQBA37z/KvnY3.gc0aseJiOtzfd35cH/PVexqgZQYYFXR5N7y9y	Automated role scope smoke	DISABLED	2026-07-02 14:08:22.786526+00	9983001301751	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 14:08:23.255627+00	428	428	\N	2026-07-02 14:08:22.788+00	2026-07-09 14:08:22.788+00	2026-07-02 14:08:23.255627+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 419	account_lifecycle_smoke_archived_419	$2b$12$5AaRsge06m/yInvNAaqXfOaB59bNuc.CdsaybSUO.HzIvhgpbDnpm	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:54.236789+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-01 08:14:54.973837+00	\N	\N	\N	\N	\N	2026-07-01 08:14:54.973837+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-420	account_lifecycle_smoke_admin	$2b$12$BUuw7zDp9r.McgMbR2CDD.cfsmEt9zw6WUnex/SHDfEvCW9bBWqHq	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.947477+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 09:03:56.995104+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-421	account_lifecycle_smoke_teacher	$2b$12$Oooo.Canv.NPBxOOk8he6.0D1vOKjRJcWB27eEaYzZ67Z30r5aS0.	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.951823+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-01 09:03:56.995104+00	\N	\N	\N	\N	\N	2026-07-01 09:03:56.995104+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-422	student_accounts_smoke_admin	$2b$12$jzMdJbqEkOMJHB3aogd8P.KJQnSZEEQk3atsGF8g3CPXAxg.xxxJ6	Automated student accounts smoke	DISABLED	2026-07-01 08:24:06.634877+00	\N	\N	\N	["manage-student-accounts", "edit-students"]	Student	Accounts Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 09:05:45.216066+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+441	role_scope_smoke_teacher_1783001872531_bdpic6	$2b$12$l14TslDRdW1JDzij4n172ul/OM/fOoo2jSydsudy/nN3gpS/cfq0G	Automated role scope smoke	DISABLED	2026-07-02 14:17:53.503909+00	9983001872531	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 14:17:53.963674+00	428	428	\N	2026-07-02 14:17:53.491+00	2026-07-09 14:17:53.491+00	2026-07-02 14:17:53.963674+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+420	account_lifecycle_smoke_admin	$2b$12$6J.tfRVvMTf9MTfXNyZbgO3yuYdmOLpYcG3YL2TsyhtXQ.gk4PdPK	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.947477+00	\N	\N	\N	["manage-users-list"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-02 14:18:00.849999+00	\N	\N	\N	\N	\N	2026-07-02 14:18:00.849999+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+421	account_lifecycle_smoke_teacher	$2b$12$FLszDf8C6su8vbhYT2tV/.y7HwFrA6wAjtHvlmf5hxEH827lGLHfW	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.951823+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-02 14:18:00.849999+00	\N	\N	\N	\N	\N	2026-07-02 14:18:00.849999+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+442	10010002-C37GN	$2b$12$02smRbd30sXMluPP/c/C0OMZezqR7d8dBzx0zJ9tzkcGhdHlmbwDO	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 14:18:24.326687+00		\N	\N	["home", "student-self"]	ดรุณี	สุดสวย	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.256296+00	422	422	ff1a2091-ac4d-49bf-9f2f-27874853da6d	2026-07-02 14:18:24.784+00	2026-07-09 14:18:24.784+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+422	student_accounts_smoke_admin	$2b$12$Uz0Zx9zJvcwgv/8Olhjao..YhHIb1kMsLSaR0G9w91mcvi8Xhm9Sy	Automated student accounts smoke	DISABLED	2026-07-01 08:24:06.634877+00	\N	\N	\N	["manage-student-accounts"]	Student	Accounts Admin	ADMIN	{"global": true}	f	2026-07-02 14:18:25.481326+00	\N	\N	\N	\N	\N	2026-07-02 14:18:25.481326+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 168	10010004-MTY9N	$2b$12$a2dX/7LmvRhGfriiwwBFCe9hs30Tjpmd0R0PYC3jL3cUxAZrJvN9m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ธนภัทร	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bf9f4436-67f9-4466-a467-fb89c22216ef	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 169	10010004-YA4V5	$2b$12$oAhRXyadfE.ENkwwrp8n.Oky5u5Oe19bzjPWzqjChXKvR5jJlOqPe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	แสงดาว	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	00e37249-c621-4fe2-adb9-e06d4155a523	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 170	10010004-HU3JE	$2b$12$JIgqeltvuK6cghOw6bVzWuqJ7feuLRl/1GSyr9gOlFf5TZOrOhbYu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ทัศนัย	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4bbaf978-5c5c-4e07-ac93-78b52aa6fb8e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
@@ -19192,7 +19609,7 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 54	10010001-386LB	$2b$12$ZhwJkU/oOcovQ1yNsMTLnOBZz1MYtr/PaedxNSns63PAtvD3aSkOq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐพล	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	142e7256-9054-4090-8956-95d19fa09ac1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 12	seed_teacher_cm_p3_1	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-teacher-001	0800000008	seed.teacher.p3r1@example.test	[]	สุภาวดี	วัฒนานุกูล	TEACHER	{"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": [103], "sub_districts": ["สุเทพ"]}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 5	seed_admin	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ส่วนกลาง	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-001	0800000001	seed.admin@example.test	[]	อรทัย	บริหารกลาง	ADMIN	{"global": true}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-423	10010002-U878T	$2b$12$eNjW9KCJWzf6H5mgVw5qtuUu/AnfwBD.d4R76.Z8zHrhGLKEgvkaO	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:06.911102+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-01 09:05:45.216066+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:07.597+00	2026-07-08 08:24:07.597+00	2026-07-01 08:24:08.08752+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+423	10010002-U878T	$2b$12$eNjW9KCJWzf6H5mgVw5qtuUu/AnfwBD.d4R76.Z8zHrhGLKEgvkaO	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:06.911102+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:07.597+00	2026-07-08 08:24:07.597+00	2026-07-01 08:24:08.08752+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 1	newnew	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	BUU	ACTIVE	2026-03-13 18:14:37.679195+00	1264646406406	0640649024	new@gmail.com	[]	ณัฐพล	สิทธิบุศย์​	ADMIN	{"global": true}	f	2026-06-29 14:22:56.965575+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 8	seed_admin_subdistrict_suthep	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ตำบลสุเทพ	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-subdistrict-001	0800000004	seed.admin.subdistrict@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	พัชรินทร์	ดูแลตำบล	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "sub_districts": ["สุเทพ"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 313	10010003-54AWR	$2b$12$hXK.TyLeOXD0Ztp7ucHuLuJEBxzOUudQNxvce7jwqjWGjpGEYhT1a	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ทักษิณ	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	23c654f4-88bf-4c57-b71c-b45a33a92d8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
@@ -19205,7 +19622,7 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 319	10010003-QNZPK	$2b$12$Hz5aejEeGwCshzeSHvnxu.NBFqKBDQFg2Rm.Qw1wfNcdTcYNwwHJq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ณัฐวรรธน์	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c01d9ed0-7643-48f2-b541-0db0a3558dae	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 55	10010001-CWQED	$2b$12$.7Vm.0cWIGU9JDxTgsdpAe5t/7UAi/ddFU/fAhjvR/Dg31M8VFKAC	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c002a87f-a8b7-4634-8f15-e2102a89c281	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 56	10010001-EE5PM	$2b$12$VNNNmNdgeqicKHEOJWx.iOl9djN5lzjmOnvS8rDkxL/IzMGfDXcR2	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ภูมิพัฒน์	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6e164bd9-4645-45ad-9057-8ffbf1a0c9d3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-424	10010002-P4N35	$2b$12$kaRgJ1.ouiwxI1LgQKHm1Ok2hY3ceKuz1XfKWlsY7aXLeAJgz2Hh2	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:31.721893+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-01 09:05:45.216066+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:32.179+00	2026-07-08 08:24:32.179+00	2026-07-01 08:24:32.879027+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+424	10010002-P4N35	$2b$12$kaRgJ1.ouiwxI1LgQKHm1Ok2hY3ceKuz1XfKWlsY7aXLeAJgz2Hh2	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:31.721893+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:32.179+00	2026-07-08 08:24:32.179+00	2026-07-01 08:24:32.879027+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 320	10010003-BJ2DL	$2b$12$KaRsyRySI3W1QOX0nTi2OOQQJXInFe.b9Q7NNMvtG8cixXGO6pFna	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สมหญิง	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2128cfa7-7df9-4249-b51f-88bc7710ceeb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 9	seed_admin_school_10010002	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-school-001	0800000005	seed.admin.school@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	วรพล	ดูแลโรงเรียน	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 321	10010003-D8UUC	$2b$12$h7urSTuc2itBN0A9sGm4xeZVQItDLMS7HL8H/3KSSIrMYY8Iv9WzO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	พรรษา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	61ade533-68f0-48bd-8292-a675ba848724	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
@@ -19223,7 +19640,7 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 37	10010001-J8XHD	$2b$12$7uDAzpckGIax0sme.fLmau6.7BLjT0WY/HoVKmnYb43oUG.TixRYG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ธัชพล	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	68c362c6-e368-4981-aa8c-ae00a754e817	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 38	10010001-C5ZWM	$2b$12$6SH5niBBvCQo98.br6BV0OF5U/YhgDVMH7FwK9paWs2rXu1s3C3B2	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชลธิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8c0f1cdc-db38-43d3-bae3-cf53e8bd41e0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 39	10010001-7JBZC	$2b$12$Kgj2XCuv/843nDD8C6y.MOTxas4CbYHEdOIBbAoPuQAXsP75D.TQu	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สิรภพ	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9f46bd9b-fa6b-4d26-994d-b3303cdb024b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-425	10010002-PTYVF	$2b$12$ByMLOaA1SWxYgUXMYybJLOTuFIButFZrYOUoCctwxcXZXj3gl88Sq	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:40.636928+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-01 09:05:45.216066+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:41.095+00	2026-07-08 08:24:41.095+00	2026-07-01 08:24:41.793754+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+425	10010002-PTYVF	$2b$12$ByMLOaA1SWxYgUXMYybJLOTuFIButFZrYOUoCctwxcXZXj3gl88Sq	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:40.636928+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:41.095+00	2026-07-08 08:24:41.095+00	2026-07-01 08:24:41.793754+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 40	10010001-V842Q	$2b$12$AyBALrvnZ83qydB8zOD4beIyvNFVbvHPDoPTTrjsEjUmVWmm.jmqW	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐนิชา	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	190fd5a8-6e44-4385-b3fc-e4be68847952	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 41	10010001-C76QC	$2b$12$v7jUkwIjwQwQA2J.QM.6b.wNFrZqb6W.smzZcgPWMogPapbizttau	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อัมพร	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6aeb5902-15e3-4dca-9a8f-9c77b9b365bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 42	10010001-K8KT5	$2b$12$zCB8gKhS.0CJP66Ip8qpAuYL4H8nn0ByHiBvj21mVXyQj9FmUvOdK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bcce8cfc-fb1d-4cdc-960a-f896c98f08b8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
@@ -19327,15 +19744,15 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 143	10010004-XTFFV	$2b$12$z7pnNmbPURnrxaAudgtzn.eUWeBuEpXug.nHsBMh8Qgu/7ymmz4Iy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	มานพ	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a74f671f-c8de-48cb-92ac-d4d7cfbe4a31	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 144	10010004-TZKJC	$2b$12$TTLPduYl4v8P9UytnNL4xeCLpYPbMfWICi1toBNfG1flOv6EMHf2q	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นภาพร	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	32b3ce02-15d5-4d8b-bc36-22bf2d118df4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 145	10010004-RTEXE	$2b$12$ZUGqX0vsv.m8QvvHP9ahyO.odlT1XBsdA/IFlPLRgAMicvRk30LEy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กัญญา	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e580fe04-8d7b-4424-aaec-b0da691b0242	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-426	10010002-DYH9A	$2b$12$eyuNpgNDKp2BvRg5RMBkAe/CzyIEJC6CIb8dAaFgQFWhA1QDXNqfe	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:26:00.206266+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-01 09:05:45.216066+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:26:00.695+00	2026-07-08 08:26:00.695+00	2026-07-01 08:26:01.417646+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-427	role_scope_smoke_global_admin	$2b$12$w8N8A1/3AF8wIZ8MEJyxPOqI13DiMKnUO0fcV3gcH5NV/wbzOOA6i	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.477154+00	\N	\N	\N	["manage-users-list", "home", "attendance", "edit-students"]	Role	Scope Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 09:05:00.336466+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-428	role_scope_smoke_school_admin	$2b$12$HRTL.FamwO7hyhzQOR0pieciFxwd1u3AJ0Wg4j7L3DtW3vKSbfCEm	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.698448+00	\N	\N	\N	["manage-users-list", "home", "attendance", "edit-students"]	Role	Scope Admin	ADMIN	{"school_ids": ["10010002"]}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 09:05:00.336466+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+426	10010002-DYH9A	$2b$12$eyuNpgNDKp2BvRg5RMBkAe/CzyIEJC6CIb8dAaFgQFWhA1QDXNqfe	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:26:00.206266+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:26:00.695+00	2026-07-08 08:26:00.695+00	2026-07-01 08:26:01.417646+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 429	role_scope_smoke_teacher	$2b$12$DSvBOgJswlklr210OKkVOeCvkHM9UKZ1MAv.lphSSXSJUCMkoTRTG	Automated role scope smoke	DISABLED	2026-07-01 08:30:53.19538+00	9900000000001	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:31:11.898761+00	428	428	\N	2026-07-01 08:30:53.196+00	2026-07-08 08:30:53.196+00	2026-07-01 08:30:53.654501+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+427	role_scope_smoke_global_admin	$2b$12$Oh47sIAOHL8iK.0GmvyGdO.VFNKaFXGZ12LuUzmCagi8ig0lF27QC	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.477154+00	\N	\N	\N	["manage-users-list", "home", "attendance"]	Role	Scope Admin	ADMIN	{"global": true}	f	2026-07-02 14:17:53.963674+00	\N	\N	\N	\N	\N	2026-07-02 14:17:53.963674+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+428	role_scope_smoke_school_admin	$2b$12$ALuMnn2SsLXz4RvQOJOtMuJz8TGQDin0s58Em2bg6h8jC.6n.UeOy	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.698448+00	\N	\N	\N	["manage-users-list", "home", "attendance"]	Role	Scope Admin	ADMIN	{"school_ids": ["10010002"]}	f	2026-07-02 14:17:53.963674+00	\N	\N	\N	\N	\N	2026-07-02 14:17:53.963674+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 431	role_scope_smoke_teacher_1782894714327_mmc1p0	$2b$12$3adjFNmGByXdO9PXT1B1FO2oJmPzvWkygxbPIOrV5QcPzWzgmI3Zu	Automated role scope smoke	DISABLED	2026-07-01 08:31:55.268939+00	9982894714327	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:31:55.769949+00	428	428	\N	2026-07-01 08:31:55.269+00	2026-07-08 08:31:55.269+00	2026-07-01 08:31:55.769949+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 432	role_scope_smoke_teacher_1782894721505_x9cglx	$2b$12$VYiehrqvDfEcvFwlqHjxrOr8uESj1vVDrv65kEFBqFjhaIApMTzL6	Automated role scope smoke	DISABLED	2026-07-01 08:32:02.434948+00	9982894721505	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:32:02.918781+00	428	428	\N	2026-07-01 08:32:02.435+00	2026-07-08 08:32:02.435+00	2026-07-01 08:32:02.918781+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 433	role_scope_smoke_teacher_1782894788742_8irdn4	$2b$12$ZXb5rm/PKKULe6HbefMaLeRhYDt1lXBdn6wBckECHswjIBRdLcRvy	Automated role scope smoke	DISABLED	2026-07-01 08:33:09.674962+00	9982894788742	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:33:10.146654+00	428	428	\N	2026-07-01 08:33:09.678+00	2026-07-08 08:33:09.678+00	2026-07-01 08:33:10.146654+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 434	role_scope_smoke_teacher_1782896698932_n7uzta	$2b$12$QC2Gg7NSREsX4vE61nXXsuori0dw9EP0GGA7GknXp11xfdR9eaif.	Automated role scope smoke	ACTIVE	2026-07-01 09:04:59.874589+00	9982896698932	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 09:08:15.962453+00	428	428	\N	2026-07-01 09:04:59.875+00	2026-07-08 09:04:59.875+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-435	10010002-K36WJ	$2b$12$HKwpBvqCKkAJaIABsq8Uk.wwxUEP4dMqPOCdhEI9p/f47OWSp7Leu	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 09:05:44.025618+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-01 09:05:45.216066+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 09:05:44.484+00	2026-07-08 09:05:44.484+00	2026-07-01 09:05:45.216066+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+435	10010002-K36WJ	$2b$12$HKwpBvqCKkAJaIABsq8Uk.wwxUEP4dMqPOCdhEI9p/f47OWSp7Leu	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 09:05:44.025618+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 09:05:44.484+00	2026-07-08 09:05:44.484+00	2026-07-01 09:05:45.216066+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 146	10010004-XZ4ST	$2b$12$80B/0SwbSih9RYmsdtU2p.nguCqif0rfHUC9Pa0CCahjfX61aTD2a	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	เกวลิน	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2bb29287-fa05-45ca-9988-7d21039defbc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 147	10010004-6R7PB	$2b$12$8wM6kIDUqR/LWkRx8bIGruOOUMkrXYoVES6zsGp2M78l7QLq3Zghu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	อนุชา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4207f945-2d75-4f02-ac2c-1acd90a04f8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 148	10010004-Y228F	$2b$12$9/h/vvNdqxYNP28vLGphSeRmhYP9wel3t0/CAomY/LuZhY8N6I.Lq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นภาพร	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d373db90-a6c3-4400-a735-6fc395acd8e7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
@@ -19352,6 +19769,20 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 159	10010004-SXFU8	$2b$12$rIkAm6MlvivQS6vUT4/Y6O0QHNPFral0nRKHkZPCE8Y5iaS2MS/rm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กาญจนา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71ec0062-a255-4a20-8531-33a8d5455aa9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 160	10010004-6PUXH	$2b$12$2GwAYpF/AVwKAYW/a/5Sn.cQ48EUx5zzelRTEjwQlw6ZTuxhrTE7S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชนะชัย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d9bac52c-ddd9-4424-b1f4-70adc4bfa6bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 \.
+
+
+--
+-- Name: absence_reason_categories_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.absence_reason_categories_id_seq', 1, false);
+
+
+--
+-- Name: absence_reasons_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.absence_reasons_id_seq', 1, false);
 
 
 --
@@ -19372,7 +19803,7 @@ SELECT pg_catalog.setval('public."attendance_AttendanceID_seq"', 185, true);
 -- Name: audit_log_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.audit_log_id_seq', 190, true);
+SELECT pg_catalog.setval('public.audit_log_id_seq', 257, true);
 
 
 --
@@ -19380,6 +19811,13 @@ SELECT pg_catalog.setval('public.audit_log_id_seq', 190, true);
 --
 
 SELECT pg_catalog.setval('public.cases_id_seq', 1021, true);
+
+
+--
+-- Name: disability_types_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.disability_types_id_seq', 10, true);
 
 
 --
@@ -19414,7 +19852,14 @@ SELECT pg_catalog.setval('public."external_users_ExternalID_seq"', 1, false);
 -- Name: migrations_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.migrations_id_seq', 56, true);
+SELECT pg_catalog.setval('public.migrations_id_seq', 60, true);
+
+
+--
+-- Name: non_follow_up_reasons_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.non_follow_up_reasons_id_seq', 1, false);
 
 
 --
@@ -19450,6 +19895,13 @@ SELECT pg_catalog.setval('public.roles_id_seq', 114, true);
 --
 
 SELECT pg_catalog.setval('public.schedules_id_seq', 1, false);
+
+
+--
+-- Name: school_affiliations_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.school_affiliations_id_seq', 5, true);
 
 
 --
@@ -19491,7 +19943,7 @@ SELECT pg_catalog.setval('public.task_submissions_id_seq', 2, true);
 -- Name: users_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.users_id_seq', 435, true);
+SELECT pg_catalog.setval('public.users_id_seq', 442, true);
 
 
 --
@@ -19500,6 +19952,38 @@ SELECT pg_catalog.setval('public.users_id_seq', 435, true);
 
 ALTER TABLE ONLY public.migrations
     ADD CONSTRAINT "PK_8c82d7f526340ab734260ea46be" PRIMARY KEY (id);
+
+
+--
+-- Name: absence_reason_categories absence_reason_categories_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reason_categories
+    ADD CONSTRAINT absence_reason_categories_code_key UNIQUE (code);
+
+
+--
+-- Name: absence_reason_categories absence_reason_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reason_categories
+    ADD CONSTRAINT absence_reason_categories_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: absence_reasons absence_reasons_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reasons
+    ADD CONSTRAINT absence_reasons_code_key UNIQUE (code);
+
+
+--
+-- Name: absence_reasons absence_reasons_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reasons
+    ADD CONSTRAINT absence_reasons_pkey PRIMARY KEY (id);
 
 
 --
@@ -19559,6 +20043,14 @@ ALTER TABLE ONLY public.case_reviews
 
 
 --
+-- Name: case_student_uuid_backfill_20260702_backup case_student_uuid_backfill_20260702_backup_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_student_uuid_backfill_20260702_backup
+    ADD CONSTRAINT case_student_uuid_backfill_20260702_backup_pkey PRIMARY KEY (case_id);
+
+
+--
 -- Name: cases cases_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -19572,6 +20064,22 @@ ALTER TABLE ONLY public.cases
 
 ALTER TABLE public.pii_access_events
     ADD CONSTRAINT chk_pii_access_events_subject_type CHECK (((subject_type)::text = ANY ((ARRAY['STUDENT'::character varying, 'USER'::character varying])::text[]))) NOT VALID;
+
+
+--
+-- Name: disability_types disability_types_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.disability_types
+    ADD CONSTRAINT disability_types_code_key UNIQUE (code);
+
+
+--
+-- Name: disability_types disability_types_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.disability_types
+    ADD CONSTRAINT disability_types_pkey PRIMARY KEY (id);
 
 
 --
@@ -19636,6 +20144,22 @@ ALTER TABLE ONLY public.external_users
 
 ALTER TABLE ONLY public.grade_levels
     ADD CONSTRAINT grade_levels_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: non_follow_up_reasons non_follow_up_reasons_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.non_follow_up_reasons
+    ADD CONSTRAINT non_follow_up_reasons_code_key UNIQUE (code);
+
+
+--
+-- Name: non_follow_up_reasons non_follow_up_reasons_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.non_follow_up_reasons
+    ADD CONSTRAINT non_follow_up_reasons_pkey PRIMARY KEY (id);
 
 
 --
@@ -19708,6 +20232,22 @@ ALTER TABLE ONLY public.roles
 
 ALTER TABLE ONLY public.schedules
     ADD CONSTRAINT schedules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: school_affiliations school_affiliations_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_affiliations
+    ADD CONSTRAINT school_affiliations_code_key UNIQUE (code);
+
+
+--
+-- Name: school_affiliations school_affiliations_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_affiliations
+    ADD CONSTRAINT school_affiliations_pkey PRIMARY KEY (id);
 
 
 --
@@ -19924,6 +20464,13 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_username_key UNIQUE (username);
+
+
+--
+-- Name: idx_absence_reasons_category_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_absence_reasons_category_id ON public.absence_reasons USING btree (category_id);
 
 
 --
@@ -20221,6 +20768,20 @@ CREATE UNIQUE INDEX uq_users_active_student_person ON public.users USING btree (
 
 
 --
+-- Name: absence_reason_categories trg_absence_reason_categories_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_absence_reason_categories_set_updated_at BEFORE UPDATE ON public.absence_reason_categories FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: absence_reasons trg_absence_reasons_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_absence_reasons_set_updated_at BEFORE UPDATE ON public.absence_reasons FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: assistance_measures trg_assistance_measures_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -20270,6 +20831,13 @@ CREATE TRIGGER trg_cases_set_updated_at BEFORE UPDATE ON public.cases FOR EACH R
 
 
 --
+-- Name: disability_types trg_disability_types_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_disability_types_set_updated_at BEFORE UPDATE ON public.disability_types FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: dropout_reasons trg_dropout_reasons_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -20305,6 +20873,13 @@ CREATE TRIGGER trg_grade_levels_set_updated_at BEFORE UPDATE ON public.grade_lev
 
 
 --
+-- Name: non_follow_up_reasons trg_non_follow_up_reasons_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_non_follow_up_reasons_set_updated_at BEFORE UPDATE ON public.non_follow_up_reasons FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: pii_access_events trg_pii_access_events_immutable; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -20337,6 +20912,13 @@ CREATE TRIGGER trg_roles_set_updated_at BEFORE UPDATE ON public.roles FOR EACH R
 --
 
 CREATE TRIGGER trg_schedules_set_updated_at BEFORE UPDATE ON public.schedules FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: school_affiliations trg_school_affiliations_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_school_affiliations_set_updated_at BEFORE UPDATE ON public.school_affiliations FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -20435,6 +21017,62 @@ CREATE TRIGGER trg_tasks_set_updated_at BEFORE UPDATE ON public.tasks FOR EACH R
 --
 
 CREATE TRIGGER trg_users_set_updated_at BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: absence_reason_categories absence_reason_categories_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reason_categories
+    ADD CONSTRAINT absence_reason_categories_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: absence_reason_categories absence_reason_categories_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reason_categories
+    ADD CONSTRAINT absence_reason_categories_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: absence_reason_categories absence_reason_categories_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reason_categories
+    ADD CONSTRAINT absence_reason_categories_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: absence_reasons absence_reasons_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reasons
+    ADD CONSTRAINT absence_reasons_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.absence_reason_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: absence_reasons absence_reasons_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reasons
+    ADD CONSTRAINT absence_reasons_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: absence_reasons absence_reasons_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reasons
+    ADD CONSTRAINT absence_reasons_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: absence_reasons absence_reasons_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.absence_reasons
+    ADD CONSTRAINT absence_reasons_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -20635,6 +21273,30 @@ ALTER TABLE ONLY public.cases
 
 ALTER TABLE ONLY public.cases
     ADD CONSTRAINT cases_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: disability_types disability_types_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.disability_types
+    ADD CONSTRAINT disability_types_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: disability_types disability_types_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.disability_types
+    ADD CONSTRAINT disability_types_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: disability_types disability_types_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.disability_types
+    ADD CONSTRAINT disability_types_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -20854,6 +21516,30 @@ ALTER TABLE ONLY public.grade_levels
 
 
 --
+-- Name: non_follow_up_reasons non_follow_up_reasons_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.non_follow_up_reasons
+    ADD CONSTRAINT non_follow_up_reasons_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: non_follow_up_reasons non_follow_up_reasons_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.non_follow_up_reasons
+    ADD CONSTRAINT non_follow_up_reasons_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: non_follow_up_reasons non_follow_up_reasons_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.non_follow_up_reasons
+    ADD CONSTRAINT non_follow_up_reasons_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: pii_access_events pii_access_events_actor_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -20923,6 +21609,30 @@ ALTER TABLE ONLY public.schedules
 
 ALTER TABLE ONLY public.schedules
     ADD CONSTRAINT schedules_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_affiliations school_affiliations_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_affiliations
+    ADD CONSTRAINT school_affiliations_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_affiliations school_affiliations_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_affiliations
+    ADD CONSTRAINT school_affiliations_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_affiliations school_affiliations_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_affiliations
+    ADD CONSTRAINT school_affiliations_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -21304,5 +22014,5 @@ REVOKE USAGE ON SCHEMA public FROM PUBLIC;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Of27xE4X9vlZBFi98QTXl3cnXVej2FX1KEo7PddoAbDdIZ8tmG1E4j8zgCxWlQl
+\unrestrict hepZhfzga8jNWLtybVdUcEMfL2Uelhn7UudkihTbZq2S5ZKbRbHoTtK3Zjmzgul
 

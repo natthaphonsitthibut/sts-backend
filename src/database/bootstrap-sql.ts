@@ -968,6 +968,94 @@ export const DATABASE_BASELINE_SQL = `
 
   ${SET_UPDATED_AT_FUNCTION_SQL}
 
+  CREATE TABLE IF NOT EXISTS school_affiliations (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    note TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_school_affiliations_code CHECK (length(trim(code)) > 0),
+    CONSTRAINT chk_school_affiliations_name CHECK (length(trim(name)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('school_affiliations')}
+
+  CREATE TABLE IF NOT EXISTS disability_types (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    note TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    legal_category TEXT,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_disability_types_code CHECK (length(trim(code)) > 0),
+    CONSTRAINT chk_disability_types_name CHECK (length(trim(name)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('disability_types')}
+
+  CREATE TABLE IF NOT EXISTS absence_reason_categories (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    note TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_absence_reason_categories_code CHECK (length(trim(code)) > 0),
+    CONSTRAINT chk_absence_reason_categories_name CHECK (length(trim(name)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('absence_reason_categories')}
+
+  CREATE TABLE IF NOT EXISTS absence_reasons (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    category_id BIGINT NOT NULL REFERENCES absence_reason_categories(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    note TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_absence_reasons_code CHECK (length(trim(code)) > 0),
+    CONSTRAINT chk_absence_reasons_name CHECK (length(trim(name)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('absence_reasons')}
+  CREATE INDEX IF NOT EXISTS idx_absence_reasons_category_id
+    ON absence_reasons (category_id);
+
+  CREATE TABLE IF NOT EXISTS non_follow_up_reasons (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    note TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_non_follow_up_reasons_code CHECK (length(trim(code)) > 0),
+    CONSTRAINT chk_non_follow_up_reasons_name CHECK (length(trim(name)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('non_follow_up_reasons')}
+
+  INSERT INTO school_affiliations (code, name)
+  VALUES
+    ('สพฐ', 'สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน'),
+    ('สช', 'สำนักงานคณะกรรมการส่งเสริมการศึกษาเอกชน'),
+    ('อปท', 'องค์กรปกครองส่วนท้องถิ่น'),
+    ('กทม', 'กรุงเทพมหานคร'),
+    ('มกท', 'เมืองพัทยา')
+  ON CONFLICT (code) DO NOTHING;
+
+  INSERT INTO disability_types (code, name, legal_category)
+  VALUES
+    ('NONE', 'ไม่มีความพิการ', NULL),
+    ('VISUAL', 'ความบกพร่องทางการเห็น', 'ความพิการทางการเห็น'),
+    ('HEARING', 'ความบกพร่องทางการได้ยินหรือสื่อความหมาย', 'ความพิการทางการได้ยินหรือสื่อความหมาย'),
+    ('INTELLECTUAL', 'ความบกพร่องทางสติปัญญา', 'ความพิการทางสติปัญญา'),
+    ('PHYSICAL_HEALTH', 'ความบกพร่องทางร่างกายหรือสุขภาพ', 'ความพิการทางร่างกายหรือการเคลื่อนไหว'),
+    ('LEARNING', 'ความบกพร่องทางการเรียนรู้', 'ความพิการทางการเรียนรู้'),
+    ('SPEECH_LANGUAGE', 'ความบกพร่องทางการพูดและภาษา', 'ความพิการทางการพูดและภาษา'),
+    ('BEHAVIOR_EMOTION', 'ความบกพร่องทางพฤติกรรมหรืออารมณ์', 'ความพิการทางพฤติกรรมหรืออารมณ์'),
+    ('AUTISM', 'ออทิสติก', 'ออทิสติก'),
+    ('MULTIPLE', 'ความพิการซ้อน', 'ความพิการซ้อน')
+  ON CONFLICT (code) DO NOTHING;
+
   CREATE TABLE IF NOT EXISTS student_status (
     code INTEGER PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,

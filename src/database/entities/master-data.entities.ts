@@ -75,3 +75,41 @@ export class EducationalAreaEntity {
   @Column({ name: 'name', type: 'text' })
   name!: string;
 }
+
+abstract class CodedMasterDataEntity {
+  @PrimaryGeneratedColumn({ name: 'id', type: 'bigint' })
+  id!: string;
+
+  @Column({ name: 'code', type: 'text' })
+  code!: string;
+
+  @Column({ name: 'name', type: 'text' })
+  name!: string;
+
+  @Column({ name: 'note', type: 'text', nullable: true })
+  note!: string | null;
+
+  @Column({ name: 'is_active', type: 'boolean' })
+  isActive!: boolean;
+}
+
+@Entity({ name: 'school_affiliations' })
+export class SchoolAffiliationEntity extends CodedMasterDataEntity {}
+
+@Entity({ name: 'disability_types' })
+export class DisabilityTypeEntity extends CodedMasterDataEntity {
+  @Column({ name: 'legal_category', type: 'text', nullable: true })
+  legalCategory!: string | null;
+}
+
+@Entity({ name: 'absence_reason_categories' })
+export class AbsenceReasonCategoryEntity extends CodedMasterDataEntity {}
+
+@Entity({ name: 'absence_reasons' })
+export class AbsenceReasonEntity extends CodedMasterDataEntity {
+  @Column({ name: 'category_id', type: 'bigint' })
+  categoryId!: string;
+}
+
+@Entity({ name: 'non_follow_up_reasons' })
+export class NonFollowUpReasonEntity extends CodedMasterDataEntity {}
