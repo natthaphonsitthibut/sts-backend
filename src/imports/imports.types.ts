@@ -129,6 +129,7 @@ export interface ExistingStudentTermRow extends ExistingImportPersonIdRow {
 export interface ImportReferenceRow extends Record<string, unknown> {
   id: number;
   label: string;
+  category?: string;
 }
 
 export type ImportWriteAction = 'inserted' | 'updated' | 'skipped';

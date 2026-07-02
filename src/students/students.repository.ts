@@ -109,6 +109,8 @@ export class StudentsRepository {
       FROM student_term s
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+      LEFT JOIN student_status ss
+        ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
       ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
     `;
 
@@ -145,7 +147,9 @@ export class StudentsRepository {
           COALESCE(gl.label, 'ไม่ทราบ') as grade,
           s."RoomID_Onec"::text as room,
           sc.name as school_name,
-          sc.id as school_id
+          sc.id as school_id,
+          COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
+          COALESCE(ss.category, 'UNMAPPED') as student_status_category
         ${fromWhere}
         ORDER BY s."SchoolID_Onec" ASC, s."GradeLevelID_Onec" ASC, s."RoomID_Onec" ASC, s."PersonID_Onec" ASC
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
@@ -259,10 +263,14 @@ export class StudentsRepository {
         s.*,
         gl.label as grade,
         s."RoomID_Onec"::text as room,
-        sc.name as school_name
+        sc.name as school_name,
+        COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
+        COALESCE(ss.category, 'UNMAPPED') as student_status_category
       FROM student_term s
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+      LEFT JOIN student_status ss
+        ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
       WHERE s.student_uuid = $1
     `;
     const params: unknown[] = [id];
@@ -297,6 +305,7 @@ export class StudentsRepository {
     // national id) — strip it from the wire shape; internal callers resolve it
     // via findPersonUuidByStudentUuid instead.
     delete (row as Record<string, unknown>).person_uuid;
+    delete (row as Record<string, unknown>).student_status_code;
     return row;
   }
 

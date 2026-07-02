@@ -172,6 +172,14 @@ function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
     room: typeof student.room === 'string' && student.room.trim().length > 0 ? student.room : '-',
     school_name: typeof student.school_name === 'string' ? student.school_name : null,
     school_id: Number.isFinite(schoolId) ? schoolId : null,
+    student_status_label:
+      typeof student.student_status_label === 'string'
+        ? student.student_status_label
+        : 'ยังไม่ได้จับคู่',
+    student_status_category:
+      typeof student.student_status_category === 'string'
+        ? student.student_status_category
+        : 'UNMAPPED',
   };
 }
 

@@ -1,4 +1,35 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
+import type { StudentStatusCategory } from '../../master-data/student-status.types';
+
+@Entity({ name: 'student_status' })
+export class StudentStatusEntity {
+  @PrimaryColumn({ name: 'code', type: 'integer' })
+  code!: number;
+
+  @Column({ name: 'label_th', type: 'varchar', length: 100 })
+  labelTh!: string;
+
+  @Column({ name: 'category', type: 'varchar', length: 32 })
+  category!: StudentStatusCategory;
+
+  @Column({ name: 'is_active_for_login', type: 'boolean' })
+  isActiveForLogin!: boolean;
+
+  @Column({ name: 'is_terminal', type: 'boolean' })
+  isTerminal!: boolean;
+
+  @Column({ name: 'requires_followup', type: 'boolean' })
+  requiresFollowup!: boolean;
+
+  @Column({ name: 'is_enabled', type: 'boolean' })
+  isEnabled!: boolean;
+
+  @Column({ name: 'sort_order', type: 'smallint' })
+  sortOrder!: number;
+
+  @Column({ name: 'source_system', type: 'varchar', length: 32 })
+  sourceSystem!: string;
+}
 
 @Entity({ name: 'risk_factors' })
 export class RiskFactorEntity {

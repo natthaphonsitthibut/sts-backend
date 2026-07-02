@@ -52,6 +52,9 @@ export interface ImportPreviewRow {
   gradeLevelId: string;
   gradeLabel: string;
   roomId: string;
+  studentStatusCode: string;
+  studentStatusLabel: string;
+  studentStatusCategory: string;
 }
 
 export interface ImportPreviewResult {
@@ -420,15 +423,18 @@ export class ImportsService {
     );
     const schoolIds = this.numericReferenceIds(data, mapping['SchoolID_Onec']);
     const gradeIds = this.numericReferenceIds(data, mapping['GradeLevelID_Onec']);
-    const [schools, grades] =
+    const statusCodes = this.numericReferenceIds(data, mapping['StudentStatusID_Onec']);
+    const [schools, grades, statuses] =
       validTarget === 'student_term'
         ? await Promise.all([
             this.importsRepository.findSchoolNames(schoolIds),
             this.importsRepository.findGradeLabels(gradeIds),
+            this.importsRepository.findStudentStatusLabels(statusCodes),
           ])
-        : [[], []];
+        : [[], [], []];
     const schoolNames = new Map(schools.map((row) => [Number(row.id), row.label]));
     const gradeLabels = new Map(grades.map((row) => [Number(row.id), row.label]));
+    const statusLabels = new Map(statuses.map((row) => [Number(row.id), row]));
     const seenKeys = new Set<string>();
 
     let rowsReady = 0;
@@ -479,6 +485,8 @@ export class ImportsService {
 
         const schoolId = this.normalizeScalar(dbRow['SchoolID_Onec']);
         const gradeLevelId = this.normalizeScalar(dbRow['GradeLevelID_Onec']);
+        const studentStatusCode = this.normalizeScalar(dbRow['StudentStatusID_Onec']);
+        const studentStatus = statusLabels.get(Number(studentStatusCode));
 
         return {
           rowNumber: index + 2,
@@ -495,6 +503,9 @@ export class ImportsService {
           gradeLevelId: gradeLevelId || '-',
           gradeLabel: gradeLabels.get(Number(gradeLevelId)) ?? '-',
           roomId: this.normalizeScalar(dbRow['RoomID_Onec']) || '-',
+          studentStatusCode: studentStatusCode || '-',
+          studentStatusLabel: studentStatus?.label ?? 'ยังไม่ได้จับคู่',
+          studentStatusCategory: studentStatus?.category ?? 'UNMAPPED',
         };
       });
 

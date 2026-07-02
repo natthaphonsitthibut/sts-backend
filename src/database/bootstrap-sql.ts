@@ -968,6 +968,56 @@ export const DATABASE_BASELINE_SQL = `
 
   ${SET_UPDATED_AT_FUNCTION_SQL}
 
+  CREATE TABLE IF NOT EXISTS student_status (
+    code INTEGER PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    category VARCHAR(32) NOT NULL,
+    is_active_for_login BOOLEAN NOT NULL DEFAULT FALSE,
+    is_terminal BOOLEAN NOT NULL DEFAULT FALSE,
+    requires_followup BOOLEAN NOT NULL DEFAULT FALSE,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order SMALLINT NOT NULL,
+    source_system VARCHAR(32) NOT NULL DEFAULT 'ONEC',
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_status_category
+      CHECK (category IN ('ACTIVE', 'GRADUATED', 'WITHDRAWN', 'TRANSFERRED', 'DECEASED', 'UNMAPPED')),
+    CONSTRAINT chk_student_status_sort_order CHECK (sort_order >= 0),
+    CONSTRAINT chk_student_status_source_system CHECK (length(trim(source_system)) > 0),
+    CONSTRAINT chk_student_status_label_th CHECK (length(trim(label_th)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('student_status')}
+
+  INSERT INTO student_status (
+    code, label_th, category, is_active_for_login, is_terminal,
+    requires_followup, is_enabled, sort_order, source_system
+  )
+  VALUES
+    (10, 'กำลังศึกษา', 'ACTIVE', TRUE, FALSE, FALSE, TRUE, 10, 'ONEC'),
+    (20, 'จบการศึกษา', 'GRADUATED', FALSE, TRUE, FALSE, TRUE, 20, 'ONEC'),
+    (30, 'ลาออก/จำหน่าย', 'WITHDRAWN', FALSE, TRUE, TRUE, TRUE, 30, 'ONEC'),
+    (40, 'ย้ายสถานศึกษา', 'TRANSFERRED', FALSE, TRUE, FALSE, TRUE, 40, 'ONEC')
+  ON CONFLICT (code) DO NOTHING;
+
+  ALTER TABLE student_term ADD COLUMN IF NOT EXISTS student_status_code INTEGER;
+  UPDATE student_term AS enrollment
+  SET student_status_code = status.code
+  FROM student_status AS status
+  WHERE enrollment.student_status_code IS NULL
+    AND enrollment."StudentStatusID_Onec" = status.code;
+  DO $student_status_fk$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_term_student_status'
+    ) THEN
+      ALTER TABLE student_term
+        ADD CONSTRAINT fk_student_term_student_status
+        FOREIGN KEY (student_status_code) REFERENCES student_status(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $student_status_fk$;
+  CREATE INDEX IF NOT EXISTS idx_student_term_student_status_code
+    ON student_term (student_status_code);
+
   ${STUDENT_ACCOUNT_BATCH_TABLES_SQL}
 
   ${AUDIT_RETROFIT_SQL}

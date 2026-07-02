@@ -28,6 +28,9 @@ describe('ImportsService', () => {
       findExistingSchoolIds: jest.fn().mockResolvedValue([]),
       findSchoolNames: jest.fn().mockResolvedValue([{ id: 1001, label: 'Test School' }]),
       findGradeLabels: jest.fn().mockResolvedValue([{ id: 101, label: 'ป.1' }]),
+      findStudentStatusLabels: jest
+        .fn()
+        .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'ACTIVE' }]),
     };
     const auditLog = {
       record: jest.fn(),
@@ -57,6 +60,7 @@ describe('ImportsService', () => {
         AcademicYear_Onec: 2567,
         Semester_Onec: 1,
         GradeLevelID_Onec: 101,
+        StudentStatusID_Onec: 10,
       },
       {
         PersonID_Onec: '1111111111111',
@@ -105,6 +109,7 @@ describe('ImportsService', () => {
       status: 'ready',
       schoolName: 'Test School',
       gradeLabel: 'ป.1',
+      studentStatusLabel: 'กำลังศึกษา',
     });
     expect(preview.sampleRows[2]).toMatchObject({ action: 'update', status: 'ready' });
   });

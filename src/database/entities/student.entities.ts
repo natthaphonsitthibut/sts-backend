@@ -60,6 +60,12 @@ export class StudentTermEntity {
   @Column({ name: 'GPAX_Onec', type: 'real', nullable: true })
   gpaxOnec!: number | null;
 
+  @Column({ name: 'StudentStatusID_Onec', type: 'integer', nullable: true })
+  studentStatusIdOnec!: number | null;
+
+  @Column({ name: 'student_status_code', type: 'integer', nullable: true })
+  studentStatusCode!: number | null;
+
   @Column({ name: 'ProvinceNameThai_Onec', type: 'text', nullable: true })
   provinceNameThaiOnec!: string | null;
 

@@ -126,6 +126,22 @@ export class ImportsRepository {
     return result.rows;
   }
 
+  async findStudentStatusLabels(statusCodes: number[]): Promise<ImportReferenceRow[]> {
+    if (statusCodes.length === 0) {
+      return [];
+    }
+
+    const result = await this.query<ImportReferenceRow>(
+      `
+        SELECT code AS id, label_th AS label, category
+        FROM student_status
+        WHERE code = ANY($1::int[])
+      `,
+      [statusCodes],
+    );
+    return result.rows;
+  }
+
   async upsertManualSchool(school: ManualSchool, executor?: QueryExecutor): Promise<void> {
     const queryExecutor = this.getExecutor(executor);
 

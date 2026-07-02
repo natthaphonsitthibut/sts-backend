@@ -11,6 +11,7 @@ import {
   EducationalAreaEntity,
   RelatedAgencyEntity,
   RiskFactorEntity,
+  StudentStatusEntity,
 } from './master-data.entities';
 import { AttendanceEntity, StudentDropoutEntity, StudentTermEntity } from './student.entities';
 import {
@@ -51,6 +52,7 @@ export const DATABASE_ENTITIES = [
   AssistanceMeasureEntity,
   RelatedAgencyEntity,
   EducationalAreaEntity,
+  StudentStatusEntity,
 ];
 
 export {
@@ -71,6 +73,7 @@ export {
   SchoolCalendarDayEntity,
   SchoolTermEntity,
   StudentDropoutEntity,
+  StudentStatusEntity,
   StudentTermEntity,
   SystemSettingEntity,
   TaskEntity,
