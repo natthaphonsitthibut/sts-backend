@@ -109,6 +109,15 @@ export class ImportsService {
     return this.normalizeScalar(value).replace(/[^0-9]/g, '');
   }
 
+  private normalizePositiveInteger(value: unknown): string {
+    const normalized = this.normalizeScalar(value);
+    if (!/^\d+$/.test(normalized)) {
+      return '';
+    }
+    const numericValue = Number(normalized);
+    return Number.isSafeInteger(numericValue) && numericValue > 0 ? String(numericValue) : '';
+  }
+
   private maskIdentifier(value: unknown): string {
     const normalized = this.normalizeNationalId(value);
     if (normalized.length >= 4) {
@@ -283,9 +292,9 @@ export class ImportsService {
 
   private studentTermKey(row: Record<string, unknown>): string | null {
     const personId = this.normalizeNationalId(row['PersonID_Onec']);
-    const academicYear = this.normalizeScalar(row['AcademicYear_Onec']);
-    const semester = this.normalizeScalar(row['Semester_Onec']);
-    const schoolId = this.normalizeScalar(row['SchoolID_Onec']);
+    const academicYear = this.normalizePositiveInteger(row['AcademicYear_Onec']);
+    const semester = this.normalizePositiveInteger(row['Semester_Onec']);
+    const schoolId = this.normalizePositiveInteger(row['SchoolID_Onec']);
     if (!personId || !academicYear || !semester || !schoolId) {
       return null;
     }
@@ -464,7 +473,7 @@ export class ImportsService {
           issues.push('ไม่มี PersonID_Onec');
           action = 'skip';
         } else if (!rowKey) {
-          issues.push('ปีการศึกษา เทอม หรือโรงเรียนไม่ครบ');
+          issues.push('ปีการศึกษา เทอม หรือโรงเรียนไม่ครบหรือรูปแบบไม่ถูกต้อง');
           action = 'skip';
         } else if (seenKeys.has(rowKey)) {
           issues.push('ซ้ำในไฟล์เดียวกัน');
