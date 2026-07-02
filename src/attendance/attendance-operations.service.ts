@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { normalizeDataScope, type AuthenticatedRequestUser } from '../auth';
+import { resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { CalendarDayType, SchoolTermStatus } from './attendance-operations.types';
 
@@ -254,7 +254,7 @@ export class AttendanceOperationsService {
     const result = await this.repository.listReconciliation(
       term,
       date,
-      normalizeDataScope(actor?.data_scope),
+      resolveActorDataScope(actor),
       page,
       limit,
     );
@@ -291,7 +291,7 @@ export class AttendanceOperationsService {
     }
     const result = await this.repository.listSessionAnomalies(
       term,
-      normalizeDataScope(actor?.data_scope),
+      resolveActorDataScope(actor),
       page,
       limit,
     );
@@ -327,10 +327,7 @@ export class AttendanceOperationsService {
     schoolId: number,
     actor?: AuthenticatedRequestUser,
   ): Promise<void> {
-    const allowed = await this.repository.isSchoolInScope(
-      schoolId,
-      normalizeDataScope(actor?.data_scope),
-    );
+    const allowed = await this.repository.isSchoolInScope(schoolId, resolveActorDataScope(actor));
     if (!allowed) throw new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ');
   }
 
@@ -339,7 +336,7 @@ export class AttendanceOperationsService {
     actor?: AuthenticatedRequestUser,
   ): Promise<void> {
     await this.assertSchoolAccess(schoolId, actor);
-    const scope = normalizeDataScope(actor?.data_scope);
+    const scope = resolveActorDataScope(actor);
     if (scope?.grade_levels?.length || scope?.room_ids?.length) {
       throw new ForbiddenException('การตั้งปฏิทินต้องใช้สิทธิ์ระดับโรงเรียนขึ้นไป');
     }
@@ -350,7 +347,7 @@ export class AttendanceOperationsService {
     roomId: number,
     actor?: AuthenticatedRequestUser,
   ): void {
-    const scope = normalizeDataScope(actor?.data_scope);
+    const scope = resolveActorDataScope(actor);
     if (scope?.grade_levels?.length && !scope.grade_levels.includes(gradeLevelId)) {
       throw new ForbiddenException('ชั้นเรียนอยู่นอกขอบเขตของคุณ');
     }

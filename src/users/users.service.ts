@@ -19,6 +19,7 @@ import {
 } from '../students/pii-fields.config';
 import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
+import { finalizePersistedDataScope } from '../auth/auth.types';
 import { hasPermission } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
@@ -395,9 +396,13 @@ export class UsersService {
     try {
       const currentActor = this.usersPolicyService.ensureActor(actor);
       const roleMap = await this.usersPolicyService.getRoleMap();
+      // Resolve the persisted scope BEFORE authorization: an empty scope means
+      // nationwide (explicit global:true), and only an actor who is nationwide
+      // themselves may grant it — never a silent pass-through of "{}".
+      const persistedScope = finalizePersistedDataScope(data.data_scope);
       await this.usersPolicyService.assertAssignablePayload(
         currentActor,
-        data,
+        { ...data, data_scope: persistedScope },
         { allowEqualRole: false },
         roleMap,
       );
@@ -446,7 +451,7 @@ export class UsersService {
             status: data.status || 'ACTIVE',
             permissions: data.permissions || [],
             role: primaryRole,
-            dataScope: data.data_scope || {},
+            dataScope: persistedScope,
             mustChangePassword: true,
             temporaryPasswordIssuedAt,
             temporaryPasswordExpiresAt,
@@ -581,7 +586,7 @@ export class UsersService {
               data.permissions ??
               this.usersPolicyService.normalizePermissionList(existingUser.permissions),
             role: primaryRole,
-            dataScope: data.data_scope ?? existingUser.data_scope ?? {},
+            dataScope: finalizePersistedDataScope(data.data_scope ?? existingUser.data_scope),
             updatedBy: resolveAuditActorId(currentActor),
           },
           executor,

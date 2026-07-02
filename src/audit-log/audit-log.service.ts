@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { AuthenticatedRequestUser, DataScope } from '../auth';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { hasPermission } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
@@ -461,6 +462,12 @@ export class AuditLogService {
     params: unknown[],
     actorScope: DataScope | undefined,
   ): void {
+    // An unconfigured actor scope (no areas, no explicit global/own_only) must
+    // never widen the audit list to every event — fail closed instead.
+    if (isUnconfiguredDataScope(actorScope)) {
+      conditions.push('1=0');
+      return;
+    }
     const scopeSql = `COALESCE(a.metadata -> 'scope', '{}'::jsonb)`;
     const appendSubset = (key: keyof Omit<DataScope, 'own_only'>, values: unknown): void => {
       const normalized = this.normalizeScopeValues(values).map(String);

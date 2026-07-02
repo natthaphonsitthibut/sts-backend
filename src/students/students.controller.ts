@@ -17,7 +17,7 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
   AuthGuard,
   CurrentUser,
-  normalizeDataScope,
+  resolveActorDataScope,
   PermissionsGuard,
   RequireAnyPermission,
   RequirePermission,
@@ -87,7 +87,7 @@ export class StudentsController {
 
   @Get()
   findAll(@Query() query: GetStudentsQueryDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
-    return this.studentsService.findAll(query, normalizeDataScope(actor?.data_scope), actor);
+    return this.studentsService.findAll(query, resolveActorDataScope(actor), actor);
   }
 
   // Declared before the dynamic `:id` route so the static segment isn't
@@ -97,7 +97,7 @@ export class StudentsController {
     @Query() query: GetStudentFilterOptionsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return this.studentsService.getFilterOptions(query, normalizeDataScope(actor?.data_scope));
+    return this.studentsService.getFilterOptions(query, resolveActorDataScope(actor));
   }
 
   @Get('cases/by-name/:name')
@@ -110,16 +110,12 @@ export class StudentsController {
     @Param('id') id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return this.studentsService.findAttendanceByStudentId(
-      id,
-      actor,
-      normalizeDataScope(actor?.data_scope),
-    );
+    return this.studentsService.findAttendanceByStudentId(id, actor, resolveActorDataScope(actor));
   }
 
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
-    return this.studentsService.findOne(id, actor, normalizeDataScope(actor?.data_scope));
+    return this.studentsService.findOne(id, actor, resolveActorDataScope(actor));
   }
 
   // Reveal a masked PII group (national id / passport) for one student. Staff
@@ -134,7 +130,7 @@ export class StudentsController {
     @Req() req: Request,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return this.studentsService.revealPii(id, actor, normalizeDataScope(actor?.data_scope), body, {
+    return this.studentsService.revealPii(id, actor, resolveActorDataScope(actor), body, {
       ip: req.ip ?? null,
       userAgent: firstHeaderValue(req.headers['user-agent']),
       requestId: firstHeaderValue(req.headers['x-request-id']),
@@ -154,7 +150,7 @@ export class StudentsController {
       id,
       updateStudentDto,
       actor,
-      normalizeDataScope(actor?.data_scope),
+      resolveActorDataScope(actor),
     );
     await this.recordStudentWriteAudit('STUDENT_UPDATE', actor, req, id, updateStudentDto);
     return result;

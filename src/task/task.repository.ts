@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import type {
   ActorContext,
@@ -92,7 +93,7 @@ interface CreateTaskLinkInput {
   createdBy: number | null;
   loginRole: string | null;
   loginPermissions: string[];
-  loginDataScope: Record<string, unknown>;
+  loginDataScope: DataScope | Record<string, unknown>;
 }
 
 interface TaskStudentFilters {
@@ -234,6 +235,12 @@ export class TaskRepository {
     startIndex = 1,
     caseAlias = 'c',
   ): ScopeQuery {
+    // An unconfigured actor scope (no areas, no explicit global/own_only) must
+    // never widen the case list to every row — fail closed instead. own_only is
+    // handled below (restricts to the actor's own created rows).
+    if (isUnconfiguredDataScope(actor?.data_scope)) {
+      return { sql: '1=0', params: [] };
+    }
     const scope = actor?.data_scope || {};
     const params: unknown[] = [];
     const conditions: string[] = [];
@@ -317,6 +324,11 @@ export class TaskRepository {
     actorScope: DataScope | undefined,
     startIndex = 1,
   ): ScopeQuery {
+    // An unconfigured actor scope (no areas, no explicit global/own_only) must
+    // never widen the list to every row — fail closed instead.
+    if (isUnconfiguredDataScope(actorScope)) {
+      return { sql: '1=0', params: [] };
+    }
     const scope = actorScope || {};
     const params: unknown[] = [];
     const conditions: string[] = [];

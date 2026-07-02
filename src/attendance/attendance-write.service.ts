@@ -5,7 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { normalizeDataScope, type AuthenticatedRequestUser } from '../auth';
+import { resolveActorDataScope, type AuthenticatedRequestUser, type DataScope } from '../auth';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { AutomationService, NewCase } from '../automation/automation.service';
 import { AttendanceRepository } from './attendance.repository';
@@ -50,7 +50,7 @@ export class AttendanceWriteService {
             recorder: this.resolveRecorder(actor),
           },
           executor,
-          normalizeDataScope(actor?.data_scope),
+          resolveActorDataScope(actor),
         ),
     );
 
@@ -74,7 +74,7 @@ export class AttendanceWriteService {
     records: AttendanceSaveRecordInput[] | AttendanceWriteRecord[],
     context: AttendanceWriteContext,
     executor: QueryExecutor,
-    actorScope?: ReturnType<typeof normalizeDataScope>,
+    actorScope?: DataScope,
   ): Promise<{
     session: { id: string; status: string; revision: number };
     calendarConfigured: boolean;

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery, type DataScope } from '../common/utils/authorization';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
@@ -65,6 +66,13 @@ export class AttendanceRepository {
   }
 
   async listSchools(filters: SchoolFilters, userScope?: DataScope): Promise<SchoolRow[]> {
+    // Self-only actors (student logins) own no rows in these operational lists;
+    // their reads go through explicit own-uuid paths, never area lists. An
+    // unconfigured scope (no areas, no explicit global) likewise fails closed —
+    // this query builds its scope clauses manually, so guard it here.
+    if (userScope && (userScope.own_only === true || isUnconfiguredDataScope(userScope))) {
+      return [];
+    }
     let query = 'SELECT id, name, province, district, sub_district FROM schools';
     const params: unknown[] = [];
     const conditions: string[] = [];
@@ -153,6 +161,10 @@ export class AttendanceRepository {
     filters: StudentFilters,
     userScope?: DataScope,
   ): Promise<AttendanceStudentRow[]> {
+    // Self-only actors own no roster rows (see listSchools note).
+    if (userScope?.own_only === true) {
+      return [];
+    }
     // Roster guard: this list is a class roster, not a national directory. A
     // global/area admin must pin a school (explicit filter or school-scoped
     // login) before we run it — otherwise return empty instead of every student
@@ -238,6 +250,10 @@ export class AttendanceRepository {
     userScope?: DataScope,
     schoolId?: number | null,
   ): Promise<AttendanceHistoryRow[]> {
+    // Self-only actors own no history rows (see listSchools note).
+    if (userScope?.own_only === true) {
+      return [];
+    }
     // Bound the query to a single school's day. Without a school the result set
     // is a whole day nationwide (global admin) — return empty instead. Scope is
     // still applied on top so an actor can't read a school outside their area.
@@ -288,6 +304,10 @@ export class AttendanceRepository {
   }
 
   async listAttendanceTasks(userScope?: DataScope): Promise<AttendanceTaskRow[]> {
+    // Self-only actors own no link rows (see listSchools note).
+    if (userScope?.own_only === true) {
+      return [];
+    }
     const conditions = [`t.task_type = 'ATTENDANCE'`, 't.deleted_at IS NULL'];
     let query = `
       SELECT
@@ -397,6 +417,14 @@ export class AttendanceRepository {
     totalCount: number;
     summary: { total: number; active: number; locked: number; expired: number };
   }> {
+    // Self-only actors own no link rows (see listSchools note).
+    if (userScope?.own_only === true) {
+      return {
+        rows: [],
+        totalCount: 0,
+        summary: { total: 0, active: 0, locked: 0, expired: 0 },
+      };
+    }
     const linkStateSql = `
       CASE
         WHEN tl.id IS NULL OR tl.expires_at <= NOW() THEN 'EXPIRED'
@@ -639,6 +667,10 @@ export class AttendanceRepository {
     executor?: QueryExecutor,
   ): Promise<string[]> {
     if (studentIds.length === 0) {
+      return [];
+    }
+    // Self-only actors may not validate/write roster attendance at all.
+    if (userScope?.own_only === true) {
       return [];
     }
 

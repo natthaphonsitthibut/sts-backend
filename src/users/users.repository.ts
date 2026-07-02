@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
@@ -361,6 +362,11 @@ export class UsersRepository {
     actorScope: DataScope | undefined,
     startIndex = 1,
   ): ScopeQuery {
+    // An unconfigured actor scope (no areas, no explicit global/own_only) must
+    // never widen the list to every row — fail closed instead.
+    if (isUnconfiguredDataScope(actorScope)) {
+      return { sql: '1=0', params: [] };
+    }
     const scope = actorScope || {};
     const params: unknown[] = [];
     const conditions: string[] = [];

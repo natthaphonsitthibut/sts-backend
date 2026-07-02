@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
+import { finalizePersistedDataScope } from '../auth/auth.types';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -160,8 +161,13 @@ export class TaskLifecycleService {
       taskType === 'LOGIN'
         ? this.taskPolicyService.normalizePermissionList(data.permissions ?? data.mock_permissions)
         : [];
+    // Persist LOGIN scopes with an explicit nationwide marker: scoped reads
+    // fail closed on an empty scope, so a confirmed-nationwide link must be
+    // stored as global:true rather than an empty object.
     const loginDataScope =
-      taskType === 'LOGIN' ? this.taskPolicyService.normalizeScope(data.data_scope) : {};
+      taskType === 'LOGIN'
+        ? finalizePersistedDataScope(this.taskPolicyService.normalizeScope(data.data_scope))
+        : {};
 
     if (taskType === 'LOGIN') {
       await this.taskPolicyService.assertAssignableLoginPayload(

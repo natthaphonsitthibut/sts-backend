@@ -16,7 +16,7 @@ import {
   PermissionsGuard,
   RequireAnyPermission,
   RequirePermission,
-  normalizeDataScope,
+  resolveActorDataScope,
   type AuthenticatedRequestUser,
 } from '../auth';
 import { AttendanceService } from './attendance.service';
@@ -66,7 +66,7 @@ export class AttendanceController {
       query.subDistrict,
       query.searchTerm,
       query.limit,
-      normalizeDataScope(actor?.data_scope),
+      resolveActorDataScope(actor),
     );
   }
 
@@ -84,7 +84,7 @@ export class AttendanceController {
       query.grade,
       query.room,
       query.schoolId,
-      normalizeDataScope(actor?.data_scope),
+      resolveActorDataScope(actor),
     );
   }
 
@@ -96,7 +96,7 @@ export class AttendanceController {
     const schoolId = query.schoolId ? Number(query.schoolId) : null;
     return await this.attendanceService.getHistory(
       query.date,
-      normalizeDataScope(actor?.data_scope),
+      resolveActorDataScope(actor),
       Number.isInteger(schoolId) ? schoolId : null,
     );
   }
@@ -120,7 +120,7 @@ export class AttendanceController {
     @Query() query: GetAttendanceTasksQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    const scope = normalizeDataScope(actor?.data_scope);
+    const scope = resolveActorDataScope(actor);
     // Opt-in pagination: the dashboard sends `page` and gets the paginated
     // envelope; legacy callers (no page) still get the full array.
     if (query.page === undefined) {
