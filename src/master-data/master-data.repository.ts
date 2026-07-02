@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
-import { getMasterDataValueColumn } from './master-data.types';
+import { getCodedMasterDataWritableColumns, getMasterDataValueColumn } from './master-data.types';
 import type {
+  CodedMasterDataColumn,
+  CodedMasterDataTable,
   MasterDataRow,
   MasterDataTable,
   MasterDataValueColumn,
@@ -18,6 +20,8 @@ interface ListRowsPaginatedOptions {
 interface CountRow extends Record<string, unknown> {
   total: number;
 }
+
+export type CodedMasterDataInput = Partial<Record<CodedMasterDataColumn, unknown>>;
 
 @Injectable()
 export class MasterDataRepository {
@@ -74,10 +78,7 @@ export class MasterDataRepository {
       return { whereSql: '', params: [] };
     }
 
-    const searchColumns =
-      table === 'schools'
-        ? ['name', 'province', 'district', 'sub_district']
-        : [getMasterDataValueColumn(table)];
+    const searchColumns = this.getSearchColumns(table);
     const params = [`%${trimmedSearch}%`];
     const conditions = searchColumns.map((column) => `COALESCE(${column}::text, '') ILIKE $1`);
 
@@ -85,6 +86,25 @@ export class MasterDataRepository {
       whereSql: ` WHERE (${conditions.join(' OR ')})`,
       params,
     };
+  }
+
+  private getSearchColumns(table: MasterDataTable): string[] {
+    if (table === 'schools') {
+      return ['name', 'province', 'district', 'sub_district'];
+    }
+    if (table === 'disability_types') {
+      return ['code', 'name', 'legal_category', 'note'];
+    }
+    if (
+      table === 'school_affiliations' ||
+      table === 'absence_reason_categories' ||
+      table === 'absence_reasons' ||
+      table === 'non_follow_up_reasons'
+    ) {
+      return ['code', 'name', 'note'];
+    }
+
+    return [getMasterDataValueColumn(table)];
   }
 
   async findRowById(table: MasterDataTable, id: number): Promise<MasterDataRow | null> {
@@ -115,6 +135,28 @@ export class MasterDataRepository {
     return result.rows[0];
   }
 
+  async createCodedRow(
+    table: CodedMasterDataTable,
+    data: CodedMasterDataInput,
+  ): Promise<MasterDataRow> {
+    const writableColumns = getCodedMasterDataWritableColumns(table);
+    const columns = writableColumns.filter((column) => data[column] !== undefined);
+    const placeholders = columns.map((_, index) => `$${index + 1}`);
+    const params = columns.map((column) => data[column]);
+
+    const result = (await queryDataSource<MasterDataRow>(
+      this.dataSource,
+      `
+        INSERT INTO ${table} (${columns.join(', ')})
+        VALUES (${placeholders.join(', ')})
+        RETURNING *;
+      `,
+      params,
+    )) as QueryResultLike<MasterDataRow>;
+
+    return result.rows[0];
+  }
+
   async updateRow(
     table: MasterDataTable,
     id: number,
@@ -130,6 +172,31 @@ export class MasterDataRepository {
         RETURNING *;
       `,
       [value, id],
+    )) as QueryResultLike<MasterDataRow>;
+
+    return result.rows[0] || null;
+  }
+
+  async updateCodedRow(
+    table: CodedMasterDataTable,
+    id: number,
+    data: CodedMasterDataInput,
+  ): Promise<MasterDataRow | null> {
+    const writableColumns = getCodedMasterDataWritableColumns(table);
+    const columns = writableColumns.filter((column) => data[column] !== undefined);
+    const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
+    const params = columns.map((column) => data[column]);
+    params.push(id);
+
+    const result = (await queryDataSource<MasterDataRow>(
+      this.dataSource,
+      `
+        UPDATE ${table}
+        SET ${assignments.join(', ')}
+        WHERE id = $${params.length}
+        RETURNING *;
+      `,
+      params,
     )) as QueryResultLike<MasterDataRow>;
 
     return result.rows[0] || null;
