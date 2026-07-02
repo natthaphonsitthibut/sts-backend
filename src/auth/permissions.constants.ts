@@ -35,6 +35,7 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
   { id: 'home', label: 'หน้าหลัก' },
   { id: 'dashboard', label: 'รายงานนักเรียน' },
   { id: 'students', label: 'รายชื่อนักเรียน' },
+  { id: 'edit-students', label: 'แก้ไขข้อมูลนักเรียน' },
   {
     id: 'case-management',
     label: 'จัดการเคสช่วยเหลือ',
@@ -94,6 +95,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'home',
       'dashboard',
       'students',
+      'edit-students',
       'review-cases',
       'close-case',
       'forward-case',
@@ -121,6 +123,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'home',
       'dashboard',
       'students',
+      'edit-students',
       'review-cases',
       'close-case',
       'forward-case',

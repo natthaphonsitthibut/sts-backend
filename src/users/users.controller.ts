@@ -53,6 +53,7 @@ import { RoleGroupsService } from './role-groups.service';
 import { UserAuthService } from './user-auth.service';
 import { PasswordMigrationService } from './password-migration.service';
 import { StudentAccountBatchService } from './student-account-batch.service';
+import { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 
 /**
  * Client IP for audit. Relies on `req.ip`, which Express resolves through the
@@ -61,6 +62,13 @@ import { StudentAccountBatchService } from './student-account-batch.service';
  */
 function requestIp(req: Request): string | null {
   return req.ip || null;
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
 @Controller('api/users')
@@ -248,6 +256,20 @@ export class UsersController {
       page: query.page,
       limit: query.limit,
     });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
+  @Get(':id/detail')
+  async getUserDetailById(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const user = await this.usersService.getUserDetailById(id, actor);
+    if (!user) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+    return user;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -449,6 +471,22 @@ export class UsersController {
   ) {
     return await this.usersService.reactivateStudentAccount(actor, id, {
       ip: requestIp(req),
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
+  @Post(':id/address-reveal')
+  async revealUserAddress(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: UserAddressRevealDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.revealUserAddress(id, actor, data, {
+      ip: requestIp(req),
+      userAgent: firstHeaderValue(req.headers['user-agent']),
+      requestId: firstHeaderValue(req.headers['x-request-id']),
     });
   }
 

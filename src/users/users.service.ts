@@ -6,8 +6,18 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Inject } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { randomInt } from 'crypto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
+import { piiConfig } from '../config/pii.config';
+import {
+  PII_REASON_CODES,
+  PII_REASON_REQUIRES_NOTE,
+  type PiiReasonCode,
+} from '../students/pii-fields.config';
+import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
 import { hasPermission } from '../auth/permissions.constants';
 import {
@@ -61,6 +71,24 @@ function cleanNullableText(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function cleanPrefixedAddressText(prefix: string, value: unknown): string | null {
+  const text = cleanNullableText(value);
+  if (!text) {
+    return null;
+  }
+  const normalized = text.replace(new RegExp(`^\\s*${prefix}\\s*`, 'u'), '').trim();
+  return normalized || null;
+}
+
+function normalizeNumericScopeValues(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(
+    new Set(value.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0)),
+  );
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -70,7 +98,71 @@ export class UsersService {
     private readonly usersPolicyService: UsersPolicyService,
     private readonly passwordService: PasswordService,
     private readonly auditLog: AuditLogService,
+    @Inject(piiConfig.KEY)
+    private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
   ) {}
+
+  async revealUserAddress(
+    id: number,
+    actor: ActorContext | undefined,
+    data: UserAddressRevealDto,
+    meta: { ip: string | null; userAgent: string | null; requestId: string | null },
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    await this.getUserById(id, currentActor);
+    const profile = await this.usersRepository.findOwnProfileById(id);
+    if (!profile) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+
+    const reasonCode = data.reason_code as PiiReasonCode;
+    const reasonNote = data.reason_note?.trim() || null;
+    if (!PII_REASON_CODES.includes(reasonCode) || reasonCode === 'SELF_ACCESS') {
+      throw new BadRequestException('กรุณาระบุเหตุผลที่ถูกต้อง');
+    }
+    if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !reasonNote) {
+      throw new BadRequestException('กรุณาระบุรายละเอียดเหตุผล');
+    }
+    if (reasonNote && /\d(?:[\s-]*\d){9,}/u.test(reasonNote)) {
+      throw new BadRequestException('รายละเอียดเหตุผลต้องไม่มีเลขเอกสารหรือข้อมูลระบุตัวบุคคล');
+    }
+
+    const subjectRef = buildSubjectStudentRef(
+      `user-${id}`,
+      this.piiRuntimeConfig.hashPepper,
+      this.piiRuntimeConfig.hashKeyVersion,
+    );
+    const active = await this.usersRepository.hasActiveUserAddressReveal(
+      currentActor.id,
+      subjectRef,
+      this.piiRuntimeConfig.revealTtlSeconds,
+    );
+    if (!active) {
+      await this.usersRepository.insertUserAddressAccessEvent({
+        actorUserId: currentActor.id,
+        actorRoles: currentActor.roles ?? [],
+        subjectRef,
+        subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+        reasonCode,
+        reasonNote,
+        ...meta,
+      });
+    }
+
+    return {
+      address_line: profile.address_line ?? null,
+      address_village_no: profile.address_village_no ?? null,
+      address_street: profile.address_street ?? null,
+      address_soi: profile.address_soi ?? null,
+      address_trok: profile.address_trok ?? null,
+      address_sub_district: profile.address_sub_district ?? null,
+      address_district: profile.address_district ?? null,
+      address_province: profile.address_province ?? null,
+      address_postal_code: profile.address_postal_code ?? null,
+      address_latitude: profile.address_latitude ?? null,
+      address_longitude: profile.address_longitude ?? null,
+    };
+  }
 
   async getAllUsers(actor?: ActorContext, filters: Partial<UserListFilters> = {}) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
@@ -128,6 +220,64 @@ export class UsersService {
     return studentUuid ? { ...user, student_uuid: studentUuid } : user;
   }
 
+  async getUserDetailById(id: number, actor?: ActorContext) {
+    const user = await this.getUserById(id, actor);
+    if (!user) {
+      return null;
+    }
+
+    const studentUuid =
+      'student_uuid' in user && typeof user.student_uuid === 'string' ? user.student_uuid : null;
+    const schoolLabels = await this.usersRepository.findSchoolNamesByIds(
+      normalizeNumericScopeValues(user.data_scope?.school_ids),
+    );
+    const profile = user;
+    const hasProfileLocation = Boolean(
+      profile?.address_line ||
+      profile?.address_village_no ||
+      profile?.address_street ||
+      profile?.address_soi ||
+      profile?.address_trok ||
+      profile?.address_sub_district ||
+      profile?.address_district ||
+      profile?.address_province ||
+      profile?.address_postal_code ||
+      profile?.address_latitude != null ||
+      profile?.address_longitude != null,
+    );
+
+    return {
+      id: user.id,
+      username: user.username,
+      FirstName: user.FirstName ?? null,
+      LastName: user.LastName ?? null,
+      fullname: user.fullname ?? null,
+      phone: user.phone ?? null,
+      email: user.email ?? null,
+      affiliation: user.affiliation ?? null,
+      line_id: profile?.line_id ?? null,
+      role: user.role ?? null,
+      roles: user.roles ?? [],
+      labels: user.labels ?? [],
+      permissions: user.permissions ?? [],
+      status: user.status,
+      data_scope: user.data_scope,
+      must_change_password: user.must_change_password ?? false,
+      temporary_password_issued_at: user.temporary_password_issued_at ?? null,
+      temporary_password_expires_at: user.temporary_password_expires_at ?? null,
+      deactivated_at: user.deactivated_at ?? null,
+      deactivated_by: user.deactivated_by ?? null,
+      deactivation_reason_code: user.deactivation_reason_code ?? null,
+      deactivation_note: user.deactivation_note ?? null,
+      created_at: user.created_at ?? null,
+      student_uuid: studentUuid,
+      has_profile_location: hasProfileLocation,
+      data_scope_labels: {
+        schools: schoolLabels,
+      },
+    };
+  }
+
   async getOwnProfile(actor: ActorContext | undefined) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     const roleMap = await this.usersPolicyService.getRoleMap();
@@ -139,7 +289,16 @@ export class UsersService {
     const studentUuid = user.roles?.includes('STUDENT')
       ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
       : null;
-    return studentUuid ? { ...user, student_uuid: studentUuid } : user;
+    const schoolLabels = await this.usersRepository.findSchoolNamesByIds(
+      normalizeNumericScopeValues(user.data_scope?.school_ids),
+    );
+    return {
+      ...user,
+      student_uuid: studentUuid,
+      data_scope_labels: {
+        schools: schoolLabels,
+      },
+    };
   }
 
   async updateOwnProfile(actor: ActorContext | undefined, data: UpdateOwnProfileDto) {
@@ -192,6 +351,22 @@ export class UsersService {
         data.address_line !== undefined
           ? cleanNullableText(data.address_line)
           : (existingUser.address_line ?? null),
+      addressVillageNo:
+        data.address_village_no !== undefined
+          ? cleanPrefixedAddressText('หมู่', data.address_village_no)
+          : (existingUser.address_village_no ?? null),
+      addressStreet:
+        data.address_street !== undefined
+          ? cleanPrefixedAddressText('ถนน', data.address_street)
+          : (existingUser.address_street ?? null),
+      addressSoi:
+        data.address_soi !== undefined
+          ? cleanPrefixedAddressText('ซอย', data.address_soi)
+          : (existingUser.address_soi ?? null),
+      addressTrok:
+        data.address_trok !== undefined
+          ? cleanPrefixedAddressText('ตรอก', data.address_trok)
+          : (existingUser.address_trok ?? null),
       addressSubDistrict:
         data.address_sub_district !== undefined
           ? cleanNullableText(data.address_sub_district)
@@ -228,6 +403,9 @@ export class UsersService {
       );
 
       const password = data.password || this.passwordService.generateTempPassword();
+      if ((data.address_latitude == null) !== (data.address_longitude == null)) {
+        throw new BadRequestException('กรุณาระบุ latitude และ longitude ให้ครบทั้งคู่');
+      }
       const generatedTempPassword = data.password ? undefined : password;
 
       // New accounts start in "awaiting first login" with a temporary password:
@@ -253,6 +431,18 @@ export class UsersService {
             phone: data.phone || null,
             email: data.email || null,
             affiliation: data.affiliation || null,
+            lineId: cleanNullableText(data.line_id),
+            addressLine: cleanNullableText(data.address_line),
+            addressVillageNo: cleanPrefixedAddressText('หมู่', data.address_village_no),
+            addressStreet: cleanPrefixedAddressText('ถนน', data.address_street),
+            addressSoi: cleanPrefixedAddressText('ซอย', data.address_soi),
+            addressTrok: cleanPrefixedAddressText('ตรอก', data.address_trok),
+            addressSubDistrict: cleanNullableText(data.address_sub_district),
+            addressDistrict: cleanNullableText(data.address_district),
+            addressProvince: cleanNullableText(data.address_province),
+            addressPostalCode: cleanNullableText(data.address_postal_code),
+            addressLatitude: data.address_latitude ?? null,
+            addressLongitude: data.address_longitude ?? null,
             status: data.status || 'ACTIVE',
             permissions: data.permissions || [],
             role: primaryRole,
@@ -321,6 +511,11 @@ export class UsersService {
         const passwordHash = data.password
           ? await this.passwordService.hash(data.password)
           : undefined;
+        const addressLatitude = data.address_latitude ?? existingUser.address_latitude ?? null;
+        const addressLongitude = data.address_longitude ?? existingUser.address_longitude ?? null;
+        if ((addressLatitude === null) !== (addressLongitude === null)) {
+          throw new BadRequestException('กรุณาระบุ latitude และ longitude ให้ครบทั้งคู่');
+        }
 
         await this.usersRepository.updateUser(
           {
@@ -333,6 +528,54 @@ export class UsersService {
             phone: data.phone ?? existingUser.phone ?? null,
             email: data.email ?? existingUser.email ?? null,
             affiliation: data.affiliation ?? existingUser.affiliation ?? null,
+            lineId:
+              data.line_id !== undefined
+                ? cleanNullableText(data.line_id)
+                : (existingUser.line_id ?? null),
+            addressLine:
+              data.address_line !== undefined
+                ? cleanNullableText(data.address_line)
+                : (existingUser.address_line ?? null),
+            addressVillageNo: cleanPrefixedAddressText(
+              'หมู่',
+              data.address_village_no !== undefined
+                ? data.address_village_no
+                : existingUser.address_village_no,
+            ),
+            addressStreet: cleanPrefixedAddressText(
+              'ถนน',
+              data.address_street !== undefined ? data.address_street : existingUser.address_street,
+            ),
+            addressSoi: cleanPrefixedAddressText(
+              'ซอย',
+              data.address_soi !== undefined ? data.address_soi : existingUser.address_soi,
+            ),
+            addressTrok: cleanPrefixedAddressText(
+              'ตรอก',
+              data.address_trok !== undefined ? data.address_trok : existingUser.address_trok,
+            ),
+            addressSubDistrict: cleanNullableText(
+              data.address_sub_district !== undefined
+                ? data.address_sub_district
+                : existingUser.address_sub_district,
+            ),
+            addressDistrict: cleanNullableText(
+              data.address_district !== undefined
+                ? data.address_district
+                : existingUser.address_district,
+            ),
+            addressProvince: cleanNullableText(
+              data.address_province !== undefined
+                ? data.address_province
+                : existingUser.address_province,
+            ),
+            addressPostalCode: cleanNullableText(
+              data.address_postal_code !== undefined
+                ? data.address_postal_code
+                : existingUser.address_postal_code,
+            ),
+            addressLatitude,
+            addressLongitude,
             status: data.status ?? existingUser.status ?? 'ACTIVE',
             permissions:
               data.permissions ??
@@ -970,6 +1213,9 @@ export class UsersService {
     const cleanString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined;
     const grade = cleanString(filters.grade);
+    if (typeof filters.room === 'number' && !grade) {
+      throw new BadRequestException('กรุณาเลือกชั้นเรียนก่อนเลือกห้อง');
+    }
     return {
       actorScope,
       schoolId: filters.schoolId,
@@ -995,6 +1241,10 @@ export class UsersService {
     const page = Math.max(filters.page ?? 1, 1);
     const cleanString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const grade = cleanString(filters.grade);
+    if (typeof filters.room === 'number' && !grade) {
+      throw new BadRequestException('กรุณาเลือกชั้นเรียนก่อนเลือกห้อง');
+    }
     return {
       actorScope,
       userIds: filters.userIds,
@@ -1003,7 +1253,7 @@ export class UsersService {
       province: cleanString(filters.province),
       district: cleanString(filters.district),
       subDistrict: cleanString(filters.subDistrict),
-      grade: cleanString(filters.grade),
+      grade,
       room: filters.room,
       accountStatus: filters.accountStatus,
       onlyExpired: filters.onlyExpired === true,
@@ -1099,6 +1349,7 @@ export class UsersService {
     return {
       userId: row.user_id,
       username: row.username,
+      studentId: row.student_uuid,
       studentName: this.getStudentAccountManagementName(row),
       schoolId: row.school_id,
       schoolName: row.school_name,

@@ -508,6 +508,10 @@ export const DATABASE_BASELINE_SQL = `
     affiliation TEXT,
     line_id TEXT,
     address_line TEXT,
+    address_village_no TEXT,
+    address_street TEXT,
+    address_soi TEXT,
+    address_trok TEXT,
     address_sub_district TEXT,
     address_district TEXT,
     address_province TEXT,
@@ -581,6 +585,10 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "affiliation" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS line_id TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS address_line TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_village_no TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_street TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_soi TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS address_trok TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS address_sub_district TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS address_district TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS address_province TEXT;

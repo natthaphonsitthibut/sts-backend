@@ -11,9 +11,19 @@ function text(value: unknown): string {
   return '';
 }
 
+/**
+ * Prefix a value with its Thai label unless it already carries it, so imported
+ * data like "ถนนเพชรเกษม" does not become "ถนนถนนเพชรเกษม".
+ */
+function withPrefix(prefix: string, value: string): string {
+  if (!value) return '';
+  return value.startsWith(prefix) ? value : `${prefix}${value}`;
+}
+
 export function buildStudentTermAddress(row: Record<string, unknown>): string {
   const parts: string[] = [];
 
+  const houseNo = text(row['address_house_no']);
   const village = text(row['VillageNumber_Onec']);
   const trok = text(row['Trok_Onec']);
   const soi = text(row['Soi_Onec']);
@@ -23,13 +33,16 @@ export function buildStudentTermAddress(row: Record<string, unknown>): string {
   const province = text(row['ProvinceNameThai_Onec']);
   const postalCode = text(row['PostalCode_Onec']);
 
-  if (village) parts.push(`หมู่ ${village}`);
-  if (trok) parts.push(`ตรอก${trok}`);
-  if (soi) parts.push(`ซอย${soi}`);
-  if (street) parts.push(`ถนน${street}`);
-  if (subDistrict) parts.push(`ตำบล/แขวง${subDistrict}`);
-  if (district) parts.push(`อำเภอ/เขต${district}`);
-  if (province) parts.push(`จังหวัด${province}`);
+  if (houseNo) parts.push(houseNo);
+  if (village) parts.push(withPrefix('หมู่ ', village));
+  if (trok) parts.push(withPrefix('ตรอก', trok));
+  if (soi) parts.push(withPrefix('ซอย', soi));
+  if (street) parts.push(withPrefix('ถนน', street));
+  // Sub-district/district/province names are self-evident and read cleanly
+  // without run-together "ตำบล/แขวง" prefixes.
+  if (subDistrict) parts.push(subDistrict);
+  if (district) parts.push(district);
+  if (province) parts.push(province);
   if (postalCode) parts.push(postalCode);
 
   return parts.join(' ');

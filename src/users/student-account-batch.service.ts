@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -476,13 +477,17 @@ export class StudentAccountBatchService implements OnModuleInit {
     }
     const cleanString = (value: unknown): string | null =>
       typeof value === 'string' && value.trim() ? value.trim() : null;
+    const grade = cleanString(filters.grade);
+    if (typeof filters.room === 'number' && !grade) {
+      throw new BadRequestException('กรุณาเลือกชั้นเรียนก่อนเลือกห้อง');
+    }
     return {
       actorScope: actor.data_scope ?? {},
       schoolId: typeof filters.schoolId === 'number' ? filters.schoolId : null,
       province: cleanString(filters.province),
       district: cleanString(filters.district),
       subDistrict: cleanString(filters.subDistrict),
-      grade: cleanString(filters.grade),
+      grade,
       room: typeof filters.room === 'number' ? filters.room : null,
     };
   }

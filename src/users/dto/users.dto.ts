@@ -107,6 +107,79 @@ export class CreateUserDto {
   affiliation?: string;
 
   @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(64)
+  line_id?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(255)
+  address_line?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_village_no?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(150)
+  address_street?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(150)
+  address_soi?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(150)
+  address_trok?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_sub_district?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_district?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_province?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @Matches(/^\d{5}$/, { message: 'รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก' })
+  address_postal_code?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  address_latitude?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  address_longitude?: number | null;
+
+  @IsOptional()
   @IsString()
   status?: string;
 
@@ -176,6 +249,30 @@ export class UpdateOwnProfileDto {
   @IsString()
   @MaxLength(255)
   address_line?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(100)
+  address_village_no?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(150)
+  address_street?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(150)
+  address_soi?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(150)
+  address_trok?: string | null;
 
   @IsOptional()
   @Transform(({ value }) => trimOptionalText(value))

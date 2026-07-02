@@ -69,6 +69,7 @@ describe('UsersService student accounts', () => {
       | 'findUserById'
       | 'findOwnProfileById'
       | 'findCurrentStudentUuidByUserId'
+      | 'findSchoolNamesByIds'
       | 'listStudentAccountsPaginated'
       | 'countStudentAccountStatuses'
       | 'findStudentAccountForManagement'
@@ -107,6 +108,7 @@ describe('UsersService student accounts', () => {
       findUserById: jest.fn().mockResolvedValue({ id: 77 }),
       findOwnProfileById: jest.fn().mockResolvedValue({ id: 77 }),
       findCurrentStudentUuidByUserId: jest.fn().mockResolvedValue(null),
+      findSchoolNamesByIds: jest.fn().mockResolvedValue([{ id: 10010002, name: 'โรงเรียนทดสอบ' }]),
       listStudentAccountsPaginated: jest
         .fn()
         .mockResolvedValue({ rows: [studentAccount], totalCount: 1 }),
@@ -124,6 +126,8 @@ describe('UsersService student accounts', () => {
       listUserOperationalReferences: jest.fn().mockResolvedValue([]),
       deleteUser: jest.fn().mockResolvedValue(1),
       updateOwnProfile: jest.fn().mockResolvedValue(undefined),
+      hasActiveUserAddressReveal: jest.fn().mockResolvedValue(false),
+      insertUserAddressAccessEvent: jest.fn().mockResolvedValue(undefined),
     };
     usersPolicyService = {
       ensureActor: jest.fn().mockImplementation((value: ActorContext | undefined) => {
@@ -167,6 +171,11 @@ describe('UsersService student accounts', () => {
       usersPolicyService as unknown as UsersPolicyService,
       passwordService as unknown as PasswordService,
       auditLog as unknown as AuditLogService,
+      {
+        hashPepper: 'test-pii-hash-pepper',
+        hashKeyVersion: 1,
+        revealTtlSeconds: 900,
+      },
     );
   });
 
@@ -174,6 +183,79 @@ describe('UsersService student accounts', () => {
     await expect(
       service.previewStudentAccounts({ ...actor, permissions: ['manage-users-list'] }, {}),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('returns minimized user detail without identity or address fields', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher-one',
+      FirstName: 'ครู',
+      LastName: 'ใจดี',
+      PersonID_Onec: '1234567890123',
+      phone: '0812345678',
+      email: 'teacher@example.test',
+      affiliation: 'โรงเรียนทดสอบ',
+      line_id: 'teacher.line',
+      address_line: '99/1',
+      address_sub_district: 'บ้านสวน',
+      address_district: 'เมืองชลบุรี',
+      address_province: 'ชลบุรี',
+      address_postal_code: '20000',
+      address_latitude: 13.3611,
+      address_longitude: 100.9847,
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      labels: ['คุณครู'],
+      permissions: ['home', 'students'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    });
+
+    const detail = await service.getUserDetailById(77, {
+      ...actor,
+      permissions: ['manage-users-list'],
+    });
+
+    expect(detail).toEqual(
+      expect.objectContaining({
+        id: 77,
+        username: 'teacher-one',
+        phone: '0812345678',
+        role: 'TEACHER',
+        data_scope_labels: { schools: [{ id: 10010002, name: 'โรงเรียนทดสอบ' }] },
+        has_profile_location: true,
+      }),
+    );
+    expect(usersRepository.findSchoolNamesByIds).toHaveBeenCalledWith([10010002]);
+    expect(detail).not.toHaveProperty('PersonID_Onec');
+    expect(detail).toHaveProperty('line_id', 'teacher.line');
+    expect(detail).not.toHaveProperty('address_line');
+    expect(detail).not.toHaveProperty('address_latitude');
+  });
+
+  it('reveals a managed user address and records an access event', async () => {
+    usersRepository.findOwnProfileById.mockResolvedValueOnce({
+      id: 77,
+      address_line: '99/1',
+      address_sub_district: 'บ้านสวน',
+      address_district: 'เมืองชลบุรี',
+      address_province: 'ชลบุรี',
+      address_postal_code: '20000',
+      address_latitude: 13.3611,
+      address_longitude: 100.9847,
+    });
+
+    const result = await service.revealUserAddress(
+      77,
+      { ...actor, permissions: ['manage-users-list'] },
+      { reason_code: 'VERIFY_DATA' },
+      { ip: null, userAgent: null, requestId: 'request-1' },
+    );
+
+    expect(result.address_line).toBe('99/1');
+    expect(usersRepository.insertUserAddressAccessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: actor.id, reasonCode: 'VERIFY_DATA' }),
+    );
   });
 
   it('updates only the authenticated user profile fields', async () => {
@@ -223,6 +305,10 @@ describe('UsersService student accounts', () => {
         affiliation: ' โรงเรียนทดสอบ ',
         line_id: ' teacher.line ',
         address_line: ' 99/1 ',
+        address_village_no: ' หมู่ 5 ',
+        address_street: ' ประชาราษฎร์ ',
+        address_soi: ' สุขใจ 2 ',
+        address_trok: ' วัดใหม่ ',
         address_sub_district: ' บ้านสวน ',
         address_district: ' เมืองชลบุรี ',
         address_province: ' ชลบุรี ',
@@ -247,6 +333,10 @@ describe('UsersService student accounts', () => {
         affiliation: 'โรงเรียนทดสอบ',
         lineId: 'teacher.line',
         addressLine: '99/1',
+        addressVillageNo: '5',
+        addressStreet: 'ประชาราษฎร์',
+        addressSoi: 'สุขใจ 2',
+        addressTrok: 'วัดใหม่',
         addressSubDistrict: 'บ้านสวน',
         addressDistrict: 'เมืองชลบุรี',
         addressProvince: 'ชลบุรี',
@@ -324,6 +414,21 @@ describe('UsersService student accounts', () => {
       hasActiveAccount: false,
     });
     expect(JSON.stringify(result)).not.toContain(candidate.person_uuid);
+  });
+
+  it('rejects student account filters that specify room without grade', async () => {
+    await expect(
+      service.previewStudentAccounts(actor, { schoolId: 10010002, room: 1 }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.listStudentAccounts(actor, { schoolId: 10010002, room: 1 }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.generateStudentAccounts(actor, { schoolId: 10010002, room: 1 }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(usersRepository.countStudentAccountCandidates).not.toHaveBeenCalledWith(
+      expect.objectContaining({ room: 1 }),
+    );
   });
 
   it('lists scoped student accounts with derived management status', async () => {

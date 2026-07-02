@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { PasswordService } from '../auth/password.service';
 import { UsersPolicyService } from './users-policy.service';
@@ -166,6 +166,13 @@ describe('StudentAccountBatchService', () => {
     );
     expect(result.success).toBe(true);
     expect(result.data.id).toBe('job-1');
+  });
+
+  it('rejects enqueue when room is specified without grade', async () => {
+    await expect(service.enqueue(actor, { schoolId: 10010002, room: 1 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(batchRepository.createJob).not.toHaveBeenCalled();
   });
 
   it('processes a chunk: creates account, writes CREATED item, completes', async () => {

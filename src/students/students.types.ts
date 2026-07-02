@@ -60,6 +60,8 @@ export interface PiiAccessEventInput {
   actorRoles: string[];
   actorKind: 'STAFF' | 'GUEST';
   subjectStudentRef: string;
+  subjectType: 'STUDENT' | 'USER';
+  subjectRef: string;
   subjectRefKeyVersion: number;
   fieldGroup: string;
   reasonCode: string;

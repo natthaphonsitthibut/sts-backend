@@ -13,6 +13,7 @@ describe('StudentsService', () => {
     listAttendanceByStudentId: jest.Mock;
     insertPiiAccessEvent: jest.Mock;
     listActiveRevealGroups: jest.Mock;
+    updateStudentByUuid: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -29,11 +30,16 @@ describe('StudentsService', () => {
             listAttendanceByStudentId: jest.fn(),
             insertPiiAccessEvent: jest.fn(),
             listActiveRevealGroups: jest.fn(),
+            updateStudentByUuid: jest.fn(),
           },
         },
         {
           provide: piiConfig.KEY,
-          useValue: { hashPepper: 'test-pepper-at-least-16-chars', hashKeyVersion: 1 },
+          useValue: {
+            hashPepper: 'test-pepper-at-least-16-chars',
+            hashKeyVersion: 1,
+            revealTtlSeconds: 900,
+          },
         },
       ],
     }).compile();
@@ -88,5 +94,30 @@ describe('StudentsService', () => {
       }),
       undefined,
     );
+  });
+
+  it('updates a student by UUID after a scoped lookup succeeds', async () => {
+    const student = {
+      student_uuid: '00000000-0000-4000-8000-000000000001',
+      PersonID_Onec: 'masked',
+      FirstName_Onec: 'สมชาย',
+      LastName_Onec: 'ใจดี',
+    };
+    studentsRepository.findStudentById.mockResolvedValue(student);
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+
+    await service.update(
+      student.student_uuid,
+      { FirstName_Onec: 'สมศรี' },
+      { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['edit-students'] },
+      { school_ids: [10010002] },
+    );
+
+    expect(studentsRepository.findStudentById).toHaveBeenCalledWith(student.student_uuid, {
+      school_ids: [10010002],
+    });
+    expect(studentsRepository.updateStudentByUuid).toHaveBeenCalledWith(student.student_uuid, {
+      FirstName_Onec: 'สมศรี',
+    });
   });
 });

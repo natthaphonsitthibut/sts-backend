@@ -15,6 +15,11 @@ import {
 
 const MAX_IMPORT_ROWS = 10_000;
 
+const IMPORT_TARGET_LABELS: Record<ImportTarget, string> = {
+  student_dropouts: 'ข้อมูลนักเรียนออกกลางคัน',
+  student_term: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
+};
+
 @Injectable()
 export class ImportsService {
   private readonly logger = new Logger(ImportsService.name);
@@ -146,6 +151,10 @@ export class ImportsService {
     return target;
   }
 
+  private getTargetLabel(target: ImportTarget): string {
+    return IMPORT_TARGET_LABELS[target] ?? target;
+  }
+
   private actorLabel(actor?: AuthenticatedRequestUser): string | null {
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     return actor?.username || actorName || null;
@@ -268,6 +277,7 @@ export class ImportsService {
       targetType: 'import',
       targetId: null,
       metadata: {
+        target: this.getTargetLabel(validTarget),
         rowCount: result.rowsProcessed,
         rowsInserted: result.rowsInserted,
         rowsSkipped: result.rowsSkipped,

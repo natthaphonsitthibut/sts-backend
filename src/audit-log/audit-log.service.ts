@@ -39,6 +39,9 @@ export type AuditAction =
   | 'USER_DEACTIVATE'
   | 'USER_REACTIVATE'
   | 'USER_TEMP_PASSWORD_REISSUE'
+  | 'STUDENT_CREATE'
+  | 'STUDENT_UPDATE'
+  | 'STUDENT_DELETE'
   | 'STUDENT_ACCOUNT_BULK_GENERATE'
   | 'STUDENT_ACCOUNT_BATCH_ENQUEUE'
   | 'STUDENT_ACCOUNT_BATCH_RESUME'
@@ -86,6 +89,8 @@ interface AuditLogRow extends Record<string, unknown> {
   action: AuditAction;
   target_type: string | null;
   target_id: string | null;
+  target_username: string | null;
+  school_name: string | null;
   metadata: Record<string, unknown> | null;
   created_at: Date | string;
   total_count: number | string;
@@ -120,6 +125,8 @@ export interface AuditLogEntryResponse {
   actorLabel: string;
   targetType: string | null;
   targetId: string | null;
+  /** Human-readable target (e.g. the affected account's username) when known. */
+  targetLabel: string | null;
   createdAt: string;
   details: Array<{ label: string; value: string | number }>;
 }
@@ -144,7 +151,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'province', label: 'จังหวัด' },
       { key: 'district', label: 'อำเภอ' },
       { key: 'subDistrict', label: 'ตำบล' },
-      { key: 'schoolId', label: 'รหัสโรงเรียน' },
+      { key: 'schoolName', label: 'โรงเรียน' },
       { key: 'grade', label: 'ชั้นเรียน' },
       { key: 'room', label: 'ห้อง' },
     ],
@@ -160,7 +167,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   STUDENT_ACCOUNT_REACTIVATE: {
     domain: 'student_accounts',
     label: 'เปิดใช้งานบัญชีนักเรียนอีกครั้ง',
-    detailKeys: [{ key: 'username', label: 'ชื่อผู้ใช้' }],
+    detailKeys: [],
   },
   STUDENT_ACCOUNT_BATCH_ENQUEUE: {
     domain: 'student_accounts',
@@ -171,7 +178,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'province', label: 'จังหวัด' },
       { key: 'district', label: 'อำเภอ' },
       { key: 'subDistrict', label: 'ตำบล' },
-      { key: 'schoolId', label: 'รหัสโรงเรียน' },
+      { key: 'schoolName', label: 'โรงเรียน' },
       { key: 'grade', label: 'ชั้นเรียน' },
       { key: 'room', label: 'ห้อง' },
     ],
@@ -199,7 +206,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   USER_CREATE: {
     domain: 'users',
     label: 'สร้างผู้ใช้งาน',
-    detailKeys: [{ key: 'username', label: 'ชื่อผู้ใช้' }],
+    detailKeys: [],
   },
   USER_UPDATE: {
     domain: 'users',
@@ -214,13 +221,12 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   USER_DELETE: {
     domain: 'users',
     label: 'ปิดหรือลบผู้ใช้งาน',
-    detailKeys: [{ key: 'username', label: 'ชื่อผู้ใช้' }],
+    detailKeys: [],
   },
   USER_DEACTIVATE: {
     domain: 'users',
     label: 'ปิดใช้งานผู้ใช้งาน',
     detailKeys: [
-      { key: 'username', label: 'ชื่อผู้ใช้' },
       { key: 'reasonCode', label: 'รหัสเหตุผล' },
       { key: 'note', label: 'หมายเหตุ' },
     ],
@@ -228,7 +234,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   USER_REACTIVATE: {
     domain: 'users',
     label: 'เปิดใช้งานผู้ใช้งานอีกครั้ง',
-    detailKeys: [{ key: 'username', label: 'ชื่อผู้ใช้' }],
+    detailKeys: [],
   },
   TASK_CREATE: {
     domain: 'tasks',
@@ -302,6 +308,21 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'attendanceDate', label: 'วันที่' },
       { key: 'revision', label: 'ครั้งที่แก้ไข' },
     ],
+  },
+  STUDENT_CREATE: {
+    domain: 'students',
+    label: 'เพิ่มข้อมูลนักเรียน',
+    detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่ส่ง' }],
+  },
+  STUDENT_UPDATE: {
+    domain: 'students',
+    label: 'แก้ไขข้อมูลนักเรียน',
+    detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
+  },
+  STUDENT_DELETE: {
+    domain: 'students',
+    label: 'ลบข้อมูลนักเรียน',
+    detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่เกี่ยวข้อง' }],
   },
 };
 
@@ -521,9 +542,29 @@ export class AuditLogService {
     }
 
     return definition.detailKeys.flatMap(({ key, label }) => {
+      if (key === 'schoolName') {
+        const schoolName = metadata.schoolName;
+        if (typeof schoolName === 'string' && schoolName.trim()) {
+          return [{ label, value: schoolName }];
+        }
+        const schoolId = metadata.schoolId;
+        return typeof schoolId === 'string' || typeof schoolId === 'number'
+          ? [{ label: 'รหัสโรงเรียน', value: schoolId }]
+          : [];
+      }
       const value = metadata[key];
       return typeof value === 'string' || typeof value === 'number' ? [{ label, value }] : [];
     });
+  }
+
+  private withResolvedDetailMetadata(row: AuditLogRow): Record<string, unknown> | null {
+    if (!row.metadata) {
+      return null;
+    }
+    if (typeof row.school_name === 'string' && row.school_name.trim()) {
+      return { ...row.metadata, schoolName: row.school_name };
+    }
+    return row.metadata;
   }
 
   private toAuditLogEntry(row: AuditLogRow): AuditLogEntryResponse {
@@ -536,12 +577,26 @@ export class AuditLogService {
       actorLabel: row.actor_label || 'ระบบ',
       targetType: row.target_type,
       targetId: row.target_id,
+      targetLabel: this.extractTargetLabel(row),
       createdAt:
         row.created_at instanceof Date
           ? row.created_at.toISOString()
           : new Date(String(row.created_at)).toISOString(),
-      details: this.toSafeDetails(definition, row.metadata),
+      details: this.toSafeDetails(definition, this.withResolvedDetailMetadata(row)),
     };
+  }
+
+  /**
+   * The affected record's readable name (the target account's username) so the
+   * list can show it in the target column instead of a bare numeric id. The
+   * username is recorded in the event metadata by the write path.
+   */
+  private extractTargetLabel(row: AuditLogRow): string | null {
+    if (typeof row.target_username === 'string' && row.target_username.trim()) {
+      return row.target_username;
+    }
+    const username = row.metadata?.['username'];
+    return typeof username === 'string' && username.trim() ? username : null;
   }
 
   async list(actor: AuthenticatedRequestUser, filters: AuditLogListFilters) {
@@ -663,10 +718,17 @@ export class AuditLogService {
           a.action,
           a.target_type,
           a.target_id,
+          tu.username AS target_username,
+          audit_school.name AS school_name,
           a.metadata,
           a.created_at,
           COUNT(*) OVER() AS total_count
         FROM audit_log a
+        LEFT JOIN users tu
+          ON a.target_type = 'user' AND a.target_id = tu.id::text
+        LEFT JOIN schools audit_school
+          ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
+         AND audit_school.id = (a.metadata ->> 'schoolId')::int
         WHERE ${conditions.join(' AND ')}
         ORDER BY a.created_at DESC, a.id DESC
         LIMIT ${limitParam}
@@ -697,10 +759,17 @@ export class AuditLogService {
             a.action,
             a.target_type,
             a.target_id,
+            tu.username AS target_username,
+            audit_school.name AS school_name,
             a.metadata,
             a.created_at,
             1 AS total_count
           FROM audit_log a
+          LEFT JOIN users tu
+            ON a.target_type = 'user' AND a.target_id = tu.id::text
+          LEFT JOIN schools audit_school
+            ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
+           AND audit_school.id = (a.metadata ->> 'schoolId')::int
           WHERE a.id = $1::bigint
         `,
         [id],
@@ -744,10 +813,17 @@ export class AuditLogService {
             a.action,
             a.target_type,
             a.target_id,
+            tu.username AS target_username,
+            audit_school.name AS school_name,
             a.metadata,
             a.created_at,
             1 AS total_count
           FROM audit_log a
+          LEFT JOIN users tu
+            ON a.target_type = 'user' AND a.target_id = tu.id::text
+          LEFT JOIN schools audit_school
+            ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
+           AND audit_school.id = (a.metadata ->> 'schoolId')::int
           WHERE ${conditions.join(' AND ')}
           LIMIT 1
         `,

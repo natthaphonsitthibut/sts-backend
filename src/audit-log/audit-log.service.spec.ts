@@ -87,6 +87,7 @@ describe('AuditLogService', () => {
         grade: 'ป.3',
         scope: { school_ids: [10010003] },
       },
+      school_name: 'โรงเรียนตัวอย่าง',
       created_at: new Date('2026-06-29T06:28:00.000Z'),
       total_count: 1,
     };
@@ -115,6 +116,7 @@ describe('AuditLogService', () => {
       targetId: 'batch-42',
     });
     expect(result.data.details).toContainEqual({ label: 'สร้างสำเร็จ', value: 42 });
+    expect(result.data.details).toContainEqual({ label: 'โรงเรียน', value: 'โรงเรียนตัวอย่าง' });
     expect(queries).toHaveLength(2);
     expect(queries[1].sql).toContain('a.id = $1::bigint');
     expect(queries[1].sql).toContain("-> 'school_ids'");

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   Patch,
   Post,
@@ -11,12 +12,15 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
   AuthGuard,
   CurrentUser,
   normalizeDataScope,
   PermissionsGuard,
   RequireAnyPermission,
+  RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
 import { StudentsService } from './students.service';
@@ -35,11 +39,50 @@ function firstHeaderValue(value: string | string[] | undefined): string | null {
 @UseGuards(AuthGuard)
 @Controller('api/students')
 export class StudentsController {
-  constructor(private readonly studentsService: StudentsService) {}
+  private readonly logger = new Logger(StudentsController.name);
 
+  constructor(
+    private readonly studentsService: StudentsService,
+    private readonly auditLog: AuditLogService,
+  ) {}
+
+  private async recordStudentWriteAudit(
+    action: AuditAction,
+    actor: AuthenticatedRequestUser | undefined,
+    req: Request,
+    targetId: string | null,
+    payload: object,
+  ): Promise<void> {
+    try {
+      await this.auditLog.record({
+        action,
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: actor?.username,
+        targetType: 'student',
+        targetId,
+        metadata: {
+          fieldCount: Object.keys(payload).length,
+          fields: Object.keys(payload),
+        },
+        ip: req.ip ?? null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`${action} audit failed: ${message}`);
+    }
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('edit-students')
   @Post()
-  create(@Body() createStudentDto: CreateStudentDto) {
-    return this.studentsService.create(createStudentDto);
+  async create(
+    @Body() createStudentDto: CreateStudentDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    const result = this.studentsService.create(createStudentDto);
+    await this.recordStudentWriteAudit('STUDENT_CREATE', actor, req, null, createStudentDto);
+    return result;
   }
 
   @Get()
@@ -98,13 +141,35 @@ export class StudentsController {
     });
   }
 
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('edit-students')
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateStudentDto: UpdateStudentDto) {
-    return this.studentsService.update(+id, updateStudentDto);
+  async update(
+    @Param('id') id: string,
+    @Body() updateStudentDto: UpdateStudentDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    const result = await this.studentsService.update(
+      id,
+      updateStudentDto,
+      actor,
+      normalizeDataScope(actor?.data_scope),
+    );
+    await this.recordStudentWriteAudit('STUDENT_UPDATE', actor, req, id, updateStudentDto);
+    return result;
   }
 
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('edit-students')
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.studentsService.remove(+id);
+  async remove(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    const result = this.studentsService.remove(+id);
+    await this.recordStudentWriteAudit('STUDENT_DELETE', actor, req, id, {});
+    return result;
   }
 }

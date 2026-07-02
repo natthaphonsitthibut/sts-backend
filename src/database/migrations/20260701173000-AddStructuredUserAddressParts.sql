@@ -1,0 +1,5 @@
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS address_village_no TEXT,
+  ADD COLUMN IF NOT EXISTS address_street TEXT,
+  ADD COLUMN IF NOT EXISTS address_soi TEXT,
+  ADD COLUMN IF NOT EXISTS address_trok TEXT;

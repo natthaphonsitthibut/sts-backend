@@ -22,6 +22,18 @@ interface CreateUserRecordInput {
   phone: string | null;
   email: string | null;
   affiliation: string | null;
+  lineId?: string | null;
+  addressLine?: string | null;
+  addressVillageNo?: string | null;
+  addressStreet?: string | null;
+  addressSoi?: string | null;
+  addressTrok?: string | null;
+  addressSubDistrict?: string | null;
+  addressDistrict?: string | null;
+  addressProvince?: string | null;
+  addressPostalCode?: string | null;
+  addressLatitude?: number | null;
+  addressLongitude?: number | null;
   status: string;
   permissions: string[];
   role: string;
@@ -42,6 +54,18 @@ interface UpdateUserRecordInput {
   phone: string | null;
   email: string | null;
   affiliation: string | null;
+  lineId: string | null;
+  addressLine: string | null;
+  addressVillageNo: string | null;
+  addressStreet: string | null;
+  addressSoi: string | null;
+  addressTrok: string | null;
+  addressSubDistrict: string | null;
+  addressDistrict: string | null;
+  addressProvince: string | null;
+  addressPostalCode: string | null;
+  addressLatitude: number | null;
+  addressLongitude: number | null;
   status: string;
   permissions: string[];
   role: string;
@@ -58,6 +82,10 @@ interface UpdateOwnProfileRecordInput {
   affiliation: string | null;
   lineId: string | null;
   addressLine: string | null;
+  addressVillageNo: string | null;
+  addressStreet: string | null;
+  addressSoi: string | null;
+  addressTrok: string | null;
   addressSubDistrict: string | null;
   addressDistrict: string | null;
   addressProvince: string | null;
@@ -283,6 +311,10 @@ export class UsersRepository {
       ${this.userFieldsSql},
       u.line_id,
       u.address_line,
+      u.address_village_no,
+      u.address_street,
+      u.address_soi,
+      u.address_trok,
       u.address_sub_district,
       u.address_district,
       u.address_province,
@@ -594,7 +626,7 @@ export class UsersRepository {
   async findUserById(id: number): Promise<HydratableUserRow | null> {
     const result = await this.query<HydratableUserRow>(
       `
-        ${this.userSelectSql}
+        ${this.ownProfileSelectSql}
         WHERE u.id = $1
       `,
       [id],
@@ -615,6 +647,77 @@ export class UsersRepository {
     return result.rows[0] || null;
   }
 
+  async insertUserAddressAccessEvent(input: {
+    actorUserId: number;
+    actorRoles: string[];
+    subjectRef: string;
+    subjectRefKeyVersion: number;
+    reasonCode: string;
+    reasonNote: string | null;
+    requestId: string | null;
+    ip: string | null;
+    userAgent: string | null;
+  }): Promise<void> {
+    await this.query(
+      `
+        INSERT INTO pii_access_events (
+          actor_user_id, actor_roles, actor_kind, subject_student_ref,
+          subject_type, subject_ref, subject_ref_key_version, field_group,
+          reason_code, reason_note, request_id, ip, user_agent
+        )
+        VALUES ($1, $2::jsonb, 'STAFF', $3, 'USER', $3, $4, 'ADDRESS', $5, $6, $7, $8, $9)
+      `,
+      [
+        input.actorUserId,
+        JSON.stringify(input.actorRoles),
+        input.subjectRef,
+        input.subjectRefKeyVersion,
+        input.reasonCode,
+        input.reasonNote,
+        input.requestId,
+        input.ip,
+        input.userAgent,
+      ],
+    );
+  }
+
+  async hasActiveUserAddressReveal(
+    actorUserId: number,
+    subjectRef: string,
+    withinSeconds: number,
+  ): Promise<boolean> {
+    const result = await this.query<{ found: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1 FROM pii_access_events
+          WHERE actor_user_id = $1
+            AND subject_type = 'USER'
+            AND subject_ref = $2
+            AND field_group = 'ADDRESS'
+            AND created_at > now() - make_interval(secs => $3)
+        ) AS found
+      `,
+      [actorUserId, subjectRef, withinSeconds],
+    );
+    return result.rows[0]?.found === true;
+  }
+
+  async findSchoolNamesByIds(ids: number[]): Promise<Array<{ id: number; name: string | null }>> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const result = await this.query<{ id: number; name: string | null }>(
+      `
+        SELECT id, name
+        FROM schools
+        WHERE id = ANY($1::int[])
+        ORDER BY name ASC, id ASC
+      `,
+      [ids],
+    );
+    return result.rows;
+  }
+
   async createUser(data: CreateUserRecordInput, executor?: QueryExecutor): Promise<number> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<{ id: number }>(
@@ -628,6 +731,18 @@ export class UsersRepository {
           phone,
           email,
           affiliation,
+          line_id,
+          address_line,
+          address_village_no,
+          address_street,
+          address_soi,
+          address_trok,
+          address_sub_district,
+          address_district,
+          address_province,
+          address_postal_code,
+          address_latitude,
+          address_longitude,
           status,
           permissions,
           role,
@@ -639,7 +754,7 @@ export class UsersRepository {
           created_by,
           updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $29)
         RETURNING id
       `,
       [
@@ -651,6 +766,18 @@ export class UsersRepository {
         data.phone,
         data.email,
         data.affiliation,
+        data.lineId,
+        data.addressLine,
+        data.addressVillageNo,
+        data.addressStreet,
+        data.addressSoi,
+        data.addressTrok,
+        data.addressSubDistrict,
+        data.addressDistrict,
+        data.addressProvince,
+        data.addressPostalCode,
+        data.addressLatitude,
+        data.addressLongitude,
         data.status,
         JSON.stringify(data.permissions),
         data.role,
@@ -1115,11 +1242,23 @@ export class UsersRepository {
       `phone = $5`,
       `email = $6`,
       `affiliation = $7`,
-      `status = $8`,
-      `permissions = $9`,
-      `role = $10`,
-      `data_scope = $11`,
-      `updated_by = $12`,
+      `line_id = $8`,
+      `address_line = $9`,
+      `address_village_no = $10`,
+      `address_street = $11`,
+      `address_soi = $12`,
+      `address_trok = $13`,
+      `address_sub_district = $14`,
+      `address_district = $15`,
+      `address_province = $16`,
+      `address_postal_code = $17`,
+      `address_latitude = $18`,
+      `address_longitude = $19`,
+      `status = $20`,
+      `permissions = $21`,
+      `role = $22`,
+      `data_scope = $23`,
+      `updated_by = $24`,
     ];
 
     const params: unknown[] = [
@@ -1130,6 +1269,18 @@ export class UsersRepository {
       data.phone,
       data.email,
       data.affiliation,
+      data.lineId,
+      data.addressLine,
+      data.addressVillageNo,
+      data.addressStreet,
+      data.addressSoi,
+      data.addressTrok,
+      data.addressSubDistrict,
+      data.addressDistrict,
+      data.addressProvince,
+      data.addressPostalCode,
+      data.addressLatitude,
+      data.addressLongitude,
       data.status,
       JSON.stringify(data.permissions),
       data.role,
@@ -1172,14 +1323,18 @@ export class UsersRepository {
           affiliation = $5,
           line_id = $6,
           address_line = $7,
-          address_sub_district = $8,
-          address_district = $9,
-          address_province = $10,
-          address_postal_code = $11,
-          address_latitude = $12,
-          address_longitude = $13,
-          updated_by = $14
-        WHERE id = $15
+          address_village_no = $8,
+          address_street = $9,
+          address_soi = $10,
+          address_trok = $11,
+          address_sub_district = $12,
+          address_district = $13,
+          address_province = $14,
+          address_postal_code = $15,
+          address_latitude = $16,
+          address_longitude = $17,
+          updated_by = $18
+        WHERE id = $19
       `,
       [
         data.firstName,
@@ -1189,6 +1344,10 @@ export class UsersRepository {
         data.affiliation,
         data.lineId,
         data.addressLine,
+        data.addressVillageNo,
+        data.addressStreet,
+        data.addressSoi,
+        data.addressTrok,
         data.addressSubDistrict,
         data.addressDistrict,
         data.addressProvince,

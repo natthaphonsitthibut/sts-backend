@@ -13,6 +13,7 @@ import type {
   StudentListRow,
   StudentsQueryResult,
 } from './students.types';
+import type { UpdateStudentDto } from './dto/update-student.dto';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -314,6 +315,38 @@ export class StudentsRepository {
     return result.rows[0]?.person_uuid ?? null;
   }
 
+  async updateStudentByUuid(studentUuid: string, data: UpdateStudentDto): Promise<void> {
+    const columnByField: Record<keyof UpdateStudentDto, string> = {
+      FirstName_Onec: '"FirstName_Onec"',
+      MiddleName_Onec: '"MiddleName_Onec"',
+      LastName_Onec: '"LastName_Onec"',
+      address_house_no: '"address_house_no"',
+      VillageNumber_Onec: '"VillageNumber_Onec"',
+      Street_Onec: '"Street_Onec"',
+      Soi_Onec: '"Soi_Onec"',
+      Trok_Onec: '"Trok_Onec"',
+      ProvinceNameThai_Onec: '"ProvinceNameThai_Onec"',
+      DistrictNameThai_Onec: '"DistrictNameThai_Onec"',
+      SubDistrictNameThai_Onec: '"SubDistrictNameThai_Onec"',
+      PostalCode_Onec: '"PostalCode_Onec"',
+      address_latitude: '"address_latitude"',
+      address_longitude: '"address_longitude"',
+    };
+    const entries = Object.entries(data) as Array<[keyof UpdateStudentDto, unknown]>;
+    if (entries.length === 0) {
+      return;
+    }
+    const values: unknown[] = [studentUuid];
+    const assignments = entries.map(([field, value]) => {
+      values.push(typeof value === 'string' ? value.trim() || null : value);
+      return `${columnByField[field]} = $${values.length}`;
+    });
+    await this.query(
+      `UPDATE student_term SET ${assignments.join(', ')} WHERE student_uuid = $1`,
+      values,
+    );
+  }
+
   /** Append one immutable PII-reveal record to the access log. */
   async insertPiiAccessEvent(event: PiiAccessEventInput): Promise<void> {
     await this.query(
@@ -323,6 +356,8 @@ export class StudentsRepository {
           actor_roles,
           actor_kind,
           subject_student_ref,
+          subject_type,
+          subject_ref,
           subject_ref_key_version,
           field_group,
           reason_code,
@@ -332,13 +367,15 @@ export class StudentsRepository {
           ip,
           user_agent
         )
-        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
         event.actorUserId,
         JSON.stringify(event.actorRoles ?? []),
         event.actorKind,
         event.subjectStudentRef,
+        event.subjectType,
+        event.subjectRef,
         event.subjectRefKeyVersion,
         event.fieldGroup,
         event.reasonCode,
@@ -367,6 +404,7 @@ export class StudentsRepository {
         FROM pii_access_events
         WHERE actor_user_id = $1
           AND subject_student_ref = $2
+          AND subject_type = 'STUDENT'
           AND created_at > now() - make_interval(secs => $3)
       `,
       [actorUserId, subjectStudentRef, withinSeconds],

@@ -200,7 +200,7 @@ async function main() {
     const adminCookie = cookieHeader(adminLogin.response);
     assert(admin.id > 0, 'Admin fixture id is invalid');
 
-    const filter = { schoolId: SCHOOL_ID, room: ROOM_ID, limit: 1 };
+    const filter = { schoolId: SCHOOL_ID, grade: 'ม.6', room: ROOM_ID, limit: 1 };
     const preview = await request(baseUrl, 'POST', '/api/users/student-accounts/preview', 201, {
       headers: { cookie: adminCookie },
       body: filter,
@@ -227,7 +227,7 @@ async function main() {
     const list = await request(
       baseUrl,
       'GET',
-      `/api/users/student-accounts?schoolId=${SCHOOL_ID}&room=${ROOM_ID}&searchTerm=${encodeURIComponent(
+      `/api/users/student-accounts?schoolId=${SCHOOL_ID}&grade=${encodeURIComponent('ม.6')}&room=${ROOM_ID}&searchTerm=${encodeURIComponent(
         credential.username,
       )}`,
       200,

@@ -41,6 +41,23 @@ export interface PiiRevealRequestMeta {
   requestId: string | null;
 }
 
+function cleanPrefixedAddressText(
+  prefix: string,
+  value: string | null | undefined,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  const normalized = value
+    .trim()
+    .replace(new RegExp(`^\\s*${prefix}\\s*`, 'u'), '')
+    .trim();
+  return normalized || null;
+}
+
 /**
  * Mask the Phase-1 sensitive groups (national id, passport) on a student-detail
  * row before it leaves the server, and report which fields were masked so the UI
@@ -355,6 +372,8 @@ export class StudentsService {
           actorRoles: actor?.roles ?? [],
           actorKind: actor?.virtual_login ? 'GUEST' : 'STAFF',
           subjectStudentRef: subjectRef,
+          subjectType: 'STUDENT',
+          subjectRef,
           subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
           fieldGroup: group,
           reasonCode,
@@ -410,9 +429,25 @@ export class StudentsService {
     }
   }
 
-  update(id: number, updateStudentDto: UpdateStudentDto) {
-    void updateStudentDto;
-    return `This action updates a #${id} student`;
+  async update(
+    id: string,
+    updateStudentDto: UpdateStudentDto,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+  ) {
+    await this.assertOwnStudentAccess(id, actor);
+    const existing = await this.studentsRepository.findStudentById(id, userScope);
+    if (!existing) {
+      throw new NotFoundException(`Student with ID ${id} not found`);
+    }
+    await this.studentsRepository.updateStudentByUuid(id, {
+      ...updateStudentDto,
+      VillageNumber_Onec: cleanPrefixedAddressText('หมู่', updateStudentDto.VillageNumber_Onec),
+      Street_Onec: cleanPrefixedAddressText('ถนน', updateStudentDto.Street_Onec),
+      Soi_Onec: cleanPrefixedAddressText('ซอย', updateStudentDto.Soi_Onec),
+      Trok_Onec: cleanPrefixedAddressText('ตรอก', updateStudentDto.Trok_Onec),
+    });
+    return await this.findOne(id, actor, userScope);
   }
 
   remove(id: number) {
