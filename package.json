@@ -23,6 +23,7 @@
     "roles:verify-migration-parity": "ts-node -r tsconfig-paths/register -r dotenv/config src/scripts/verify_role_scope_migration_parity.ts",
     "smoke:attendance-operations": "node scripts/smoke-attendance-operations.js",
     "smoke:account-lifecycle": "node scripts/smoke-account-lifecycle.js",
+    "smoke:master-data-lookups": "node scripts/smoke-master-data-lookups.js",
     "smoke:student-accounts": "node scripts/smoke-student-accounts.js",
     "smoke:role-scope-users": "node scripts/smoke-role-scope-users.js",
     "seed:attendance-anomalies": "node scripts/seed-attendance-anomalies.js",
