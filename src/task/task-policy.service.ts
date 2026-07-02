@@ -9,6 +9,7 @@ import {
   type RoleScopeMode,
   type RoleScopePolicy,
 } from '../auth/permissions.constants';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { TaskRepository } from './task.repository';
 import type { ActorContext, DataScope, NormalizedDataScope, RoleDefinition } from './task.types';
 
@@ -181,6 +182,10 @@ export class TaskPolicyService {
   isScopeSubsetOfActor(targetScope: unknown, actorScope: unknown): boolean {
     if (this.isScopeGlobal(actorScope)) {
       return true;
+    }
+
+    if (isUnconfiguredDataScope(actorScope)) {
+      return false;
     }
 
     const actor = this.normalizeScope(actorScope);

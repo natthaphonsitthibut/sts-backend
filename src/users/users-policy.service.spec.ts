@@ -194,6 +194,8 @@ describe('UsersPolicyService functional roles and data scope', () => {
   });
 
   it.each([
+    ['empty actor scope', {}, scopedTeacher.data_scope, false],
+    ['global actor scope', { global: true }, scopedTeacher.data_scope, true],
     ['same full school scope', scopedAdmin.data_scope, scopedTeacher.data_scope, true],
     [
       'target narrower grade scope inside the same school',

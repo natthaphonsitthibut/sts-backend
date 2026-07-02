@@ -9,6 +9,7 @@ import {
   type RoleScopeMode,
   type RoleScopePolicy,
 } from '../auth/permissions.constants';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import type {
   CreateRoleGroupDto,
   CreateUserDto,
@@ -208,6 +209,10 @@ export class UsersPolicyService {
   isScopeSubsetOfActor(targetScope: unknown, actorScope: unknown): boolean {
     if (this.isScopeGlobal(actorScope)) {
       return true;
+    }
+
+    if (isUnconfiguredDataScope(actorScope)) {
+      return false;
     }
 
     const actor = this.normalizeScope(actorScope);
