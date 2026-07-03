@@ -72,6 +72,12 @@ export const SERVER_INJECTED_COLUMNS: ReadonlySet<string> = new Set([
   'student_status_code',
 ]);
 
+/** Input-only fields transformed into canonical table columns before persistence. */
+export const DERIVED_IMPORT_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = {
+  student_term: new Set(['FullName_Onec']),
+  student_dropouts: new Set(),
+};
+
 export const STUDENT_TERM_NATURAL_KEY_COLUMNS: readonly string[] = [
   'person_uuid',
   'AcademicYear_Onec',

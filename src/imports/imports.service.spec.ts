@@ -242,9 +242,9 @@ describe('ImportsService', () => {
       },
     ]);
 
-    const missingRequired = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
-    expect(missingRequired.canImport).toBe(false);
-    expect(missingRequired.headers).toEqual([
+    const automaticPreview = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
+    expect(automaticPreview.canImport).toBe(true);
+    expect(automaticPreview.headers).toEqual([
       'เลขบัตร',
       'ชื่อ',
       'นามสกุล',
@@ -252,12 +252,14 @@ describe('ImportsService', () => {
       'ภาคเรียน',
       'รหัสโรงเรียน',
     ]);
-    expect(missingRequired.missingRequiredColumns).toEqual([
-      'PersonID_Onec',
-      'AcademicYear_Onec',
-      'Semester_Onec',
-      'SchoolID_Onec',
-    ]);
+    expect(automaticPreview.mapping).toMatchObject({
+      PersonID_Onec: 'เลขบัตร',
+      FirstName_Onec: 'ชื่อ',
+      LastName_Onec: 'นามสกุล',
+      AcademicYear_Onec: 'ปีการศึกษา',
+      Semester_Onec: 'ภาคเรียน',
+      SchoolID_Onec: 'รหัสโรงเรียน',
+    });
 
     const preview = await service.previewImport(
       file,
@@ -281,6 +283,55 @@ describe('ImportsService', () => {
       lastName: 'Student',
       personIdMasked: '••••3333',
     });
+  });
+
+  it('auto-maps common name and id headers and splits a combined full name', async () => {
+    const { service } = createService();
+    const file = makeImportFile([
+      {
+        ID: '3333333333333',
+        'ชื่อ-นามสกุล': 'ณัฐพล สิทธิบุศย์',
+        ปี: 2569,
+        เทอม: 1,
+        รหัสโรงเรียน: 1001,
+      },
+    ]);
+
+    const preview = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
+
+    expect(preview.mapping).toMatchObject({
+      PersonID_Onec: 'ID',
+      FullName_Onec: 'ชื่อ-นามสกุล',
+      AcademicYear_Onec: 'ปี',
+      Semester_Onec: 'เทอม',
+      SchoolID_Onec: 'รหัสโรงเรียน',
+    });
+    expect(preview.sampleRows[0]).toMatchObject({
+      firstName: 'ณัฐพล',
+      lastName: 'สิทธิบุศย์',
+      personIdMasked: '••••3333',
+    });
+  });
+
+  it('rejects mapping one source header to multiple system fields', async () => {
+    const { service } = createService();
+    const file = makeImportFile([
+      {
+        ชื่อ: 'ณัฐพล สิทธิบุศย์',
+        ปี: 2569,
+        เทอม: 1,
+        รหัสโรงเรียน: 1001,
+      },
+    ]);
+
+    await expect(
+      service.previewImport(
+        file,
+        'student_term',
+        JSON.stringify({ PersonID_Onec: 'ชื่อ', FirstName_Onec: 'ชื่อ' }),
+        GLOBAL_ACTOR,
+      ),
+    ).rejects.toThrow('ถูกจับคู่มากกว่าหนึ่งช่อง');
   });
 
   it('previews reordered CSV columns and trims identifier whitespace', async () => {

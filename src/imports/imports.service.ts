@@ -22,6 +22,7 @@ import type {
   RetryImportQuarantineDto,
 } from './dto/imports.dto';
 import {
+  DERIVED_IMPORT_COLUMNS,
   IMPORT_TARGET_COLUMNS,
   isImportTarget,
   type ImportQuarantineReason,
@@ -47,6 +48,37 @@ const PREVIEW_CHANGE_FIELDS: ReadonlyArray<{ column: string; label: string }> = 
 const IMPORT_TARGET_LABELS: Record<ImportTarget, string> = {
   student_dropouts: 'ข้อมูลนักเรียนออกกลางคัน',
   student_term: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
+};
+
+const STUDENT_TERM_HEADER_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  PersonID_Onec: [
+    'id',
+    'student id',
+    'studentid',
+    'national id',
+    'citizen id',
+    'เลขประจำตัว',
+    'เลขประจำตัวประชาชน',
+    'เลขบัตรประชาชน',
+    'เลขบัตร',
+    'รหัสนักเรียน',
+  ],
+  FullName_Onec: [
+    'full name',
+    'fullname',
+    'ชื่อ-นามสกุล',
+    'ชื่อนามสกุล',
+    'ชื่อสกุล',
+    'ชื่อและนามสกุล',
+  ],
+  FirstName_Onec: ['first name', 'firstname', 'ชื่อ'],
+  LastName_Onec: ['last name', 'lastname', 'นามสกุล', 'สกุล'],
+  AcademicYear_Onec: ['academic year', 'academicyear', 'ปีการศึกษา', 'ปี'],
+  Semester_Onec: ['semester', 'term', 'ภาคเรียน', 'เทอม'],
+  SchoolID_Onec: ['school id', 'schoolid', 'รหัสโรงเรียน', 'รหัสสถานศึกษา', 'โรงเรียน'],
+  GradeLevelID_Onec: ['grade id', 'grade', 'ชั้นเรียน', 'ชั้น'],
+  RoomID_Onec: ['room id', 'room', 'ห้องเรียน', 'ห้อง'],
+  StudentStatusID_Onec: ['student status', 'status', 'สถานะนักเรียน', 'สถานะ'],
 };
 
 const RETRYABLE_QUARANTINE_REASONS: ReadonlySet<string> = new Set([
@@ -417,9 +449,34 @@ export class ImportsService {
    */
   private assertMappedColumnsAllowed(target: ImportTarget, mapping: Record<string, string>): void {
     const allowed = IMPORT_TARGET_COLUMNS[target];
-    const invalid = Object.keys(mapping).filter((column) => !allowed.has(column));
+    const derived = DERIVED_IMPORT_COLUMNS[target];
+    const invalid = Object.keys(mapping).filter(
+      (column) => !allowed.has(column) && !derived.has(column),
+    );
     if (invalid.length > 0) {
       throw new BadRequestException(`พบคอลัมน์ที่ไม่อนุญาตสำหรับ ${target}: ${invalid.join(', ')}`);
+    }
+  }
+
+  private normalizeHeader(value: string): string {
+    return value
+      .trim()
+      .toLocaleLowerCase('th')
+      .replace(/[\s_\-./()]+/g, '');
+  }
+
+  private assertUniqueMappedHeaders(mapping: Record<string, string>): void {
+    const fieldsByHeader = new Map<string, string[]>();
+    for (const [field, header] of Object.entries(mapping)) {
+      const normalized = this.normalizeHeader(header);
+      if (!normalized) continue;
+      fieldsByHeader.set(normalized, [...(fieldsByHeader.get(normalized) ?? []), field]);
+    }
+    const duplicate = [...fieldsByHeader.entries()].find(([, fields]) => fields.length > 1);
+    if (duplicate) {
+      throw new BadRequestException(
+        `คอลัมน์ “${duplicate[0]}” ถูกจับคู่มากกว่าหนึ่งช่อง กรุณาเลือกคอลัมน์แยกกัน`,
+      );
     }
   }
 
@@ -507,14 +564,35 @@ export class ImportsService {
     data: SheetRow[],
   ): Record<string, string> {
     if (Object.keys(mapping).length > 0) {
+      this.assertUniqueMappedHeaders(mapping);
       return mapping;
     }
 
-    const headers = new Set(this.getWorksheetHeaders(data));
+    const headers = this.getWorksheetHeaders(data);
     const allowedColumns = IMPORT_TARGET_COLUMNS[target];
-    return Object.fromEntries(
-      [...allowedColumns].filter((column) => headers.has(column)).map((column) => [column, column]),
+    const derivedColumns = DERIVED_IMPORT_COLUMNS[target];
+    const candidates = [...allowedColumns, ...derivedColumns];
+    const normalizedHeaders = new Map(
+      headers.map((header) => [this.normalizeHeader(header), header]),
     );
+    const usedHeaders = new Set<string>();
+    const resolved: Record<string, string> = {};
+
+    for (const column of candidates) {
+      const aliases =
+        target === 'student_term'
+          ? [column, ...(STUDENT_TERM_HEADER_ALIASES[column] ?? [])]
+          : [column];
+      const header = aliases
+        .map((alias) => normalizedHeaders.get(this.normalizeHeader(alias)))
+        .find((value): value is string => typeof value === 'string' && !usedHeaders.has(value));
+      if (header) {
+        resolved[column] = header;
+        usedHeaders.add(header);
+      }
+    }
+
+    return resolved;
   }
 
   private getUnmappedHeaders(
@@ -523,7 +601,10 @@ export class ImportsService {
     data: SheetRow[],
   ): string[] {
     const mappedHeaders = new Set(Object.values(mapping));
-    const allowedColumns = IMPORT_TARGET_COLUMNS[target];
+    const allowedColumns = new Set([
+      ...IMPORT_TARGET_COLUMNS[target],
+      ...DERIVED_IMPORT_COLUMNS[target],
+    ]);
     return this.getWorksheetHeaders(data).filter(
       (header) => !mappedHeaders.has(header) && !allowedColumns.has(header),
     );
@@ -535,12 +616,25 @@ export class ImportsService {
   ): Record<string, unknown> {
     const dbRow: Record<string, unknown> = {};
     for (const dbCol of Object.keys(mapping)) {
+      if (DERIVED_IMPORT_COLUMNS.student_term.has(dbCol)) continue;
       const csvHeader = mapping[dbCol];
       if (csvHeader && row[csvHeader] !== undefined) {
         const value = row[csvHeader];
         dbRow[dbCol] = typeof value === 'string' && value.trim().length === 0 ? null : value;
       } else {
         dbRow[dbCol] = null;
+      }
+    }
+
+    const fullNameHeader = mapping['FullName_Onec'];
+    const fullName = fullNameHeader ? this.normalizeScalar(row[fullNameHeader]) : '';
+    if (fullName) {
+      const parts = fullName.split(/\s+/u).filter(Boolean);
+      if (!this.normalizeScalar(dbRow['FirstName_Onec'])) {
+        dbRow['FirstName_Onec'] = parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0];
+      }
+      if (!this.normalizeScalar(dbRow['LastName_Onec'])) {
+        dbRow['LastName_Onec'] = parts.length > 1 ? parts.at(-1) : null;
       }
     }
 
