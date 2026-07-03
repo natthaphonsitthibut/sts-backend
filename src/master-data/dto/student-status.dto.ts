@@ -13,6 +13,7 @@ import {
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import {
   STUDENT_STATUS_CATEGORIES,
+  STUDENT_STATUS_BADGE_VARIANTS,
   STUDENT_STATUS_SORT_FIELDS,
   type StudentStatusCategory,
   type StudentStatusSortField,
@@ -52,6 +53,9 @@ export class CreateStudentStatusDto {
   @IsIn(STUDENT_STATUS_CATEGORIES)
   category!: StudentStatusCategory;
 
+  @IsIn(STUDENT_STATUS_BADGE_VARIANTS)
+  badgeVariant!: (typeof STUDENT_STATUS_BADGE_VARIANTS)[number];
+
   @IsBoolean()
   isActiveForLogin!: boolean;
 
@@ -88,6 +92,10 @@ export class UpdateStudentStatusDto {
   @IsOptional()
   @IsIn(STUDENT_STATUS_CATEGORIES)
   category?: StudentStatusCategory;
+
+  @IsOptional()
+  @IsIn(STUDENT_STATUS_BADGE_VARIANTS)
+  badgeVariant?: (typeof STUDENT_STATUS_BADGE_VARIANTS)[number];
 
   @IsOptional()
   @IsBoolean()

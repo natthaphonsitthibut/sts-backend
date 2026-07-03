@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsIn,
+  IsDefined,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -8,6 +9,8 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { IMPORT_QUARANTINE_REASONS, type ImportQuarantineReason } from '../imports.types';
 
@@ -97,16 +100,90 @@ export class ResolveImportQuarantineDto {
   @Matches(/^[0-9a-f]{64}$/)
   candidateKey?: string;
 
-  @IsOptional()
+  @ValidateIf(
+    (value: ResolveImportQuarantineDto) => value.action === 'REJECT' || value.note !== undefined,
+  )
+  @IsNotEmpty()
   @IsString()
   @MaxLength(500)
   note?: string;
 }
 
+export class ImportQuarantineValuesDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  AcademicYear_Onec?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  Semester_Onec?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  SchoolID_Onec?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  GradeLevelID_Onec?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  RoomID_Onec?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  StudentStatusID_Onec?: string;
+}
+
+export class FixImportQuarantineDto {
+  @IsDefined()
+  @Type(() => ImportQuarantineValuesDto)
+  @ValidateNested()
+  values!: ImportQuarantineValuesDto;
+}
+
+export class RetryImportQuarantineDto {
+  @IsOptional()
+  @IsIn(IMPORT_QUARANTINE_REASONS)
+  reasonCode?: ImportQuarantineReason;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+}
+
 export class ExportImportQuarantineDto {
   @IsOptional()
-  @IsIn(['PENDING', 'REJECTED'])
-  status: 'PENDING' | 'REJECTED' = 'REJECTED';
+  @IsIn(['PENDING', 'RESOLVED', 'REJECTED'])
+  status: 'PENDING' | 'RESOLVED' | 'REJECTED' = 'REJECTED';
 
   @IsOptional()
   @IsIn(IMPORT_QUARANTINE_REASONS)

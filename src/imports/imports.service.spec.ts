@@ -27,6 +27,27 @@ function makeCsvImportFile(csv: string): Express.Multer.File {
   } as Express.Multer.File;
 }
 
+function quarantineLookupMocks() {
+  return {
+    findQuarantineReasonLookups: jest.fn().mockResolvedValue([
+      { code: 'IDENTIFIER_CONFLICT', label_th: 'เลขนี้ตรงกับหลายโปรไฟล์ในระบบ' },
+      { code: 'MISSING_NATURAL_KEY_FIELD', label_th: 'ข้อมูลภาคเรียนบังคับไม่ครบหรือไม่ถูกต้อง' },
+      { code: 'ROOM_NOT_FOUND', label_th: 'ไม่พบห้องเรียนในข้อมูลหลัก' },
+    ]),
+    findQuarantineResolutionStateLookups: jest.fn().mockResolvedValue([
+      { code: 'ACTION_REQUIRED', label_th: 'ต้องแก้ข้อมูล', badge_variant: 'warning' },
+      { code: 'DECISION_REQUIRED', label_th: 'ต้องตัดสินใจ', badge_variant: 'default' },
+      { code: 'RETRY_ELIGIBLE', label_th: 'ผ่านการตรวจเบื้องต้น', badge_variant: 'success' },
+      { code: 'BLOCKED', label_th: 'ต้องตรวจสอบเพิ่มเติม', badge_variant: 'secondary' },
+    ]),
+    findQuarantineStatusLookups: jest.fn().mockResolvedValue([
+      { code: 'PENDING', label_th: 'รอตรวจสอบ', badge_variant: 'warning' },
+      { code: 'RESOLVED', label_th: 'แก้ไขแล้ว', badge_variant: 'success' },
+      { code: 'REJECTED', label_th: 'ปฏิเสธแล้ว', badge_variant: 'secondary' },
+    ]),
+  };
+}
+
 describe('ImportsService', () => {
   function createService(
     existingStudentTerms: Array<{
@@ -48,6 +69,7 @@ describe('ImportsService', () => {
       findStudentStatusLabels: jest
         .fn()
         .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'ACTIVE' }]),
+      ...quarantineLookupMocks(),
     };
     const auditLog = {
       record: jest.fn(),
@@ -383,6 +405,34 @@ describe('ImportsService', () => {
       status: 'quarantine',
       action: 'quarantine',
       studentStatusCode: '999',
+      studentStatusLabel: 'ยังไม่ได้จับคู่',
+      studentStatusCategory: 'UNMAPPED',
+      issues: ['สถานะนักเรียนยังไม่ได้จับคู่'],
+    });
+  });
+
+  it('treats a placeholder UNMAPPED-category status as still unmapped in preview', async () => {
+    const { repository, service } = createService();
+    repository.findStudentStatusLabels.mockResolvedValue([
+      { id: 90, label: 'ยังไม่ได้จับคู่ (ตัวอย่าง)', category: 'UNMAPPED' },
+    ]);
+    const file = makeImportFile([
+      {
+        PersonID_Onec: '7777777777777',
+        AcademicYear_Onec: 2567,
+        Semester_Onec: 1,
+        SchoolID_Onec: 1001,
+        StudentStatusID_Onec: 90,
+      },
+    ]);
+
+    const preview = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
+
+    expect(preview).toMatchObject({ rowsReady: 0, rowsToQuarantine: 1 });
+    expect(preview.sampleRows[0]).toMatchObject({
+      status: 'quarantine',
+      action: 'quarantine',
+      studentStatusCode: '90',
       studentStatusLabel: 'ยังไม่ได้จับคู่',
       studentStatusCategory: 'UNMAPPED',
       issues: ['สถานะนักเรียนยังไม่ได้จับคู่'],
@@ -856,6 +906,7 @@ describe('ImportsService', () => {
 
   it('lists scoped quarantine rows with identifiers masked', async () => {
     const repository = {
+      ...quarantineLookupMocks(),
       listQuarantine: jest.fn().mockResolvedValue({
         rows: [
           {
@@ -872,6 +923,7 @@ describe('ImportsService', () => {
               FirstName_Onec: 'Test',
               LastName_Onec: 'Student',
             },
+            changed_field_details: [{ label: 'ห้อง', oldValue: '99', newValue: '1' }],
           },
         ],
         totalCount: 1,
@@ -897,7 +949,97 @@ describe('ImportsService', () => {
       { school_ids: [1001] },
     );
     expect(result.items[0].student.personIdMasked).toBe('••••0123');
+    expect(result.items[0].changedFieldDetails).toEqual([
+      { label: 'ห้อง', oldValue: '99', newValue: '1' },
+    ]);
+    expect(result.items[0].resolution).toMatchObject({
+      state: 'DECISION_REQUIRED',
+      action: 'SELECT_CANDIDATE',
+    });
     expect(JSON.stringify(result)).not.toContain('1234567890123');
+  });
+
+  it('marks only invalid natural-key fields as editable', async () => {
+    const repository = {
+      ...quarantineLookupMocks(),
+      listQuarantine: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            id: '2',
+            batch_id: 'batch-id',
+            school_id: 1001,
+            school_name: 'Test School',
+            source_row_number: 3,
+            reason_code: 'MISSING_NATURAL_KEY_FIELD',
+            status: 'PENDING',
+            target: 'student_term',
+            mapped_values: {
+              PersonID_Onec: '1234567890123',
+              FirstName_Onec: 'Test',
+              LastName_Onec: 'Student',
+              AcademicYear_Onec: 2569,
+              Semester_Onec: 1,
+              SchoolID_Onec: 'Test School',
+            },
+          },
+        ],
+        totalCount: 1,
+      }),
+    };
+    const service = new ImportsService(repository as never, { record: jest.fn() } as never);
+
+    const result = await service.listQuarantine({ page: 1, limit: 20 }, {
+      id: 1,
+      data_scope: { global: true },
+    } as never);
+
+    expect(result.items[0].resolution).toMatchObject({
+      state: 'ACTION_REQUIRED',
+      action: 'EDIT_FIELDS',
+      editableFields: ['SchoolID_Onec'],
+    });
+  });
+
+  it('marks natural-key rows as retryable when the corrected values are complete', async () => {
+    const repository = {
+      ...quarantineLookupMocks(),
+      listQuarantine: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            id: '3',
+            batch_id: 'batch-id',
+            school_id: 1001,
+            school_name: 'Test School',
+            source_row_number: 4,
+            reason_code: 'MISSING_NATURAL_KEY_FIELD',
+            status: 'PENDING',
+            target: 'student_term',
+            retry_eligible: true,
+            mapped_values: {
+              PersonID_Onec: '1234567890123',
+              FirstName_Onec: 'Test',
+              LastName_Onec: 'Student',
+              AcademicYear_Onec: 2569,
+              Semester_Onec: 1,
+              SchoolID_Onec: 1001,
+            },
+          },
+        ],
+        totalCount: 1,
+      }),
+    };
+    const service = new ImportsService(repository as never, { record: jest.fn() } as never);
+
+    const result = await service.listQuarantine({ page: 1, limit: 20 }, {
+      id: 1,
+      data_scope: { global: true },
+    } as never);
+
+    expect(result.items[0].resolution).toMatchObject({
+      state: 'RETRY_ELIGIBLE',
+      action: 'RETRY',
+      editableFields: [],
+    });
   });
 
   it('fails closed when resolving a quarantine row outside actor scope', async () => {
@@ -920,6 +1062,7 @@ describe('ImportsService', () => {
   it('resolves an identity conflict only to a matching candidate', async () => {
     const auditLog = { record: jest.fn(), recordAtomic: jest.fn() };
     const repository = {
+      ...quarantineLookupMocks(),
       withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
         callback({ query: jest.fn() }),
       ),
@@ -987,12 +1130,39 @@ describe('ImportsService', () => {
       findQuarantine: jest.fn().mockResolvedValue({
         status: 'PENDING',
         reason_code: 'IDENTIFIER_CONFLICT',
-        mapped_values: { PersonID_Onec: '1234567890123' },
+        school_name: 'Import School',
+        school_province: 'Bangkok',
+        source_grade_label: 'ป.1',
+        source_status_label: 'กำลังศึกษา',
+        mapped_values: {
+          PersonID_Onec: '1234567890123',
+          FirstName_Onec: 'Import',
+          LastName_Onec: 'Student',
+          SchoolID_Onec: 1001,
+          GradeLevelID_Onec: 101,
+          RoomID_Onec: 1,
+          AcademicYear_Onec: 2569,
+          Semester_Onec: 1,
+          StudentStatusID_Onec: 10,
+        },
       }),
       findPersonCandidateDetailsByNationalId: jest.fn().mockResolvedValue([
-        { person_uuid: 'person-a', first_name: 'A', last_name: 'One' },
-        { person_uuid: 'person-b', first_name: 'B', last_name: 'Two' },
+        {
+          person_uuid: 'person-a',
+          first_name: 'A',
+          last_name: 'One',
+          school_name: 'Candidate School',
+          school_province: 'Bangkok',
+          grade_level_id: 101,
+          grade_level_label: 'ป.1',
+          room_id: '2',
+          academic_year: '2569',
+          semester: '1',
+          student_status_code: 10,
+          student_status_label: 'กำลังศึกษา',
+        },
       ]),
+      countPersonCandidatesByNationalId: jest.fn().mockResolvedValue(2),
     };
     const service = new ImportsService(repository as never, { record: jest.fn() } as never);
 
@@ -1001,23 +1171,254 @@ describe('ImportsService', () => {
       data_scope: { school_ids: [1001] },
     } as never);
 
-    expect(result.items).toHaveLength(2);
+    expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
       candidateKey: candidateKey('1', 'person-a'),
       personIdMasked: '••••0123',
+      schoolName: 'Candidate School',
+      roomId: '2',
+    });
+    expect(result.meta).toEqual({ totalCount: 2, visibleCount: 1 });
+    expect(result.importRow).toMatchObject({
+      firstName: 'Import',
+      schoolName: 'Import School',
+      gradeLevelLabel: 'ป.1',
+      roomId: '1',
     });
     expect(repository.findPersonCandidateDetailsByNationalId).toHaveBeenCalledWith(
       '1234567890123',
       { school_ids: [1001] },
       expect.anything(),
     );
+    expect(repository.countPersonCandidatesByNationalId).toHaveBeenCalledWith(
+      '1234567890123',
+      expect.anything(),
+    );
     expect(JSON.stringify(result)).not.toContain('person-a');
     expect(JSON.stringify(result)).not.toContain('1234567890123');
+  });
+
+  it('corrects an allowed quarantine field and resolves atomically', async () => {
+    const auditLog = { recordAtomic: jest.fn() };
+    const repository = {
+      ...quarantineLookupMocks(),
+      withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
+        callback({ query: jest.fn() }),
+      ),
+      findQuarantineForUpdate: jest.fn().mockResolvedValue({
+        id: '7',
+        status: 'PENDING',
+        reason_code: 'ROOM_NOT_FOUND',
+        target: 'student_term',
+        mapped_values: {
+          PersonID_Onec: '1234567890123',
+          AcademicYear_Onec: 2569,
+          Semester_Onec: 1,
+          SchoolID_Onec: 1001,
+          GradeLevelID_Onec: 101,
+          RoomID_Onec: 'bad',
+        },
+      }),
+      findSchoolScopeDetails: jest
+        .fn()
+        .mockResolvedValue([{ id: 1001, province: 'Bangkok', district: null, sub_district: null }]),
+      findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
+      findGradeLabels: jest.fn().mockResolvedValue([{ id: 101, label: 'ป.1' }]),
+      findPersonUuidMatchesByNationalIds: jest
+        .fn()
+        .mockResolvedValue([{ identifier_normalized: '1234567890123', person_uuid: 'person-a' }]),
+      insertImportRow: jest.fn().mockResolvedValue('inserted'),
+      updateQuarantineMappedValues: jest.fn(),
+      resolveQuarantineRow: jest.fn(),
+    };
+    const service = new ImportsService(repository as never, auditLog as never);
+
+    const result = await service.fixQuarantineValues(
+      '7',
+      { values: { AcademicYear_Onec: undefined, RoomID_Onec: '2' } },
+      {
+        id: 1,
+        data_scope: { global: true },
+      } as never,
+    );
+
+    expect(result).toEqual({ id: '7', status: 'RESOLVED', changedFields: ['RoomID_Onec'] });
+    expect(repository.insertImportRow).toHaveBeenCalledWith(
+      'student_term',
+      expect.objectContaining({
+        AcademicYear_Onec: 2569,
+        RoomID_Onec: '2',
+        person_uuid: 'person-a',
+      }),
+      expect.anything(),
+    );
+    expect(repository.updateQuarantineMappedValues).toHaveBeenCalledWith(
+      '7',
+      expect.any(Object),
+      1001,
+      1,
+      expect.anything(),
+    );
+    const auditCall = (auditLog.recordAtomic.mock.calls[0] as unknown[])[0] as {
+      action: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(auditCall.action).toBe('IMPORT_QUARANTINE_RESOLVED');
+    expect(auditCall.metadata).toMatchObject({
+      status: 'RESOLVED',
+      statusLabel: 'แก้ไขแล้ว',
+      reasonCode: 'ROOM_NOT_FOUND',
+      reasonLabel: 'ไม่พบห้องเรียนในข้อมูลหลัก',
+      changedFields: ['RoomID_Onec'],
+      changedFieldDetails: [
+        {
+          field: 'RoomID_Onec',
+          label: 'ห้อง',
+          oldValue: 'bad',
+          newValue: '2',
+        },
+      ],
+      changedFieldLabels: 'ห้อง',
+    });
+  });
+
+  it('rejects resolving a quarantine row against a placeholder UNMAPPED-category status', async () => {
+    const repository = {
+      ...quarantineLookupMocks(),
+      withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
+        callback({ query: jest.fn() }),
+      ),
+      findQuarantineForUpdate: jest.fn().mockResolvedValue({
+        id: '22',
+        status: 'PENDING',
+        reason_code: 'UNMAPPED_STUDENT_STATUS',
+        target: 'student_term',
+        mapped_values: {
+          PersonID_Onec: '1234567890123',
+          AcademicYear_Onec: 2569,
+          Semester_Onec: 1,
+          SchoolID_Onec: 1001,
+          StudentStatusID_Onec: 90,
+        },
+      }),
+      findSchoolScopeDetails: jest
+        .fn()
+        .mockResolvedValue([{ id: 1001, province: 'Bangkok', district: null, sub_district: null }]),
+      findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
+      findStudentStatusLabels: jest
+        .fn()
+        .mockResolvedValue([{ id: 90, label: 'ยังไม่ได้จับคู่ (ตัวอย่าง)', category: 'UNMAPPED' }]),
+      insertImportRow: jest.fn(),
+      resolveQuarantineRow: jest.fn(),
+    };
+    const service = new ImportsService(repository as never, { recordAtomic: jest.fn() } as never);
+
+    await expect(
+      service.fixQuarantineValues('22', { values: { StudentStatusID_Onec: '90' } }, {
+        id: 1,
+        data_scope: { global: true },
+      } as never),
+    ).rejects.toThrow('สถานะนักเรียนยังไม่ได้จับคู่');
+    expect(repository.insertImportRow).not.toHaveBeenCalled();
+    expect(repository.resolveQuarantineRow).not.toHaveBeenCalled();
+  });
+
+  it('summarizes retryable quarantine rows within actor scope and filters', async () => {
+    const repository = {
+      countReadyQuarantineRows: jest.fn().mockResolvedValue(3),
+    };
+    const service = new ImportsService(repository as never, { record: jest.fn() } as never);
+
+    const result = await service.retryableQuarantineSummary(
+      { reasonCode: 'GRADE_NOT_FOUND', schoolId: 1001 },
+      { id: 1, data_scope: { school_ids: [1001] } } as never,
+    );
+
+    expect(result).toEqual({ readyCount: 3, batchLimit: 100 });
+    expect(repository.countReadyQuarantineRows).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonCode: 'GRADE_NOT_FOUND', schoolId: 1001 }),
+      { school_ids: [1001] },
+    );
+  });
+
+  it('denies retry summary and batch actions for own-only actors', async () => {
+    const repository = {
+      countReadyQuarantineRows: jest.fn(),
+      findReadyQuarantineRows: jest.fn(),
+    };
+    const service = new ImportsService(repository as never, { record: jest.fn() } as never);
+    const actor = { id: 1, data_scope: { own_only: true } } as never;
+
+    await expect(service.retryableQuarantineSummary({}, actor)).rejects.toThrow(
+      'บัญชีนี้ไม่มีสิทธิ์จัดการรายการนำเข้าที่รอตรวจสอบ',
+    );
+    await expect(service.retryReadyQuarantine({}, actor)).rejects.toThrow(
+      'บัญชีนี้ไม่มีสิทธิ์จัดการรายการนำเข้าที่รอตรวจสอบ',
+    );
+    expect(repository.countReadyQuarantineRows).not.toHaveBeenCalled();
+    expect(repository.findReadyQuarantineRows).not.toHaveBeenCalled();
+  });
+
+  it('retries a bounded quarantine batch and is idempotent when no rows remain', async () => {
+    const repository = {
+      findReadyQuarantineRows: jest
+        .fn()
+        .mockResolvedValueOnce([
+          { id: '1', sourceRowNumber: 11, studentName: 'ณัฐวุฒิ ใจตรง' },
+          { id: '2', sourceRowNumber: 12, studentName: 'อรณิชา แสงแก้ว' },
+        ])
+        .mockResolvedValueOnce([]),
+      countReadyQuarantineRows: jest.fn().mockResolvedValue(0),
+    };
+    const service = new ImportsService(repository as never, { record: jest.fn() } as never);
+    const resolve = jest.spyOn(service, 'resolveQuarantine').mockResolvedValue({
+      id: '1',
+      status: 'RESOLVED',
+    });
+    const actor = { id: 1, data_scope: { global: true } } as never;
+
+    const first = await service.retryReadyQuarantine({}, actor);
+    const second = await service.retryReadyQuarantine({}, actor);
+
+    expect(first).toEqual({
+      selectedCount: 2,
+      processedCount: 2,
+      skippedCount: 0,
+      failedCount: 0,
+      remainingReadyCount: 0,
+      batchLimit: 100,
+      items: [
+        {
+          id: '1',
+          sourceRowNumber: 11,
+          studentName: 'ณัฐวุฒิ ใจตรง',
+          outcome: 'IMPORTED',
+          code: 'IMPORTED',
+          message: 'นำเข้าสำเร็จ',
+        },
+        {
+          id: '2',
+          sourceRowNumber: 12,
+          studentName: 'อรณิชา แสงแก้ว',
+          outcome: 'IMPORTED',
+          code: 'IMPORTED',
+          message: 'นำเข้าสำเร็จ',
+        },
+      ],
+    });
+    expect(second.selectedCount).toBe(0);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(repository.findReadyQuarantineRows).toHaveBeenCalledWith(
+      expect.any(Object),
+      { global: true },
+      100,
+    );
   });
 
   it('exports a scoped readable CSV with masked identifiers', async () => {
     const auditLog = { record: jest.fn() };
     const repository = {
+      ...quarantineLookupMocks(),
       listQuarantine: jest.fn().mockResolvedValue({
         rows: [
           {

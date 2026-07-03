@@ -16,6 +16,7 @@ describe('TaskStatsService', () => {
       countAtRiskStudents: jest.fn().mockResolvedValue(9),
       countCasesCreatedOn: jest.fn().mockResolvedValue(0),
       countActiveTaskLinks: jest.fn().mockResolvedValue(0),
+      countCaseStatuses: jest.fn().mockResolvedValue({ OPEN: 2 }),
     };
     const taskPolicyService = {
       ensureActor: jest.fn().mockReturnValue(actor),
@@ -26,7 +27,7 @@ describe('TaskStatsService', () => {
     );
 
     await expect(service.getStats(actor)).resolves.toEqual(
-      expect.objectContaining({ atRiskStudents: 9 }),
+      expect.objectContaining({ atRiskStudents: 9, statusCounts: { OPEN: 2 } }),
     );
     expect(taskRepository.countAtRiskStudents).toHaveBeenCalledWith(actor);
   });

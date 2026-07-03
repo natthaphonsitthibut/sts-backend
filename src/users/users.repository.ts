@@ -369,7 +369,7 @@ export class UsersRepository {
     }
     const scope = actorScope || {};
     const params: unknown[] = [];
-    const conditions: string[] = [];
+    const conditions: string[] = [`u.data_origin_code <> 'AUTOMATED_TEST'`];
     let paramIndex = startIndex;
 
     const addScopeCondition = (key: keyof Omit<DataScope, 'own_only'>): void => {

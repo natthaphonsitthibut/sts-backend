@@ -31,6 +31,7 @@ export interface StudentListRow extends Record<string, unknown> {
   school_id: number | null;
   student_status_label: string;
   student_status_category: string;
+  student_status_badge_variant: string;
 }
 
 export interface StudentDetailRow extends Record<string, unknown> {
@@ -41,6 +42,7 @@ export interface StudentDetailRow extends Record<string, unknown> {
   school_name?: string | null;
   student_status_label?: string | null;
   student_status_category?: string | null;
+  student_status_badge_variant?: string | null;
 }
 
 export interface StudentCaseRow extends Record<string, unknown> {

@@ -122,4 +122,40 @@ describe('AuditLogService', () => {
     expect(queries[1].sql).toContain("-> 'school_ids'");
     expect(queries[1].params).toContainEqual(['10010003']);
   });
+
+  it('returns before and after values for resolved quarantine fields', async () => {
+    const importActor: AuthenticatedRequestUser = {
+      ...actor,
+      permissions: ['import-data'],
+    };
+    const row = {
+      id: '94',
+      actor_label: 'ผู้ดูแลระบบ',
+      action: 'IMPORT_QUARANTINE_RESOLVED',
+      target_type: 'student_import_quarantine_row',
+      target_id: '94',
+      metadata: {
+        studentName: 'ชลธิชา ใจงาม',
+        changedFieldLabels: 'ห้อง',
+        changedFieldDetails: [{ label: 'ห้อง', oldValue: '99', newValue: '1' }],
+      },
+      school_name: null,
+      created_at: new Date('2026-07-03T08:00:00.000Z'),
+      total_count: 1,
+    };
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue({ records: [row], affected: 1 }),
+    };
+    const service = new AuditLogService({
+      createQueryRunner: jest.fn(() => queryRunner),
+    } as never);
+
+    const result = await service.getById(importActor, '94');
+
+    expect(result.data.details).toContainEqual({ label: 'ห้อง (ก่อนแก้)', value: '99' });
+    expect(result.data.details).toContainEqual({ label: 'ห้อง (หลังแก้)', value: '1' });
+    expect(result.data.details).not.toContainEqual({ label: 'ข้อมูลที่แก้', value: 'ห้อง' });
+  });
 });

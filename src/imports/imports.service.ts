@@ -13,16 +13,19 @@ import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
-import { ImportsRepository } from './imports.repository';
+import { ImportsRepository, type QuarantineLookupRow } from './imports.repository';
 import type {
   ExportImportQuarantineDto,
+  FixImportQuarantineDto,
   ListImportQuarantineDto,
   ResolveImportQuarantineDto,
+  RetryImportQuarantineDto,
 } from './dto/imports.dto';
 import {
   IMPORT_TARGET_COLUMNS,
   isImportTarget,
   type ImportQuarantineReason,
+  type ImportReferenceRow,
   type ImportTarget,
   type ManualSchool,
   type QueryExecutor,
@@ -31,6 +34,7 @@ import {
 
 const MAX_IMPORT_ROWS = 10_000;
 const IMPORT_PREVIEW_SAMPLE_LIMIT = 20;
+const QUARANTINE_RETRY_BATCH_LIMIT = 100;
 
 const PREVIEW_CHANGE_FIELDS: ReadonlyArray<{ column: string; label: string }> = [
   { column: 'FirstName_Onec', label: 'ชื่อ' },
@@ -46,6 +50,7 @@ const IMPORT_TARGET_LABELS: Record<ImportTarget, string> = {
 };
 
 const RETRYABLE_QUARANTINE_REASONS: ReadonlySet<string> = new Set([
+  'MISSING_NATURAL_KEY_FIELD',
   'UNMAPPED_STUDENT_STATUS',
   'SCHOOL_NOT_FOUND',
   'GRADE_NOT_FOUND',
@@ -53,27 +58,34 @@ const RETRYABLE_QUARANTINE_REASONS: ReadonlySet<string> = new Set([
   'STATUS_CAUSE_UNMAPPED',
 ]);
 
-// Human-readable labels for the downloadable review report (kept in sync with
-// the frontend REASON_LABELS map in import.types.ts).
-const QUARANTINE_REASON_LABELS_TH: Record<string, string> = {
-  IDENTIFIER_CONFLICT: 'เลขนี้ตรงกับหลายโปรไฟล์ในระบบ',
-  UNMAPPED_STUDENT_STATUS: 'สถานะนักเรียนยังไม่จับคู่',
-  MISSING_NATURAL_KEY_FIELD: 'ข้อมูลภาคเรียนบังคับไม่ครบหรือไม่ถูกต้อง',
-  BLANK_REQUIRED_IDENTITY: 'ไม่มีรหัสประจำตัว',
-  DUPLICATE_ROW_IN_FILE: 'แถวซ้ำในไฟล์',
-  MULTIPLE_ACTIVE_ENROLLMENTS: 'พบการลงทะเบียนที่ยังใช้งานหลายรายการ',
-  NAME_CONFLICT_FOR_IDENTIFIER: 'ชื่อไม่ตรงกับรหัสประจำตัวเดิม',
-  INVALID_NATIONAL_ID_CHECKSUM: 'เลขประจำตัวประชาชนไม่ผ่านการตรวจสอบ',
-  SCHOOL_NOT_FOUND: 'ไม่พบโรงเรียนในข้อมูลหลัก',
-  GRADE_NOT_FOUND: 'ไม่พบชั้นเรียนในข้อมูลหลัก',
-  ROOM_NOT_FOUND: 'ไม่พบห้องเรียนในข้อมูลหลัก',
-  STATUS_CAUSE_UNMAPPED: 'สาเหตุสถานะนักเรียนยังไม่จับคู่',
+const QUARANTINE_FIELD_LABELS_TH: Readonly<Record<string, string>> = {
+  AcademicYear_Onec: 'ปีการศึกษา',
+  Semester_Onec: 'ภาคเรียน',
+  SchoolID_Onec: 'โรงเรียน',
+  GradeLevelID_Onec: 'ชั้นเรียน',
+  RoomID_Onec: 'ห้อง',
+  StudentStatusID_Onec: 'สถานะนักเรียน',
 };
 
-const QUARANTINE_STATUS_LABELS_TH: Record<string, string> = {
-  PENDING: 'รอตรวจสอบ',
-  RESOLVED: 'แก้ไขแล้ว',
-  REJECTED: 'ปฏิเสธแล้ว',
+type QuarantineBadgeVariant = 'default' | 'secondary' | 'destructive' | 'success' | 'warning';
+
+interface QuarantineLookupMeta {
+  label: string;
+  variant?: QuarantineBadgeVariant;
+}
+
+interface QuarantineLookupContext {
+  reason: Map<string, QuarantineLookupMeta>;
+  resolution: Map<string, QuarantineLookupMeta>;
+  status: Map<string, QuarantineLookupMeta>;
+}
+
+const QUARANTINE_EDITABLE_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  MISSING_NATURAL_KEY_FIELD: ['AcademicYear_Onec', 'Semester_Onec', 'SchoolID_Onec'],
+  UNMAPPED_STUDENT_STATUS: ['StudentStatusID_Onec'],
+  SCHOOL_NOT_FOUND: ['SchoolID_Onec'],
+  GRADE_NOT_FOUND: ['GradeLevelID_Onec'],
+  ROOM_NOT_FOUND: ['RoomID_Onec'],
 };
 
 const REQUIRED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
@@ -224,6 +236,125 @@ export class ImportsService {
     const roomValue = this.normalizeScalar(row['RoomID_Onec']);
     if (roomValue && !this.normalizePositiveInteger(roomValue)) return 'ROOM_NOT_FOUND';
     return null;
+  }
+
+  /**
+   * Codes usable as a real student status for import. A placeholder row whose
+   * category is UNMAPPED (e.g. seeded "ยังไม่ได้จับคู่") exists in master data but
+   * must still be treated as not mapped, otherwise quarantined rows would
+   * auto-pass retry without any correction.
+   */
+  private mappedStudentStatusCodes(statuses: ImportReferenceRow[]): Set<number> {
+    return new Set(
+      statuses
+        .filter((status) => status.category !== 'UNMAPPED')
+        .map((status) => Number(status.id)),
+    );
+  }
+
+  private importStatusLabel(status?: {
+    label?: string | null;
+    category?: string | null;
+  }): string | null {
+    if (!status?.label || status.category === 'UNMAPPED') return null;
+    return status.label.replace(/\s*\(ตัวอย่าง\)\s*$/u, '').trim() || status.label;
+  }
+
+  private quarantineChangedFieldDetails(
+    changedFields: string[],
+    originalValues: Record<string, unknown>,
+    values: Record<string, unknown>,
+  ) {
+    return changedFields.map((field) => ({
+      field,
+      label: QUARANTINE_FIELD_LABELS_TH[field] ?? field,
+      oldValue: this.normalizeScalar(originalValues[field]) || '-',
+      newValue: this.normalizeScalar(values[field]) || '-',
+    }));
+  }
+
+  private toChangedFieldDetails(value: unknown) {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+      const detail = item as Record<string, unknown>;
+      const label = this.normalizeScalar(detail.label);
+      if (!label) return [];
+      return [
+        {
+          label,
+          oldValue: this.normalizeScalar(detail.oldValue) || '-',
+          newValue: this.normalizeScalar(detail.newValue) || '-',
+        },
+      ];
+    });
+  }
+
+  private toQuarantineLookupMap(rows: QuarantineLookupRow[]): Map<string, QuarantineLookupMeta> {
+    return new Map(
+      rows.map((row) => {
+        const variant = this.normalizeScalar(row.badge_variant) as QuarantineBadgeVariant;
+        return [
+          String(row.code),
+          {
+            label: this.normalizeScalar(row.label_th) || String(row.code),
+            ...(variant ? { variant } : {}),
+          },
+        ];
+      }),
+    );
+  }
+
+  private async quarantineLookupContext(
+    executor?: QueryExecutor,
+  ): Promise<QuarantineLookupContext> {
+    if (executor) {
+      const reasonRows = await this.importsRepository.findQuarantineReasonLookups(executor);
+      const resolutionRows =
+        await this.importsRepository.findQuarantineResolutionStateLookups(executor);
+      const statusRows = await this.importsRepository.findQuarantineStatusLookups(executor);
+      return {
+        reason: this.toQuarantineLookupMap(reasonRows),
+        resolution: this.toQuarantineLookupMap(resolutionRows),
+        status: this.toQuarantineLookupMap(statusRows),
+      };
+    }
+    const [reasonRows, resolutionRows, statusRows] = await Promise.all([
+      this.importsRepository.findQuarantineReasonLookups(executor),
+      this.importsRepository.findQuarantineResolutionStateLookups(executor),
+      this.importsRepository.findQuarantineStatusLookups(executor),
+    ]);
+    return {
+      reason: this.toQuarantineLookupMap(reasonRows),
+      resolution: this.toQuarantineLookupMap(resolutionRows),
+      status: this.toQuarantineLookupMap(statusRows),
+    };
+  }
+
+  private quarantineLookup(
+    lookups: Map<string, QuarantineLookupMeta>,
+    code: string,
+    fallbackVariant?: QuarantineBadgeVariant,
+  ): QuarantineLookupMeta {
+    const lookup = lookups.get(code);
+    return {
+      label: lookup?.label ?? code,
+      variant: lookup?.variant ?? fallbackVariant,
+    };
+  }
+
+  private missingStudentTermKeyFields(values: Record<string, unknown>): string[] {
+    const fields: string[] = [];
+    if (!this.normalizePositiveInteger(values['AcademicYear_Onec'])) {
+      fields.push('AcademicYear_Onec');
+    }
+    if (!this.normalizePositiveInteger(values['Semester_Onec'])) {
+      fields.push('Semester_Onec');
+    }
+    if (!this.normalizePositiveInteger(values['SchoolID_Onec'])) {
+      fields.push('SchoolID_Onec');
+    }
+    return fields;
   }
 
   private applyCanonicalStudentStatus(
@@ -655,6 +786,7 @@ export class ImportsService {
     const gradeLabels = new Map(grades.map((row) => [Number(row.id), row.label]));
     const knownGradeIds = new Set(gradeLabels.keys());
     const statusLabels = new Map(statuses.map((row) => [Number(row.id), row]));
+    const mappedStatusCodes = this.mappedStudentStatusCodes(statuses);
     const seenKeys = new Set<string>();
 
     let rowsReady = 0;
@@ -741,7 +873,7 @@ export class ImportsService {
         }
         const studentStatusCode = this.normalizeScalar(dbRow['StudentStatusID_Onec']);
         const studentStatus = statusLabels.get(Number(studentStatusCode));
-        if (studentStatusCode && !studentStatus) {
+        if (studentStatusCode && !mappedStatusCodes.has(Number(studentStatusCode))) {
           issues.push('สถานะนักเรียนยังไม่ได้จับคู่');
           action = 'quarantine';
         }
@@ -772,7 +904,7 @@ export class ImportsService {
           changedFields,
           hasDifferentSchoolSnapshot,
           studentStatusCode: studentStatusCode || '-',
-          studentStatusLabel: studentStatus?.label ?? 'ยังไม่ได้จับคู่',
+          studentStatusLabel: this.importStatusLabel(studentStatus) ?? 'ยังไม่ได้จับคู่',
           studentStatusCategory: studentStatus?.category ?? 'UNMAPPED',
         };
       });
@@ -796,7 +928,7 @@ export class ImportsService {
         continue;
       }
       const studentStatusCode = this.normalizeScalar(dbRow['StudentStatusID_Onec']);
-      if (studentStatusCode && !statusLabels.has(Number(studentStatusCode))) {
+      if (studentStatusCode && !mappedStatusCodes.has(Number(studentStatusCode))) {
         rowsToQuarantine += 1;
         continue;
       }
@@ -932,7 +1064,9 @@ export class ImportsService {
         this.importsRepository.findStudentStatusLabels(statusCodes),
         this.importsRepository.findGradeLabels(gradeIds),
       ]);
-      for (const status of statuses) knownStudentStatusCodes.add(Number(status.id));
+      for (const code of this.mappedStudentStatusCodes(statuses)) {
+        knownStudentStatusCodes.add(code);
+      }
       for (const grade of grades) knownGradeIds.add(Number(grade.id));
       const schoolDetails = await this.importsRepository.findSchoolScopeDetails(fileSchoolIds);
       this.assertActorImportScope(actor, data, mapping, schoolDetails);
@@ -1123,10 +1257,18 @@ export class ImportsService {
     }
   }
 
-  private quarantineValues(row: Record<string, unknown>): Record<string, unknown> {
-    return row.mapped_values && typeof row.mapped_values === 'object'
-      ? { ...(row.mapped_values as Record<string, unknown>) }
-      : {};
+  private quarantineValues(
+    row: Record<string, unknown>,
+    target?: ImportTarget,
+  ): Record<string, unknown> {
+    if (!row.mapped_values || typeof row.mapped_values !== 'object') return {};
+    const raw = row.mapped_values as Record<string, unknown>;
+    if (!target) return { ...raw };
+    // Strip columns that aren't in the target's whitelist — mapped_values may
+    // contain extra file columns (e.g. _demoReason) that would be rejected by
+    // the SQL identifier guard in insertImportRow.
+    const allowed = IMPORT_TARGET_COLUMNS[target];
+    return Object.fromEntries(Object.entries(raw).filter(([key]) => allowed.has(key)));
   }
 
   private async validateQuarantineValuesForImport(
@@ -1154,13 +1296,12 @@ export class ImportsService {
     }
 
     const statusCode = this.normalizePositiveInteger(values['StudentStatusID_Onec']);
-    const knownStudentStatusCodes = new Set<number>();
     if (statusCode) {
       const statuses = await this.importsRepository.findStudentStatusLabels(
         [Number(statusCode)],
         executor,
       );
-      for (const status of statuses) knownStudentStatusCodes.add(Number(status.id));
+      const knownStudentStatusCodes = this.mappedStudentStatusCodes(statuses);
       if (!knownStudentStatusCodes.has(Number(statusCode))) {
         throw new BadRequestException('สถานะนักเรียนยังไม่ได้จับคู่');
       }
@@ -1237,47 +1378,455 @@ export class ImportsService {
     if (actor.data_scope?.own_only) {
       throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์จัดการรายการนำเข้าที่รอตรวจสอบ');
     }
-    const result = await this.importsRepository.listQuarantine(
-      {
-        page: query.page,
-        limit: query.limit,
-        status: query.status,
-        reasonCode: query.reasonCode,
-        search: query.search,
-        province: query.province,
-        district: query.district,
-        subDistrict: query.subDistrict,
-        schoolId: query.schoolId,
-      },
-      actor.data_scope ?? {},
-    );
+    const [result, lookups] = await Promise.all([
+      this.importsRepository.listQuarantine(
+        {
+          page: query.page,
+          limit: query.limit,
+          status: query.status,
+          reasonCode: query.reasonCode,
+          search: query.search,
+          province: query.province,
+          district: query.district,
+          subDistrict: query.subDistrict,
+          schoolId: query.schoolId,
+        },
+        actor.data_scope ?? {},
+      ),
+      this.quarantineLookupContext(),
+    ]);
     return {
-      items: result.rows.map((row) => {
-        const values =
-          row.mapped_values && typeof row.mapped_values === 'object'
-            ? (row.mapped_values as Record<string, unknown>)
-            : {};
-        return {
-          id: String(row.id),
-          schoolId: row.school_id == null ? null : Number(row.school_id),
-          schoolName: typeof row.school_name === 'string' ? row.school_name : null,
-          sourceRowNumber: Number(row.source_row_number),
-          reasonCode: String(row.reason_code),
-          status: String(row.status),
-          target: String(row.target),
-          student: {
-            personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
-            firstName: this.normalizeScalar(values['FirstName_Onec']) || '-',
-            lastName: this.normalizeScalar(values['LastName_Onec']) || '-',
-            academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || '-',
-            semester: this.normalizeScalar(values['Semester_Onec']) || '-',
-          },
-          createdAt: row.created_at,
-          resolvedAt: row.resolved_at,
-        };
-      }),
+      items: result.rows.map((row) => this.toQuarantineItem(row, lookups)),
       meta: { page: query.page, limit: query.limit, totalCount: result.totalCount },
     };
+  }
+
+  async getQuarantineLookups() {
+    const lookups = await this.quarantineLookupContext();
+    const toOptions = (map: Map<string, QuarantineLookupMeta>) =>
+      [...map.entries()].map(([code, meta]) => ({
+        code,
+        label: meta.label,
+        ...(meta.variant ? { variant: meta.variant } : {}),
+      }));
+    return {
+      reasons: toOptions(lookups.reason),
+      resolutionStates: toOptions(lookups.resolution),
+      statuses: toOptions(lookups.status),
+    };
+  }
+
+  async getQuarantine(id: string, actor: AuthenticatedRequestUser) {
+    if (!/^\d+$/.test(id)) throw new BadRequestException('Invalid quarantine row id');
+    if (actor.data_scope?.own_only) {
+      throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์จัดการรายการนำเข้าที่รอตรวจสอบ');
+    }
+    return this.importsRepository.withTransaction(async (executor) => {
+      const row = await this.importsRepository.findQuarantine(id, actor.data_scope ?? {}, executor);
+      if (!row) throw new NotFoundException('ไม่พบรายการนำเข้าที่รอตรวจสอบ');
+      const lookups = await this.quarantineLookupContext(executor);
+      return this.toQuarantineItem(row, lookups);
+    });
+  }
+
+  private toQuarantineItem(row: Record<string, unknown>, lookups: QuarantineLookupContext) {
+    const values =
+      row.mapped_values && typeof row.mapped_values === 'object'
+        ? (row.mapped_values as Record<string, unknown>)
+        : {};
+    const reasonCode = String(row.reason_code);
+    const statusCode = String(row.status);
+    const reasonLabel =
+      this.normalizeScalar(row.reason_label) ||
+      this.quarantineLookup(lookups.reason, reasonCode).label;
+    const statusMeta = this.quarantineLookup(lookups.status, statusCode, 'secondary');
+    const resolution = this.quarantineResolution({ ...row, reason_label: reasonLabel }, lookups);
+    const editableValues = Object.fromEntries(
+      resolution.editableFields.map((field) => [field, this.normalizeScalar(values[field])]),
+    );
+    return {
+      id: String(row.id),
+      schoolId: row.school_id == null ? null : Number(row.school_id),
+      schoolName: typeof row.school_name === 'string' ? row.school_name : null,
+      schoolDistrict: typeof row.school_district === 'string' ? row.school_district : null,
+      schoolSubDistrict:
+        typeof row.school_sub_district === 'string' ? row.school_sub_district : null,
+      sourceRowNumber: Number(row.source_row_number),
+      reasonCode,
+      reasonLabel,
+      status: statusCode,
+      statusLabel: this.normalizeScalar(row.status_label) || statusMeta.label,
+      statusBadgeVariant:
+        (this.normalizeScalar(row.status_badge_variant) as QuarantineBadgeVariant) ||
+        statusMeta.variant ||
+        'secondary',
+      target: String(row.target),
+      student: {
+        personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
+        firstName: this.normalizeScalar(values['FirstName_Onec']) || '-',
+        lastName: this.normalizeScalar(values['LastName_Onec']) || '-',
+        academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || '-',
+        semester: this.normalizeScalar(values['Semester_Onec']) || '-',
+        province: typeof row.school_province === 'string' ? row.school_province : null,
+        gradeLevelId: this.normalizeScalar(values['GradeLevelID_Onec']) || null,
+        gradeLabel: typeof row.source_grade_label === 'string' ? row.source_grade_label : null,
+        roomId: this.normalizeScalar(values['RoomID_Onec']) || null,
+        studentStatusCode: this.normalizeScalar(values['StudentStatusID_Onec']) || null,
+        studentStatusLabel: this.importStatusLabel({
+          label: typeof row.source_status_label === 'string' ? row.source_status_label : null,
+          category:
+            typeof row.source_status_category === 'string' ? row.source_status_category : null,
+        }),
+      },
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
+      resolutionNote: typeof row.resolution_note === 'string' ? row.resolution_note : null,
+      resolvedByName: typeof row.resolved_by_name === 'string' ? row.resolved_by_name : null,
+      changedFieldLabels: Array.isArray(row.changed_fields)
+        ? row.changed_fields.map(
+            (field) => QUARANTINE_FIELD_LABELS_TH[String(field)] ?? String(field),
+          )
+        : [],
+      changedFieldDetails: this.toChangedFieldDetails(row.changed_field_details),
+      resolution,
+      editableValues,
+    };
+  }
+
+  /**
+   * Readable context for quarantine audit entries so the history list/detail
+   * can show who was affected without joining back to the row. Student names
+   * are scope-gated data, not secrets; identifiers stay masked elsewhere.
+   */
+  private quarantineAuditContext(row: Record<string, unknown>, lookups?: QuarantineLookupContext) {
+    const values =
+      row.mapped_values && typeof row.mapped_values === 'object'
+        ? (row.mapped_values as Record<string, unknown>)
+        : {};
+    const reasonCode = String(row.reason_code);
+    const studentName = [
+      this.normalizeScalar(values['FirstName_Onec']),
+      this.normalizeScalar(values['LastName_Onec']),
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return {
+      studentName: studentName || '-',
+      reasonLabel:
+        this.normalizeScalar(row.reason_label) ||
+        (lookups ? this.quarantineLookup(lookups.reason, reasonCode).label : reasonCode),
+      schoolName: typeof row.school_name === 'string' ? row.school_name : undefined,
+      sourceRowNumber:
+        row.source_row_number === null || row.source_row_number === undefined
+          ? undefined
+          : Number(row.source_row_number),
+      academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || undefined,
+      semester: this.normalizeScalar(values['Semester_Onec']) || undefined,
+      gradeRoom:
+        [
+          typeof row.source_grade_label === 'string'
+            ? row.source_grade_label
+            : this.normalizeScalar(values['GradeLevelID_Onec']),
+          this.normalizeScalar(values['RoomID_Onec']),
+        ]
+          .filter(Boolean)
+          .join(' / ') || undefined,
+      studentStatus:
+        this.importStatusLabel({
+          label: typeof row.source_status_label === 'string' ? row.source_status_label : null,
+          category:
+            typeof row.source_status_category === 'string' ? row.source_status_category : null,
+        }) ||
+        this.normalizeScalar(values['StudentStatusID_Onec']) ||
+        undefined,
+    };
+  }
+
+  private quarantineRetryFilters(query: RetryImportQuarantineDto) {
+    return {
+      reasonCode: query.reasonCode,
+      search: query.search,
+      province: query.province,
+      district: query.district,
+      subDistrict: query.subDistrict,
+      schoolId: query.schoolId,
+    };
+  }
+
+  private quarantineResolution(row: Record<string, unknown>, lookups: QuarantineLookupContext) {
+    const withResolutionMeta = <T extends { state: string }>(resolution: T) => {
+      const meta = this.quarantineLookup(lookups.resolution, resolution.state, 'secondary');
+      return {
+        ...resolution,
+        label: meta.label,
+        variant: meta.variant ?? 'secondary',
+      };
+    };
+    if (String(row.status) !== 'PENDING') {
+      return withResolutionMeta({
+        state: 'BLOCKED' as const,
+        action: 'NONE' as const,
+        code: 'ALREADY_PROCESSED',
+        message: 'รายการนี้ถูกดำเนินการแล้ว',
+        editableFields: [] as string[],
+      });
+    }
+    const reasonCode = String(row.reason_code);
+    if (reasonCode === 'IDENTIFIER_CONFLICT') {
+      return withResolutionMeta({
+        state: 'DECISION_REQUIRED' as const,
+        action: 'SELECT_CANDIDATE' as const,
+        code: reasonCode,
+        message: 'ต้องเลือกโปรไฟล์ที่ตรงกับนักเรียนก่อนนำเข้า',
+        editableFields: [] as string[],
+      });
+    }
+    if (row.retry_eligible === true) {
+      return withResolutionMeta({
+        state: 'RETRY_ELIGIBLE' as const,
+        action: 'RETRY' as const,
+        code: reasonCode,
+        message: 'ผ่านการตรวจเบื้องต้น สามารถลองนำเข้าได้',
+        editableFields: [] as string[],
+      });
+    }
+    const configuredEditableFields = [...(QUARANTINE_EDITABLE_FIELDS[reasonCode] ?? [])];
+    const missingKeyFields =
+      reasonCode === 'MISSING_NATURAL_KEY_FIELD'
+        ? this.missingStudentTermKeyFields(
+            row.mapped_values && typeof row.mapped_values === 'object'
+              ? (row.mapped_values as Record<string, unknown>)
+              : {},
+          )
+        : [];
+    const editableFields =
+      reasonCode === 'MISSING_NATURAL_KEY_FIELD' && missingKeyFields.length > 0
+        ? missingKeyFields
+        : configuredEditableFields;
+    if (editableFields.length > 0) {
+      return withResolutionMeta({
+        state: 'ACTION_REQUIRED' as const,
+        action: 'EDIT_FIELDS' as const,
+        code: reasonCode,
+        message:
+          this.normalizeScalar(row.reason_label) ||
+          this.quarantineLookup(lookups.reason, reasonCode).label,
+        editableFields,
+      });
+    }
+    return withResolutionMeta({
+      state: 'BLOCKED' as const,
+      action: 'OPEN_REVIEW' as const,
+      code: reasonCode,
+      message: 'กรณีนี้ต้องตรวจสอบใน workflow ที่เกี่ยวข้อง',
+      editableFields: [] as string[],
+    });
+  }
+
+  async retryableQuarantineSummary(
+    query: RetryImportQuarantineDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    if (actor.data_scope?.own_only) {
+      throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์จัดการรายการนำเข้าที่รอตรวจสอบ');
+    }
+    const readyCount = await this.importsRepository.countReadyQuarantineRows(
+      this.quarantineRetryFilters(query),
+      actor.data_scope ?? {},
+    );
+    return { readyCount, batchLimit: QUARANTINE_RETRY_BATCH_LIMIT };
+  }
+
+  async retryReadyQuarantine(query: RetryImportQuarantineDto, actor: AuthenticatedRequestUser) {
+    if (actor.data_scope?.own_only) {
+      throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์จัดการรายการนำเข้าที่รอตรวจสอบ');
+    }
+    const filters = this.quarantineRetryFilters(query);
+    const rows = await this.importsRepository.findReadyQuarantineRows(
+      filters,
+      actor.data_scope ?? {},
+      QUARANTINE_RETRY_BATCH_LIMIT,
+    );
+    let processedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    const items: Array<{
+      id: string;
+      sourceRowNumber: number;
+      studentName: string;
+      outcome: string;
+      code: string;
+      message: string;
+    }> = [];
+
+    for (const { id, sourceRowNumber, studentName } of rows) {
+      try {
+        await this.resolveQuarantine(id, { action: 'RESOLVE' }, actor);
+        processedCount += 1;
+        items.push({
+          id,
+          sourceRowNumber,
+          studentName,
+          outcome: 'IMPORTED',
+          code: 'IMPORTED',
+          message: 'นำเข้าสำเร็จ',
+        });
+      } catch (error) {
+        if (
+          error instanceof BadRequestException ||
+          error instanceof ConflictException ||
+          error instanceof NotFoundException
+        ) {
+          skippedCount += 1;
+          items.push({
+            id,
+            sourceRowNumber,
+            studentName,
+            outcome: 'NEEDS_ACTION',
+            code: error instanceof ConflictException ? 'ALREADY_PROCESSED' : 'VALIDATION_FAILED',
+            message: error.message,
+          });
+          continue;
+        }
+        failedCount += 1;
+        this.logger.error(`Bulk quarantine retry failed for row ${id}`);
+        items.push({
+          id,
+          sourceRowNumber,
+          studentName,
+          outcome: 'FAILED',
+          code: 'IMPORT_FAILED',
+          message: 'นำเข้าไม่สำเร็จ กรุณาตรวจสอบรายการนี้อีกครั้ง',
+        });
+      }
+    }
+
+    const remainingReadyCount = await this.importsRepository.countReadyQuarantineRows(
+      filters,
+      actor.data_scope ?? {},
+    );
+    this.logger.log(
+      `Completed quarantine retry batch (selected: ${rows.length}, processed: ${processedCount}, skipped: ${skippedCount}, failed: ${failedCount}, remaining: ${remainingReadyCount})`,
+    );
+    return {
+      selectedCount: rows.length,
+      processedCount,
+      skippedCount,
+      failedCount,
+      remainingReadyCount,
+      batchLimit: QUARANTINE_RETRY_BATCH_LIMIT,
+      items,
+    };
+  }
+
+  async fixQuarantineValues(
+    id: string,
+    input: FixImportQuarantineDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    if (!/^\d+$/.test(id)) throw new BadRequestException('Invalid quarantine row id');
+    if (actor.data_scope?.own_only) {
+      throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์จัดการรายการนำเข้าที่รอตรวจสอบ');
+    }
+    return this.importsRepository.withTransaction(async (executor) => {
+      const row = await this.importsRepository.findQuarantineForUpdate(
+        id,
+        actor.data_scope ?? {},
+        executor,
+      );
+      if (!row) throw new NotFoundException('ไม่พบรายการนำเข้าที่รอตรวจสอบ');
+      if (row.status !== 'PENDING') throw new ConflictException('รายการนี้ถูกดำเนินการแล้ว');
+      const lookups = await this.quarantineLookupContext(executor);
+      const reasonCode = String(row.reason_code);
+      const allowedFields = new Set(QUARANTINE_EDITABLE_FIELDS[reasonCode] ?? []);
+      const submittedValues = Object.fromEntries(
+        Object.entries(input.values ?? {}).filter(([, value]) => value !== undefined),
+      );
+      const submittedFields = Object.keys(submittedValues);
+      if (
+        submittedFields.length === 0 ||
+        submittedFields.some((field) => !allowedFields.has(field))
+      ) {
+        throw new BadRequestException('ฟิลด์ที่ส่งมาไม่ตรงกับวิธีแก้ของรายการนี้');
+      }
+      const importTarget = String(row.target);
+      if (!isImportTarget(importTarget) || importTarget !== 'student_term') {
+        throw new BadRequestException('รายการนี้ยังไม่รองรับการแก้ข้อมูลจากหน้านี้');
+      }
+      const originalValues = this.quarantineValues(row, importTarget);
+      const values: Record<string, unknown> = { ...originalValues, ...submittedValues };
+      const schoolId = Number(this.normalizePositiveInteger(values['SchoolID_Onec']));
+      const schoolDetails = schoolId
+        ? await this.importsRepository.findSchoolScopeDetails([schoolId])
+        : [];
+      this.assertActorImportScope(
+        actor,
+        [values],
+        {
+          SchoolID_Onec: 'SchoolID_Onec',
+          GradeLevelID_Onec: 'GradeLevelID_Onec',
+          RoomID_Onec: 'RoomID_Onec',
+        },
+        schoolDetails,
+      );
+      await this.validateQuarantineValuesForImport(importTarget, values, executor);
+      const personUuid = await this.resolveQuarantinePersonUuid(
+        id,
+        reasonCode,
+        values,
+        { action: 'RESOLVE' },
+        actor,
+        executor,
+      );
+      // person_uuid is only an insert column; keep it out of mapped_values —
+      // resolved_person_uuid already records the linkage.
+      const correctedMappedValues = { ...values };
+      values['person_uuid'] = personUuid;
+      await this.importsRepository.insertImportRow(importTarget, values, executor);
+      await this.importsRepository.updateQuarantineMappedValues(
+        id,
+        correctedMappedValues,
+        schoolId,
+        actor.id,
+        executor,
+      );
+      await this.importsRepository.resolveQuarantineRow(
+        id,
+        { status: 'RESOLVED', personUuid, actorId: actor.id },
+        executor,
+      );
+      const changedFields = submittedFields.filter(
+        (field) =>
+          this.normalizeScalar(originalValues[field]) !== this.normalizeScalar(values[field]),
+      );
+      const changedFieldDetails = this.quarantineChangedFieldDetails(
+        changedFields,
+        originalValues,
+        values,
+      );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actor.id,
+          actorLabel: this.actorLabel(actor),
+          action: 'IMPORT_QUARANTINE_RESOLVED',
+          targetType: 'student_import_quarantine_row',
+          targetId: id,
+          metadata: {
+            status: 'RESOLVED',
+            statusLabel: this.quarantineLookup(lookups.status, 'RESOLVED').label,
+            reasonCode,
+            changedFields,
+            changedFieldDetails,
+            changedFieldLabels: changedFields
+              .map((field) => QUARANTINE_FIELD_LABELS_TH[field] ?? field)
+              .join(', '),
+            ...this.quarantineAuditContext(row, lookups),
+          },
+        },
+        executor,
+      );
+      return { id, status: 'RESOLVED' as const, changedFields };
+    });
   }
 
   async resolveQuarantine(
@@ -1298,11 +1847,14 @@ export class ImportsService {
       );
       if (!row) throw new NotFoundException('ไม่พบรายการนำเข้าที่รอตรวจสอบ');
       if (row.status !== 'PENDING') throw new ConflictException('รายการนี้ถูกดำเนินการแล้ว');
+      const lookups = await this.quarantineLookupContext(executor);
 
       if (input.action === 'REJECT') {
+        const rejectionNote = input.note?.trim();
+        if (!rejectionNote) throw new BadRequestException('กรุณาระบุเหตุผลที่ปฏิเสธ');
         await this.importsRepository.resolveQuarantineRow(
           id,
-          { status: 'REJECTED', note: input.note, actorId: actor.id },
+          { status: 'REJECTED', note: rejectionNote, actorId: actor.id },
           executor,
         );
         await this.auditLog.recordAtomic(
@@ -1312,7 +1864,12 @@ export class ImportsService {
             action: 'IMPORT_QUARANTINE_REJECTED',
             targetType: 'student_import_quarantine_row',
             targetId: id,
-            metadata: { status: 'REJECTED' },
+            metadata: {
+              status: 'REJECTED',
+              statusLabel: this.quarantineLookup(lookups.status, 'REJECTED').label,
+              note: rejectionNote,
+              ...this.quarantineAuditContext(row, lookups),
+            },
           },
           executor,
         );
@@ -1321,7 +1878,7 @@ export class ImportsService {
 
       const importTarget = String(row.target);
       if (!isImportTarget(importTarget)) throw new BadRequestException('Invalid import target');
-      const values = this.quarantineValues(row);
+      const values = this.quarantineValues(row, importTarget);
       await this.validateQuarantineValuesForImport(importTarget, values, executor);
       const selectedPersonUuid = await this.resolveQuarantinePersonUuid(
         id,
@@ -1350,7 +1907,11 @@ export class ImportsService {
           action: 'IMPORT_QUARANTINE_RESOLVED',
           targetType: 'student_import_quarantine_row',
           targetId: id,
-          metadata: { status: 'RESOLVED' },
+          metadata: {
+            status: 'RESOLVED',
+            statusLabel: this.quarantineLookup(lookups.status, 'RESOLVED').label,
+            ...this.quarantineAuditContext(row, lookups),
+          },
         },
         executor,
       );
@@ -1367,8 +1928,9 @@ export class ImportsService {
     return this.importsRepository.withTransaction(async (executor) => {
       const row = await this.importsRepository.findQuarantine(id, actor.data_scope ?? {}, executor);
       if (!row) throw new NotFoundException('ไม่พบรายการนำเข้าที่รอตรวจสอบ');
-      if (row.status !== 'PENDING') return { items: [] };
-      if (row.reason_code !== 'IDENTIFIER_CONFLICT') return { items: [] };
+      if (row.status !== 'PENDING' || row.reason_code !== 'IDENTIFIER_CONFLICT') {
+        return { items: [], meta: { totalCount: 0, visibleCount: 0 }, importRow: null };
+      }
       const values =
         row.mapped_values && typeof row.mapped_values === 'object'
           ? (row.mapped_values as Record<string, unknown>)
@@ -1379,13 +1941,48 @@ export class ImportsService {
         actor.data_scope ?? {},
         executor,
       );
+      const totalCount = await this.importsRepository.countPersonCandidatesByNationalId(
+        personId,
+        executor,
+      );
+      const importGradeId = this.normalizePositiveInteger(values['GradeLevelID_Onec']);
+      const importStatusCode = this.normalizePositiveInteger(values['StudentStatusID_Onec']);
       return {
         items: candidates.map((candidate) => ({
           candidateKey: this.quarantineCandidateKey(id, candidate.person_uuid),
           firstName: candidate.first_name ?? '-',
           lastName: candidate.last_name ?? '-',
           personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
+          schoolName: candidate.school_name,
+          province: candidate.school_province,
+          gradeLevelId: candidate.grade_level_id,
+          gradeLevelLabel: candidate.grade_level_label,
+          roomId: candidate.room_id,
+          academicYear: candidate.academic_year,
+          semester: candidate.semester,
+          studentStatusCode: candidate.student_status_code,
+          studentStatusLabel: candidate.student_status_label,
         })),
+        meta: { totalCount, visibleCount: candidates.length },
+        importRow: {
+          firstName: this.normalizeScalar(values['FirstName_Onec']) || '-',
+          lastName: this.normalizeScalar(values['LastName_Onec']) || '-',
+          personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
+          schoolName:
+            typeof row.school_name === 'string'
+              ? row.school_name
+              : this.normalizeScalar(values['SchoolID_Onec']) || '-',
+          province: typeof row.school_province === 'string' ? row.school_province : null,
+          gradeLevelId: importGradeId ? Number(importGradeId) : null,
+          gradeLevelLabel:
+            typeof row.source_grade_label === 'string' ? row.source_grade_label : null,
+          roomId: this.normalizeScalar(values['RoomID_Onec']) || null,
+          academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || null,
+          semester: this.normalizeScalar(values['Semester_Onec']) || null,
+          studentStatusCode: importStatusCode ? Number(importStatusCode) : null,
+          studentStatusLabel:
+            typeof row.source_status_label === 'string' ? row.source_status_label : null,
+        },
       };
     });
   }
@@ -1398,20 +1995,23 @@ export class ImportsService {
     if (actor.data_scope?.own_only) {
       throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์ส่งออกรายการนำเข้าที่รอตรวจสอบ');
     }
-    const result = await this.importsRepository.listQuarantine(
-      {
-        page: 1,
-        limit: 10_000,
-        status,
-        reasonCode: query.reasonCode,
-        search: query.search,
-        province: query.province,
-        district: query.district,
-        subDistrict: query.subDistrict,
-        schoolId: query.schoolId,
-      },
-      actor.data_scope ?? {},
-    );
+    const [result, lookups] = await Promise.all([
+      this.importsRepository.listQuarantine(
+        {
+          page: 1,
+          limit: 10_000,
+          status,
+          reasonCode: query.reasonCode,
+          search: query.search,
+          province: query.province,
+          district: query.district,
+          subDistrict: query.subDistrict,
+          schoolId: query.schoolId,
+        },
+        actor.data_scope ?? {},
+      ),
+      this.quarantineLookupContext(),
+    ]);
     const rows = [
       [
         'แถวในไฟล์',
@@ -1447,8 +2047,10 @@ export class ImportsService {
           row.school_name,
           this.normalizeScalar(values['AcademicYear_Onec']) || '-',
           this.normalizeScalar(values['Semester_Onec']) || '-',
-          QUARANTINE_REASON_LABELS_TH[reasonCode] ?? reasonCode,
-          QUARANTINE_STATUS_LABELS_TH[rowStatus] ?? rowStatus,
+          this.normalizeScalar(row.reason_label) ||
+            this.quarantineLookup(lookups.reason, reasonCode).label,
+          this.normalizeScalar(row.status_label) ||
+            this.quarantineLookup(lookups.status, rowStatus).label,
         ];
       }),
     ];
@@ -1458,7 +2060,20 @@ export class ImportsService {
       action: 'IMPORT_QUARANTINE_EXPORT',
       targetType: 'student_import_quarantine_row',
       targetId: null,
-      metadata: { status, rowCount: result.rows.length, truncated: result.totalCount > 10_000 },
+      metadata: {
+        status,
+        statusLabel: this.quarantineLookup(lookups.status, status).label,
+        rowCount: result.rows.length,
+        truncated: result.totalCount > 10_000,
+        reasonLabel: query.reasonCode
+          ? this.quarantineLookup(lookups.reason, query.reasonCode).label
+          : undefined,
+        search: query.search?.trim() || undefined,
+        province: query.province?.trim() || undefined,
+        district: query.district?.trim() || undefined,
+        subDistrict: query.subDistrict?.trim() || undefined,
+        schoolId: query.schoolId,
+      },
     });
     return `\uFEFF${rows.map((row) => row.map((value) => this.csvCell(value)).join(',')).join('\n')}`;
   }

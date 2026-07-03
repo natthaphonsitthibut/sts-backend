@@ -21,6 +21,37 @@ import type {
   QueryResultLike,
 } from './imports.types';
 
+interface QuarantineFilters {
+  status?: string;
+  reasonCode?: string;
+  search?: string;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  schoolId?: number;
+}
+
+interface PersonCandidateDetail extends Record<string, unknown> {
+  person_uuid: string;
+  first_name: string | null;
+  last_name: string | null;
+  school_name: string | null;
+  school_province: string | null;
+  grade_level_id: number | null;
+  grade_level_label: string | null;
+  room_id: string | null;
+  academic_year: string | null;
+  semester: string | null;
+  student_status_code: number | null;
+  student_status_label: string | null;
+}
+
+export interface QuarantineLookupRow extends Record<string, unknown> {
+  code: string;
+  label_th: string;
+  badge_variant?: string;
+}
+
 @Injectable()
 export class ImportsRepository {
   constructor(private readonly dataSource: DataSource) {}
@@ -198,6 +229,44 @@ export class ImportsRepository {
     return result.rows;
   }
 
+  async findQuarantineResolutionStateLookups(
+    executor?: QueryExecutor,
+  ): Promise<QuarantineLookupRow[]> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<QuarantineLookupRow>(
+      `
+        SELECT code, label_th, badge_variant
+        FROM student_import_quarantine_resolution_states
+        ORDER BY sort_order, code
+      `,
+    );
+    return result.rows;
+  }
+
+  async findQuarantineStatusLookups(executor?: QueryExecutor): Promise<QuarantineLookupRow[]> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<QuarantineLookupRow>(
+      `
+        SELECT code, label_th, badge_variant
+        FROM student_import_quarantine_statuses
+        ORDER BY sort_order, code
+      `,
+    );
+    return result.rows;
+  }
+
+  async findQuarantineReasonLookups(executor?: QueryExecutor): Promise<QuarantineLookupRow[]> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<QuarantineLookupRow>(
+      `
+        SELECT code, label_th
+        FROM student_import_quarantine_reason_codes
+        ORDER BY sort_order, code
+      `,
+    );
+    return result.rows;
+  }
+
   async upsertManualSchool(school: ManualSchool, executor?: QueryExecutor): Promise<void> {
     const queryExecutor = this.getExecutor(executor);
 
@@ -307,7 +376,7 @@ export class ImportsRepository {
     identifierNormalized: string,
     scope: DataScope,
     executor: QueryExecutor,
-  ): Promise<Array<{ person_uuid: string; first_name: string | null; last_name: string | null }>> {
+  ): Promise<PersonCandidateDetail[]> {
     const scopeQuery = buildDataScopeQuery(
       scope,
       {
@@ -320,14 +389,22 @@ export class ImportsRepository {
       },
       2,
     );
-    const result = await executor.query<{
-      person_uuid: string;
-      first_name: string | null;
-      last_name: string | null;
-    }>(
+    const result = await executor.query<PersonCandidateDetail>(
       `SELECT candidates.person_uuid,
               scoped_enrollment."FirstName_Onec" AS first_name,
-              scoped_enrollment."LastName_Onec" AS last_name
+              scoped_enrollment."LastName_Onec" AS last_name,
+              scoped_enrollment.school_name,
+              scoped_enrollment.school_province,
+              scoped_enrollment."GradeLevelID_Onec" AS grade_level_id,
+              scoped_enrollment.grade_level_label,
+              scoped_enrollment."RoomID_Onec"::text AS room_id,
+              scoped_enrollment."AcademicYear_Onec"::text AS academic_year,
+              scoped_enrollment."Semester_Onec"::text AS semester,
+              COALESCE(
+                scoped_enrollment.student_status_code,
+                scoped_enrollment."StudentStatusID_Onec"
+              ) AS student_status_code,
+              scoped_enrollment.student_status_label
        FROM (
          SELECT DISTINCT person_uuid
          FROM student_person_identifier
@@ -336,9 +413,21 @@ export class ImportsRepository {
        JOIN LATERAL (
          SELECT scoped_enrollment."FirstName_Onec", scoped_enrollment."LastName_Onec",
                 scoped_enrollment."AcademicYear_Onec", scoped_enrollment."Semester_Onec",
-                scoped_enrollment.student_uuid
+                scoped_enrollment."GradeLevelID_Onec", scoped_enrollment."RoomID_Onec",
+                scoped_enrollment."StudentStatusID_Onec", scoped_enrollment.student_status_code,
+                scoped_enrollment.student_uuid,
+                scoped_school.name AS school_name, scoped_school.province AS school_province,
+                scoped_grade.label AS grade_level_label,
+                scoped_status.label_th AS student_status_label
          FROM student_term scoped_enrollment
          LEFT JOIN schools scoped_school ON scoped_school.id = scoped_enrollment."SchoolID_Onec"
+         LEFT JOIN grade_levels scoped_grade
+           ON scoped_grade.id = scoped_enrollment."GradeLevelID_Onec"
+         LEFT JOIN student_status scoped_status
+           ON scoped_status.code = COALESCE(
+             scoped_enrollment.student_status_code,
+             scoped_enrollment."StudentStatusID_Onec"
+           )
          WHERE scoped_enrollment.person_uuid = candidates.person_uuid
            AND scoped_enrollment.deleted_at IS NULL
            ${scopeQuery.sql ? `AND ${scopeQuery.sql}` : ''}
@@ -352,6 +441,19 @@ export class ImportsRepository {
       [identifierNormalized, ...scopeQuery.params],
     );
     return result.rows;
+  }
+
+  async countPersonCandidatesByNationalId(
+    identifierNormalized: string,
+    executor: QueryExecutor,
+  ): Promise<number> {
+    const result = await executor.query<{ total_count: string }>(
+      `SELECT COUNT(DISTINCT person_uuid)::text AS total_count
+       FROM student_person_identifier
+       WHERE identifier_normalized = $1 AND identifier_type = 'NATIONAL_ID'`,
+      [identifierNormalized],
+    );
+    return Number(result.rows[0]?.total_count ?? 0);
   }
 
   async findConflictingNationalIds(identifierNormalized: string[]): Promise<string[]> {
@@ -440,20 +542,7 @@ export class ImportsRepository {
     );
   }
 
-  async listQuarantine(
-    filters: {
-      page: number;
-      limit: number;
-      status?: string;
-      reasonCode?: string;
-      search?: string;
-      province?: string;
-      district?: string;
-      subDistrict?: string;
-      schoolId?: number;
-    },
-    scope: DataScope,
-  ): Promise<{ rows: Record<string, unknown>[]; totalCount: number }> {
+  private quarantineFilterQuery(filters: QuarantineFilters, scope: DataScope) {
     const params: unknown[] = [];
     const clauses = [`q.deleted_at IS NULL`];
     if (filters.status) {
@@ -492,7 +581,99 @@ export class ImportsRepository {
     const scopeQuery = this.quarantineScope(scope, params.length + 1);
     if (scopeQuery.sql) clauses.push(scopeQuery.sql);
     params.push(...scopeQuery.params);
-    const where = clauses.join(' AND ');
+    return { params, where: clauses.join(' AND ') };
+  }
+
+  private readonly retryableQuarantineReadySql = `(
+    (
+      (q.reason_code = 'UNMAPPED_STUDENT_STATUS'
+      AND EXISTS (
+        SELECT 1 FROM student_status ready_status
+        WHERE ready_status.category <> 'UNMAPPED'
+          AND ready_status.code = CASE
+          WHEN q.mapped_values->>'StudentStatusID_Onec' ~ '^[1-9]\\d*$'
+          THEN (q.mapped_values->>'StudentStatusID_Onec')::int
+        END
+      ))
+      OR (q.reason_code = 'SCHOOL_NOT_FOUND'
+      AND EXISTS (
+        SELECT 1 FROM schools ready_school
+        WHERE ready_school.id = CASE
+          WHEN q.mapped_values->>'SchoolID_Onec' ~ '^[1-9]\\d*$'
+          THEN (q.mapped_values->>'SchoolID_Onec')::int
+        END
+      ))
+      OR q.reason_code = 'MISSING_NATURAL_KEY_FIELD'
+      OR (q.reason_code = 'GRADE_NOT_FOUND'
+      AND EXISTS (
+        SELECT 1 FROM grade_levels ready_grade
+        WHERE ready_grade.id = CASE
+          WHEN q.mapped_values->>'GradeLevelID_Onec' ~ '^[1-9]\\d*$'
+          THEN (q.mapped_values->>'GradeLevelID_Onec')::int
+        END
+      ))
+    )
+    AND regexp_replace(
+      COALESCE(q.mapped_values->>'PersonID_Onec', ''),
+      '[^0-9]',
+      '',
+      'g'
+    ) <> ''
+    AND q.mapped_values->>'AcademicYear_Onec' ~ '^[1-9]\\d*$'
+    AND q.mapped_values->>'Semester_Onec' ~ '^[1-9]\\d*$'
+    AND EXISTS (
+      SELECT 1 FROM schools required_school
+      WHERE required_school.id = CASE
+        WHEN q.mapped_values->>'SchoolID_Onec' ~ '^[1-9]\\d*$'
+        THEN (q.mapped_values->>'SchoolID_Onec')::int
+      END
+    )
+    AND (
+      COALESCE(q.mapped_values->>'GradeLevelID_Onec', '') = ''
+      OR EXISTS (
+        SELECT 1 FROM grade_levels required_grade
+        WHERE required_grade.id = CASE
+          WHEN q.mapped_values->>'GradeLevelID_Onec' ~ '^[1-9]\\d*$'
+          THEN (q.mapped_values->>'GradeLevelID_Onec')::int
+        END
+      )
+    )
+    AND (
+      COALESCE(q.mapped_values->>'RoomID_Onec', '') = ''
+      OR q.mapped_values->>'RoomID_Onec' ~ '^[1-9]\\d*$'
+    )
+    AND (
+      COALESCE(q.mapped_values->>'StudentStatusID_Onec', '') = ''
+      OR EXISTS (
+        SELECT 1 FROM student_status required_status
+        WHERE required_status.category <> 'UNMAPPED'
+          AND required_status.code = CASE
+          WHEN q.mapped_values->>'StudentStatusID_Onec' ~ '^[1-9]\\d*$'
+          THEN (q.mapped_values->>'StudentStatusID_Onec')::int
+        END
+      )
+    )
+    AND (
+      SELECT COUNT(DISTINCT ready_identifier.person_uuid)
+      FROM student_person_identifier ready_identifier
+      WHERE ready_identifier.identifier_type = 'NATIONAL_ID'
+        AND ready_identifier.identifier_normalized = regexp_replace(
+          COALESCE(q.mapped_values->>'PersonID_Onec', ''),
+          '[^0-9]',
+          '',
+          'g'
+        )
+    ) <= 1
+  )`;
+
+  async listQuarantine(
+    filters: QuarantineFilters & {
+      page: number;
+      limit: number;
+    },
+    scope: DataScope,
+  ): Promise<{ rows: Record<string, unknown>[]; totalCount: number }> {
+    const { params, where } = this.quarantineFilterQuery(filters, scope);
     const count = await this.query<{ total_count: string }>(
       `SELECT COUNT(*)::text AS total_count
        FROM student_import_quarantine_rows q
@@ -502,18 +683,98 @@ export class ImportsRepository {
     );
     const listParams = [...params, filters.limit, (filters.page - 1) * filters.limit];
     const rows = await this.query<Record<string, unknown>>(
-      `SELECT q.id::text, q.school_id, s.name AS school_name, q.source_row_number,
+      `SELECT q.id::text, q.school_id, s.name AS school_name, s.province AS school_province,
+              s.district AS school_district, s.sub_district AS school_sub_district,
+              q.source_row_number,
               q.reason_code, q.status, q.mapped_values, q.created_at, q.resolved_at,
-              q.batch_id::text, b.target, b.created_at AS batch_created_at
+              reason_lookup.label_th AS reason_label,
+              status_lookup.label_th AS status_label,
+              status_lookup.badge_variant AS status_badge_variant,
+              q.resolution_note,
+              NULLIF(TRIM(CONCAT(resolver."FirstName", ' ', resolver."LastName")), '')
+                AS resolved_by_name,
+              resolution_audit.changed_fields,
+              resolution_audit.changed_field_details,
+              q.batch_id::text, b.target, b.created_at AS batch_created_at,
+              source_grade.label AS source_grade_label,
+              source_status.label_th AS source_status_label,
+              source_status.category AS source_status_category,
+              (${this.retryableQuarantineReadySql}) AS retry_eligible
        FROM student_import_quarantine_rows q
        JOIN student_import_batches b ON b.id = q.batch_id
        LEFT JOIN schools s ON s.id = q.school_id
+       LEFT JOIN student_import_quarantine_reason_codes reason_lookup
+         ON reason_lookup.code = q.reason_code
+       LEFT JOIN student_import_quarantine_statuses status_lookup
+         ON status_lookup.code = q.status
+       LEFT JOIN users resolver ON resolver.id = q.resolved_by
+       LEFT JOIN LATERAL (
+         SELECT a.metadata->'changedFields' AS changed_fields,
+                a.metadata->'changedFieldDetails' AS changed_field_details
+         FROM audit_log a
+         WHERE a.target_type = 'student_import_quarantine_row'
+           AND a.target_id = q.id::text
+           AND a.action = 'IMPORT_QUARANTINE_RESOLVED'
+         ORDER BY a.created_at DESC
+         LIMIT 1
+       ) resolution_audit ON TRUE
+       LEFT JOIN grade_levels source_grade
+         ON source_grade.id = CASE
+           WHEN q.mapped_values->>'GradeLevelID_Onec' ~ '^[1-9]\\d*$'
+           THEN (q.mapped_values->>'GradeLevelID_Onec')::int
+         END
+       LEFT JOIN student_status source_status
+         ON source_status.code = CASE
+           WHEN q.mapped_values->>'StudentStatusID_Onec' ~ '^[1-9]\\d*$'
+           THEN (q.mapped_values->>'StudentStatusID_Onec')::int
+         END
        WHERE ${where}
        ORDER BY q.created_at DESC, q.id DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       listParams,
     );
     return { rows: rows.rows, totalCount: Number(count.rows[0]?.total_count ?? 0) };
+  }
+
+  async countReadyQuarantineRows(filters: QuarantineFilters, scope: DataScope): Promise<number> {
+    const { params, where } = this.quarantineFilterQuery({ ...filters, status: 'PENDING' }, scope);
+    const result = await this.query<{ total_count: string }>(
+      `SELECT COUNT(*)::text AS total_count
+       FROM student_import_quarantine_rows q
+       LEFT JOIN schools s ON s.id = q.school_id
+       WHERE ${where} AND ${this.retryableQuarantineReadySql}`,
+      params,
+    );
+    return Number(result.rows[0]?.total_count ?? 0);
+  }
+
+  async findReadyQuarantineRows(
+    filters: QuarantineFilters,
+    scope: DataScope,
+    limit: number,
+  ): Promise<Array<{ id: string; sourceRowNumber: number; studentName: string }>> {
+    const { params, where } = this.quarantineFilterQuery({ ...filters, status: 'PENDING' }, scope);
+    const result = await this.query<{
+      id: string;
+      source_row_number: number;
+      first_name: string | null;
+      last_name: string | null;
+    }>(
+      `SELECT q.id::text, q.source_row_number,
+              q.mapped_values->>'FirstName_Onec' AS first_name,
+              q.mapped_values->>'LastName_Onec' AS last_name
+       FROM student_import_quarantine_rows q
+       LEFT JOIN schools s ON s.id = q.school_id
+       WHERE ${where} AND ${this.retryableQuarantineReadySql}
+       ORDER BY q.created_at, q.id
+       LIMIT $${params.length + 1}`,
+      [...params, limit],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      sourceRowNumber: Number(row.source_row_number),
+      studentName: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || '-',
+    }));
   }
 
   private async findQuarantineRow(
@@ -524,10 +785,47 @@ export class ImportsRepository {
   ): Promise<Record<string, unknown> | null> {
     const scopeQuery = this.quarantineScope(scope, 2);
     const result = await executor.query<Record<string, unknown>>(
-      `SELECT q.*, b.target
+      `SELECT q.*, b.target, s.name AS school_name, s.province AS school_province,
+              s.district AS school_district, s.sub_district AS school_sub_district,
+              reason_lookup.label_th AS reason_label,
+              status_lookup.label_th AS status_label,
+              status_lookup.badge_variant AS status_badge_variant,
+              NULLIF(TRIM(CONCAT(resolver."FirstName", ' ', resolver."LastName")), '')
+                AS resolved_by_name,
+              resolution_audit.changed_fields,
+              resolution_audit.changed_field_details,
+              source_grade.label AS source_grade_label,
+              source_status.label_th AS source_status_label,
+              source_status.category AS source_status_category,
+              (${this.retryableQuarantineReadySql}) AS retry_eligible
        FROM student_import_quarantine_rows q
        JOIN student_import_batches b ON b.id = q.batch_id
        LEFT JOIN schools s ON s.id = q.school_id
+       LEFT JOIN student_import_quarantine_reason_codes reason_lookup
+         ON reason_lookup.code = q.reason_code
+       LEFT JOIN student_import_quarantine_statuses status_lookup
+         ON status_lookup.code = q.status
+       LEFT JOIN users resolver ON resolver.id = q.resolved_by
+       LEFT JOIN LATERAL (
+         SELECT a.metadata->'changedFields' AS changed_fields,
+                a.metadata->'changedFieldDetails' AS changed_field_details
+         FROM audit_log a
+         WHERE a.target_type = 'student_import_quarantine_row'
+           AND a.target_id = q.id::text
+           AND a.action = 'IMPORT_QUARANTINE_RESOLVED'
+         ORDER BY a.created_at DESC
+         LIMIT 1
+       ) resolution_audit ON TRUE
+       LEFT JOIN grade_levels source_grade
+         ON source_grade.id = CASE
+           WHEN q.mapped_values->>'GradeLevelID_Onec' ~ '^[1-9]\\d*$'
+           THEN (q.mapped_values->>'GradeLevelID_Onec')::int
+         END
+       LEFT JOIN student_status source_status
+         ON source_status.code = CASE
+           WHEN q.mapped_values->>'StudentStatusID_Onec' ~ '^[1-9]\\d*$'
+           THEN (q.mapped_values->>'StudentStatusID_Onec')::int
+         END
        WHERE q.id = $1 AND q.deleted_at IS NULL
          ${scopeQuery.sql ? `AND ${scopeQuery.sql}` : ''}
        ${forUpdate ? 'FOR UPDATE OF q' : ''}`,
@@ -563,6 +861,21 @@ export class ImportsRepository {
            resolved_at = now(), resolved_by = $5, updated_by = $5
        WHERE id = $1`,
       [id, input.status, input.personUuid ?? null, input.note ?? null, input.actorId],
+    );
+  }
+
+  async updateQuarantineMappedValues(
+    id: string,
+    values: Record<string, unknown>,
+    schoolId: number,
+    actorId: number,
+    executor: QueryExecutor,
+  ): Promise<void> {
+    await executor.query(
+      `UPDATE student_import_quarantine_rows
+       SET mapped_values = $2::jsonb, school_id = $3, updated_by = $4
+       WHERE id = $1`,
+      [id, JSON.stringify(values), schoolId, actorId],
     );
   }
 

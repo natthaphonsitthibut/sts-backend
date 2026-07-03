@@ -204,26 +204,57 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'target', label: 'ประเภทข้อมูล' },
       { key: 'rowCount', label: 'จำนวนทั้งหมด' },
       { key: 'rowsInserted', label: 'เพิ่มใหม่' },
+      { key: 'rowsUpdated', label: 'อัปเดต' },
       { key: 'rowsQuarantined', label: 'รอตรวจสอบ' },
       { key: 'rowsSkipped', label: 'ข้าม' },
+      { key: 'manualSchools', label: 'โรงเรียนที่ระบุเพิ่ม' },
     ],
   },
   IMPORT_QUARANTINE_RESOLVED: {
     domain: 'imports',
     label: 'แก้ไขรายการนำเข้าที่รอตรวจสอบ',
-    detailKeys: [{ key: 'status', label: 'สถานะ' }],
+    detailKeys: [
+      { key: 'studentName', label: 'นักเรียน' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'sourceRowNumber', label: 'แถวในไฟล์' },
+      { key: 'academicYear', label: 'ปีการศึกษา' },
+      { key: 'semester', label: 'ภาคเรียน' },
+      { key: 'gradeRoom', label: 'ชั้น / ห้อง' },
+      { key: 'studentStatus', label: 'สถานะนักเรียน' },
+      { key: 'reasonLabel', label: 'สาเหตุที่ติดตรวจสอบ' },
+      { key: 'changedFieldDetails', label: 'ข้อมูลที่แก้' },
+      { key: 'changedFieldLabels', label: 'ข้อมูลที่แก้' },
+      { key: 'statusLabel', label: 'สถานะ' },
+    ],
   },
   IMPORT_QUARANTINE_REJECTED: {
     domain: 'imports',
     label: 'ปฏิเสธรายการนำเข้าที่รอตรวจสอบ',
-    detailKeys: [{ key: 'status', label: 'สถานะ' }],
+    detailKeys: [
+      { key: 'studentName', label: 'นักเรียน' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'sourceRowNumber', label: 'แถวในไฟล์' },
+      { key: 'academicYear', label: 'ปีการศึกษา' },
+      { key: 'semester', label: 'ภาคเรียน' },
+      { key: 'gradeRoom', label: 'ชั้น / ห้อง' },
+      { key: 'studentStatus', label: 'สถานะนักเรียน' },
+      { key: 'reasonLabel', label: 'สาเหตุที่ติดตรวจสอบ' },
+      { key: 'note', label: 'เหตุผลที่ปฏิเสธ' },
+      { key: 'statusLabel', label: 'สถานะ' },
+    ],
   },
   IMPORT_QUARANTINE_EXPORT: {
     domain: 'imports',
     label: 'ดาวน์โหลดรายงานรายการนำเข้าที่รอตรวจสอบ',
     detailKeys: [
-      { key: 'status', label: 'สถานะ' },
+      { key: 'statusLabel', label: 'สถานะรายงาน' },
       { key: 'rowCount', label: 'จำนวนรายการ' },
+      { key: 'reasonLabel', label: 'สาเหตุที่กรอง' },
+      { key: 'search', label: 'คำค้น' },
+      { key: 'province', label: 'จังหวัด' },
+      { key: 'district', label: 'อำเภอ' },
+      { key: 'subDistrict', label: 'ตำบล' },
+      { key: 'schoolName', label: 'โรงเรียน' },
     ],
   },
   USER_CREATE: {
@@ -571,6 +602,31 @@ export class AuditLogService {
     }
 
     return definition.detailKeys.flatMap(({ key, label }) => {
+      if (key === 'changedFieldDetails') {
+        const changedFields = metadata[key];
+        if (!Array.isArray(changedFields)) return [];
+        return changedFields.flatMap((field) => {
+          if (!field || typeof field !== 'object' || Array.isArray(field)) return [];
+          const detail = field as Record<string, unknown>;
+          const fieldLabel = typeof detail.label === 'string' ? detail.label.trim() : '';
+          if (!fieldLabel) return [];
+          const oldValue = detail.oldValue;
+          const newValue = detail.newValue;
+          const isSafeValue = (value: unknown): value is string | number =>
+            typeof value === 'string' || typeof value === 'number';
+          return [
+            ...(isSafeValue(oldValue)
+              ? [{ label: `${fieldLabel} (ก่อนแก้)`, value: oldValue }]
+              : []),
+            ...(isSafeValue(newValue)
+              ? [{ label: `${fieldLabel} (หลังแก้)`, value: newValue }]
+              : []),
+          ];
+        });
+      }
+      if (key === 'changedFieldLabels' && Array.isArray(metadata.changedFieldDetails)) {
+        return [];
+      }
       if (key === 'schoolName') {
         const schoolName = metadata.schoolName;
         if (typeof schoolName === 'string' && schoolName.trim()) {
@@ -648,7 +704,7 @@ export class AuditLogService {
       };
     }
 
-    const conditions: string[] = [];
+    const conditions: string[] = [`a.data_origin_code <> 'AUTOMATED_TEST'`];
     const params: unknown[] = [];
     params.push(filters.action ? [filters.action] : actions);
     conditions.push(`a.action = ANY($${params.length}::text[])`);
@@ -669,13 +725,11 @@ export class AuditLogService {
         OR COALESCE(a.metadata -> 'scope', '{}'::jsonb) <> '{}'::jsonb
       )`);
     }
+    // Actor-only search: the tables show who performed the action, while raw
+    // target ids and English action enums are not visible anywhere to match.
     if (filters.searchTerm) {
       params.push(`%${filters.searchTerm}%`);
-      conditions.push(`(
-        COALESCE(a.actor_label, '') ILIKE $${params.length}
-        OR COALESCE(a.target_id, '') ILIKE $${params.length}
-        OR a.action ILIKE $${params.length}
-      )`);
+      conditions.push(`COALESCE(a.actor_label, '') ILIKE $${params.length}`);
     }
     if (filters.dateFrom) {
       params.push(filters.dateFrom);
@@ -800,6 +854,7 @@ export class AuditLogService {
             ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
            AND audit_school.id = (a.metadata ->> 'schoolId')::int
           WHERE a.id = $1::bigint
+            AND a.data_origin_code <> 'AUTOMATED_TEST'
         `,
         [id],
       )
@@ -811,7 +866,7 @@ export class AuditLogService {
 
     this.assertDomainPermission(actor, definition.domain);
 
-    const conditions = [`a.id = $1::bigint`];
+    const conditions = [`a.id = $1::bigint`, `a.data_origin_code <> 'AUTOMATED_TEST'`];
     const params: unknown[] = [id];
     if (definition.domain === 'student_accounts') {
       conditions.push(
@@ -884,9 +939,16 @@ export class AuditLogService {
           target_type,
           target_id,
           metadata,
-          ip
+          ip,
+          data_origin_code
         )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        VALUES (
+          $1, $2, $3, $4, $5, $6::jsonb, $7,
+          COALESCE(
+            (SELECT data_origin_code FROM users WHERE id = $1),
+            'OPERATIONAL'
+          )
+        )
       `,
       [
         event.actorUserId ?? null,

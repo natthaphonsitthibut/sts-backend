@@ -26,6 +26,7 @@ import { piiConfig } from './config/pii.config';
 import { throttleConfig } from './config/throttle.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
 import { GeoModule } from './geo/geo.module';
+import { StatusCatalogModule } from './status-catalog/status-catalog.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { GeoModule } from './geo/geo.module';
     FilesModule,
     AuditLogModule,
     GeoModule,
+    StatusCatalogModule,
   ],
   controllers: [AppController],
   providers: [AppService],

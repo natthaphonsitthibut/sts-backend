@@ -180,6 +180,10 @@ function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
       typeof student.student_status_category === 'string'
         ? student.student_status_category
         : 'UNMAPPED',
+    student_status_badge_variant:
+      typeof student.student_status_badge_variant === 'string'
+        ? student.student_status_badge_variant
+        : 'warning',
   };
 }
 

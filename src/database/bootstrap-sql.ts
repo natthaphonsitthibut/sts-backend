@@ -287,6 +287,84 @@ export const STUDENT_ACCOUNT_BATCH_TABLES_SQL = `
 
 /** Persistent, scope-addressable review queue for invalid student import rows. */
 export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS student_import_quarantine_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_import_quarantine_statuses_code
+      CHECK (code IN ('PENDING', 'RESOLVED', 'REJECTED')),
+    CONSTRAINT chk_student_import_quarantine_statuses_badge_variant
+      CHECK (badge_variant IN ('default', 'secondary', 'destructive', 'success', 'warning')),
+    CONSTRAINT chk_student_import_quarantine_statuses_sort_order CHECK (sort_order >= 0),
+    CONSTRAINT chk_student_import_quarantine_statuses_label_th CHECK (length(trim(label_th)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('student_import_quarantine_statuses')}
+  INSERT INTO student_import_quarantine_statuses (code, label_th, badge_variant, sort_order)
+  VALUES
+    ('PENDING', 'รอตรวจสอบ', 'warning', 10),
+    ('RESOLVED', 'แก้ไขแล้ว', 'success', 20),
+    ('REJECTED', 'ปฏิเสธแล้ว', 'secondary', 30)
+  ON CONFLICT (code) DO UPDATE
+  SET label_th = EXCLUDED.label_th,
+      badge_variant = EXCLUDED.badge_variant,
+      sort_order = EXCLUDED.sort_order;
+
+  CREATE TABLE IF NOT EXISTS student_import_quarantine_reason_codes (
+    code VARCHAR(64) PRIMARY KEY,
+    label_th VARCHAR(160) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_import_quarantine_reason_codes_sort_order CHECK (sort_order >= 0),
+    CONSTRAINT chk_student_import_quarantine_reason_codes_label_th CHECK (length(trim(label_th)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('student_import_quarantine_reason_codes')}
+  INSERT INTO student_import_quarantine_reason_codes (code, label_th, sort_order)
+  VALUES
+    ('IDENTIFIER_CONFLICT', 'เลขนี้ตรงกับหลายโปรไฟล์ในระบบ', 10),
+    ('UNMAPPED_STUDENT_STATUS', 'สถานะนักเรียนยังไม่จับคู่', 20),
+    ('MISSING_NATURAL_KEY_FIELD', 'ข้อมูลภาคเรียนบังคับไม่ครบหรือไม่ถูกต้อง', 30),
+    ('BLANK_REQUIRED_IDENTITY', 'ไม่มีรหัสประจำตัว', 40),
+    ('DUPLICATE_ROW_IN_FILE', 'แถวซ้ำในไฟล์', 50),
+    ('MULTIPLE_ACTIVE_ENROLLMENTS', 'พบการลงทะเบียนที่ยังใช้งานหลายรายการ', 60),
+    ('NAME_CONFLICT_FOR_IDENTIFIER', 'ชื่อไม่ตรงกับรหัสประจำตัวเดิม', 70),
+    ('INVALID_NATIONAL_ID_CHECKSUM', 'เลขประจำตัวประชาชนไม่ผ่านการตรวจสอบ', 80),
+    ('SCHOOL_NOT_FOUND', 'ไม่พบโรงเรียนในข้อมูลหลัก', 90),
+    ('GRADE_NOT_FOUND', 'ไม่พบชั้นเรียนในข้อมูลหลัก', 100),
+    ('ROOM_NOT_FOUND', 'ไม่พบห้องเรียนในข้อมูลหลัก', 110),
+    ('STATUS_CAUSE_UNMAPPED', 'สาเหตุสถานะนักเรียนยังไม่จับคู่', 120)
+  ON CONFLICT (code) DO UPDATE
+  SET label_th = EXCLUDED.label_th,
+      sort_order = EXCLUDED.sort_order;
+
+  CREATE TABLE IF NOT EXISTS student_import_quarantine_resolution_states (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_import_quarantine_resolution_states_code
+      CHECK (code IN ('ACTION_REQUIRED', 'DECISION_REQUIRED', 'RETRY_ELIGIBLE', 'BLOCKED')),
+    CONSTRAINT chk_student_import_quarantine_resolution_states_badge_variant
+      CHECK (badge_variant IN ('default', 'secondary', 'destructive', 'success', 'warning')),
+    CONSTRAINT chk_student_import_quarantine_resolution_states_sort_order CHECK (sort_order >= 0),
+    CONSTRAINT chk_student_import_quarantine_resolution_states_label_th CHECK (length(trim(label_th)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('student_import_quarantine_resolution_states')}
+  INSERT INTO student_import_quarantine_resolution_states (
+    code, label_th, badge_variant, sort_order
+  )
+  VALUES
+    ('ACTION_REQUIRED', 'ต้องแก้ข้อมูล', 'warning', 10),
+    ('DECISION_REQUIRED', 'ต้องตัดสินใจ', 'default', 20),
+    ('RETRY_ELIGIBLE', 'ผ่านการตรวจเบื้องต้น', 'success', 30),
+    ('BLOCKED', 'ต้องตรวจสอบเพิ่มเติม', 'secondary', 40)
+  ON CONFLICT (code) DO UPDATE
+  SET label_th = EXCLUDED.label_th,
+      badge_variant = EXCLUDED.badge_variant,
+      sort_order = EXCLUDED.sort_order;
+
   CREATE TABLE IF NOT EXISTS student_import_batches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     target VARCHAR(32) NOT NULL,
@@ -329,14 +407,12 @@ export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
     ${AUDIT_COLUMNS_SQL},
     CONSTRAINT chk_student_import_quarantine_row_fingerprint
       CHECK (row_fingerprint ~ '^[0-9a-f]{64}$'),
-    CONSTRAINT chk_student_import_quarantine_reason
-      CHECK (reason_code IN ('MISSING_NATURAL_KEY_FIELD', 'UNMAPPED_STUDENT_STATUS',
-        'DUPLICATE_ROW_IN_FILE', 'MULTIPLE_ACTIVE_ENROLLMENTS', 'IDENTIFIER_CONFLICT',
-        'NAME_CONFLICT_FOR_IDENTIFIER', 'INVALID_NATIONAL_ID_CHECKSUM', 'SCHOOL_NOT_FOUND',
-        'GRADE_NOT_FOUND', 'ROOM_NOT_FOUND', 'STATUS_CAUSE_UNMAPPED',
-        'BLANK_REQUIRED_IDENTITY')),
-    CONSTRAINT chk_student_import_quarantine_status
-      CHECK (status IN ('PENDING', 'RESOLVED', 'REJECTED'))
+    CONSTRAINT fk_student_import_quarantine_rows_reason_code
+      FOREIGN KEY (reason_code) REFERENCES student_import_quarantine_reason_codes(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_student_import_quarantine_rows_status
+      FOREIGN KEY (status) REFERENCES student_import_quarantine_statuses(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE
   );
   ${auditUpdatedAtTriggerSql('student_import_quarantine_rows')}
   CREATE UNIQUE INDEX IF NOT EXISTS uq_student_import_quarantine_pending_row
@@ -346,6 +422,369 @@ export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
     ON student_import_quarantine_rows (batch_id, status);
   CREATE INDEX IF NOT EXISTS idx_student_import_quarantine_school_status
     ON student_import_quarantine_rows (school_id, status, created_at DESC);
+`;
+
+export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS case_workflow_statuses (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    summary_tone VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_case_workflow_statuses_label_th CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_case_workflow_statuses_badge_variant
+      CHECK (badge_variant IN ('default', 'secondary', 'destructive', 'success', 'warning')),
+    CONSTRAINT chk_case_workflow_statuses_summary_tone
+      CHECK (summary_tone IN ('default', 'success', 'warning', 'danger', 'info')),
+    CONSTRAINT chk_case_workflow_statuses_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('case_workflow_statuses')}
+  INSERT INTO case_workflow_statuses (
+    code, label_th, badge_variant, summary_tone, sort_order
+  ) VALUES
+    ('OPEN', 'รอสร้างลิงก์', 'secondary', 'default', 10),
+    ('PENDING_REVIEW', 'รอตรวจผล', 'default', 'info', 20),
+    ('IN_PROGRESS', 'กำลังติดตาม', 'warning', 'warning', 30),
+    ('AWAITING_HELP', 'รอช่วยเหลือ', 'destructive', 'danger', 40),
+    ('RESOLVED', 'ปิดเคสแล้ว', 'success', 'success', 50)
+  ON CONFLICT (code) DO NOTHING;
+  ALTER TABLE cases DROP CONSTRAINT IF EXISTS chk_cases_status;
+  DO $case_workflow_status_fk$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_cases_workflow_status'
+    ) THEN
+      ALTER TABLE cases
+        ADD CONSTRAINT fk_cases_workflow_status
+        FOREIGN KEY (status) REFERENCES case_workflow_statuses(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $case_workflow_status_fk$;
+`;
+
+export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS user_account_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_user_account_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_user_account_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('user_account_statuses')}
+  INSERT INTO user_account_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('ACTIVE', 'ใช้งาน', 'success', 10),
+    ('DISABLED', 'ปิดใช้งาน', 'destructive', 20)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS task_workflow_statuses (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_task_workflow_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_task_workflow_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('task_workflow_statuses')}
+  INSERT INTO task_workflow_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('OPEN', 'เปิดอยู่', 'secondary', 10),
+    ('ACTIVE', 'ใช้งาน', 'success', 20),
+    ('IN_PROGRESS', 'กำลังดำเนินการ', 'warning', 30),
+    ('PENDING_REVIEW', 'รอตรวจผล', 'default', 40),
+    ('COMPLETED', 'เสร็จสิ้น', 'success', 50)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS task_link_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_task_link_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_task_link_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('task_link_statuses')}
+  INSERT INTO task_link_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('ACTIVE', 'ใช้งาน', 'success', 10),
+    ('DELEGATED', 'ส่งต่อแล้ว', 'secondary', 20),
+    ('COMPLETED', 'เสร็จสิ้น', 'success', 30)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS attendance_record_statuses (
+    code SMALLINT PRIMARY KEY,
+    internal_code VARCHAR(16) NOT NULL UNIQUE,
+    short_label_th VARCHAR(40) NOT NULL,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_attendance_record_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_attendance_record_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('attendance_record_statuses')}
+  INSERT INTO attendance_record_statuses (
+    code, internal_code, short_label_th, label_th, badge_variant, sort_order
+  ) VALUES
+    (1, 'P_PRESENT', 'มา', 'มาเรียน', 'success', 10),
+    (2, 'P_ABSENT', 'ขาด', 'ขาดเรียน', 'destructive', 20),
+    (3, 'P_LATE', 'สาย', 'มาสาย', 'warning', 30)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS school_term_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_school_term_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_school_term_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('school_term_statuses')}
+  INSERT INTO school_term_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('DRAFT', 'ร่าง', 'warning', 10),
+    ('ACTIVE', 'เปิดใช้งาน', 'success', 20),
+    ('CLOSED', 'ปิดภาคเรียน', 'secondary', 30)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS school_calendar_day_types (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_school_calendar_day_types_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_school_calendar_day_types_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('school_calendar_day_types')}
+  INSERT INTO school_calendar_day_types (code, label_th, badge_variant, sort_order) VALUES
+    ('SCHOOL_DAY', 'วันเรียน', 'success', 10),
+    ('HOLIDAY', 'วันหยุด', 'secondary', 20),
+    ('CANCELLED', 'ยกเลิกการเรียน', 'warning', 30)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS attendance_session_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_attendance_session_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_attendance_session_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('attendance_session_statuses')}
+  INSERT INTO attendance_session_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('OPEN', 'เปิดเช็คชื่อ', 'warning', 10),
+    ('SUBMITTED', 'ส่งแล้ว', 'success', 20),
+    ('REOPENED', 'เปิดแก้ไข', 'warning', 30),
+    ('VOIDED', 'ยกเลิก', 'destructive', 40)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS student_account_batch_job_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_account_batch_job_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_student_account_batch_job_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('student_account_batch_job_statuses')}
+  INSERT INTO student_account_batch_job_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('PENDING', 'รอเริ่ม', 'secondary', 10),
+    ('RUNNING', 'กำลังทำงาน', 'default', 20),
+    ('COMPLETED', 'เสร็จสิ้น', 'success', 30),
+    ('FAILED', 'ล้มเหลว', 'destructive', 40),
+    ('INTERRUPTED', 'หยุดชะงัก', 'warning', 50),
+    ('CANCELED', 'ยกเลิกแล้ว', 'secondary', 60)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS student_account_batch_item_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_account_batch_item_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_student_account_batch_item_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('student_account_batch_item_statuses')}
+  INSERT INTO student_account_batch_item_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('PENDING', 'รอดำเนินการ', 'secondary', 10),
+    ('CREATED', 'สร้างแล้ว', 'success', 20),
+    ('SKIPPED', 'ข้าม', 'warning', 30),
+    ('FAILED', 'ล้มเหลว', 'destructive', 40)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS case_referral_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_case_referral_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_case_referral_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('case_referral_statuses')}
+  INSERT INTO case_referral_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('SENT', 'ส่งต่อแล้ว', 'default', 10),
+    ('ACKNOWLEDGED', 'รับทราบแล้ว', 'secondary', 20),
+    ('ACCEPTED', 'รับดำเนินการ', 'success', 30),
+    ('DECLINED', 'ปฏิเสธรับเรื่อง', 'destructive', 40),
+    ('RETURNED', 'ส่งกลับ', 'warning', 50)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS student_import_batch_statuses (
+    code VARCHAR(16) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_import_batch_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_student_import_batch_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
+  );
+  ${auditUpdatedAtTriggerSql('student_import_batch_statuses')}
+  INSERT INTO student_import_batch_statuses (code, label_th, badge_variant, sort_order) VALUES
+    ('RUNNING', 'กำลังนำเข้า', 'default', 10),
+    ('COMPLETED', 'สำเร็จ', 'success', 20),
+    ('PARTIAL', 'สำเร็จบางส่วน', 'warning', 30),
+    ('FAILED', 'ล้มเหลว', 'destructive', 40)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS application_display_states (
+    domain_code VARCHAR(48) NOT NULL,
+    code VARCHAR(32) NOT NULL,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    summary_tone VARCHAR(16),
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    PRIMARY KEY (domain_code, code),
+    CONSTRAINT chk_application_display_states_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_application_display_states_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning')),
+    CONSTRAINT chk_application_display_states_summary CHECK (summary_tone IS NULL OR summary_tone IN ('default','success','warning','danger','info'))
+  );
+  ${auditUpdatedAtTriggerSql('application_display_states')}
+  INSERT INTO application_display_states (
+    domain_code, code, label_th, badge_variant, summary_tone, sort_order
+  ) VALUES
+    ('USER_ACCOUNT_LIFECYCLE', 'PENDING_FIRST_LOGIN', 'รอเปลี่ยนรหัส', 'default', 'info', 10),
+    ('USER_ACCOUNT_LIFECYCLE', 'ACTIVE', 'ใช้งาน', 'success', 'success', 20),
+    ('USER_ACCOUNT_LIFECYCLE', 'TEMP_PASSWORD_EXPIRED', 'รหัสหมดอายุ', 'warning', 'warning', 30),
+    ('USER_ACCOUNT_LIFECYCLE', 'DISABLED', 'ปิดใช้งาน', 'destructive', 'danger', 40),
+    ('TASK_LINK_STATE', 'ACTIVE', 'ใช้งาน', 'success', NULL, 10),
+    ('TASK_LINK_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', NULL, 20),
+    ('TASK_LINK_STATE', 'EXPIRED', 'หมดอายุ', 'warning', NULL, 30),
+    ('TASK_LINK_STATE', 'COMPLETED', 'เสร็จสิ้น', 'success', NULL, 40),
+    ('TASK_LINK_STATE', 'DELEGATED', 'ส่งต่อแล้ว', 'secondary', NULL, 50),
+    ('LOGIN_LINK_USAGE', 'USED', 'เข้าใช้แล้ว', 'success', NULL, 10),
+    ('LOGIN_LINK_USAGE', 'UNUSED', 'ยังไม่เข้าใช้', 'secondary', NULL, 20),
+    ('ATTENDANCE_RECONCILIATION', 'COMPLETED', 'ครบ', 'success', NULL, 10),
+    ('ATTENDANCE_RECONCILIATION', 'MISSING', 'ยังไม่เช็ค', 'destructive', NULL, 20),
+    ('ATTENDANCE_RECONCILIATION', 'INCOMPLETE', 'ไม่ครบ', 'warning', NULL, 30),
+    ('RECORD_ACTIVITY', 'ACTIVE', 'เปิดใช้งาน', 'success', NULL, 10),
+    ('RECORD_ACTIVITY', 'INACTIVE', 'ปิดใช้งาน', 'secondary', NULL, 20),
+    ('STUDENT_STATUS_FLAG', 'LOGIN_ALLOWED', 'นโยบาย: เข้าสู่ระบบได้', 'success', NULL, 10),
+    ('STUDENT_STATUS_FLAG', 'TERMINAL', 'สิ้นสุด', 'secondary', NULL, 20),
+    ('STUDENT_STATUS_FLAG', 'FOLLOWUP_REQUIRED', 'ควรพิจารณาติดตาม', 'warning', NULL, 30),
+    ('STUDENT_STATUS_FLAG', 'DISABLED', 'ปิดใช้งาน', 'destructive', NULL, 40),
+    ('ROLE_ORIGIN', 'SYSTEM', 'ระบบ', 'secondary', NULL, 10),
+    ('ATTENDANCE_ANOMALY', 'HOLIDAY_ATTENDANCE', 'เช็คชื่อในวันหยุด', 'warning', NULL, 10),
+    ('ATTENDANCE_ANOMALY', 'CANCELLED_ATTENDANCE', 'เช็คชื่อในวันที่ยกเลิกเรียน', 'warning', NULL, 20),
+    ('ATTENDANCE_ANOMALY', 'OUT_OF_TERM', 'เช็คชื่อนอกช่วงภาคเรียน', 'destructive', NULL, 30),
+    ('ATTENDANCE_ANOMALY', 'MISSING_CALENDAR_DAY', 'ไม่มีวันในปฏิทิน', 'secondary', NULL, 40)
+  ON CONFLICT (domain_code, code) DO NOTHING;
+
+  ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_status;
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS chk_tasks_status;
+  ALTER TABLE school_terms DROP CONSTRAINT IF EXISTS chk_school_terms_status;
+  ALTER TABLE school_calendar_days DROP CONSTRAINT IF EXISTS chk_school_calendar_days_type;
+  ALTER TABLE attendance_sessions DROP CONSTRAINT IF EXISTS chk_attendance_sessions_status;
+  ALTER TABLE student_account_batch_job DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_status;
+  ALTER TABLE student_account_batch_job_item DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_item_status;
+  ALTER TABLE case_referrals DROP CONSTRAINT IF EXISTS chk_case_referrals_status;
+  ALTER TABLE student_import_batches DROP CONSTRAINT IF EXISTS chk_student_import_batches_status;
+
+  DO $operational_status_fks$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_account_status') THEN
+      ALTER TABLE users ADD CONSTRAINT fk_users_account_status FOREIGN KEY (status)
+        REFERENCES user_account_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_tasks_workflow_status') THEN
+      ALTER TABLE tasks ADD CONSTRAINT fk_tasks_workflow_status FOREIGN KEY (status)
+        REFERENCES task_workflow_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_links_status') THEN
+      ALTER TABLE task_links ADD CONSTRAINT fk_task_links_status FOREIGN KEY (status)
+        REFERENCES task_link_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_record_status') THEN
+      ALTER TABLE attendance ADD CONSTRAINT fk_attendance_record_status FOREIGN KEY ("AttendanceStatus")
+        REFERENCES attendance_record_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_school_terms_status') THEN
+      ALTER TABLE school_terms ADD CONSTRAINT fk_school_terms_status FOREIGN KEY (status)
+        REFERENCES school_term_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_school_calendar_days_type') THEN
+      ALTER TABLE school_calendar_days ADD CONSTRAINT fk_school_calendar_days_type FOREIGN KEY (day_type)
+        REFERENCES school_calendar_day_types(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_sessions_status') THEN
+      ALTER TABLE attendance_sessions ADD CONSTRAINT fk_attendance_sessions_status FOREIGN KEY (status)
+        REFERENCES attendance_session_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_account_batch_job_status') THEN
+      ALTER TABLE student_account_batch_job ADD CONSTRAINT fk_student_account_batch_job_status FOREIGN KEY (status)
+        REFERENCES student_account_batch_job_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_account_batch_item_status') THEN
+      ALTER TABLE student_account_batch_job_item ADD CONSTRAINT fk_student_account_batch_item_status FOREIGN KEY (status)
+        REFERENCES student_account_batch_item_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_case_referrals_status') THEN
+      ALTER TABLE case_referrals ADD CONSTRAINT fk_case_referrals_status FOREIGN KEY (status)
+        REFERENCES case_referral_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_import_batches_status') THEN
+      ALTER TABLE student_import_batches ADD CONSTRAINT fk_student_import_batches_status FOREIGN KEY (status)
+        REFERENCES student_import_batch_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $operational_status_fks$;
+`;
+
+export const DATA_RECORD_ORIGINS_SQL = `
+  CREATE TABLE IF NOT EXISTS data_record_origins (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    is_visible_by_default BOOLEAN NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_data_record_origins_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_data_record_origins_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('data_record_origins')}
+  INSERT INTO data_record_origins (code, label_th, is_visible_by_default, sort_order) VALUES
+    ('OPERATIONAL', 'ข้อมูลใช้งานจริง', TRUE, 10),
+    ('DEMO', 'ข้อมูลสาธิต', TRUE, 20),
+    ('AUTOMATED_TEST', 'ข้อมูลทดสอบอัตโนมัติ', FALSE, 30)
+  ON CONFLICT (code) DO NOTHING;
 `;
 
 export const DATABASE_BASELINE_SQL = `
@@ -560,6 +999,8 @@ export const DATABASE_BASELINE_SQL = `
   SET is_assignable = FALSE
   WHERE name IN ('ADMIN_PROVINCE', 'ADMIN_DISTRICT', 'ADMIN_SUBDISTRICT', 'ADMIN_SCHOOL');
 
+  ${DATA_RECORD_ORIGINS_SQL}
+
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
@@ -585,6 +1026,7 @@ export const DATABASE_BASELINE_SQL = `
     permissions JSONB DEFAULT '[]'::jsonb,
     role TEXT DEFAULT 'TEACHER',
     data_scope JSONB DEFAULT '{}'::jsonb,
+    data_origin_code VARCHAR(32) NOT NULL DEFAULT 'OPERATIONAL',
     person_uuid UUID,
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     temporary_password_issued_at TIMESTAMP WITH TIME ZONE,
@@ -595,6 +1037,21 @@ export const DATABASE_BASELINE_SQL = `
     deactivation_note VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
+
+  ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS data_origin_code VARCHAR(32) NOT NULL DEFAULT 'OPERATIONAL';
+  DO $users_data_origin_fk$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_data_origin'
+    ) THEN
+      ALTER TABLE users
+        ADD CONSTRAINT fk_users_data_origin
+        FOREIGN KEY (data_origin_code) REFERENCES data_record_origins(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $users_data_origin_fk$;
+  CREATE INDEX IF NOT EXISTS idx_users_data_origin_code ON users (data_origin_code);
 
   CREATE TABLE IF NOT EXISTS external_users (
     "ExternalID" SERIAL PRIMARY KEY,
@@ -1119,10 +1576,29 @@ export const DATABASE_BASELINE_SQL = `
     ('MULTIPLE', 'ความพิการซ้อน', 'ความพิการซ้อน')
   ON CONFLICT (code) DO NOTHING;
 
+  CREATE TABLE IF NOT EXISTS student_status_categories (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_status_categories_label CHECK (length(trim(label_th)) > 0)
+  );
+  ${auditUpdatedAtTriggerSql('student_status_categories')}
+  INSERT INTO student_status_categories (code, label_th, sort_order) VALUES
+    ('ACTIVE', 'กำลังศึกษา', 10),
+    ('GRADUATED', 'สำเร็จการศึกษา', 20),
+    ('WITHDRAWN', 'ลาออก/พ้นสภาพ', 30),
+    ('TRANSFERRED', 'ย้ายสถานศึกษา', 40),
+    ('DECEASED', 'เสียชีวิต', 50),
+    ('UNMAPPED', 'ยังไม่ได้จับคู่', 60)
+  ON CONFLICT (code) DO NOTHING;
+
   CREATE TABLE IF NOT EXISTS student_status (
     code INTEGER PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,
     category VARCHAR(32) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL DEFAULT 'secondary',
     is_active_for_login BOOLEAN NOT NULL DEFAULT FALSE,
     is_terminal BOOLEAN NOT NULL DEFAULT FALSE,
     requires_followup BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1130,23 +1606,25 @@ export const DATABASE_BASELINE_SQL = `
     sort_order SMALLINT NOT NULL,
     source_system VARCHAR(32) NOT NULL DEFAULT 'ONEC',
     ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_student_status_category
-      CHECK (category IN ('ACTIVE', 'GRADUATED', 'WITHDRAWN', 'TRANSFERRED', 'DECEASED', 'UNMAPPED')),
     CONSTRAINT chk_student_status_sort_order CHECK (sort_order >= 0),
     CONSTRAINT chk_student_status_source_system CHECK (length(trim(source_system)) > 0),
-    CONSTRAINT chk_student_status_label_th CHECK (length(trim(label_th)) > 0)
+    CONSTRAINT chk_student_status_label_th CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_student_status_badge_variant
+      CHECK (badge_variant IN ('default','secondary','destructive','success','warning')),
+    CONSTRAINT fk_student_status_category FOREIGN KEY (category)
+      REFERENCES student_status_categories(code) ON DELETE RESTRICT ON UPDATE CASCADE
   );
   ${auditUpdatedAtTriggerSql('student_status')}
 
   INSERT INTO student_status (
-    code, label_th, category, is_active_for_login, is_terminal,
+    code, label_th, category, badge_variant, is_active_for_login, is_terminal,
     requires_followup, is_enabled, sort_order, source_system
   )
   VALUES
-    (10, 'กำลังศึกษา', 'ACTIVE', TRUE, FALSE, FALSE, TRUE, 10, 'ONEC'),
-    (20, 'จบการศึกษา', 'GRADUATED', FALSE, TRUE, FALSE, TRUE, 20, 'ONEC'),
-    (30, 'ลาออก/จำหน่าย', 'WITHDRAWN', FALSE, TRUE, TRUE, TRUE, 30, 'ONEC'),
-    (40, 'ย้ายสถานศึกษา', 'TRANSFERRED', FALSE, TRUE, FALSE, TRUE, 40, 'ONEC')
+    (10, 'กำลังศึกษา', 'ACTIVE', 'success', TRUE, FALSE, FALSE, TRUE, 10, 'ONEC'),
+    (20, 'จบการศึกษา', 'GRADUATED', 'secondary', FALSE, TRUE, FALSE, TRUE, 20, 'ONEC'),
+    (30, 'ลาออก/จำหน่าย', 'WITHDRAWN', 'secondary', FALSE, TRUE, TRUE, TRUE, 30, 'ONEC'),
+    (40, 'ย้ายสถานศึกษา', 'TRANSFERRED', 'secondary', FALSE, TRUE, FALSE, TRUE, 40, 'ONEC')
   ON CONFLICT (code) DO NOTHING;
 
   ALTER TABLE student_term ADD COLUMN IF NOT EXISTS student_status_code INTEGER;
@@ -1172,6 +1650,10 @@ export const DATABASE_BASELINE_SQL = `
   ${STUDENT_ACCOUNT_BATCH_TABLES_SQL}
 
   ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
+
+  ${CASE_WORKFLOW_STATUS_TABLE_SQL}
+
+  ${OPERATIONAL_STATUS_CATALOG_TABLES_SQL}
 
   ${AUDIT_RETROFIT_SQL}
 `;

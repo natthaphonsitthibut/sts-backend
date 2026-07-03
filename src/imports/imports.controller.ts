@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Patch,
   Param,
   Post,
   Query,
@@ -22,9 +23,11 @@ import {
   BulkImportUploadDto,
   CheckSchoolsUploadDto,
   ExportImportQuarantineDto,
+  FixImportQuarantineDto,
   ListImportQuarantineDto,
   PreviewImportUploadDto,
   ResolveImportQuarantineDto,
+  RetryImportQuarantineDto,
 } from './dto/imports.dto';
 import { ImportsService } from './imports.service';
 
@@ -105,6 +108,16 @@ export class ImportsController {
     return this.importsService.listQuarantine(query, actor);
   }
 
+  @Get('quarantine-lookups')
+  getQuarantineLookups() {
+    return this.importsService.getQuarantineLookups();
+  }
+
+  @Get('quarantine/:id')
+  getQuarantine(@Param('id') id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
+    return this.importsService.getQuarantine(id, actor);
+  }
+
   @Get('quarantine-export')
   async exportQuarantine(
     @Query() query: ExportImportQuarantineDto,
@@ -127,6 +140,31 @@ export class ImportsController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.importsService.resolveQuarantine(id, body, actor);
+  }
+
+  @Patch('quarantine/:id/values')
+  fixQuarantineValues(
+    @Param('id') id: string,
+    @Body() body: FixImportQuarantineDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.importsService.fixQuarantineValues(id, body, actor);
+  }
+
+  @Get('quarantine-retryable-summary')
+  retryableQuarantineSummary(
+    @Query() query: RetryImportQuarantineDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.importsService.retryableQuarantineSummary(query, actor);
+  }
+
+  @Post('quarantine-retry')
+  retryReadyQuarantine(
+    @Body() body: RetryImportQuarantineDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.importsService.retryReadyQuarantine(body, actor);
   }
 
   @Get('quarantine/:id/candidates')

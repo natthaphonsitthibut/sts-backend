@@ -14,6 +14,7 @@ interface ListOptions {
 interface WriteValues {
   labelTh: string;
   category: string;
+  badgeVariant: string;
   isActiveForLogin: boolean;
   isTerminal: boolean;
   requiresFollowup: boolean;
@@ -38,6 +39,7 @@ const SELECT_COLUMNS = `
   status.code,
   status.label_th,
   status.category,
+  status.badge_variant,
   status.is_active_for_login,
   status.is_terminal,
   status.requires_followup,
@@ -129,16 +131,17 @@ export class StudentStatusRepository {
     await queryRunner.query(
       `
         INSERT INTO student_status (
-          code, label_th, category, is_active_for_login, is_terminal,
+          code, label_th, category, badge_variant, is_active_for_login, is_terminal,
           requires_followup, is_enabled, sort_order, source_system,
           created_by, updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
       `,
       [
         code,
         values.labelTh,
         values.category,
+        values.badgeVariant,
         values.isActiveForLogin,
         values.isTerminal,
         values.requiresFollowup,
@@ -156,19 +159,21 @@ export class StudentStatusRepository {
         UPDATE student_status
         SET label_th = $2,
             category = $3,
-            is_active_for_login = $4,
-            is_terminal = $5,
-            requires_followup = $6,
-            is_enabled = $7,
-            sort_order = $8,
-            source_system = $9,
-            updated_by = $10
+            badge_variant = $4,
+            is_active_for_login = $5,
+            is_terminal = $6,
+            requires_followup = $7,
+            is_enabled = $8,
+            sort_order = $9,
+            source_system = $10,
+            updated_by = $11
         WHERE code = $1
       `,
       [
         code,
         values.labelTh,
         values.category,
+        values.badgeVariant,
         values.isActiveForLogin,
         values.isTerminal,
         values.requiresFollowup,

@@ -31,6 +31,7 @@ export class StudentStatusService {
       code: row.code,
       labelTh: row.label_th,
       category: row.category,
+      badgeVariant: row.badge_variant,
       isActiveForLogin: row.is_active_for_login,
       isTerminal: row.is_terminal,
       requiresFollowup: row.requires_followup,
@@ -74,6 +75,7 @@ export class StudentStatusService {
           {
             labelTh: dto.labelTh.trim(),
             category: dto.category,
+            badgeVariant: dto.badgeVariant,
             isActiveForLogin: dto.isActiveForLogin,
             isTerminal: dto.isTerminal,
             requiresFollowup: dto.requiresFollowup,
@@ -123,6 +125,7 @@ export class StudentStatusService {
         {
           labelTh: dto.labelTh?.trim() ?? existing.label_th,
           category: dto.category ?? existing.category,
+          badgeVariant: dto.badgeVariant ?? existing.badge_variant,
           isActiveForLogin: dto.isActiveForLogin ?? existing.is_active_for_login,
           isTerminal: dto.isTerminal ?? existing.is_terminal,
           requiresFollowup: dto.requiresFollowup ?? existing.requires_followup,

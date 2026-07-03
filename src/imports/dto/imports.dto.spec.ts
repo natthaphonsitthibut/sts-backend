@@ -1,7 +1,11 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
-import { ListImportQuarantineDto, ResolveImportQuarantineDto } from './imports.dto';
+import {
+  ListImportQuarantineDto,
+  ResolveImportQuarantineDto,
+  RetryImportQuarantineDto,
+} from './imports.dto';
 
 describe('import quarantine DTOs', () => {
   it('rejects unsupported pagination values', () => {
@@ -45,5 +49,30 @@ describe('import quarantine DTOs', () => {
     });
 
     expect(validateSync(dto)).toHaveLength(2);
+  });
+
+  it('requires a non-empty rejection note', () => {
+    const missing = plainToInstance(ResolveImportQuarantineDto, { action: 'REJECT' });
+    const valid = plainToInstance(ResolveImportQuarantineDto, {
+      action: 'REJECT',
+      note: 'ข้อมูลไม่ถูกต้อง',
+    });
+
+    expect(validateSync(missing)).toHaveLength(1);
+    expect(validateSync(valid)).toHaveLength(0);
+  });
+
+  it('validates retry filters without accepting pagination or status fields', () => {
+    const valid = plainToInstance(RetryImportQuarantineDto, {
+      reasonCode: 'GRADE_NOT_FOUND',
+      schoolId: '1001',
+    });
+    const invalid = plainToInstance(RetryImportQuarantineDto, {
+      reasonCode: 'NOT_A_REASON',
+      schoolId: 0,
+    });
+
+    expect(validateSync(valid)).toHaveLength(0);
+    expect(validateSync(invalid)).toHaveLength(2);
   });
 });

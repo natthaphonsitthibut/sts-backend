@@ -1551,6 +1551,9 @@ export class TaskRepository {
         c.postal_code,
         c.reason_flagged,
         c.status,
+        case_status.label_th AS status_label,
+        case_status.badge_variant AS status_badge_variant,
+        case_status.summary_tone AS status_summary_tone,
         c.created_at,
         student_match.student_id,
         t.id AS task_id,
@@ -1564,6 +1567,7 @@ export class TaskRepository {
         tl.delegation_depth AS active_link_depth,
         COALESCE(link_state_snapshot.link_state, 'NONE') AS link_state
       FROM cases c
+      INNER JOIN case_workflow_statuses case_status ON case_status.code = c.status
       LEFT JOIN LATERAL (
         SELECT
           CASE

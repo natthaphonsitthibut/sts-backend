@@ -48,6 +48,7 @@ export class TaskStatsService {
     try {
       const today = getBangkokDateString();
 
+      const statusCounts = await this.taskRepository.countCaseStatuses(currentActor);
       return {
         total: await this.taskRepository.countCases(undefined, currentActor),
         atRiskStudents: await this.taskRepository.countAtRiskStudents(currentActor),
@@ -59,6 +60,7 @@ export class TaskStatsService {
         pendingReview: await this.taskRepository.countCases('PENDING_REVIEW', currentActor),
         activeLinks: await this.taskRepository.countActiveTaskLinks(currentActor),
         delegations: 0,
+        statusCounts,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -149,7 +149,8 @@ export class StudentsRepository {
           sc.name as school_name,
           sc.id as school_id,
           COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
-          COALESCE(ss.category, 'UNMAPPED') as student_status_category
+          COALESCE(ss.category, 'UNMAPPED') as student_status_category,
+          COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant
         ${fromWhere}
         ORDER BY s."SchoolID_Onec" ASC, s."GradeLevelID_Onec" ASC, s."RoomID_Onec" ASC, s."PersonID_Onec" ASC
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
@@ -265,7 +266,8 @@ export class StudentsRepository {
         s."RoomID_Onec"::text as room,
         sc.name as school_name,
         COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
-        COALESCE(ss.category, 'UNMAPPED') as student_status_category
+        COALESCE(ss.category, 'UNMAPPED') as student_status_category,
+        COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant
       FROM student_term s
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
