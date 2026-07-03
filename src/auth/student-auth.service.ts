@@ -143,22 +143,14 @@ export class StudentAuthService {
           ARRAY[u.role]::text[] AS roles,
           CASE WHEN r.label IS NULL THEN ARRAY[]::text[] ELSE ARRAY[r.label]::text[] END AS labels,
           r.default_permissions AS role_default_permissions,
-          current_student.student_uuid
+          current_enrollment.selected_student_uuid AS student_uuid
         FROM student_person_identifier spi
         JOIN student_person person ON person.person_uuid = spi.person_uuid
         JOIN users u ON u.person_uuid = person.person_uuid
         LEFT JOIN roles r ON r.name = u.role
-        JOIN LATERAL (
-          SELECT enrollment.student_uuid
-          FROM student_term enrollment
-          WHERE enrollment.person_uuid = person.person_uuid
-            AND enrollment.deleted_at IS NULL
-            AND enrollment."StudentStatusID_Onec" = 10
-          ORDER BY enrollment."AcademicYear_Onec" DESC NULLS LAST,
-                   enrollment."Semester_Onec" DESC NULLS LAST,
-                   enrollment.student_uuid DESC
-          LIMIT 1
-        ) current_student ON true
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = person.person_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
         WHERE spi.identifier_type = 'NATIONAL_ID'
           AND spi.identifier_normalized = $1
           AND spi.is_primary = TRUE

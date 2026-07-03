@@ -56,6 +56,11 @@ describe('StudentAuthService real-account binding', () => {
       ['1234567890123'],
       true,
     );
+    const queryCalls = queryRunner.query.mock.calls as Array<[string, unknown[], boolean?]>;
+    const sql = queryCalls[0]?.[0] ?? '';
+    expect(sql).toContain('student_current_enrollment_resolution');
+    expect(sql).toContain("current_enrollment.resolution_state = 'ACTIVE'");
+    expect(sql).not.toContain('"StudentStatusID_Onec" = 10');
   });
 
   it('fails closed when no active generated account matches', async () => {

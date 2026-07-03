@@ -41,9 +41,13 @@ export class UserAuthService {
     const { password: _password, ...safeUser } = user;
     void _password;
     const hydratedUser = this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
-    const studentUuid = hydratedUser.roles?.includes('STUDENT')
+    const isStudent = hydratedUser.roles?.includes('STUDENT') === true;
+    const studentUuid = isStudent
       ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
       : null;
+    if (isStudent && !studentUuid) {
+      return null;
+    }
     return studentUuid ? { ...hydratedUser, student_uuid: studentUuid } : hydratedUser;
   }
 

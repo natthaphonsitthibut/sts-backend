@@ -1428,18 +1428,14 @@ export class UsersRepository {
   async findCurrentStudentUuidByUserId(userId: number): Promise<string | null> {
     const result = await this.query<{ student_uuid: string }>(
       `
-      SELECT enrollment.student_uuid
+      SELECT current_enrollment.selected_student_uuid AS student_uuid
       FROM users u
-      JOIN student_term enrollment ON enrollment.person_uuid = u.person_uuid
+      JOIN student_current_enrollment_resolution current_enrollment
+        ON current_enrollment.person_uuid = u.person_uuid
+       AND current_enrollment.resolution_state = 'ACTIVE'
       WHERE u.id = $1
         AND u.role = 'STUDENT'
         AND u.status = 'ACTIVE'
-        AND enrollment.deleted_at IS NULL
-        AND enrollment."StudentStatusID_Onec" = 10
-      ORDER BY enrollment."AcademicYear_Onec" DESC NULLS LAST,
-               enrollment."Semester_Onec" DESC NULLS LAST,
-               enrollment.student_uuid DESC
-      LIMIT 1
     `,
       [userId],
     );

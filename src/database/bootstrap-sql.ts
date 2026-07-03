@@ -787,6 +787,81 @@ export const DATA_RECORD_ORIGINS_SQL = `
   ON CONFLICT (code) DO NOTHING;
 `;
 
+export const STUDENT_CURRENT_ENROLLMENT_VIEW_SQL = `
+  CREATE OR REPLACE VIEW student_current_enrollment_resolution AS
+  WITH ranked_enrollments AS (
+    SELECT
+      enrollment.person_uuid,
+      enrollment.student_uuid,
+      enrollment."AcademicYear_Onec" AS academic_year,
+      enrollment."Semester_Onec" AS semester,
+      status.category AS status_category,
+      status.is_active_for_login,
+      status.is_enabled,
+      DENSE_RANK() OVER (
+        PARTITION BY enrollment.person_uuid
+        ORDER BY enrollment."AcademicYear_Onec" DESC NULLS LAST,
+                 enrollment."Semester_Onec" DESC NULLS LAST
+      ) AS term_rank
+    FROM student_term enrollment
+    LEFT JOIN student_status status
+      ON status.code = COALESCE(
+        enrollment.student_status_code,
+        enrollment."StudentStatusID_Onec"
+      )
+     AND status.deleted_at IS NULL
+    WHERE enrollment.person_uuid IS NOT NULL
+      AND enrollment.deleted_at IS NULL
+  ),
+  latest_term AS (
+    SELECT *
+    FROM ranked_enrollments
+    WHERE term_rank = 1
+  )
+  SELECT
+    person_uuid,
+    MAX(academic_year) AS academic_year,
+    MAX(semester) AS semester,
+    COUNT(*)::integer AS latest_enrollment_count,
+    COUNT(*) FILTER (
+      WHERE status_category = 'ACTIVE'
+        AND is_active_for_login IS TRUE
+        AND is_enabled IS TRUE
+    )::integer AS active_enrollment_count,
+    COUNT(*) FILTER (
+      WHERE status_category IS NULL
+         OR status_category = 'UNMAPPED'
+         OR is_enabled IS NOT TRUE
+    )::integer AS unresolved_status_count,
+    CASE
+      WHEN COUNT(*) FILTER (
+        WHERE status_category IS NULL
+           OR status_category = 'UNMAPPED'
+           OR is_enabled IS NOT TRUE
+      ) > 0 THEN 'STATUS_UNRESOLVED'
+      WHEN COUNT(*) FILTER (
+        WHERE status_category = 'ACTIVE'
+          AND is_active_for_login IS TRUE
+          AND is_enabled IS TRUE
+      ) = 1 THEN 'ACTIVE'
+      WHEN COUNT(*) FILTER (
+        WHERE status_category = 'ACTIVE'
+          AND is_active_for_login IS TRUE
+          AND is_enabled IS TRUE
+      ) > 1 THEN 'AMBIGUOUS_ACTIVE'
+      ELSE 'INACTIVE'
+    END::varchar(32) AS resolution_state,
+    (
+      ARRAY_AGG(student_uuid ORDER BY student_uuid) FILTER (
+        WHERE status_category = 'ACTIVE'
+          AND is_active_for_login IS TRUE
+          AND is_enabled IS TRUE
+      )
+    )[1] AS selected_student_uuid
+  FROM latest_term
+  GROUP BY person_uuid;
+`;
+
 export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS schools (
     id SERIAL PRIMARY KEY,
@@ -1646,6 +1721,8 @@ export const DATABASE_BASELINE_SQL = `
   END $student_status_fk$;
   CREATE INDEX IF NOT EXISTS idx_student_term_student_status_code
     ON student_term (student_status_code);
+
+  ${STUDENT_CURRENT_ENROLLMENT_VIEW_SQL}
 
   ${STUDENT_ACCOUNT_BATCH_TABLES_SQL}
 

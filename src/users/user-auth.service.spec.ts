@@ -86,4 +86,16 @@ describe('UserAuthService temporary password expiry', () => {
     await expect(service.validateUser('student-temp', 'TEMP123')).resolves.toBeNull();
     expect(passwordService.compare).not.toHaveBeenCalled();
   });
+
+  it('rejects a student whose current enrollment is not eligible', async () => {
+    const user = buildUser({
+      must_change_password: false,
+      temporary_password_expires_at: null,
+    });
+    usersRepository.findUserByUsername.mockResolvedValue(user);
+    usersRepository.findCurrentStudentUuidByUserId.mockResolvedValue(null);
+
+    await expect(service.validateUser('student-temp', 'PASSWORD')).resolves.toBeNull();
+    expect(passwordService.compare).toHaveBeenCalledWith('PASSWORD', 'hashed-password');
+  });
 });

@@ -134,22 +134,18 @@ export class AuthActorService {
             u.data_scope,
             u."PersonID_Onec",
             u.person_uuid,
-            current_student.student_uuid,
+            current_enrollment.selected_student_uuid AS student_uuid,
             r.default_permissions AS role_default_permissions
           FROM users u
           LEFT JOIN roles r ON r.name = u.role
-          LEFT JOIN LATERAL (
-            SELECT enrollment.student_uuid
-            FROM student_term enrollment
-            WHERE enrollment.person_uuid = u.person_uuid
-              AND enrollment.deleted_at IS NULL
-              AND enrollment."StudentStatusID_Onec" = 10
-            ORDER BY enrollment."AcademicYear_Onec" DESC NULLS LAST,
-                     enrollment."Semester_Onec" DESC NULLS LAST,
-                     enrollment.student_uuid DESC
-            LIMIT 1
-          ) current_student ON u.role = 'STUDENT'
+          LEFT JOIN student_current_enrollment_resolution current_enrollment
+            ON current_enrollment.person_uuid = u.person_uuid
+           AND current_enrollment.resolution_state = 'ACTIVE'
           WHERE u.id = $1 AND u.status = 'ACTIVE'
+            AND (
+              u.role IS DISTINCT FROM 'STUDENT'
+              OR current_enrollment.selected_student_uuid IS NOT NULL
+            )
         `,
         [userId],
       )) as QueryResult<UserActorRow>;
