@@ -66,6 +66,9 @@ export type AuditAction =
   | 'LINK_UNLOCK'
   | 'DELEGATION'
   | 'DATA_IMPORT'
+  | 'IMPORT_QUARANTINE_RESOLVED'
+  | 'IMPORT_QUARANTINE_REJECTED'
+  | 'IMPORT_QUARANTINE_EXPORT'
   | 'MASTER_DATA_EDIT';
 
 export interface AuditLogRecordInput {
@@ -201,7 +204,26 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'target', label: 'ประเภทข้อมูล' },
       { key: 'rowCount', label: 'จำนวนทั้งหมด' },
       { key: 'rowsInserted', label: 'เพิ่มใหม่' },
+      { key: 'rowsQuarantined', label: 'รอตรวจสอบ' },
       { key: 'rowsSkipped', label: 'ข้าม' },
+    ],
+  },
+  IMPORT_QUARANTINE_RESOLVED: {
+    domain: 'imports',
+    label: 'แก้ไขรายการนำเข้าที่รอตรวจสอบ',
+    detailKeys: [{ key: 'status', label: 'สถานะ' }],
+  },
+  IMPORT_QUARANTINE_REJECTED: {
+    domain: 'imports',
+    label: 'ปฏิเสธรายการนำเข้าที่รอตรวจสอบ',
+    detailKeys: [{ key: 'status', label: 'สถานะ' }],
+  },
+  IMPORT_QUARANTINE_EXPORT: {
+    domain: 'imports',
+    label: 'ดาวน์โหลดรายงานรายการนำเข้าที่รอตรวจสอบ',
+    detailKeys: [
+      { key: 'status', label: 'สถานะ' },
+      { key: 'rowCount', label: 'จำนวนรายการ' },
     ],
   },
   USER_CREATE: {

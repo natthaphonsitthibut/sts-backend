@@ -1,4 +1,15 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { IMPORT_QUARANTINE_REASONS, type ImportQuarantineReason } from '../imports.types';
 
 export class CheckSchoolsUploadDto {
   @IsString()
@@ -28,4 +39,102 @@ export class PreviewImportUploadDto {
   @IsString()
   @IsNotEmpty()
   mapping!: string;
+}
+
+export class ListImportQuarantineDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsIn([10, 20, 50])
+  limit = 20;
+
+  @IsOptional()
+  @IsIn(['PENDING', 'RESOLVED', 'REJECTED'])
+  status?: 'PENDING' | 'RESOLVED' | 'REJECTED';
+
+  @IsOptional()
+  @IsIn(IMPORT_QUARANTINE_REASONS)
+  reasonCode?: ImportQuarantineReason;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+}
+
+export class ResolveImportQuarantineDto {
+  @IsIn(['RESOLVE', 'REJECT'])
+  action!: 'RESOLVE' | 'REJECT';
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[0-9a-f]{64}$/)
+  candidateKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+export class ExportImportQuarantineDto {
+  @IsOptional()
+  @IsIn(['PENDING', 'REJECTED'])
+  status: 'PENDING' | 'REJECTED' = 'REJECTED';
+
+  @IsOptional()
+  @IsIn(IMPORT_QUARANTINE_REASONS)
+  reasonCode?: ImportQuarantineReason;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
 }

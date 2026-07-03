@@ -67,7 +67,10 @@ export const IMPORT_TARGET_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = 
   ]),
 };
 
-export const SERVER_INJECTED_COLUMNS: ReadonlySet<string> = new Set(['person_uuid']);
+export const SERVER_INJECTED_COLUMNS: ReadonlySet<string> = new Set([
+  'person_uuid',
+  'student_status_code',
+]);
 
 export const STUDENT_TERM_NATURAL_KEY_COLUMNS: readonly string[] = [
   'person_uuid',
@@ -97,6 +100,7 @@ export const STUDENT_TERM_MUTABLE_IMPORT_COLUMNS: ReadonlySet<string> = new Set(
   'RoomID_Onec',
   'GPAX_Onec',
   'StudentStatusID_Onec',
+  'student_status_code',
   'ProvinceNameThai_Onec',
   'DistrictNameThai_Onec',
   'SubDistrictNameThai_Onec',
@@ -124,6 +128,7 @@ export interface ExistingStudentTermRow extends ExistingImportPersonIdRow {
   academic_year: string;
   semester: string;
   school_id: string;
+  mutable_values?: Record<string, unknown>;
 }
 
 export interface ImportReferenceRow extends Record<string, unknown> {
@@ -133,6 +138,23 @@ export interface ImportReferenceRow extends Record<string, unknown> {
 }
 
 export type ImportWriteAction = 'inserted' | 'updated' | 'skipped';
+
+export const IMPORT_QUARANTINE_REASONS = [
+  'MISSING_NATURAL_KEY_FIELD',
+  'UNMAPPED_STUDENT_STATUS',
+  'DUPLICATE_ROW_IN_FILE',
+  'MULTIPLE_ACTIVE_ENROLLMENTS',
+  'IDENTIFIER_CONFLICT',
+  'NAME_CONFLICT_FOR_IDENTIFIER',
+  'INVALID_NATIONAL_ID_CHECKSUM',
+  'SCHOOL_NOT_FOUND',
+  'GRADE_NOT_FOUND',
+  'ROOM_NOT_FOUND',
+  'STATUS_CAUSE_UNMAPPED',
+  'BLANK_REQUIRED_IDENTITY',
+] as const;
+
+export type ImportQuarantineReason = (typeof IMPORT_QUARANTINE_REASONS)[number];
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
   rows: T[];

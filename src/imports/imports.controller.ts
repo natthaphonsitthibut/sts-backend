@@ -2,7 +2,11 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
+  Param,
   Post,
+  Query,
+  Res,
   Req,
   UploadedFile,
   UseGuards,
@@ -10,13 +14,17 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
+import type { Response } from 'express';
 import { extname } from 'path';
 import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
 import type { AuthenticatedRequestUser } from '../auth';
 import {
   BulkImportUploadDto,
   CheckSchoolsUploadDto,
+  ExportImportQuarantineDto,
+  ListImportQuarantineDto,
   PreviewImportUploadDto,
+  ResolveImportQuarantineDto,
 } from './dto/imports.dto';
 import { ImportsService } from './imports.service';
 
@@ -55,10 +63,11 @@ export class ImportsController {
   async checkSchools(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: CheckSchoolsUploadDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
 
-    return this.importsService.checkMissingSchools(file, body.mapping);
+    return this.importsService.checkMissingSchools(file, body.mapping, actor);
   }
 
   @Post('bulk')
@@ -81,9 +90,50 @@ export class ImportsController {
   async previewImport(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: PreviewImportUploadDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
 
-    return this.importsService.previewImport(file, body.target, body.mapping);
+    return this.importsService.previewImport(file, body.target, body.mapping, actor);
+  }
+
+  @Get('quarantine')
+  listQuarantine(
+    @Query() query: ListImportQuarantineDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.importsService.listQuarantine(query, actor);
+  }
+
+  @Get('quarantine-export')
+  async exportQuarantine(
+    @Query() query: ExportImportQuarantineDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const csv = await this.importsService.exportQuarantine(query, actor);
+    response.setHeader('content-type', 'text/csv; charset=utf-8');
+    response.setHeader(
+      'content-disposition',
+      `attachment; filename="student-import-${query.status.toLowerCase()}.csv"`,
+    );
+    return csv;
+  }
+
+  @Post('quarantine/:id/resolve')
+  resolveQuarantine(
+    @Param('id') id: string,
+    @Body() body: ResolveImportQuarantineDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.importsService.resolveQuarantine(id, body, actor);
+  }
+
+  @Get('quarantine/:id/candidates')
+  listQuarantineCandidates(
+    @Param('id') id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.importsService.listQuarantineCandidates(id, actor);
   }
 }

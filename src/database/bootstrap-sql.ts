@@ -285,6 +285,69 @@ export const STUDENT_ACCOUNT_BATCH_TABLES_SQL = `
     ON student_account_batch_job_item (job_id, status);
 `;
 
+/** Persistent, scope-addressable review queue for invalid student import rows. */
+export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS student_import_batches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    target VARCHAR(32) NOT NULL,
+    source_sha256 CHAR(64) NOT NULL,
+    scope_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status VARCHAR(16) NOT NULL DEFAULT 'RUNNING',
+    total_rows INTEGER NOT NULL DEFAULT 0 CHECK (total_rows >= 0),
+    imported_rows INTEGER NOT NULL DEFAULT 0 CHECK (imported_rows >= 0),
+    quarantined_rows INTEGER NOT NULL DEFAULT 0 CHECK (quarantined_rows >= 0),
+    completed_at TIMESTAMPTZ,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_import_batches_target
+      CHECK (target IN ('student_term', 'student_dropouts')),
+    CONSTRAINT chk_student_import_batches_source_sha256
+      CHECK (source_sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_student_import_batches_status
+      CHECK (status IN ('RUNNING', 'COMPLETED', 'PARTIAL', 'FAILED'))
+  );
+  ${auditUpdatedAtTriggerSql('student_import_batches')}
+  CREATE INDEX IF NOT EXISTS idx_student_import_batches_source
+    ON student_import_batches (target, source_sha256, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_student_import_batches_created_by
+    ON student_import_batches (created_by, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS student_import_quarantine_rows (
+    id BIGSERIAL PRIMARY KEY,
+    batch_id UUID NOT NULL REFERENCES student_import_batches(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    school_id INTEGER REFERENCES schools(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    source_row_number INTEGER NOT NULL CHECK (source_row_number >= 2),
+    row_fingerprint CHAR(64) NOT NULL,
+    reason_code VARCHAR(64) NOT NULL,
+    mapped_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+    resolved_person_uuid UUID REFERENCES student_person(person_uuid)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    resolved_at TIMESTAMPTZ,
+    resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    resolution_note TEXT,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_import_quarantine_row_fingerprint
+      CHECK (row_fingerprint ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_student_import_quarantine_reason
+      CHECK (reason_code IN ('MISSING_NATURAL_KEY_FIELD', 'UNMAPPED_STUDENT_STATUS',
+        'DUPLICATE_ROW_IN_FILE', 'MULTIPLE_ACTIVE_ENROLLMENTS', 'IDENTIFIER_CONFLICT',
+        'NAME_CONFLICT_FOR_IDENTIFIER', 'INVALID_NATIONAL_ID_CHECKSUM', 'SCHOOL_NOT_FOUND',
+        'GRADE_NOT_FOUND', 'ROOM_NOT_FOUND', 'STATUS_CAUSE_UNMAPPED',
+        'BLANK_REQUIRED_IDENTITY')),
+    CONSTRAINT chk_student_import_quarantine_status
+      CHECK (status IN ('PENDING', 'RESOLVED', 'REJECTED'))
+  );
+  ${auditUpdatedAtTriggerSql('student_import_quarantine_rows')}
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_student_import_quarantine_pending_row
+    ON student_import_quarantine_rows (row_fingerprint, reason_code)
+    WHERE status = 'PENDING' AND deleted_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_student_import_quarantine_batch_status
+    ON student_import_quarantine_rows (batch_id, status);
+  CREATE INDEX IF NOT EXISTS idx_student_import_quarantine_school_status
+    ON student_import_quarantine_rows (school_id, status, created_at DESC);
+`;
+
 export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS schools (
     id SERIAL PRIMARY KEY,
@@ -1107,6 +1170,8 @@ export const DATABASE_BASELINE_SQL = `
     ON student_term (student_status_code);
 
   ${STUDENT_ACCOUNT_BATCH_TABLES_SQL}
+
+  ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
 
   ${AUDIT_RETROFIT_SQL}
 `;
