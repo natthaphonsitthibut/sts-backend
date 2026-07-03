@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
-import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
+import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
+import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import { UpdateSettingDto } from './dto/settings.dto';
 import { SettingsService } from './settings.service';
 
@@ -20,11 +21,11 @@ export class SettingsController {
   }
 
   @Put(':key')
-  updateSetting(@Param('key') key: string, @Body() body: UpdateSettingDto) {
-    return this.settingsService.updateSetting(
-      key,
-      body.value,
-      typeof body.description === 'string' ? body.description : undefined,
-    );
+  updateSetting(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Param('key') key: string,
+    @Body() body: UpdateSettingDto,
+  ) {
+    return this.settingsService.updateSetting(actor, key, body.value);
   }
 }

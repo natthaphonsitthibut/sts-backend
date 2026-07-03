@@ -1,4 +1,5 @@
 import { SYSTEM_ROLE_DEFINITIONS } from '../auth/permissions.constants';
+import { SYSTEM_SETTING_CATALOG } from '../settings/settings-catalog';
 
 interface SqlExecutor {
   query(sql: string, params?: unknown[]): Promise<unknown>;
@@ -10,23 +11,13 @@ interface SystemSettingDefinition {
   description: string;
 }
 
-export const SYSTEM_SETTING_DEFINITIONS: SystemSettingDefinition[] = [
-  {
-    key: 'ABSENT_THRESHOLD_DAYS',
-    value: '3',
-    description: 'จำนวนวันขาดเรียนติดต่อกันก่อนที่จะแจ้งเตือนหรือเปิดเคสอัตโนมัติ',
-  },
-  {
-    key: 'ALERT_TRIGGER_TYPE',
-    value: 'SCHEDULED',
-    description: 'รูปแบบการทำงาน (SCHEDULED = ตามตารางกะเวลา, IMMEDIATE = แจ้งเตือนทันที)',
-  },
-  {
-    key: 'ALERT_SCHEDULE_TIME',
-    value: '18:00',
-    description: 'เวลาที่จะรันบอทตรวจสอบข้อมูล (HH:MM) เมื่อเลือกรูปแบบ SCHEDULED',
-  },
-];
+export const SYSTEM_SETTING_DEFINITIONS: SystemSettingDefinition[] = SYSTEM_SETTING_CATALOG.map(
+  (entry) => ({
+    key: entry.key,
+    value: entry.defaultValue,
+    description: entry.description,
+  }),
+);
 
 /**
  * Deterministic postal-code backfill for the demo roster locations. The match

@@ -69,7 +69,8 @@ export type AuditAction =
   | 'IMPORT_QUARANTINE_RESOLVED'
   | 'IMPORT_QUARANTINE_REJECTED'
   | 'IMPORT_QUARANTINE_EXPORT'
-  | 'MASTER_DATA_EDIT';
+  | 'MASTER_DATA_EDIT'
+  | 'SYSTEM_SETTING_EDIT';
 
 export interface AuditLogRecordInput {
   actorUserId?: number | null;

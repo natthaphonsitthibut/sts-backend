@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
 import type { QueryResultLike, SystemSettingRow } from './settings.types';
 
@@ -7,28 +7,58 @@ import type { QueryResultLike, SystemSettingRow } from './settings.types';
 export class SettingsRepository {
   constructor(private readonly dataSource: DataSource) {}
 
-  async listSettings(): Promise<SystemSettingRow[]> {
+  private async runQuery(
+    sql: string,
+    params: unknown[],
+    queryRunner?: QueryRunner,
+  ): Promise<SystemSettingRow[]> {
+    if (queryRunner) {
+      return (await queryRunner.query(sql, params)) as SystemSettingRow[];
+    }
     const result = (await queryDataSource<SystemSettingRow>(
       this.dataSource,
-      'SELECT * FROM system_settings ORDER BY setting_key',
+      sql,
+      params,
     )) as QueryResultLike<SystemSettingRow>;
-
     return result.rows;
   }
 
-  async findSettingByKey(key: string): Promise<SystemSettingRow | null> {
-    const result = (await queryDataSource<SystemSettingRow>(
-      this.dataSource,
-      'SELECT * FROM system_settings WHERE setting_key = $1',
-      [key],
-    )) as QueryResultLike<SystemSettingRow>;
-
-    return result.rows[0] || null;
+  async withTransaction<T>(operation: (queryRunner: QueryRunner) => Promise<T>): Promise<T> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      const result = await operation(queryRunner);
+      await queryRunner.commitTransaction();
+      return result;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
-  async upsertSetting(key: string, value: string, description?: string): Promise<SystemSettingRow> {
-    const result = (await queryDataSource<SystemSettingRow>(
-      this.dataSource,
+  async listSettings(): Promise<SystemSettingRow[]> {
+    return await this.runQuery('SELECT * FROM system_settings ORDER BY setting_key', []);
+  }
+
+  async findSettingByKey(key: string, queryRunner?: QueryRunner): Promise<SystemSettingRow | null> {
+    const rows = await this.runQuery(
+      'SELECT * FROM system_settings WHERE setting_key = $1',
+      [key],
+      queryRunner,
+    );
+    return rows[0] || null;
+  }
+
+  async upsertSetting(
+    key: string,
+    value: string,
+    description: string,
+    queryRunner?: QueryRunner,
+  ): Promise<SystemSettingRow> {
+    const rows = await this.runQuery(
       `
         INSERT INTO system_settings (
           setting_key,
@@ -45,8 +75,9 @@ export class SettingsRepository {
         RETURNING *;
       `,
       [key, value, description],
-    )) as QueryResultLike<SystemSettingRow>;
+      queryRunner,
+    );
 
-    return result.rows[0];
+    return rows[0];
   }
 }
