@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AutomationRepository } from './automation.repository';
 import type {
   CaseAutoCancelAuditEvent,
@@ -15,6 +16,7 @@ export class AbsenceMonitorService {
   constructor(
     private readonly automationRepository: AutomationRepository,
     private readonly auditLog: AuditLogService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private normalizeText(value: unknown): string {
@@ -193,6 +195,7 @@ export class AbsenceMonitorService {
             student_name: studentName,
             student_school: schoolName,
             reason_flagged: reason,
+            school_id: schoolId,
           });
         }
       });
@@ -209,6 +212,16 @@ export class AbsenceMonitorService {
             studentUuid: event.studentUuid,
           },
           ip: null,
+        });
+      }
+
+      for (const created of newCases) {
+        await this.notificationsService.notifyCaseCreated({
+          caseId: created.case_id,
+          studentName: created.student_name,
+          schoolId: created.school_id ?? null,
+          schoolName: created.student_school,
+          reason: created.reason_flagged,
         });
       }
     } catch (error) {

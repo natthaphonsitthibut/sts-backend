@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { hashToken } from '../common/utils/helpers';
 import { SaveTaskSubmissionDto, TaskAttendanceRecordDto } from './dto/task.dto';
@@ -23,6 +24,7 @@ export class TaskSubmissionService {
     private readonly taskAccessService: TaskAccessService,
     private readonly automationService: AutomationService,
     private readonly attendanceWriteService: AttendanceWriteService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
@@ -260,6 +262,10 @@ export class TaskSubmissionService {
       });
 
       this.logger.log('[saveTaskSubmission] success');
+      await this.notificationsService.notifyTaskSubmitted({
+        taskId: String(link.task_id),
+        submitterName: typeof task?.assigned_to_name === 'string' ? task.assigned_to_name : null,
+      });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

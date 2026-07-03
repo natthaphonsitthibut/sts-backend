@@ -11,6 +11,7 @@ import { hashToken, generateToken, clean } from '../common/utils/helpers';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { DelegateTaskDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
@@ -27,6 +28,7 @@ export class DelegationService {
     private readonly taskRepository: TaskRepository,
     private readonly taskAccessService: TaskAccessService,
     private readonly auditLog: AuditLogService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
@@ -175,6 +177,10 @@ export class DelegationService {
       ip: null,
     });
     this.logger.log(`Delegation completed at depth ${delegation.nextDepth}`);
+    await this.notificationsService.notifyTaskDelegated({
+      taskId: String(link.task_id),
+      assigneeName: newAssigneeName,
+    });
 
     let qrDataUrl: string | null = null;
     try {

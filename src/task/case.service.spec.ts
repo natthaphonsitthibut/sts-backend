@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { CaseService } from './case.service';
@@ -39,6 +40,7 @@ describe('CaseService', () => {
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let notificationsService: { [k: string]: jest.Mock };
 
   beforeEach(() => {
     taskRepository = {
@@ -85,11 +87,15 @@ describe('CaseService', () => {
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
     };
+    notificationsService = {
+      notifyCaseStatusChanged: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new CaseService(
       taskRepository as unknown as TaskRepository,
       new TaskPolicyService({} as TaskRepository),
       auditLog as unknown as AuditLogService,
+      notificationsService as unknown as NotificationsService,
     );
   });
 

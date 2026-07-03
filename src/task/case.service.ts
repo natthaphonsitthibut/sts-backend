@@ -3,6 +3,7 @@ import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
   ReviewCaseDto,
@@ -37,6 +38,7 @@ export class CaseService {
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private normalizeText(value: unknown): string {
@@ -206,6 +208,14 @@ export class CaseService {
           ip: null,
         });
       }
+
+      await this.notificationsService.notifyCaseStatusChanged({
+        caseId,
+        studentName: this.normalizeText(caseRecord.student_name) || null,
+        schoolId: this.normalizeNumber(caseRecord.school_id),
+        nextStatus,
+        actorUserId: resolveAuditActorId(actor),
+      });
 
       return {
         success: true,

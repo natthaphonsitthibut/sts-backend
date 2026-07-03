@@ -27,6 +27,7 @@ import { throttleConfig } from './config/throttle.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
 import { GeoModule } from './geo/geo.module';
 import { StatusCatalogModule } from './status-catalog/status-catalog.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { StatusCatalogModule } from './status-catalog/status-catalog.module';
     AuditLogModule,
     GeoModule,
     StatusCatalogModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

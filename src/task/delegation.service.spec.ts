@@ -1,5 +1,6 @@
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { TaskAccessService } from './task-access.service';
 import { DelegationService } from './delegation.service';
 import { TaskRepository } from './task.repository';
@@ -25,6 +26,7 @@ describe('DelegationService', () => {
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let notificationsService: { [k: string]: jest.Mock };
   let parentStatus: string;
   let childCount: number;
   let transactionTail: Promise<void>;
@@ -92,11 +94,15 @@ describe('DelegationService', () => {
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
     };
+    notificationsService = {
+      notifyTaskDelegated: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new DelegationService(
       taskRepository as unknown as TaskRepository,
       taskAccessService as unknown as TaskAccessService,
       auditLog as unknown as AuditLogService,
+      notificationsService as unknown as NotificationsService,
     );
   });
 

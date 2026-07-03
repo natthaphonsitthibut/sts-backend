@@ -59,4 +59,5 @@ export interface NewCase {
   student_name: string;
   student_school: string;
   reason_flagged: string;
+  school_id?: number | null;
 }

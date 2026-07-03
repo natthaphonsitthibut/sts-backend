@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { TaskService } from './task.service';
 import { TaskController } from './task.controller';
 import { AdminController } from './admin.controller';
@@ -20,7 +21,7 @@ import { TaskStatsService } from './task-stats.service';
 import { AttendanceModule } from '../attendance/attendance.module';
 
 @Module({
-  imports: [AutomationModule, AttendanceModule],
+  imports: [AutomationModule, AttendanceModule, NotificationsModule],
   controllers: [
     TaskController,
     AdminController,

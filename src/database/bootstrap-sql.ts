@@ -853,6 +853,48 @@ export const STUDENT_CURRENT_ENROLLMENT_VIEW_SQL = `
   GROUP BY person_uuid;
 `;
 
+export const NOTIFICATION_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS notification_types (
+    code VARCHAR(64) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    required_permission VARCHAR(64) NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order SMALLINT NOT NULL DEFAULT 0,
+    CONSTRAINT chk_notification_types_label_th CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_notification_types_required_permission
+      CHECK (length(trim(required_permission)) > 0)
+  );
+
+  INSERT INTO notification_types (code, label_th, required_permission, sort_order)
+  VALUES
+    ('CASE_CREATED', 'เคสติดตามใหม่', 'review-cases', 10),
+    ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'review-cases', 20),
+    ('TASK_DELEGATED', 'งานถูกส่งต่อ', 'attendance-dashboard', 30),
+    ('TASK_SUBMITTED', 'มีรายงานส่งกลับ', 'attendance-dashboard', 40)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    recipient_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type_code VARCHAR(64) NOT NULL
+      REFERENCES notification_types(code) ON DELETE RESTRICT ON UPDATE CASCADE,
+    title TEXT NOT NULL,
+    body TEXT,
+    ref_entity VARCHAR(32),
+    ref_id TEXT,
+    seen_at TIMESTAMP WITH TIME ZONE,
+    read_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_notifications_title CHECK (length(trim(title)) > 0)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created
+    ON notifications (recipient_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_notifications_recipient_unread
+    ON notifications (recipient_user_id, created_at DESC)
+    WHERE read_at IS NULL;
+`;
+
 export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS schools (
     id SERIAL PRIMARY KEY,
@@ -1722,6 +1764,8 @@ export const DATABASE_BASELINE_SQL = `
   ${CASE_WORKFLOW_STATUS_TABLE_SQL}
 
   ${OPERATIONAL_STATUS_CATALOG_TABLES_SQL}
+
+  ${NOTIFICATION_TABLES_SQL}
 
   ${AUDIT_RETROFIT_SQL}
 `;
