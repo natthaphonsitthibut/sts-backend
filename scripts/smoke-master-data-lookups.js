@@ -68,6 +68,7 @@ async function upsertActor(dataSource, passwordHash, { username, permissions }) 
             deactivation_reason_code = NULL,
             deactivation_note = NULL,
             affiliation = 'Automated master-data lookup smoke',
+            data_origin_code = 'AUTOMATED_TEST',
             email = NULL,
             phone = NULL
         WHERE id = $1
@@ -81,11 +82,12 @@ async function upsertActor(dataSource, passwordHash, { username, permissions }) 
     `
       INSERT INTO users (
         username, password, "FirstName", "LastName", status, permissions, role,
-        data_scope, must_change_password, affiliation, email, phone
+        data_scope, must_change_password, affiliation, data_origin_code, email, phone
       )
       VALUES (
         $1, $2, 'Master Data', 'Lookup Smoke', 'ACTIVE', $3::jsonb, 'ADMIN',
-        '{"global":true}'::jsonb, FALSE, 'Automated master-data lookup smoke', NULL, NULL
+        '{"global":true}'::jsonb, FALSE, 'Automated master-data lookup smoke',
+        'AUTOMATED_TEST', NULL, NULL
       )
       RETURNING id
     `,

@@ -82,6 +82,7 @@ async function upsertSmokeUser(
             deactivation_reason_code = NULL,
             deactivation_note = NULL,
             affiliation = 'Automated account lifecycle smoke',
+            data_origin_code = 'AUTOMATED_TEST',
             email = NULL,
             phone = NULL
         WHERE id = $1
@@ -103,9 +104,9 @@ async function upsertSmokeUser(
     `
       INSERT INTO users (
         username, password, "FirstName", "LastName", status, permissions, role,
-        data_scope, must_change_password, affiliation, email, phone
+        data_scope, must_change_password, affiliation, data_origin_code, email, phone
       )
-      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, FALSE, $8, NULL, NULL)
+      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, FALSE, $8, 'AUTOMATED_TEST', NULL, NULL)
       RETURNING id
     `,
     [

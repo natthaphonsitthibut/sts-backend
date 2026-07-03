@@ -73,6 +73,7 @@ async function upsertAdmin(dataSource, passwordHash) {
             deactivation_reason_code = NULL,
             deactivation_note = NULL,
             affiliation = 'Automated student accounts smoke',
+            data_origin_code = 'AUTOMATED_TEST',
             email = NULL,
             phone = NULL
         WHERE id = $1
@@ -91,11 +92,11 @@ async function upsertAdmin(dataSource, passwordHash) {
     `
       INSERT INTO users (
         username, password, "FirstName", "LastName", status, permissions, role,
-        data_scope, must_change_password, affiliation, email, phone
+        data_scope, must_change_password, affiliation, data_origin_code, email, phone
       )
       VALUES (
         $1, $2, 'Student', 'Accounts Admin', 'ACTIVE', $3::jsonb, 'ADMIN',
-        $4::jsonb, FALSE, 'Automated student accounts smoke', NULL, NULL
+        $4::jsonb, FALSE, 'Automated student accounts smoke', 'AUTOMATED_TEST', NULL, NULL
       )
       RETURNING id
     `,

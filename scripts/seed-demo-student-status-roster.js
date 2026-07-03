@@ -16,8 +16,9 @@ const NATIONALITY_THAI = 99;
 const DEMO_STATUSES = [
   {
     code: 50,
-    label: 'เสียชีวิต (ตัวอย่าง)',
+    label: 'เสียชีวิต',
     category: 'DECEASED',
+    badgeVariant: 'secondary',
     isActiveForLogin: false,
     isTerminal: true,
     requiresFollowup: false,
@@ -25,8 +26,9 @@ const DEMO_STATUSES = [
   },
   {
     code: 90,
-    label: 'ยังไม่ได้จับคู่ (ตัวอย่าง)',
+    label: 'ยังไม่ได้จับคู่',
     category: 'UNMAPPED',
+    badgeVariant: 'warning',
     isActiveForLogin: false,
     isTerminal: false,
     requiresFollowup: true,
@@ -628,13 +630,14 @@ async function ensureDemoStatuses(dataSource, actorId) {
     await dataSource.query(
       `
         INSERT INTO student_status (
-          code, label_th, category, is_active_for_login, is_terminal,
+          code, label_th, category, badge_variant, is_active_for_login, is_terminal,
           requires_followup, is_enabled, sort_order, source_system, created_by, updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, 'DEMO', $8, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, 'DEMO', $9, $9)
         ON CONFLICT (code) DO UPDATE SET
           label_th = EXCLUDED.label_th,
           category = EXCLUDED.category,
+          badge_variant = EXCLUDED.badge_variant,
           is_active_for_login = EXCLUDED.is_active_for_login,
           is_terminal = EXCLUDED.is_terminal,
           requires_followup = EXCLUDED.requires_followup,
@@ -650,6 +653,7 @@ async function ensureDemoStatuses(dataSource, actorId) {
         status.code,
         status.label,
         status.category,
+        status.badgeVariant,
         status.isActiveForLogin,
         status.isTerminal,
         status.requiresFollowup,

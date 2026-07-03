@@ -29,6 +29,7 @@
     "smoke:role-scope-users": "node scripts/smoke-role-scope-users.js",
     "seed:attendance-anomalies": "node scripts/seed-attendance-anomalies.js",
     "seed:demo-student-status-roster": "node scripts/seed-demo-student-status-roster.js",
+    "seed:demo-case-scenarios": "node scripts/seed-demo-case-scenarios.js",
     "commitlint": "commitlint --edit",
     "prepare": "husky",
     "test": "jest",
