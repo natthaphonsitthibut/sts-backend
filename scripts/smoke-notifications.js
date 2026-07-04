@@ -13,6 +13,14 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function errorMessage(error) {
+  if (error instanceof AggregateError) {
+    const messages = error.errors.map((cause) => cause?.message || String(cause));
+    return `AggregateError: ${messages.join(' | ')}`;
+  }
+  return error?.message || String(error);
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -21,6 +29,10 @@ async function main() {
   const service = app.get(NotificationsService);
   const dataSource = app.get(DataSource);
   const refId = `smoke-${Date.now()}`;
+  const importRefId = `${refId}-import`;
+  const accountBatchRefId = `${refId}-account-batch`;
+  const expiredRefId = `${refId}-retention-expired`;
+  const retainedRefId = `${refId}-retention-retained`;
 
   try {
     // Pick real fixtures: a school, a global admin, a school-scoped admin
@@ -37,9 +49,14 @@ async function main() {
          AND u.data_origin_code <> 'AUTOMATED_TEST'
          AND (CASE WHEN jsonb_typeof(u.permissions)='array' AND jsonb_array_length(u.permissions)>0
               THEN u.permissions ? 'review-cases' ELSE COALESCE(r.default_permissions ? 'review-cases', FALSE) END)
+         AND (CASE WHEN jsonb_typeof(u.permissions)='array' AND jsonb_array_length(u.permissions)>0
+              THEN u.permissions ? 'import-data' ELSE COALESCE(r.default_permissions ? 'import-data', FALSE) END)
+         AND (CASE WHEN jsonb_typeof(u.permissions)='array' AND jsonb_array_length(u.permissions)>0
+              THEN u.permissions ? 'manage-student-accounts'
+              ELSE COALESCE(r.default_permissions ? 'manage-student-accounts', FALSE) END)
        LIMIT 1`,
     );
-    assert(globalAdmins.length === 1, 'need a global admin with review-cases');
+    assert(globalAdmins.length === 1, 'need a global admin with notification smoke permissions');
     const globalAdminId = globalAdmins[0].id;
 
     const before = await dataSource.query(`SELECT COUNT(*)::int AS c FROM notifications`);
@@ -134,17 +151,89 @@ async function main() {
     const list4 = await service.listForUser(globalAdminId, {});
     assert(list4.unreadCount === 0, 'read-all must clear unread');
 
+    await service.notifyImportCompleted({
+      batchId: importRefId,
+      actorUserId: globalAdminId,
+      targetLabel: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
+      importedRows: 12,
+      quarantinedRows: 3,
+    });
+    const importRows = await dataSource.query(
+      `SELECT recipient_user_id, type_code, body
+       FROM notifications
+       WHERE ref_entity = 'import' AND ref_id = $1`,
+      [importRefId],
+    );
+    assert(importRows.length === 1, 'import event must notify only the initiating user');
+    assert(importRows[0].recipient_user_id === globalAdminId, 'import recipient must be the actor');
+    assert(importRows[0].type_code === 'IMPORT_COMPLETED', 'import type must be persisted');
+    assert(importRows[0].body.includes('สำเร็จ 12 รายการ'), 'import summary must include result counts');
+
+    await service.notifyStudentAccountBatchCompleted({
+      jobId: accountBatchRefId,
+      actorUserId: globalAdminId,
+      createdCount: 20,
+      skippedCount: 2,
+      failedCount: 1,
+    });
+    const accountBatchRows = await dataSource.query(
+      `SELECT recipient_user_id, type_code, body
+       FROM notifications
+       WHERE ref_entity = 'student-account-batch' AND ref_id = $1`,
+      [accountBatchRefId],
+    );
+    assert(accountBatchRows.length === 1, 'account batch event must notify only the owner');
+    assert(
+      accountBatchRows[0].recipient_user_id === globalAdminId,
+      'account batch recipient must be the owner',
+    );
+    assert(
+      accountBatchRows[0].type_code === 'STUDENT_ACCOUNT_BATCH_COMPLETED',
+      'account batch type must be persisted',
+    );
+    assert(
+      accountBatchRows[0].body.includes('สร้าง 20 บัญชี'),
+      'account batch summary must include result counts',
+    );
+
+    // Retention boundary: use a historical reference time so the smoke cannot
+    // delete any current development data while still exercising real SQL.
+    const retentionNow = new Date('2000-01-01T00:00:00.000Z');
+    await dataSource.query(
+      `INSERT INTO notifications
+         (recipient_user_id, type_code, title, ref_entity, ref_id, created_at)
+       VALUES
+         ($1, 'CASE_CREATED', 'Retention expired fixture', 'case', $2,
+          $4::timestamptz - INTERVAL '91 days'),
+         ($1, 'CASE_CREATED', 'Retention retained fixture', 'case', $3,
+          $4::timestamptz - INTERVAL '89 days')`,
+      [globalAdminId, expiredRefId, retainedRefId, retentionNow.toISOString()],
+    );
+
+    const retentionResult = await service.cleanupExpiredNotifications(retentionNow);
+    assert(retentionResult.deleted === 1, 'retention cleanup must delete only the 91-day fixture');
+    const retentionRows = await dataSource.query(
+      `SELECT ref_id FROM notifications WHERE ref_id = ANY($1::text[]) ORDER BY ref_id`,
+      [[expiredRefId, retainedRefId]],
+    );
+    assert(
+      retentionRows.length === 1 && retentionRows[0].ref_id === retainedRefId,
+      'retention cleanup must keep the 89-day fixture',
+    );
+
     const after = await dataSource.query(`SELECT COUNT(*)::int AS c FROM notifications`);
     console.log(
       `notifications smoke passed (${rows.length} recipients, total ${before[0].c} -> ${after[0].c})`,
     );
   } finally {
-    await dataSource.query(`DELETE FROM notifications WHERE ref_id = $1`, [refId]);
+    await dataSource.query(`DELETE FROM notifications WHERE ref_id = ANY($1::text[])`, [
+      [refId, importRefId, accountBatchRefId, expiredRefId, retainedRefId],
+    ]);
     await app.close();
   }
 }
 
 main().catch((error) => {
-  console.error(error.message || String(error));
+  console.error(errorMessage(error));
   process.exitCode = 1;
 });

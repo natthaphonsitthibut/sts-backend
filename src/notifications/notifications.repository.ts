@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
 import type {
+  DirectNotificationInput,
   NotificationCounts,
   NotificationFanOutInput,
   NotificationListFilters,
@@ -125,6 +126,39 @@ export class NotificationsRepository {
     return result.rows.length;
   }
 
+  async createForEligibleRecipient(input: DirectNotificationInput): Promise<boolean> {
+    const result = await this.query(
+      `
+        INSERT INTO notifications (recipient_user_id, type_code, title, body, ref_entity, ref_id)
+        SELECT u.id, nt.code, $3, $4, $5, $6
+        FROM users u
+        CROSS JOIN notification_types nt
+        LEFT JOIN roles r ON r.name = u.role
+        WHERE u.id = $1
+          AND nt.code = $2
+          AND nt.is_enabled IS TRUE
+          AND u.status = 'ACTIVE'
+          AND u.role IS DISTINCT FROM 'STUDENT'
+          AND u.data_origin_code <> 'AUTOMATED_TEST'
+          AND CASE
+            WHEN jsonb_typeof(u.permissions) = 'array' AND jsonb_array_length(u.permissions) > 0
+              THEN u.permissions ? nt.required_permission
+            ELSE COALESCE(r.default_permissions ? nt.required_permission, FALSE)
+          END
+        RETURNING id
+      `,
+      [
+        input.recipientUserId,
+        input.typeCode,
+        input.title,
+        input.body ?? null,
+        input.refEntity ?? null,
+        input.refId ?? null,
+      ],
+    );
+    return result.rows.length > 0;
+  }
+
   async listForRecipient(
     recipientUserId: number,
     filters: NotificationListFilters,
@@ -216,6 +250,18 @@ export class NotificationsRepository {
         RETURNING id
       `,
       [recipientUserId],
+    );
+    return result.rows.length;
+  }
+
+  async deleteOlderThan(cutoff: Date): Promise<number> {
+    const result = await this.query(
+      `
+        DELETE FROM notifications
+        WHERE created_at < $1
+        RETURNING id
+      `,
+      [cutoff],
     );
     return result.rows.length;
   }

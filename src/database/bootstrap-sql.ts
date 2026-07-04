@@ -870,7 +870,11 @@ export const NOTIFICATION_TABLES_SQL = `
     ('CASE_CREATED', 'เคสติดตามใหม่', 'review-cases', 10),
     ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'review-cases', 20),
     ('TASK_DELEGATED', 'งานถูกส่งต่อ', 'attendance-dashboard', 30),
-    ('TASK_SUBMITTED', 'มีรายงานส่งกลับ', 'attendance-dashboard', 40)
+    ('TASK_SUBMITTED', 'มีรายงานส่งกลับ', 'attendance-dashboard', 40),
+    ('IMPORT_COMPLETED', 'นำเข้าข้อมูลเสร็จแล้ว', 'import-data', 50),
+    ('IMPORT_FAILED', 'นำเข้าข้อมูลไม่สำเร็จ', 'import-data', 60),
+    ('STUDENT_ACCOUNT_BATCH_COMPLETED', 'สร้างบัญชีนักเรียนเสร็จแล้ว', 'manage-student-accounts', 70),
+    ('STUDENT_ACCOUNT_BATCH_FAILED', 'สร้างบัญชีนักเรียนไม่สำเร็จ', 'manage-student-accounts', 80)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS notifications (

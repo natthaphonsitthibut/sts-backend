@@ -9,6 +9,7 @@ import {
 import { randomInt, randomUUID } from 'crypto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PasswordService } from '../auth/password.service';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
@@ -68,6 +69,7 @@ export class StudentAccountBatchService implements OnModuleInit {
     private readonly usersPolicyService: UsersPolicyService,
     private readonly passwordService: PasswordService,
     private readonly auditLog: AuditLogService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -284,11 +286,13 @@ export class StudentAccountBatchService implements OnModuleInit {
       return;
     }
     this.runningJobs.add(jobId);
+    let createdBy: number | null = null;
     try {
       const claimed = await this.batchRepository.claimJobForRun(jobId);
       if (!claimed) {
         return;
       }
+      createdBy = claimed.created_by;
       const scope = this.readScopeSnapshot(claimed);
       for (;;) {
         const current = await this.batchRepository.findJobById(jobId);
@@ -317,13 +321,29 @@ export class StudentAccountBatchService implements OnModuleInit {
       const finalJob = await this.batchRepository.findJobById(jobId);
       if (finalJob && finalJob.status === 'RUNNING') {
         await this.batchRepository.setJobStatus(jobId, 'COMPLETED', { finished: true });
+        if (createdBy !== null) {
+          await this.notificationsService.notifyStudentAccountBatchCompleted({
+            jobId,
+            actorUserId: createdBy,
+            createdCount: finalJob.created_count,
+            skippedCount: finalJob.skipped_count,
+            failedCount: finalJob.failed_count,
+          });
+        }
       }
     } catch (error) {
       const message = this.errorMessage(error);
       this.logger.error(`Batch job ${jobId} failed: ${message}`);
-      await this.batchRepository
+      const failurePersisted = await this.batchRepository
         .setJobStatus(jobId, 'FAILED', { errorSummary: message.slice(0, 1000), finished: true })
-        .catch(() => undefined);
+        .then(() => true)
+        .catch(() => false);
+      if (failurePersisted && createdBy !== null) {
+        await this.notificationsService.notifyStudentAccountBatchFailed({
+          jobId,
+          actorUserId: createdBy,
+        });
+      }
     } finally {
       this.runningJobs.delete(jobId);
     }

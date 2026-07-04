@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { PasswordService } from '../auth/password.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
 import {
@@ -85,6 +86,12 @@ describe('StudentAccountBatchService', () => {
   let usersPolicyService: jest.Mocked<Pick<UsersPolicyService, 'ensureActor'>>;
   let passwordService: jest.Mocked<Pick<PasswordService, 'generateTempPassword' | 'hash'>>;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let notificationsService: jest.Mocked<
+    Pick<
+      NotificationsService,
+      'notifyStudentAccountBatchCompleted' | 'notifyStudentAccountBatchFailed'
+    >
+  >;
   let service: StudentAccountBatchService;
 
   beforeEach(() => {
@@ -125,6 +132,10 @@ describe('StudentAccountBatchService', () => {
       hash: jest.fn().mockResolvedValue('hash'),
     };
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
+    notificationsService = {
+      notifyStudentAccountBatchCompleted: jest.fn().mockResolvedValue(undefined),
+      notifyStudentAccountBatchFailed: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new StudentAccountBatchService(
       batchRepository as unknown as StudentAccountBatchRepository,
@@ -132,6 +143,7 @@ describe('StudentAccountBatchService', () => {
       usersPolicyService as unknown as UsersPolicyService,
       passwordService as unknown as PasswordService,
       auditLog as unknown as AuditLogService,
+      notificationsService as unknown as NotificationsService,
     );
   });
 
@@ -194,6 +206,14 @@ describe('StudentAccountBatchService', () => {
       'COMPLETED',
       expect.objectContaining({ finished: true }),
     );
+    expect(notificationsService.notifyStudentAccountBatchCompleted).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      actorUserId: 5,
+      createdCount: 0,
+      skippedCount: 0,
+      failedCount: 0,
+    });
+    expect(notificationsService.notifyStudentAccountBatchFailed).not.toHaveBeenCalled();
   });
 
   it('records a duplicate as SKIPPED without aborting the batch', async () => {
@@ -213,6 +233,8 @@ describe('StudentAccountBatchService', () => {
       'COMPLETED',
       expect.objectContaining({ finished: true }),
     );
+    expect(notificationsService.notifyStudentAccountBatchCompleted).toHaveBeenCalled();
+    expect(notificationsService.notifyStudentAccountBatchFailed).not.toHaveBeenCalled();
   });
 
   it('stops processing when the job is canceled mid-run', async () => {
@@ -240,6 +262,21 @@ describe('StudentAccountBatchService', () => {
       'FAILED',
       expect.objectContaining({ finished: true }),
     );
+    expect(notificationsService.notifyStudentAccountBatchFailed).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      actorUserId: 5,
+    });
+    expect(notificationsService.notifyStudentAccountBatchCompleted).not.toHaveBeenCalled();
+  });
+
+  it('does not notify failure when the FAILED status cannot be persisted', async () => {
+    batchRepository.claimJobForRun.mockResolvedValue(makeJob({ status: 'RUNNING' }));
+    usersRepository.listStudentAccountCandidates.mockRejectedValue(new Error('db down'));
+    batchRepository.setJobStatus.mockRejectedValue(new Error('status write failed'));
+
+    await (service as unknown as { runJob(id: string): Promise<void> }).runJob('job-1');
+
+    expect(notificationsService.notifyStudentAccountBatchFailed).not.toHaveBeenCalled();
   });
 
   it('only resumes from INTERRUPTED or FAILED', async () => {

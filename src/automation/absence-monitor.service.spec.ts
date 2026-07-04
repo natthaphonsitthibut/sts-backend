@@ -1,4 +1,5 @@
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AutomationRepository } from './automation.repository';
 import { AbsenceMonitorService } from './absence-monitor.service';
 import type { ConsecutiveAbsentStudentRow } from './automation.types';
@@ -39,6 +40,7 @@ describe('AbsenceMonitorService', () => {
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let notificationsService: jest.Mocked<Pick<NotificationsService, 'notifyCaseCreated'>>;
 
   beforeEach(() => {
     automationRepository = {
@@ -56,10 +58,14 @@ describe('AbsenceMonitorService', () => {
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
     };
+    notificationsService = {
+      notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new AbsenceMonitorService(
       automationRepository as unknown as AutomationRepository,
       auditLog as unknown as AuditLogService,
+      notificationsService as unknown as NotificationsService,
     );
   });
 
@@ -105,6 +111,30 @@ describe('AbsenceMonitorService', () => {
       undefined,
     );
     expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
+    expect(notificationsService.notifyCaseCreated).not.toHaveBeenCalled();
+  });
+
+  it('notifies eligible staff after creating an absence case', async () => {
+    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
+
+    const result = await service.checkConsecutiveAbsences();
+
+    expect(result).toEqual([
+      {
+        case_id: 77,
+        student_name: 'สมชาย ใจดี',
+        student_school: 'โรงเรียนทดสอบ',
+        reason_flagged: 'ขาดเรียนติดต่อกัน 3 วัน',
+        school_id: 10010002,
+      },
+    ]);
+    expect(notificationsService.notifyCaseCreated).toHaveBeenCalledWith({
+      caseId: 77,
+      studentName: 'สมชาย ใจดี',
+      schoolId: 10010002,
+      schoolName: 'โรงเรียนทดสอบ',
+      reason: 'ขาดเรียนติดต่อกัน 3 วัน',
+    });
   });
 
   it('does not auto-cancel a legacy case without a stable student uuid', async () => {

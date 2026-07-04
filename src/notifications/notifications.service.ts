@@ -1,7 +1,10 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { maskName } from '../common/utils/helpers';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { NotificationsRepository } from './notifications.repository';
 import type { NotificationFanOutInput, NotificationListFilters } from './notifications.types';
+import type { DirectNotificationInput } from './notifications.types';
 
 const CASE_STATUS_LABELS: Record<string, string> = {
   OPEN: 'เปิดเคส',
@@ -10,6 +13,8 @@ const CASE_STATUS_LABELS: Record<string, string> = {
   AWAITING_HELP: 'ส่งต่อหน่วยงาน',
   RESOLVED: 'ปิดเคสแล้ว',
 };
+const NOTIFICATION_RETENTION_DAYS = 90;
+const NOTIFICATION_RETENTION_CRON = '0 30 3 * * *';
 
 @Injectable()
 export class NotificationsService {
@@ -29,6 +34,83 @@ export class NotificationsService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Notification fan-out failed for ${input.typeCode}: ${message}`);
     }
+  }
+
+  private async createForRecipientSafely(input: DirectNotificationInput): Promise<void> {
+    try {
+      const created = await this.notificationsRepository.createForEligibleRecipient(input);
+      if (created) {
+        this.logger.log(
+          `Notification ${input.typeCode} created for recipient ${input.recipientUserId}.`,
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Notification creation failed for ${input.typeCode}: ${message}`);
+    }
+  }
+
+  async notifyImportCompleted(event: {
+    batchId: string;
+    actorUserId: number;
+    targetLabel: string;
+    importedRows: number;
+    quarantinedRows: number;
+  }): Promise<void> {
+    await this.createForRecipientSafely({
+      recipientUserId: event.actorUserId,
+      typeCode: 'IMPORT_COMPLETED',
+      title: 'นำเข้าข้อมูลเสร็จแล้ว',
+      body: `${event.targetLabel} · สำเร็จ ${event.importedRows} รายการ · รอตรวจ ${event.quarantinedRows} รายการ`,
+      refEntity: 'import',
+      refId: event.batchId,
+    });
+  }
+
+  async notifyImportFailed(event: {
+    batchId: string;
+    actorUserId: number;
+    targetLabel: string;
+  }): Promise<void> {
+    await this.createForRecipientSafely({
+      recipientUserId: event.actorUserId,
+      typeCode: 'IMPORT_FAILED',
+      title: 'นำเข้าข้อมูลไม่สำเร็จ',
+      body: event.targetLabel,
+      refEntity: 'import',
+      refId: event.batchId,
+    });
+  }
+
+  async notifyStudentAccountBatchCompleted(event: {
+    jobId: string;
+    actorUserId: number;
+    createdCount: number;
+    skippedCount: number;
+    failedCount: number;
+  }): Promise<void> {
+    await this.createForRecipientSafely({
+      recipientUserId: event.actorUserId,
+      typeCode: 'STUDENT_ACCOUNT_BATCH_COMPLETED',
+      title: 'สร้างบัญชีนักเรียนเสร็จแล้ว',
+      body: `สร้าง ${event.createdCount} บัญชี · ข้าม ${event.skippedCount} รายการ · ไม่สำเร็จ ${event.failedCount} รายการ`,
+      refEntity: 'student-account-batch',
+      refId: event.jobId,
+    });
+  }
+
+  async notifyStudentAccountBatchFailed(event: {
+    jobId: string;
+    actorUserId: number;
+  }): Promise<void> {
+    await this.createForRecipientSafely({
+      recipientUserId: event.actorUserId,
+      typeCode: 'STUDENT_ACCOUNT_BATCH_FAILED',
+      title: 'สร้างบัญชีนักเรียนไม่สำเร็จ',
+      body: 'เปิดประวัติงานเพื่อตรวจสอบและลองทำต่อ',
+      refEntity: 'student-account-batch',
+      refId: event.jobId,
+    });
   }
 
   async notifyCaseCreated(event: {
@@ -157,5 +239,29 @@ export class NotificationsService {
   async markAllRead(userId: number) {
     const updated = await this.notificationsRepository.markAllRead(userId);
     return { success: true, updated };
+  }
+
+  async cleanupExpiredNotifications(now = new Date()): Promise<{ deleted: number }> {
+    const cutoff = new Date(now.getTime() - NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const deleted = await this.notificationsRepository.deleteOlderThan(cutoff);
+    if (deleted > 0) {
+      this.logger.log(
+        `Deleted ${deleted} notification(s) older than ${NOTIFICATION_RETENTION_DAYS} days.`,
+      );
+    }
+    return { deleted };
+  }
+
+  @Cron(NOTIFICATION_RETENTION_CRON, {
+    timeZone: BANGKOK_TIME_ZONE,
+    name: 'notifications_retention_cleanup',
+  })
+  async runRetentionCleanup(): Promise<void> {
+    try {
+      await this.cleanupExpiredNotifications();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Notification retention cleanup failed: ${message}`);
+    }
   }
 }

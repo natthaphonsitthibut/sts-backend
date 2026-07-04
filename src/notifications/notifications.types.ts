@@ -35,6 +35,15 @@ export interface NotificationFanOutInput {
   excludeUserId?: number | null;
 }
 
+export interface DirectNotificationInput {
+  recipientUserId: number;
+  typeCode: string;
+  title: string;
+  body?: string | null;
+  refEntity?: string | null;
+  refId?: string | null;
+}
+
 export interface NotificationListFilters {
   unreadOnly?: boolean;
   page?: number;
