@@ -12,6 +12,7 @@ import type { AuthenticatedRequestUser } from '../auth';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { NotificationsService } from '../notifications/notifications.service';
 import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
 import { ImportsRepository, type QuarantineLookupRow } from './imports.repository';
 import type {
@@ -194,6 +195,7 @@ export class ImportsService {
   constructor(
     private readonly importsRepository: ImportsRepository,
     private readonly auditLog: AuditLogService,
+    private readonly notificationsService?: NotificationsService,
   ) {}
 
   private normalizeScalar(value: unknown): string {
@@ -1179,7 +1181,7 @@ export class ImportsService {
     });
 
     try {
-      return await this.importsRepository.withTransaction(async (executor) => {
+      const result = await this.importsRepository.withTransaction(async (executor) => {
         for (const school of manualSchools) {
           await this.importsRepository.upsertManualSchool(school, executor);
         }
@@ -1189,6 +1191,7 @@ export class ImportsService {
         let skipped = 0;
         let quarantined = 0;
         const seenKeys = new Set<string>();
+        const readyStudentTermRows: Record<string, unknown>[] = [];
         const resolvedPersonUuids = new Map<string, string>();
         const conflictingPersonIds = new Set<string>();
         if (validTarget === 'student_term') {
@@ -1292,6 +1295,11 @@ export class ImportsService {
           }
           dbRow['person_uuid'] = personUuid;
 
+          if (validTarget === 'student_term') {
+            readyStudentTermRows.push(dbRow);
+            continue;
+          }
+
           const action = await this.importsRepository.insertImportRow(validTarget, dbRow, executor);
           if (action === 'inserted') {
             inserted++;
@@ -1300,6 +1308,15 @@ export class ImportsService {
           } else {
             skipped++;
           }
+        }
+
+        if (readyStudentTermRows.length > 0) {
+          const writeSummary = await this.importsRepository.bulkUpsertStudentTerms(
+            readyStudentTermRows,
+            executor,
+          );
+          inserted += writeSummary.inserted;
+          updated += writeSummary.updated;
         }
 
         await this.importsRepository.completeImportBatch(
@@ -1341,11 +1358,28 @@ export class ImportsService {
         );
         return result;
       });
+      if (actorUserId !== null) {
+        await this.notificationsService?.notifyImportCompleted({
+          batchId,
+          actorUserId,
+          targetLabel: this.getTargetLabel(validTarget),
+          importedRows: result.rowsInserted + result.rowsUpdated,
+          quarantinedRows: result.rowsQuarantined,
+        });
+      }
+      return result;
     } catch (error) {
       try {
         await this.importsRepository.failImportBatch(batchId);
       } catch {
         this.logger.error(`Failed to persist FAILED status for ${validTarget} import batch`);
+      }
+      if (actorUserId !== null) {
+        await this.notificationsService?.notifyImportFailed({
+          batchId,
+          actorUserId,
+          targetLabel: this.getTargetLabel(validTarget),
+        });
       }
       throw error;
     }

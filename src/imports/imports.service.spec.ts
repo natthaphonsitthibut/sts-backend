@@ -388,6 +388,27 @@ describe('ImportsService', () => {
     );
   });
 
+  it('accepts CSV files at the 10,000-row import limit', async () => {
+    const { service } = createService();
+    const rows = Array.from(
+      { length: 10_000 },
+      (_, index) => `${String(index + 1).padStart(13, '0')},2567,1,1001`,
+    );
+    const file = makeCsvImportFile(
+      ['PersonID_Onec,AcademicYear_Onec,Semester_Onec,SchoolID_Onec', ...rows].join('\n'),
+    );
+
+    const preview = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
+
+    expect(preview).toMatchObject({
+      canImport: true,
+      rowsProcessed: 10_000,
+      rowsReady: 10_000,
+      rowsToInsert: 10_000,
+      rowsToQuarantine: 0,
+    });
+  });
+
   it('quarantines rows with non-integer student-term natural keys', async () => {
     const { service } = createService();
     const file = makeImportFile([
@@ -586,6 +607,7 @@ describe('ImportsService', () => {
       upsertManualSchool: jest.fn(),
       resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
       insertImportRow: jest.fn().mockResolvedValue('inserted'),
+      bulkUpsertStudentTerms: jest.fn().mockResolvedValue({ inserted: 1, updated: 0 }),
       findStudentStatusLabels: jest.fn().mockResolvedValue([]),
       findGradeLabels: jest.fn().mockResolvedValue([]),
       createImportBatch: jest.fn().mockResolvedValue('batch-id'),
@@ -648,6 +670,7 @@ describe('ImportsService', () => {
       findPersonUuidsByNationalId: jest.fn().mockResolvedValue([]),
       resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
       insertImportRow: jest.fn().mockResolvedValue('inserted'),
+      bulkUpsertStudentTerms: jest.fn().mockResolvedValue({ inserted: 1, updated: 0 }),
       completeImportBatch: jest.fn(),
       upsertManualSchool: jest.fn(),
     };
@@ -692,8 +715,10 @@ describe('ImportsService', () => {
         callback({ query: jest.fn() }),
       ),
       resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
-      insertImportRow: jest.fn(
-        (_target: string, row: Record<string, unknown>): 'inserted' | 'updated' => {
+      bulkUpsertStudentTerms: jest.fn((rows: Record<string, unknown>[]) => {
+        let inserted = 0;
+        let updated = 0;
+        for (const row of rows) {
           const key = JSON.stringify([
             row.person_uuid,
             row.AcademicYear_Onec,
@@ -701,12 +726,15 @@ describe('ImportsService', () => {
             row.SchoolID_Onec,
           ]);
           if (writes.has(key)) {
-            return 'updated';
+            updated += 1;
+            continue;
           }
           writes.add(key);
-          return 'inserted';
-        },
-      ),
+          inserted += 1;
+        }
+        return { inserted, updated };
+      }),
+      insertImportRow: jest.fn(),
       upsertManualSchool: jest.fn(),
       findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
       findSchoolScopeDetails: jest
@@ -721,7 +749,15 @@ describe('ImportsService', () => {
       completeImportBatch: jest.fn(),
     };
     const auditLog = { record: jest.fn(), recordAtomic: jest.fn() };
-    const service = new ImportsService(repository as never, auditLog as never);
+    const notificationsService = {
+      notifyImportCompleted: jest.fn(),
+      notifyImportFailed: jest.fn(),
+    };
+    const service = new ImportsService(
+      repository as never,
+      auditLog as never,
+      notificationsService as never,
+    );
     const file = makeImportFile([
       {
         PersonID_Onec: '4444444444444',
@@ -746,8 +782,19 @@ describe('ImportsService', () => {
     expect(first).toMatchObject({ rowsInserted: 2, rowsUpdated: 0, rowsSkipped: 0 });
     expect(repeated).toMatchObject({ rowsInserted: 0, rowsUpdated: 2, rowsSkipped: 0 });
     expect(repository.resolveOrCreatePersonByNationalId).toHaveBeenCalledTimes(2);
+    expect(repository.bulkUpsertStudentTerms).toHaveBeenCalledTimes(2);
+    expect(repository.insertImportRow).not.toHaveBeenCalled();
     expect(repository.findPersonUuidMatchesByNationalIds).toHaveBeenCalledTimes(2);
     expect(auditLog.recordAtomic).toHaveBeenCalledTimes(2);
+    expect(notificationsService.notifyImportCompleted).toHaveBeenNthCalledWith(1, {
+      batchId: 'batch-id',
+      actorUserId: 1,
+      targetLabel: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
+      importedRows: 2,
+      quarantinedRows: 0,
+    });
+    expect(notificationsService.notifyImportCompleted).toHaveBeenCalledTimes(2);
+    expect(notificationsService.notifyImportFailed).not.toHaveBeenCalled();
   });
 
   it('writes canonical student status code for mapped import rows', async () => {
@@ -757,6 +804,7 @@ describe('ImportsService', () => {
       ),
       resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
       insertImportRow: jest.fn().mockResolvedValue('inserted'),
+      bulkUpsertStudentTerms: jest.fn().mockResolvedValue({ inserted: 1, updated: 0 }),
       upsertManualSchool: jest.fn(),
       findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
       findSchoolScopeDetails: jest
@@ -791,14 +839,16 @@ describe('ImportsService', () => {
       data_scope: { global: true },
     } as never);
 
-    expect(repository.insertImportRow).toHaveBeenCalledWith(
-      'student_term',
-      expect.objectContaining({
-        StudentStatusID_Onec: 10,
-        student_status_code: 10,
-      }),
+    expect(repository.bulkUpsertStudentTerms).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          StudentStatusID_Onec: 10,
+          student_status_code: 10,
+        }),
+      ],
       expect.anything(),
     );
+    expect(repository.insertImportRow).not.toHaveBeenCalled();
   });
 
   it('persists a FAILED batch marker when transactional import writes fail', async () => {
@@ -816,12 +866,21 @@ describe('ImportsService', () => {
       findPersonUuidMatchesByNationalIds: jest.fn().mockResolvedValue([]),
       resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
       insertImportRow: jest.fn().mockRejectedValue(new Error('database write failed')),
+      bulkUpsertStudentTerms: jest.fn().mockRejectedValue(new Error('database write failed')),
       completeImportBatch: jest.fn(),
       failImportBatch: jest.fn(),
       upsertManualSchool: jest.fn(),
     };
     const auditLog = { record: jest.fn(), recordAtomic: jest.fn() };
-    const service = new ImportsService(repository as never, auditLog as never);
+    const notificationsService = {
+      notifyImportCompleted: jest.fn(),
+      notifyImportFailed: jest.fn(),
+    };
+    const service = new ImportsService(
+      repository as never,
+      auditLog as never,
+      notificationsService as never,
+    );
     const file = makeImportFile([
       {
         PersonID_Onec: '4444444444444',
@@ -841,6 +900,12 @@ describe('ImportsService', () => {
     expect(repository.failImportBatch).toHaveBeenCalledWith('batch-id');
     expect(repository.completeImportBatch).not.toHaveBeenCalled();
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
+    expect(notificationsService.notifyImportFailed).toHaveBeenCalledWith({
+      batchId: 'batch-id',
+      actorUserId: 1,
+      targetLabel: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
+    });
+    expect(notificationsService.notifyImportCompleted).not.toHaveBeenCalled();
   });
 
   it('quarantines identity conflicts without writing enrollment', async () => {

@@ -16,6 +16,7 @@ import type {
   ImportQuarantineReason,
   ImportTarget,
   ImportWriteAction,
+  ImportWriteSummary,
   ManualSchool,
   QueryExecutor,
   QueryResultLike,
@@ -45,6 +46,8 @@ interface PersonCandidateDetail extends Record<string, unknown> {
   student_status_code: number | null;
   student_status_label: string | null;
 }
+
+const STUDENT_TERM_BULK_WRITE_CHUNK_SIZE = 500;
 
 export interface QuarantineLookupRow extends Record<string, unknown> {
   code: string;
@@ -1024,5 +1027,71 @@ export class ImportsRepository {
     );
 
     return result.rowCount > 0 ? 'inserted' : 'skipped';
+  }
+
+  async bulkUpsertStudentTerms(
+    rows: Record<string, unknown>[],
+    executor?: QueryExecutor,
+  ): Promise<ImportWriteSummary> {
+    if (rows.length === 0) {
+      return { inserted: 0, updated: 0 };
+    }
+
+    const queryExecutor = this.getExecutor(executor);
+    const summary: ImportWriteSummary = { inserted: 0, updated: 0 };
+
+    for (let start = 0; start < rows.length; start += STUDENT_TERM_BULK_WRITE_CHUNK_SIZE) {
+      const chunk = rows.slice(start, start + STUDENT_TERM_BULK_WRITE_CHUNK_SIZE);
+      const chunkColumns = [...new Set(chunk.flatMap((row) => Object.keys(row)))];
+
+      for (const column of chunkColumns) {
+        if (
+          !IMPORT_TARGET_COLUMNS.student_term.has(column) &&
+          !SERVER_INJECTED_COLUMNS.has(column)
+        ) {
+          throw new Error(`Illegal import column for student_term: ${column}`);
+        }
+      }
+
+      const mutableColumns = chunkColumns.filter((column) =>
+        STUDENT_TERM_MUTABLE_IMPORT_COLUMNS.has(column),
+      );
+      const updateAssignments = mutableColumns.map(
+        (column) => `"${column}" = COALESCE(EXCLUDED."${column}", student_term."${column}")`,
+      );
+      if (updateAssignments.length === 0) {
+        updateAssignments.push('"PersonID_Onec" = student_term."PersonID_Onec"');
+      }
+
+      const values: unknown[] = [];
+      const valueRows = chunk.map((row) => {
+        const placeholders = chunkColumns.map((column) => {
+          values.push(row[column] ?? null);
+          return `$${values.length}`;
+        });
+        return `(${placeholders.join(', ')})`;
+      });
+
+      const result = await queryExecutor.query<{ inserted: boolean }>(
+        `
+          INSERT INTO student_term (${chunkColumns.map((column) => `"${column}"`).join(', ')})
+          VALUES ${valueRows.join(', ')}
+          ON CONFLICT (${STUDENT_TERM_NATURAL_KEY_COLUMNS.map((column) => `"${column}"`).join(', ')})
+          DO UPDATE SET ${updateAssignments.join(', ')}
+          RETURNING (xmax = 0) AS inserted
+        `,
+        values,
+      );
+
+      for (const row of result.rows) {
+        if (row.inserted) {
+          summary.inserted += 1;
+        } else {
+          summary.updated += 1;
+        }
+      }
+    }
+
+    return summary;
   }
 }

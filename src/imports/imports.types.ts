@@ -145,6 +145,11 @@ export interface ImportReferenceRow extends Record<string, unknown> {
 
 export type ImportWriteAction = 'inserted' | 'updated' | 'skipped';
 
+export interface ImportWriteSummary {
+  inserted: number;
+  updated: number;
+}
+
 export const IMPORT_QUARANTINE_REASONS = [
   'MISSING_NATURAL_KEY_FIELD',
   'UNMAPPED_STUDENT_STATUS',
