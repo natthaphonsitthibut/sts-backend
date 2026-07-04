@@ -68,8 +68,22 @@ describe('StudentsService', () => {
         province: 'กรุงเทพมหานคร',
         district: 'เขตปทุมวัน',
         subDistrict: 'รองเมือง',
+        enrollmentState: 'current-active',
         page: 1,
         limit: 20,
+      }),
+      undefined,
+    );
+  });
+
+  it('passes all-enrollment list mode only when requested', async () => {
+    studentsRepository.listStudents.mockResolvedValue({ rows: [], totalCount: 0 });
+
+    await service.findAll({ enrollmentState: 'all', page: 1, limit: 20 });
+
+    expect(studentsRepository.listStudents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enrollmentState: 'all',
       }),
       undefined,
     );
@@ -91,6 +105,7 @@ describe('StudentsService', () => {
         district: 'เขตปทุมวัน',
         subDistrict: 'รองเมือง',
         grade: 'ม.1',
+        enrollmentState: 'current-active',
       }),
       undefined,
     );

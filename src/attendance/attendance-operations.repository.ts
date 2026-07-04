@@ -19,6 +19,13 @@ function pushParams(target: unknown[], source: unknown[]): void {
   source.forEach((value) => target.push(value));
 }
 
+const CURRENT_ENROLLMENT_JOIN = `
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
+      `;
+
 @Injectable()
 export class AttendanceOperationsRepository {
   constructor(private readonly dataSource: DataSource) {}
@@ -320,6 +327,7 @@ export class AttendanceOperationsRepository {
           s."AcademicYear_Onec" AS academic_year,
           s."Semester_Onec" AS semester
         FROM student_term s
+        ${CURRENT_ENROLLMENT_JOIN}
         JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         WHERE s.student_uuid = ANY($1::uuid[]) AND s.deleted_at IS NULL
       `,
@@ -334,14 +342,15 @@ export class AttendanceOperationsRepository {
   ): Promise<string[]> {
     const result = await this.getExecutor(executor).query<{ student_uuid: string }>(
       `
-        SELECT student_uuid
-        FROM student_term
-        WHERE "SchoolID_Onec" = $1
-          AND "GradeLevelID_Onec" = $2
-          AND "RoomID_Onec" = $3
-          AND "AcademicYear_Onec" = $4
-          AND "Semester_Onec" = $5
-          AND deleted_at IS NULL
+        SELECT s.student_uuid
+        FROM student_term s
+        ${CURRENT_ENROLLMENT_JOIN}
+        WHERE s."SchoolID_Onec" = $1
+          AND s."GradeLevelID_Onec" = $2
+          AND s."RoomID_Onec" = $3
+          AND s."AcademicYear_Onec" = $4
+          AND s."Semester_Onec" = $5
+          AND s.deleted_at IS NULL
         ORDER BY student_uuid
       `,
       [
@@ -502,6 +511,7 @@ export class AttendanceOperationsRepository {
           s."AcademicYear_Onec" AS academic_year,
           s."Semester_Onec" AS semester
         FROM student_term s
+        ${CURRENT_ENROLLMENT_JOIN}
         JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         WHERE s."SchoolID_Onec" = $1
           AND gl.label = $2
@@ -709,6 +719,7 @@ export class AttendanceOperationsRepository {
         s."RoomID_Onec" AS room_id,
         COUNT(*)::int AS expected_roster_count
       FROM student_term s
+      ${CURRENT_ENROLLMENT_JOIN}
       JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
       JOIN schools sc ON sc.id = s."SchoolID_Onec"
       WHERE ${conditions.join(' AND ')}

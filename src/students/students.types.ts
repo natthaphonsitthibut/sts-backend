@@ -1,5 +1,8 @@
 import type { SqlQueryResult } from '../database/sql-query';
 
+export const STUDENT_ENROLLMENT_STATES = ['current-active', 'all'] as const;
+export type StudentEnrollmentState = (typeof STUDENT_ENROLLMENT_STATES)[number];
+
 export interface StudentListFilters {
   grade?: string;
   room?: number;
@@ -8,6 +11,7 @@ export interface StudentListFilters {
   district?: string;
   subDistrict?: string;
   searchTerm?: string;
+  enrollmentState?: StudentEnrollmentState;
   page?: number;
   limit?: number;
 }

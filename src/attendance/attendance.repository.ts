@@ -28,6 +28,13 @@ function pushScopeParams(target: unknown[], values: unknown[]): void {
   });
 }
 
+const CURRENT_ENROLLMENT_JOIN = `
+      JOIN student_current_enrollment_resolution current_enrollment
+        ON current_enrollment.person_uuid = s.person_uuid
+       AND current_enrollment.selected_student_uuid = s.student_uuid
+       AND current_enrollment.resolution_state = 'ACTIVE'
+    `;
+
 @Injectable()
 export class AttendanceRepository {
   constructor(private readonly dataSource: DataSource) {}
@@ -196,6 +203,7 @@ export class AttendanceRepository {
             AND a."AttendanceStatus" = 2
         ) as total_absent
       FROM student_term s
+      ${CURRENT_ENROLLMENT_JOIN}
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
     `;
@@ -597,6 +605,7 @@ export class AttendanceRepository {
     let query = `
       SELECT DISTINCT s."RoomID_Onec"::text as room
       FROM student_term s
+      ${CURRENT_ENROLLMENT_JOIN}
       JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       WHERE gl.label = $1
     `;
@@ -701,6 +710,7 @@ export class AttendanceRepository {
       `
         SELECT s.student_uuid AS id
         FROM student_term s
+        ${CURRENT_ENROLLMENT_JOIN}
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         WHERE ${conditions.join(' AND ')}
       `,

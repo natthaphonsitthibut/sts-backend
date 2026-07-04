@@ -105,8 +105,19 @@ export class StudentsRepository {
       );
     }
 
+    const currentEnrollmentJoin =
+      filters.enrollmentState === 'all'
+        ? ''
+        : `
+      JOIN student_current_enrollment_resolution current_enrollment
+        ON current_enrollment.person_uuid = s.person_uuid
+       AND current_enrollment.selected_student_uuid = s.student_uuid
+       AND current_enrollment.resolution_state = 'ACTIVE'
+    `;
+
     const fromWhere = `
       FROM student_term s
+      ${currentEnrollmentJoin}
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       LEFT JOIN student_status ss
@@ -173,9 +184,20 @@ export class StudentsRepository {
       district?: string;
       subDistrict?: string;
       grade?: string;
+      enrollmentState?: StudentListFilters['enrollmentState'];
     },
     userScope?: DataScope,
   ): Promise<StudentFilterOptions> {
+    const currentEnrollmentJoin =
+      filters.enrollmentState === 'all'
+        ? ''
+        : `
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
+      `;
+
     const buildConditions = (params: unknown[], withGrade: boolean): string => {
       const conditions: string[] = [];
 
@@ -225,6 +247,7 @@ export class StudentsRepository {
       `
         SELECT DISTINCT COALESCE(gl.label, 'ไม่ทราบ') AS grade, gl.id AS grade_id
         FROM student_term s
+        ${currentEnrollmentJoin}
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         ${gradeWhere}
@@ -239,6 +262,7 @@ export class StudentsRepository {
       `
         SELECT DISTINCT s."RoomID_Onec" AS room
         FROM student_term s
+        ${currentEnrollmentJoin}
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         ${roomWhere}

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { STUDENT_ENROLLMENT_STATES } from '../students.types';
 
 /** Page sizes the student list UI offers; keep in sync with the frontend control. */
 export const STUDENT_PAGE_SIZES = [10, 20, 50] as const;
@@ -35,6 +36,10 @@ export class GetStudentsQueryDto {
   searchTerm?: string;
 
   @IsOptional()
+  @IsIn(STUDENT_ENROLLMENT_STATES)
+  enrollmentState?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -68,4 +73,8 @@ export class GetStudentFilterOptionsQueryDto {
   @IsOptional()
   @IsString()
   grade?: string;
+
+  @IsOptional()
+  @IsIn(STUDENT_ENROLLMENT_STATES)
+  enrollmentState?: string;
 }

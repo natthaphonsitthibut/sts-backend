@@ -807,7 +807,6 @@ export class UsersRepository {
     const conditions = [
       's.deleted_at IS NULL',
       's.person_uuid IS NOT NULL',
-      `s."StudentStatusID_Onec" = 10`,
       `s."SchoolID_Onec" IS NOT NULL`,
     ];
 
@@ -901,6 +900,10 @@ export class UsersRepository {
           existing_user.id AS existing_user_id,
           existing_user.username AS existing_username
         FROM student_term s
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
         JOIN schools sc ON sc.id = s."SchoolID_Onec"
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         LEFT JOIN users existing_user
@@ -932,6 +935,10 @@ export class UsersRepository {
           COUNT(*) FILTER (WHERE existing_user.id IS NULL)::int AS without_account_count,
           COUNT(*) FILTER (WHERE existing_user.id IS NOT NULL)::int AS existing_account_count
         FROM student_term s
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
         JOIN schools sc ON sc.id = s."SchoolID_Onec"
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         LEFT JOIN users existing_user
@@ -959,7 +966,6 @@ export class UsersRepository {
       'u.person_uuid IS NOT NULL',
       's.deleted_at IS NULL',
       's.person_uuid IS NOT NULL',
-      `s."StudentStatusID_Onec" = 10`,
       `s."SchoolID_Onec" IS NOT NULL`,
     ];
 
@@ -1061,6 +1067,10 @@ export class UsersRepository {
         SELECT COUNT(DISTINCT u.id)::int AS count
         FROM users u
         JOIN student_term s ON s.person_uuid = u.person_uuid
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
         JOIN schools sc ON sc.id = s."SchoolID_Onec"
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         ${whereSql}
@@ -1098,6 +1108,10 @@ export class UsersRepository {
           s."Semester_Onec" AS semester
         FROM users u
         JOIN student_term s ON s.person_uuid = u.person_uuid
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
         JOIN schools sc ON sc.id = s."SchoolID_Onec"
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         ${whereSql}
@@ -1138,6 +1152,10 @@ export class UsersRepository {
             END AS status
           FROM users u
           JOIN student_term s ON s.person_uuid = u.person_uuid
+          JOIN student_current_enrollment_resolution current_enrollment
+            ON current_enrollment.person_uuid = s.person_uuid
+           AND current_enrollment.selected_student_uuid = s.student_uuid
+           AND current_enrollment.resolution_state = 'ACTIVE'
           JOIN schools sc ON sc.id = s."SchoolID_Onec"
           LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
           ${whereSql}

@@ -1,5 +1,11 @@
 import { AttendanceRepository } from './attendance.repository';
 
+function expectCurrentEnrollmentPolicy(sql: string) {
+  expect(sql).toContain('student_current_enrollment_resolution');
+  expect(sql).toContain("current_enrollment.resolution_state = 'ACTIVE'");
+  expect(sql).toContain('current_enrollment.selected_student_uuid = s.student_uuid');
+}
+
 describe('AttendanceRepository', () => {
   function createRepository() {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
@@ -69,5 +75,32 @@ describe('AttendanceRepository', () => {
       expect(query.sql).toContain('sc.sub_district = $3');
     }
     expect(filteredQueries[0].params).toEqual(['ขอนแก่น', 'เมืองขอนแก่น', 'ในเมือง']);
+  });
+
+  it('filters the attendance roster through current enrollment policy', async () => {
+    const { queries, repository } = createRepository();
+
+    await repository.listStudents({ schoolId: 10010002, grade: 'ม.1', room: 1 });
+
+    expect(queries).toHaveLength(1);
+    expectCurrentEnrollmentPolicy(queries[0].sql);
+  });
+
+  it('filters attendance room options through current enrollment policy', async () => {
+    const { queries, repository } = createRepository();
+
+    await repository.listRooms('ม.1', 10010002);
+
+    expect(queries).toHaveLength(1);
+    expectCurrentEnrollmentPolicy(queries[0].sql);
+  });
+
+  it('validates writable roster ids through current enrollment policy', async () => {
+    const { queries, repository } = createRepository();
+
+    await repository.filterStudentIdsInScope(['00000000-0000-4000-8000-000000000001']);
+
+    expect(queries).toHaveLength(1);
+    expectCurrentEnrollmentPolicy(queries[0].sql);
   });
 });

@@ -31,7 +31,12 @@ import {
   maskPiiValue,
 } from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
-import type { StudentDetailRow, StudentListFilters, StudentListRow } from './students.types';
+import type {
+  StudentDetailRow,
+  StudentEnrollmentState,
+  StudentListFilters,
+  StudentListRow,
+} from './students.types';
 import type { AuthenticatedRequestUser } from '../auth';
 
 /** Metadata captured from the HTTP request for the PII access log. */
@@ -105,9 +110,13 @@ function normalizeOptionalString(value?: string): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+function normalizeEnrollmentState(value?: string): StudentEnrollmentState {
+  return value === 'all' ? 'all' : 'current-active';
+}
+
 function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): StudentListFilters {
   if (!queryParams) {
-    return {};
+    return { enrollmentState: 'current-active' };
   }
 
   const searchTerm = queryParams.searchTerm?.trim();
@@ -120,6 +129,7 @@ function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): Student
     district: normalizeOptionalString(queryParams.district),
     subDistrict: normalizeOptionalString(queryParams.subDistrict),
     searchTerm: searchTerm && searchTerm.length > 0 ? searchTerm : undefined,
+    enrollmentState: normalizeEnrollmentState(queryParams.enrollmentState),
     page: queryParams.page && queryParams.page > 0 ? queryParams.page : 1,
     limit:
       queryParams.limit && queryParams.limit > 0 ? queryParams.limit : DEFAULT_STUDENT_PAGE_SIZE,
@@ -249,6 +259,7 @@ export class StudentsService {
           district: normalizeOptionalString(query.district),
           subDistrict: normalizeOptionalString(query.subDistrict),
           grade: query.grade && query.grade !== 'ALL' ? query.grade : undefined,
+          enrollmentState: normalizeEnrollmentState(query.enrollmentState),
         },
         userScope,
       );
