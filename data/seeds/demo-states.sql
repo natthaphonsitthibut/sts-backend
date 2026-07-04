@@ -11,15 +11,15 @@ BEGIN;
 
 -- Clean any prior run of these demo rows (children first).
 DELETE FROM task_links WHERE id IN (
-  'seed-link-1005', 'seed-link-attendance-3', 'seed-link-login-1', 'seed-link-login-2'
+  '5b32ebc9-56e5-4b8f-b8e5-d01598943118', 'd5578f4a-9aa9-4c41-b820-66fefb0a71d5', 'f863b2af-ef2d-4069-aeb3-14d9a8898dc7', '13fe00ea-a462-4ed3-9db6-2f3f97be806c'
 );
 DELETE FROM tasks WHERE id IN (
-  'seed-task-1005', 'seed-attendance-task-3', 'seed-task-login-1', 'seed-task-login-2'
+  'e4e70ad7-50de-4d2c-bf30-71b4c6d7766c', '1f1f8d88-3317-4c75-a64b-1142ea318725', '0f2776f2-a492-44c3-84a9-f49a4a3c93dd', 'd90d491c-dc50-493c-99f9-ea93876af8b1'
 );
 
 -- VISIT — expired link (case 1005 already exists, AWAITING_HELP).
 INSERT INTO tasks (id, case_id, status, task_type, created_at, updated_at, created_by, updated_by)
-VALUES ('seed-task-1005', 1005, 'ACTIVE', 'VISIT',
+VALUES ('e4e70ad7-50de-4d2c-bf30-71b4c6d7766c', 1005, 'ACTIVE', 'VISIT',
         '2026-05-20 03:00:00+00', '2026-05-20 03:00:00+00', 5, 5);
 INSERT INTO task_links
   (id, task_id, token_hash, magic_link, delegation_depth, assigned_to_name,
@@ -27,7 +27,7 @@ INSERT INTO task_links
    admin_locked, expires_at, created_at, updated_at, created_by,
    login_permissions, login_data_scope)
 VALUES
-  ('seed-link-1005', 'seed-task-1005', '1491e917687e944a0cf35525131219dda75cc140f73c3f89a4bced1967669b87', '/task/cd9c99fbe4d761679395deb7b47950ff358f72190a722c87115d87738ba6b0f9', 0,
+  ('5b32ebc9-56e5-4b8f-b8e5-d01598943118', 'e4e70ad7-50de-4d2c-bf30-71b4c6d7766c', '1491e917687e944a0cf35525131219dda75cc140f73c3f89a4bced1967669b87', '/task/cd9c99fbe4d761679395deb7b47950ff358f72190a722c87115d87738ba6b0f9', 0,
    'ชาญวิทย์ ใจมั่น', '0800000009', 'seed.teacher.p6r2@example.test', 0,
    'ลงพื้นที่ติดตามนักเรียน', 'ACTIVE', 0,
    '2026-05-27 03:00:00+00', '2026-05-20 03:00:00+00', '2026-05-20 03:00:00+00', 5,
@@ -36,7 +36,7 @@ VALUES
 -- ATTENDANCE — fresh link, no attendance records yet.
 INSERT INTO tasks (id, case_id, status, task_type, target_grade, target_room, target_school_id,
                    created_at, updated_at, created_by, updated_by)
-VALUES ('seed-attendance-task-3', NULL, 'ACTIVE', 'ATTENDANCE', 'ป.6', '1', 10010002,
+VALUES ('1f1f8d88-3317-4c75-a64b-1142ea318725', NULL, 'ACTIVE', 'ATTENDANCE', 'ป.6', '1', 10010002,
         '2026-06-13 02:00:00+00', '2026-06-13 02:00:00+00', 14, 14);
 INSERT INTO task_links
   (id, task_id, token_hash, magic_link, delegation_depth, assigned_to_name,
@@ -44,7 +44,7 @@ INSERT INTO task_links
    admin_locked, expires_at, created_at, updated_at, created_by,
    login_permissions, login_data_scope)
 VALUES
-  ('seed-link-attendance-3', 'seed-attendance-task-3', '97ebdfc85682e6c465f6aafdeacece83c7153c95b152e08bce811c0c7e69bd0f',
+  ('d5578f4a-9aa9-4c41-b820-66fefb0a71d5', '1f1f8d88-3317-4c75-a64b-1142ea318725', '97ebdfc85682e6c465f6aafdeacece83c7153c95b152e08bce811c0c7e69bd0f',
    '/task/52851e14b4c4f7a569fe5056e08dc1fd34c6591d3b8496f8ee23fd53aaa948fe', 0, 'วีรพล แก้วมณี', '0800000010',
    'seed.teacher.ud.p6r1@example.test', 0, 'เช็คชื่อ ป.6 ห้อง 1', 'ACTIVE', 0,
    '2026-06-20 02:00:00+00', '2026-06-13 02:00:00+00', '2026-06-13 02:00:00+00', 14,
@@ -52,7 +52,7 @@ VALUES
 
 -- LOGIN — successfully used magic-login link (TEACHER).
 INSERT INTO tasks (id, case_id, status, task_type, created_at, updated_at, created_by, updated_by)
-VALUES ('seed-task-login-1', NULL, 'ACTIVE', 'LOGIN',
+VALUES ('0f2776f2-a492-44c3-84a9-f49a4a3c93dd', NULL, 'ACTIVE', 'LOGIN',
         '2026-06-12 04:00:00+00', '2026-06-12 04:00:00+00', 5, 5);
 INSERT INTO task_links
   (id, task_id, token_hash, magic_link, delegation_depth, assigned_to_name,
@@ -60,7 +60,7 @@ INSERT INTO task_links
    created_at, updated_at, created_by, first_used_at, login_role, login_permissions,
    login_data_scope)
 VALUES
-  ('seed-link-login-1', 'seed-task-login-1', '620320ee74dcdb448c4c1df57674787a7b24d26d3d907a5cfb0ae6a6257b907b', '/task/6e641b6f0595b5f2fb02b55fc9982ca5e9220e8c13fe54ffa658bc1bd36698bc', 0,
+  ('f863b2af-ef2d-4069-aeb3-14d9a8898dc7', '0f2776f2-a492-44c3-84a9-f49a4a3c93dd', '620320ee74dcdb448c4c1df57674787a7b24d26d3d907a5cfb0ae6a6257b907b', '/task/6e641b6f0595b5f2fb02b55fc9982ca5e9220e8c13fe54ffa658bc1bd36698bc', 0,
    'สุภาวดี วัฒนานุกูล', 'seed.teacher.p3r1@example.test', 0,
    'ลิงก์เข้าสู่ระบบสำหรับครู', 'ACTIVE', 0, '2026-06-19 04:00:00+00',
    '2026-06-12 04:00:00+00', '2026-06-12 04:00:00+00', 5,
@@ -70,7 +70,7 @@ VALUES
 
 -- LOGIN — admin-locked magic-login link.
 INSERT INTO tasks (id, case_id, status, task_type, created_at, updated_at, created_by, updated_by)
-VALUES ('seed-task-login-2', NULL, 'ACTIVE', 'LOGIN',
+VALUES ('d90d491c-dc50-493c-99f9-ea93876af8b1', NULL, 'ACTIVE', 'LOGIN',
         '2026-06-12 05:00:00+00', '2026-06-12 06:00:00+00', 5, 5);
 INSERT INTO task_links
   (id, task_id, token_hash, magic_link, delegation_depth, assigned_to_name,
@@ -78,7 +78,7 @@ INSERT INTO task_links
    admin_lock_at, expires_at, created_at, updated_at, created_by, login_role,
    login_permissions, login_data_scope)
 VALUES
-  ('seed-link-login-2', 'seed-task-login-2', 'a49699205212c4615d9aa40b1f7044edb1793fe6ecdbed6241b9cd836a4132ba', '/task/b78cd3a7b8de14078f446a822f3143619e3e639580403b9eef26f6410c932421', 0,
+  ('13fe00ea-a462-4ed3-9db6-2f3f97be806c', 'd90d491c-dc50-493c-99f9-ea93876af8b1', 'a49699205212c4615d9aa40b1f7044edb1793fe6ecdbed6241b9cd836a4132ba', '/task/b78cd3a7b8de14078f446a822f3143619e3e639580403b9eef26f6410c932421', 0,
    'ปรียา ศรีประเสริฐ', 'seed.director@example.test', 0,
    'ลิงก์เข้าสู่ระบบสำหรับผู้บริหาร', 'ACTIVE', 1, 'ปิดลิงก์โดยผู้ดูแลระบบ',
    '2026-06-12 06:00:00+00', '2026-06-19 05:00:00+00', '2026-06-12 05:00:00+00',

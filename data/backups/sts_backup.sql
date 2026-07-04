@@ -2306,8 +2306,8 @@ COPY public.case_referrals (id, case_id, agency_id, agency_name_snapshot, agency
 --
 
 COPY public.case_reviews (id, case_id, review_action, review_note, reviewed_by, reviewed_at, created_at, updated_at, created_by, updated_by, resolution_outcome) FROM stdin;
-seed-review-1003	1003	CLOSE	ยืนยันการช่วยเหลือสำเร็จและปิดเคส	seed_director_10010002	2026-06-09 16:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
-seed-review-1004	1004	ASSIST	เห็นควรให้ความช่วยเหลือด้านค่าเดินทาง	seed_director_10010002	2026-06-10 04:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
+74e37c29-6c32-4657-90fd-7979632e4802	1003	CLOSE	ยืนยันการช่วยเหลือสำเร็จและปิดเคส	seed_director_10010002	2026-06-09 16:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
+f91c0033-cdd8-4f64-9e66-74115729ec31	1004	ASSIST	เห็นควรให้ความช่วยเหลือด้านค่าเดินทาง	seed_director_10010002	2026-06-10 04:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
 576cc53b-f130-451a-98ca-352e4aa7a187	1004	FORWARD	\N	newnew	2026-06-24 14:11:41.146352+00	2026-06-24 14:11:41.146352+00	2026-06-24 14:11:41.146352+00	\N	\N	\N
 \.
 
@@ -19249,7 +19249,7 @@ ALERT_SCHEDULE_TIME	18:00	เวลาที่จะรันบอทตรว
 --
 
 COPY public.task_link_role_scope_migration_backup (task_link_id, old_login_role, old_login_permissions, old_login_data_scope) FROM stdin;
-seed-link-login-2	ADMIN_SCHOOL	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}
+13fe00ea-a462-4ed3-9db6-2f3f97be806c	ADMIN_SCHOOL	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}
 \.
 
 
@@ -19266,15 +19266,15 @@ COPY public.task_link_scope_backfill_20260702_backup (task_link_id, old_login_da
 --
 
 COPY public.task_links (id, task_id, parent_link_id, token_hash, magic_link, delegation_depth, assigned_to_name, assigned_to_phone, assigned_to_email, otp_code, otp_expires_at, otp_verified, otp_attempts, otp_locked_until, subject, status, admin_locked, admin_lock_reason, admin_lock_at, expires_at, created_at, created_by, login_role, login_permissions, login_data_scope, updated_at, updated_by, deleted_at, deleted_by, first_used_at) FROM stdin;
-seed-link-1003	seed-task-1003	\N	65531f33ee9c13a59caa3310f5100ce5233e0de8d4c33ac6ba65dd4702c05e64	/task/31619a47525b3cdf0a38add16ac369801ae14cb01ac7e5221f3587d3cc84ced1	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	สรุปผลช่วยเหลือนักเรียน	COMPLETED	0	\N	\N	2026-06-15 16:30:26.906096+00	2026-06-07 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-seed-link-1004	seed-task-1004	\N	c60e7faff0a96ebc553a020f4d4585c2d7b76458832102948f34a4bc37714cfc	/task/945e8188915f93d35575bc97e99d9d4d10681ab582a3351ef700858e6001641a	0	ปรียา ศรีประเสริฐ	0800000006	seed.director@example.test	\N	\N	0	0	\N	ประเมินแนวทางช่วยเหลือ	ACTIVE	0	\N	\N	2026-06-17 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-seed-link-attendance-1	seed-attendance-task-1	\N	28dff42dd38001a727e8b7e0e5e16c8976f428979d1c0d626d3e6160a5d95d82	/task/9bb1434e289021751e87823858a347fd175a85bbeda7ab9c2117797a4084d15b	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.3 ห้อง 1	ACTIVE	0	\N	\N	2026-06-13 16:30:26.906096+00	2026-06-09 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-seed-link-attendance-2	seed-attendance-task-2	\N	d62a223deb3fc85828e558dee28ff2711d39499dc45e940a00b3699daa57091b	/task/9c637663cec8765ef41b961b7f34e4cb84b9779b79d023de601e7369d77f06cc	0	ชาญวิทย์ ใจมั่น	0800000009	seed.teacher.p6r2@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 2	ACTIVE	1	ปิดลิงก์ชั่วคราว	2026-06-10 10:30:26.906096+00	2026-06-14 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-seed-link-1002	seed-task-1002	\N	bd74fe877fcc7a5bebc69199b356826063152f61eaea12e3ac3a30cd580a4958	/task/a459ade11b257556e0c71cc0fc3ab61a51d23c44d64df8d9f93097a0212214ae	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-06-20 16:30:26.906096+00	2026-06-06 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-seed-link-1005	seed-task-1005	\N	1491e917687e944a0cf35525131219dda75cc140f73c3f89a4bced1967669b87	/task/cd9c99fbe4d761679395deb7b47950ff358f72190a722c87115d87738ba6b0f9	0	ชาญวิทย์ ใจมั่น	0800000009	seed.teacher.p6r2@example.test	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-05-27 03:00:00+00	2026-05-20 03:00:00+00	5	\N	[]	{}	2026-05-20 03:00:00+00	\N	\N	\N	\N
-seed-link-attendance-3	seed-attendance-task-3	\N	97ebdfc85682e6c465f6aafdeacece83c7153c95b152e08bce811c0c7e69bd0f	/task/52851e14b4c4f7a569fe5056e08dc1fd34c6591d3b8496f8ee23fd53aaa948fe	0	วีรพล แก้วมณี	0800000010	seed.teacher.ud.p6r1@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 1	ACTIVE	0	\N	\N	2026-06-20 02:00:00+00	2026-06-13 02:00:00+00	14	\N	[]	{}	2026-06-13 02:00:00+00	\N	\N	\N	\N
-seed-link-login-1	seed-task-login-1	\N	620320ee74dcdb448c4c1df57674787a7b24d26d3d907a5cfb0ae6a6257b907b	/task/6e641b6f0595b5f2fb02b55fc9982ca5e9220e8c13fe54ffa658bc1bd36698bc	0	สุภาวดี วัฒนานุกูล	\N	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับครู	ACTIVE	0	\N	\N	2026-06-19 04:00:00+00	2026-06-12 04:00:00+00	5	TEACHER	["home", "attendance", "students", "create"]	{"own_only": false, "school_ids": [10010002]}	2026-06-12 04:00:00+00	\N	\N	\N	2026-06-12 04:15:00+00
-seed-link-login-2	seed-task-login-2	\N	a49699205212c4615d9aa40b1f7044edb1793fe6ecdbed6241b9cd836a4132ba	/task/b78cd3a7b8de14078f446a822f3143619e3e639580403b9eef26f6410c932421	0	ปรียา ศรีประเสริฐ	\N	seed.director@example.test	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับผู้บริหาร	ACTIVE	1	ปิดลิงก์โดยผู้ดูแลระบบ	2026-06-12 06:00:00+00	2026-06-19 05:00:00+00	2026-06-12 05:00:00+00	5	ADMIN	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}	2026-06-12 06:00:00+00	\N	\N	\N	\N
+021535fa-cbb2-4099-b39a-77fc22f742e7	1ab1fb4d-0aa5-4625-a1e4-93429d1171b8	\N	65531f33ee9c13a59caa3310f5100ce5233e0de8d4c33ac6ba65dd4702c05e64	/task/31619a47525b3cdf0a38add16ac369801ae14cb01ac7e5221f3587d3cc84ced1	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	สรุปผลช่วยเหลือนักเรียน	COMPLETED	0	\N	\N	2026-06-15 16:30:26.906096+00	2026-06-07 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
+16741db7-1a7e-4639-8571-7e2ec97edb44	b2f0f940-5087-446b-bde4-3f41d33c0ca5	\N	c60e7faff0a96ebc553a020f4d4585c2d7b76458832102948f34a4bc37714cfc	/task/945e8188915f93d35575bc97e99d9d4d10681ab582a3351ef700858e6001641a	0	ปรียา ศรีประเสริฐ	0800000006	seed.director@example.test	\N	\N	0	0	\N	ประเมินแนวทางช่วยเหลือ	ACTIVE	0	\N	\N	2026-06-17 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
+4dc1e5e4-c7c1-47e4-81f5-e2b74a4c5e9f	2461af75-dfd9-48f9-a3ec-6e1fabec3773	\N	28dff42dd38001a727e8b7e0e5e16c8976f428979d1c0d626d3e6160a5d95d82	/task/9bb1434e289021751e87823858a347fd175a85bbeda7ab9c2117797a4084d15b	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.3 ห้อง 1	ACTIVE	0	\N	\N	2026-06-13 16:30:26.906096+00	2026-06-09 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
+b58cbe36-1c15-4095-b4ee-97bb2ece4601	cf174c35-b27e-40fb-9d4c-31cc2c86f8a3	\N	d62a223deb3fc85828e558dee28ff2711d39499dc45e940a00b3699daa57091b	/task/9c637663cec8765ef41b961b7f34e4cb84b9779b79d023de601e7369d77f06cc	0	ชาญวิทย์ ใจมั่น	0800000009	seed.teacher.p6r2@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 2	ACTIVE	1	ปิดลิงก์ชั่วคราว	2026-06-10 10:30:26.906096+00	2026-06-14 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
+b9eaa8da-bb9d-4635-81b0-b49c4afc6ad6	8fe51f0c-69ff-43dc-bf44-7ca7e9b21d02	\N	bd74fe877fcc7a5bebc69199b356826063152f61eaea12e3ac3a30cd580a4958	/task/a459ade11b257556e0c71cc0fc3ab61a51d23c44d64df8d9f93097a0212214ae	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-06-20 16:30:26.906096+00	2026-06-06 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
+5b32ebc9-56e5-4b8f-b8e5-d01598943118	e4e70ad7-50de-4d2c-bf30-71b4c6d7766c	\N	1491e917687e944a0cf35525131219dda75cc140f73c3f89a4bced1967669b87	/task/cd9c99fbe4d761679395deb7b47950ff358f72190a722c87115d87738ba6b0f9	0	ชาญวิทย์ ใจมั่น	0800000009	seed.teacher.p6r2@example.test	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-05-27 03:00:00+00	2026-05-20 03:00:00+00	5	\N	[]	{}	2026-05-20 03:00:00+00	\N	\N	\N	\N
+d5578f4a-9aa9-4c41-b820-66fefb0a71d5	1f1f8d88-3317-4c75-a64b-1142ea318725	\N	97ebdfc85682e6c465f6aafdeacece83c7153c95b152e08bce811c0c7e69bd0f	/task/52851e14b4c4f7a569fe5056e08dc1fd34c6591d3b8496f8ee23fd53aaa948fe	0	วีรพล แก้วมณี	0800000010	seed.teacher.ud.p6r1@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 1	ACTIVE	0	\N	\N	2026-06-20 02:00:00+00	2026-06-13 02:00:00+00	14	\N	[]	{}	2026-06-13 02:00:00+00	\N	\N	\N	\N
+f863b2af-ef2d-4069-aeb3-14d9a8898dc7	0f2776f2-a492-44c3-84a9-f49a4a3c93dd	\N	620320ee74dcdb448c4c1df57674787a7b24d26d3d907a5cfb0ae6a6257b907b	/task/6e641b6f0595b5f2fb02b55fc9982ca5e9220e8c13fe54ffa658bc1bd36698bc	0	สุภาวดี วัฒนานุกูล	\N	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับครู	ACTIVE	0	\N	\N	2026-06-19 04:00:00+00	2026-06-12 04:00:00+00	5	TEACHER	["home", "attendance", "students", "create"]	{"own_only": false, "school_ids": [10010002]}	2026-06-12 04:00:00+00	\N	\N	\N	2026-06-12 04:15:00+00
+13fe00ea-a462-4ed3-9db6-2f3f97be806c	d90d491c-dc50-493c-99f9-ea93876af8b1	\N	a49699205212c4615d9aa40b1f7044edb1793fe6ecdbed6241b9cd836a4132ba	/task/b78cd3a7b8de14078f446a822f3143619e3e639580403b9eef26f6410c932421	0	ปรียา ศรีประเสริฐ	\N	seed.director@example.test	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับผู้บริหาร	ACTIVE	1	ปิดลิงก์โดยผู้ดูแลระบบ	2026-06-12 06:00:00+00	2026-06-19 05:00:00+00	2026-06-12 05:00:00+00	5	ADMIN	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}	2026-06-12 06:00:00+00	\N	\N	\N	\N
 \.
 
 
@@ -19283,7 +19283,7 @@ seed-link-login-2	seed-task-login-2	\N	a49699205212c4615d9aa40b1f7044edb1793fe6e
 --
 
 COPY public.task_submissions (id, task_link_id, visit_lat, visit_lng, cause_category, cause_detail, photo_paths, recommendation, submitted_at, address_changed, updated_student_address, updated_lat, updated_lng, created_at, updated_at, created_by, updated_by, deleted_at, deleted_by) FROM stdin;
-1	seed-link-1003	18.801	98.961	เศรษฐกิจครอบครัว	ผู้ปกครองมีรายได้ไม่แน่นอน นักเรียนขาดค่าเดินทาง	[]	ติดตามต่อเนื่องเดือนละครั้ง	2026-06-08 16:30:26.906096+00	f	\N	\N	\N	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N	\N
+1	021535fa-cbb2-4099-b39a-77fc22f742e7	18.801	98.961	เศรษฐกิจครอบครัว	ผู้ปกครองมีรายได้ไม่แน่นอน นักเรียนขาดค่าเดินทาง	[]	ติดตามต่อเนื่องเดือนละครั้ง	2026-06-08 16:30:26.906096+00	f	\N	\N	\N	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N	\N
 \.
 
 
@@ -19292,15 +19292,15 @@ COPY public.task_submissions (id, task_link_id, visit_lat, visit_lng, cause_cate
 --
 
 COPY public.tasks (id, case_id, status, max_delegation_depth, created_at, task_type, target_grade, target_room, target_school_id, updated_at, created_by, updated_by, deleted_at, deleted_by) FROM stdin;
-seed-task-1003	1003	COMPLETED	3	2026-06-07 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-07 16:30:26.906096+00	\N	\N	\N	\N
-seed-task-1004	1004	PENDING_REVIEW	3	2026-06-08 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
-seed-attendance-task-1	\N	ACTIVE	1	2026-06-09 16:30:26.906096+00	ATTENDANCE	ป.3	1	10010002	2026-06-09 16:30:26.906096+00	\N	\N	\N	\N
-seed-attendance-task-2	\N	ACTIVE	1	2026-06-08 16:30:26.906096+00	ATTENDANCE	ป.6	2	10010002	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
-seed-task-1002	1002	ACTIVE	3	2026-06-06 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-21 03:36:16.120364+00	\N	\N	\N	\N
-seed-task-1005	1005	ACTIVE	3	2026-05-20 03:00:00+00	VISIT	\N	\N	\N	2026-05-20 03:00:00+00	5	5	\N	\N
-seed-attendance-task-3	\N	ACTIVE	3	2026-06-13 02:00:00+00	ATTENDANCE	ป.6	1	10010002	2026-06-13 02:00:00+00	14	14	\N	\N
-seed-task-login-1	\N	ACTIVE	3	2026-06-12 04:00:00+00	LOGIN	\N	\N	\N	2026-06-12 04:00:00+00	5	5	\N	\N
-seed-task-login-2	\N	ACTIVE	3	2026-06-12 05:00:00+00	LOGIN	\N	\N	\N	2026-06-12 06:00:00+00	5	5	\N	\N
+1ab1fb4d-0aa5-4625-a1e4-93429d1171b8	1003	COMPLETED	3	2026-06-07 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-07 16:30:26.906096+00	\N	\N	\N	\N
+b2f0f940-5087-446b-bde4-3f41d33c0ca5	1004	PENDING_REVIEW	3	2026-06-08 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
+2461af75-dfd9-48f9-a3ec-6e1fabec3773	\N	ACTIVE	1	2026-06-09 16:30:26.906096+00	ATTENDANCE	ป.3	1	10010002	2026-06-09 16:30:26.906096+00	\N	\N	\N	\N
+cf174c35-b27e-40fb-9d4c-31cc2c86f8a3	\N	ACTIVE	1	2026-06-08 16:30:26.906096+00	ATTENDANCE	ป.6	2	10010002	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
+8fe51f0c-69ff-43dc-bf44-7ca7e9b21d02	1002	ACTIVE	3	2026-06-06 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-21 03:36:16.120364+00	\N	\N	\N	\N
+e4e70ad7-50de-4d2c-bf30-71b4c6d7766c	1005	ACTIVE	3	2026-05-20 03:00:00+00	VISIT	\N	\N	\N	2026-05-20 03:00:00+00	5	5	\N	\N
+1f1f8d88-3317-4c75-a64b-1142ea318725	\N	ACTIVE	3	2026-06-13 02:00:00+00	ATTENDANCE	ป.6	1	10010002	2026-06-13 02:00:00+00	14	14	\N	\N
+0f2776f2-a492-44c3-84a9-f49a4a3c93dd	\N	ACTIVE	3	2026-06-12 04:00:00+00	LOGIN	\N	\N	\N	2026-06-12 04:00:00+00	5	5	\N	\N
+d90d491c-dc50-493c-99f9-ea93876af8b1	\N	ACTIVE	3	2026-06-12 05:00:00+00	LOGIN	\N	\N	\N	2026-06-12 06:00:00+00	5	5	\N	\N
 \.
 
 
