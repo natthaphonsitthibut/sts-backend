@@ -1,4 +1,5 @@
 import { DataSource } from 'typeorm';
+import * as crypto from 'crypto';
 import { AuthActorService } from './auth-actor.service';
 import { StudentAuthService } from './student-auth.service';
 import { SessionCookieService } from './session-cookie.service';
@@ -16,10 +17,17 @@ function buildActor(overrides: Partial<AuthenticatedRequestUser> = {}): Authenti
   };
 }
 
+function signMagicSession(payload: Record<string, unknown>, secret: string): string {
+  const serialized = JSON.stringify(payload);
+  const signature = crypto.createHmac('sha256', secret).update(serialized).digest('hex');
+  return `${Buffer.from(serialized).toString('base64')}.${signature}`;
+}
+
 describe('AuthActorService', () => {
   let service: AuthActorService;
   let studentAuthService: jest.Mocked<Pick<StudentAuthService, 'loadVirtualStudentActor'>>;
   let sessionCookieService: jest.Mocked<Pick<SessionCookieService, 'readUserId'>>;
+  const sessionSecret = 'test-session-secret-value';
 
   beforeEach(() => {
     studentAuthService = {
@@ -31,7 +39,7 @@ describe('AuthActorService', () => {
 
     const authRuntimeConfig: AuthRuntimeConfig = {
       jwtSecret: 'test-jwt-secret-value',
-      sessionSecret: 'test-session-secret-value',
+      sessionSecret,
       magicSessionTtlSeconds: 60,
       otpTtlSeconds: 60,
       otpMaxAttempts: 5,
@@ -151,5 +159,65 @@ describe('AuthActorService', () => {
 
     expect(actor).toBeNull();
     expect(studentAuthService.loadVirtualStudentActor).not.toHaveBeenCalled();
+  });
+
+  it('accepts a signed magic session within the configured TTL', () => {
+    const token = signMagicSession(
+      { link_id: 'link-1', verified: true, ts: Date.now() },
+      sessionSecret,
+    );
+
+    expect(
+      (
+        service as unknown as {
+          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
+        }
+      ).isMagicSessionVerified('link-1', token),
+    ).toBe(true);
+  });
+
+  it('rejects expired magic sessions', () => {
+    const token = signMagicSession(
+      { link_id: 'link-1', verified: true, ts: Date.now() - 61_000 },
+      sessionSecret,
+    );
+
+    expect(
+      (
+        service as unknown as {
+          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
+        }
+      ).isMagicSessionVerified('link-1', token),
+    ).toBe(false);
+  });
+
+  it('rejects future-dated magic sessions', () => {
+    const token = signMagicSession(
+      { link_id: 'link-1', verified: true, ts: Date.now() + 1_000 },
+      sessionSecret,
+    );
+
+    expect(
+      (
+        service as unknown as {
+          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
+        }
+      ).isMagicSessionVerified('link-1', token),
+    ).toBe(false);
+  });
+
+  it('rejects magic sessions with an invalid signature', () => {
+    const token = signMagicSession(
+      { link_id: 'link-1', verified: true, ts: Date.now() },
+      'different-secret',
+    );
+
+    expect(
+      (
+        service as unknown as {
+          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
+        }
+      ).isMagicSessionVerified('link-1', token),
+    ).toBe(false);
   });
 });

@@ -185,16 +185,33 @@ export class AuthActorService {
         .update(payload)
         .digest('hex');
 
-      if (expectedSign !== signature) {
+      const expectedBuf = Buffer.from(expectedSign);
+      const providedBuf = Buffer.from(signature ?? '');
+      if (
+        expectedBuf.length !== providedBuf.length ||
+        !crypto.timingSafeEqual(expectedBuf, providedBuf)
+      ) {
         return false;
       }
 
       const data = JSON.parse(payload) as {
         link_id?: string;
         verified?: boolean;
+        ts?: number;
       };
 
-      return data.link_id === linkId && data.verified === true;
+      if (data.link_id !== linkId || data.verified !== true) {
+        return false;
+      }
+
+      const issuedAt = typeof data.ts === 'number' ? data.ts : 0;
+      const ageMs = Date.now() - issuedAt;
+      const ttlMs = this.authRuntimeConfig.magicSessionTtlSeconds * 1000;
+      if (!Number.isFinite(issuedAt) || issuedAt <= 0 || ageMs > ttlMs || ageMs < 0) {
+        return false;
+      }
+
+      return true;
     } catch {
       return false;
     }
