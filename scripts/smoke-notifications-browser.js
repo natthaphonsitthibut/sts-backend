@@ -29,6 +29,10 @@ function errorMessage(error) {
   return error?.message || String(error);
 }
 
+function returningRows(result) {
+  return Array.isArray(result?.[0]) ? result[0] : result;
+}
+
 async function waitFor(check, message, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -36,6 +40,35 @@ async function waitFor(check, message, timeoutMs = 15_000) {
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   throw new Error(message);
+}
+
+async function collectInitialBellDiagnostics(client) {
+  return evaluate(
+    client,
+    `JSON.stringify({
+      path: location.pathname,
+      body: document.body.innerText.slice(0, 800),
+      hasUserStorage: Boolean(localStorage.getItem('sts_user') || sessionStorage.getItem('sts_user')),
+      hasAdminAccess: localStorage.getItem('admin_access') === 'true' || sessionStorage.getItem('admin_access') === 'true',
+      buttons: [...document.querySelectorAll('button')].map((button) => ({
+        label: button.getAttribute('aria-label'),
+        text: button.textContent?.trim().slice(0, 80),
+      })).slice(0, 20),
+    })`,
+  );
+}
+
+async function collectNotificationFetchDiagnostics(client) {
+  return evaluate(
+    client,
+    `fetch('${BACKEND_URL}/api/notifications?limit=10', { credentials: 'include' })
+      .then(async (response) => ({
+        status: response.status,
+        body: await response.text().then((text) => text.slice(0, 800)),
+      }))
+      .then((result) => JSON.stringify(result))
+      .catch((error) => JSON.stringify({ error: error?.message || String(error) }))`,
+  );
 }
 
 class CdpClient {
@@ -137,27 +170,33 @@ async function upsertFixture(dataSource, passwordHash) {
   ];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
-    const [updated] = await dataSource.query(
-      `UPDATE users
-       SET password = $2, status = 'ACTIVE', permissions = $3::jsonb, role = 'ADMIN',
-           data_scope = '{"global":true}'::jsonb, data_origin_code = 'AUTOMATED_TEST',
-           must_change_password = FALSE, deactivated_at = NULL, deactivated_by = NULL,
-           deactivation_reason_code = NULL, deactivation_note = NULL
-       WHERE id = $1
-       RETURNING id`,
-      [existing.id, passwordHash, JSON.stringify(permissions)],
+    const [updated] = returningRows(
+      await dataSource.query(
+        `UPDATE users
+         SET password = $2, status = 'ACTIVE', permissions = $3::jsonb, role = 'ADMIN',
+             data_scope = '{"global":true}'::jsonb, data_origin_code = 'AUTOMATED_TEST',
+             must_change_password = FALSE, deactivated_at = NULL, deactivated_by = NULL,
+             deactivation_reason_code = NULL, deactivation_note = NULL
+         WHERE id = $1
+         RETURNING id`,
+        [existing.id, passwordHash, JSON.stringify(permissions)],
+      ),
     );
+    assert(updated?.id, 'Updating notification browser fixture did not return a user id');
     return updated.id;
   }
-  const [created] = await dataSource.query(
-    `INSERT INTO users
-       (username, password, "FirstName", "LastName", status, permissions, role,
-        data_scope, must_change_password, data_origin_code)
-     VALUES ($1, $2, 'Notification', 'Browser Smoke', 'ACTIVE', $3::jsonb, 'ADMIN',
-             '{"global":true}'::jsonb, FALSE, 'AUTOMATED_TEST')
-     RETURNING id`,
-    [USERNAME, passwordHash, JSON.stringify(permissions)],
+  const [created] = returningRows(
+    await dataSource.query(
+      `INSERT INTO users
+         (username, password, "FirstName", "LastName", status, permissions, role,
+          data_scope, must_change_password, data_origin_code)
+       VALUES ($1, $2, 'Notification', 'Browser Smoke', 'ACTIVE', $3::jsonb, 'ADMIN',
+               '{"global":true}'::jsonb, FALSE, 'AUTOMATED_TEST')
+       RETURNING id`,
+      [USERNAME, passwordHash, JSON.stringify(permissions)],
+    ),
   );
+  assert(created?.id, 'Creating notification browser fixture did not return a user id');
   return created.id;
 }
 
@@ -200,6 +239,30 @@ async function capture(client, outputPath) {
     captureBeyondViewport: true,
   });
   fs.writeFileSync(outputPath, Buffer.from(result.data, 'base64'));
+}
+
+async function closeChrome(chrome) {
+  if (!chrome) return;
+  try {
+    chrome.client.close();
+  } catch {
+    // best-effort cleanup only
+  }
+  if (chrome.processRef && !chrome.processRef.killed) {
+    chrome.processRef.kill('SIGTERM');
+    await Promise.race([
+      new Promise((resolve) => chrome.processRef.once('exit', resolve)),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ]);
+  }
+  if (chrome.userDataDir) {
+    fs.rmSync(chrome.userDataDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
 }
 
 async function main() {
@@ -257,16 +320,22 @@ async function main() {
        localStorage.setItem('admin_access', 'true');`,
     );
     await navigate(client, `${FRONTEND_URL}/`);
-    await waitFor(
-      async () =>
-        Boolean(
+    try {
+      await waitFor(
+        async () =>
           await evaluate(
             client,
-            `document.querySelector('button[aria-label*="รายการแจ้งเตือน (ใหม่ 3 รายการ)"]')`,
+            `Boolean(document.querySelector('button[aria-label*="รายการแจ้งเตือน (ใหม่ 3 รายการ)"]'))`,
           ),
-        ),
-      'Notification bell did not show unseen count 3',
-    );
+        'Notification bell did not show unseen count 3',
+      );
+    } catch (error) {
+      const pageDiagnostics = await collectInitialBellDiagnostics(client);
+      const fetchDiagnostics = await collectNotificationFetchDiagnostics(client);
+      throw new Error(
+        `${errorMessage(error)}; page=${pageDiagnostics}; notifications=${fetchDiagnostics}`,
+      );
+    }
 
     await evaluate(
       client,
@@ -332,9 +401,7 @@ async function main() {
       'notification browser smoke passed (bell seen, inbox desktop/mobile, import deep-link/read)',
     );
   } finally {
-    chrome?.client.close();
-    chrome?.processRef.kill('SIGTERM');
-    if (chrome?.userDataDir) fs.rmSync(chrome.userDataDir, { recursive: true, force: true });
+    await closeChrome(chrome);
     if (userId) {
       await dataSource.query(`DELETE FROM notifications WHERE recipient_user_id = $1`, [userId]);
       await dataSource.query(
