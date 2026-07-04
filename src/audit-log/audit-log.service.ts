@@ -15,7 +15,7 @@ import {
   resolvePage,
 } from '../common/pagination/pagination.util';
 import { queryDataSource } from '../database/sql-query';
-import type { AuditLogDomain } from './dto/audit-log.dto';
+import type { AuditLogDomain, AuditLogTaskType } from './dto/audit-log.dto';
 
 interface AuditQueryExecutor {
   query<T extends Record<string, unknown>>(
@@ -118,6 +118,10 @@ interface AuditLogListFilters {
   district?: string;
   subDistrict?: string;
   schoolId?: number;
+  taskType?: AuditLogTaskType;
+  targetType?: string;
+  targetId?: string;
+  caseId?: number;
   page?: number;
   limit?: number;
 }
@@ -698,6 +702,9 @@ export class AuditLogService {
     if (filters.action && !actions.includes(filters.action)) {
       throw new BadRequestException('action ไม่ตรงกับประเภทประวัติ');
     }
+    if (filters.caseId && filters.domain !== 'cases') {
+      throw new BadRequestException('caseId ใช้ได้กับประวัติเคสเท่านั้น');
+    }
     if (actions.length === 0) {
       return {
         data: [],
@@ -724,6 +731,25 @@ export class AuditLogService {
           NULLIF(a.metadata ->> 'room', '')
         ) IS NOT NULL
         OR COALESCE(a.metadata -> 'scope', '{}'::jsonb) <> '{}'::jsonb
+      )`);
+    }
+    if (filters.taskType) {
+      params.push(filters.taskType);
+      conditions.push(`a.metadata ->> 'taskType' = $${params.length}`);
+    }
+    if (filters.targetType) {
+      params.push(filters.targetType);
+      conditions.push(`a.target_type = $${params.length}`);
+    }
+    if (filters.targetId) {
+      params.push(filters.targetId);
+      conditions.push(`a.target_id = $${params.length}`);
+    }
+    if (filters.caseId) {
+      params.push(String(filters.caseId));
+      conditions.push(`(
+        (a.target_type = 'case' AND a.target_id = $${params.length})
+        OR a.metadata ->> 'caseId' = $${params.length}
       )`);
     }
     // Actor-only search: the tables show who performed the action, while raw

@@ -205,6 +205,10 @@ export class TaskLifecycleService {
 
     const expiresAt = new Date(Date.now() + expiresMs).toISOString();
     const magicLink = `${baseUrl}/task/${token}`;
+    let auditCaseId: number | null = null;
+    let auditTargetSchoolId: number | null = null;
+    const auditTargetGrade = clean(data.target_grade) || null;
+    const auditTargetRoom = clean(data.target_room) || null;
 
     try {
       await this.taskRepository.withTransaction(async (executor) => {
@@ -310,14 +314,16 @@ export class TaskLifecycleService {
             );
           }
         }
+        auditCaseId = caseId;
+        auditTargetSchoolId = resolvedTargetSchoolId;
 
         await this.taskRepository.createTask(
           {
             taskId,
             caseId,
             taskType,
-            targetGrade: clean(data.target_grade) || null,
-            targetRoom: clean(data.target_room) || null,
+            targetGrade: auditTargetGrade,
+            targetRoom: auditTargetRoom,
             targetSchoolId: resolvedTargetSchoolId,
             createdBy: resolveAuditActorId(currentActor),
           },
@@ -347,6 +353,23 @@ export class TaskLifecycleService {
           },
           executor,
         );
+      });
+
+      await this.auditLog.record({
+        action: 'TASK_CREATE',
+        actorUserId: resolveAuditActorId(currentActor),
+        actorLabel: currentActor.username,
+        targetType: 'task',
+        targetId: taskId,
+        metadata: {
+          taskType,
+          schoolId: auditTargetSchoolId,
+          grade: auditTargetGrade,
+          room: auditTargetRoom,
+          caseId: auditCaseId,
+          scope: taskType === 'LOGIN' ? loginDataScope : undefined,
+        },
+        ip: null,
       });
 
       let qrDataUrl: string | null = null;

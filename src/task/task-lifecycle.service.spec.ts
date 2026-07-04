@@ -104,5 +104,18 @@ describe('TaskLifecycleService', () => {
       }),
       undefined,
     );
+    const auditEvent = auditLog.record.mock.calls[0]?.[0];
+    expect(auditEvent).toMatchObject({
+      action: 'TASK_CREATE',
+      actorUserId: 7,
+      actorLabel: 'case-admin',
+      targetType: 'task',
+    });
+    expect(typeof auditEvent?.targetId).toBe('string');
+    expect(auditEvent?.metadata).toMatchObject({
+      taskType: 'VISIT',
+      schoolId: 10010002,
+      caseId: 123,
+    });
   });
 });

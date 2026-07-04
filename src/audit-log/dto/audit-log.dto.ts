@@ -15,6 +15,10 @@ export const AUDIT_LOG_DOMAINS = [
 
 export type AuditLogDomain = (typeof AUDIT_LOG_DOMAINS)[number];
 
+export const AUDIT_LOG_TASK_TYPES = ['ATTENDANCE', 'VISIT', 'LOGIN'] as const;
+
+export type AuditLogTaskType = (typeof AUDIT_LOG_TASK_TYPES)[number];
+
 export class GetAuditLogQueryDto extends PaginationQueryDto {
   @IsIn(AUDIT_LOG_DOMAINS)
   domain!: AuditLogDomain;
@@ -52,4 +56,22 @@ export class GetAuditLogQueryDto extends PaginationQueryDto {
   @IsInt()
   @Min(1)
   schoolId?: number;
+
+  @IsOptional()
+  @IsIn(AUDIT_LOG_TASK_TYPES)
+  taskType?: AuditLogTaskType;
+
+  @IsOptional()
+  @IsString()
+  targetType?: string;
+
+  @IsOptional()
+  @IsString()
+  targetId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  caseId?: number;
 }

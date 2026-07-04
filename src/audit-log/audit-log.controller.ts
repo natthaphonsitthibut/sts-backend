@@ -30,6 +30,8 @@ export class AuditLogController {
       province: query.province?.trim() || undefined,
       district: query.district?.trim() || undefined,
       subDistrict: query.subDistrict?.trim() || undefined,
+      targetType: query.targetType?.trim() || undefined,
+      targetId: query.targetId?.trim() || undefined,
     });
   }
 }

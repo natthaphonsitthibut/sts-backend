@@ -13,6 +13,8 @@ import * as crypto from 'crypto';
 import { authConfig } from '../config/auth.config';
 import { emailConfig } from '../config/email.config';
 import { clean, hashToken } from '../common/utils/helpers';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from './email.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository, type LoginLinkListFilters } from './task.repository';
@@ -42,6 +44,7 @@ export class TaskAccessService {
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
     private readonly emailService: EmailService,
+    private readonly auditLog: AuditLogService,
     @Inject(authConfig.KEY)
     private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
     @Inject(emailConfig.KEY)
@@ -420,6 +423,23 @@ export class TaskAccessService {
           lockedAt: new Date().toISOString(),
         });
 
+        await this.auditLog.record({
+          actorUserId: resolveAuditActorId(currentActor),
+          actorLabel: currentActor.username,
+          action: 'LINK_LOCK',
+          targetType: 'task_link',
+          targetId: linkId,
+          metadata: {
+            taskType: link.task_type,
+            schoolId: link.target_school_id,
+            grade: link.target_grade,
+            room: link.target_room,
+            reason: normalizedReason,
+            scope: link.task_type === 'LOGIN' ? link.login_data_scope : undefined,
+          },
+          ip: null,
+        });
+
         return {
           message: 'Link locked by admin',
           link_id: linkId,
@@ -430,6 +450,22 @@ export class TaskAccessService {
       await this.taskRepository.updateAdminLockState({
         linkId,
         locked: false,
+      });
+
+      await this.auditLog.record({
+        actorUserId: resolveAuditActorId(currentActor),
+        actorLabel: currentActor.username,
+        action: 'LINK_UNLOCK',
+        targetType: 'task_link',
+        targetId: linkId,
+        metadata: {
+          taskType: link.task_type,
+          schoolId: link.target_school_id,
+          grade: link.target_grade,
+          room: link.target_room,
+          scope: link.task_type === 'LOGIN' ? link.login_data_scope : undefined,
+        },
+        ip: null,
       });
 
       return {
