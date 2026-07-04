@@ -20,6 +20,7 @@ export function createTypeOrmOptions(
     synchronize: false,
     migrationsRun: false,
     logging: false,
+    ssl: config.ssl ? { rejectUnauthorized: false } : false,
     namingStrategy: new LegacyNamingStrategy(),
   };
 }

@@ -6,11 +6,16 @@ export interface DatabaseRuntimeConfig {
   username: string;
   password: string;
   database: string;
+  ssl: boolean;
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((value || '').trim().toLowerCase());
 }
 
 function requireEnv(name: string): string {
@@ -28,6 +33,7 @@ export function getDatabaseConfigFromEnv(): DatabaseRuntimeConfig {
     username: process.env.DB_USER || 'postgres',
     password: requireEnv('DB_PASSWORD'),
     database: process.env.DB_NAME || 'sts',
+    ssl: parseBoolean(process.env.DB_SSL),
   };
 }
 
