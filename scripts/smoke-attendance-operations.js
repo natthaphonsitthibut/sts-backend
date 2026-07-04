@@ -40,6 +40,8 @@ async function main() {
   const runtimeAuthConfig = app.get(authConfig.KEY);
   const address = app.getHttpServer().address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  const deniedUsername = 'attendance_operations_smoke_no_permission';
+  let deniedActorId = null;
 
   const fixtureRows = await dataSource.query(`
     SELECT term.id AS term_id, term.school_id, term.academic_year, term.semester,
@@ -69,12 +71,10 @@ async function main() {
   const fixture = fixtureRows[0];
 
   const [actors] = await dataSource.query(`
-    SELECT MIN(id) FILTER (WHERE role = 'ADMIN')::int AS admin_id,
-      MIN(id) FILTER (WHERE role = 'STUDENT')::int AS student_id
+    SELECT MIN(id) FILTER (WHERE role = 'ADMIN')::int AS admin_id
     FROM users WHERE status = 'ACTIVE'
   `);
   assert(Number.isInteger(actors.admin_id), 'No active ADMIN actor is available');
-  assert(Number.isInteger(actors.student_id), 'No active STUDENT actor is available');
 
   const roster = await dataSource.query(
     `SELECT student_uuid FROM student_term
@@ -110,13 +110,25 @@ async function main() {
 
   try {
     const adminId = actors.admin_id;
-    const studentId = actors.student_id;
+    const [deniedActor] = await dataSource.query(
+      `INSERT INTO users
+         (username, password, status, permissions, "FirstName", "LastName", role, data_scope)
+       VALUES ($1, 'NOT_A_LOGIN_CREDENTIAL', 'ACTIVE', '["home"]'::jsonb,
+         'Attendance', 'Smoke', 'TEACHER', $2::jsonb)
+       ON CONFLICT (username) DO UPDATE SET
+         status = 'ACTIVE', permissions = '["home"]'::jsonb,
+         role = 'TEACHER', data_scope = EXCLUDED.data_scope
+       RETURNING id`,
+      [deniedUsername, JSON.stringify({ school_ids: [fixture.school_id] })],
+    );
+    deniedActorId = Number(deniedActor.id);
+    assert(Number.isInteger(deniedActorId), 'No-permission staff fixture was not created');
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(new Date());
 
     await request('GET', `/api/attendance/terms?schoolId=${fixture.school_id}`, 401);
-    await request('GET', `/api/attendance/terms?schoolId=${fixture.school_id}`, 403, studentId);
+    await request('GET', `/api/attendance/terms?schoolId=${fixture.school_id}`, 403, deniedActorId);
 
     const termBody = {
       schoolId: fixture.school_id,
@@ -225,6 +237,12 @@ async function main() {
       reconciliation: classRow.operationalStatus, auditEvents: auditRows.length,
     }));
   } finally {
+    if (deniedActorId) {
+      await dataSource.query(`DELETE FROM users WHERE id = $1 AND username = $2`, [
+        deniedActorId,
+        deniedUsername,
+      ]);
+    }
     await app.close();
   }
 }
