@@ -1,10 +1,12 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import {
   ReviewCaseDto,
   type CaseReferralOutcomeStatus,
@@ -29,6 +31,7 @@ const CASE_RESOLUTION_OUTCOMES: CaseResolutionOutcome[] = [
   'REFERRED_EXTERNAL',
   'OTHER',
 ];
+const CASE_SLA_REMINDER_CRON = '0 45 4 * * *';
 
 @Injectable()
 export class CaseService {
@@ -118,6 +121,52 @@ export class CaseService {
   private actorLabel(actor?: AuthenticatedRequestUser): string | null {
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     return actor?.username || actorName || null;
+  }
+
+  async remindCaseSla(now = new Date()): Promise<{ warned: number; breached: number }> {
+    const warnings = await this.taskRepository.claimCaseSlaWarnings(now);
+    const breaches = await this.taskRepository.claimCaseSlaBreaches(now);
+
+    for (const row of warnings) {
+      await this.notificationsService.notifyCaseSlaWarning({
+        caseId: row.id,
+        studentName: row.student_name,
+        schoolId: row.school_id,
+        riskTier: row.risk_tier,
+        dueAt: row.sla_due_at,
+      });
+    }
+
+    for (const row of breaches) {
+      await this.notificationsService.notifyCaseSlaBreached({
+        caseId: row.id,
+        studentName: row.student_name,
+        schoolId: row.school_id,
+        riskTier: row.risk_tier,
+        dueAt: row.sla_due_at,
+      });
+    }
+
+    if (warnings.length > 0 || breaches.length > 0) {
+      this.logger.log(
+        `Sent ${warnings.length} case SLA warning(s) and ${breaches.length} breach escalation(s).`,
+      );
+    }
+
+    return { warned: warnings.length, breached: breaches.length };
+  }
+
+  @Cron(CASE_SLA_REMINDER_CRON, {
+    timeZone: BANGKOK_TIME_ZONE,
+    name: 'case_sla_reminder',
+  })
+  async runCaseSlaReminder(): Promise<void> {
+    try {
+      await this.remindCaseSla();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Case SLA reminder job failed: ${message}`);
+    }
   }
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {

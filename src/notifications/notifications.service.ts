@@ -152,6 +152,54 @@ export class NotificationsService {
     });
   }
 
+  async notifyCaseSlaWarning(event: {
+    caseId: number;
+    studentName: string | null;
+    schoolId: number | null;
+    riskTier: string | null;
+    dueAt: Date | string | null;
+  }): Promise<void> {
+    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
+    const dueAt =
+      event.dueAt instanceof Date
+        ? event.dueAt.toISOString()
+        : typeof event.dueAt === 'string'
+          ? event.dueAt
+          : 'ไม่ระบุวันกำหนด';
+    await this.fanOutSafely({
+      typeCode: 'CASE_SLA_WARNING',
+      title: 'เคสใกล้เกินกำหนดดำเนินการ',
+      body: `เคสของ ${student} · ระดับ ${event.riskTier ?? 'ไม่ระบุ'} · กำหนด ${dueAt}`,
+      refEntity: 'case',
+      refId: String(event.caseId),
+      schoolId: event.schoolId,
+    });
+  }
+
+  async notifyCaseSlaBreached(event: {
+    caseId: number;
+    studentName: string | null;
+    schoolId: number | null;
+    riskTier: string | null;
+    dueAt: Date | string | null;
+  }): Promise<void> {
+    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
+    const dueAt =
+      event.dueAt instanceof Date
+        ? event.dueAt.toISOString()
+        : typeof event.dueAt === 'string'
+          ? event.dueAt
+          : 'ไม่ระบุวันกำหนด';
+    await this.fanOutSafely({
+      typeCode: 'CASE_SLA_BREACHED',
+      title: 'เคสเกินกำหนดดำเนินการ',
+      body: `เคสของ ${student} · ระดับ ${event.riskTier ?? 'ไม่ระบุ'} · กำหนด ${dueAt}`,
+      refEntity: 'case',
+      refId: String(event.caseId),
+      schoolId: event.schoolId,
+    });
+  }
+
   async notifyAttendanceIncomplete(event: {
     sessionId: string;
     schoolId: number;

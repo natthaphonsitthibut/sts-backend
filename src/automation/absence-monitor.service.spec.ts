@@ -115,7 +115,20 @@ describe('AbsenceMonitorService', () => {
   });
 
   it('notifies eligible staff after creating an absence case', async () => {
-    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
+    automationRepository.getSystemSettingValue.mockImplementation((key) => {
+      const values: Record<string, string> = {
+        ABSENT_THRESHOLD_DAYS: '3',
+        CASE_RISK_HIGH_ABSENCE_DAYS: '7',
+        CASE_RISK_MEDIUM_ABSENCE_DAYS: '5',
+        CASE_SLA_HIGH_DAYS: '3',
+        CASE_SLA_MEDIUM_DAYS: '7',
+        CASE_SLA_LOW_DAYS: '14',
+      };
+      return values[key] ?? null;
+    });
+    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([
+      buildAbsentStudent({ consecutive_days: 7 }),
+    ]);
 
     const result = await service.checkConsecutiveAbsences();
 
@@ -135,6 +148,9 @@ describe('AbsenceMonitorService', () => {
       schoolName: 'โรงเรียนทดสอบ',
       reason: 'ขาดเรียนติดต่อกัน 3 วัน',
     });
+    const createdInput = automationRepository.createAutomatedCase.mock.calls[0]?.[0];
+    expect(createdInput?.riskTier).toBe('HIGH');
+    expect(createdInput?.slaDueAt).toBeInstanceOf(Date);
   });
 
   it('does not auto-cancel a legacy case without a stable student uuid', async () => {

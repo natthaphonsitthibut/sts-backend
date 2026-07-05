@@ -39,6 +39,7 @@
     "smoke:account-lifecycle-notifications": "node scripts/smoke-account-lifecycle-notifications.js",
     "smoke:task-overdue-notifications": "node scripts/smoke-task-overdue-notifications.js",
     "smoke:attendance-incomplete-notifications": "node scripts/smoke-attendance-incomplete-notifications.js",
+    "smoke:case-sla-notifications": "node scripts/smoke-case-sla-notifications.js",
     "smoke:seed-username-rename": "node scripts/smoke-seed-username-rename.js",
     "smoke:notifications-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-notifications-browser.js",
     "smoke:settings-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-settings-browser.js",

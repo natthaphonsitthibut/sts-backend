@@ -58,6 +58,8 @@ export type AuditAction =
   | 'CASE_REFERRAL_OUTCOME_UPDATE'
   | 'CASE_REVIEW'
   | 'CASE_AUTO_CANCEL'
+  | 'CASE_SLA_WARNING'
+  | 'CASE_SLA_BREACHED'
   | 'ATTENDANCE_SUBMIT'
   | 'ATTENDANCE_REOPEN'
   | 'TASK_CREATE'
@@ -339,6 +341,22 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     domain: 'cases',
     label: 'ยกเลิกเคสอัตโนมัติ',
     detailKeys: [],
+  },
+  CASE_SLA_WARNING: {
+    domain: 'cases',
+    label: 'แจ้งเตือน SLA เคส',
+    detailKeys: [
+      { key: 'riskTier', label: 'ระดับความเสี่ยง' },
+      { key: 'slaDueAt', label: 'กำหนดดำเนินการ' },
+    ],
+  },
+  CASE_SLA_BREACHED: {
+    domain: 'cases',
+    label: 'ยกระดับเคสเกิน SLA',
+    detailKeys: [
+      { key: 'riskTier', label: 'ระดับความเสี่ยง' },
+      { key: 'slaDueAt', label: 'กำหนดดำเนินการ' },
+    ],
   },
   TASK_DELETE: {
     domain: 'tasks',

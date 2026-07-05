@@ -9,6 +9,8 @@ import type {
 } from './automation.types';
 import { getBangkokDateString } from '../common/utils/date.util';
 
+type CaseRiskTier = 'HIGH' | 'MEDIUM' | 'LOW';
+
 @Injectable()
 export class AbsenceMonitorService {
   private readonly logger = new Logger(AbsenceMonitorService.name);
@@ -66,12 +68,51 @@ export class AbsenceMonitorService {
     return parts.join(' ');
   }
 
+  private parsePositiveIntegerSetting(value: string | null, fallback: number): number {
+    const parsed = value ? Number.parseInt(value, 10) : fallback;
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private deriveRiskTier(
+    consecutiveDays: number,
+    highThresholdDays: number,
+    mediumThresholdDays: number,
+  ): CaseRiskTier {
+    if (consecutiveDays >= highThresholdDays) return 'HIGH';
+    if (consecutiveDays >= mediumThresholdDays) return 'MEDIUM';
+    return 'LOW';
+  }
+
+  private addDays(baseDate: Date, days: number): Date {
+    return new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
+  }
+
   async checkConsecutiveAbsences(): Promise<NewCase[]> {
     this.logger.log('Starting CRON Job: Checking consecutive absences...');
 
     const thresholdSetting =
       await this.automationRepository.getSystemSettingValue('ABSENT_THRESHOLD_DAYS');
     const thresholdDays = thresholdSetting ? Number.parseInt(thresholdSetting, 10) : 3;
+    const riskHighDays = this.parsePositiveIntegerSetting(
+      await this.automationRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
+      7,
+    );
+    const riskMediumDays = this.parsePositiveIntegerSetting(
+      await this.automationRepository.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
+      5,
+    );
+    const slaHighDays = this.parsePositiveIntegerSetting(
+      await this.automationRepository.getSystemSettingValue('CASE_SLA_HIGH_DAYS'),
+      3,
+    );
+    const slaMediumDays = this.parsePositiveIntegerSetting(
+      await this.automationRepository.getSystemSettingValue('CASE_SLA_MEDIUM_DAYS'),
+      7,
+    );
+    const slaLowDays = this.parsePositiveIntegerSetting(
+      await this.automationRepository.getSystemSettingValue('CASE_SLA_LOW_DAYS'),
+      14,
+    );
 
     if (!Number.isInteger(thresholdDays) || thresholdDays <= 0) {
       this.logger.warn('ABSENT_THRESHOLD_DAYS is invalid. Skipping job.');
@@ -174,6 +215,14 @@ export class AbsenceMonitorService {
             `School ID: ${this.normalizeText(student.school_id_onec)}`;
           const address = this.buildStudentTermAddress(student) || null;
           const reason = `ขาดเรียนติดต่อกัน ${thresholdDays} วัน`;
+          const riskTier = this.deriveRiskTier(
+            student.consecutive_days,
+            riskHighDays,
+            riskMediumDays,
+          );
+          const slaDays =
+            riskTier === 'HIGH' ? slaHighDays : riskTier === 'MEDIUM' ? slaMediumDays : slaLowDays;
+          const slaDueAt = this.addDays(new Date(), slaDays);
 
           this.logger.log(`Inserting Case for ${studentName} with Reason: ${reason}`);
 
@@ -185,6 +234,8 @@ export class AbsenceMonitorService {
               schoolName,
               studentAddress: address,
               reason,
+              riskTier,
+              slaDueAt,
             },
             executor,
           );
