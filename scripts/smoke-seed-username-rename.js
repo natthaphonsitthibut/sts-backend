@@ -42,7 +42,8 @@ async function main() {
 
     for (const expected of EXPECTED) {
       const [row] = await dataSource.query(
-        `SELECT role, status, password IS NOT NULL AS has_password FROM users WHERE username = $1`,
+        `SELECT role, status, password IS NOT NULL AS has_password, email, "LastName"
+         FROM users WHERE username = $1`,
         [expected.username],
       );
       assert(row, `Renamed account "${expected.username}" is missing`);
@@ -50,7 +51,36 @@ async function main() {
       assert(row.status === 'ACTIVE', `"${expected.username}" is not ACTIVE`);
       // Password/role/scope are unchanged by the rename, so login still works.
       assert(row.has_password, `"${expected.username}" lost its password (login would break)`);
+      // Realistic identity (migration 20260705160000): staff email follows the
+      // username at the fictional domain; the demo student has none.
+      if (expected.role === 'STUDENT') {
+        assert(row.email === null, `Demo student "${expected.username}" should have no email`);
+      } else {
+        assert(
+          row.email === `${expected.username}@sts-demo.ac.th`,
+          `"${expected.username}" email ${row.email} != ${expected.username}@sts-demo.ac.th`,
+        );
+      }
     }
+
+    // No fixture-style emails or descriptive surnames remain on real accounts
+    // (AUTOMATED_TEST smoke fixtures keep synthetic emails by design).
+    const [emailLeft] = await dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM users
+       WHERE (email LIKE '%example.test%' OR email LIKE 'seed.%')
+         AND data_origin_code <> 'AUTOMATED_TEST'`,
+    );
+    assert(emailLeft.count === 0, `${emailLeft.count} fixture email(s) remain on real accounts`);
+    const [linkEmailLeft] = await dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM task_links
+       WHERE assigned_to_email LIKE '%example%' OR assigned_to_email LIKE 'seed.%'`,
+    );
+    assert(linkEmailLeft.count === 0, `${linkEmailLeft.count} fixture email(s) remain on task_links`);
+    const [surnameLeft] = await dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM users
+       WHERE "LastName" IN ('ดูแลจังหวัด','ดูแลอำเภอ','ดูแลตำบล','ดูแลโรงเรียน','ผู้อำนวยการ','ผู้บริหาร','บริหารกลาง','ทดสอบระบบ')`,
+    );
+    assert(surnameLeft.count === 0, `${surnameLeft.count} descriptive fixture surname(s) remain`);
 
     console.log(
       JSON.stringify({
@@ -60,6 +90,8 @@ async function main() {
           'no seed_ usernames remain',
           'newnew preserved',
           'all renamed accounts keep role, ACTIVE status and password (login intact)',
+          'staff emails follow username@sts-demo.ac.th; demo student has none',
+          'no fixture emails remain in users/task_links; no descriptive surnames remain',
         ],
       }),
     );
