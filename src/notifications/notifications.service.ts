@@ -152,6 +152,42 @@ export class NotificationsService {
     });
   }
 
+  async notifyAccountDeactivated(event: {
+    userId: number;
+    displayName: string | null;
+    schoolId: number | null;
+    actorUserId: number | null;
+  }): Promise<void> {
+    const who = event.displayName ? maskName(event.displayName) : 'บัญชีผู้ใช้งาน';
+    await this.fanOutSafely({
+      typeCode: 'ACCOUNT_DEACTIVATED',
+      title: 'มีบัญชีถูกปิดใช้งาน',
+      body: who,
+      refEntity: 'user',
+      refId: String(event.userId),
+      schoolId: event.schoolId,
+      excludeUserId: event.actorUserId,
+    });
+  }
+
+  async notifyAccountReactivated(event: {
+    userId: number;
+    displayName: string | null;
+    schoolId: number | null;
+    actorUserId: number | null;
+  }): Promise<void> {
+    const who = event.displayName ? maskName(event.displayName) : 'บัญชีผู้ใช้งาน';
+    await this.fanOutSafely({
+      typeCode: 'ACCOUNT_REACTIVATED',
+      title: 'มีบัญชีถูกเปิดใช้งานอีกครั้ง',
+      body: who,
+      refEntity: 'user',
+      refId: String(event.userId),
+      schoolId: event.schoolId,
+      excludeUserId: event.actorUserId,
+    });
+  }
+
   async notifyTaskDelegated(event: { taskId: string; assigneeName: string | null }): Promise<void> {
     const context = await this.findTaskContextSafely(event.taskId);
     const assignee = event.assigneeName ? maskName(event.assigneeName) : 'ผู้รับงานใหม่';

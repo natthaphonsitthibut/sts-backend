@@ -19,6 +19,7 @@ import {
 } from '../students/pii-fields.config';
 import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { finalizePersistedDataScope } from '../auth/auth.types';
 import { hasPermission } from '../auth/permissions.constants';
 import {
@@ -101,6 +102,7 @@ export class UsersService {
     private readonly auditLog: AuditLogService,
     @Inject(piiConfig.KEY)
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
+    private readonly notificationsService?: NotificationsService,
   ) {}
 
   async revealUserAddress(
@@ -721,6 +723,9 @@ export class UsersService {
       );
     });
 
+    // Best-effort: alert admins who manage users in this account's scope.
+    await this.notifyAccountLifecycleChange(existingUser, currentActor, 'DEACTIVATED');
+
     return {
       success: true,
       userId,
@@ -773,12 +778,52 @@ export class UsersService {
       );
     });
 
+    // Best-effort: alert admins who manage users in this account's scope.
+    await this.notifyAccountLifecycleChange(existingUser, currentActor, 'REACTIVATED');
+
     return {
       success: true,
       userId,
       status: 'ACTIVE',
       needsReissue: this.needsTemporaryPasswordReissue(existingUser),
     };
+  }
+
+  /**
+   * Fan a best-effort account-lifecycle notification out to staff who hold
+   * `manage-users-list` and whose data scope covers the affected account
+   * (nationwide admins always; scoped admins only for their own school). The
+   * acting admin is excluded. Never throws — notification is non-critical.
+   */
+  private async notifyAccountLifecycleChange(
+    affected: {
+      id: number;
+      username: string;
+      FirstName: string | null;
+      LastName: string | null;
+      data_scope: DataScope | null;
+    },
+    actor: ActorContext,
+    change: 'DEACTIVATED' | 'REACTIVATED',
+  ): Promise<void> {
+    if (!this.notificationsService) {
+      return;
+    }
+    const displayName =
+      [affected.FirstName, affected.LastName].filter(Boolean).join(' ').trim() || affected.username;
+    const schoolIds = affected.data_scope?.school_ids;
+    const schoolId = Array.isArray(schoolIds) && schoolIds.length > 0 ? Number(schoolIds[0]) : null;
+    const event = {
+      userId: affected.id,
+      displayName,
+      schoolId: Number.isFinite(schoolId) ? schoolId : null,
+      actorUserId: resolveAuditActorId(actor),
+    };
+    if (change === 'DEACTIVATED') {
+      await this.notificationsService.notifyAccountDeactivated(event);
+    } else {
+      await this.notificationsService.notifyAccountReactivated(event);
+    }
   }
 
   async changeOwnPassword(actor: ActorContext | undefined, data: ChangePasswordDto) {
