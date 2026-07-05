@@ -27,6 +27,7 @@
     "smoke:account-lifecycle-browser": "node scripts/smoke-account-lifecycle-browser.js",
     "smoke:master-data-lookups": "node scripts/smoke-master-data-lookups.js",
     "smoke:student-import-quarantine": "node scripts/smoke-student-import-quarantine.js",
+    "smoke:quarantine-retention": "node scripts/smoke-quarantine-retention.js",
     "smoke:student-accounts": "node scripts/smoke-student-accounts.js",
     "smoke:role-scope-users": "node scripts/smoke-role-scope-users.js",
     "smoke:role-scope-users-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-role-scope-users-browser.js",

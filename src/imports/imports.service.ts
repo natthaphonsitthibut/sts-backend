@@ -6,10 +6,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { createHash } from 'crypto';
 import * as xlsx from 'xlsx';
 import type { AuthenticatedRequestUser } from '../auth';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -37,6 +39,13 @@ import {
 const MAX_IMPORT_ROWS = 10_000;
 const IMPORT_PREVIEW_SAMPLE_LIMIT = 20;
 const QUARANTINE_RETRY_BATCH_LIMIT = 100;
+
+// Interim retention (owner-approved 2026-07-05): resolved/rejected quarantine
+// rows hold minor PII, so purge them 180 days after resolution. PENDING rows are
+// kept until worked, and the immutable audit_log is preserved. Replace with the
+// full PDPA retention matrix when it lands.
+const QUARANTINE_RETENTION_DAYS = 180;
+const QUARANTINE_RETENTION_CRON = '0 45 3 * * *';
 
 const PREVIEW_CHANGE_FIELDS: ReadonlyArray<{ column: string; label: string }> = [
   { column: 'FirstName_Onec', label: 'ชื่อ' },
@@ -2204,5 +2213,33 @@ export class ImportsService {
       },
     });
     return `\uFEFF${rows.map((row) => row.map((value) => this.csvCell(value)).join(',')).join('\n')}`;
+  }
+
+  /**
+   * Purge resolved/rejected quarantine rows older than the retention window.
+   * `now` is injectable for tests. PENDING rows and the audit_log are untouched.
+   */
+  async cleanupExpiredQuarantine(now = new Date()): Promise<{ deleted: number }> {
+    const cutoff = new Date(now.getTime() - QUARANTINE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const deleted = await this.importsRepository.deleteResolvedQuarantineOlderThan(cutoff);
+    if (deleted > 0) {
+      this.logger.log(
+        `Deleted ${deleted} resolved/rejected quarantine row(s) older than ${QUARANTINE_RETENTION_DAYS} days.`,
+      );
+    }
+    return { deleted };
+  }
+
+  @Cron(QUARANTINE_RETENTION_CRON, {
+    timeZone: BANGKOK_TIME_ZONE,
+    name: 'student_import_quarantine_retention_cleanup',
+  })
+  async runQuarantineRetentionCleanup(): Promise<void> {
+    try {
+      await this.cleanupExpiredQuarantine();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Quarantine retention cleanup failed: ${message}`);
+    }
   }
 }

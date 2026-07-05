@@ -1579,4 +1579,23 @@ describe('ImportsService', () => {
       expect.objectContaining({ action: 'IMPORT_QUARANTINE_EXPORT' }),
     );
   });
+
+  it('purges resolved/rejected quarantine rows past the 180-day retention window', async () => {
+    let capturedCutoff: Date | undefined;
+    const repository = {
+      deleteResolvedQuarantineOlderThan: jest.fn((cutoff: Date) => {
+        capturedCutoff = cutoff;
+        return Promise.resolve(3);
+      }),
+    };
+    const service = new ImportsService(repository as never, { record: jest.fn() } as never);
+    const now = new Date('2026-07-05T00:00:00.000Z');
+
+    const result = await service.cleanupExpiredQuarantine(now);
+
+    expect(result).toEqual({ deleted: 3 });
+    expect(repository.deleteResolvedQuarantineOlderThan).toHaveBeenCalledTimes(1);
+    // Cutoff is 180 days before `now`.
+    expect(capturedCutoff?.toISOString()).toBe('2026-01-06T00:00:00.000Z');
+  });
 });

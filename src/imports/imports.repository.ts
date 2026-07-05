@@ -270,6 +270,27 @@ export class ImportsRepository {
     return result.rows;
   }
 
+  /**
+   * Retention purge: hard-delete quarantine rows that have already been resolved
+   * or rejected and whose resolution is older than the cutoff. PENDING rows are
+   * never removed (they are unresolved work), and the immutable audit_log is
+   * untouched. Returns the number of rows deleted.
+   */
+  async deleteResolvedQuarantineOlderThan(cutoff: Date, executor?: QueryExecutor): Promise<number> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<{ id: string }>(
+      `
+        DELETE FROM student_import_quarantine_rows
+        WHERE status IN ('RESOLVED', 'REJECTED')
+          AND resolved_at IS NOT NULL
+          AND resolved_at < $1
+        RETURNING id::text
+      `,
+      [cutoff.toISOString()],
+    );
+    return result.rows.length;
+  }
+
   async upsertManualSchool(school: ManualSchool, executor?: QueryExecutor): Promise<void> {
     const queryExecutor = this.getExecutor(executor);
 
