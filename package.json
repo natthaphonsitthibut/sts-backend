@@ -41,6 +41,7 @@
     "smoke:attendance-incomplete-notifications": "node scripts/smoke-attendance-incomplete-notifications.js",
     "smoke:case-sla-notifications": "node scripts/smoke-case-sla-notifications.js",
     "smoke:pii-export": "node scripts/smoke-pii-export.js",
+    "smoke:pii-export-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-pii-export-browser.js",
     "smoke:seed-username-rename": "node scripts/smoke-seed-username-rename.js",
     "smoke:notifications-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-notifications-browser.js",
     "smoke:settings-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-settings-browser.js",
