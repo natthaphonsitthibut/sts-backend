@@ -31,6 +31,7 @@
     "smoke:role-scope-users": "node scripts/smoke-role-scope-users.js",
     "smoke:role-scope-users-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-role-scope-users-browser.js",
     "smoke:entity-history-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-entity-history-browser.js",
+    "smoke:student-accounts-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-student-accounts-browser.js",
     "smoke:current-enrollment": "node scripts/smoke-current-enrollment.js",
     "smoke:notifications": "node scripts/smoke-notifications.js",
     "smoke:notifications-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-notifications-browser.js",
