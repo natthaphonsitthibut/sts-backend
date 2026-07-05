@@ -23,7 +23,8 @@ const PERSON_UUID = '21000000-0000-4000-8000-000000000001';
 const STUDENT_UUID = '21000000-0000-4000-8000-000000000002';
 const STUDENT_PERSON_ID = '1234567890123';
 const SCHOOL_ID = 10010002;
-const GRADE_LEVEL_ID = 6;
+// Shared smoke fixture grade used by roster/account browser smokes.
+const GRADE_LEVEL_ID = 423;
 const ROOM_ID = 1;
 
 function assert(condition, message) {
@@ -385,7 +386,7 @@ async function cancelSmokeRequests(dataSource, requestIds) {
 async function latestRequest(dataSource, requesterId) {
   const [row] = await dataSource.query(
     `
-      SELECT id, status
+      SELECT id, status, scope_snapshot
       FROM pii_export_requests
       WHERE requester_user_id = $1
       ORDER BY created_at DESC
@@ -409,6 +410,10 @@ async function eventCount(dataSource, requestId, action) {
   return Number(row?.count ?? 0);
 }
 
+function includesStringish(values, expected) {
+  return Array.isArray(values) && values.map(String).includes(String(expected));
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -430,7 +435,11 @@ async function main() {
       await passwordService.hash(password),
       REQUESTER_USERNAME,
       'Requester',
-      { school_ids: [SCHOOL_ID] },
+      {
+        school_ids: [SCHOOL_ID],
+        grade_levels: [GRADE_LEVEL_ID],
+        room_ids: [String(ROOM_ID)],
+      },
     );
     const approverId = await upsertActor(
       dataSource,
@@ -447,7 +456,11 @@ async function main() {
       LastName: 'PII Export Browser',
       roles: ['ADMIN'],
       permissions: ['home', 'students'],
-      data_scope: { school_ids: [SCHOOL_ID] },
+      data_scope: {
+        school_ids: [SCHOOL_ID],
+        grade_levels: [GRADE_LEVEL_ID],
+        room_ids: [String(ROOM_ID)],
+      },
       must_change_password: false,
     };
     const approverUser = {
@@ -495,6 +508,14 @@ async function main() {
     assert(request?.id, 'Created PII export request was not found in database');
     requestIds.push(request.id);
     assert(request.status === 'PENDING', `Created request status was ${request.status}`);
+    assert(
+      includesStringish(request.scope_snapshot?.grade_levels, GRADE_LEVEL_ID),
+      'Created request scope did not include the selected grade level',
+    );
+    assert(
+      includesStringish(request.scope_snapshot?.room_ids, ROOM_ID),
+      'Created request scope did not include the selected room',
+    );
     assert((await eventCount(dataSource, request.id, 'REQUEST')) === 1, 'REQUEST event was not created');
     assert(
       !(await bodyText(client)).includes(STUDENT_PERSON_ID),
