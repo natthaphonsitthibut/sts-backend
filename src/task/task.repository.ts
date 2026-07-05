@@ -414,6 +414,45 @@ export class TaskRepository {
     }));
   }
 
+  /**
+   * Atomically claim overdue home-visit links: still ACTIVE, past their expiry,
+   * not yet flagged. The single UPDATE…RETURNING both marks and returns them, so
+   * a reminder is sent at most once even if the job overlaps.
+   */
+  async claimOverdueTaskLinks(cutoff: Date): Promise<
+    Array<{
+      id: string;
+      task_id: string | null;
+      created_by: number | null;
+      assigned_to_name: string | null;
+    }>
+  > {
+    const result = await this.query<QueryResultRow>(
+      `
+        UPDATE task_links
+        SET overdue_notified_at = now(), updated_at = now()
+        WHERE status = 'ACTIVE'
+          AND expires_at < $1
+          AND overdue_notified_at IS NULL
+          AND deleted_at IS NULL
+          AND created_by IS NOT NULL
+        RETURNING id, task_id, created_by, assigned_to_name
+      `,
+      [cutoff.toISOString()],
+    );
+    return result.rows.map((row) => ({
+      id: typeof row.id === 'string' ? row.id : '',
+      task_id: typeof row.task_id === 'string' ? row.task_id : null,
+      created_by:
+        typeof row.created_by === 'number'
+          ? row.created_by
+          : typeof row.created_by === 'string'
+            ? Number(row.created_by)
+            : null,
+      assigned_to_name: typeof row.assigned_to_name === 'string' ? row.assigned_to_name : null,
+    }));
+  }
+
   async findCaseById(
     caseId: number,
     executor?: QueryExecutor,

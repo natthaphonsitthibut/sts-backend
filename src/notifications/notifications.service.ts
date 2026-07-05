@@ -152,6 +152,23 @@ export class NotificationsService {
     });
   }
 
+  async notifyTaskOverdue(event: {
+    linkId: string;
+    taskId: string | null;
+    recipientUserId: number;
+    assigneeName: string | null;
+  }): Promise<void> {
+    const assignee = event.assigneeName ? maskName(event.assigneeName) : 'ผู้รับงาน';
+    await this.createForRecipientSafely({
+      recipientUserId: event.recipientUserId,
+      typeCode: 'TASK_OVERDUE',
+      title: 'งานเยี่ยมบ้านเลยกำหนดแล้ว',
+      body: `งานที่มอบให้ ${assignee} ยังไม่เสร็จและเลยกำหนด`,
+      refEntity: 'task',
+      refId: event.taskId ?? event.linkId,
+    });
+  }
+
   async notifyAccountDeactivated(event: {
     userId: number;
     displayName: string | null;

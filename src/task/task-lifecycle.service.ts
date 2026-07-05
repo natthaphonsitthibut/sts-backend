@@ -1,14 +1,19 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { finalizePersistedDataScope } from '../auth/auth.types';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import type { ActorContext, DataScope, QueryExecutor, QueryResultRow } from './task.types';
+
+const OVERDUE_TASK_REMINDER_CRON = '0 15 4 * * *';
 
 @Injectable()
 export class TaskLifecycleService {
@@ -18,7 +23,47 @@ export class TaskLifecycleService {
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
+    private readonly notificationsService?: NotificationsService,
   ) {}
+
+  /**
+   * Notify the assigning staff when a home-visit link passes its expiry without
+   * being completed. Claims-and-marks in one query so each link reminds once.
+   * `now` is injectable for tests. Best-effort — never blocks the cron.
+   */
+  async remindOverdueTaskLinks(now = new Date()): Promise<{ notified: number }> {
+    const overdue = await this.taskRepository.claimOverdueTaskLinks(now);
+    let notified = 0;
+    for (const link of overdue) {
+      if (link.created_by == null) {
+        continue;
+      }
+      await this.notificationsService?.notifyTaskOverdue({
+        linkId: link.id,
+        taskId: link.task_id,
+        recipientUserId: link.created_by,
+        assigneeName: link.assigned_to_name,
+      });
+      notified += 1;
+    }
+    if (notified > 0) {
+      this.logger.log(`Sent ${notified} overdue home-visit reminder(s).`);
+    }
+    return { notified };
+  }
+
+  @Cron(OVERDUE_TASK_REMINDER_CRON, {
+    timeZone: BANGKOK_TIME_ZONE,
+    name: 'overdue_task_link_reminder',
+  })
+  async runOverdueTaskReminders(): Promise<void> {
+    try {
+      await this.remindOverdueTaskLinks();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Overdue task reminder job failed: ${message}`);
+    }
+  }
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
