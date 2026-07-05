@@ -43,6 +43,6 @@ import { AttendanceModule } from '../attendance/attendance.module';
     EmailService,
     CaseService,
   ],
-  exports: [TaskService, DelegationService, EmailService, CaseService],
+  exports: [TaskService, DelegationService, EmailService, CaseService, TaskPolicyService],
 })
 export class TaskModule {}
