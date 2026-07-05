@@ -3,18 +3,68 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { CalendarDayType, SchoolTermStatus } from './attendance-operations.types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_TERM_DAYS = 401;
+const INCOMPLETE_ATTENDANCE_CRON = '0 30 4 * * *';
 
 @Injectable()
 export class AttendanceOperationsService {
-  constructor(private readonly repository: AttendanceOperationsRepository) {}
+  private readonly logger = new Logger(AttendanceOperationsService.name);
+
+  constructor(
+    private readonly repository: AttendanceOperationsRepository,
+    private readonly notificationsService?: NotificationsService,
+  ) {}
+
+  /**
+   * Notify staff who check attendance (permission `attendance`, in the session's
+   * school/grade/room scope) when a past-date session was left incomplete — some
+   * of the roster was never recorded. Claimed-and-flagged once per session.
+   * `now` is injectable for tests. Best-effort; never blocks the cron.
+   */
+  async remindIncompleteSessions(now = new Date()): Promise<{ notified: number }> {
+    const sessions = await this.repository.claimIncompleteSessions(now);
+    let notified = 0;
+    for (const session of sessions) {
+      await this.notificationsService?.notifyAttendanceIncomplete({
+        sessionId: session.id,
+        schoolId: session.school_id,
+        gradeLevel: session.grade_level_id,
+        roomId: session.room_id,
+        attendanceDate: session.attendance_date,
+        expected: session.expected_roster_count,
+        recorded: session.recorded_count,
+      });
+      notified += 1;
+    }
+    if (notified > 0) {
+      this.logger.log(`Sent ${notified} incomplete-attendance reminder(s).`);
+    }
+    return { notified };
+  }
+
+  @Cron(INCOMPLETE_ATTENDANCE_CRON, {
+    timeZone: BANGKOK_TIME_ZONE,
+    name: 'incomplete_attendance_reminder',
+  })
+  async runIncompleteAttendanceReminders(): Promise<void> {
+    try {
+      await this.remindIncompleteSessions();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Incomplete attendance reminder job failed: ${message}`);
+    }
+  }
 
   async listTerms(schoolId: number, actor?: AuthenticatedRequestUser) {
     await this.assertSchoolAccess(schoolId, actor);

@@ -43,6 +43,48 @@ export class AttendanceOperationsRepository {
     );
   }
 
+  /**
+   * Atomically claim past-date attendance sessions that were started but never
+   * finished (recorded fewer students than the roster), flagging each once so a
+   * completeness reminder is sent a single time. Returns the claimed sessions.
+   */
+  async claimIncompleteSessions(cutoffDate: Date): Promise<
+    Array<{
+      id: string;
+      school_id: number;
+      grade_level_id: number | null;
+      room_id: number | null;
+      attendance_date: string;
+      expected_roster_count: number;
+      recorded_count: number;
+    }>
+  > {
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `
+        UPDATE attendance_sessions
+        SET anomaly_notified_at = now(), updated_at = now()
+        WHERE deleted_at IS NULL
+          AND anomaly_notified_at IS NULL
+          AND attendance_date < $1::date
+          AND expected_roster_count > 0
+          AND recorded_count < expected_roster_count
+        RETURNING id, school_id, grade_level_id, room_id, attendance_date::text AS attendance_date,
+                  expected_roster_count, recorded_count
+      `,
+      [cutoffDate.toISOString().slice(0, 10)],
+    );
+    return result.rows.map((row) => ({
+      id: typeof row.id === 'string' ? row.id : '',
+      school_id: Number(row.school_id),
+      grade_level_id: row.grade_level_id == null ? null : Number(row.grade_level_id),
+      room_id: row.room_id == null ? null : Number(row.room_id),
+      attendance_date: typeof row.attendance_date === 'string' ? row.attendance_date : '',
+      expected_roster_count: Number(row.expected_roster_count),
+      recorded_count: Number(row.recorded_count),
+    }));
+  }
+
   async isSchoolInScope(schoolId: number, scope?: DataScope): Promise<boolean> {
     const params: unknown[] = [schoolId];
     const conditions = ['sc.id = $1'];

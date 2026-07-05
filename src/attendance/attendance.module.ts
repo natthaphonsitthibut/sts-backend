@@ -3,6 +3,7 @@ import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
 import { AutomationModule } from '../automation/automation.module';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { AttendanceRepository } from './attendance.repository';
 import { AttendanceLookupService } from './attendance-lookup.service';
 import { AttendanceReadService } from './attendance-read.service';
@@ -11,7 +12,7 @@ import { AttendanceOperationsRepository } from './attendance-operations.reposito
 import { AttendanceOperationsService } from './attendance-operations.service';
 
 @Module({
-  imports: [AuthModule, AutomationModule],
+  imports: [AuthModule, AutomationModule, NotificationsModule],
   controllers: [AttendanceController],
   providers: [
     AttendanceRepository,

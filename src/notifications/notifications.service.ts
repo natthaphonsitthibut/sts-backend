@@ -152,6 +152,28 @@ export class NotificationsService {
     });
   }
 
+  async notifyAttendanceIncomplete(event: {
+    sessionId: string;
+    schoolId: number;
+    gradeLevel: number | null;
+    roomId: number | null;
+    attendanceDate: string;
+    expected: number;
+    recorded: number;
+  }): Promise<void> {
+    const remaining = Math.max(event.expected - event.recorded, 0);
+    await this.fanOutSafely({
+      typeCode: 'ATTENDANCE_INCOMPLETE',
+      title: 'เช็กชื่อไม่ครบเลยกำหนด',
+      body: `วันที่ ${event.attendanceDate} · ยังเช็กไม่ครบ ${remaining} คน`,
+      refEntity: 'attendance',
+      refId: event.sessionId,
+      schoolId: event.schoolId,
+      gradeLevel: event.gradeLevel,
+      roomId: event.roomId,
+    });
+  }
+
   async notifyTaskOverdue(event: {
     linkId: string;
     taskId: string | null;
