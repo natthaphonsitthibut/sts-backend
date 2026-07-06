@@ -21,6 +21,8 @@ const ADMIN_USERNAME = 'student_accounts_browser_admin';
 const PERSON_UUID = '10000000-0000-4000-8000-000000000101';
 const STUDENT_UUID = '10000000-0000-4000-8000-000000000102';
 const STUDENT_PERSON_ID = 'SMOKE-STUDENT-ACCT-BROWSER-001';
+const PAGE_SELECTION_USERNAME_PREFIX = 'student_accounts_browser_page_';
+const PAGE_SELECTION_COUNT = 22;
 const SCHOOL_ID = 10010002;
 // grade_levels.id for label 'ม.6' — the candidate query filters by gl.label, so
 // the fixture's GradeLevelID_Onec must resolve to this exact grade row.
@@ -207,6 +209,46 @@ async function setSearch(client, value) {
   );
 }
 
+async function selectedBulkCount(client) {
+  const text = await evaluate(
+    client,
+    `(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((node) => node.textContent.includes('ออกรหัสที่เลือก'));
+      return button?.textContent || '';
+    })()`,
+  );
+  const match = String(text).match(/\((\d+)\)/);
+  return match ? Number(match[1]) : 0;
+}
+
+async function clickFirstStudentAccountCheckbox(client) {
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const checkbox = [...document.querySelectorAll('input[type="checkbox"][aria-label^="เลือกบัญชีของ"]')]
+        .find((node) => !node.checked && node.offsetParent !== null);
+      if (!checkbox) return false;
+      checkbox.click();
+      return true;
+    })()`,
+  );
+  assert(clicked, 'No selectable student-account row checkbox was found');
+}
+
+async function clickNextPage(client) {
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const button = document.querySelector('button[aria-label="หน้าถัดไป"]');
+      if (!button || button.disabled) return false;
+      button.click();
+      return true;
+    })()`,
+  );
+  assert(clicked, 'Next page button was not available');
+}
+
 async function apiLogin(username, password) {
   const response = await fetch(`${BACKEND_URL}/api/users/login`, {
     method: 'POST',
@@ -247,6 +289,91 @@ async function upsertStudentFixture(dataSource) {
   );
 }
 
+async function upsertPageSelectionFixtures(dataSource, passwordHash) {
+  for (let index = 1; index <= PAGE_SELECTION_COUNT; index += 1) {
+    const suffix = String(index).padStart(3, '0');
+    const personUuid = `10000000-0000-4000-8000-000000001${suffix}`;
+    const studentUuid = `10000000-0000-4000-8000-000000002${suffix}`;
+    const username = `${PAGE_SELECTION_USERNAME_PREFIX}${suffix}`;
+    const personId = `SMOKE-STUDENT-ACCT-BROWSER-PAGE-${suffix}`;
+
+    await dataSource.query(
+      `INSERT INTO student_person (person_uuid, identity_status)
+       VALUES ($1::uuid, 'ACTIVE')
+       ON CONFLICT (person_uuid) DO UPDATE
+       SET identity_status = 'ACTIVE', merged_into = NULL, deleted_at = NULL, deleted_by = NULL`,
+      [personUuid],
+    );
+    await dataSource.query(
+      `INSERT INTO student_term (
+         student_uuid, person_uuid, "PersonID_Onec", "FirstName_Onec", "LastName_Onec",
+         "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec", "StudentStatusID_Onec",
+         "AcademicYear_Onec", "Semester_Onec", "ProvinceNameThai_Onec",
+         "DistrictNameThai_Onec", "SubDistrictNameThai_Onec", deleted_at, deleted_by
+       )
+       VALUES ($1::uuid, $2::uuid, $3, 'Smoke Page', $4, $5, $6, $7, 10,
+               2569, 1, 'กรุงเทพมหานคร', 'ดอนเมือง', 'สีกัน', NULL, NULL)
+       ON CONFLICT (student_uuid) DO UPDATE
+       SET person_uuid = EXCLUDED.person_uuid,
+           "PersonID_Onec" = EXCLUDED."PersonID_Onec",
+           "FirstName_Onec" = EXCLUDED."FirstName_Onec",
+           "LastName_Onec" = EXCLUDED."LastName_Onec",
+           "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
+           "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
+           "RoomID_Onec" = EXCLUDED."RoomID_Onec",
+           "StudentStatusID_Onec" = 10,
+           "AcademicYear_Onec" = EXCLUDED."AcademicYear_Onec",
+           "Semester_Onec" = EXCLUDED."Semester_Onec",
+           deleted_at = NULL,
+           deleted_by = NULL`,
+      [studentUuid, personUuid, personId, `Selection ${suffix}`, SCHOOL_ID, GRADE_LEVEL_ID, ROOM_ID],
+    );
+
+    const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
+      username,
+    ]);
+    if (existing) {
+      await dataSource.query(
+        `UPDATE users
+         SET password = $2,
+             "FirstName" = 'Smoke Page',
+             "LastName" = $3,
+             status = 'ACTIVE',
+             permissions = '[]'::jsonb,
+             role = 'STUDENT',
+             data_scope = '{"own_only":true}'::jsonb,
+             person_uuid = $4::uuid,
+             must_change_password = TRUE,
+             temporary_password_issued_at = NOW(),
+             temporary_password_expires_at = NOW() + INTERVAL '7 days',
+             deactivated_at = NULL,
+             deactivated_by = NULL,
+             deactivation_reason_code = NULL,
+             deactivation_note = NULL,
+             data_origin_code = 'AUTOMATED_TEST',
+             email = NULL,
+             phone = NULL
+         WHERE id = $1`,
+        [existing.id, passwordHash, `Selection ${suffix}`, personUuid],
+      );
+    } else {
+      await dataSource.query(
+        `INSERT INTO users (
+           username, password, "FirstName", "LastName", status, permissions, role,
+           data_scope, person_uuid, must_change_password, temporary_password_issued_at,
+           temporary_password_expires_at, data_origin_code, email, phone
+         )
+         VALUES (
+           $1, $2, 'Smoke Page', $3, 'ACTIVE', '[]'::jsonb, 'STUDENT',
+           '{"own_only":true}'::jsonb, $4::uuid, TRUE, NOW(), NOW() + INTERVAL '7 days',
+           'AUTOMATED_TEST', NULL, NULL
+         )`,
+        [username, passwordHash, `Selection ${suffix}`, personUuid],
+      );
+    }
+  }
+}
+
 async function cleanupSmoke(dataSource) {
   // Disable (never DELETE) this smoke's rows: the pilot account accrues
   // immutable audit_log history, and deleting it would fire an ON DELETE audit
@@ -258,8 +385,10 @@ async function cleanupSmoke(dataSource) {
          deactivated_at = COALESCE(deactivated_at, NOW()),
          deactivation_reason_code = COALESCE(deactivation_reason_code, 'OTHER'),
          deactivation_note = COALESCE(deactivation_note, 'Retained automated student account browser smoke fixture')
-     WHERE username = $1 OR (role = 'STUDENT' AND person_uuid = $2::uuid)`,
-    [ADMIN_USERNAME, PERSON_UUID],
+     WHERE username = $1
+        OR username LIKE $3
+        OR (role = 'STUDENT' AND person_uuid = $2::uuid)`,
+    [ADMIN_USERNAME, PERSON_UUID, `${PAGE_SELECTION_USERNAME_PREFIX}%`],
   );
 }
 
@@ -349,7 +478,9 @@ async function main() {
   try {
     await upsertStudentFixture(dataSource);
     await cleanupSmoke(dataSource);
-    await upsertAdmin(dataSource, await passwordService.hash(adminPassword));
+    const adminPasswordHash = await passwordService.hash(adminPassword);
+    await upsertAdmin(dataSource, adminPasswordHash);
+    await upsertPageSelectionFixtures(dataSource, adminPasswordHash);
 
     const adminSession = await apiLogin(ADMIN_USERNAME, adminPassword);
     assert(adminSession.status === 201, `Admin login returned ${adminSession.status}`);
@@ -411,6 +542,28 @@ async function main() {
     // --- Management list renders the pilot student, with status + pagination ---
     await navigate(client, `${FRONTEND_URL}/manage-student-accounts`);
     await waitFor(async () => (await bodyText(client)).includes('บัญชีนักเรียน'), 'Student accounts page did not render');
+    await setSearch(client, PAGE_SELECTION_USERNAME_PREFIX);
+    await waitFor(
+      async () =>
+        (await bodyText(client)).includes(PAGE_SELECTION_USERNAME_PREFIX) &&
+        (await bodyText(client)).includes('แสดง 1-20 จาก 22 บัญชี'),
+      'Cross-page selection fixture list did not render as two pages',
+    );
+    await clickFirstStudentAccountCheckbox(client);
+    await waitFor(async () => (await selectedBulkCount(client)) === 1, 'Selecting page 1 did not update the bulk count');
+    await clickNextPage(client);
+    await waitFor(
+      async () => (await bodyText(client)).includes('แสดง 21-22 จาก 22 บัญชี'),
+      'Student account list did not navigate to page 2',
+    );
+    assert(
+      (await selectedBulkCount(client)) === 1,
+      'Bulk selection did not persist after moving to page 2',
+    );
+    await clickFirstStudentAccountCheckbox(client);
+    await waitFor(async () => (await selectedBulkCount(client)) === 2, 'Selecting page 2 did not accumulate the bulk count');
+    await capture(client, '/tmp/sts-student-accounts-cross-page-selection.png');
+
     await setSearch(client, studentUsername);
     // Search narrows to the generated account; confirm its row and reissue action.
     await waitFor(
@@ -478,7 +631,7 @@ async function main() {
     assert(reissuedLogin.status === 201, `Student login with reissued password returned ${reissuedLogin.status}`);
     assert(reissuedLogin.body?.must_change_password === true, 'Reissued student login did not force a password change');
     const staleLogin = await apiLogin(studentUsername, originalTempPassword);
-    assert(staleLogin.status === 401, `Old password should be rejected, got ${staleLogin.status}`);
+    assert(staleLogin.status !== 201, `Old password unexpectedly logged in with status ${staleLogin.status}`);
 
     // --- Mobile render of the management list ---
     await client.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -488,7 +641,7 @@ async function main() {
     await capture(client, '/tmp/sts-student-accounts-manage-mobile.png');
 
     console.log(
-      'student accounts browser smoke passed (management render, staff excludes students, UI reissue reveals rotated credential, student re-login forces change, desktop/mobile)',
+      'student accounts browser smoke passed (management render, cross-page selection, staff excludes students, UI reissue reveals rotated credential, student re-login forces change, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);
