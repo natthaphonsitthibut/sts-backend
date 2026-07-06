@@ -2217,11 +2217,23 @@ export class TaskRepository {
       case_summary AS (
         SELECT
           c.student_uuid,
-          COUNT(*) FILTER (WHERE c.status <> 'RESOLVED' AND c.deleted_at IS NULL)::int AS open_case_count,
-          MAX(c.created_at) FILTER (WHERE c.status <> 'RESOLVED' AND c.deleted_at IS NULL) AS latest_case_at
+          COUNT(*)::int AS open_case_count,
+          (array_agg(c.id ORDER BY c.created_at DESC, c.id DESC))[1] AS latest_open_case_id,
+          (array_agg(c.reason_flagged ORDER BY c.created_at DESC, c.id DESC))[1] AS latest_open_case_reason,
+          (array_agg(latest_task.task_id ORDER BY c.created_at DESC, c.id DESC))[1] AS latest_open_task_id,
+          MAX(c.created_at) AS latest_case_at
         FROM cases c
         JOIN base_students b ON b.student_uuid = c.student_uuid
+        LEFT JOIN LATERAL (
+          SELECT t.id AS task_id
+          FROM tasks t
+          WHERE t.case_id = c.id
+            AND t.deleted_at IS NULL
+          ORDER BY t.created_at DESC, t.id DESC
+          LIMIT 1
+        ) latest_task ON true
         WHERE c.deleted_at IS NULL
+          AND c.status <> 'RESOLVED'
         GROUP BY c.student_uuid
       ),
       metrics AS (
@@ -2251,6 +2263,9 @@ export class TaskRepository {
             ELSE NULL
           END AS weighted_attendance_percent,
           COALESCE(cases.open_case_count, 0)::int AS open_case_count,
+          cases.latest_open_case_id,
+          cases.latest_open_case_reason,
+          cases.latest_open_task_id,
           cases.latest_case_at
         FROM base_students b
         LEFT JOIN absence_streak streak ON streak.student_uuid = b.student_uuid
@@ -2377,7 +2392,9 @@ export class TaskRepository {
               ? `room ${sortDirection}, grade ASC, student_name ASC`
               : filters.sortBy === 'attendance'
                 ? `weighted_attendance_percent ${sortDirection} NULLS LAST, risk_severity DESC, student_name ASC`
-                : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
+                : filters.sortBy === 'openCases'
+                  ? `open_case_count ${sortDirection}, risk_severity DESC, risk_score DESC, student_name ASC`
+                  : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
 
     const rowsResult = await this.query<RiskDashboardRow>(
       `
@@ -2398,6 +2415,9 @@ export class TaskRepository {
           risk_tier,
           ROUND(risk_score, 4) AS risk_score,
           open_case_count,
+          latest_open_case_id,
+          latest_open_case_reason,
+          latest_open_task_id,
           latest_case_at
         FROM filtered
         ORDER BY ${orderBy}

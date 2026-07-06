@@ -190,6 +190,10 @@ export class TaskStatsService {
           riskTier: row.risk_tier,
           riskScore: Number(row.risk_score ?? 0),
           openCaseCount: Number(row.open_case_count ?? 0),
+          latestOpenCaseId:
+            row.latest_open_case_id == null ? null : Number(row.latest_open_case_id),
+          latestOpenCaseReason: row.latest_open_case_reason ?? null,
+          latestOpenTaskId: row.latest_open_task_id ?? null,
           latestCaseAt: row.latest_case_at,
         })),
         meta: {

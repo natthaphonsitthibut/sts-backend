@@ -24,6 +24,7 @@ export interface PiiExportRequestRow extends Record<string, unknown> {
   reason_code: string;
   reason_note: string | null;
   row_estimate: number | null;
+  selected_student_count?: number | string | null;
   download_token_hash: string | null;
   download_expires_at: Date | string | null;
   downloaded_at: Date | string | null;

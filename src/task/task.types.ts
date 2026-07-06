@@ -34,7 +34,14 @@ export interface QueryExecutor {
 }
 
 export type RiskDashboardTier = 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
-export type RiskDashboardSortBy = 'risk' | 'name' | 'school' | 'grade' | 'room' | 'attendance';
+export type RiskDashboardSortBy =
+  | 'risk'
+  | 'name'
+  | 'school'
+  | 'grade'
+  | 'room'
+  | 'attendance'
+  | 'openCases';
 export type RiskDashboardSortDirection = 'asc' | 'desc';
 
 export interface RiskDashboardFilters {
@@ -87,6 +94,9 @@ export interface RiskDashboardRow extends QueryResultRow {
   risk_tier: RiskDashboardTier;
   risk_score: number | string;
   open_case_count: number | string;
+  latest_open_case_id: number | string | null;
+  latest_open_case_reason: string | null;
+  latest_open_task_id: string | null;
   latest_case_at: string | null;
 }
 

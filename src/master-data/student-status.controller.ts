@@ -30,10 +30,10 @@ import { StudentStatusService } from './student-status.service';
 export class StudentStatusController {
   constructor(private readonly service: StudentStatusService) {}
 
-  // Read access also covers import admins — the quarantine fix dialog needs
-  // the status list to offer a picker without granting settings management.
+  // Read access covers list/search screens and import admins without granting
+  // settings management; mutations remain settings-only.
   @Get()
-  @RequireAnyPermission('settings', 'import-data')
+  @RequireAnyPermission('settings', 'import-data', 'students')
   list(@Query() query: ListStudentStatusesQueryDto) {
     return this.service.list(query);
   }

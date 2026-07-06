@@ -12,6 +12,7 @@ describe('PiiExportService', () => {
       PiiExportRepository,
       | 'countStudentsForScope'
       | 'createRequest'
+      | 'insertRequestStudents'
       | 'insertEvent'
       | 'withTransaction'
       | 'listRequests'
@@ -20,6 +21,7 @@ describe('PiiExportService', () => {
       | 'rejectRequest'
       | 'claimDownload'
       | 'findRequestByTokenHash'
+      | 'countRequestStudents'
       | 'listStudentsForExport'
       | 'claimExpiredRequests'
     >
@@ -95,6 +97,7 @@ describe('PiiExportService', () => {
     repository = {
       countStudentsForScope: jest.fn(),
       createRequest: jest.fn(),
+      insertRequestStudents: jest.fn(),
       insertEvent: jest.fn(),
       withTransaction: jest.fn(async (callback) => callback({ query: jest.fn() })),
       listRequests: jest.fn(),
@@ -103,6 +106,7 @@ describe('PiiExportService', () => {
       rejectRequest: jest.fn(),
       claimDownload: jest.fn(),
       findRequestByTokenHash: jest.fn(),
+      countRequestStudents: jest.fn(),
       listStudentsForExport: jest.fn(),
       claimExpiredRequests: jest.fn(),
     };
@@ -169,6 +173,59 @@ describe('PiiExportService', () => {
     expect(repository.countStudentsForScope).not.toHaveBeenCalled();
   });
 
+  it('creates a selected-student export only when every student is in scope', async () => {
+    repository.countStudentsForScope.mockResolvedValue(2);
+    repository.createRequest.mockResolvedValue(requestRow({ row_estimate: 2 }));
+
+    await service.createRequest(
+      actor,
+      {
+        scope: { school_ids: [10010002] },
+        selected_student_uuids: [
+          '00000000-0000-4000-8000-000000000101',
+          '00000000-0000-4000-8000-000000000102',
+        ],
+        include_full_national_id: false,
+        reason_code: 'VERIFY_DATA',
+        reason_note: 'ตรวจสอบข้อมูล',
+      },
+      { ip: null },
+    );
+
+    expect(repository.countStudentsForScope).toHaveBeenCalledWith({ school_ids: ['10010002'] }, [
+      '00000000-0000-4000-8000-000000000101',
+      '00000000-0000-4000-8000-000000000102',
+    ]);
+    expect(repository.insertRequestStudents).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      ['00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000102'],
+      expect.anything(),
+    );
+  });
+
+  it('rejects selected-student export when any selected student is out of scope', async () => {
+    repository.countStudentsForScope.mockResolvedValue(1);
+
+    await expect(
+      service.createRequest(
+        actor,
+        {
+          scope: { school_ids: [10010002] },
+          selected_student_uuids: [
+            '00000000-0000-4000-8000-000000000101',
+            '00000000-0000-4000-8000-000000000999',
+          ],
+          include_full_national_id: false,
+          reason_code: 'VERIFY_DATA',
+          reason_note: 'ตรวจสอบข้อมูล',
+        },
+        { ip: null },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(repository.createRequest).not.toHaveBeenCalled();
+  });
+
   it('rejects self approval', async () => {
     repository.findRequestById.mockResolvedValue(requestRow({ requester_user_id: approver.id }));
 
@@ -217,6 +274,7 @@ describe('PiiExportService', () => {
         include_full_national_id: false,
       }),
     );
+    repository.countRequestStudents.mockResolvedValue(0);
     repository.listStudentsForExport.mockResolvedValue([studentRow]);
 
     const result = await service.download(token, { ip: null });
@@ -226,6 +284,10 @@ describe('PiiExportService', () => {
     expect(result.csv).toContain('••••0123');
     expect(result.csv).not.toContain('1234567890123');
     expect(result.csv).toContain('••••3456');
+    expect(repository.listStudentsForExport).toHaveBeenCalledWith(
+      { school_ids: [10010002] },
+      undefined,
+    );
     expect(repository.insertEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'DOWNLOAD', actorUserId: null }),
       expect.anything(),
@@ -241,12 +303,33 @@ describe('PiiExportService', () => {
         include_full_national_id: true,
       }),
     );
+    repository.countRequestStudents.mockResolvedValue(0);
     repository.listStudentsForExport.mockResolvedValue([studentRow]);
 
     const result = await service.download(token, { ip: null });
 
     expect(result.csv).toContain('1234567890123');
     expect(result.csv).toContain('เลขบัตรประชาชน');
+  });
+
+  it('downloads only persisted selected students for selected-student exports', async () => {
+    const token = 'download-token';
+    repository.claimDownload.mockResolvedValue(
+      requestRow({
+        status: 'APPROVED',
+        download_token_hash: hashToken(token),
+        include_full_national_id: false,
+      }),
+    );
+    repository.countRequestStudents.mockResolvedValue(1);
+    repository.listStudentsForExport.mockResolvedValue([studentRow]);
+
+    await service.download(token, { ip: null });
+
+    expect(repository.listStudentsForExport).toHaveBeenCalledWith(
+      { school_ids: [10010002] },
+      '00000000-0000-4000-8000-000000000001',
+    );
   });
 
   it('returns gone for a used or expired download token', async () => {

@@ -89,6 +89,20 @@ describe('StudentsService', () => {
     );
   });
 
+  it('passes student status code to the student list query', async () => {
+    studentsRepository.listStudents.mockResolvedValue({ rows: [], totalCount: 0 });
+
+    await service.findAll({ student_status_code: 20, enrollmentState: 'all', page: 1, limit: 20 });
+
+    expect(studentsRepository.listStudents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        studentStatusCode: 20,
+        enrollmentState: 'all',
+      }),
+      undefined,
+    );
+  });
+
   it('passes geo filters to student filter options', async () => {
     studentsRepository.getStudentFilterOptions.mockResolvedValue({ grades: [], rooms: [] });
 
@@ -105,6 +119,23 @@ describe('StudentsService', () => {
         district: 'เขตปทุมวัน',
         subDistrict: 'รองเมือง',
         grade: 'ม.1',
+        enrollmentState: 'current-active',
+      }),
+      undefined,
+    );
+  });
+
+  it('passes student status code to student filter options', async () => {
+    studentsRepository.getStudentFilterOptions.mockResolvedValue({ grades: [], rooms: [] });
+
+    await service.getFilterOptions({
+      student_status_code: 10,
+      enrollmentState: 'current-active',
+    });
+
+    expect(studentsRepository.getStudentFilterOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        studentStatusCode: 10,
         enrollmentState: 'current-active',
       }),
       undefined,

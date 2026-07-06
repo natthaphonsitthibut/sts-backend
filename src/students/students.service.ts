@@ -96,12 +96,12 @@ function maskStudentDetail(
   return { ...masked, masked_fields: maskedFields, revealed_fields: revealedFields };
 }
 
-function parseOptionalInteger(value?: string): number | undefined {
+function parseOptionalInteger(value?: string | number): number | undefined {
   if (!value || value === 'ALL' || value === 'all') {
     return undefined;
   }
 
-  const parsed = Number.parseInt(value, 10);
+  const parsed = Number.parseInt(String(value), 10);
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
@@ -112,6 +112,13 @@ function normalizeOptionalString(value?: string): string | undefined {
 
 function normalizeEnrollmentState(value?: string): StudentEnrollmentState {
   return value === 'all' ? 'all' : 'current-active';
+}
+
+function normalizeStudentStatusCode(
+  value?: string | number,
+  fallback?: string | number,
+): number | undefined {
+  return parseOptionalInteger(value ?? fallback);
 }
 
 function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): StudentListFilters {
@@ -129,6 +136,10 @@ function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): Student
     district: normalizeOptionalString(queryParams.district),
     subDistrict: normalizeOptionalString(queryParams.subDistrict),
     searchTerm: searchTerm && searchTerm.length > 0 ? searchTerm : undefined,
+    studentStatusCode: normalizeStudentStatusCode(
+      queryParams.student_status_code,
+      queryParams.studentStatusCode,
+    ),
     enrollmentState: normalizeEnrollmentState(queryParams.enrollmentState),
     page: queryParams.page && queryParams.page > 0 ? queryParams.page : 1,
     limit:
@@ -259,6 +270,10 @@ export class StudentsService {
           district: normalizeOptionalString(query.district),
           subDistrict: normalizeOptionalString(query.subDistrict),
           grade: query.grade && query.grade !== 'ALL' ? query.grade : undefined,
+          studentStatusCode: normalizeStudentStatusCode(
+            query.student_status_code,
+            query.studentStatusCode,
+          ),
           enrollmentState: normalizeEnrollmentState(query.enrollmentState),
         },
         userScope,

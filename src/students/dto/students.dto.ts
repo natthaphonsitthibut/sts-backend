@@ -36,6 +36,18 @@ export class GetStudentsQueryDto {
   searchTerm?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  student_status_code?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  studentStatusCode?: number;
+
+  @IsOptional()
   @IsIn(STUDENT_ENROLLMENT_STATES)
   enrollmentState?: string;
 
@@ -73,6 +85,18 @@ export class GetStudentFilterOptionsQueryDto {
   @IsOptional()
   @IsString()
   grade?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  student_status_code?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  studentStatusCode?: number;
 
   @IsOptional()
   @IsIn(STUDENT_ENROLLMENT_STATES)

@@ -19,6 +19,7 @@ import type { PiiExportRequestRow, PiiExportStudentRow } from './pii-export.type
 const EXPORT_DOWNLOAD_TTL_HOURS = 24;
 const EXPORT_EXPIRY_CRON = '0 5 4 * * *';
 const EXPORT_REASON_CODES = PII_REASON_CODES.filter((code) => code !== 'SELF_ACCESS');
+const MAX_SELECTED_STUDENTS = 500;
 
 export interface PiiExportRequestMeta {
   ip: string | null;
@@ -45,6 +46,15 @@ function maskIdentifier(value: unknown): string {
 function maskDocument(value: unknown): string {
   const normalized = normalizeScalar(value);
   return normalized.length >= 4 ? `••••${normalized.slice(-4)}` : '-';
+}
+
+function normalizeSelectedStudentUuids(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(
+    new Set(value.map((item) => normalizeScalar(item)).filter((item) => item.length > 0)),
+  );
 }
 
 @Injectable()
@@ -133,6 +143,7 @@ export class PiiExportService {
       reason_code: row.reason_code,
       reason_note: row.reason_note,
       row_estimate: row.row_estimate,
+      selected_student_count: Number(row.selected_student_count ?? 0),
       download_expires_at: row.download_expires_at,
       downloaded_at: row.downloaded_at,
       rejected_reason: row.rejected_reason,
@@ -150,7 +161,16 @@ export class PiiExportService {
     const scope = this.normalizeScope(dto.scope);
     this.assertScopeAllowed(scope, actor);
     const reasonNote = this.assertReason(dto.reason_code, dto.reason_note);
-    const rowEstimate = await this.repository.countStudentsForScope(scope);
+    const selectedStudentUuids = normalizeSelectedStudentUuids(dto.selected_student_uuids);
+    if (selectedStudentUuids.length > MAX_SELECTED_STUDENTS) {
+      throw new BadRequestException(
+        `selected_student_uuids must not exceed ${MAX_SELECTED_STUDENTS}`,
+      );
+    }
+    const rowEstimate = await this.repository.countStudentsForScope(scope, selectedStudentUuids);
+    if (selectedStudentUuids.length > 0 && rowEstimate !== selectedStudentUuids.length) {
+      throw new ForbiddenException('ไม่สามารถขอส่งออกนักเรียนนอกขอบเขตสิทธิ์ของตนเองได้');
+    }
     const row = await this.repository.withTransaction(async (executor) => {
       const request = await this.repository.createRequest(
         {
@@ -163,6 +183,7 @@ export class PiiExportService {
         },
         executor,
       );
+      await this.repository.insertRequestStudents(request.id, selectedStudentUuids, executor);
       await this.repository.insertEvent(
         {
           requestId: request.id,
@@ -171,6 +192,7 @@ export class PiiExportService {
           metadata: {
             includeFullNationalId: dto.include_full_national_id === true,
             rowEstimate,
+            selectedStudentCount: selectedStudentUuids.length,
             reasonCode: dto.reason_code,
           },
           ip: meta.ip,
@@ -393,7 +415,11 @@ export class PiiExportService {
       }
       throw new GoneException('ลิงก์ดาวน์โหลดหมดอายุหรือถูกใช้ไปแล้ว');
     }
-    const rows = await this.repository.listStudentsForExport(request.scope_snapshot);
+    const selectedStudentCount = await this.repository.countRequestStudents(request.id);
+    const rows = await this.repository.listStudentsForExport(
+      request.scope_snapshot,
+      selectedStudentCount > 0 ? request.id : undefined,
+    );
     const csv = this.exportRowsToCsv(request, rows);
     return {
       filename: `pii-export-${request.id.slice(0, 8)}.csv`,

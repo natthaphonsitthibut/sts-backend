@@ -105,6 +105,13 @@ export class StudentsRepository {
       );
     }
 
+    if (typeof filters.studentStatusCode === 'number') {
+      params.push(filters.studentStatusCode);
+      conditions.push(
+        `COALESCE(s.student_status_code, s."StudentStatusID_Onec") = $${params.length}`,
+      );
+    }
+
     const currentEnrollmentJoin =
       filters.enrollmentState === 'all'
         ? ''
@@ -184,6 +191,7 @@ export class StudentsRepository {
       district?: string;
       subDistrict?: string;
       grade?: string;
+      studentStatusCode?: StudentListFilters['studentStatusCode'];
       enrollmentState?: StudentListFilters['enrollmentState'];
     },
     userScope?: DataScope,
@@ -236,6 +244,13 @@ export class StudentsRepository {
       if (withGrade && filters.grade) {
         params.push(filters.grade);
         conditions.push(`gl.label = $${params.length}`);
+      }
+
+      if (typeof filters.studentStatusCode === 'number') {
+        params.push(filters.studentStatusCode);
+        conditions.push(
+          `COALESCE(s.student_status_code, s."StudentStatusID_Onec") = $${params.length}`,
+        );
       }
 
       return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

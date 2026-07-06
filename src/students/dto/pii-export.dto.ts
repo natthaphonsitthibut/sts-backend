@@ -2,11 +2,13 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsArray,
+  ArrayMaxSize,
   IsIn,
   IsInt,
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
   ValidateNested,
@@ -54,6 +56,12 @@ export class CreatePiiExportRequestDto {
   @IsOptional()
   @IsBoolean()
   include_full_national_id?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsUUID('4', { each: true })
+  selected_student_uuids?: string[];
 
   @IsIn(EXPORT_REASON_CODES)
   reason_code!: string;

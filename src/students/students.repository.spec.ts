@@ -47,6 +47,17 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[1]).not.toContain('student_current_enrollment_resolution');
   });
 
+  it('filters student list by canonical student status code', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.listStudents({ studentStatusCode: 20, enrollmentState: 'all' });
+
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).toContain('COALESCE(s.student_status_code, s."StudentStatusID_Onec") = $1');
+    expect(queries[1]).toContain('COALESCE(s.student_status_code, s."StudentStatusID_Onec") = $1');
+  });
+
   it('filters student filter options through current enrollment policy by default', async () => {
     const queries: string[] = [];
     const repository = createRepositoryWithQueryCapture(queries);
@@ -56,5 +67,16 @@ describe('StudentsRepository roster queries', () => {
     expect(queries).toHaveLength(2);
     expectCurrentEnrollmentPolicy(queries[0]);
     expectCurrentEnrollmentPolicy(queries[1]);
+  });
+
+  it('filters student filter options by canonical student status code', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.getStudentFilterOptions({ studentStatusCode: 10 });
+
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).toContain('COALESCE(s.student_status_code, s."StudentStatusID_Onec")');
+    expect(queries[1]).toContain('COALESCE(s.student_status_code, s."StudentStatusID_Onec")');
   });
 });

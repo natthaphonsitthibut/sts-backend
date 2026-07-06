@@ -11,6 +11,7 @@ export interface StudentListFilters {
   district?: string;
   subDistrict?: string;
   searchTerm?: string;
+  studentStatusCode?: number;
   enrollmentState?: StudentEnrollmentState;
   page?: number;
   limit?: number;

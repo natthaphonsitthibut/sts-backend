@@ -262,17 +262,61 @@ async function disableActor(dataSource) {
   );
 }
 
-async function fetchRiskDashboard(client) {
+async function fetchRiskDashboard(client, sortDirection = 'desc') {
   return evaluate(
     client,
     `(async () => {
       const response = await fetch(${JSON.stringify(
-        `${BACKEND_URL}/api/dashboard/risk-watchlist?limit=10&sortBy=risk&sortDirection=desc`,
+        `${BACKEND_URL}/api/dashboard/risk-watchlist?limit=10&sortBy=risk&sortDirection=${sortDirection}`,
       )}, { credentials: 'include' });
       const payload = await response.json();
       return { status: response.status, payload };
     })()`,
   );
+}
+
+async function clickRiskSortHeader(client) {
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const button = Array.from(document.querySelectorAll('th button'))
+        .find((candidate) => candidate.innerText.includes('ระดับ'));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`,
+  );
+  assert(clicked, 'Risk sort header button was not found');
+}
+
+async function assertRiskSortDirection(client, direction, label) {
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => {
+          const header = Array.from(document.querySelectorAll('th[aria-sort="${direction}"]'))
+            .find((candidate) => candidate.innerText.includes('ระดับ'));
+          return Boolean(header);
+        })()`,
+      ),
+    `${label} risk sort header did not switch to ${direction}`,
+  );
+}
+
+async function setMobileSort(client, value) {
+  const selected = await evaluate(
+    client,
+    `(() => {
+      const select = Array.from(document.querySelectorAll('select'))
+        .find((candidate) => candidate.getAttribute('aria-label') === 'เรียงลำดับรายงานนักเรียน');
+      if (!select) return null;
+      select.value = ${JSON.stringify(value)};
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return select.value;
+    })()`,
+  );
+  assert(selected === value, `Mobile sort select did not accept ${value}`);
 }
 
 async function assertRiskDashboard(client, expectedStudentName, expectedTotalCount, label) {
@@ -359,6 +403,11 @@ async function main() {
     assert(expectedTotalCount > 0, 'Risk dashboard API totalCount was zero');
 
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop');
+    await assertRiskSortDirection(client, 'descending', 'desktop default');
+    await clickRiskSortHeader(client);
+    await assertRiskSortDirection(client, 'ascending', 'desktop toggle');
+    await clickRiskSortHeader(client);
+    await assertRiskSortDirection(client, 'descending', 'desktop toggle back');
     await capture(client, '/tmp/sts-risk-dashboard-desktop.png');
 
     await client.call('Emulation.setDeviceMetricsOverride', {
@@ -368,9 +417,11 @@ async function main() {
       mobile: true,
     });
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'mobile');
+    await setMobileSort(client, 'risk:asc');
+    await setMobileSort(client, 'risk:desc');
     await capture(client, '/tmp/sts-risk-dashboard-mobile.png');
 
-    console.log('risk dashboard browser smoke passed (API, desktop/mobile render)');
+    console.log('risk dashboard browser smoke passed (API, desktop/mobile render, sort controls)');
   } finally {
     await closeChrome(chrome);
     await disableActor(dataSource).catch(() => null);

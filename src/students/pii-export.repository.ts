@@ -54,8 +54,25 @@ export class PiiExportRepository {
     };
   }
 
-  async countStudentsForScope(scope: DataScope): Promise<number> {
+  private studentScopeSelectionWhere(
+    scope: DataScope,
+    selectedStudentUuids?: string[],
+  ): { sql: string; params: unknown[] } {
     const where = this.studentScopeWhere(scope);
+    const conditions = where.sql ? [where.sql.replace(/^WHERE\s+/u, '')] : [];
+    const params = [...where.params];
+    if (selectedStudentUuids?.length) {
+      params.push(selectedStudentUuids);
+      conditions.push(`s.student_uuid = ANY($${params.length}::uuid[])`);
+    }
+    return {
+      sql: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
+      params,
+    };
+  }
+
+  async countStudentsForScope(scope: DataScope, selectedStudentUuids?: string[]): Promise<number> {
+    const where = this.studentScopeSelectionWhere(scope, selectedStudentUuids);
     const result = await this.query<{ count: number | string }>(
       `
         SELECT COUNT(*)::int AS count
@@ -106,6 +123,24 @@ export class PiiExportRepository {
       ],
     );
     return result.rows[0];
+  }
+
+  async insertRequestStudents(
+    requestId: string,
+    studentUuids: string[],
+    executor: SqlQueryExecutor,
+  ): Promise<void> {
+    if (studentUuids.length === 0) {
+      return;
+    }
+    await executor.query(
+      `
+        INSERT INTO pii_export_request_students (request_id, student_uuid)
+        SELECT $1::uuid, unnest($2::uuid[])
+        ON CONFLICT (request_id, student_uuid) DO NOTHING
+      `,
+      [requestId, studentUuids],
+    );
   }
 
   async insertEvent(
@@ -195,11 +230,14 @@ export class PiiExportRepository {
           concat_ws(' ', requester."FirstName", requester."LastName") AS requester_name,
           approver.username AS approver_username,
           concat_ws(' ', approver."FirstName", approver."LastName") AS approver_name,
+          COUNT(selected.student_uuid)::int AS selected_student_count,
           COUNT(*) OVER()::int AS total_count
         FROM pii_export_requests request
         JOIN users requester ON requester.id = request.requester_user_id
         LEFT JOIN users approver ON approver.id = request.approver_user_id
+        LEFT JOIN pii_export_request_students selected ON selected.request_id = request.id
         WHERE ${conditions.join(' AND ')}
+        GROUP BY request.id, requester.id, approver.id
         ORDER BY request.created_at DESC
         LIMIT $${limitIndex} OFFSET $${offsetIndex}
       `,
@@ -219,11 +257,14 @@ export class PiiExportRepository {
           requester.username AS requester_username,
           concat_ws(' ', requester."FirstName", requester."LastName") AS requester_name,
           approver.username AS approver_username,
-          concat_ws(' ', approver."FirstName", approver."LastName") AS approver_name
+          concat_ws(' ', approver."FirstName", approver."LastName") AS approver_name,
+          COUNT(selected.student_uuid)::int AS selected_student_count
         FROM pii_export_requests request
         JOIN users requester ON requester.id = request.requester_user_id
         LEFT JOIN users approver ON approver.id = request.approver_user_id
+        LEFT JOIN pii_export_request_students selected ON selected.request_id = request.id
         WHERE request.id = $1::uuid
+        GROUP BY request.id, requester.id, approver.id
       `,
       [id],
     );
@@ -305,8 +346,31 @@ export class PiiExportRepository {
     return result.rows[0] ?? null;
   }
 
-  async listStudentsForExport(scope: DataScope): Promise<PiiExportStudentRow[]> {
+  async countRequestStudents(requestId: string): Promise<number> {
+    const result = await this.query<{ count: number | string }>(
+      `
+        SELECT COUNT(*)::int AS count
+        FROM pii_export_request_students
+        WHERE request_id = $1::uuid
+      `,
+      [requestId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async listStudentsForExport(
+    scope: DataScope,
+    requestId?: string,
+  ): Promise<PiiExportStudentRow[]> {
     const where = this.studentScopeWhere(scope);
+    const selectedJoin = requestId
+      ? `
+        JOIN pii_export_request_students selected
+          ON selected.student_uuid = s.student_uuid
+         AND selected.request_id = $${where.params.length + 1}::uuid
+      `
+      : '';
+    const params = requestId ? [...where.params, requestId] : where.params;
     const result = await this.query<PiiExportStudentRow>(
       `
         SELECT
@@ -328,6 +392,7 @@ export class PiiExportRepository {
           s."ProvinceNameThai_Onec",
           s."PostalCode_Onec"
         FROM student_term s
+        ${selectedJoin}
         JOIN student_current_enrollment_resolution current_enrollment
           ON current_enrollment.person_uuid = s.person_uuid
          AND current_enrollment.selected_student_uuid = s.student_uuid
@@ -340,7 +405,7 @@ export class PiiExportRepository {
         ORDER BY s."SchoolID_Onec", s."GradeLevelID_Onec", s."RoomID_Onec", s."PersonID_Onec"
         LIMIT 10000
       `,
-      where.params,
+      params,
     );
     return result.rows;
   }

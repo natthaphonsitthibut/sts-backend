@@ -31,17 +31,19 @@ describe('StudentStatusController access', () => {
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('list'))).toEqual([
       'settings',
       'import-data',
+      'students',
     ]);
     for (const method of ['getByCode', 'create', 'update', 'disable']) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual(['settings']);
     }
   });
 
-  it('allows settings or import-data to list and rejects actors without either', () => {
+  it('allows settings, import-data or students to list and rejects actors without them', () => {
     const guard = new PermissionsGuard(new Reflector());
 
     expect(guard.canActivate(contextWithPermissions('list', ['settings']))).toBe(true);
     expect(guard.canActivate(contextWithPermissions('list', ['import-data']))).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('list', ['students']))).toBe(true);
     expect(() => guard.canActivate(contextWithPermissions('list', ['home']))).toThrow(
       ForbiddenException,
     );
