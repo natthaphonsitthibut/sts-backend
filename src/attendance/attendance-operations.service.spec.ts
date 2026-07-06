@@ -65,7 +65,7 @@ describe('AttendanceOperationsService', () => {
           id: 5,
           username: 'director',
           roles: ['DIRECTOR'],
-          permissions: ['settings'],
+          permissions: ['manage-attendance-calendar'],
           data_scope: { school_ids: [10010002] },
         },
       ),

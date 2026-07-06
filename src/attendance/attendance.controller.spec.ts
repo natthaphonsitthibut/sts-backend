@@ -81,4 +81,42 @@ describe('AttendanceController access', () => {
       ).toThrow(ForbiddenException);
     }
   });
+
+  it('separates attendance calendar read and write permissions', () => {
+    const guard = new PermissionsGuard(new Reflector());
+    const calendarReadMethods: Array<keyof AttendanceController> = ['listTerms', 'listCalendar'];
+    const calendarWriteMethods: Array<keyof AttendanceController> = [
+      'upsertTerm',
+      'generateCalendar',
+      'updateCalendarDay',
+    ];
+
+    for (const method of calendarReadMethods) {
+      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
+        'attendance-dashboard',
+        'manage-attendance-calendar',
+      ]);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
+        true,
+      );
+      expect(
+        guard.canActivate(contextWithPermissions(method, ['manage-attendance-calendar'])),
+      ).toBe(true);
+      expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
+        ForbiddenException,
+      );
+    }
+
+    for (const method of calendarWriteMethods) {
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([
+        'manage-attendance-calendar',
+      ]);
+      expect(
+        guard.canActivate(contextWithPermissions(method, ['manage-attendance-calendar'])),
+      ).toBe(true);
+      expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
+        ForbiddenException,
+      );
+    }
+  });
 });

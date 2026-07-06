@@ -41,7 +41,9 @@ async function main() {
   const address = app.getHttpServer().address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const deniedUsername = 'attendance_operations_smoke_no_permission';
+  const settingsOnlyUsername = 'attendance_operations_smoke_settings_only';
   let deniedActorId = null;
+  let settingsOnlyActorId = null;
 
   const fixtureRows = await dataSource.query(`
     SELECT term.id AS term_id, term.school_id, term.academic_year, term.semester,
@@ -112,17 +114,30 @@ async function main() {
     const adminId = actors.admin_id;
     const [deniedActor] = await dataSource.query(
       `INSERT INTO users
-         (username, password, status, permissions, "FirstName", "LastName", role, data_scope)
+         (username, password, status, permissions, "FirstName", "LastName", role, data_scope, data_origin_code)
        VALUES ($1, 'NOT_A_LOGIN_CREDENTIAL', 'ACTIVE', '["home"]'::jsonb,
-         'Attendance', 'Smoke', 'TEACHER', $2::jsonb)
+         'Attendance', 'Smoke', 'TEACHER', $2::jsonb, 'AUTOMATED_TEST')
        ON CONFLICT (username) DO UPDATE SET
          status = 'ACTIVE', permissions = '["home"]'::jsonb,
-         role = 'TEACHER', data_scope = EXCLUDED.data_scope
+         role = 'TEACHER', data_scope = EXCLUDED.data_scope, data_origin_code = 'AUTOMATED_TEST'
        RETURNING id`,
       [deniedUsername, JSON.stringify({ school_ids: [fixture.school_id] })],
     );
     deniedActorId = Number(deniedActor.id);
     assert(Number.isInteger(deniedActorId), 'No-permission staff fixture was not created');
+    const [settingsOnlyActor] = await dataSource.query(
+      `INSERT INTO users
+         (username, password, status, permissions, "FirstName", "LastName", role, data_scope, data_origin_code)
+       VALUES ($1, 'NOT_A_LOGIN_CREDENTIAL', 'ACTIVE', '["home","settings"]'::jsonb,
+         'Attendance', 'Settings Only', 'ADMIN', $2::jsonb, 'AUTOMATED_TEST')
+       ON CONFLICT (username) DO UPDATE SET
+         status = 'ACTIVE', permissions = '["home","settings"]'::jsonb,
+         role = 'ADMIN', data_scope = EXCLUDED.data_scope, data_origin_code = 'AUTOMATED_TEST'
+       RETURNING id`,
+      [settingsOnlyUsername, JSON.stringify({ school_ids: [fixture.school_id] })],
+    );
+    settingsOnlyActorId = Number(settingsOnlyActor.id);
+    assert(Number.isInteger(settingsOnlyActorId), 'Settings-only admin fixture was not created');
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(new Date());
@@ -138,6 +153,8 @@ async function main() {
       endsOn: today,
       status: 'DRAFT',
     };
+    await request('GET', `/api/attendance/terms?schoolId=${fixture.school_id}`, 403, settingsOnlyActorId);
+    await request('POST', '/api/attendance/terms', 403, settingsOnlyActorId, termBody);
     const draft = await request('POST', '/api/attendance/terms', 201, adminId, termBody);
     console.error('[smoke] term and authorization checks passed');
     assert(Number(draft.data.id) === Number(fixture.term_id), 'Term upsert returned another term');
@@ -231,18 +248,24 @@ async function main() {
     assert(Array.isArray(changes) && changes.length === 1, 'Correction audit is incorrect');
 
     console.log(JSON.stringify({
-      status: 'attendance_operations_smoke_ok', checks: 18, rosterCount: roster.length,
+      status: 'attendance_operations_smoke_ok', checks: 20, rosterCount: roster.length,
       finalSessionStatus: finalContext.data.session.status,
       revision: finalContext.data.session.revision,
       reconciliation: classRow.operationalStatus, auditEvents: auditRows.length,
     }));
   } finally {
-    if (deniedActorId) {
-      await dataSource.query(`DELETE FROM users WHERE id = $1 AND username = $2`, [
-        deniedActorId,
-        deniedUsername,
-      ]);
-    }
+    await dataSource.query(
+      `
+        UPDATE users
+        SET status = 'DISABLED',
+            deactivated_at = COALESCE(deactivated_at, NOW()),
+            deactivation_reason_code = COALESCE(deactivation_reason_code, 'OTHER'),
+            deactivation_note = COALESCE(deactivation_note, 'Retained automated attendance operations smoke fixture')
+        WHERE username = ANY($1::text[])
+          AND data_origin_code = 'AUTOMATED_TEST'
+      `,
+      [[deniedUsername, settingsOnlyUsername]],
+    );
     await app.close();
   }
 }

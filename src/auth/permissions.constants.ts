@@ -54,6 +54,7 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
     children: [
       { id: 'attendance-dashboard', label: 'ลิงก์เช็คชื่อ' },
       { id: 'attendance', label: 'เช็คชื่อ' },
+      { id: 'manage-attendance-calendar', label: 'จัดการปฏิทินเช็คชื่อ' },
     ],
   },
   {
@@ -102,6 +103,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'create',
       'attendance',
       'attendance-dashboard',
+      'manage-attendance-calendar',
       'manage-users-list',
       'manage-student-accounts',
       'manage-role-groups',
@@ -130,6 +132,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'create',
       'attendance',
       'attendance-dashboard',
+      'manage-attendance-calendar',
       'manage-users-list',
       'login-links',
       'settings',

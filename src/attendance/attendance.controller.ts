@@ -161,7 +161,7 @@ export class AttendanceController {
 
   @Get('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard', 'settings')
+  @RequireAnyPermission('attendance-dashboard', 'manage-attendance-calendar')
   async listTerms(
     @Query() query: ListSchoolTermsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -171,7 +171,7 @@ export class AttendanceController {
 
   @Post('terms')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('settings')
+  @RequirePermission('manage-attendance-calendar')
   async upsertTerm(
     @Body() body: UpsertSchoolTermDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -181,7 +181,7 @@ export class AttendanceController {
 
   @Post('terms/:termId/calendar/generate')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('settings')
+  @RequirePermission('manage-attendance-calendar')
   async generateCalendar(
     @Param('termId', ParseIntPipe) termId: number,
     @Body() body: GenerateSchoolCalendarDto,
@@ -192,7 +192,7 @@ export class AttendanceController {
 
   @Get('calendar')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard', 'settings')
+  @RequireAnyPermission('attendance-dashboard', 'manage-attendance-calendar')
   async listCalendar(
     @Query() query: ListSchoolCalendarQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -202,7 +202,7 @@ export class AttendanceController {
 
   @Patch('calendar-days/:calendarDayId')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('settings')
+  @RequirePermission('manage-attendance-calendar')
   async updateCalendarDay(
     @Param('calendarDayId', ParseIntPipe) calendarDayId: number,
     @Body() body: UpdateSchoolCalendarDayDto,
