@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict hepZhfzga8jNWLtybVdUcEMfL2Uelhn7UudkihTbZq2S5ZKbRbHoTtK3Zjmzgul
+\restrict YHQEkGz6r83gG7EW0TbEKCTJOdp1RxqXsJS0tU7kgwe0mktdA6THpu8S6iygYkf
 
 -- Dumped from database version 15.18
 -- Dumped by pg_dump version 15.18
@@ -77,6 +77,21 @@ CREATE FUNCTION public.pii_access_events_block_mutation() RETURNS trigger
 
 
 ALTER FUNCTION public.pii_access_events_block_mutation() OWNER TO postgres;
+
+--
+-- Name: pii_export_events_block_mutation(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.pii_export_events_block_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+      BEGIN
+        RAISE EXCEPTION 'pii_export_events is append-only; % is not allowed', TG_OP;
+      END;
+      $$;
+
+
+ALTER FUNCTION public.pii_export_events_block_mutation() OWNER TO postgres;
 
 --
 -- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -188,6 +203,32 @@ ALTER SEQUENCE public.absence_reasons_id_seq OWNED BY public.absence_reasons.id;
 
 
 --
+-- Name: application_display_states; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.application_display_states (
+    domain_code character varying(48) NOT NULL,
+    code character varying(32) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    summary_tone character varying(16),
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_application_display_states_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_application_display_states_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_application_display_states_summary CHECK (((summary_tone IS NULL) OR ((summary_tone)::text = ANY ((ARRAY['default'::character varying, 'success'::character varying, 'warning'::character varying, 'danger'::character varying, 'info'::character varying])::text[]))))
+);
+
+
+ALTER TABLE public.application_display_states OWNER TO postgres;
+
+--
 -- Name: assistance_measures; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -275,6 +316,54 @@ ALTER SEQUENCE public."attendance_AttendanceID_seq" OWNED BY public.attendance."
 
 
 --
+-- Name: attendance_record_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.attendance_record_statuses (
+    code smallint NOT NULL,
+    internal_code character varying(16) NOT NULL,
+    short_label_th character varying(40) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_attendance_record_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_attendance_record_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.attendance_record_statuses OWNER TO postgres;
+
+--
+-- Name: attendance_session_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.attendance_session_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_attendance_session_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_attendance_session_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.attendance_session_statuses OWNER TO postgres;
+
+--
 -- Name: attendance_sessions; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -302,12 +391,12 @@ CREATE TABLE public.attendance_sessions (
     updated_by integer,
     deleted_at timestamp with time zone,
     deleted_by integer,
+    anomaly_notified_at timestamp with time zone,
     CONSTRAINT chk_attendance_sessions_counts CHECK (((expected_roster_count >= 0) AND (recorded_count >= 0))),
     CONSTRAINT chk_attendance_sessions_kind CHECK (((session_kind)::text = 'DAILY'::text)),
     CONSTRAINT chk_attendance_sessions_period CHECK ((period > 0)),
     CONSTRAINT chk_attendance_sessions_revision CHECK ((revision > 0)),
-    CONSTRAINT chk_attendance_sessions_room CHECK ((room_id > 0)),
-    CONSTRAINT chk_attendance_sessions_status CHECK (((status)::text = ANY ((ARRAY['OPEN'::character varying, 'SUBMITTED'::character varying, 'REOPENED'::character varying, 'VOIDED'::character varying])::text[])))
+    CONSTRAINT chk_attendance_sessions_room CHECK ((room_id > 0))
 );
 
 
@@ -326,7 +415,8 @@ CREATE TABLE public.audit_log (
     target_id text,
     metadata jsonb,
     ip text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    data_origin_code character varying(32) DEFAULT 'OPERATIONAL'::character varying NOT NULL
 );
 
 
@@ -354,6 +444,29 @@ ALTER SEQUENCE public.audit_log_id_seq OWNED BY public.audit_log.id;
 
 
 --
+-- Name: case_referral_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.case_referral_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_case_referral_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_case_referral_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.case_referral_statuses OWNER TO postgres;
+
+--
 -- Name: case_referrals; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -376,8 +489,7 @@ CREATE TABLE public.case_referrals (
     updated_by integer,
     deleted_at timestamp with time zone,
     deleted_by integer,
-    CONSTRAINT chk_case_referrals_agency_type CHECK ((agency_type_snapshot = ANY (ARRAY['HOSPITAL'::text, 'POLICE'::text, 'SOCIAL_WELFARE'::text, 'NGO'::text, 'EDUCATION'::text, 'OTHER'::text]))),
-    CONSTRAINT chk_case_referrals_status CHECK ((status = ANY (ARRAY['SENT'::text, 'ACKNOWLEDGED'::text, 'ACCEPTED'::text, 'DECLINED'::text, 'RETURNED'::text])))
+    CONSTRAINT chk_case_referrals_agency_type CHECK ((agency_type_snapshot = ANY (ARRAY['HOSPITAL'::text, 'POLICE'::text, 'SOCIAL_WELFARE'::text, 'NGO'::text, 'EDUCATION'::text, 'OTHER'::text])))
 );
 
 
@@ -421,6 +533,32 @@ CREATE TABLE public.case_student_uuid_backfill_20260702_backup (
 ALTER TABLE public.case_student_uuid_backfill_20260702_backup OWNER TO postgres;
 
 --
+-- Name: case_workflow_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.case_workflow_statuses (
+    code character varying(32) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    summary_tone character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_case_workflow_statuses_badge_variant CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_case_workflow_statuses_label_th CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_case_workflow_statuses_sort_order CHECK ((sort_order >= 0)),
+    CONSTRAINT chk_case_workflow_statuses_summary_tone CHECK (((summary_tone)::text = ANY ((ARRAY['default'::character varying, 'success'::character varying, 'warning'::character varying, 'danger'::character varying, 'info'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.case_workflow_statuses OWNER TO postgres;
+
+--
 -- Name: cases; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -449,8 +587,12 @@ CREATE TABLE public.cases (
     address_district text,
     address_sub_district text,
     postal_code text,
+    risk_tier character varying(10),
+    sla_due_at timestamp with time zone,
+    sla_warning_notified_at timestamp with time zone,
+    sla_breached_notified_at timestamp with time zone,
     CONSTRAINT chk_cases_postal_code CHECK (((postal_code IS NULL) OR (postal_code ~ '^[0-9]{5}$'::text))),
-    CONSTRAINT chk_cases_status CHECK ((status = ANY (ARRAY['OPEN'::text, 'IN_PROGRESS'::text, 'AWAITING_HELP'::text, 'PENDING_REVIEW'::text, 'RESOLVED'::text])))
+    CONSTRAINT chk_cases_risk_tier CHECK (((risk_tier IS NULL) OR ((risk_tier)::text = ANY ((ARRAY['HIGH'::character varying, 'MEDIUM'::character varying, 'LOW'::character varying])::text[]))))
 );
 
 
@@ -477,6 +619,28 @@ ALTER TABLE public.cases_id_seq OWNER TO postgres;
 
 ALTER SEQUENCE public.cases_id_seq OWNED BY public.cases.id;
 
+
+--
+-- Name: data_record_origins; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.data_record_origins (
+    code character varying(32) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    is_visible_by_default boolean NOT NULL,
+    sort_order smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_data_record_origins_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_data_record_origins_sort_order CHECK ((sort_order >= 0))
+);
+
+
+ALTER TABLE public.data_record_origins OWNER TO postgres;
 
 --
 -- Name: disability_types; Type: TABLE; Schema: public; Owner: postgres
@@ -784,6 +948,44 @@ ALTER SEQUENCE public.non_follow_up_reasons_id_seq OWNED BY public.non_follow_up
 
 
 --
+-- Name: notification_types; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.notification_types (
+    code character varying(64) NOT NULL,
+    label_th character varying(120) NOT NULL,
+    required_permission character varying(64) NOT NULL,
+    is_enabled boolean DEFAULT true NOT NULL,
+    sort_order smallint DEFAULT 0 NOT NULL,
+    CONSTRAINT chk_notification_types_label_th CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_notification_types_required_permission CHECK ((length(TRIM(BOTH FROM required_permission)) > 0))
+);
+
+
+ALTER TABLE public.notification_types OWNER TO postgres;
+
+--
+-- Name: notifications; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.notifications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    recipient_user_id integer NOT NULL,
+    type_code character varying(64) NOT NULL,
+    title text NOT NULL,
+    body text,
+    ref_entity character varying(32),
+    ref_id text,
+    seen_at timestamp with time zone,
+    read_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT chk_notifications_title CHECK ((length(TRIM(BOTH FROM title)) > 0))
+);
+
+
+ALTER TABLE public.notifications OWNER TO postgres;
+
+--
 -- Name: pii_access_events; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -831,6 +1033,76 @@ ALTER TABLE public.pii_access_events_id_seq OWNER TO postgres;
 
 ALTER SEQUENCE public.pii_access_events_id_seq OWNED BY public.pii_access_events.id;
 
+
+--
+-- Name: pii_export_events; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.pii_export_events (
+    id bigint NOT NULL,
+    request_id uuid NOT NULL,
+    actor_user_id integer,
+    action character varying(20) NOT NULL,
+    metadata jsonb,
+    ip text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_pii_export_events_action CHECK (((action)::text = ANY ((ARRAY['REQUEST'::character varying, 'APPROVE'::character varying, 'REJECT'::character varying, 'DOWNLOAD'::character varying, 'EXPIRE'::character varying, 'CANCEL'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.pii_export_events OWNER TO postgres;
+
+--
+-- Name: pii_export_events_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.pii_export_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.pii_export_events_id_seq OWNER TO postgres;
+
+--
+-- Name: pii_export_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.pii_export_events_id_seq OWNED BY public.pii_export_events.id;
+
+
+--
+-- Name: pii_export_requests; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.pii_export_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    requester_user_id integer NOT NULL,
+    approver_user_id integer,
+    status character varying(20) DEFAULT 'PENDING'::character varying NOT NULL,
+    scope_snapshot jsonb NOT NULL,
+    include_full_national_id boolean DEFAULT false NOT NULL,
+    reason_code character varying(40) NOT NULL,
+    reason_note text,
+    row_estimate integer,
+    download_token_hash text,
+    download_expires_at timestamp with time zone,
+    downloaded_at timestamp with time zone,
+    rejected_reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_pii_export_requests_reason_code CHECK ((length(TRIM(BOTH FROM reason_code)) > 0)),
+    CONSTRAINT chk_pii_export_requests_reason_note CHECK (((reason_note IS NULL) OR (length(TRIM(BOTH FROM reason_note)) > 0))),
+    CONSTRAINT chk_pii_export_requests_rejected_reason CHECK (((rejected_reason IS NULL) OR (length(TRIM(BOTH FROM rejected_reason)) > 0))),
+    CONSTRAINT chk_pii_export_requests_scope_object CHECK ((jsonb_typeof(scope_snapshot) = 'object'::text)),
+    CONSTRAINT chk_pii_export_requests_status CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'APPROVED'::character varying, 'REJECTED'::character varying, 'DOWNLOADED'::character varying, 'EXPIRED'::character varying, 'CANCELLED'::character varying])::text[]))),
+    CONSTRAINT pii_export_requests_row_estimate_check CHECK (((row_estimate IS NULL) OR (row_estimate >= 0)))
+);
+
+
+ALTER TABLE public.pii_export_requests OWNER TO postgres;
 
 --
 -- Name: related_agencies; Type: TABLE; Schema: public; Owner: postgres
@@ -1057,6 +1329,29 @@ ALTER SEQUENCE public.school_affiliations_id_seq OWNED BY public.school_affiliat
 
 
 --
+-- Name: school_calendar_day_types; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.school_calendar_day_types (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_school_calendar_day_types_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_school_calendar_day_types_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.school_calendar_day_types OWNER TO postgres;
+
+--
 -- Name: school_calendar_days; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1073,8 +1368,7 @@ CREATE TABLE public.school_calendar_days (
     updated_by integer,
     deleted_at timestamp with time zone,
     deleted_by integer,
-    CONSTRAINT chk_school_calendar_days_source CHECK (((source)::text = ANY ((ARRAY['GENERATED'::character varying, 'MANUAL'::character varying, 'IMPORT'::character varying, 'BACKFILL'::character varying])::text[]))),
-    CONSTRAINT chk_school_calendar_days_type CHECK (((day_type)::text = ANY ((ARRAY['SCHOOL_DAY'::character varying, 'HOLIDAY'::character varying, 'CANCELLED'::character varying])::text[])))
+    CONSTRAINT chk_school_calendar_days_source CHECK (((source)::text = ANY ((ARRAY['GENERATED'::character varying, 'MANUAL'::character varying, 'IMPORT'::character varying, 'BACKFILL'::character varying])::text[])))
 );
 
 
@@ -1102,6 +1396,29 @@ ALTER SEQUENCE public.school_calendar_days_id_seq OWNED BY public.school_calenda
 
 
 --
+-- Name: school_term_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.school_term_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_school_term_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_school_term_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.school_term_statuses OWNER TO postgres;
+
+--
 -- Name: school_terms; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1122,8 +1439,7 @@ CREATE TABLE public.school_terms (
     CONSTRAINT chk_school_terms_academic_year CHECK ((academic_year > 0)),
     CONSTRAINT chk_school_terms_active_dates CHECK ((((status)::text <> 'ACTIVE'::text) OR ((starts_on IS NOT NULL) AND (ends_on IS NOT NULL)))),
     CONSTRAINT chk_school_terms_date_range CHECK ((((starts_on IS NULL) AND (ends_on IS NULL)) OR ((starts_on IS NOT NULL) AND (ends_on IS NOT NULL) AND (starts_on <= ends_on) AND ((ends_on - starts_on) <= 400)))),
-    CONSTRAINT chk_school_terms_semester CHECK (((semester >= 1) AND (semester <= 3))),
-    CONSTRAINT chk_school_terms_status CHECK (((status)::text = ANY ((ARRAY['DRAFT'::character varying, 'ACTIVE'::character varying, 'CLOSED'::character varying])::text[])))
+    CONSTRAINT chk_school_terms_semester CHECK (((semester >= 1) AND (semester <= 3)))
 );
 
 
@@ -1170,6 +1486,29 @@ CREATE TABLE public.schools (
 ALTER TABLE public.schools OWNER TO postgres;
 
 --
+-- Name: student_account_batch_item_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_account_batch_item_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_account_batch_item_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_student_account_batch_item_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.student_account_batch_item_statuses OWNER TO postgres;
+
+--
 -- Name: student_account_batch_job; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1187,8 +1526,7 @@ CREATE TABLE public.student_account_batch_job (
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_student_account_batch_job_status CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'RUNNING'::character varying, 'COMPLETED'::character varying, 'FAILED'::character varying, 'INTERRUPTED'::character varying, 'CANCELED'::character varying])::text[])))
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1208,8 +1546,7 @@ CREATE TABLE public.student_account_batch_job_item (
     status character varying(16) DEFAULT 'PENDING'::character varying NOT NULL,
     error_code character varying(64),
     processed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_student_account_batch_job_item_status CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'CREATED'::character varying, 'SKIPPED'::character varying, 'FAILED'::character varying])::text[])))
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1235,6 +1572,160 @@ ALTER TABLE public.student_account_batch_job_item_id_seq OWNER TO postgres;
 
 ALTER SEQUENCE public.student_account_batch_job_item_id_seq OWNED BY public.student_account_batch_job_item.id;
 
+
+--
+-- Name: student_account_batch_job_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_account_batch_job_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_account_batch_job_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_student_account_batch_job_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.student_account_batch_job_statuses OWNER TO postgres;
+
+--
+-- Name: student_status; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_status (
+    code integer NOT NULL,
+    label_th character varying(100) NOT NULL,
+    category character varying(32) NOT NULL,
+    is_active_for_login boolean DEFAULT false NOT NULL,
+    is_terminal boolean DEFAULT false NOT NULL,
+    requires_followup boolean DEFAULT false NOT NULL,
+    is_enabled boolean DEFAULT true NOT NULL,
+    sort_order smallint NOT NULL,
+    source_system character varying(32) DEFAULT 'ONEC'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    badge_variant character varying(16) DEFAULT 'secondary'::character varying NOT NULL,
+    CONSTRAINT chk_student_status_badge_variant CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_student_status_label_th CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_student_status_sort_order CHECK ((sort_order >= 0)),
+    CONSTRAINT chk_student_status_source_system CHECK ((length(TRIM(BOTH FROM source_system)) > 0))
+);
+
+
+ALTER TABLE public.student_status OWNER TO postgres;
+
+--
+-- Name: student_term; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_term (
+    "AcademicYear_Onec" integer NOT NULL,
+    "Semester_Onec" integer NOT NULL,
+    "DepartmentID_Onec" integer,
+    "SchoolID_Onec" integer NOT NULL,
+    "PersonID_Onec" text NOT NULL,
+    "PassportNumber_Onec" text,
+    "PrefixID_Onec" integer,
+    "FirstName_Onec" text,
+    "MiddleName_Onec" text,
+    "LastName_Onec" text,
+    "GenderID_Onec" integer,
+    "NationalityID_Onec" integer,
+    "DisabilityID_Onec" integer,
+    "DisadvantageEducationID_Onec" integer,
+    "VillageNumber_Onec" text,
+    "Street_Onec" text,
+    "Soi_Onec" text,
+    "Trok_Onec" text,
+    "SubDistrictID_Onec" integer,
+    "SchoolAdmissionYear_Onec" integer,
+    "GradeLevelID_Onec" integer,
+    "RoomID_Onec" integer,
+    "GPAX_Onec" real,
+    "StudentStatusID_Onec" integer,
+    "ProvinceNameThai_Onec" text,
+    "DistrictNameThai_Onec" text,
+    "SubDistrictNameThai_Onec" text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    student_uuid uuid DEFAULT gen_random_uuid() NOT NULL,
+    person_uuid uuid NOT NULL,
+    "PostalCode_Onec" character varying(5),
+    address_house_no text,
+    address_latitude double precision,
+    address_longitude double precision,
+    student_status_code integer,
+    CONSTRAINT chk_student_term_address_coordinates CHECK ((((address_latitude IS NULL) AND (address_longitude IS NULL)) OR (((address_latitude >= ('-90'::integer)::double precision) AND (address_latitude <= (90)::double precision)) AND ((address_longitude >= ('-180'::integer)::double precision) AND (address_longitude <= (180)::double precision))))),
+    CONSTRAINT chk_student_term_postal_code CHECK ((("PostalCode_Onec" IS NULL) OR (("PostalCode_Onec")::text ~ '^[0-9]{5}$'::text)))
+);
+
+
+ALTER TABLE public.student_term OWNER TO postgres;
+
+--
+-- Name: student_current_enrollment_resolution; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.student_current_enrollment_resolution AS
+ WITH ranked_enrollments AS (
+         SELECT enrollment.person_uuid,
+            enrollment.student_uuid,
+            enrollment."AcademicYear_Onec" AS academic_year,
+            enrollment."Semester_Onec" AS semester,
+            status.category AS status_category,
+            status.is_active_for_login,
+            status.is_enabled,
+            dense_rank() OVER (PARTITION BY enrollment.person_uuid ORDER BY enrollment."AcademicYear_Onec" DESC NULLS LAST, enrollment."Semester_Onec" DESC NULLS LAST) AS term_rank
+           FROM (public.student_term enrollment
+             LEFT JOIN public.student_status status ON (((status.code = COALESCE(enrollment.student_status_code, enrollment."StudentStatusID_Onec")) AND (status.deleted_at IS NULL))))
+          WHERE ((enrollment.person_uuid IS NOT NULL) AND (enrollment.deleted_at IS NULL))
+        ), latest_term AS (
+         SELECT ranked_enrollments.person_uuid,
+            ranked_enrollments.student_uuid,
+            ranked_enrollments.academic_year,
+            ranked_enrollments.semester,
+            ranked_enrollments.status_category,
+            ranked_enrollments.is_active_for_login,
+            ranked_enrollments.is_enabled,
+            ranked_enrollments.term_rank
+           FROM ranked_enrollments
+          WHERE (ranked_enrollments.term_rank = 1)
+        )
+ SELECT latest_term.person_uuid,
+    max(latest_term.academic_year) AS academic_year,
+    max(latest_term.semester) AS semester,
+    (count(*))::integer AS latest_enrollment_count,
+    (count(*) FILTER (WHERE (((latest_term.status_category)::text = 'ACTIVE'::text) AND (latest_term.is_active_for_login IS TRUE) AND (latest_term.is_enabled IS TRUE))))::integer AS active_enrollment_count,
+    (count(*) FILTER (WHERE ((latest_term.status_category IS NULL) OR ((latest_term.status_category)::text = 'UNMAPPED'::text) OR (latest_term.is_enabled IS NOT TRUE))))::integer AS unresolved_status_count,
+    (
+        CASE
+            WHEN (count(*) FILTER (WHERE ((latest_term.status_category IS NULL) OR ((latest_term.status_category)::text = 'UNMAPPED'::text) OR (latest_term.is_enabled IS NOT TRUE))) > 0) THEN 'STATUS_UNRESOLVED'::text
+            WHEN (count(*) FILTER (WHERE (((latest_term.status_category)::text = 'ACTIVE'::text) AND (latest_term.is_active_for_login IS TRUE) AND (latest_term.is_enabled IS TRUE))) = 1) THEN 'ACTIVE'::text
+            WHEN (count(*) FILTER (WHERE (((latest_term.status_category)::text = 'ACTIVE'::text) AND (latest_term.is_active_for_login IS TRUE) AND (latest_term.is_enabled IS TRUE))) > 1) THEN 'AMBIGUOUS_ACTIVE'::text
+            ELSE 'INACTIVE'::text
+        END)::character varying(32) AS resolution_state,
+    (array_agg(latest_term.student_uuid ORDER BY latest_term.student_uuid) FILTER (WHERE (((latest_term.status_category)::text = 'ACTIVE'::text) AND (latest_term.is_active_for_login IS TRUE) AND (latest_term.is_enabled IS TRUE))))[1] AS selected_student_uuid
+   FROM latest_term
+  GROUP BY latest_term.person_uuid;
+
+
+ALTER TABLE public.student_current_enrollment_resolution OWNER TO postgres;
 
 --
 -- Name: student_dropouts; Type: TABLE; Schema: public; Owner: postgres
@@ -1277,6 +1768,179 @@ CREATE TABLE public.student_dropouts (
 
 
 ALTER TABLE public.student_dropouts OWNER TO postgres;
+
+--
+-- Name: student_import_batch_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_import_batch_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_import_batch_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_student_import_batch_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.student_import_batch_statuses OWNER TO postgres;
+
+--
+-- Name: student_import_batches; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_import_batches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    target character varying(32) NOT NULL,
+    source_sha256 character(64) NOT NULL,
+    scope_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status character varying(16) DEFAULT 'RUNNING'::character varying NOT NULL,
+    total_rows integer DEFAULT 0 NOT NULL,
+    imported_rows integer DEFAULT 0 NOT NULL,
+    quarantined_rows integer DEFAULT 0 NOT NULL,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_import_batches_source_sha256 CHECK ((source_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT chk_student_import_batches_target CHECK (((target)::text = ANY ((ARRAY['student_term'::character varying, 'student_dropouts'::character varying])::text[]))),
+    CONSTRAINT student_import_batches_imported_rows_check CHECK ((imported_rows >= 0)),
+    CONSTRAINT student_import_batches_quarantined_rows_check CHECK ((quarantined_rows >= 0)),
+    CONSTRAINT student_import_batches_total_rows_check CHECK ((total_rows >= 0))
+);
+
+
+ALTER TABLE public.student_import_batches OWNER TO postgres;
+
+--
+-- Name: student_import_quarantine_reason_codes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_import_quarantine_reason_codes (
+    code character varying(64) NOT NULL,
+    label_th character varying(160) NOT NULL,
+    sort_order smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_import_quarantine_reason_codes_label_th CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_student_import_quarantine_reason_codes_sort_order CHECK ((sort_order >= 0))
+);
+
+
+ALTER TABLE public.student_import_quarantine_reason_codes OWNER TO postgres;
+
+--
+-- Name: student_import_quarantine_resolution_states; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_import_quarantine_resolution_states (
+    code character varying(32) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_import_quarantine_resolution_states_badge_variant CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_student_import_quarantine_resolution_states_code CHECK (((code)::text = ANY ((ARRAY['ACTION_REQUIRED'::character varying, 'DECISION_REQUIRED'::character varying, 'RETRY_ELIGIBLE'::character varying, 'BLOCKED'::character varying])::text[]))),
+    CONSTRAINT chk_student_import_quarantine_resolution_states_label_th CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_student_import_quarantine_resolution_states_sort_order CHECK ((sort_order >= 0))
+);
+
+
+ALTER TABLE public.student_import_quarantine_resolution_states OWNER TO postgres;
+
+--
+-- Name: student_import_quarantine_rows; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_import_quarantine_rows (
+    id bigint NOT NULL,
+    batch_id uuid NOT NULL,
+    school_id integer,
+    source_row_number integer NOT NULL,
+    row_fingerprint character(64) NOT NULL,
+    reason_code character varying(64) NOT NULL,
+    mapped_values jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status character varying(16) DEFAULT 'PENDING'::character varying NOT NULL,
+    resolved_person_uuid uuid,
+    resolved_at timestamp with time zone,
+    resolved_by integer,
+    resolution_note text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_import_quarantine_row_fingerprint CHECK ((row_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT student_import_quarantine_rows_source_row_number_check CHECK ((source_row_number >= 2))
+);
+
+
+ALTER TABLE public.student_import_quarantine_rows OWNER TO postgres;
+
+--
+-- Name: student_import_quarantine_rows_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.student_import_quarantine_rows_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.student_import_quarantine_rows_id_seq OWNER TO postgres;
+
+--
+-- Name: student_import_quarantine_rows_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.student_import_quarantine_rows_id_seq OWNED BY public.student_import_quarantine_rows.id;
+
+
+--
+-- Name: student_import_quarantine_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.student_import_quarantine_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_student_import_quarantine_statuses_badge_variant CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_student_import_quarantine_statuses_code CHECK (((code)::text = ANY ((ARRAY['PENDING'::character varying, 'RESOLVED'::character varying, 'REJECTED'::character varying])::text[]))),
+    CONSTRAINT chk_student_import_quarantine_statuses_label_th CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
+    CONSTRAINT chk_student_import_quarantine_statuses_sort_order CHECK ((sort_order >= 0))
+);
+
+
+ALTER TABLE public.student_import_quarantine_statuses OWNER TO postgres;
 
 --
 -- Name: student_person; Type: TABLE; Schema: public; Owner: postgres
@@ -1344,85 +2008,25 @@ ALTER SEQUENCE public.student_person_identifier_id_seq OWNED BY public.student_p
 
 
 --
--- Name: student_status; Type: TABLE; Schema: public; Owner: postgres
+-- Name: student_status_categories; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.student_status (
-    code integer NOT NULL,
+CREATE TABLE public.student_status_categories (
+    code character varying(32) NOT NULL,
     label_th character varying(100) NOT NULL,
-    category character varying(32) NOT NULL,
-    is_active_for_login boolean DEFAULT false NOT NULL,
-    is_terminal boolean DEFAULT false NOT NULL,
-    requires_followup boolean DEFAULT false NOT NULL,
-    is_enabled boolean DEFAULT true NOT NULL,
     sort_order smallint NOT NULL,
-    source_system character varying(32) DEFAULT 'ONEC'::character varying NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by integer,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by integer,
     deleted_at timestamp with time zone,
     deleted_by integer,
-    CONSTRAINT chk_student_status_category CHECK (((category)::text = ANY ((ARRAY['ACTIVE'::character varying, 'GRADUATED'::character varying, 'WITHDRAWN'::character varying, 'TRANSFERRED'::character varying, 'DECEASED'::character varying, 'UNMAPPED'::character varying])::text[]))),
-    CONSTRAINT chk_student_status_label_th CHECK ((length(TRIM(BOTH FROM label_th)) > 0)),
-    CONSTRAINT chk_student_status_sort_order CHECK ((sort_order >= 0)),
-    CONSTRAINT chk_student_status_source_system CHECK ((length(TRIM(BOTH FROM source_system)) > 0))
+    CONSTRAINT chk_student_status_categories_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
 );
 
 
-ALTER TABLE public.student_status OWNER TO postgres;
-
---
--- Name: student_term; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.student_term (
-    "AcademicYear_Onec" integer NOT NULL,
-    "Semester_Onec" integer NOT NULL,
-    "DepartmentID_Onec" integer,
-    "SchoolID_Onec" integer NOT NULL,
-    "PersonID_Onec" text NOT NULL,
-    "PassportNumber_Onec" text,
-    "PrefixID_Onec" integer,
-    "FirstName_Onec" text,
-    "MiddleName_Onec" text,
-    "LastName_Onec" text,
-    "GenderID_Onec" integer,
-    "NationalityID_Onec" integer,
-    "DisabilityID_Onec" integer,
-    "DisadvantageEducationID_Onec" integer,
-    "VillageNumber_Onec" text,
-    "Street_Onec" text,
-    "Soi_Onec" text,
-    "Trok_Onec" text,
-    "SubDistrictID_Onec" integer,
-    "SchoolAdmissionYear_Onec" integer,
-    "GradeLevelID_Onec" integer,
-    "RoomID_Onec" integer,
-    "GPAX_Onec" real,
-    "StudentStatusID_Onec" integer,
-    "ProvinceNameThai_Onec" text,
-    "DistrictNameThai_Onec" text,
-    "SubDistrictNameThai_Onec" text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    created_by integer,
-    updated_by integer,
-    deleted_at timestamp with time zone,
-    deleted_by integer,
-    student_uuid uuid DEFAULT gen_random_uuid() NOT NULL,
-    person_uuid uuid NOT NULL,
-    "PostalCode_Onec" character varying(5),
-    address_house_no text,
-    address_latitude double precision,
-    address_longitude double precision,
-    student_status_code integer,
-    CONSTRAINT chk_student_term_address_coordinates CHECK ((((address_latitude IS NULL) AND (address_longitude IS NULL)) OR (((address_latitude >= ('-90'::integer)::double precision) AND (address_latitude <= (90)::double precision)) AND ((address_longitude >= ('-180'::integer)::double precision) AND (address_longitude <= (180)::double precision))))),
-    CONSTRAINT chk_student_term_postal_code CHECK ((("PostalCode_Onec" IS NULL) OR (("PostalCode_Onec")::text ~ '^[0-9]{5}$'::text)))
-);
-
-
-ALTER TABLE public.student_term OWNER TO postgres;
+ALTER TABLE public.student_status_categories OWNER TO postgres;
 
 --
 -- Name: system_settings; Type: TABLE; Schema: public; Owner: postgres
@@ -1468,6 +2072,29 @@ CREATE TABLE public.task_link_scope_backfill_20260702_backup (
 ALTER TABLE public.task_link_scope_backfill_20260702_backup OWNER TO postgres;
 
 --
+-- Name: task_link_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.task_link_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_task_link_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_task_link_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.task_link_statuses OWNER TO postgres;
+
+--
 -- Name: task_links; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1501,7 +2128,8 @@ CREATE TABLE public.task_links (
     updated_by integer,
     deleted_at timestamp with time zone,
     deleted_by integer,
-    first_used_at timestamp with time zone
+    first_used_at timestamp with time zone,
+    overdue_notified_at timestamp with time zone
 );
 
 
@@ -1559,6 +2187,29 @@ ALTER SEQUENCE public.task_submissions_id_seq OWNED BY public.task_submissions.i
 
 
 --
+-- Name: task_workflow_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.task_workflow_statuses (
+    code character varying(32) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_task_workflow_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_task_workflow_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.task_workflow_statuses OWNER TO postgres;
+
+--
 -- Name: tasks; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1576,12 +2227,34 @@ CREATE TABLE public.tasks (
     created_by integer,
     updated_by integer,
     deleted_at timestamp with time zone,
-    deleted_by integer,
-    CONSTRAINT chk_tasks_status CHECK ((status = ANY (ARRAY['OPEN'::text, 'ACTIVE'::text, 'IN_PROGRESS'::text, 'COMPLETED'::text, 'PENDING_REVIEW'::text])))
+    deleted_by integer
 );
 
 
 ALTER TABLE public.tasks OWNER TO postgres;
+
+--
+-- Name: user_account_statuses; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.user_account_statuses (
+    code character varying(16) NOT NULL,
+    label_th character varying(100) NOT NULL,
+    badge_variant character varying(16) NOT NULL,
+    sort_order smallint NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by integer,
+    deleted_at timestamp with time zone,
+    deleted_by integer,
+    CONSTRAINT chk_user_account_statuses_badge CHECK (((badge_variant)::text = ANY ((ARRAY['default'::character varying, 'secondary'::character varying, 'destructive'::character varying, 'success'::character varying, 'warning'::character varying])::text[]))),
+    CONSTRAINT chk_user_account_statuses_label CHECK ((length(TRIM(BOTH FROM label_th)) > 0))
+);
+
+
+ALTER TABLE public.user_account_statuses OWNER TO postgres;
 
 --
 -- Name: user_role_scope_migration_backup; Type: TABLE; Schema: public; Owner: postgres
@@ -1651,10 +2324,10 @@ CREATE TABLE public.users (
     address_street text,
     address_soi text,
     address_trok text,
+    data_origin_code character varying(32) DEFAULT 'OPERATIONAL'::character varying NOT NULL,
     CONSTRAINT chk_users_address_coordinates CHECK ((((address_latitude IS NULL) AND (address_longitude IS NULL)) OR (((address_latitude >= ('-90'::integer)::double precision) AND (address_latitude <= (90)::double precision)) AND ((address_longitude >= ('-180'::integer)::double precision) AND (address_longitude <= (180)::double precision))))),
     CONSTRAINT chk_users_address_postal_code CHECK (((address_postal_code IS NULL) OR (address_postal_code ~ '^[0-9]{5}$'::text))),
-    CONSTRAINT chk_users_deactivation_reason_code CHECK (((deactivation_reason_code IS NULL) OR ((deactivation_reason_code)::text = ANY ((ARRAY['STAFF_LEFT'::character varying, 'TRANSFERRED'::character varying, 'DUPLICATE'::character varying, 'SECURITY'::character varying, 'OTHER'::character varying])::text[])))),
-    CONSTRAINT chk_users_status CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'DISABLED'::text])))
+    CONSTRAINT chk_users_deactivation_reason_code CHECK (((deactivation_reason_code IS NULL) OR ((deactivation_reason_code)::text = ANY ((ARRAY['STAFF_LEFT'::character varying, 'TRANSFERRED'::character varying, 'DUPLICATE'::character varying, 'SECURITY'::character varying, 'OTHER'::character varying])::text[]))))
 );
 
 
@@ -1781,6 +2454,13 @@ ALTER TABLE ONLY public.pii_access_events ALTER COLUMN id SET DEFAULT nextval('p
 
 
 --
+-- Name: pii_export_events id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pii_export_events ALTER COLUMN id SET DEFAULT nextval('public.pii_export_events_id_seq'::regclass);
+
+
+--
 -- Name: related_agencies id; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
@@ -1837,6 +2517,13 @@ ALTER TABLE ONLY public.student_account_batch_job_item ALTER COLUMN id SET DEFAU
 
 
 --
+-- Name: student_import_quarantine_rows id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows ALTER COLUMN id SET DEFAULT nextval('public.student_import_quarantine_rows_id_seq'::regclass);
+
+
+--
 -- Name: student_person_identifier id; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
@@ -1870,6 +2557,39 @@ COPY public.absence_reason_categories (id, code, name, note, is_active, created_
 --
 
 COPY public.absence_reasons (id, code, name, category_id, note, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+\.
+
+
+--
+-- Data for Name: application_display_states; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.application_display_states (domain_code, code, label_th, badge_variant, summary_tone, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+USER_ACCOUNT_LIFECYCLE	PENDING_FIRST_LOGIN	รอเปลี่ยนรหัส	default	info	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+USER_ACCOUNT_LIFECYCLE	ACTIVE	ใช้งาน	success	success	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+USER_ACCOUNT_LIFECYCLE	TEMP_PASSWORD_EXPIRED	รหัสหมดอายุ	warning	warning	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+USER_ACCOUNT_LIFECYCLE	DISABLED	ปิดใช้งาน	destructive	danger	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+TASK_LINK_STATE	ACTIVE	ใช้งาน	success	\N	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+TASK_LINK_STATE	LOCKED	ปิดใช้งาน	destructive	\N	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+TASK_LINK_STATE	EXPIRED	หมดอายุ	warning	\N	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+TASK_LINK_STATE	COMPLETED	เสร็จสิ้น	success	\N	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+TASK_LINK_STATE	DELEGATED	ส่งต่อแล้ว	secondary	\N	50	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+LOGIN_LINK_USAGE	USED	เข้าใช้แล้ว	success	\N	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+LOGIN_LINK_USAGE	UNUSED	ยังไม่เข้าใช้	secondary	\N	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+ATTENDANCE_RECONCILIATION	COMPLETED	ครบ	success	\N	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+ATTENDANCE_RECONCILIATION	MISSING	ยังไม่เช็ค	destructive	\N	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+ATTENDANCE_RECONCILIATION	INCOMPLETE	ไม่ครบ	warning	\N	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+RECORD_ACTIVITY	ACTIVE	เปิดใช้งาน	success	\N	10	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+RECORD_ACTIVITY	INACTIVE	ปิดใช้งาน	secondary	\N	20	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+STUDENT_STATUS_FLAG	LOGIN_ALLOWED	นโยบาย: เข้าสู่ระบบได้	success	\N	10	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+STUDENT_STATUS_FLAG	TERMINAL	สิ้นสุด	secondary	\N	20	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+STUDENT_STATUS_FLAG	FOLLOWUP_REQUIRED	ควรพิจารณาติดตาม	warning	\N	30	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+STUDENT_STATUS_FLAG	DISABLED	ปิดใช้งาน	destructive	\N	40	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+ROLE_ORIGIN	SYSTEM	ระบบ	secondary	\N	10	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+ATTENDANCE_ANOMALY	HOLIDAY_ATTENDANCE	เช็คชื่อในวันหยุด	warning	\N	10	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+ATTENDANCE_ANOMALY	CANCELLED_ATTENDANCE	เช็คชื่อในวันที่ยกเลิกเรียน	warning	\N	20	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+ATTENDANCE_ANOMALY	OUT_OF_TERM	เช็คชื่อนอกช่วงภาคเรียน	destructive	\N	30	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+ATTENDANCE_ANOMALY	MISSING_CALENDAR_DAY	ไม่มีวันในปฏิทิน	secondary	\N	40	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
 \.
 
 
@@ -2024,17 +2744,40 @@ COPY public.attendance ("AttendanceID", "SchoolID_Onec", "GradeLevelID_Onec", "R
 
 
 --
+-- Data for Name: attendance_record_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.attendance_record_statuses (code, internal_code, short_label_th, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+1	P_PRESENT	มา	มาเรียน	success	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+2	P_ABSENT	ขาด	ขาดเรียน	destructive	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+3	P_LATE	สาย	มาสาย	warning	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: attendance_session_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.attendance_session_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+OPEN	เปิดเช็คชื่อ	warning	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+SUBMITTED	ส่งแล้ว	success	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+REOPENED	เปิดแก้ไข	warning	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+VOIDED	ยกเลิก	destructive	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: attendance_sessions; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.attendance_sessions (id, school_term_id, school_id, grade_level_id, room_id, attendance_date, period, session_kind, status, expected_roster_count, recorded_count, revision, submitted_at, submitted_by, reopened_at, reopened_by, correction_reason, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
-afcd94ff-ea2d-4252-ae0b-9c7b032750a0	2	10010009	101	1	2026-06-25	1	DAILY	SUBMITTED	14	14	1	2026-06-25 02:36:22.466819+00	\N	\N	\N	Backfilled from legacy attendance records	2026-06-27 08:07:04.748983+00	\N	2026-06-27 08:07:04.748983+00	\N	\N	\N
-1b39c74b-dfa4-487b-abba-87f2df1c4d39	7	10010002	103	1	2026-06-09	1	DAILY	SUBMITTED	21	16	1	2026-06-09 16:30:26.906096+00	\N	\N	\N	Backfilled from legacy attendance records	2026-06-27 08:07:04.748983+00	\N	2026-06-27 08:07:04.748983+00	\N	\N	\N
-e87beefa-45c8-4b20-8a04-386605786ef5	7	10010002	103	1	2026-06-10	1	DAILY	SUBMITTED	21	16	1	2026-06-10 16:30:26.906096+00	\N	\N	\N	Backfilled from legacy attendance records	2026-06-27 08:07:04.748983+00	\N	2026-06-27 08:07:04.748983+00	\N	\N	\N
-2898f184-61c9-4ee3-b87f-da4886805d3a	9	10010004	104	1	2026-06-06	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N
-8ef20cb2-89a0-4959-aa29-e38dd610b3cb	9	10010004	104	1	2026-06-01	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N
-62323639-a6bc-4db2-93bd-273c48cb7cc2	9	10010004	104	1	2026-06-02	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N
-4c217193-eb4d-4b31-8e45-80fee1582e58	9	10010004	104	1	2026-05-31	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N
+COPY public.attendance_sessions (id, school_term_id, school_id, grade_level_id, room_id, attendance_date, period, session_kind, status, expected_roster_count, recorded_count, revision, submitted_at, submitted_by, reopened_at, reopened_by, correction_reason, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, anomaly_notified_at) FROM stdin;
+afcd94ff-ea2d-4252-ae0b-9c7b032750a0	2	10010009	101	1	2026-06-25	1	DAILY	SUBMITTED	14	14	1	2026-06-25 02:36:22.466819+00	\N	\N	\N	Backfilled from legacy attendance records	2026-06-27 08:07:04.748983+00	\N	2026-06-27 08:07:04.748983+00	\N	\N	\N	\N
+2898f184-61c9-4ee3-b87f-da4886805d3a	9	10010004	104	1	2026-06-06	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N
+8ef20cb2-89a0-4959-aa29-e38dd610b3cb	9	10010004	104	1	2026-06-01	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N
+62323639-a6bc-4db2-93bd-273c48cb7cc2	9	10010004	104	1	2026-06-02	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N
+4c217193-eb4d-4b31-8e45-80fee1582e58	9	10010004	104	1	2026-05-31	1	DAILY	SUBMITTED	22	22	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N	2026-06-29 12:48:52.949513+00	1	2026-06-29 12:48:52.949513+00	1	\N	\N	\N
+1b39c74b-dfa4-487b-abba-87f2df1c4d39	7	10010002	103	1	2026-06-09	1	DAILY	SUBMITTED	21	16	1	2026-06-09 16:30:26.906096+00	\N	\N	\N	Backfilled from legacy attendance records	2026-06-27 08:07:04.748983+00	\N	2026-07-05 21:12:01.579654+00	\N	\N	\N	2026-07-05 21:12:01.579654+00
+e87beefa-45c8-4b20-8a04-386605786ef5	7	10010002	103	1	2026-06-10	1	DAILY	SUBMITTED	21	16	1	2026-06-10 16:30:26.906096+00	\N	\N	\N	Backfilled from legacy attendance records	2026-06-27 08:07:04.748983+00	\N	2026-07-05 21:12:01.579654+00	\N	\N	\N	2026-07-05 21:12:01.579654+00
 \.
 
 
@@ -2042,254 +2785,624 @@ e87beefa-45c8-4b20-8a04-386605786ef5	7	10010002	103	1	2026-06-10	1	DAILY	SUBMITT
 -- Data for Name: audit_log; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.audit_log (id, actor_user_id, actor_label, action, target_type, target_id, metadata, ip, created_at) FROM stdin;
-8	\N	q	LOGIN_FAILED	\N	\N	\N	::1	2026-06-21 03:53:58.061553+00
-9	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-21 16:10:59.337031+00
-10	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-21 16:17:31.851315+00
-11	1	newnew	USER_CREATE	user	\N	{"username": "smoke_teacher_231811"}	::1	2026-06-21 16:18:12.099411+00
-12	1	newnew	USER_UPDATE	user	16	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope"]}	::1	2026-06-21 16:18:12.128101+00
-13	1	newnew	USER_DELETE	user	16	\N	::1	2026-06-21 16:18:12.163154+00
-14	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 02:18:05.237009+00
-15	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 07:28:59.090373+00
-16	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 13:23:29.519503+00
-17	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 13:23:49.333194+00
-18	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 13:43:03.543326+00
-19	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-24 06:30:49.044581+00
-20	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-24 06:57:59.146633+00
-21	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-24 14:03:00.983515+00
-22	1	newnew	CASE_FORWARD	case	1004	{"reviewAction": "FORWARD"}	\N	2026-06-24 14:11:41.153128+00
-23	18	referral-smoke-1782320563431	CASE_FORWARD	case	1012	{"agencyId": 4, "referralId": "9fbb2b0c-b84a-474a-a0b7-551ae54c161c", "reviewAction": "FORWARD"}	\N	2026-06-24 17:02:43.497332+00
-24	19	referral-smoke-1782320616951	CASE_FORWARD	case	1013	{"agencyId": 5, "referralId": "a4ee4ed5-9113-4989-80e0-b12392a193f8", "reviewAction": "FORWARD"}	\N	2026-06-24 17:03:37.010846+00
-25	20	referral-smoke-1782320710520	CASE_FORWARD	case	1014	{"agencyId": 6, "referralId": "0adf9e29-5f9d-45b5-97ed-a14df22bc5e3", "reviewAction": "FORWARD"}	\N	2026-06-24 17:05:10.576299+00
-26	22	referral-outcome-smoke-1782321665716	CASE_REFERRAL_OUTCOME_UPDATE	case_referral	03ed52db-865c-466a-8664-24c25fc27596	{"caseId": 1016, "status": "ACCEPTED"}	\N	2026-06-24 17:21:05.750547+00
-27	23	referral-outcome-smoke-1782321788918	CASE_REFERRAL_OUTCOME_UPDATE	case_referral	2959924e-57f1-4f32-8118-b95da657c1d4	{"caseId": 1017, "status": "ACCEPTED"}	\N	2026-06-24 17:23:08.95744+00
-28	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-25 02:29:19.625277+00
-29	25	auth_smoke_f50995c7e009	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:57:21.928869+00
-30	\N	auth_smoke_f50995c7e009	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-06-25 17:57:22.640899+00
-31	25	auth_smoke_f50995c7e009	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:57:22.863884+00
-32	25	auth_smoke_44589a34e34d	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:59:05.469468+00
-33	\N	auth_smoke_44589a34e34d	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-06-25 17:59:06.191175+00
-34	25	auth_smoke_44589a34e34d	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:59:06.425484+00
-35	26	exec_smoke_e86ab8d78792	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 18:03:41.348524+00
-36	1	newnew	CASE_CLOSE	case	1021	{"agencyId": null, "referralId": null, "reviewAction": "CLOSE", "resolutionOutcome": "RETURNED_TO_SCHOOL"}	\N	2026-06-25 18:23:23.31562+00
-37	\N	Delegation smoke root	DELEGATION	task_link	f1c9a0f0-8c3f-425f-82f3-35842e5cca6e	{"toDepth": 1, "parentLinkId": "c8de39f4-1151-4db1-8a53-e8806cb20963"}	\N	2026-06-27 07:02:27.139656+00
-41	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": null, "schoolId": -1, "createdCount": 0}	127.0.0.1	2026-06-27 11:17:29.591957+00
-42	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-27 16:11:26.093089+00
-43	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": null, "schoolId": null, "createdCount": 50}	::1	2026-06-28 03:27:20.273634+00
-44	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 03:30:44.246407+00
-45	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:30:58.466129+00
-46	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:30:59.47012+00
-47	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:30:59.852396+00
-48	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.013125+00
-49	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.175957+00
-50	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.324085+00
-51	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.476266+00
-52	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.2", "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 03:31:17.733697+00
-53	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-28 04:25:45.824504+00
-54	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ม.6", "scope": {"districts": ["ดอนเมือง"], "provinces": ["กรุงเทพมหานคร"], "school_ids": [10010004], "grade_levels": ["ม.6"], "sub_districts": ["สีกัน"]}, "schoolId": 10010004, "createdCount": 41}	::1	2026-06-28 13:39:58.021136+00
-92	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:16:28.454481+00
-93	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.680431+00
-94	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:35.68169+00
-55	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.3", "scope": {"districts": ["ดอนเมือง"], "provinces": ["กรุงเทพมหานคร"], "school_ids": [10010004], "grade_levels": ["ป.3"], "sub_districts": ["สีกัน"]}, "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 13:42:37.460844+00
-56	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.4", "scope": {"districts": ["ดอนเมือง"], "provinces": ["กรุงเทพมหานคร"], "school_ids": [10010004], "grade_levels": ["ป.4"], "sub_districts": ["สีกัน"]}, "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 13:42:55.968545+00
-57	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ป.1", "scope": {"room_ids": [1], "districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.1"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 13}	::1	2026-06-28 14:15:09.327064+00
-58	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-29 06:14:42.333423+00
-59	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "scope": {"districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.1"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 29}	::1	2026-06-29 06:18:47.784768+00
-60	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.2", "scope": {"districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.2"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 42}	::1	2026-06-29 06:26:04.425055+00
-61	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.3", "scope": {"districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.3"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 42}	::1	2026-06-29 06:28:35.44349+00
-62	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-30 10:22:41.657969+00
-63	1	newnew	USER_UPDATE	user	23	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope"]}	::1	2026-06-30 11:28:31.179841+00
-64	1	newnew	USER_UPDATE	user	23	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope"]}	::1	2026-06-30 11:30:43.820019+00
-65	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-01 05:09:37.15142+00
-66	1	newnew	USER_CREATE	user	\N	{"username": "ก"}	::1	2026-07-01 05:33:10.978096+00
-67	1	newnew	USER_UPDATE	user	412	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope", "phone", "email"]}	::1	2026-07-01 05:33:48.11327+00
-68	1	newnew	USER_CREATE	user	\N	{"username": "test"}	::1	2026-07-01 05:34:19.30843+00
-69	\N	__invalid__	LOGIN_FAILED	\N	\N	\N	::ffff:127.0.0.1	2026-07-01 08:09:06.69172+00
-70	415	account_lifecycle_smoke_1782893619103_pg5etk_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:13:39.81048+00
-71	414	account_lifecycle_smoke_1782893619103_pg5etk_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:13:40.063946+00
-72	414	account_lifecycle_smoke_1782893619103_pg5etk_admin	USER_DEACTIVATE	user	415	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_1782893619103_pg5etk_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:13:40.075743+00
-73	\N	account_lifecycle_smoke_1782893619103_pg5etk_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:13:40.08471+00
-74	414	account_lifecycle_smoke_1782893619103_pg5etk_admin	USER_REACTIVATE	user	415	{"username": "account_lifecycle_smoke_1782893619103_pg5etk_teacher"}	127.0.0.1	2026-07-01 08:13:40.08944+00
-75	415	account_lifecycle_smoke_1782893619103_pg5etk_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:13:40.313456+00
-76	417	account_lifecycle_smoke_1782893648305_45k9z9_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:08.985297+00
-77	416	account_lifecycle_smoke_1782893648305_45k9z9_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:09.213436+00
-78	416	account_lifecycle_smoke_1782893648305_45k9z9_admin	USER_DEACTIVATE	user	417	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_1782893648305_45k9z9_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:14:09.223016+00
-79	\N	account_lifecycle_smoke_1782893648305_45k9z9_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:14:09.229892+00
-80	416	account_lifecycle_smoke_1782893648305_45k9z9_admin	USER_REACTIVATE	user	417	{"username": "account_lifecycle_smoke_1782893648305_45k9z9_teacher"}	127.0.0.1	2026-07-01 08:14:09.234007+00
-81	417	account_lifecycle_smoke_1782893648305_45k9z9_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:09.48889+00
-82	419	account_lifecycle_smoke_1782893693786_ku966l_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.485116+00
-83	418	account_lifecycle_smoke_1782893693786_ku966l_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.717728+00
-84	418	account_lifecycle_smoke_1782893693786_ku966l_admin	USER_DEACTIVATE	user	419	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_1782893693786_ku966l_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:14:54.728589+00
-85	\N	account_lifecycle_smoke_1782893693786_ku966l_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.738729+00
-86	418	account_lifecycle_smoke_1782893693786_ku966l_admin	USER_REACTIVATE	user	419	{"username": "account_lifecycle_smoke_1782893693786_ku966l_teacher"}	127.0.0.1	2026-07-01 08:14:54.743994+00
-87	419	account_lifecycle_smoke_1782893693786_ku966l_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.969903+00
-88	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.196641+00
-89	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.432652+00
-90	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:16:28.441005+00
-91	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.447927+00
-95	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:35.909118+00
-96	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.366782+00
-97	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.611188+00
-98	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:17:09.618679+00
-99	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.622359+00
-100	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:17:09.625882+00
-101	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.845547+00
-102	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.20793+00
-103	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.439314+00
-104	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:17:15.449527+00
-105	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.455838+00
-106	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:17:15.460356+00
-107	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.683908+00
-108	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:06.877137+00
-110	423	10010002-U878T	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:07.371963+00
-111	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	423	{"expiresAt": "2026-07-08T08:24:07.597Z"}	127.0.0.1	2026-07-01 08:24:07.604206+00
-112	\N	10010002-U878T	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:07.836207+00
-113	423	10010002-U878T	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:08.059094+00
-114	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	423	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-U878T", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:24:08.069759+00
-115	\N	10010002-U878T	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:08.075793+00
-116	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	423	{"username": "10010002-U878T"}	127.0.0.1	2026-07-01 08:24:08.083862+00
-117	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:31.691146+00
-119	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	424	{"expiresAt": "2026-07-08T08:24:32.179Z"}	127.0.0.1	2026-07-01 08:24:32.183836+00
-120	\N	10010002-P4N35	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.403785+00
-121	424	10010002-P4N35	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.627299+00
-122	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	424	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-P4N35", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:24:32.639119+00
-123	\N	10010002-P4N35	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.644695+00
-124	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	424	{"username": "10010002-P4N35"}	127.0.0.1	2026-07-01 08:24:32.652703+00
-125	424	10010002-P4N35	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.87679+00
-126	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:40.606909+00
-128	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	425	{"expiresAt": "2026-07-08T08:24:41.095Z"}	127.0.0.1	2026-07-01 08:24:41.097762+00
-129	\N	10010002-PTYVF	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.320197+00
-130	425	10010002-PTYVF	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.544778+00
-131	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	425	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-PTYVF", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:24:41.55649+00
-132	\N	10010002-PTYVF	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.561602+00
-133	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	425	{"username": "10010002-PTYVF"}	127.0.0.1	2026-07-01 08:24:41.568265+00
-134	425	10010002-PTYVF	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.791247+00
-135	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.181673+00
-136	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.409331+00
-138	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.652254+00
-139	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:26:00.66154+00
-140	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.667558+00
-141	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:26:00.672304+00
-143	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.906839+00
-142	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	426	{"expiresAt": "2026-07-08T08:26:00.695Z"}	127.0.0.1	2026-07-01 08:26:00.699498+00
-144	\N	10010002-DYH9A	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.93477+00
-145	426	10010002-DYH9A	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:01.165073+00
-146	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	426	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-DYH9A", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:26:01.175657+00
-147	\N	10010002-DYH9A	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:26:01.181366+00
-148	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	426	{"username": "10010002-DYH9A"}	127.0.0.1	2026-07-01 08:26:01.189043+00
-149	426	10010002-DYH9A	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:01.415424+00
-150	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:30:52.944986+00
-151	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:30:53.177068+00
-152	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher"}	127.0.0.1	2026-07-01 08:30:53.416448+00
-153	428	role_scope_smoke_school_admin	USER_UPDATE	user	429	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:30:53.644314+00
-154	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:11.423371+00
-155	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:11.656322+00
-156	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:55.015019+00
-157	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:55.244609+00
-158	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782894714327_mmc1p0"}	127.0.0.1	2026-07-01 08:31:55.498198+00
-159	428	role_scope_smoke_school_admin	USER_UPDATE	user	431	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:31:55.758406+00
-160	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:32:02.189871+00
-161	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:32:02.417331+00
-162	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782894721505_x9cglx"}	127.0.0.1	2026-07-01 08:32:02.654938+00
-163	428	role_scope_smoke_school_admin	USER_UPDATE	user	432	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:32:02.90992+00
-164	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:33:09.427373+00
-165	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:33:09.656436+00
-166	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782894788742_8irdn4"}	127.0.0.1	2026-07-01 08:33:09.899398+00
-167	428	role_scope_smoke_school_admin	USER_UPDATE	user	433	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:33:10.135543+00
-168	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.515884+00
-169	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.745702+00
-170	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 09:03:56.75663+00
-171	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.763482+00
-172	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 09:03:56.768239+00
-173	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.991201+00
-174	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:04:59.626957+00
-175	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:04:59.855284+00
-176	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782896698932_n7uzta"}	127.0.0.1	2026-07-01 09:05:00.098532+00
-177	428	role_scope_smoke_school_admin	USER_UPDATE	user	434	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 09:05:00.325305+00
-178	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:05:43.99464+00
-180	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	435	{"expiresAt": "2026-07-08T09:05:44.484Z"}	127.0.0.1	2026-07-01 09:05:44.488345+00
-181	\N	10010002-K36WJ	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 09:05:44.70867+00
-182	435	10010002-K36WJ	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:05:44.963165+00
-183	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	435	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-K36WJ", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 09:05:44.975464+00
-184	\N	10010002-K36WJ	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 09:05:44.981796+00
-185	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	435	{"username": "10010002-K36WJ"}	127.0.0.1	2026-07-01 09:05:44.989076+00
-186	435	10010002-K36WJ	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:05:45.213731+00
-187	1	newnew	USER_REACTIVATE	user	434	{"username": "role_scope_smoke_teacher_1782896698932_n7uzta"}	::1	2026-07-01 09:08:15.962453+00
-188	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-02 00:51:36.932149+00
-109	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:24:07.140857+00
-118	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:24:31.947839+00
-127	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:24:40.862941+00
-137	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:26:00.447321+00
-179	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 09:05:44.2516+00
-189	1	newnew	DATA_IMPORT	import	\N	{"rowCount": 4950, "rowsSkipped": 4950, "rowsInserted": 0, "manualSchools": 0}	::1	2026-07-02 01:20:42.117789+00
-190	1	newnew	DATA_IMPORT	import	\N	{"target": "ข้อมูลนักเรียนในระบบ (รายภาคเรียน)", "rowCount": 4950, "rowsSkipped": 4950, "rowsInserted": 0, "manualSchools": 0}	::1	2026-07-02 01:34:13.399654+00
-191	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:34.553802+00
-192	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:34.786707+00
-193	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782998733824_g9pa6h"}	127.0.0.1	2026-07-02 13:25:35.032493+00
-194	428	role_scope_smoke_school_admin	USER_UPDATE	user	436	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 13:25:35.259348+00
-195	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:44.876979+00
-196	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.104018+00
-197	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:25:45.115342+00
-198	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.121077+00
-199	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 13:25:45.125655+00
-200	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.345793+00
-201	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:46.591908+00
-202	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 13:25:46.849427+00
-203	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	437	{"expiresAt": "2026-07-09T13:25:47.078Z"}	127.0.0.1	2026-07-02 13:25:47.082838+00
-204	\N	10010002-9NBXU	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.301622+00
-205	437	10010002-9NBXU	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.52612+00
-206	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	437	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-9NBXU", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:25:47.536548+00
-207	\N	10010002-9NBXU	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.542808+00
-208	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	437	{"username": "10010002-9NBXU"}	127.0.0.1	2026-07-02 13:25:47.550193+00
-209	437	10010002-9NBXU	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.772163+00
-210	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:36.407744+00
-211	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:36.661741+00
-212	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782999215637_paj37r"}	127.0.0.1	2026-07-02 13:33:36.923772+00
-213	428	role_scope_smoke_school_admin	USER_UPDATE	user	438	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 13:33:37.200715+00
-214	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.036632+00
-215	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.315314+00
-216	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:33:39.323256+00
-217	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.328624+00
-218	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 13:33:39.335038+00
-219	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.577989+00
-220	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:41.302185+00
-221	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 13:33:41.582272+00
-222	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	439	{"expiresAt": "2026-07-09T13:33:41.843Z"}	127.0.0.1	2026-07-02 13:33:41.850561+00
-223	\N	10010002-QLKT2	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.090208+00
-224	439	10010002-QLKT2	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.342609+00
-225	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	439	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-QLKT2", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:33:42.35397+00
-226	\N	10010002-QLKT2	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.36053+00
-227	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	439	{"username": "10010002-QLKT2"}	127.0.0.1	2026-07-02 13:33:42.369214+00
-228	439	10010002-QLKT2	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.621204+00
-229	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:22.526883+00
-230	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:22.764639+00
-231	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1783001301751_7uisi1"}	127.0.0.1	2026-07-02 14:08:23.009566+00
-232	428	role_scope_smoke_school_admin	USER_UPDATE	user	440	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 14:08:23.245159+00
-233	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:27.810771+00
-234	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.041598+00
-235	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:08:28.051478+00
-236	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.056778+00
-237	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 14:08:28.06121+00
-238	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.282856+00
-239	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:17:53.249198+00
-240	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:17:53.483186+00
-241	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1783001872531_bdpic6"}	127.0.0.1	2026-07-02 14:17:53.727423+00
-242	428	role_scope_smoke_school_admin	USER_UPDATE	user	441	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 14:17:53.952574+00
-243	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.373471+00
-244	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.601349+00
-245	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:18:00.612772+00
-246	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.618612+00
-247	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 14:18:00.623362+00
-248	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.84579+00
-249	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:24.306045+00
-250	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 14:18:24.55654+00
-251	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	442	{"expiresAt": "2026-07-09T14:18:24.784Z"}	127.0.0.1	2026-07-02 14:18:24.790152+00
-252	\N	10010002-C37GN	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.009502+00
-253	442	10010002-C37GN	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.23408+00
-254	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	442	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-C37GN", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:18:25.243979+00
-255	\N	10010002-C37GN	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.249569+00
-256	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	442	{"username": "10010002-C37GN"}	127.0.0.1	2026-07-02 14:18:25.256296+00
-257	442	10010002-C37GN	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.479152+00
+COPY public.audit_log (id, actor_user_id, actor_label, action, target_type, target_id, metadata, ip, created_at, data_origin_code) FROM stdin;
+8	\N	q	LOGIN_FAILED	\N	\N	\N	::1	2026-06-21 03:53:58.061553+00	OPERATIONAL
+9	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-21 16:10:59.337031+00	OPERATIONAL
+10	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-21 16:17:31.851315+00	OPERATIONAL
+419	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-03 16:13:16.213541+00	OPERATIONAL
+12	1	newnew	USER_UPDATE	user	16	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope"]}	::1	2026-06-21 16:18:12.128101+00	OPERATIONAL
+13	1	newnew	USER_DELETE	user	16	\N	::1	2026-06-21 16:18:12.163154+00	OPERATIONAL
+14	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 02:18:05.237009+00	OPERATIONAL
+15	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 07:28:59.090373+00	OPERATIONAL
+16	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 13:23:29.519503+00	OPERATIONAL
+17	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 13:23:49.333194+00	OPERATIONAL
+18	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-22 13:43:03.543326+00	OPERATIONAL
+19	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-24 06:30:49.044581+00	OPERATIONAL
+20	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-24 06:57:59.146633+00	OPERATIONAL
+21	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-24 14:03:00.983515+00	OPERATIONAL
+22	1	newnew	CASE_FORWARD	case	1004	{"reviewAction": "FORWARD"}	\N	2026-06-24 14:11:41.153128+00	OPERATIONAL
+169	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.745702+00	AUTOMATED_TEST
+118	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:24:31.947839+00	AUTOMATED_TEST
+127	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:24:40.862941+00	AUTOMATED_TEST
+137	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:26:00.447321+00	AUTOMATED_TEST
+179	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 09:05:44.2516+00	AUTOMATED_TEST
+28	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-25 02:29:19.625277+00	OPERATIONAL
+191	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:34.553802+00	AUTOMATED_TEST
+192	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:34.786707+00	AUTOMATED_TEST
+193	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782998733824_g9pa6h"}	127.0.0.1	2026-07-02 13:25:35.032493+00	AUTOMATED_TEST
+195	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:44.876979+00	AUTOMATED_TEST
+196	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.104018+00	AUTOMATED_TEST
+482	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:30:10.502325+00	AUTOMATED_TEST
+36	1	newnew	CASE_CLOSE	case	1021	{"agencyId": null, "referralId": null, "reviewAction": "CLOSE", "resolutionOutcome": "RETURNED_TO_SCHOOL"}	\N	2026-06-25 18:23:23.31562+00	OPERATIONAL
+41	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": null, "schoolId": -1, "createdCount": 0}	127.0.0.1	2026-06-27 11:17:29.591957+00	OPERATIONAL
+42	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-27 16:11:26.093089+00	OPERATIONAL
+43	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": null, "schoolId": null, "createdCount": 50}	::1	2026-06-28 03:27:20.273634+00	OPERATIONAL
+44	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 03:30:44.246407+00	OPERATIONAL
+45	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:30:58.466129+00	OPERATIONAL
+46	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:30:59.47012+00	OPERATIONAL
+47	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:30:59.852396+00	OPERATIONAL
+48	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.013125+00	OPERATIONAL
+49	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.175957+00	OPERATIONAL
+50	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.324085+00	OPERATIONAL
+51	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "schoolId": 10010004, "createdCount": 0}	::1	2026-06-28 03:31:00.476266+00	OPERATIONAL
+52	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.2", "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 03:31:17.733697+00	OPERATIONAL
+53	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-28 04:25:45.824504+00	OPERATIONAL
+54	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ม.6", "scope": {"districts": ["ดอนเมือง"], "provinces": ["กรุงเทพมหานคร"], "school_ids": [10010004], "grade_levels": ["ม.6"], "sub_districts": ["สีกัน"]}, "schoolId": 10010004, "createdCount": 41}	::1	2026-06-28 13:39:58.021136+00	OPERATIONAL
+55	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.3", "scope": {"districts": ["ดอนเมือง"], "provinces": ["กรุงเทพมหานคร"], "school_ids": [10010004], "grade_levels": ["ป.3"], "sub_districts": ["สีกัน"]}, "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 13:42:37.460844+00	OPERATIONAL
+56	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.4", "scope": {"districts": ["ดอนเมือง"], "provinces": ["กรุงเทพมหานคร"], "school_ids": [10010004], "grade_levels": ["ป.4"], "sub_districts": ["สีกัน"]}, "schoolId": 10010004, "createdCount": 42}	::1	2026-06-28 13:42:55.968545+00	OPERATIONAL
+57	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ป.1", "scope": {"room_ids": [1], "districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.1"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 13}	::1	2026-06-28 14:15:09.327064+00	OPERATIONAL
+58	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-29 06:14:42.333423+00	OPERATIONAL
+59	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.1", "scope": {"districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.1"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 29}	::1	2026-06-29 06:18:47.784768+00	OPERATIONAL
+60	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.2", "scope": {"districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.2"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 42}	::1	2026-06-29 06:26:04.425055+00	OPERATIONAL
+61	1	newnew	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": null, "grade": "ป.3", "scope": {"districts": ["เมืองขอนแก่น"], "provinces": ["ขอนแก่น"], "school_ids": [10010003], "grade_levels": ["ป.3"], "sub_districts": ["ในเมือง"]}, "district": null, "province": null, "schoolId": 10010003, "scopeLabel": null, "subDistrict": null, "createdCount": 42}	::1	2026-06-29 06:28:35.44349+00	OPERATIONAL
+62	1	newnew	LOGIN	\N	\N	\N	::1	2026-06-30 10:22:41.657969+00	OPERATIONAL
+63	1	newnew	USER_UPDATE	user	23	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope"]}	::1	2026-06-30 11:28:31.179841+00	OPERATIONAL
+64	1	newnew	USER_UPDATE	user	23	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope"]}	::1	2026-06-30 11:30:43.820019+00	OPERATIONAL
+65	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-01 05:09:37.15142+00	OPERATIONAL
+66	1	newnew	USER_CREATE	user	\N	{"username": "ก"}	::1	2026-07-01 05:33:10.978096+00	OPERATIONAL
+67	1	newnew	USER_UPDATE	user	412	{"fields": ["id", "username", "FirstName", "LastName", "PersonID_Onec", "role", "roles", "permissions", "status", "data_scope", "phone", "email"]}	::1	2026-07-01 05:33:48.11327+00	OPERATIONAL
+68	1	newnew	USER_CREATE	user	\N	{"username": "test"}	::1	2026-07-01 05:34:19.30843+00	OPERATIONAL
+69	\N	__invalid__	LOGIN_FAILED	\N	\N	\N	::ffff:127.0.0.1	2026-07-01 08:09:06.69172+00	OPERATIONAL
+200	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.345793+00	AUTOMATED_TEST
+201	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:46.591908+00	AUTOMATED_TEST
+278	443	master_data_lookup_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:14:37.283582+00	AUTOMATED_TEST
+221	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 13:33:41.582272+00	AUTOMATED_TEST
+222	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	439	{"expiresAt": "2026-07-09T13:33:41.843Z"}	127.0.0.1	2026-07-02 13:33:41.850561+00	AUTOMATED_TEST
+225	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	439	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-QLKT2", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:33:42.35397+00	AUTOMATED_TEST
+227	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	439	{"username": "10010002-QLKT2"}	127.0.0.1	2026-07-02 13:33:42.369214+00	AUTOMATED_TEST
+233	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:27.810771+00	AUTOMATED_TEST
+234	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.041598+00	AUTOMATED_TEST
+238	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.282856+00	AUTOMATED_TEST
+239	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:17:53.249198+00	AUTOMATED_TEST
+240	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:17:53.483186+00	AUTOMATED_TEST
+241	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1783001872531_bdpic6"}	127.0.0.1	2026-07-02 14:17:53.727423+00	AUTOMATED_TEST
+243	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.373471+00	AUTOMATED_TEST
+244	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.601349+00	AUTOMATED_TEST
+248	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.84579+00	AUTOMATED_TEST
+249	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:24.306045+00	AUTOMATED_TEST
+250	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 14:18:24.55654+00	AUTOMATED_TEST
+496	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:10:09.241254+00	AUTOMATED_TEST
+31	25	auth_smoke_f50995c7e009	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:57:22.863884+00	AUTOMATED_TEST
+32	25	auth_smoke_44589a34e34d	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:59:05.469468+00	AUTOMATED_TEST
+34	25	auth_smoke_44589a34e34d	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:59:06.425484+00	AUTOMATED_TEST
+35	26	exec_smoke_e86ab8d78792	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 18:03:41.348524+00	AUTOMATED_TEST
+93	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.680431+00	AUTOMATED_TEST
+94	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:35.68169+00	AUTOMATED_TEST
+70	415	account_lifecycle_smoke_1782893619103_pg5etk_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:13:39.81048+00	AUTOMATED_TEST
+71	414	account_lifecycle_smoke_1782893619103_pg5etk_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:13:40.063946+00	AUTOMATED_TEST
+75	415	account_lifecycle_smoke_1782893619103_pg5etk_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:13:40.313456+00	AUTOMATED_TEST
+76	417	account_lifecycle_smoke_1782893648305_45k9z9_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:08.985297+00	AUTOMATED_TEST
+77	416	account_lifecycle_smoke_1782893648305_45k9z9_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:09.213436+00	AUTOMATED_TEST
+95	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:35.909118+00	AUTOMATED_TEST
+96	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.366782+00	AUTOMATED_TEST
+251	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	442	{"expiresAt": "2026-07-09T14:18:24.784Z"}	127.0.0.1	2026-07-02 14:18:24.790152+00	AUTOMATED_TEST
+254	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	442	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-C37GN", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:18:25.243979+00	AUTOMATED_TEST
+112	\N	10010002-U878T	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:07.836207+00	OPERATIONAL
+256	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	442	{"username": "10010002-C37GN"}	127.0.0.1	2026-07-02 14:18:25.256296+00	AUTOMATED_TEST
+259	443	master_data_lookup_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:09:01.250672+00	AUTOMATED_TEST
+115	\N	10010002-U878T	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:08.075793+00	OPERATIONAL
+260	444	master_data_lookup_smoke_no_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:09:01.480141+00	AUTOMATED_TEST
+261	443	master_data_lookup_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:09:22.221042+00	AUTOMATED_TEST
+262	444	master_data_lookup_smoke_no_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:09:22.451504+00	AUTOMATED_TEST
+263	443	master_data_lookup_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:10:19.195548+00	AUTOMATED_TEST
+120	\N	10010002-P4N35	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.403785+00	OPERATIONAL
+264	444	master_data_lookup_smoke_no_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:10:19.426303+00	AUTOMATED_TEST
+268	443	master_data_lookup_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:13:34.843169+00	AUTOMATED_TEST
+123	\N	10010002-P4N35	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.644695+00	OPERATIONAL
+269	444	master_data_lookup_smoke_no_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:13:35.072599+00	AUTOMATED_TEST
+273	443	master_data_lookup_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:14:11.337451+00	AUTOMATED_TEST
+283	443	master_data_lookup_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:17:48.346661+00	AUTOMATED_TEST
+284	444	master_data_lookup_smoke_no_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:17:48.57809+00	AUTOMATED_TEST
+288	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:32:12.54037+00	AUTOMATED_TEST
+129	\N	10010002-PTYVF	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.320197+00	OPERATIONAL
+289	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:32:12.773842+00	AUTOMATED_TEST
+290	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:32:12.995723+00	AUTOMATED_TEST
+132	\N	10010002-PTYVF	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.561602+00	OPERATIONAL
+291	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	1	{"status": "RESOLVED"}	\N	2026-07-02 16:32:13.02486+00	AUTOMATED_TEST
+292	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	2	{"status": "REJECTED"}	\N	2026-07-02 16:32:13.040492+00	AUTOMATED_TEST
+293	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 1, "truncated": false}	\N	2026-07-02 16:32:13.046924+00	AUTOMATED_TEST
+294	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:35:14.598221+00	AUTOMATED_TEST
+295	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:35:14.824993+00	AUTOMATED_TEST
+296	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:35:15.047016+00	AUTOMATED_TEST
+297	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	3	{"status": "RESOLVED"}	\N	2026-07-02 16:35:15.073309+00	AUTOMATED_TEST
+298	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	4	{"status": "REJECTED"}	\N	2026-07-02 16:35:15.084021+00	AUTOMATED_TEST
+299	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 1, "truncated": false}	\N	2026-07-02 16:35:15.089506+00	AUTOMATED_TEST
+420	1	newnew	SYSTEM_SETTING_EDIT	system_settings	ABSENT_THRESHOLD_DAYS	{"op": "update", "newValue": "4", "previousValue": "3"}	\N	2026-07-03 16:56:38.044203+00	OPERATIONAL
+421	1	newnew	SYSTEM_SETTING_EDIT	system_settings	ABSENT_THRESHOLD_DAYS	{"op": "update", "newValue": "3", "previousValue": "4"}	\N	2026-07-03 16:56:38.070319+00	OPERATIONAL
+483	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 16:30:11.665313+00	AUTOMATED_TEST
+497	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:10:10.889189+00	AUTOMATED_TEST
+511	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:21:47.216943+00	OPERATIONAL
+525	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 17:52:14.538207+00	AUTOMATED_TEST
+81	417	account_lifecycle_smoke_1782893648305_45k9z9_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:09.48889+00	AUTOMATED_TEST
+300	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:38:30.436665+00	AUTOMATED_TEST
+301	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:38:30.66657+00	AUTOMATED_TEST
+302	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:38:30.887284+00	AUTOMATED_TEST
+352	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:25:15.635626+00	AUTOMATED_TEST
+303	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	5	{"status": "RESOLVED"}	\N	2026-07-02 16:38:30.911967+00	AUTOMATED_TEST
+304	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	6	{"status": "REJECTED"}	\N	2026-07-02 16:38:30.923096+00	AUTOMATED_TEST
+305	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 1, "truncated": false}	\N	2026-07-02 16:38:30.930162+00	AUTOMATED_TEST
+306	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:47:26.404976+00	AUTOMATED_TEST
+307	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:47:26.635926+00	AUTOMATED_TEST
+308	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 16:47:26.866668+00	AUTOMATED_TEST
+309	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	7	{"status": "RESOLVED"}	\N	2026-07-02 16:47:26.900802+00	AUTOMATED_TEST
+310	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	8	{"status": "REJECTED"}	\N	2026-07-02 16:47:26.907233+00	AUTOMATED_TEST
+311	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 1, "truncated": false}	\N	2026-07-02 16:47:26.910735+00	AUTOMATED_TEST
+312	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 01:30:07.742158+00	AUTOMATED_TEST
+313	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 01:30:08.038598+00	AUTOMATED_TEST
+314	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 01:30:08.306212+00	AUTOMATED_TEST
+315	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	1	{"status": "RESOLVED"}	\N	2026-07-03 01:30:08.372565+00	AUTOMATED_TEST
+316	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	2	{"status": "REJECTED"}	\N	2026-07-03 01:30:08.386326+00	AUTOMATED_TEST
+317	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 1, "truncated": false}	\N	2026-07-03 01:30:08.396682+00	AUTOMATED_TEST
+320	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:58:49.44837+00	AUTOMATED_TEST
+321	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:58:49.708184+00	AUTOMATED_TEST
+322	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:58:49.931178+00	AUTOMATED_TEST
+323	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:59:04.953297+00	AUTOMATED_TEST
+324	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:59:05.180305+00	AUTOMATED_TEST
+325	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:59:05.402273+00	AUTOMATED_TEST
+326	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:59:38.544376+00	AUTOMATED_TEST
+327	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:59:38.77155+00	AUTOMATED_TEST
+328	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 03:59:38.994423+00	AUTOMATED_TEST
+329	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	45	{"status": "RESOLVED"}	\N	2026-07-03 03:59:39.041256+00	AUTOMATED_TEST
+330	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:00:34.14399+00	AUTOMATED_TEST
+331	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:00:34.370962+00	AUTOMATED_TEST
+332	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:00:34.593897+00	AUTOMATED_TEST
+333	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	48	{"status": "RESOLVED"}	\N	2026-07-03 04:00:34.640935+00	AUTOMATED_TEST
+334	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	49	{"status": "RESOLVED"}	\N	2026-07-03 04:00:34.659822+00	AUTOMATED_TEST
+335	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	50	{"status": "REJECTED"}	\N	2026-07-03 04:00:34.670569+00	AUTOMATED_TEST
+29	25	auth_smoke_f50995c7e009	LOGIN	\N	\N	\N	127.0.0.1	2026-06-25 17:57:21.928869+00	AUTOMATED_TEST
+336	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 04:00:34.67696+00	AUTOMATED_TEST
+337	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:00:58.42043+00	AUTOMATED_TEST
+338	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:00:58.649573+00	AUTOMATED_TEST
+339	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:00:58.87125+00	AUTOMATED_TEST
+340	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	51	{"status": "RESOLVED"}	\N	2026-07-03 04:00:58.918606+00	AUTOMATED_TEST
+341	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	52	{"status": "RESOLVED"}	\N	2026-07-03 04:00:58.937662+00	AUTOMATED_TEST
+342	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	53	{"status": "REJECTED"}	\N	2026-07-03 04:00:58.948788+00	AUTOMATED_TEST
+343	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 04:00:58.954077+00	AUTOMATED_TEST
+344	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:02:07.473739+00	AUTOMATED_TEST
+345	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:02:07.712341+00	AUTOMATED_TEST
+346	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:02:07.943502+00	AUTOMATED_TEST
+422	448	profile_self_edit_smoke	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:49:19.012652+00	AUTOMATED_TEST
+484	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:40:20.519686+00	AUTOMATED_TEST
+347	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	54	{"status": "RESOLVED"}	\N	2026-07-03 04:02:07.989883+00	AUTOMATED_TEST
+144	\N	10010002-DYH9A	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.93477+00	OPERATIONAL
+348	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	55	{"status": "RESOLVED"}	\N	2026-07-03 04:02:08.008834+00	AUTOMATED_TEST
+349	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	56	{"status": "REJECTED"}	\N	2026-07-03 04:02:08.018975+00	AUTOMATED_TEST
+147	\N	10010002-DYH9A	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:26:01.181366+00	OPERATIONAL
+350	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 04:02:08.023011+00	AUTOMATED_TEST
+351	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:25:15.398168+00	AUTOMATED_TEST
+353	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:25:15.855652+00	AUTOMATED_TEST
+354	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	57	{"status": "RESOLVED"}	\N	2026-07-03 04:25:15.904012+00	AUTOMATED_TEST
+355	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	58	{"status": "RESOLVED"}	\N	2026-07-03 04:25:15.922952+00	AUTOMATED_TEST
+356	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:25:40.313563+00	AUTOMATED_TEST
+357	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:25:40.541642+00	AUTOMATED_TEST
+358	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:25:40.763011+00	AUTOMATED_TEST
+359	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	61	{"status": "RESOLVED"}	\N	2026-07-03 04:25:40.813182+00	AUTOMATED_TEST
+360	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	62	{"status": "RESOLVED"}	\N	2026-07-03 04:25:40.831149+00	AUTOMATED_TEST
+361	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:27:50.129892+00	AUTOMATED_TEST
+362	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:27:50.358146+00	AUTOMATED_TEST
+363	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:27:50.579719+00	AUTOMATED_TEST
+364	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	65	{"status": "RESOLVED"}	\N	2026-07-03 04:27:50.629396+00	AUTOMATED_TEST
+365	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	66	{"status": "RESOLVED"}	\N	2026-07-03 04:27:50.647897+00	AUTOMATED_TEST
+366	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:28:35.634201+00	AUTOMATED_TEST
+367	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:28:35.863966+00	AUTOMATED_TEST
+368	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:28:36.086707+00	AUTOMATED_TEST
+369	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	69	{"status": "RESOLVED"}	\N	2026-07-03 04:28:36.134118+00	AUTOMATED_TEST
+370	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	70	{"status": "RESOLVED"}	\N	2026-07-03 04:28:36.153232+00	AUTOMATED_TEST
+371	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	71	{"status": "RESOLVED", "reasonCode": "ROOM_NOT_FOUND", "changedFields": ["RoomID_Onec"]}	\N	2026-07-03 04:28:36.165596+00	AUTOMATED_TEST
+372	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	72	{"status": "REJECTED"}	\N	2026-07-03 04:28:36.175617+00	AUTOMATED_TEST
+373	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 04:28:36.179927+00	AUTOMATED_TEST
+374	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:33:13.71121+00	AUTOMATED_TEST
+375	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:33:13.960699+00	AUTOMATED_TEST
+376	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:33:14.195885+00	AUTOMATED_TEST
+377	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	73	{"status": "RESOLVED"}	\N	2026-07-03 04:33:14.240555+00	AUTOMATED_TEST
+378	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	74	{"status": "RESOLVED"}	\N	2026-07-03 04:33:14.259982+00	AUTOMATED_TEST
+379	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	75	{"status": "RESOLVED", "reasonCode": "ROOM_NOT_FOUND", "changedFields": ["RoomID_Onec"]}	\N	2026-07-03 04:33:14.270952+00	AUTOMATED_TEST
+380	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	76	{"status": "REJECTED"}	\N	2026-07-03 04:33:14.281652+00	AUTOMATED_TEST
+381	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 04:33:14.286234+00	AUTOMATED_TEST
+382	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:33:52.536926+00	AUTOMATED_TEST
+383	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:33:52.765166+00	AUTOMATED_TEST
+181	\N	10010002-K36WJ	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 09:05:44.70867+00	OPERATIONAL
+384	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 04:33:52.986513+00	AUTOMATED_TEST
+385	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	77	{"status": "RESOLVED"}	\N	2026-07-03 04:33:53.027398+00	AUTOMATED_TEST
+184	\N	10010002-K36WJ	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 09:05:44.981796+00	OPERATIONAL
+386	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	78	{"status": "RESOLVED"}	\N	2026-07-03 04:33:53.047992+00	AUTOMATED_TEST
+498	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:11:53.485423+00	OPERATIONAL
+188	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-02 00:51:36.932149+00	OPERATIONAL
+275	\N	\N	MASTER_DATA_EDIT	absence_reason_categories	3	{"op": "create"}	\N	2026-07-02 15:14:11.582406+00	OPERATIONAL
+276	\N	\N	MASTER_DATA_EDIT	absence_reasons	3	{"op": "create"}	\N	2026-07-02 15:14:11.588025+00	OPERATIONAL
+277	\N	\N	MASTER_DATA_EDIT	absence_reasons	3	{"op": "update"}	\N	2026-07-02 15:14:11.591979+00	OPERATIONAL
+280	\N	\N	MASTER_DATA_EDIT	absence_reason_categories	4	{"op": "create"}	\N	2026-07-02 15:14:37.528539+00	OPERATIONAL
+387	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	79	{"status": "RESOLVED", "reasonCode": "ROOM_NOT_FOUND", "changedFields": ["RoomID_Onec"]}	\N	2026-07-03 04:33:53.059866+00	AUTOMATED_TEST
+388	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	80	{"status": "REJECTED"}	\N	2026-07-03 04:33:53.070055+00	AUTOMATED_TEST
+389	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 04:33:53.074224+00	AUTOMATED_TEST
+391	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 06:44:55.944264+00	AUTOMATED_TEST
+189	1	newnew	DATA_IMPORT	import	\N	{"rowCount": 4950, "rowsSkipped": 4950, "rowsInserted": 0, "manualSchools": 0}	::1	2026-07-02 01:20:42.117789+00	OPERATIONAL
+190	1	newnew	DATA_IMPORT	import	\N	{"target": "ข้อมูลนักเรียนในระบบ (รายภาคเรียน)", "rowCount": 4950, "rowsSkipped": 4950, "rowsInserted": 0, "manualSchools": 0}	::1	2026-07-02 01:34:13.399654+00	OPERATIONAL
+392	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 06:44:56.171531+00	AUTOMATED_TEST
+393	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 06:44:56.39042+00	AUTOMATED_TEST
+394	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	81	{"status": "RESOLVED"}	\N	2026-07-03 06:44:56.442137+00	AUTOMATED_TEST
+395	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	82	{"status": "RESOLVED"}	\N	2026-07-03 06:44:56.461686+00	AUTOMATED_TEST
+396	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	83	{"status": "RESOLVED", "reasonCode": "ROOM_NOT_FOUND", "changedFields": ["RoomID_Onec"]}	\N	2026-07-03 06:44:56.473386+00	AUTOMATED_TEST
+397	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	85	{"status": "RESOLVED", "reasonCode": "UNMAPPED_STUDENT_STATUS", "changedFields": ["StudentStatusID_Onec"]}	\N	2026-07-03 06:44:56.490511+00	AUTOMATED_TEST
+398	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	84	{"status": "REJECTED"}	\N	2026-07-03 06:44:56.49644+00	AUTOMATED_TEST
+399	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 06:44:56.501395+00	AUTOMATED_TEST
+400	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 06:47:19.762933+00	AUTOMATED_TEST
+401	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 06:47:19.995231+00	AUTOMATED_TEST
+402	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 06:47:20.216964+00	AUTOMATED_TEST
+403	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	86	{"status": "RESOLVED"}	\N	2026-07-03 06:47:20.263897+00	AUTOMATED_TEST
+404	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	87	{"status": "RESOLVED"}	\N	2026-07-03 06:47:20.279648+00	AUTOMATED_TEST
+204	\N	10010002-9NBXU	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.301622+00	OPERATIONAL
+205	437	10010002-9NBXU	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.52612+00	OPERATIONAL
+405	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	88	{"status": "RESOLVED", "reasonCode": "ROOM_NOT_FOUND", "changedFields": ["RoomID_Onec"]}	\N	2026-07-03 06:47:20.288884+00	AUTOMATED_TEST
+207	\N	10010002-9NBXU	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.542808+00	OPERATIONAL
+406	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	90	{"status": "RESOLVED", "reasonCode": "UNMAPPED_STUDENT_STATUS", "changedFields": ["StudentStatusID_Onec"]}	\N	2026-07-03 06:47:20.304307+00	AUTOMATED_TEST
+209	437	10010002-9NBXU	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:25:47.772163+00	OPERATIONAL
+407	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	89	{"status": "REJECTED"}	\N	2026-07-03 06:47:20.311138+00	AUTOMATED_TEST
+408	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false}	\N	2026-07-03 06:47:20.315903+00	AUTOMATED_TEST
+409	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 07:20:59.611434+00	AUTOMATED_TEST
+410	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 07:20:59.858314+00	AUTOMATED_TEST
+411	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 07:21:00.095312+00	AUTOMATED_TEST
+412	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	91	{"status": "RESOLVED", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "เลขนี้ตรงกับหลายโปรไฟล์ในระบบ", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke"}	\N	2026-07-03 07:21:00.152024+00	AUTOMATED_TEST
+413	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	92	{"status": "RESOLVED", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "ไม่พบชั้นเรียนในข้อมูลหลัก", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke"}	\N	2026-07-03 07:21:00.170374+00	AUTOMATED_TEST
+414	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	93	{"status": "RESOLVED", "reasonCode": "ROOM_NOT_FOUND", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "ไม่พบห้องเรียนในข้อมูลหลัก", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke", "changedFields": ["RoomID_Onec"], "changedFieldLabels": "ห้อง"}	\N	2026-07-03 07:21:00.179806+00	AUTOMATED_TEST
+415	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	95	{"status": "RESOLVED", "reasonCode": "UNMAPPED_STUDENT_STATUS", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "สถานะนักเรียนยังไม่จับคู่", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke", "changedFields": ["StudentStatusID_Onec"], "changedFieldLabels": "สถานะนักเรียน"}	\N	2026-07-03 07:21:00.197497+00	AUTOMATED_TEST
+526	456	student_status_browser_settings	LOGIN	\N	\N	\N	::1	2026-07-04 17:52:15.413721+00	AUTOMATED_TEST
+552	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:11:02.662394+00	AUTOMATED_TEST
+589	458	account_lifecycle_browser_admin	LOGOUT	\N	\N	\N	::1	2026-07-04 18:26:46.362845+00	DEMO
+416	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	94	{"note": "Automated smoke rejection", "status": "REJECTED", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "แถวซ้ำในไฟล์", "statusLabel": "ปฏิเสธแล้ว", "studentName": "Private Smoke"}	\N	2026-07-03 07:21:00.204134+00	AUTOMATED_TEST
+417	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false, "statusLabel": "ปฏิเสธแล้ว"}	\N	2026-07-03 07:21:00.211997+00	AUTOMATED_TEST
+223	\N	10010002-QLKT2	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.090208+00	OPERATIONAL
+224	439	10010002-QLKT2	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.342609+00	OPERATIONAL
+423	448	profile_self_edit_smoke	USER_PROFILE_UPDATE	user	448	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	127.0.0.1	2026-07-03 17:49:19.07172+00	AUTOMATED_TEST
+226	\N	10010002-QLKT2	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.36053+00	OPERATIONAL
+485	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 16:40:21.968206+00	AUTOMATED_TEST
+228	439	10010002-QLKT2	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:42.621204+00	OPERATIONAL
+499	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:11:55.023027+00	OPERATIONAL
+512	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:21:48.568971+00	OPERATIONAL
+527	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:02:13.56977+00	AUTOMATED_TEST
+553	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:11:03.212864+00	AUTOMATED_TEST
+554	456	student_status_browser_settings	LOGIN	\N	\N	\N	::1	2026-07-04 18:11:03.872262+00	AUTOMATED_TEST
+571	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	979718	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:17:53.585263+00	AUTOMATED_TEST
+572	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	979718	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:17:53.828941+00	AUTOMATED_TEST
+573	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	979718	{"op": "update", "changedFields": ["isEnabled"]}	\N	2026-07-04 18:17:54.016761+00	AUTOMATED_TEST
+595	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-04 18:27:20.817068+00	AUTOMATED_TEST
+596	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-04 18:27:21.045496+00	AUTOMATED_TEST
+597	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-04 18:27:21.073758+00	AUTOMATED_TEST
+598	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-04 18:27:21.077641+00	OPERATIONAL
+599	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-04 18:27:21.088626+00	AUTOMATED_TEST
+600	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-04 18:27:21.308614+00	AUTOMATED_TEST
+252	\N	10010002-C37GN	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.009502+00	OPERATIONAL
+253	442	10010002-C37GN	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.23408+00	OPERATIONAL
+255	\N	10010002-C37GN	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.249569+00	OPERATIONAL
+257	442	10010002-C37GN	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:18:25.479152+00	OPERATIONAL
+258	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-02 15:06:23.362098+00	OPERATIONAL
+265	\N	\N	MASTER_DATA_EDIT	absence_reason_categories	1	{"op": "create"}	\N	2026-07-02 15:10:19.443348+00	OPERATIONAL
+266	\N	\N	MASTER_DATA_EDIT	absence_reasons	1	{"op": "create"}	\N	2026-07-02 15:10:19.450423+00	OPERATIONAL
+267	\N	\N	MASTER_DATA_EDIT	absence_reasons	1	{"op": "update"}	\N	2026-07-02 15:10:19.454343+00	OPERATIONAL
+270	\N	\N	MASTER_DATA_EDIT	absence_reason_categories	2	{"op": "create"}	\N	2026-07-02 15:13:35.090398+00	OPERATIONAL
+271	\N	\N	MASTER_DATA_EDIT	absence_reasons	2	{"op": "create"}	\N	2026-07-02 15:13:35.097759+00	OPERATIONAL
+272	\N	\N	MASTER_DATA_EDIT	absence_reasons	2	{"op": "update"}	\N	2026-07-02 15:13:35.102595+00	OPERATIONAL
+281	\N	\N	MASTER_DATA_EDIT	absence_reasons	4	{"op": "create"}	\N	2026-07-02 15:14:37.536598+00	OPERATIONAL
+282	\N	\N	MASTER_DATA_EDIT	absence_reasons	4	{"op": "update"}	\N	2026-07-02 15:14:37.541081+00	OPERATIONAL
+82	419	account_lifecycle_smoke_1782893693786_ku966l_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.485116+00	AUTOMATED_TEST
+424	448	profile_self_edit_smoke	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:49:50.824139+00	AUTOMATED_TEST
+285	\N	\N	MASTER_DATA_EDIT	absence_reason_categories	5	{"op": "create"}	\N	2026-07-02 15:17:48.594256+00	OPERATIONAL
+286	\N	\N	MASTER_DATA_EDIT	absence_reasons	5	{"op": "create"}	\N	2026-07-02 15:17:48.601073+00	OPERATIONAL
+287	\N	\N	MASTER_DATA_EDIT	absence_reasons	5	{"op": "update"}	\N	2026-07-02 15:17:48.605552+00	OPERATIONAL
+425	448	profile_self_edit_smoke	USER_PROFILE_UPDATE	user	448	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	127.0.0.1	2026-07-03 17:49:50.874855+00	AUTOMATED_TEST
+486	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:42:29.200487+00	AUTOMATED_TEST
+500	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:13:36.692426+00	OPERATIONAL
+501	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:13:37.977993+00	OPERATIONAL
+513	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:23:51.814661+00	OPERATIONAL
+528	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:02:14.711288+00	AUTOMATED_TEST
+529	456	student_status_browser_settings	LOGIN	\N	\N	\N	::1	2026-07-04 18:02:15.557579+00	AUTOMATED_TEST
+530	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	980278	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:02:16.757179+00	AUTOMATED_TEST
+531	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	980278	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:02:16.9807+00	AUTOMATED_TEST
+555	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:11:39.039997+00	AUTOMATED_TEST
+574	449	student_status_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-04 18:18:00.285612+00	AUTOMATED_TEST
+575	450	student_status_smoke_import	LOGIN	\N	\N	\N	127.0.0.1	2026-07-04 18:18:00.515842+00	AUTOMATED_TEST
+576	451	student_status_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-04 18:18:00.739584+00	AUTOMATED_TEST
+577	449	student_status_smoke_settings	MASTER_DATA_EDIT	student_status	989338	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:18:00.803546+00	AUTOMATED_TEST
+578	449	student_status_smoke_settings	MASTER_DATA_EDIT	student_status	989338	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:18:00.862252+00	AUTOMATED_TEST
+579	449	student_status_smoke_settings	MASTER_DATA_EDIT	student_status	989338	{"op": "update", "changedFields": ["isEnabled"]}	\N	2026-07-04 18:18:00.874546+00	AUTOMATED_TEST
+601	461	home_visit_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:41:31.199607+00	OPERATIONAL
+194	428	role_scope_smoke_school_admin	USER_UPDATE	user	436	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 13:25:35.259348+00	AUTOMATED_TEST
+213	428	role_scope_smoke_school_admin	USER_UPDATE	user	438	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 13:33:37.200715+00	AUTOMATED_TEST
+72	414	account_lifecycle_smoke_1782893619103_pg5etk_admin	USER_DEACTIVATE	user	415	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_1782893619103_pg5etk_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:13:40.075743+00	AUTOMATED_TEST
+92	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:16:28.454481+00	AUTOMATED_TEST
+318	1	newnew	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "PENDING", "rowCount": 6, "truncated": false}	\N	2026-07-03 02:40:22.928499+00	OPERATIONAL
+319	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-03 03:45:56.502469+00	OPERATIONAL
+83	418	account_lifecycle_smoke_1782893693786_ku966l_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.717728+00	AUTOMATED_TEST
+74	414	account_lifecycle_smoke_1782893619103_pg5etk_admin	USER_REACTIVATE	user	415	{"username": "account_lifecycle_smoke_1782893619103_pg5etk_teacher"}	127.0.0.1	2026-07-01 08:13:40.08944+00	AUTOMATED_TEST
+78	416	account_lifecycle_smoke_1782893648305_45k9z9_admin	USER_DEACTIVATE	user	417	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_1782893648305_45k9z9_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:14:09.223016+00	AUTOMATED_TEST
+80	416	account_lifecycle_smoke_1782893648305_45k9z9_admin	USER_REACTIVATE	user	417	{"username": "account_lifecycle_smoke_1782893648305_45k9z9_teacher"}	127.0.0.1	2026-07-01 08:14:09.234007+00	AUTOMATED_TEST
+232	428	role_scope_smoke_school_admin	USER_UPDATE	user	440	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 14:08:23.245159+00	AUTOMATED_TEST
+84	418	account_lifecycle_smoke_1782893693786_ku966l_admin	USER_DEACTIVATE	user	419	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_1782893693786_ku966l_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:14:54.728589+00	AUTOMATED_TEST
+86	418	account_lifecycle_smoke_1782893693786_ku966l_admin	USER_REACTIVATE	user	419	{"username": "account_lifecycle_smoke_1782893693786_ku966l_teacher"}	127.0.0.1	2026-07-01 08:14:54.743994+00	AUTOMATED_TEST
+242	428	role_scope_smoke_school_admin	USER_UPDATE	user	441	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-02 14:17:53.952574+00	AUTOMATED_TEST
+104	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:17:15.449527+00	AUTOMATED_TEST
+106	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:17:15.460356+00	AUTOMATED_TEST
+90	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:16:28.441005+00	AUTOMATED_TEST
+98	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:17:09.618679+00	AUTOMATED_TEST
+100	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:17:09.625882+00	AUTOMATED_TEST
+139	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:26:00.66154+00	AUTOMATED_TEST
+141	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 08:26:00.672304+00	AUTOMATED_TEST
+170	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 09:03:56.75663+00	AUTOMATED_TEST
+172	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-01 09:03:56.768239+00	AUTOMATED_TEST
+197	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:25:45.115342+00	AUTOMATED_TEST
+199	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 13:25:45.125655+00	AUTOMATED_TEST
+216	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:33:39.323256+00	AUTOMATED_TEST
+218	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 13:33:39.335038+00	AUTOMATED_TEST
+235	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:08:28.051478+00	AUTOMATED_TEST
+237	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 14:08:28.06121+00	AUTOMATED_TEST
+245	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 14:18:00.612772+00	AUTOMATED_TEST
+247	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-02 14:18:00.623362+00	AUTOMATED_TEST
+114	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	423	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-U878T", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:24:08.069759+00	AUTOMATED_TEST
+116	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	423	{"username": "10010002-U878T"}	127.0.0.1	2026-07-01 08:24:08.083862+00	AUTOMATED_TEST
+111	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	423	{"expiresAt": "2026-07-08T08:24:07.597Z"}	127.0.0.1	2026-07-01 08:24:07.604206+00	AUTOMATED_TEST
+119	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	424	{"expiresAt": "2026-07-08T08:24:32.179Z"}	127.0.0.1	2026-07-01 08:24:32.183836+00	AUTOMATED_TEST
+122	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	424	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-P4N35", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:24:32.639119+00	AUTOMATED_TEST
+124	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	424	{"username": "10010002-P4N35"}	127.0.0.1	2026-07-01 08:24:32.652703+00	AUTOMATED_TEST
+128	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	425	{"expiresAt": "2026-07-08T08:24:41.095Z"}	127.0.0.1	2026-07-01 08:24:41.097762+00	AUTOMATED_TEST
+426	449	student_status_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:54:32.511496+00	AUTOMATED_TEST
+427	450	student_status_smoke_import	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:54:32.742895+00	AUTOMATED_TEST
+428	451	student_status_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:54:32.965284+00	AUTOMATED_TEST
+87	419	account_lifecycle_smoke_1782893693786_ku966l_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.969903+00	AUTOMATED_TEST
+88	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.196641+00	AUTOMATED_TEST
+89	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.432652+00	AUTOMATED_TEST
+117	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:31.691146+00	AUTOMATED_TEST
+390	1	newnew	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	22	{"status": "RESOLVED"}	\N	2026-07-03 05:18:52.171008+00	OPERATIONAL
+121	424	10010002-P4N35	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.627299+00	AUTOMATED_TEST
+125	424	10010002-P4N35	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:32.87679+00	AUTOMATED_TEST
+126	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:40.606909+00	AUTOMATED_TEST
+131	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	425	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-PTYVF", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:24:41.55649+00	AUTOMATED_TEST
+133	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	425	{"username": "10010002-PTYVF"}	127.0.0.1	2026-07-01 08:24:41.568265+00	AUTOMATED_TEST
+142	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	426	{"expiresAt": "2026-07-08T08:26:00.695Z"}	127.0.0.1	2026-07-01 08:26:00.699498+00	AUTOMATED_TEST
+146	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	426	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-DYH9A", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 08:26:01.175657+00	AUTOMATED_TEST
+148	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	426	{"username": "10010002-DYH9A"}	127.0.0.1	2026-07-01 08:26:01.189043+00	AUTOMATED_TEST
+153	428	role_scope_smoke_school_admin	USER_UPDATE	user	429	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:30:53.644314+00	AUTOMATED_TEST
+159	428	role_scope_smoke_school_admin	USER_UPDATE	user	431	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:31:55.758406+00	AUTOMATED_TEST
+163	428	role_scope_smoke_school_admin	USER_UPDATE	user	432	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:32:02.90992+00	AUTOMATED_TEST
+167	428	role_scope_smoke_school_admin	USER_UPDATE	user	433	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 08:33:10.135543+00	AUTOMATED_TEST
+187	1	newnew	USER_REACTIVATE	user	434	{"username": "role_scope_smoke_teacher_1782896698932_n7uzta"}	::1	2026-07-01 09:08:15.962453+00	AUTOMATED_TEST
+177	428	role_scope_smoke_school_admin	USER_UPDATE	user	434	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-01 09:05:00.325305+00	AUTOMATED_TEST
+180	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	435	{"expiresAt": "2026-07-08T09:05:44.484Z"}	127.0.0.1	2026-07-01 09:05:44.488345+00	AUTOMATED_TEST
+183	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	435	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-K36WJ", "reasonCode": "OTHER"}	127.0.0.1	2026-07-01 09:05:44.975464+00	AUTOMATED_TEST
+185	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	435	{"username": "10010002-K36WJ"}	127.0.0.1	2026-07-01 09:05:44.989076+00	AUTOMATED_TEST
+11	1	newnew	USER_CREATE	user	\N	{"username": "smoke_teacher_231811"}	::1	2026-06-21 16:18:12.099411+00	AUTOMATED_TEST
+27	23	referral-outcome-smoke-1782321788918	CASE_REFERRAL_OUTCOME_UPDATE	case_referral	2959924e-57f1-4f32-8118-b95da657c1d4	{"caseId": 1017, "status": "ACCEPTED"}	\N	2026-06-24 17:23:08.95744+00	AUTOMATED_TEST
+30	\N	auth_smoke_f50995c7e009	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-06-25 17:57:22.640899+00	AUTOMATED_TEST
+23	18	referral-smoke-1782320563431	CASE_FORWARD	case	1012	{"agencyId": 4, "referralId": "9fbb2b0c-b84a-474a-a0b7-551ae54c161c", "reviewAction": "FORWARD"}	\N	2026-06-24 17:02:43.497332+00	AUTOMATED_TEST
+24	19	referral-smoke-1782320616951	CASE_FORWARD	case	1013	{"agencyId": 5, "referralId": "a4ee4ed5-9113-4989-80e0-b12392a193f8", "reviewAction": "FORWARD"}	\N	2026-06-24 17:03:37.010846+00	AUTOMATED_TEST
+418	1	newnew	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	25	{"status": "RESOLVED", "semester": "1", "gradeRoom": "ม.1 / 1", "schoolName": "โรงเรียนเทพศิรินทร์ราชดำริ", "reasonLabel": "ข้อมูลภาคเรียนบังคับไม่ครบหรือไม่ถูกต้อง", "statusLabel": "แก้ไขแล้ว", "studentName": "ชลธิชา ใจงาม", "academicYear": "2569", "studentStatus": "กำลังศึกษา", "sourceRowNumber": 6}	\N	2026-07-03 07:52:07.504968+00	OPERATIONAL
+25	20	referral-smoke-1782320710520	CASE_FORWARD	case	1014	{"agencyId": 6, "referralId": "0adf9e29-5f9d-45b5-97ed-a14df22bc5e3", "reviewAction": "FORWARD"}	\N	2026-06-24 17:05:10.576299+00	AUTOMATED_TEST
+26	22	referral-outcome-smoke-1782321665716	CASE_REFERRAL_OUTCOME_UPDATE	case_referral	03ed52db-865c-466a-8664-24c25fc27596	{"caseId": 1016, "status": "ACCEPTED"}	\N	2026-06-24 17:21:05.750547+00	AUTOMATED_TEST
+429	449	student_status_smoke_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:54:53.453449+00	AUTOMATED_TEST
+430	450	student_status_smoke_import	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:54:53.685622+00	AUTOMATED_TEST
+431	451	student_status_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:54:53.907692+00	AUTOMATED_TEST
+432	449	student_status_smoke_settings	MASTER_DATA_EDIT	student_status	952533	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-03 17:54:53.972188+00	AUTOMATED_TEST
+433	449	student_status_smoke_settings	MASTER_DATA_EDIT	student_status	952533	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-03 17:54:54.032825+00	AUTOMATED_TEST
+434	449	student_status_smoke_settings	MASTER_DATA_EDIT	student_status	952533	{"op": "update", "changedFields": ["isEnabled"]}	\N	2026-07-03 17:54:54.045477+00	AUTOMATED_TEST
+472	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:23:06.5762+00	AUTOMATED_TEST
+130	425	10010002-PTYVF	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.544778+00	AUTOMATED_TEST
+134	425	10010002-PTYVF	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:41.791247+00	AUTOMATED_TEST
+135	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.181673+00	AUTOMATED_TEST
+136	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.409331+00	AUTOMATED_TEST
+97	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.611188+00	AUTOMATED_TEST
+101	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.845547+00	AUTOMATED_TEST
+102	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.20793+00	AUTOMATED_TEST
+103	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.439314+00	AUTOMATED_TEST
+107	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.683908+00	AUTOMATED_TEST
+108	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:06.877137+00	AUTOMATED_TEST
+110	423	10010002-U878T	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:07.371963+00	AUTOMATED_TEST
+113	423	10010002-U878T	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:24:08.059094+00	AUTOMATED_TEST
+138	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.652254+00	AUTOMATED_TEST
+145	426	10010002-DYH9A	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:01.165073+00	AUTOMATED_TEST
+149	426	10010002-DYH9A	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:01.415424+00	AUTOMATED_TEST
+150	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:30:52.944986+00	AUTOMATED_TEST
+435	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:55:42.188931+00	AUTOMATED_TEST
+151	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:30:53.177068+00	AUTOMATED_TEST
+152	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher"}	127.0.0.1	2026-07-01 08:30:53.416448+00	AUTOMATED_TEST
+154	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:11.423371+00	AUTOMATED_TEST
+155	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:11.656322+00	AUTOMATED_TEST
+156	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:55.015019+00	AUTOMATED_TEST
+157	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:31:55.244609+00	AUTOMATED_TEST
+158	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782894714327_mmc1p0"}	127.0.0.1	2026-07-01 08:31:55.498198+00	AUTOMATED_TEST
+143	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.906839+00	AUTOMATED_TEST
+160	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:32:02.189871+00	AUTOMATED_TEST
+161	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:32:02.417331+00	AUTOMATED_TEST
+162	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782894721505_x9cglx"}	127.0.0.1	2026-07-01 08:32:02.654938+00	AUTOMATED_TEST
+164	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:33:09.427373+00	AUTOMATED_TEST
+165	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 08:33:09.656436+00	AUTOMATED_TEST
+166	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782894788742_8irdn4"}	127.0.0.1	2026-07-01 08:33:09.899398+00	AUTOMATED_TEST
+168	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.515884+00	AUTOMATED_TEST
+436	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:55:42.453764+00	AUTOMATED_TEST
+437	420	account_lifecycle_smoke_admin	USER_DEACTIVATE	user	421	{"note": "Automated smoke test", "reason": "Automated smoke test", "username": "account_lifecycle_smoke_teacher", "reasonCode": "OTHER"}	127.0.0.1	2026-07-03 17:55:42.479224+00	AUTOMATED_TEST
+438	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-03 17:55:42.483858+00	OPERATIONAL
+439	420	account_lifecycle_smoke_admin	USER_REACTIVATE	user	421	{"username": "account_lifecycle_smoke_teacher"}	127.0.0.1	2026-07-03 17:55:42.497911+00	AUTOMATED_TEST
+440	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:55:42.724263+00	AUTOMATED_TEST
+473	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:24:19.946154+00	AUTOMATED_TEST
+487	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 16:42:30.507294+00	AUTOMATED_TEST
+502	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:14:20.798003+00	OPERATIONAL
+514	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:23:53.342791+00	OPERATIONAL
+532	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:05:48.434019+00	AUTOMATED_TEST
+535	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	975247	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:05:51.741385+00	AUTOMATED_TEST
+536	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	975247	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:05:51.948096+00	AUTOMATED_TEST
+556	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:11:39.590459+00	AUTOMATED_TEST
+557	456	student_status_browser_settings	LOGIN	\N	\N	\N	::1	2026-07-04 18:11:40.233621+00	AUTOMATED_TEST
+580	459	account_lifecycle_browser_teacher	LOGIN	\N	\N	\N	::1	2026-07-04 18:22:39.617164+00	AUTOMATED_TEST
+602	461	home_visit_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:43:01.770649+00	OPERATIONAL
+173	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.991201+00	AUTOMATED_TEST
+174	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:04:59.626957+00	AUTOMATED_TEST
+175	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:04:59.855284+00	AUTOMATED_TEST
+176	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782896698932_n7uzta"}	127.0.0.1	2026-07-01 09:05:00.098532+00	AUTOMATED_TEST
+178	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:05:43.99464+00	AUTOMATED_TEST
+182	435	10010002-K36WJ	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:05:44.963165+00	AUTOMATED_TEST
+441	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:56:30.265684+00	AUTOMATED_TEST
+442	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:56:30.49672+00	AUTOMATED_TEST
+443	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1783101389575_smvq47"}	127.0.0.1	2026-07-03 17:56:30.781688+00	AUTOMATED_TEST
+444	428	role_scope_smoke_school_admin	USER_UPDATE	user	452	{"fields": ["username", "password", "FirstName", "LastName", "PersonID_Onec", "phone", "email", "affiliation", "role", "permissions", "data_scope"]}	127.0.0.1	2026-07-03 17:56:31.024397+00	AUTOMATED_TEST
+474	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:24:59.157625+00	AUTOMATED_TEST
+488	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:43:34.235684+00	AUTOMATED_TEST
+503	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:15:17.840312+00	OPERATIONAL
+186	435	10010002-K36WJ	LOGIN	\N	\N	\N	127.0.0.1	2026-07-01 09:05:45.213731+00	AUTOMATED_TEST
+515	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:26:17.881506+00	OPERATIONAL
+516	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:26:19.185195+00	OPERATIONAL
+109	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1, "gradeBackfillSource": "student_accounts_smoke_grade_20260702"}	127.0.0.1	2026-07-01 08:24:07.140857+00	AUTOMATED_TEST
+274	444	master_data_lookup_smoke_no_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:14:11.564795+00	AUTOMATED_TEST
+533	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:05:49.565022+00	AUTOMATED_TEST
+534	456	student_status_browser_settings	LOGIN	\N	\N	\N	::1	2026-07-04 18:05:50.604943+00	AUTOMATED_TEST
+279	444	master_data_lookup_smoke_no_settings	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 15:14:37.51375+00	AUTOMATED_TEST
+229	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:22.526883+00	AUTOMATED_TEST
+230	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 14:08:22.764639+00	AUTOMATED_TEST
+231	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1783001301751_7uisi1"}	127.0.0.1	2026-07-02 14:08:23.009566+00	AUTOMATED_TEST
+558	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:11:59.66438+00	AUTOMATED_TEST
+581	459	account_lifecycle_browser_teacher	LOGOUT	\N	\N	\N	::1	2026-07-04 18:22:40.218232+00	AUTOMATED_TEST
+603	461	home_visit_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:43:31.524259+00	OPERATIONAL
+202	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-02 13:25:46.849427+00	AUTOMATED_TEST
+203	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	437	{"expiresAt": "2026-07-09T13:25:47.078Z"}	127.0.0.1	2026-07-02 13:25:47.082838+00	AUTOMATED_TEST
+206	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	437	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-9NBXU", "reasonCode": "OTHER"}	127.0.0.1	2026-07-02 13:25:47.536548+00	AUTOMATED_TEST
+445	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:58:53.766163+00	AUTOMATED_TEST
+475	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:25:14.512883+00	AUTOMATED_TEST
+489	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 16:43:35.573457+00	AUTOMATED_TEST
+504	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:15:19.437376+00	OPERATIONAL
+517	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:40:48.093633+00	OPERATIONAL
+208	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	437	{"username": "10010002-9NBXU"}	127.0.0.1	2026-07-02 13:25:47.550193+00	AUTOMATED_TEST
+537	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:06:35.185564+00	AUTOMATED_TEST
+559	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:12:00.20711+00	AUTOMATED_TEST
+210	427	role_scope_smoke_global_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:36.407744+00	AUTOMATED_TEST
+211	428	role_scope_smoke_school_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:36.661741+00	AUTOMATED_TEST
+582	459	account_lifecycle_browser_teacher	LOGIN	\N	\N	\N	::1	2026-07-04 18:23:41.190437+00	AUTOMATED_TEST
+604	461	home_visit_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:44:26.780426+00	OPERATIONAL
+212	428	role_scope_smoke_school_admin	USER_CREATE	user	\N	{"username": "role_scope_smoke_teacher_1782999215637_paj37r"}	127.0.0.1	2026-07-02 13:33:36.923772+00	AUTOMATED_TEST
+214	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.036632+00	AUTOMATED_TEST
+215	420	account_lifecycle_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.315314+00	AUTOMATED_TEST
+219	421	account_lifecycle_smoke_teacher	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.577989+00	AUTOMATED_TEST
+220	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-02 13:33:41.302185+00	AUTOMATED_TEST
+446	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-03 17:58:54.088788+00	AUTOMATED_TEST
+447	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	453	{"expiresAt": "2026-07-10T17:58:54.388Z"}	127.0.0.1	2026-07-03 17:58:54.395104+00	AUTOMATED_TEST
+448	\N	10010002-A66CB	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-03 17:58:54.615292+00	OPERATIONAL
+449	453	10010002-A66CB	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:58:54.848989+00	OPERATIONAL
+450	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	453	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-A66CB", "reasonCode": "OTHER"}	127.0.0.1	2026-07-03 17:58:54.895557+00	AUTOMATED_TEST
+451	\N	10010002-A66CB	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-03 17:58:54.901296+00	OPERATIONAL
+452	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	453	{"username": "10010002-A66CB"}	127.0.0.1	2026-07-03 17:58:54.93824+00	AUTOMATED_TEST
+453	453	10010002-A66CB	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 17:58:55.176261+00	OPERATIONAL
+476	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:25:57.684326+00	AUTOMATED_TEST
+490	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:04:56.380085+00	AUTOMATED_TEST
+505	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:17:43.115775+00	OPERATIONAL
+518	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:40:49.370273+00	OPERATIONAL
+538	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:06:36.326834+00	AUTOMATED_TEST
+539	456	student_status_browser_settings	LOGIN	\N	\N	\N	::1	2026-07-04 18:06:37.208971+00	AUTOMATED_TEST
+540	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	982534	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:06:38.414267+00	AUTOMATED_TEST
+541	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	982534	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:06:38.622065+00	AUTOMATED_TEST
+542	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	982534	{"op": "update", "changedFields": ["isEnabled"]}	\N	2026-07-04 18:06:38.780972+00	AUTOMATED_TEST
+560	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:13:07.825193+00	AUTOMATED_TEST
+583	459	account_lifecycle_browser_teacher	LOGOUT	\N	\N	\N	::1	2026-07-04 18:23:41.792167+00	AUTOMATED_TEST
+605	461	home_visit_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:45:15.8916+00	OPERATIONAL
+606	460	home_visit_browser_creator	TASK_CREATE	task	44a545c1-86e0-4b01-92a7-1fb27cea3c1b	{"room": null, "grade": null, "scope": {"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "caseId": 1022, "schoolId": 10010002, "taskType": "VISIT"}	\N	2026-07-04 18:45:17.512231+00	OPERATIONAL
+454	445	student_import_quarantine_smoke_global	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 18:14:57.996792+00	AUTOMATED_TEST
+455	446	student_import_quarantine_smoke_out_scope	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 18:14:58.230137+00	AUTOMATED_TEST
+456	447	student_import_quarantine_smoke_no_permission	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 18:14:58.462208+00	AUTOMATED_TEST
+477	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:26:41.862331+00	AUTOMATED_TEST
+491	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:04:57.671952+00	AUTOMATED_TEST
+506	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:17:44.640715+00	OPERATIONAL
+519	448	profile_self_edit_smoke	LOGIN	\N	\N	\N	127.0.0.1	2026-07-04 17:40:57.992532+00	AUTOMATED_TEST
+520	448	profile_self_edit_smoke	USER_PROFILE_UPDATE	user	448	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	127.0.0.1	2026-07-04 17:40:58.03042+00	AUTOMATED_TEST
+543	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:07:03.542206+00	AUTOMATED_TEST
+546	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	970991	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:07:06.705686+00	AUTOMATED_TEST
+547	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	970991	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:07:06.923545+00	AUTOMATED_TEST
+548	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	970991	{"op": "update", "changedFields": ["isEnabled"]}	\N	2026-07-04 18:07:07.090654+00	AUTOMATED_TEST
+561	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:15:04.899+00	AUTOMATED_TEST
+584	459	account_lifecycle_browser_teacher	LOGIN	\N	\N	\N	::1	2026-07-04 18:25:15.228134+00	AUTOMATED_TEST
+607	461	home_visit_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:45:50.824996+00	OPERATIONAL
+457	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	132	{"status": "RESOLVED", "semester": "1", "gradeRoom": "ป.1 / 1", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "เลขนี้ตรงกับหลายโปรไฟล์ในระบบ", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke", "academicYear": "2599", "sourceRowNumber": 2}	\N	2026-07-03 18:14:58.576058+00	AUTOMATED_TEST
+458	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	133	{"status": "RESOLVED", "semester": "1", "gradeRoom": "ป.1 / 2", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "ไม่พบชั้นเรียนในข้อมูลหลัก", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke", "academicYear": "2599", "sourceRowNumber": 3}	\N	2026-07-03 18:14:58.621888+00	AUTOMATED_TEST
+459	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	134	{"status": "RESOLVED", "semester": "1", "gradeRoom": "ป.1 / bad", "reasonCode": "ROOM_NOT_FOUND", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "ไม่พบห้องเรียนในข้อมูลหลัก", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke", "academicYear": "2599", "changedFields": ["RoomID_Onec"], "sourceRowNumber": 4, "changedFieldLabels": "ห้อง", "changedFieldDetails": [{"field": "RoomID_Onec", "label": "ห้อง", "newValue": "3", "oldValue": "bad"}]}	\N	2026-07-03 18:14:58.645719+00	AUTOMATED_TEST
+460	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_RESOLVED	student_import_quarantine_row	136	{"status": "RESOLVED", "semester": "1", "gradeRoom": "ป.1 / 5", "reasonCode": "UNMAPPED_STUDENT_STATUS", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "สถานะนักเรียนยังไม่จับคู่", "statusLabel": "แก้ไขแล้ว", "studentName": "Private Smoke", "academicYear": "2598", "changedFields": ["StudentStatusID_Onec"], "studentStatus": "9872", "sourceRowNumber": 6, "changedFieldLabels": "สถานะนักเรียน", "changedFieldDetails": [{"field": "StudentStatusID_Onec", "label": "สถานะนักเรียน", "newValue": "9871", "oldValue": "9872"}]}	\N	2026-07-03 18:14:58.684146+00	AUTOMATED_TEST
+461	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_REJECTED	student_import_quarantine_row	135	{"note": "Automated smoke rejection", "status": "REJECTED", "semester": "1", "gradeRoom": "ป.1 / 4", "schoolName": "โรงเรียนอนุบาลวัดกลาง", "reasonLabel": "แถวซ้ำในไฟล์", "statusLabel": "ปฏิเสธแล้ว", "studentName": "Private Smoke", "academicYear": "2599", "sourceRowNumber": 5}	\N	2026-07-03 18:14:58.699715+00	AUTOMATED_TEST
+462	445	student_import_quarantine_smoke_global	IMPORT_QUARANTINE_EXPORT	student_import_quarantine_row	\N	{"status": "REJECTED", "rowCount": 7, "truncated": false, "statusLabel": "ปฏิเสธแล้ว"}	\N	2026-07-03 18:14:58.721112+00	AUTOMATED_TEST
+478	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:27:26.740324+00	AUTOMATED_TEST
+492	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:05:52.491782+00	AUTOMATED_TEST
+507	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:18:07.735944+00	OPERATIONAL
+521	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:43:29.212128+00	OPERATIONAL
+544	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:07:04.662351+00	AUTOMATED_TEST
+545	456	student_status_browser_settings	LOGIN	\N	\N	\N	::1	2026-07-04 18:07:05.529077+00	AUTOMATED_TEST
+562	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:16:13.467701+00	AUTOMATED_TEST
+585	459	account_lifecycle_browser_teacher	LOGOUT	\N	\N	\N	::1	2026-07-04 18:25:15.820492+00	AUTOMATED_TEST
+608	460	home_visit_browser_creator	TASK_CREATE	task	fe380e5f-725f-4fd3-bf53-1e363202af93	{"room": null, "grade": null, "scope": {"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}, "caseId": 1023, "schoolId": 10010002, "taskType": "VISIT"}	\N	2026-07-04 18:45:52.317977+00	OPERATIONAL
+463	422	student_accounts_smoke_admin	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 18:15:07.406649+00	AUTOMATED_TEST
+479	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:29:02.81083+00	AUTOMATED_TEST
+493	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:05:54.001063+00	AUTOMATED_TEST
+508	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:18:09.051147+00	OPERATIONAL
+522	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:43:30.636381+00	OPERATIONAL
+549	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:07:32.408227+00	AUTOMATED_TEST
+563	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	979980	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:16:14.560517+00	AUTOMATED_TEST
+564	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	979980	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:16:14.759429+00	AUTOMATED_TEST
+565	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	979980	{"op": "update", "changedFields": ["isEnabled"]}	\N	2026-07-04 18:16:14.935774+00	AUTOMATED_TEST
+586	459	account_lifecycle_browser_teacher	LOGIN	\N	\N	\N	::1	2026-07-04 18:26:44.722143+00	DEMO
+592	458	account_lifecycle_browser_admin	USER_REACTIVATE	user	459	{"username": "account_lifecycle_browser_teacher"}	::1	2026-07-04 18:26:47.875999+00	DEMO
+593	458	account_lifecycle_browser_admin	LOGOUT	\N	\N	\N	::1	2026-07-04 18:26:48.030401+00	DEMO
+594	459	account_lifecycle_browser_teacher	LOGIN	\N	\N	\N	::1	2026-07-04 18:26:48.772658+00	DEMO
+609	\N	system:case-sla-reminder	CASE_SLA_BREACHED	case	1002	{"riskTier": "LOW", "schoolId": 10010002, "slaDueAt": "2026-06-22T16:30:26.906096+00:00"}	\N	2026-07-05 21:12:02.084001+00	OPERATIONAL
+610	\N	system:case-sla-reminder	CASE_SLA_BREACHED	case	1005	{"riskTier": "LOW", "schoolId": 10010002, "slaDueAt": "2026-06-19T16:30:26.906096+00:00"}	\N	2026-07-05 21:12:02.084001+00	OPERATIONAL
+611	\N	system:case-sla-reminder	CASE_SLA_BREACHED	case	1001	{"riskTier": "LOW", "schoolId": 10010002, "slaDueAt": "2026-06-23T16:30:26.906096+00:00"}	\N	2026-07-05 21:12:02.084001+00	OPERATIONAL
+612	\N	system:case-sla-reminder	CASE_SLA_BREACHED	case	1004	{"riskTier": "LOW", "schoolId": 10010002, "slaDueAt": "2026-06-20T16:30:26.906096+00:00"}	\N	2026-07-05 21:12:02.084001+00	OPERATIONAL
+613	\N	system:case-sla-reminder	CASE_SLA_BREACHED	case	1006	{"riskTier": "LOW", "schoolId": 10010002, "slaDueAt": "2026-06-18T16:30:26.906096+00:00"}	\N	2026-07-05 21:12:02.084001+00	OPERATIONAL
+464	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_BULK_GENERATE	student_accounts	\N	{"room": 1, "grade": "ม.6", "scope": {"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": ["ม.6"], "sub_districts": ["สุเทพ"]}, "district": null, "province": null, "schoolId": 10010002, "scopeLabel": null, "subDistrict": null, "createdCount": 1}	127.0.0.1	2026-07-03 18:15:07.710974+00	AUTOMATED_TEST
+465	422	student_accounts_smoke_admin	STUDENT_TEMP_PASSWORD_REISSUE	user	454	{"expiresAt": "2026-07-10T18:15:08.021Z"}	127.0.0.1	2026-07-03 18:15:08.025905+00	AUTOMATED_TEST
+466	\N	10010002-W558S	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-03 18:15:08.246777+00	OPERATIONAL
+467	454	10010002-W558S	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 18:15:08.475523+00	OPERATIONAL
+468	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_DEACTIVATE	user	454	{"note": "Automated student account smoke", "reason": "Automated student account smoke", "username": "10010002-W558S", "reasonCode": "OTHER"}	127.0.0.1	2026-07-03 18:15:08.528571+00	AUTOMATED_TEST
+469	\N	10010002-W558S	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-03 18:15:08.533141+00	OPERATIONAL
+470	422	student_accounts_smoke_admin	STUDENT_ACCOUNT_REACTIVATE	user	454	{"username": "10010002-W558S"}	127.0.0.1	2026-07-03 18:15:08.572762+00	AUTOMATED_TEST
+471	454	10010002-W558S	LOGIN	\N	\N	\N	127.0.0.1	2026-07-03 18:15:08.807471+00	OPERATIONAL
+480	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 16:29:53.21766+00	AUTOMATED_TEST
+494	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:09:05.835576+00	AUTOMATED_TEST
+509	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:19:38.631056+00	OPERATIONAL
+523	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 17:51:52.814331+00	AUTOMATED_TEST
+550	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:07:33.543024+00	AUTOMATED_TEST
+566	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:17:32.36683+00	AUTOMATED_TEST
+567	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	978856	{"op": "create", "changedFields": ["code", "labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:17:33.495519+00	AUTOMATED_TEST
+568	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	978856	{"op": "update", "changedFields": ["labelTh", "category", "badgeVariant", "isActiveForLogin", "isTerminal", "requiresFollowup", "isEnabled", "sortOrder", "sourceSystem"]}	\N	2026-07-04 18:17:33.700936+00	AUTOMATED_TEST
+569	456	student_status_browser_settings	MASTER_DATA_EDIT	student_status	978856	{"op": "update", "changedFields": ["isEnabled"]}	\N	2026-07-04 18:17:33.890163+00	AUTOMATED_TEST
+587	459	account_lifecycle_browser_teacher	LOGOUT	\N	\N	\N	::1	2026-07-04 18:26:45.324304+00	DEMO
+614	1	newnew	LOGIN	\N	\N	\N	::1	2026-07-06 03:01:00.448641+00	OPERATIONAL
+33	\N	auth_smoke_44589a34e34d	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-06-25 17:59:06.191175+00	AUTOMATED_TEST
+37	\N	Delegation smoke root	DELEGATION	task_link	f1c9a0f0-8c3f-425f-82f3-35842e5cca6e	{"toDepth": 1, "parentLinkId": "c8de39f4-1151-4db1-8a53-e8806cb20963"}	\N	2026-06-27 07:02:27.139656+00	AUTOMATED_TEST
+73	\N	account_lifecycle_smoke_1782893619103_pg5etk_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:13:40.08471+00	AUTOMATED_TEST
+79	\N	account_lifecycle_smoke_1782893648305_45k9z9_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:14:09.229892+00	AUTOMATED_TEST
+85	\N	account_lifecycle_smoke_1782893693786_ku966l_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:14:54.738729+00	AUTOMATED_TEST
+91	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:16:28.447927+00	AUTOMATED_TEST
+99	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:17:09.622359+00	AUTOMATED_TEST
+105	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:17:15.455838+00	AUTOMATED_TEST
+140	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 08:26:00.667558+00	AUTOMATED_TEST
+171	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-01 09:03:56.763482+00	AUTOMATED_TEST
+198	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:25:45.121077+00	AUTOMATED_TEST
+217	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 13:33:39.328624+00	AUTOMATED_TEST
+236	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:08:28.056778+00	AUTOMATED_TEST
+246	\N	account_lifecycle_smoke_teacher	LOGIN_FAILED	\N	\N	\N	127.0.0.1	2026-07-02 14:18:00.618612+00	AUTOMATED_TEST
+481	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 16:29:54.459356+00	AUTOMATED_TEST
+495	455	profile_self_edit_browser_smoke	LOGIN	\N	\N	\N	::1	2026-07-04 17:09:32.828118+00	AUTOMATED_TEST
+510	455	profile_self_edit_browser_smoke	USER_PROFILE_UPDATE	user	455	{"fields": ["FirstName", "LastName", "phone", "email", "affiliation", "line_id", "address_line", "address_village_no", "address_street", "address_soi", "address_trok", "address_sub_district", "address_district", "address_province", "address_postal_code", "address_latitude", "address_longitude"], "fieldCount": 17}	::1	2026-07-04 17:19:40.196666+00	OPERATIONAL
+524	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 17:52:13.41474+00	AUTOMATED_TEST
+551	457	student_status_browser_no_permission	LOGIN	\N	\N	\N	::1	2026-07-04 18:10:41.386766+00	AUTOMATED_TEST
+570	457	student_status_browser_no_permission	LOGOUT	\N	\N	\N	::1	2026-07-04 18:17:52.528302+00	AUTOMATED_TEST
+588	458	account_lifecycle_browser_admin	USER_DEACTIVATE	user	459	{"note": "Automated browser smoke test", "reason": "Automated browser smoke test", "username": "account_lifecycle_browser_teacher", "reasonCode": "OTHER"}	::1	2026-07-04 18:26:46.20517+00	DEMO
+590	\N	account_lifecycle_browser_teacher	LOGIN_FAILED	\N	\N	\N	::1	2026-07-04 18:26:46.889947+00	OPERATIONAL
+591	\N	\N	LOGOUT	\N	\N	\N	::1	2026-07-04 18:26:47.045602+00	OPERATIONAL
+\.
+
+
+--
+-- Data for Name: case_referral_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.case_referral_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+SENT	ส่งต่อแล้ว	default	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+ACKNOWLEDGED	รับทราบแล้ว	secondary	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+ACCEPTED	รับดำเนินการ	success	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+DECLINED	ปฏิเสธรับเรื่อง	destructive	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+RETURNED	ส่งกลับ	warning	50	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
 \.
 
 
@@ -2306,8 +3419,8 @@ COPY public.case_referrals (id, case_id, agency_id, agency_name_snapshot, agency
 --
 
 COPY public.case_reviews (id, case_id, review_action, review_note, reviewed_by, reviewed_at, created_at, updated_at, created_by, updated_by, resolution_outcome) FROM stdin;
-74e37c29-6c32-4657-90fd-7979632e4802	1003	CLOSE	ยืนยันการช่วยเหลือสำเร็จและปิดเคส	seed_director_10010002	2026-06-09 16:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
-f91c0033-cdd8-4f64-9e66-74115729ec31	1004	ASSIST	เห็นควรให้ความช่วยเหลือด้านค่าเดินทาง	seed_director_10010002	2026-06-10 04:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
+seed-review-1003	1003	CLOSE	ยืนยันการช่วยเหลือสำเร็จและปิดเคส	seed_director_10010002	2026-06-09 16:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
+seed-review-1004	1004	ASSIST	เห็นควรให้ความช่วยเหลือด้านค่าเดินทาง	seed_director_10010002	2026-06-10 04:30:26.906096+00	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N
 576cc53b-f130-451a-98ca-352e4aa7a187	1004	FORWARD	\N	newnew	2026-06-24 14:11:41.146352+00	2026-06-24 14:11:41.146352+00	2026-06-24 14:11:41.146352+00	\N	\N	\N
 \.
 
@@ -2327,16 +3440,41 @@ COPY public.case_student_uuid_backfill_20260702_backup (case_id, old_student_uui
 
 
 --
+-- Data for Name: case_workflow_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.case_workflow_statuses (code, label_th, badge_variant, summary_tone, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+OPEN	รอสร้างลิงก์	secondary	default	10	t	2026-07-03 08:50:04.803108+00	\N	2026-07-03 08:50:04.803108+00	\N	\N	\N
+PENDING_REVIEW	รอตรวจผล	default	info	20	t	2026-07-03 08:50:04.803108+00	\N	2026-07-03 08:50:04.803108+00	\N	\N	\N
+IN_PROGRESS	กำลังติดตาม	warning	warning	30	t	2026-07-03 08:50:04.803108+00	\N	2026-07-03 08:50:04.803108+00	\N	\N	\N
+AWAITING_HELP	รอช่วยเหลือ	destructive	danger	40	t	2026-07-03 08:50:04.803108+00	\N	2026-07-03 08:50:04.803108+00	\N	\N	\N
+RESOLVED	ปิดเคสแล้ว	success	success	50	t	2026-07-03 08:50:04.803108+00	\N	2026-07-03 08:50:04.803108+00	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: cases; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.cases (id, student_name, student_school, student_address, student_lat, student_lng, reason_flagged, status, created_at, result_summary, updated_at, created_by, updated_by, school_id, deleted_at, deleted_by, student_uuid, student_first_name, student_last_name, address_line, address_province, address_district, address_sub_district, postal_code) FROM stdin;
-1002	จันทร์เพ็ญ พรประเสริฐ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.798999786376953	98.95600128173828	มาเรียนไม่สม่ำเสมอและมีความเสี่ยงด้านเศรษฐกิจ	IN_PROGRESS	2026-06-08 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	1e94a5b9-2072-4f6e-a4bf-a16bf366c7b8	จันทร์เพ็ญ	พรประเสริฐ	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1003	ณัฐวรรธน์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.801000595092773	98.95800018310547	ได้รับการช่วยเหลือค่าเดินทางและกลับมาเรียนปกติ	RESOLVED	2026-06-07 16:30:26.906096+00	ปิดเคสหลังติดตามครบถ้วน นักเรียนกลับมาเรียนต่อเนื่อง	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	4d3b01e5-b425-4f58-9a36-267076c427d3	ณัฐวรรธน์	จันทร์แก้ว	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1005	ดิศรณ์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80500030517578	98.96199798583984	รอประสานหน่วยงานสวัสดิการในพื้นที่	AWAITING_HELP	2026-06-05 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	2e02b21d-130d-453b-8891-dfbe6b1110f7	ดิศรณ์	จันทร์แก้ว	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1006	ภูมิพัฒน์ สกุลดี	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80699920654297	98.96399688720703	ครูประจำชั้นแจ้งพฤติกรรมเสี่ยงหลุดจากระบบ	OPEN	2026-06-04 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	7ef66068-ab91-47b7-bae2-b2718653c2af	ภูมิพัฒน์	สกุลดี	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1001	ประภา วิริยะ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.797000885009766	98.9540023803711	ขาดเรียนต่อเนื่อง 3 วันและติดต่อผู้ปกครองไม่ได้	OPEN	2026-06-09 16:30:26.906096+00	\N	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	792aed48-a4be-424b-8bda-3e248e26826b	ประภา	วิริยะ	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
-1004	ปัณณทัต ลือชา	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80299949645996	98.95999908447266	รอผู้อำนวยการประเมินแนวทางช่วยเหลือ	AWAITING_HELP	2026-06-06 16:30:26.906096+00	เจ้าหน้าที่ลงพื้นที่แล้ว รอผลประเมิน	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	a25932f0-ccc1-4476-b69d-c6ea755336b8	ปัณณทัต	ลือชา	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N
+COPY public.cases (id, student_name, student_school, student_address, student_lat, student_lng, reason_flagged, status, created_at, result_summary, updated_at, created_by, updated_by, school_id, deleted_at, deleted_by, student_uuid, student_first_name, student_last_name, address_line, address_province, address_district, address_sub_district, postal_code, risk_tier, sla_due_at, sla_warning_notified_at, sla_breached_notified_at) FROM stdin;
+1002	จันทร์เพ็ญ พรประเสริฐ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.798999786376953	98.95600128173828	มาเรียนไม่สม่ำเสมอและมีความเสี่ยงด้านเศรษฐกิจ	IN_PROGRESS	2026-06-08 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00	\N	\N	10010002	\N	\N	1e94a5b9-2072-4f6e-a4bf-a16bf366c7b8	จันทร์เพ็ญ	พรประเสริฐ	บ้านเลขที่ 12 หมู่ 2 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N	LOW	2026-06-22 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00
+1003	ณัฐวรรธน์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.801000595092773	98.95800018310547	ได้รับการช่วยเหลือค่าเดินทางและกลับมาเรียนปกติ	RESOLVED	2026-06-07 16:30:26.906096+00	ปิดเคสหลังติดตามครบถ้วน นักเรียนกลับมาเรียนต่อเนื่อง	2026-07-02 14:35:51.99405+00	\N	\N	10010002	\N	\N	4d3b01e5-b425-4f58-9a36-267076c427d3	ณัฐวรรธน์	จันทร์แก้ว	บ้านเลขที่ 13 หมู่ 3 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N	\N	\N	\N	\N
+1005	ดิศรณ์ จันทร์แก้ว	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80500030517578	98.96199798583984	รอประสานหน่วยงานสวัสดิการในพื้นที่	AWAITING_HELP	2026-06-05 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00	\N	\N	10010002	\N	\N	2e02b21d-130d-453b-8891-dfbe6b1110f7	ดิศรณ์	จันทร์แก้ว	บ้านเลขที่ 15 หมู่ 5 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N	LOW	2026-06-19 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00
+1022	ลลิตา ชัยมงคล	โรงเรียนบ้านหนองขาม	หมู่ 3 ถนนพหลโยธิน ศรีภูมิ เมืองเชียงใหม่ เชียงใหม่ 50000	13.7613	100.5008	Automated home visit browser smoke	IN_PROGRESS	2026-07-04 18:45:17.502304+00	\N	2026-07-05 16:21:16.960782+00	460	460	10010002	\N	\N	0017c072-f0af-40a7-ac01-7e30b6dcdabd	\N	\N	หมู่ 3 ถนนพหลโยธิน	เชียงใหม่	เมืองเชียงใหม่	ศรีภูมิ	50000	LOW	2026-07-18 18:45:17.502304+00	\N	\N
+1001	ประภา วิริยะ	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.797000885009766	98.9540023803711	ขาดเรียนต่อเนื่อง 3 วันและติดต่อผู้ปกครองไม่ได้	OPEN	2026-06-09 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00	\N	\N	10010002	\N	\N	792aed48-a4be-424b-8bda-3e248e26826b	ประภา	วิริยะ	บ้านเลขที่ 11 หมู่ 1 ต.ช้างมอย อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N	LOW	2026-06-23 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00
+1004	ปัณณทัต ลือชา	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80299949645996	98.95999908447266	รอผู้อำนวยการประเมินแนวทางช่วยเหลือ	AWAITING_HELP	2026-06-06 16:30:26.906096+00	เจ้าหน้าที่ลงพื้นที่แล้ว รอผลประเมิน	2026-07-05 21:12:02.084001+00	\N	\N	10010002	\N	\N	a25932f0-ccc1-4476-b69d-c6ea755336b8	ปัณณทัต	ลือชา	บ้านเลขที่ 14 หมู่ 4 ต.หายยา อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N	LOW	2026-06-20 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00
+1006	ภูมิพัฒน์ สกุลดี	โรงเรียนบ้านหนองขาม	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	18.80699920654297	98.96399688720703	ครูประจำชั้นแจ้งพฤติกรรมเสี่ยงหลุดจากระบบ	PENDING_REVIEW	2026-06-04 16:30:26.906096+00	ครูลงพื้นที่แล้ว รอผู้มีอำนาจตรวจผลและกำหนดแนวทางติดตาม	2026-07-05 21:12:02.084001+00	\N	\N	10010002	\N	\N	7ef66068-ab91-47b7-bae2-b2718653c2af	ภูมิพัฒน์	สกุลดี	บ้านเลขที่ 16 หมู่ 6 ต.ศรีภูมิ อ.เมืองเชียงใหม่ จ.เชียงใหม่	\N	\N	\N	\N	LOW	2026-06-18 16:30:26.906096+00	\N	2026-07-05 21:12:02.084001+00
+\.
+
+
+--
+-- Data for Name: data_record_origins; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.data_record_origins (code, label_th, is_visible_by_default, sort_order, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+OPERATIONAL	ข้อมูลใช้งานจริง	t	10	2026-07-03 09:41:03.943278+00	\N	2026-07-03 09:41:03.943278+00	\N	\N	\N
+DEMO	ข้อมูลสาธิต	t	20	2026-07-03 09:41:03.943278+00	\N	2026-07-03 09:41:03.943278+00	\N	\N	\N
+AUTOMATED_TEST	ข้อมูลทดสอบอัตโนมัติ	f	30	2026-07-03 09:41:03.943278+00	\N	2026-07-03 09:41:03.943278+00	\N	\N	\N
 \.
 
 
@@ -2464,6 +3602,25 @@ COPY public.migrations (id, "timestamp", name) FROM stdin;
 56	260702150000	BackfillExplicitGlobalScope20260702150000
 58	260702153000	BackfillLegacyCaseStudentUuid20260702153000
 60	260702160000	CreateAdditionalMasterDataLookups20260702160000
+63	260702170000	AddStudentImportQuarantine20260702170000
+64	260703100000	AddStudentImportQuarantineLookups20260703100000
+65	260703110000	AddCaseWorkflowStatuses20260703110000
+66	260703120000	AddOperationalStatusCatalogs20260703120000
+67	260703130000	AddStudentStatusPresentation20260703130000
+71	260703140000	AddDataRecordOrigins20260703140000
+75	260703150000	AddStudentCurrentEnrollmentResolution20260703150000
+77	260704100000	AddNotificationCenter20260704100000
+80	260704110000	AddImportNotificationTypes20260704110000
+81	260704120000	AddStudentAccountBatchNotificationTypes20260704120000
+82	260705120000	AddAccountLifecycleNotificationTypes20260705120000
+83	260705130000	AddOverdueTaskReminder20260705130000
+84	260705140000	AddAttendanceIncompleteNotification20260705140000
+85	260705150000	RenameSeedUsernames20260705150000
+86	260705160000	SeedRealisticIdentity20260705160000
+87	260705170000	AddCaseSlaTracking20260705170000
+88	260705180000	AddPiiExportRequests20260705180000
+89	260706100000	GrantAttendanceCalendarPermission20260706100000
+90	260706120000	RenameAbsentThresholdSetting20260706120000
 \.
 
 
@@ -2476,6 +3633,113 @@ COPY public.non_follow_up_reasons (id, code, name, note, is_active, created_at, 
 
 
 --
+-- Data for Name: notification_types; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.notification_types (code, label_th, required_permission, is_enabled, sort_order) FROM stdin;
+CASE_CREATED	เคสติดตามใหม่	review-cases	t	10
+CASE_STATUS_CHANGED	เคสเปลี่ยนสถานะ	review-cases	t	20
+TASK_DELEGATED	งานถูกส่งต่อ	attendance-dashboard	t	30
+TASK_SUBMITTED	มีรายงานส่งกลับ	attendance-dashboard	t	40
+IMPORT_COMPLETED	นำเข้าข้อมูลเสร็จแล้ว	import-data	t	50
+IMPORT_FAILED	นำเข้าข้อมูลไม่สำเร็จ	import-data	t	60
+STUDENT_ACCOUNT_BATCH_COMPLETED	สร้างบัญชีนักเรียนเสร็จแล้ว	manage-student-accounts	t	70
+STUDENT_ACCOUNT_BATCH_FAILED	สร้างบัญชีนักเรียนไม่สำเร็จ	manage-student-accounts	t	80
+ACCOUNT_DEACTIVATED	บัญชีผู้ใช้งานถูกปิดใช้งาน	manage-users-list	t	90
+ACCOUNT_REACTIVATED	บัญชีผู้ใช้งานถูกเปิดใช้งานอีกครั้ง	manage-users-list	t	100
+TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนด	create	t	110
+ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	attendance	t	120
+CASE_SLA_WARNING	เคสใกล้เกินกำหนดดำเนินการ	review-cases	t	130
+CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	review-cases	t	140
+\.
+
+
+--
+-- Data for Name: notifications; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.notifications (id, recipient_user_id, type_code, title, body, ref_entity, ref_id, seen_at, read_at, created_at) FROM stdin;
+3d80b2c0-19e8-4e6b-b68c-c4b97ae93639	5	TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนดแล้ว	งานที่มอบให้ ปรียา ศร**** ยังไม่เสร็จและเลยกำหนด	task	seed-task-1004	\N	\N	2026-07-05 21:11:51.524701+00
+91cf28ca-2f98-4910-81ca-5e7096b6009c	5	TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนดแล้ว	งานที่มอบให้ สุภาวดี วั**** ยังไม่เสร็จและเลยกำหนด	task	seed-attendance-task-1	\N	\N	2026-07-05 21:11:51.541161+00
+cd781e62-5050-4e30-b4b2-4b71cf601da0	5	TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนดแล้ว	งานที่มอบให้ ชาญวิทย์ ใจ**** ยังไม่เสร็จและเลยกำหนด	task	seed-attendance-task-2	\N	\N	2026-07-05 21:11:51.543159+00
+42fb5f59-4a1c-4aa7-a9e7-3079b9f6600c	5	TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนดแล้ว	งานที่มอบให้ ปรียา ศร**** ยังไม่เสร็จและเลยกำหนด	task	seed-task-login-2	\N	\N	2026-07-05 21:11:51.545069+00
+5ad04c53-9486-466c-8a44-ec15894b7e9d	5	TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนดแล้ว	งานที่มอบให้ สุภาวดี วั**** ยังไม่เสร็จและเลยกำหนด	task	seed-task-1002	\N	\N	2026-07-05 21:11:51.547426+00
+98da0892-d75d-4ed3-bf42-c720df576917	5	TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนดแล้ว	งานที่มอบให้ สุภาวดี วั**** ยังไม่เสร็จและเลยกำหนด	task	seed-task-login-1	\N	\N	2026-07-05 21:11:51.549576+00
+95a4a05c-c42d-4dd0-b428-3db9745944a0	5	TASK_OVERDUE	งานเยี่ยมบ้านเลยกำหนดแล้ว	งานที่มอบให้ ชาญวิทย์ ใจ**** ยังไม่เสร็จและเลยกำหนด	task	seed-task-1005	\N	\N	2026-07-05 21:11:51.551606+00
+139f95c1-af13-4300-b2d6-c4239879cb50	6	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+db4d4c7f-60f7-4553-820e-1d79326354b1	7	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+5318f5e1-6a0c-4d9c-908b-7671453c077e	412	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+24e56e63-5283-4dae-a29a-5a6a42e4d08d	413	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+e7f3e760-8893-478b-b8e1-899b7d80fcec	10	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+e5da509a-010a-4ab2-a4b3-c5f4354fdb88	5	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+980cee99-4e65-43cc-a729-e32ea0f97a0a	12	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+6b948d96-6645-49e0-b5c8-916be7e61f58	8	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+99f8a8c0-012a-4116-8ae4-5fe947abff13	9	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	\N	\N	2026-07-05 21:12:01.589957+00
+37b7701b-d803-41b1-81a4-6d23cd1b51e3	6	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+9350cf0b-f657-4c70-8818-ae979efbce83	7	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+4e6dca13-6d58-4e58-b642-c771b52883fb	412	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+5c32b532-76b0-49d9-88e4-f766b8ee4635	413	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+10efd2cd-b2e9-4448-a2d4-b0befda5c5ea	1	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-09 · ยังเช็กไม่ครบ 5 คน	attendance	1b39c74b-dfa4-487b-abba-87f2df1c4d39	2026-07-06 03:02:12.981238+00	\N	2026-07-05 21:12:01.589957+00
+3c95df9a-1db7-4af8-b401-484038fe91af	10	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+95c8a331-9bf4-479e-8f8d-6a3295f1e3ba	5	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+2202fb0c-c7a6-4808-bd0d-6e6de4167e07	12	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+54eb21ba-1ce5-497e-8a47-7f7acf71804e	8	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+bfc59d26-055f-4671-bd77-1e7281d438dc	9	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	\N	\N	2026-07-05 21:12:01.600258+00
+0ba89352-3fad-49ba-ba60-64a67e86558f	6	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+f953f4a3-dce4-4bce-9eba-a7c9033891be	7	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+bb87e6df-54cc-49ea-be38-a79ba4946a14	412	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+55526895-bc15-4e27-a6f6-8eb60ac2c6d8	413	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+5aa5d02f-4b1e-4349-9a26-510e2064b518	10	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+49e743c5-90f0-476d-9474-7507150fe673	5	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+8acd9700-2691-4c57-a8d0-b365f8b913dd	8	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+4ee7ca17-b945-44f8-b2de-edcffabde61c	11	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+dcf46989-59cd-47eb-8add-86de48aa5694	9	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	\N	\N	2026-07-05 21:12:02.094108+00
+79b9d6af-ee87-4af3-a2fe-62eda46bbbd2	6	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+67c363fb-9946-4835-abc9-c3b69012a5ed	7	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+1ba32489-fcaa-4ac7-9c77-74b26a0e70f7	412	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+a47d5c55-1f14-4e29-ba7e-eed4d08375fc	413	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+1b506d69-c8a9-492a-8ca9-5804363180f0	10	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+89853ac9-b832-463d-b5e5-9ac31d276176	5	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+b77f5a9d-3d34-43e3-badc-08381fb86695	8	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+bd17cc7e-4f1d-43e4-ad2f-d6c835e18d7f	11	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+5c26b447-2fef-4500-9fd5-da9012a33308	9	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	\N	\N	2026-07-05 21:12:02.098841+00
+589ab3a1-2ecf-4c9a-b81d-ed084c74a3a3	6	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+045370a8-c789-494f-b789-4600ad2799c5	7	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+3eb5acf4-3b00-47e4-87e9-0880fc231380	412	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+c7487d58-6e00-46c2-89b0-61f4aae7be93	413	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+81176e04-2bc1-45f3-b54a-c272b74af197	10	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+11033546-20b0-48a4-9312-7a48e26425d9	5	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+f3a0b674-9134-48e3-8421-21bf95e31b44	8	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+20d04da4-64dc-4faa-b18e-39c50260eade	11	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+4585a5ce-4ba3-48ed-a7b8-6c00d695c58c	9	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	\N	\N	2026-07-05 21:12:02.100637+00
+bceb3c22-ef62-4e50-98ae-b4d74ec66761	6	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+ff06194d-9d14-43c1-9526-cb4f16bc7862	7	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+a90f3758-8252-44a1-bf1d-71728c6dda3f	412	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+c49c362b-97f4-424f-b28c-86096a5fbd8b	413	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+a2012648-a316-4715-8ced-d711acd2293c	10	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+749634bc-960b-412c-aa59-f6217f934074	5	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+f51e8258-743a-4920-876e-5431b0bf3171	8	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+4d37ccc1-bb6b-4ca7-aacc-3a5b3d1bba39	11	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+30d3abda-40b5-43ee-9888-2934dbcf086c	9	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	\N	\N	2026-07-05 21:12:02.102018+00
+34aae8db-2444-4a63-808f-e71fcbd6d80b	6	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+4229184a-9cb0-4bb0-bdaa-d40c5ddabad4	7	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+09ba01ed-7515-4132-a175-caf09544a0cf	412	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+1a0fcace-f99c-442a-9b47-bf0d890c89eb	413	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+4fc75986-e9df-42dd-b3dd-f6d68440827e	10	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+5d95ac19-7d0f-4799-b6a5-3300b4b8be22	5	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+eeb37714-d7a8-4181-ad8c-aaf899748d90	8	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+9ae6f771-4bef-4ea1-8af7-1736f2bcc3c9	11	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+74aa9294-8b45-46e7-a22c-6d2c5f887645	9	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	\N	\N	2026-07-05 21:12:02.103622+00
+ea9c50f6-d395-4d0d-b776-240d5fd60d4d	1	ATTENDANCE_INCOMPLETE	เช็กชื่อไม่ครบเลยกำหนด	วันที่ 2026-06-10 · ยังเช็กไม่ครบ 5 คน	attendance	e87beefa-45c8-4b20-8a04-386605786ef5	2026-07-06 03:02:12.981238+00	2026-07-06 03:02:19.904537+00	2026-07-05 21:12:01.600258+00
+a7069916-a389-4146-8056-e5179649b2e8	1	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ จันทร์เพ็ญ พร**** · ระดับ LOW · กำหนด 2026-06-22T16:30:26.906Z	case	1002	2026-07-06 03:02:12.981238+00	\N	2026-07-05 21:12:02.094108+00
+98011733-bfbd-4bb2-ac16-bdc71b4e2b9a	1	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ดิศรณ์ จั**** · ระดับ LOW · กำหนด 2026-06-19T16:30:26.906Z	case	1005	2026-07-06 03:02:12.981238+00	\N	2026-07-05 21:12:02.098841+00
+fabb59f7-9a91-464c-802d-42c5e2262ab8	1	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ประภา วิ**** · ระดับ LOW · กำหนด 2026-06-23T16:30:26.906Z	case	1001	2026-07-06 03:02:12.981238+00	\N	2026-07-05 21:12:02.100637+00
+577316e2-f56d-428f-88d0-9231ba8f8f7e	1	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ปัณณทัต ลื**** · ระดับ LOW · กำหนด 2026-06-20T16:30:26.906Z	case	1004	2026-07-06 03:02:12.981238+00	\N	2026-07-05 21:12:02.102018+00
+4a3d62d8-e432-48a2-967e-5db9e2190157	1	CASE_SLA_BREACHED	เคสเกินกำหนดดำเนินการ	เคสของ ภูมิพัฒน์ สก**** · ระดับ LOW · กำหนด 2026-06-18T16:30:26.906Z	case	1006	2026-07-06 03:02:12.981238+00	2026-07-06 03:02:23.412996+00	2026-07-05 21:12:02.103622+00
+\.
+
+
+--
 -- Data for Name: pii_access_events; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -2483,6 +3747,22 @@ COPY public.pii_access_events (id, actor_user_id, actor_roles, actor_kind, subje
 1	\N	["STUDENT"]	GUEST	v1$d4c62605fc363ba23ef02511695c2002dc75f82ece20979b64d5d0a574e6bcfa	1	NATIONAL_ID	SELF_ACCESS	\N	\N	\N	::1	curl/8.7.1	2026-06-24 06:56:28.848689+00	STUDENT	v1$d4c62605fc363ba23ef02511695c2002dc75f82ece20979b64d5d0a574e6bcfa
 2	1	["ADMIN"]	STAFF	v1$d4c62605fc363ba23ef02511695c2002dc75f82ece20979b64d5d0a574e6bcfa	1	NATIONAL_ID	HOME_VISIT	\N	\N	\N	::1	curl/8.7.1	2026-06-24 06:57:59.188177+00	STUDENT	v1$d4c62605fc363ba23ef02511695c2002dc75f82ece20979b64d5d0a574e6bcfa
 3	\N	["STUDENT"]	GUEST	v1$25352b9e626ad9578afc8ab4544638dd86f01b84df951fe93b4b76e872e50f3f	1	NATIONAL_ID	SELF_ACCESS	\N	\N	\N	::1	curl/8.7.1	2026-06-24 12:52:11.113921+00	STUDENT	v1$25352b9e626ad9578afc8ab4544638dd86f01b84df951fe93b4b76e872e50f3f
+\.
+
+
+--
+-- Data for Name: pii_export_events; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.pii_export_events (id, request_id, actor_user_id, action, metadata, ip, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: pii_export_requests; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.pii_export_requests (id, requester_user_id, approver_user_id, status, scope_snapshot, include_full_national_id, reason_code, reason_note, row_estimate, download_token_hash, download_expires_at, downloaded_at, rejected_reason, created_at, updated_at) FROM stdin;
 \.
 
 
@@ -2527,8 +3807,8 @@ COPY public.roles (id, name, label, rank, default_permissions, scope_mode, is_sy
 105	STUDENT	นักเรียน	1	["home", "student-self"]	flexible	t	2026-06-13 17:17:47.356254+00	2026-06-29 14:22:56.965575+00	\N	\N	OWN_ONLY	t
 3	TEACHER	คุณครู	2	["home", "students", "attendance"]	flexible	t	2026-06-13 17:17:47.356254+00	2026-06-29 14:22:56.965575+00	\N	\N	ASSIGNABLE	t
 24	EXECUTIVE	ผู้บริหาร	3	["home", "dashboard", "students", "review-cases", "attendance-dashboard", "attendance-operations"]	flexible	t	2026-06-13 17:17:47.356254+00	2026-06-30 15:17:28.66522+00	\N	\N	ASSIGNABLE	t
-2	DIRECTOR	ผู้อำนวยการ	4	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "settings", "audit-log", "attendance-operations", "edit-students"]	flexible	t	2026-06-13 17:17:47.356254+00	2026-07-01 14:51:19.143142+00	\N	\N	ASSIGNABLE	t
-1	ADMIN	ผู้ดูแลระบบ	5	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "manage-role-groups", "login-links", "settings", "import-data", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	flexible	t	2026-06-13 17:17:47.356254+00	2026-07-01 14:51:19.143142+00	\N	\N	ASSIGNABLE	t
+2	DIRECTOR	ผู้อำนวยการ	4	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "settings", "audit-log", "attendance-operations", "edit-students", "manage-attendance-calendar"]	flexible	t	2026-06-13 17:17:47.356254+00	2026-07-06 01:49:55.878627+00	\N	\N	ASSIGNABLE	t
+1	ADMIN	ผู้ดูแลระบบ	5	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "manage-role-groups", "login-links", "settings", "import-data", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students", "manage-attendance-calendar"]	flexible	t	2026-06-13 17:17:47.356254+00	2026-07-06 01:49:55.878627+00	\N	\N	ASSIGNABLE	t
 98	ADMIN_PROVINCE	แอดมินระดับจังหวัด	8	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "attendance-operations"]	province	t	2026-06-13 17:17:47.356254+00	2026-06-30 15:17:28.66522+00	\N	\N	ASSIGNABLE	f
 99	ADMIN_DISTRICT	แอดมินระดับอำเภอ	7	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "attendance-operations"]	district	t	2026-06-13 17:17:47.356254+00	2026-06-30 15:17:28.66522+00	\N	\N	ASSIGNABLE	f
 100	ADMIN_SUBDISTRICT	แอดมินระดับตำบล	6	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "attendance-operations"]	sub_district	t	2026-06-13 17:17:47.356254+00	2026-06-30 15:17:28.66522+00	\N	\N	ASSIGNABLE	f
@@ -2554,6 +3834,17 @@ COPY public.school_affiliations (id, code, name, note, is_active, created_at, cr
 3	อปท	องค์กรปกครองส่วนท้องถิ่น	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
 4	กทม	กรุงเทพมหานคร	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
 5	มกท	เมืองพัทยา	\N	t	2026-07-02 14:52:41.958057+00	\N	2026-07-02 14:52:41.958057+00	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: school_calendar_day_types; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.school_calendar_day_types (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+SCHOOL_DAY	วันเรียน	success	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+HOLIDAY	วันหยุด	secondary	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+CANCELLED	ยกเลิกการเรียน	warning	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
 \.
 
 
@@ -2635,6 +3926,17 @@ COPY public.school_calendar_days (id, school_term_id, calendar_date, day_type, r
 
 
 --
+-- Data for Name: school_term_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.school_term_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+DRAFT	ร่าง	warning	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+ACTIVE	เปิดใช้งาน	success	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+CLOSED	ปิดภาคเรียน	secondary	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: school_terms; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -2672,6 +3974,18 @@ COPY public.schools (id, name, province, district, sub_district, created_at, upd
 
 
 --
+-- Data for Name: student_account_batch_item_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_account_batch_item_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+PENDING	รอดำเนินการ	secondary	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+CREATED	สร้างแล้ว	success	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+SKIPPED	ข้าม	warning	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+FAILED	ล้มเหลว	destructive	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: student_account_batch_job; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -2684,6 +3998,20 @@ COPY public.student_account_batch_job (id, status, created_by, scope_snapshot, t
 --
 
 COPY public.student_account_batch_job_item (id, job_id, person_uuid, user_id, username, detail, status, error_code, processed_at, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: student_account_batch_job_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_account_batch_job_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+PENDING	รอเริ่ม	secondary	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+RUNNING	กำลังทำงาน	default	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+COMPLETED	เสร็จสิ้น	success	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+FAILED	ล้มเหลว	destructive	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+INTERRUPTED	หยุดชะงัก	warning	50	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+CANCELED	ยกเลิกแล้ว	secondary	60	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
 \.
 
 
@@ -3192,6 +4520,96 @@ COPY public.student_dropouts ("ProvinceNameThai_Onec", "DistrictNameThai_Onec", 
 อุบลราชธานี	เมืองอุบลราชธานี	หัวเรือ	8-9365-38995-11-5	ทักษิณ ยิ้มแย้ม	ชาย	ไทย	2010-10-25	878	2	ถนนกาญจนาภิเษก	\N	\N	1	ปัญหาครอบครัว	โรงเรียนมัธยมวิทยาคุณ	112	2569	0	2569	2	10010010	1	1.58	2026-06-20 14:36:29.70776+00	2026-06-24 12:49:32.951615+00	\N	\N	\N	\N	837103eb-0701-4212-9982-a5f59cd16d00	94d808ba-328e-4cd6-bc93-d19a16434f84
 เชียงราย	เมืองเชียงราย	แม่กรณ์	8-9429-51522-67-6	ธนพัฒน์ พันธุ์ดี	ชาย	ไทย	2012-06-14	887/29	3	ถนนบายพาส	\N	\N	1	ปัญหาครอบครัว	โรงเรียนประชานุกูลประสิทธิ์	106	2569	0	2569	2	10010007	1	1.37	2026-06-20 14:36:29.70776+00	2026-06-24 12:49:32.951615+00	\N	\N	\N	\N	96ed0e2b-006c-43e8-ba97-14ca3c1d9842	e4205e12-5df5-4b59-ac4c-b1b56f138614
 เชียงใหม่	เมืองเชียงใหม่	พระสิงห์	8-9622-29089-32-4	วันวิสา เกียรติสกุล	หญิง	ไทย	2017-04-01	656	10	ถ.รัฐพัฒนา	\N	\N	1	ปัญหาครอบครัว	โรงเรียนบ้านหนองขาม	101	2569	0	2569	1	10010002	2	2.78	2026-06-20 14:36:29.70776+00	2026-06-24 12:49:32.951615+00	\N	\N	\N	\N	7ddeb6b1-6dbf-4966-ba48-9c4105adee38	ce253fc7-3315-4a42-b204-03d578a5808b
+\.
+
+
+--
+-- Data for Name: student_import_batch_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_import_batch_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+RUNNING	กำลังนำเข้า	default	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+COMPLETED	สำเร็จ	success	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+PARTIAL	สำเร็จบางส่วน	warning	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+FAILED	ล้มเหลว	destructive	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: student_import_batches; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_import_batches (id, target, source_sha256, scope_snapshot, status, total_rows, imported_rows, quarantined_rows, completed_at, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+f7773268-05ca-4266-98c0-8a71985a53ec	student_term	2ec9924f9782c83cb62f6dda2addbc68c14e0abff17e0f3791e6115037a3a625	{"purpose": "demo import review queue", "seed_source": "DEMO_STUDENT_STATUS_ROSTER"}	PARTIAL	18	0	18	2026-07-03 09:34:22.931679+00	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+\.
+
+
+--
+-- Data for Name: student_import_quarantine_reason_codes; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_import_quarantine_reason_codes (code, label_th, sort_order, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+IDENTIFIER_CONFLICT	เลขนี้ตรงกับหลายโปรไฟล์ในระบบ	10	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+UNMAPPED_STUDENT_STATUS	สถานะนักเรียนยังไม่จับคู่	20	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+MISSING_NATURAL_KEY_FIELD	ข้อมูลภาคเรียนบังคับไม่ครบหรือไม่ถูกต้อง	30	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+BLANK_REQUIRED_IDENTITY	ไม่มีรหัสประจำตัว	40	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+DUPLICATE_ROW_IN_FILE	แถวซ้ำในไฟล์	50	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+MULTIPLE_ACTIVE_ENROLLMENTS	พบการลงทะเบียนที่ยังใช้งานหลายรายการ	60	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+NAME_CONFLICT_FOR_IDENTIFIER	ชื่อไม่ตรงกับรหัสประจำตัวเดิม	70	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+INVALID_NATIONAL_ID_CHECKSUM	เลขประจำตัวประชาชนไม่ผ่านการตรวจสอบ	80	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+SCHOOL_NOT_FOUND	ไม่พบโรงเรียนในข้อมูลหลัก	90	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+GRADE_NOT_FOUND	ไม่พบชั้นเรียนในข้อมูลหลัก	100	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+ROOM_NOT_FOUND	ไม่พบห้องเรียนในข้อมูลหลัก	110	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+STATUS_CAUSE_UNMAPPED	สาเหตุสถานะนักเรียนยังไม่จับคู่	120	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: student_import_quarantine_resolution_states; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_import_quarantine_resolution_states (code, label_th, badge_variant, sort_order, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+ACTION_REQUIRED	ต้องแก้ข้อมูล	warning	10	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+DECISION_REQUIRED	ต้องตัดสินใจ	default	20	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+RETRY_ELIGIBLE	ผ่านการตรวจเบื้องต้น	success	30	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+BLOCKED	ต้องตรวจสอบเพิ่มเติม	secondary	40	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: student_import_quarantine_rows; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_import_quarantine_rows (id, batch_id, school_id, source_row_number, row_fingerprint, reason_code, mapped_values, status, resolved_person_uuid, resolved_at, resolved_by, resolution_note, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+114	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	2	7e1d3b9ffb9754e7a6371d9a7dca1ee1a61260d8552776a567dccd23530e48c6	IDENTIFIER_CONFLICT	{"GPAX_Onec": 2.15, "RoomID_Onec": 1, "LastName_Onec": "แสงแก้ว", "PersonID_Onec": "9901000000012", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "อรณิชา", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 421, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	PENDING	\N	\N	1	\N	2026-07-03 08:04:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+115	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	3	4a661ae37d4c126a02f035a751a9ac72b77ebaa8358a6cda9f666aded115f9b3	UNMAPPED_STUDENT_STATUS	{"GPAX_Onec": 2.34, "RoomID_Onec": 1, "LastName_Onec": "ปรีชาวงศ์", "PersonID_Onec": "9901000000029", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "ธนดล", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 112, "student_status_code": 90, "StudentStatusID_Onec": 90, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	PENDING	\N	\N	1	\N	2026-07-03 08:09:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+116	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	4	1e1d0cd9cbc7b36c0221f3e40928cf4d9b49a921666ba73f9bc35c1858fcdd46	GRADE_NOT_FOUND	{"GPAX_Onec": 2.53, "RoomID_Onec": 2, "LastName_Onec": "วงศ์สุริยา", "PersonID_Onec": "9901000000036", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "เบญญาภา", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 999, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	PENDING	\N	\N	1	\N	2026-07-03 08:14:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+117	f7773268-05ca-4266-98c0-8a71985a53ec	10010003	5	3fb1f36817aeed9089c0ebd84dc7c4584a14a48a071d8a60587f23b3a7ddfc6f	ROOM_NOT_FOUND	{"GPAX_Onec": 2.72, "RoomID_Onec": 99, "LastName_Onec": "ภูมิสวัสดิ์", "PersonID_Onec": "9901000000043", "SchoolID_Onec": 10010003, "Semester_Onec": 1, "FirstName_Onec": "กรวิชญ์", "PostalCode_Onec": "40000", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 421, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองขอนแก่น", "ProvinceNameThai_Onec": "ขอนแก่น", "SubDistrictNameThai_Onec": "ในเมือง"}	PENDING	\N	\N	1	\N	2026-07-03 08:19:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+118	f7773268-05ca-4266-98c0-8a71985a53ec	10010004	6	a374cf7fe870b482c684a63b7a024edde8cb7bb5e493fd352eb9c48f5fb3048b	MISSING_NATURAL_KEY_FIELD	{"GPAX_Onec": 2.91, "RoomID_Onec": 1, "LastName_Onec": "ใจงาม", "PersonID_Onec": "9901000000050", "SchoolID_Onec": 10010004, "Semester_Onec": 1, "FirstName_Onec": "ชลธิชา", "PostalCode_Onec": "10210", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 111, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "ดอนเมือง", "ProvinceNameThai_Onec": "กรุงเทพมหานคร", "SubDistrictNameThai_Onec": "สีกัน"}	PENDING	\N	\N	1	\N	2026-07-03 08:24:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+119	f7773268-05ca-4266-98c0-8a71985a53ec	\N	7	fd65384aa2fea87421e6e65bdf9d410f24463e6e832624c7163e6a4e422ec59f	SCHOOL_NOT_FOUND	{"GPAX_Onec": 3.1, "RoomID_Onec": 1, "LastName_Onec": "ไชยรักษ์", "PersonID_Onec": "9901000000067", "SchoolID_Onec": 99999999, "Semester_Onec": 1, "FirstName_Onec": "ปุณณวิช", "PostalCode_Onec": "10210", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 101, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "ดอนเมือง", "ProvinceNameThai_Onec": "กรุงเทพมหานคร", "SubDistrictNameThai_Onec": "สีกัน"}	PENDING	\N	\N	1	\N	2026-07-03 08:29:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+120	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	8	9229a1d1a9a5a315fc328b82d9e8b139f858ea6df1a43def4b0e824f59d0291c	IDENTIFIER_CONFLICT	{"GPAX_Onec": 3.29, "RoomID_Onec": 1, "LastName_Onec": "คำมูล", "PersonID_Onec": "9901000000074", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "ณัฐธิดา", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 421, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	RESOLVED	\N	2026-07-03 09:34:22.931679+00	1	แก้ไขข้อมูลตัวอย่างเรียบร้อย	2026-07-03 08:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+121	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	9	76ffaf8f7f14d558f699f173a5a15010613be468f998636e4311e8b7dd77a480	DUPLICATE_ROW_IN_FILE	{"GPAX_Onec": 3.48, "RoomID_Onec": 2, "LastName_Onec": "สารินทร์", "PersonID_Onec": "9901000000081", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "พงศกร", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 112, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	RESOLVED	\N	2026-07-03 09:34:22.931679+00	1	แก้ไขข้อมูลตัวอย่างเรียบร้อย	2026-07-03 08:39:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+122	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	10	ef316a86b9c850ce1775a70dd5ef589e8f3e6741d0c1927cb9ae4d2c8625a128	UNMAPPED_STUDENT_STATUS	{"GPAX_Onec": 2.15, "RoomID_Onec": 1, "LastName_Onec": "มีสุข", "PersonID_Onec": "9901000000098", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "กมลชนก", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 113, "student_status_code": 90, "StudentStatusID_Onec": 90, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	RESOLVED	\N	2026-07-03 09:34:22.931679+00	1	แก้ไขข้อมูลตัวอย่างเรียบร้อย	2026-07-03 08:44:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+123	f7773268-05ca-4266-98c0-8a71985a53ec	10010003	11	674b7da6e4b1ae72b5434f9e68f2c5ed06aa2585fe59d6ac08a67d1dc744acbb	NAME_CONFLICT_FOR_IDENTIFIER	{"GPAX_Onec": 2.34, "RoomID_Onec": 2, "LastName_Onec": "แก่นนคร", "PersonID_Onec": "9901000000104", "SchoolID_Onec": 10010003, "Semester_Onec": 1, "FirstName_Onec": "รชต", "PostalCode_Onec": "40000", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 422, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองขอนแก่น", "ProvinceNameThai_Onec": "ขอนแก่น", "SubDistrictNameThai_Onec": "ในเมือง"}	RESOLVED	\N	2026-07-03 09:34:22.931679+00	1	แก้ไขข้อมูลตัวอย่างเรียบร้อย	2026-07-03 08:49:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+124	f7773268-05ca-4266-98c0-8a71985a53ec	10010004	12	81f0dd40599ea16cc7aa19174db0e2bc16c5028ac712fd3a546bf06f94a03314	ROOM_NOT_FOUND	{"GPAX_Onec": 2.53, "RoomID_Onec": 4, "LastName_Onec": "ทองดี", "PersonID_Onec": "9901000000111", "SchoolID_Onec": 10010004, "Semester_Onec": 1, "FirstName_Onec": "ภคพร", "PostalCode_Onec": "10210", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 102, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "ดอนเมือง", "ProvinceNameThai_Onec": "กรุงเทพมหานคร", "SubDistrictNameThai_Onec": "สีกัน"}	RESOLVED	\N	2026-07-03 09:34:22.931679+00	1	แก้ไขข้อมูลตัวอย่างเรียบร้อย	2026-07-03 08:54:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+125	f7773268-05ca-4266-98c0-8a71985a53ec	10010005	13	40ab896740c57e962688a594e7b5e7f280c84bbf365c4dbf985f16cbbf7b9f53	STATUS_CAUSE_UNMAPPED	{"GPAX_Onec": 2.72, "RoomID_Onec": 1, "LastName_Onec": "จันทร์สว่าง", "PersonID_Onec": "9901000000128", "SchoolID_Onec": 10010005, "Semester_Onec": 1, "FirstName_Onec": "วายุ", "PostalCode_Onec": "10210", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 421, "student_status_code": 30, "StudentStatusID_Onec": 30, "DistrictNameThai_Onec": "ดอนเมือง", "ProvinceNameThai_Onec": "กรุงเทพมหานคร", "SubDistrictNameThai_Onec": "สีกัน"}	RESOLVED	\N	2026-07-03 09:34:22.931679+00	1	แก้ไขข้อมูลตัวอย่างเรียบร้อย	2026-07-03 08:59:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+126	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	14	61d7f0e203d9645cdd404d5e7ae5ef3b5bcd171fa948c39880f4b0534437ddba	INVALID_NATIONAL_ID_CHECKSUM	{"GPAX_Onec": 2.91, "RoomID_Onec": 1, "LastName_Onec": "จงรักษ์", "PersonID_Onec": "9901000000135", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "กฤตภาส", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 421, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	REJECTED	\N	2026-07-03 09:34:22.931679+00	1	ปฏิเสธรายการตัวอย่างเนื่องจากข้อมูลต้นทางไม่ถูกต้อง	2026-07-03 09:04:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+127	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	15	06bffa7db0ba204cc838c7116f10d48a0b310fc0af2f8bbf51c9fb84445616e5	BLANK_REQUIRED_IDENTITY	{"GPAX_Onec": 3.1, "RoomID_Onec": 1, "LastName_Onec": "ภักดี", "PersonID_Onec": "", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "มัณฑนา", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 112, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	REJECTED	\N	2026-07-03 09:34:22.931679+00	1	ปฏิเสธรายการตัวอย่างเนื่องจากข้อมูลต้นทางไม่ถูกต้อง	2026-07-03 09:09:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+128	f7773268-05ca-4266-98c0-8a71985a53ec	10010002	16	a95941a9f71df610e7063402e71e0c85e7f285e18b48a03bcaec3d94b0714b62	MULTIPLE_ACTIVE_ENROLLMENTS	{"GPAX_Onec": 3.29, "RoomID_Onec": 2, "LastName_Onec": "สุวรรณ", "PersonID_Onec": "9901000000159", "SchoolID_Onec": 10010002, "Semester_Onec": 1, "FirstName_Onec": "วรัญญู", "PostalCode_Onec": "50200", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 113, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองเชียงใหม่", "ProvinceNameThai_Onec": "เชียงใหม่", "SubDistrictNameThai_Onec": "สุเทพ"}	REJECTED	\N	2026-07-03 09:34:22.931679+00	1	ปฏิเสธรายการตัวอย่างเนื่องจากข้อมูลต้นทางไม่ถูกต้อง	2026-07-03 09:14:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+129	f7773268-05ca-4266-98c0-8a71985a53ec	10010003	17	089ff1feaced0db851cc077bd1fca1b509b2f09dec0bd794cd40471c799ea924	GRADE_NOT_FOUND	{"GPAX_Onec": 3.48, "RoomID_Onec": 1, "LastName_Onec": "แสนดี", "PersonID_Onec": "9901000000166", "SchoolID_Onec": 10010003, "Semester_Onec": 1, "FirstName_Onec": "อาทิตยา", "PostalCode_Onec": "40000", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 998, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "เมืองขอนแก่น", "ProvinceNameThai_Onec": "ขอนแก่น", "SubDistrictNameThai_Onec": "ในเมือง"}	REJECTED	\N	2026-07-03 09:34:22.931679+00	1	ปฏิเสธรายการตัวอย่างเนื่องจากข้อมูลต้นทางไม่ถูกต้อง	2026-07-03 09:19:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+130	f7773268-05ca-4266-98c0-8a71985a53ec	\N	18	a8ffde749072697d7f46fbed565a1ea5b04588ed8547672016c0eab3a26f51f2	SCHOOL_NOT_FOUND	{"GPAX_Onec": 2.15, "RoomID_Onec": 1, "LastName_Onec": "ศรีประภา", "PersonID_Onec": "9901000000173", "SchoolID_Onec": 99999998, "Semester_Onec": 1, "FirstName_Onec": "ภูมิพัฒน์", "PostalCode_Onec": "10210", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 421, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "ดอนเมือง", "ProvinceNameThai_Onec": "กรุงเทพมหานคร", "SubDistrictNameThai_Onec": "สีกัน"}	REJECTED	\N	2026-07-03 09:34:22.931679+00	1	ปฏิเสธรายการตัวอย่างเนื่องจากข้อมูลต้นทางไม่ถูกต้อง	2026-07-03 09:24:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+131	f7773268-05ca-4266-98c0-8a71985a53ec	10010004	19	2afe88d2feec5486d88324fdfeb5b003185c8058630cfe17c0918b9dfa55079e	MISSING_NATURAL_KEY_FIELD	{"GPAX_Onec": 2.34, "RoomID_Onec": 1, "LastName_Onec": "เรืองฤทธิ์", "PersonID_Onec": "9901000000180", "SchoolID_Onec": 10010004, "Semester_Onec": 1, "FirstName_Onec": "ณัฐกานต์", "PostalCode_Onec": "10210", "AcademicYear_Onec": 2569, "GradeLevelID_Onec": 111, "student_status_code": 10, "StudentStatusID_Onec": 10, "DistrictNameThai_Onec": "ดอนเมือง", "ProvinceNameThai_Onec": "กรุงเทพมหานคร", "SubDistrictNameThai_Onec": "สีกัน"}	REJECTED	\N	2026-07-03 09:34:22.931679+00	1	ปฏิเสธรายการตัวอย่างเนื่องจากข้อมูลต้นทางไม่ถูกต้อง	2026-07-03 09:29:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+\.
+
+
+--
+-- Data for Name: student_import_quarantine_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_import_quarantine_statuses (code, label_th, badge_variant, sort_order, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+PENDING	รอตรวจสอบ	warning	10	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+RESOLVED	แก้ไขแล้ว	success	20	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
+REJECTED	ปฏิเสธแล้ว	secondary	30	2026-07-03 08:18:06.785417+00	\N	2026-07-03 08:18:06.785417+00	\N	\N	\N
 \.
 
 
@@ -8700,7 +10118,34 @@ dcae42d1-016a-4d0f-8839-a788d3fb8311	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	
 dd521eaa-765f-4e88-bbce-f0a8ed758b8d	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
 f7b53cd6-62e3-47b8-b469-58678999c194	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
 02563963-a8a2-42c6-b535-0be1b36790a9	ACTIVE	\N	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
-10000000-0000-4000-8000-000000000001	ACTIVE	\N	2026-07-01 08:24:06.405543+00	\N	2026-07-02 14:18:23.835472+00	\N	\N	\N
+10000000-0000-4000-8000-000000000001	ACTIVE	\N	2026-07-01 08:24:06.405543+00	\N	2026-07-03 18:15:06.932729+00	\N	\N	\N
+147dc0d7-6d51-4a83-9919-3a318fce38ef	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+160ba309-4c25-426f-a25f-c8733ec538f3	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+e939cbe1-bc81-4182-8f9f-48fee801290c	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+b7716f9e-2f59-4760-b9fb-f68608977eb6	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+e84413f7-ee59-494f-afb5-6aa786cd848d	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+1efc45e4-ea03-4f2f-a5ee-77d6e388eb2b	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+e64aa8ae-7deb-4ab0-8e73-4f9d12aaf107	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+4f80d404-c879-4421-9918-22e79d8d919a	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+858cbfc4-68eb-40d7-bdcc-bfe953d32953	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+9c765f84-8ce0-4406-af05-3e335882bd44	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+ea86f21a-82f2-4e61-979f-16479adf774e	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+cc49f56f-c591-4ebf-aebe-8e9f56c47851	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+6faa0441-4bbd-4bbe-9b66-9c30773dbb4c	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+52f74bb4-3242-47db-87cc-f542de27f938	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+eeecf7ba-4476-4768-b949-cc4dd422933e	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+91cc37cb-7d30-4b52-9b3c-c85fba5b8ddb	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+9285ba2d-7d56-4ca9-af91-102f1697de0e	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+bac3e4dd-b4f7-4416-83c8-e3ddaa9fc586	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+369b403b-9b6c-4c2a-abee-943ccf4b9f43	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+087c910a-bfbb-49cd-bcf7-b7fe6acef163	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+c875c695-8e4d-4f3c-90ab-cd71818f3d1b	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+58a2a611-c65b-49d7-8c6c-fbcb3997a6e9	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+3fdcf8ec-4888-45f1-9279-9a8e9b14c477	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+042ccffd-62e6-41e7-9b22-0ee7db2ecc60	ACTIVE	\N	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+ddf650ff-4441-498f-9284-5e9e98c23c47	ACTIVE	\N	2026-07-03 07:52:07.504968+00	\N	2026-07-03 07:52:07.504968+00	\N	\N	\N
+49215735-1292-4875-b25e-b05e5fba9d53	NEEDS_REVIEW	\N	2026-07-03 01:53:03.766293+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+ede350b6-7d5f-4744-a541-495ad1bac1e8	NEEDS_REVIEW	\N	2026-07-03 01:53:03.766293+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
 \.
 
 
@@ -14209,6 +15654,33 @@ COPY public.student_person_identifier (id, person_uuid, identifier_type, identif
 5498	dd521eaa-765f-4e88-bbce-f0a8ed758b8d	NATIONAL_ID	8995834400128	8995834400128	t	ONEC_BACKFILL	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
 5499	f7b53cd6-62e3-47b8-b469-58678999c194	NATIONAL_ID	8997133671129	8997133671129	t	ONEC_BACKFILL	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
 5500	02563963-a8a2-42c6-b535-0be1b36790a9	NATIONAL_ID	8998274021141	8998274021141	t	ONEC_BACKFILL	2026-06-24 12:49:32.951615+00	\N	2026-06-24 12:49:32.951615+00	\N	\N	\N
+5738	58a2a611-c65b-49d7-8c6c-fbcb3997a6e9	NATIONAL_ID	9900000000022	9900000000022	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5739	3fdcf8ec-4888-45f1-9279-9a8e9b14c477	NATIONAL_ID	9900000000023	9900000000023	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5740	042ccffd-62e6-41e7-9b22-0ee7db2ecc60	NATIONAL_ID	9900000000024	9900000000024	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5741	49215735-1292-4875-b25e-b05e5fba9d53	NATIONAL_ID	9901000000012	9901000000012	t	DEMO_STUDENT_STATUS_ROSTER_CONFLICT_CANDIDATE	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5742	ede350b6-7d5f-4744-a541-495ad1bac1e8	NATIONAL_ID	9901000000012	9901000000012	t	DEMO_STUDENT_STATUS_ROSTER_CONFLICT_CANDIDATE	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5690	ddf650ff-4441-498f-9284-5e9e98c23c47	NATIONAL_ID	9901000000050	9901000000050	t	ONEC_IMPORT	2026-07-03 07:52:07.504968+00	\N	2026-07-03 07:52:07.504968+00	\N	\N	\N
+5717	147dc0d7-6d51-4a83-9919-3a318fce38ef	NATIONAL_ID	9900000000001	9900000000001	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5718	160ba309-4c25-426f-a25f-c8733ec538f3	NATIONAL_ID	9900000000002	9900000000002	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5719	e939cbe1-bc81-4182-8f9f-48fee801290c	NATIONAL_ID	9900000000003	9900000000003	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5720	b7716f9e-2f59-4760-b9fb-f68608977eb6	NATIONAL_ID	9900000000004	9900000000004	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5721	e84413f7-ee59-494f-afb5-6aa786cd848d	NATIONAL_ID	9900000000005	9900000000005	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5722	1efc45e4-ea03-4f2f-a5ee-77d6e388eb2b	NATIONAL_ID	9900000000006	9900000000006	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5723	e64aa8ae-7deb-4ab0-8e73-4f9d12aaf107	NATIONAL_ID	9900000000007	9900000000007	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5724	4f80d404-c879-4421-9918-22e79d8d919a	NATIONAL_ID	9900000000008	9900000000008	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5725	858cbfc4-68eb-40d7-bdcc-bfe953d32953	NATIONAL_ID	9900000000009	9900000000009	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5726	9c765f84-8ce0-4406-af05-3e335882bd44	NATIONAL_ID	9900000000010	9900000000010	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5727	ea86f21a-82f2-4e61-979f-16479adf774e	NATIONAL_ID	9900000000011	9900000000011	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5728	cc49f56f-c591-4ebf-aebe-8e9f56c47851	NATIONAL_ID	9900000000012	9900000000012	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5729	6faa0441-4bbd-4bbe-9b66-9c30773dbb4c	NATIONAL_ID	9900000000013	9900000000013	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5730	52f74bb4-3242-47db-87cc-f542de27f938	NATIONAL_ID	9900000000014	9900000000014	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5731	eeecf7ba-4476-4768-b949-cc4dd422933e	NATIONAL_ID	9900000000015	9900000000015	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5732	91cc37cb-7d30-4b52-9b3c-c85fba5b8ddb	NATIONAL_ID	9900000000016	9900000000016	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5733	9285ba2d-7d56-4ca9-af91-102f1697de0e	NATIONAL_ID	9900000000017	9900000000017	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5734	bac3e4dd-b4f7-4416-83c8-e3ddaa9fc586	NATIONAL_ID	9900000000018	9900000000018	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5735	369b403b-9b6c-4c2a-abee-943ccf4b9f43	NATIONAL_ID	9900000000019	9900000000019	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5736	087c910a-bfbb-49cd-bcf7-b7fe6acef163	NATIONAL_ID	9900000000020	9900000000020	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
+5737	c875c695-8e4d-4f3c-90ab-cd71818f3d1b	NATIONAL_ID	9900000000021	9900000000021	t	DEMO_STUDENT_STATUS_ROSTER	2026-07-03 09:34:22.931679+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N
 \.
 
 
@@ -14216,11 +15688,27 @@ COPY public.student_person_identifier (id, person_uuid, identifier_type, identif
 -- Data for Name: student_status; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.student_status (code, label_th, category, is_active_for_login, is_terminal, requires_followup, is_enabled, sort_order, source_system, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
-10	กำลังศึกษา	ACTIVE	t	f	f	t	10	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-02 02:21:20.276662+00	\N	\N	\N
-20	จบการศึกษา	GRADUATED	f	t	f	t	20	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-02 02:21:20.276662+00	\N	\N	\N
-30	ลาออก/จำหน่าย	WITHDRAWN	f	t	t	t	30	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-02 02:21:20.276662+00	\N	\N	\N
-40	ย้ายสถานศึกษา	TRANSFERRED	f	t	f	t	40	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-02 02:21:20.276662+00	\N	\N	\N
+COPY public.student_status (code, label_th, category, is_active_for_login, is_terminal, requires_followup, is_enabled, sort_order, source_system, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, badge_variant) FROM stdin;
+10	กำลังศึกษา	ACTIVE	t	f	f	t	10	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N	success
+20	จบการศึกษา	GRADUATED	f	t	f	t	20	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N	secondary
+30	ลาออก/จำหน่าย	WITHDRAWN	f	t	t	t	30	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N	secondary
+40	ย้ายสถานศึกษา	TRANSFERRED	f	t	f	t	40	ONEC	2026-07-02 02:21:20.276662+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N	secondary
+50	เสียชีวิต	DECEASED	f	t	f	t	50	DEMO	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N	secondary
+90	ยังไม่ได้จับคู่	UNMAPPED	f	f	t	t	90	DEMO	2026-07-03 01:41:49.090047+00	1	2026-07-03 09:34:22.931679+00	1	\N	\N	warning
+\.
+
+
+--
+-- Data for Name: student_status_categories; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.student_status_categories (code, label_th, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+ACTIVE	กำลังศึกษา	10	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+GRADUATED	สำเร็จการศึกษา	20	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+WITHDRAWN	ลาออก/พ้นสภาพ	30	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+TRANSFERRED	ย้ายสถานศึกษา	40	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+DECEASED	เสียชีวิต	50	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
+UNMAPPED	ยังไม่ได้จับคู่	60	t	2026-07-03 09:20:17.797487+00	\N	2026-07-03 09:20:17.797487+00	\N	\N	\N
 \.
 
 
@@ -14229,7 +15717,7 @@ COPY public.student_status (code, label_th, category, is_active_for_login, is_te
 --
 
 COPY public.student_term ("AcademicYear_Onec", "Semester_Onec", "DepartmentID_Onec", "SchoolID_Onec", "PersonID_Onec", "PassportNumber_Onec", "PrefixID_Onec", "FirstName_Onec", "MiddleName_Onec", "LastName_Onec", "GenderID_Onec", "NationalityID_Onec", "DisabilityID_Onec", "DisadvantageEducationID_Onec", "VillageNumber_Onec", "Street_Onec", "Soi_Onec", "Trok_Onec", "SubDistrictID_Onec", "SchoolAdmissionYear_Onec", "GradeLevelID_Onec", "RoomID_Onec", "GPAX_Onec", "StudentStatusID_Onec", "ProvinceNameThai_Onec", "DistrictNameThai_Onec", "SubDistrictNameThai_Onec", created_at, updated_at, created_by, updated_by, deleted_at, deleted_by, student_uuid, person_uuid, "PostalCode_Onec", address_house_no, address_latitude, address_longitude, student_status_code) FROM stdin;
-2569	1	\N	10010002	SMOKE-STUDENT-ACCT-001	\N	\N	Smoke	\N	Student Account	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	6	1	\N	10	กรุงเทพมหานคร	ดอนเมือง	สีกัน	2026-07-01 08:24:06.411086+00	2026-07-02 14:18:23.840181+00	\N	\N	\N	\N	10000000-0000-4000-8000-000000000002	10000000-0000-4000-8000-000000000001	\N	\N	\N	\N	10
+2569	1	\N	10010002	SMOKE-STUDENT-ACCT-001	\N	\N	Smoke	\N	Student Account	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	6	1	\N	10	กรุงเทพมหานคร	ดอนเมือง	สีกัน	2026-07-01 08:24:06.411086+00	2026-07-03 18:15:06.935745+00	\N	\N	\N	\N	10000000-0000-4000-8000-000000000002	10000000-0000-4000-8000-000000000001	\N	\N	\N	\N	10
 2569	1	3	10010005	1-1300-57635-20-1	\N	1	ทักษิณ	\N	สีดา	1	1	0	0	9	รามคำแหง	\N	\N	4103	2563	105	2	2.18	10	อุดรธานี	เมืองอุดรธานี	บ้านขาว	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	79190d7d-2e7e-4faa-9626-21a206bfdba1	c07a8772-4de3-412c-8fb2-729cd576692c	41000	\N	\N	\N	10
 2569	1	4	10010003	1-1314-62138-83-7	\N	2	นภาพร	\N	ทองดี	2	1	0	0	9	รัตนาธิเบศร์	\N	\N	4001	2561	111	2	3.22	10	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	316b994f-fe07-49b7-9380-af5a89c8a802	0c16dabe-954c-48e8-bd09-199a240b955c	40000	\N	\N	\N	10
 2569	1	3	10010004	1-1315-69984-28-9	\N	2	กัญญา	\N	อ่อนน้อม	2	1	0	0	9	ช้างเผือก	\N	\N	1002	2567	103	3	2.79	10	กรุงเทพมหานคร	ดอนเมือง	ดอนเมือง	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	c07478d1-4839-4efa-ad24-0e6111cd3598	96a0807f-429f-4903-bfc8-4eb5329f2b6d	10210	\N	\N	\N	10
@@ -18485,6 +19973,32 @@ COPY public.student_term ("AcademicYear_Onec", "Semester_Onec", "DepartmentID_On
 2569	1	4	10010010	7-2475-88590-61-8	\N	1	ศุภณัฐ	\N	คงมั่น	1	1	0	0	2	ถ.ประชาสามัคคี	\N	\N	3401	2564	104	1	3.98	10	อุบลราชธานี	เมืองอุบลราชธานี	ในเมือง	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	67e2eba5-4b4a-4910-9e21-7398f3c8ca3b	54f7a5af-0975-401d-9979-88e66c62b5c4	34000	\N	\N	\N	10
 2569	1	1	10010002	7-2698-75064-89-9	\N	1	ศุภณัฐ	\N	พรสวรรค์	1	1	0	0	2	ถ.ประชาสามัคคี	\N	\N	5001	2566	102	3	2.52	10	เชียงใหม่	เมืองเชียงใหม่	ศรีภูมิ	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	6b31946b-e37d-4770-af70-9bf1f2d4c50a	7ced1fd9-7184-44da-81bf-c12f270e5795	50000	\N	\N	\N	10
 2569	1	2	10010009	8-8194-57892-84-8	\N	1	วรพล	\N	เจริญชัย	1	1	0	0	3	ถ.รัฐพัฒนา	\N	\N	9204	2566	102	3	2.74	10	ตรัง	เมืองตรัง	นาตาล่วง	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	9d0b179d-3460-46cf-82da-79269056d45a	ceae28d6-4792-4437-999b-90f7a020542e	92000	\N	\N	\N	10
+2569	1	\N	10010004	9900000000020	\N	1	ณิชาภา	\N	เพชรสว่าง	\N	99	\N	\N	58/6	ถนนช่างอากาศอุทิศ	ซอยสีกัน 9	\N	\N	2566	102	3	3.11	50	กรุงเทพมหานคร	ดอนเมือง	สีกัน	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	ad585b51-0a37-4b42-9000-d2b2fc45d8a8	087c910a-bfbb-49cd-bcf7-b7fe6acef163	10210	58/6	13.9211	100.5985	50
+2569	1	\N	10010002	9900000000021	\N	1	สรวิชญ์	\N	ภูผา	\N	99	\N	\N	29	ถนนสุเทพ	ซอยวัดอุโมงค์	\N	\N	2568	113	1	2.89	90	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	1fca3027-d694-4468-b7d0-156cdd9a0b7b	c875c695-8e4d-4f3c-90ab-cd71818f3d1b	50200	29	18.7824	98.9612	90
+2569	1	\N	10010003	9900000000022	\N	1	รินรดา	\N	นาคะวารี	\N	99	\N	\N	82/2	ถนนเหล่านาดี	ซอยบึงแก่นนคร	\N	\N	2567	421	2	3.08	90	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	e62b089d-012d-4189-a9e3-a5b6271d9325	58a2a611-c65b-49d7-8c6c-fbcb3997a6e9	40000	82/2	16.4104	102.8281	90
+2569	1	\N	10010005	9900000000023	\N	1	พัชรพล	\N	สายทอง	\N	99	\N	\N	47	ถนนอุดรธานี-หนองคาย	ซอยหนองประจักษ์	\N	\N	2568	422	1	2.56	90	อุดรธานี	เมืองอุดรธานี	บ้านขาว	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	6749a3d1-ec6e-43ee-ab37-079a1778fc94	3fdcf8ec-4888-45f1-9279-9a8e9b14c477	41000	47	17.4141	102.7819	90
+2569	1	\N	10010001	9900000000024	\N	1	จิรัชญา	\N	เมืองแก้ว	\N	99	\N	\N	11/9	ถนนดินสอ	ตรอกสำราญ	\N	\N	2567	103	2	3.22	90	กรุงเทพมหานคร	พระนคร	สำราญราษฎร์	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	edd78df7-5e1f-4644-9160-4bc8e3c9ec3c	042ccffd-62e6-41e7-9b22-0ee7db2ecc60	10200	11/9	13.7568	100.5027	90
+2569	1	\N	10010002	9900000000017	\N	1	ธนภัทร	\N	สุขเกษม	\N	99	\N	\N	19	ถนนสุเทพ	ซอยสวนดอก	\N	\N	2567	112	2	2.74	50	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	32074508-9b5c-4e63-aa5e-3adab5979349	9285ba2d-7d56-4ca9-af91-102f1697de0e	50200	19	18.7881	98.9703	50
+2569	1	\N	10010003	9900000000018	\N	1	พิชชาภา	\N	ธรรมวงศ์	\N	99	\N	\N	75/1	ถนนศรีจันทร์	ซอยตลาดต้นตาล	\N	\N	2568	111	1	3.02	50	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	ca9605aa-4e66-4965-96aa-d3402d535204	bac3e4dd-b4f7-4416-83c8-e3ddaa9fc586	40000	75/1	16.4249	102.8155	50
+2569	1	\N	10010005	9900000000019	\N	1	ภูริณัฐ	\N	แก่นจันทร์	\N	99	\N	\N	33	ถนนรอบเมือง	ซอยบ้านขาว 7	\N	\N	2567	101	2	2.67	50	อุดรธานี	เมืองอุดรธานี	บ้านขาว	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	0d504d39-e136-4095-8d72-190f8a336e5c	369b403b-9b6c-4c2a-abee-943ccf4b9f43	41000	33	17.4002	102.7813	50
+2569	1	\N	10010002	9900000000001	\N	1	ณัฐวุฒิ	\N	ใจตรง	\N	99	\N	\N	12	ถนนสุเทพ	ซอยชมดอย 3	\N	\N	2568	421	1	3.42	10	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	c30ee879-ce17-4536-8896-9d3052a23f6d	147dc0d7-6d51-4a83-9919-3a318fce38ef	50200	12	18.7944	98.9651	10
+2569	1	\N	10010002	9900000000002	\N	1	กัญญาพัชร	\N	แสงมณี	\N	99	\N	\N	44/2	ถนนห้วยแก้ว	ซอยอินทนิล	\N	\N	2568	421	1	3.76	10	เชียงใหม่	เมืองเชียงใหม่	ช้างเผือก	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	ef29c90b-27db-4037-88a0-bdd347e60b64	160ba309-4c25-426f-a25f-c8733ec538f3	50300	44/2	18.8021	98.9674	10
+2569	1	\N	10010003	9900000000003	\N	1	พีรวิชญ์	\N	วงศ์คำ	\N	99	\N	\N	85	ถนนมิตรภาพ	ซอยศรีจันทร์ 8	\N	\N	2567	422	2	3.18	10	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	2274b6ab-5a88-4fef-b838-9ffa17d02af8	e939cbe1-bc81-4182-8f9f-48fee801290c	40000	85	16.4322	102.8236	10
+2569	1	\N	10010004	9900000000004	\N	1	ปาลิตา	\N	บุญรักษา	\N	99	\N	\N	9/1	ถนนสรงประภา	ซอยประชาอุทิศ	\N	\N	2566	111	3	3.64	10	กรุงเทพมหานคร	ดอนเมือง	สีกัน	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	680d0c6a-36e0-41aa-9b81-cb1cb7bd4724	b7716f9e-2f59-4760-b9fb-f68608977eb6	10210	9/1	13.9184	100.5946	10
+2569	1	\N	10010001	9900000000008	\N	1	สุพิชญา	\N	ทองประเสริฐ	\N	99	\N	\N	16	ถนนมหาไชย	ตรอกวัดกลาง	\N	\N	2567	106	2	3.57	20	กรุงเทพมหานคร	พระนคร	สำราญราษฎร์	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	6d5dba5c-2016-4b28-95b9-58fe74c58c47	4f80d404-c879-4421-9918-22e79d8d919a	10200	16	13.7549	100.5051	20
+2569	1	\N	10010002	9900000000009	\N	1	อภิสิทธิ์	\N	คำดี	\N	99	\N	\N	55	ถนนสุเทพ	ซอยร่วมใจ	\N	\N	2568	112	1	2.11	30	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	7fad3544-b79c-4cc8-9922-db3180515da1	858cbfc4-68eb-40d7-bdcc-bfe953d32953	50200	55	18.7902	98.9544	30
+2569	1	\N	10010003	9900000000010	\N	1	ชญานิศ	\N	เหลืองอร่าม	\N	99	\N	\N	37/8	ถนนประชาสโมสร	ซอยชุมชนสามเหลี่ยม	\N	\N	2567	113	2	2.48	30	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	85bae021-eecb-4718-93e1-b286cd996961	9c765f84-8ce0-4406-af05-3e335882bd44	40000	37/8	16.4468	102.8285	30
+2569	1	\N	10010005	9900000000011	\N	1	ปกรณ์	\N	สมานมิตร	\N	99	\N	\N	64	ถนนอุดรดุษฎี	ซอยบ้านขาว 4	\N	\N	2566	111	3	1.95	30	อุดรธานี	เมืองอุดรธานี	บ้านขาว	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	63b0d8c3-af33-4224-8ca6-0d9dca1df47c	ea86f21a-82f2-4e61-979f-16479adf774e	41000	64	17.4156	102.7866	30
+2569	1	\N	10010004	9900000000012	\N	1	มณีรัตน์	\N	จันทร์นวล	\N	99	\N	\N	28/3	ถนนวิภาวดีรังสิต	ซอยสีกัน 12	\N	\N	2568	421	1	2.32	30	กรุงเทพมหานคร	ดอนเมือง	สีกัน	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	cc18985d-8b28-4da8-9936-456bd220bf81	cc49f56f-c591-4ebf-aebe-8e9f56c47851	10210	28/3	13.9149	100.6035	30
+2569	1	\N	10010002	9900000000005	\N	1	วรเมธ	\N	ศรีสุข	\N	99	\N	\N	23	ถนนคันคลองชลประทาน	ซอยบ้านใหม่	\N	\N	2568	423	1	3.21	20	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	ca12cab6-e135-47fb-8f69-0252ec578af0	e84413f7-ee59-494f-afb5-6aa786cd848d	50200	23	18.7869	98.9582	20
+2569	1	\N	10010003	9900000000006	\N	1	ภัทราพร	\N	แก้วอินทร์	\N	99	\N	\N	71/4	ถนนกลางเมือง	ซอยหน้าเมือง 5	\N	\N	2567	423	2	3.88	20	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	df81b915-27c7-4171-a37a-bd0fe339817a	1efc45e4-ea03-4f2f-a5ee-77d6e388eb2b	40000	71/4	16.4377	102.8349	20
+2569	1	\N	10010005	9900000000007	\N	1	ธนกฤต	\N	ยอดยิ่ง	\N	99	\N	\N	101	ถนนโพศรี	ซอยบ้านขาว 2	\N	\N	2568	423	1	2.94	20	อุดรธานี	เมืองอุดรธานี	บ้านขาว	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	aad18d05-287a-4782-92a4-cc80cee19eb6	e64aa8ae-7deb-4ab0-8e73-4f9d12aaf107	41000	101	17.3969	102.7893	20
+2569	1	\N	10010002	9900000000013	\N	1	กิตติธัช	\N	ปัญญาไว	\N	99	\N	\N	13	ถนนนิมมานเหมินท์	ซอยสุขเกษม	\N	\N	2568	102	1	3.04	40	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	cce36a2b-a0d2-4aa7-b31d-9f772ed7cff2	6faa0441-4bbd-4bbe-9b66-9c30773dbb4c	50200	13	18.7975	98.9679	40
+2569	1	\N	10010003	9900000000014	\N	1	นฤมล	\N	พรหมรักษ์	\N	99	\N	\N	91	ถนนกัลปพฤกษ์	ซอยแก่นนคร	\N	\N	2567	103	2	3.49	40	ขอนแก่น	เมืองขอนแก่น	ในเมือง	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	d26b46fb-ed03-4233-a189-14c769a9d1ef	52f74bb4-3242-47db-87cc-f542de27f938	40000	91	16.4176	102.8341	40
+2569	1	\N	10010005	9900000000015	\N	1	ศุภณัฐ	\N	อินทะวงศ์	\N	99	\N	\N	42/5	ถนนทหาร	ซอยหนองบัว	\N	\N	2568	104	1	2.86	40	อุดรธานี	เมืองอุดรธานี	บ้านขาว	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	ed53649b-97ba-4c8f-a9b8-9ed38d4e888b	eeecf7ba-4476-4768-b949-cc4dd422933e	41000	42/5	17.4058	102.7907	40
+2569	1	\N	10010001	9900000000016	\N	1	อริสรา	\N	ประทีปทอง	\N	99	\N	\N	6	ถนนบำรุงเมือง	ตรอกศาลเจ้า	\N	\N	2567	105	2	3.31	40	กรุงเทพมหานคร	พระนคร	สำราญราษฎร์	2026-07-03 01:41:49.090047+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	bc7a5107-c78b-4d82-b103-e486a5bf6730	91cc37cb-7d30-4b52-9b3c-c85fba5b8ddb	10200	6	13.7513	100.5018	40
+2569	1	\N	10010002	9901000000012	\N	1	อรณิชา	\N	แสงแก้ว	\N	99	\N	\N	14/5	ถนนสุเทพ	ซอยชมดอย 3	\N	\N	2568	421	1	3.21	10	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:53:03.766293+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	364d22fc-891c-469a-a473-7890e78857cb	49215735-1292-4875-b25e-b05e5fba9d53	50200	14/5	18.7944	98.9651	10
+2569	1	\N	10010002	9901000000012	\N	1	อรณิชา	\N	แสนแก้ว	\N	99	\N	\N	14/5	ถนนสุเทพ	ซอยชมดอย 3	\N	\N	2568	112	1	2.84	10	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-07-03 01:53:03.766293+00	2026-07-03 09:34:22.931679+00	1	1	\N	\N	22ddec10-c978-471b-9a07-cced9fc3a508	ede350b6-7d5f-4744-a541-495ad1bac1e8	50200	14/5	18.7944	98.9651	10
 2569	1	3	10010002	1-5493-57408-44-5	\N	1	ปัณณทัต	\N	สง่างาม	1	1	0	0	10	พหลโยธิน	\N	\N	5005	2558	421	2	3.14	10	เชียงใหม่	เมืองเชียงใหม่	สุเทพ	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	2021ca51-4e02-42b1-822e-d4b182892e3d	adb356f2-ad60-4640-b360-45e2b229bb37	50000	\N	\N	\N	10
 2569	1	5	10010002	1-7231-63385-77-5	\N	1	อภิวัฒน์	\N	สกุลดี	1	1	0	0	4	สีลม	\N	\N	5001	2564	104	1	2.36	10	เชียงใหม่	เมืองเชียงใหม่	ศรีภูมิ	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	08fd2cdb-b178-4340-aa8f-771bcde3dd6b	c6522dcf-1d82-496f-acfb-00b7be54e2e2	50000	\N	\N	\N	10
 2569	1	4	10010010	1-7236-83486-33-5	\N	1	กวินท์	\N	อินทร์ชัย	1	1	0	0	3	สุรวงศ์	\N	\N	3401	2556	423	3	2.09	10	อุบลราชธานี	เมืองอุบลราชธานี	ในเมือง	2026-06-20 14:36:29.70776+00	2026-07-02 02:21:20.276662+00	\N	\N	\N	\N	539e57c1-490f-4ffa-a70b-8c829e55030c	9d16bdf4-4105-477e-b844-e6ee5ad7871c	34000	\N	\N	\N	10
@@ -19238,9 +20752,14 @@ COPY public.student_term ("AcademicYear_Onec", "Semester_Onec", "DepartmentID_On
 --
 
 COPY public.system_settings (setting_key, setting_value, description, updated_at, created_at, created_by, updated_by) FROM stdin;
-ABSENT_THRESHOLD_DAYS	3	จำนวนวันขาดเรียนติดต่อกันก่อนที่จะแจ้งเตือนหรือเปิดเคสอัตโนมัติ	2026-06-10 01:50:39.677841+00	2026-06-13 17:17:47.356254+00	\N	\N
 ALERT_TRIGGER_TYPE	SCHEDULED	รูปแบบการทำงาน (SCHEDULED = ตามตารางกะเวลา, IMMEDIATE = แจ้งเตือนทันที)	2026-06-10 01:50:39.677841+00	2026-06-13 17:17:47.356254+00	\N	\N
 ALERT_SCHEDULE_TIME	18:00	เวลาที่จะรันบอทตรวจสอบข้อมูล (HH:MM) เมื่อเลือกรูปแบบ SCHEDULED	2026-06-10 01:50:39.677841+00	2026-06-13 17:17:47.356254+00	\N	\N
+CASE_RISK_HIGH_ABSENCE_DAYS	7	จำนวนวันขาดเรียนติดต่อกันที่จัดเป็นเคสความเสี่ยงสูง	2026-07-05 16:21:16.960782+00	2026-07-05 16:21:16.960782+00	\N	\N
+CASE_RISK_MEDIUM_ABSENCE_DAYS	5	จำนวนวันขาดเรียนติดต่อกันที่จัดเป็นเคสความเสี่ยงปานกลาง	2026-07-05 16:21:16.960782+00	2026-07-05 16:21:16.960782+00	\N	\N
+CASE_SLA_HIGH_DAYS	3	จำนวนวันสำหรับดำเนินการครั้งแรกของเคสความเสี่ยงสูง	2026-07-05 16:21:16.960782+00	2026-07-05 16:21:16.960782+00	\N	\N
+CASE_SLA_MEDIUM_DAYS	7	จำนวนวันสำหรับดำเนินการครั้งแรกของเคสความเสี่ยงปานกลาง	2026-07-05 16:21:16.960782+00	2026-07-05 16:21:16.960782+00	\N	\N
+CASE_SLA_LOW_DAYS	14	จำนวนวันสำหรับดำเนินการครั้งแรกของเคสความเสี่ยงต่ำ	2026-07-05 16:21:16.960782+00	2026-07-05 16:21:16.960782+00	\N	\N
+CASE_RISK_LOW_ABSENCE_DAYS	3	จำนวนวันขาดเรียนติดต่อกันที่ระบบเปิดเคสอัตโนมัติ โดยเริ่มที่ระดับความเสี่ยงต่ำ (ขั้นแรกของบันไดความเสี่ยงต่ำ → ปานกลาง → สูง)	2026-07-06 07:44:58.340787+00	2026-06-13 17:17:47.356254+00	\N	\N
 \.
 
 
@@ -19249,7 +20768,7 @@ ALERT_SCHEDULE_TIME	18:00	เวลาที่จะรันบอทตรว
 --
 
 COPY public.task_link_role_scope_migration_backup (task_link_id, old_login_role, old_login_permissions, old_login_data_scope) FROM stdin;
-13fe00ea-a462-4ed3-9db6-2f3f97be806c	ADMIN_SCHOOL	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}
+seed-link-login-2	ADMIN_SCHOOL	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}
 \.
 
 
@@ -19262,19 +20781,31 @@ COPY public.task_link_scope_backfill_20260702_backup (task_link_id, old_login_da
 
 
 --
+-- Data for Name: task_link_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.task_link_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+ACTIVE	ใช้งาน	success	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+DELEGATED	ส่งต่อแล้ว	secondary	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+COMPLETED	เสร็จสิ้น	success	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: task_links; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.task_links (id, task_id, parent_link_id, token_hash, magic_link, delegation_depth, assigned_to_name, assigned_to_phone, assigned_to_email, otp_code, otp_expires_at, otp_verified, otp_attempts, otp_locked_until, subject, status, admin_locked, admin_lock_reason, admin_lock_at, expires_at, created_at, created_by, login_role, login_permissions, login_data_scope, updated_at, updated_by, deleted_at, deleted_by, first_used_at) FROM stdin;
-021535fa-cbb2-4099-b39a-77fc22f742e7	1ab1fb4d-0aa5-4625-a1e4-93429d1171b8	\N	65531f33ee9c13a59caa3310f5100ce5233e0de8d4c33ac6ba65dd4702c05e64	/task/31619a47525b3cdf0a38add16ac369801ae14cb01ac7e5221f3587d3cc84ced1	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	สรุปผลช่วยเหลือนักเรียน	COMPLETED	0	\N	\N	2026-06-15 16:30:26.906096+00	2026-06-07 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-16741db7-1a7e-4639-8571-7e2ec97edb44	b2f0f940-5087-446b-bde4-3f41d33c0ca5	\N	c60e7faff0a96ebc553a020f4d4585c2d7b76458832102948f34a4bc37714cfc	/task/945e8188915f93d35575bc97e99d9d4d10681ab582a3351ef700858e6001641a	0	ปรียา ศรีประเสริฐ	0800000006	seed.director@example.test	\N	\N	0	0	\N	ประเมินแนวทางช่วยเหลือ	ACTIVE	0	\N	\N	2026-06-17 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-4dc1e5e4-c7c1-47e4-81f5-e2b74a4c5e9f	2461af75-dfd9-48f9-a3ec-6e1fabec3773	\N	28dff42dd38001a727e8b7e0e5e16c8976f428979d1c0d626d3e6160a5d95d82	/task/9bb1434e289021751e87823858a347fd175a85bbeda7ab9c2117797a4084d15b	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.3 ห้อง 1	ACTIVE	0	\N	\N	2026-06-13 16:30:26.906096+00	2026-06-09 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-b58cbe36-1c15-4095-b4ee-97bb2ece4601	cf174c35-b27e-40fb-9d4c-31cc2c86f8a3	\N	d62a223deb3fc85828e558dee28ff2711d39499dc45e940a00b3699daa57091b	/task/9c637663cec8765ef41b961b7f34e4cb84b9779b79d023de601e7369d77f06cc	0	ชาญวิทย์ ใจมั่น	0800000009	seed.teacher.p6r2@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 2	ACTIVE	1	ปิดลิงก์ชั่วคราว	2026-06-10 10:30:26.906096+00	2026-06-14 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-b9eaa8da-bb9d-4635-81b0-b49c4afc6ad6	8fe51f0c-69ff-43dc-bf44-7ca7e9b21d02	\N	bd74fe877fcc7a5bebc69199b356826063152f61eaea12e3ac3a30cd580a4958	/task/a459ade11b257556e0c71cc0fc3ab61a51d23c44d64df8d9f93097a0212214ae	0	สุภาวดี วัฒนานุกูล	0800000008	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-06-20 16:30:26.906096+00	2026-06-06 16:30:26.906096+00	5	\N	[]	{}	2026-06-29 13:09:27.337938+00	\N	\N	\N	\N
-5b32ebc9-56e5-4b8f-b8e5-d01598943118	e4e70ad7-50de-4d2c-bf30-71b4c6d7766c	\N	1491e917687e944a0cf35525131219dda75cc140f73c3f89a4bced1967669b87	/task/cd9c99fbe4d761679395deb7b47950ff358f72190a722c87115d87738ba6b0f9	0	ชาญวิทย์ ใจมั่น	0800000009	seed.teacher.p6r2@example.test	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-05-27 03:00:00+00	2026-05-20 03:00:00+00	5	\N	[]	{}	2026-05-20 03:00:00+00	\N	\N	\N	\N
-d5578f4a-9aa9-4c41-b820-66fefb0a71d5	1f1f8d88-3317-4c75-a64b-1142ea318725	\N	97ebdfc85682e6c465f6aafdeacece83c7153c95b152e08bce811c0c7e69bd0f	/task/52851e14b4c4f7a569fe5056e08dc1fd34c6591d3b8496f8ee23fd53aaa948fe	0	วีรพล แก้วมณี	0800000010	seed.teacher.ud.p6r1@example.test	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 1	ACTIVE	0	\N	\N	2026-06-20 02:00:00+00	2026-06-13 02:00:00+00	14	\N	[]	{}	2026-06-13 02:00:00+00	\N	\N	\N	\N
-f863b2af-ef2d-4069-aeb3-14d9a8898dc7	0f2776f2-a492-44c3-84a9-f49a4a3c93dd	\N	620320ee74dcdb448c4c1df57674787a7b24d26d3d907a5cfb0ae6a6257b907b	/task/6e641b6f0595b5f2fb02b55fc9982ca5e9220e8c13fe54ffa658bc1bd36698bc	0	สุภาวดี วัฒนานุกูล	\N	seed.teacher.p3r1@example.test	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับครู	ACTIVE	0	\N	\N	2026-06-19 04:00:00+00	2026-06-12 04:00:00+00	5	TEACHER	["home", "attendance", "students", "create"]	{"own_only": false, "school_ids": [10010002]}	2026-06-12 04:00:00+00	\N	\N	\N	2026-06-12 04:15:00+00
-13fe00ea-a462-4ed3-9db6-2f3f97be806c	d90d491c-dc50-493c-99f9-ea93876af8b1	\N	a49699205212c4615d9aa40b1f7044edb1793fe6ecdbed6241b9cd836a4132ba	/task/b78cd3a7b8de14078f446a822f3143619e3e639580403b9eef26f6410c932421	0	ปรียา ศรีประเสริฐ	\N	seed.director@example.test	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับผู้บริหาร	ACTIVE	1	ปิดลิงก์โดยผู้ดูแลระบบ	2026-06-12 06:00:00+00	2026-06-19 05:00:00+00	2026-06-12 05:00:00+00	5	ADMIN	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}	2026-06-12 06:00:00+00	\N	\N	\N	\N
+COPY public.task_links (id, task_id, parent_link_id, token_hash, magic_link, delegation_depth, assigned_to_name, assigned_to_phone, assigned_to_email, otp_code, otp_expires_at, otp_verified, otp_attempts, otp_locked_until, subject, status, admin_locked, admin_lock_reason, admin_lock_at, expires_at, created_at, created_by, login_role, login_permissions, login_data_scope, updated_at, updated_by, deleted_at, deleted_by, first_used_at, overdue_notified_at) FROM stdin;
+seed-link-1003	seed-task-1003	\N	65531f33ee9c13a59caa3310f5100ce5233e0de8d4c33ac6ba65dd4702c05e64	/task/31619a47525b3cdf0a38add16ac369801ae14cb01ac7e5221f3587d3cc84ced1	0	สุภาวดี วัฒนานุกูล	0800000008	suphawadi.w@sts-demo.ac.th	\N	\N	0	0	\N	สรุปผลช่วยเหลือนักเรียน	COMPLETED	0	\N	\N	2026-06-15 16:30:26.906096+00	2026-06-07 16:30:26.906096+00	5	\N	[]	{}	2026-07-05 15:56:43.966492+00	\N	\N	\N	\N	\N
+seed-link-1004	seed-task-1004	\N	c60e7faff0a96ebc553a020f4d4585c2d7b76458832102948f34a4bc37714cfc	/task/945e8188915f93d35575bc97e99d9d4d10681ab582a3351ef700858e6001641a	0	ปรียา ศรีประเสริฐ	0800000006	preeya.p@sts-demo.ac.th	\N	\N	0	0	\N	ประเมินแนวทางช่วยเหลือ	ACTIVE	0	\N	\N	2026-06-17 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-07-05 21:11:51.505742+00	\N	\N	\N	\N	2026-07-05 21:11:51.505742+00
+seed-link-attendance-1	seed-attendance-task-1	\N	28dff42dd38001a727e8b7e0e5e16c8976f428979d1c0d626d3e6160a5d95d82	/task/9bb1434e289021751e87823858a347fd175a85bbeda7ab9c2117797a4084d15b	0	สุภาวดี วัฒนานุกูล	0800000008	suphawadi.w@sts-demo.ac.th	\N	\N	0	0	\N	เช็คชื่อ ป.3 ห้อง 1	ACTIVE	0	\N	\N	2026-06-13 16:30:26.906096+00	2026-06-09 16:30:26.906096+00	5	\N	[]	{}	2026-07-05 21:11:51.505742+00	\N	\N	\N	\N	2026-07-05 21:11:51.505742+00
+seed-link-attendance-2	seed-attendance-task-2	\N	d62a223deb3fc85828e558dee28ff2711d39499dc45e940a00b3699daa57091b	/task/9c637663cec8765ef41b961b7f34e4cb84b9779b79d023de601e7369d77f06cc	0	ชาญวิทย์ ใจมั่น	0800000009	chanwit.j@sts-demo.ac.th	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 2	ACTIVE	1	ปิดลิงก์ชั่วคราว	2026-06-10 10:30:26.906096+00	2026-06-14 16:30:26.906096+00	2026-06-08 16:30:26.906096+00	5	\N	[]	{}	2026-07-05 21:11:51.505742+00	\N	\N	\N	\N	2026-07-05 21:11:51.505742+00
+seed-link-1006	seed-task-1006	\N	85f4abd245f2ed4a76f9a7f70458655b330384e11005e236c71bbcd51ce320db	\N	0	ศิริพร พัฒนกิจ	0812345678	siriporn.p@sts-demo.ac.th	\N	\N	0	0	\N	ติดตามนักเรียนเสี่ยงหลุดจากระบบและรายงานผล	COMPLETED	0	\N	\N	2026-08-02 09:34:15.616756+00	2026-07-03 09:33:40.028941+00	\N	\N	[]	{}	2026-07-05 15:56:43.966492+00	\N	\N	\N	\N	\N
+seed-link-login-2	seed-task-login-2	\N	a49699205212c4615d9aa40b1f7044edb1793fe6ecdbed6241b9cd836a4132ba	/task/b78cd3a7b8de14078f446a822f3143619e3e639580403b9eef26f6410c932421	0	ปรียา ศรีประเสริฐ	\N	preeya.p@sts-demo.ac.th	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับผู้บริหาร	ACTIVE	1	ปิดลิงก์โดยผู้ดูแลระบบ	2026-06-12 06:00:00+00	2026-06-19 05:00:00+00	2026-06-12 05:00:00+00	5	ADMIN	["home", "attendance", "attendance-dashboard", "students"]	{"own_only": false, "school_ids": [10010002]}	2026-07-05 21:11:51.505742+00	\N	\N	\N	\N	2026-07-05 21:11:51.505742+00
+seed-link-1002	seed-task-1002	\N	bd74fe877fcc7a5bebc69199b356826063152f61eaea12e3ac3a30cd580a4958	/task/a459ade11b257556e0c71cc0fc3ab61a51d23c44d64df8d9f93097a0212214ae	0	สุภาวดี วัฒนานุกูล	0800000008	suphawadi.w@sts-demo.ac.th	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-06-20 16:30:26.906096+00	2026-06-06 16:30:26.906096+00	5	\N	[]	{}	2026-07-05 21:11:51.505742+00	\N	\N	\N	\N	2026-07-05 21:11:51.505742+00
+seed-link-login-1	seed-task-login-1	\N	620320ee74dcdb448c4c1df57674787a7b24d26d3d907a5cfb0ae6a6257b907b	/task/6e641b6f0595b5f2fb02b55fc9982ca5e9220e8c13fe54ffa658bc1bd36698bc	0	สุภาวดี วัฒนานุกูล	\N	suphawadi.w@sts-demo.ac.th	\N	\N	0	0	\N	ลิงก์เข้าสู่ระบบสำหรับครู	ACTIVE	0	\N	\N	2026-06-19 04:00:00+00	2026-06-12 04:00:00+00	5	TEACHER	["home", "attendance", "students", "create"]	{"own_only": false, "school_ids": [10010002]}	2026-07-05 21:11:51.505742+00	\N	\N	\N	2026-06-12 04:15:00+00	2026-07-05 21:11:51.505742+00
+seed-link-1005	seed-task-1005	\N	1491e917687e944a0cf35525131219dda75cc140f73c3f89a4bced1967669b87	/task/cd9c99fbe4d761679395deb7b47950ff358f72190a722c87115d87738ba6b0f9	0	ชาญวิทย์ ใจมั่น	0800000009	chanwit.j@sts-demo.ac.th	\N	\N	0	0	\N	ลงพื้นที่ติดตามนักเรียน	ACTIVE	0	\N	\N	2026-05-27 03:00:00+00	2026-05-20 03:00:00+00	5	\N	[]	{}	2026-07-05 21:11:51.505742+00	\N	\N	\N	\N	2026-07-05 21:11:51.505742+00
+seed-link-attendance-3	seed-attendance-task-3	\N	97ebdfc85682e6c465f6aafdeacece83c7153c95b152e08bce811c0c7e69bd0f	/task/52851e14b4c4f7a569fe5056e08dc1fd34c6591d3b8496f8ee23fd53aaa948fe	0	วีรพล แก้วมณี	0800000010	narongsak.k@sts-demo.ac.th	\N	\N	0	0	\N	เช็คชื่อ ป.6 ห้อง 1	ACTIVE	0	\N	\N	2026-06-20 02:00:00+00	2026-06-13 02:00:00+00	14	\N	[]	{}	2026-07-05 21:11:51.505742+00	\N	\N	\N	\N	2026-07-05 21:11:51.505742+00
 \.
 
 
@@ -19283,7 +20814,21 @@ f863b2af-ef2d-4069-aeb3-14d9a8898dc7	0f2776f2-a492-44c3-84a9-f49a4a3c93dd	\N	620
 --
 
 COPY public.task_submissions (id, task_link_id, visit_lat, visit_lng, cause_category, cause_detail, photo_paths, recommendation, submitted_at, address_changed, updated_student_address, updated_lat, updated_lng, created_at, updated_at, created_by, updated_by, deleted_at, deleted_by) FROM stdin;
-1	021535fa-cbb2-4099-b39a-77fc22f742e7	18.801	98.961	เศรษฐกิจครอบครัว	ผู้ปกครองมีรายได้ไม่แน่นอน นักเรียนขาดค่าเดินทาง	[]	ติดตามต่อเนื่องเดือนละครั้ง	2026-06-08 16:30:26.906096+00	f	\N	\N	\N	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N	\N
+1	seed-link-1003	18.801	98.961	เศรษฐกิจครอบครัว	ผู้ปกครองมีรายได้ไม่แน่นอน นักเรียนขาดค่าเดินทาง	[]	ติดตามต่อเนื่องเดือนละครั้ง	2026-06-08 16:30:26.906096+00	f	\N	\N	\N	2026-06-13 17:17:47.356254+00	2026-06-13 17:17:47.356254+00	\N	\N	\N	\N
+3	seed-link-1006	\N	\N	FAMILY	ผู้ปกครองมีภาระงานต่างพื้นที่ นักเรียนขาดผู้ดูแลเรื่องการเดินทางบางวัน	\N	ประสานครูที่ปรึกษาและผู้ปกครอง วางตารางรับส่งและติดตามการมาเรียน 30 วัน	2026-07-02 09:33:40.028941+00	f	\N	\N	\N	2026-07-03 09:33:40.028941+00	2026-07-03 09:33:40.028941+00	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: task_workflow_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.task_workflow_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+OPEN	เปิดอยู่	secondary	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+ACTIVE	ใช้งาน	success	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+IN_PROGRESS	กำลังดำเนินการ	warning	30	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+PENDING_REVIEW	รอตรวจผล	default	40	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+COMPLETED	เสร็จสิ้น	success	50	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
 \.
 
 
@@ -19292,15 +20837,26 @@ COPY public.task_submissions (id, task_link_id, visit_lat, visit_lng, cause_cate
 --
 
 COPY public.tasks (id, case_id, status, max_delegation_depth, created_at, task_type, target_grade, target_room, target_school_id, updated_at, created_by, updated_by, deleted_at, deleted_by) FROM stdin;
-1ab1fb4d-0aa5-4625-a1e4-93429d1171b8	1003	COMPLETED	3	2026-06-07 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-07 16:30:26.906096+00	\N	\N	\N	\N
-b2f0f940-5087-446b-bde4-3f41d33c0ca5	1004	PENDING_REVIEW	3	2026-06-08 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
-2461af75-dfd9-48f9-a3ec-6e1fabec3773	\N	ACTIVE	1	2026-06-09 16:30:26.906096+00	ATTENDANCE	ป.3	1	10010002	2026-06-09 16:30:26.906096+00	\N	\N	\N	\N
-cf174c35-b27e-40fb-9d4c-31cc2c86f8a3	\N	ACTIVE	1	2026-06-08 16:30:26.906096+00	ATTENDANCE	ป.6	2	10010002	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
-8fe51f0c-69ff-43dc-bf44-7ca7e9b21d02	1002	ACTIVE	3	2026-06-06 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-21 03:36:16.120364+00	\N	\N	\N	\N
-e4e70ad7-50de-4d2c-bf30-71b4c6d7766c	1005	ACTIVE	3	2026-05-20 03:00:00+00	VISIT	\N	\N	\N	2026-05-20 03:00:00+00	5	5	\N	\N
-1f1f8d88-3317-4c75-a64b-1142ea318725	\N	ACTIVE	3	2026-06-13 02:00:00+00	ATTENDANCE	ป.6	1	10010002	2026-06-13 02:00:00+00	14	14	\N	\N
-0f2776f2-a492-44c3-84a9-f49a4a3c93dd	\N	ACTIVE	3	2026-06-12 04:00:00+00	LOGIN	\N	\N	\N	2026-06-12 04:00:00+00	5	5	\N	\N
-d90d491c-dc50-493c-99f9-ea93876af8b1	\N	ACTIVE	3	2026-06-12 05:00:00+00	LOGIN	\N	\N	\N	2026-06-12 06:00:00+00	5	5	\N	\N
+seed-task-1003	1003	COMPLETED	3	2026-06-07 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-07 16:30:26.906096+00	\N	\N	\N	\N
+seed-task-1004	1004	PENDING_REVIEW	3	2026-06-08 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
+seed-attendance-task-1	\N	ACTIVE	1	2026-06-09 16:30:26.906096+00	ATTENDANCE	ป.3	1	10010002	2026-06-09 16:30:26.906096+00	\N	\N	\N	\N
+seed-attendance-task-2	\N	ACTIVE	1	2026-06-08 16:30:26.906096+00	ATTENDANCE	ป.6	2	10010002	2026-06-08 16:30:26.906096+00	\N	\N	\N	\N
+seed-task-1002	1002	ACTIVE	3	2026-06-06 16:30:26.906096+00	VISIT	\N	\N	\N	2026-06-21 03:36:16.120364+00	\N	\N	\N	\N
+seed-task-1005	1005	ACTIVE	3	2026-05-20 03:00:00+00	VISIT	\N	\N	\N	2026-05-20 03:00:00+00	5	5	\N	\N
+seed-attendance-task-3	\N	ACTIVE	3	2026-06-13 02:00:00+00	ATTENDANCE	ป.6	1	10010002	2026-06-13 02:00:00+00	14	14	\N	\N
+seed-task-login-1	\N	ACTIVE	3	2026-06-12 04:00:00+00	LOGIN	\N	\N	\N	2026-06-12 04:00:00+00	5	5	\N	\N
+seed-task-login-2	\N	ACTIVE	3	2026-06-12 05:00:00+00	LOGIN	\N	\N	\N	2026-06-12 06:00:00+00	5	5	\N	\N
+seed-task-1006	1006	PENDING_REVIEW	2	2026-07-03 09:33:40.028941+00	VISIT	\N	\N	10010002	2026-07-03 09:34:15.616756+00	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: user_account_statuses; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.user_account_statuses (code, label_th, badge_variant, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by) FROM stdin;
+ACTIVE	ใช้งาน	success	10	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
+DISABLED	ปิดใช้งาน	destructive	20	t	2026-07-03 08:55:35.506167+00	\N	2026-07-03 08:55:35.506167+00	\N	\N	\N
 \.
 
 
@@ -19333,441 +20889,460 @@ COPY public.user_scope_backfill_20260702_backup (user_id, old_data_scope) FROM s
 -- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.users (id, username, password, affiliation, status, created_at, "PersonID_Onec", phone, email, permissions, "FirstName", "LastName", role, data_scope, must_change_password, updated_at, created_by, updated_by, person_uuid, temporary_password_issued_at, temporary_password_expires_at, deactivated_at, deactivated_by, deactivation_reason_code, deactivation_note, line_id, address_line, address_sub_district, address_district, address_province, address_postal_code, address_latitude, address_longitude, address_village_no, address_street, address_soi, address_trok) FROM stdin;
-22	referral-outcome-smoke-1782321665716	SMOKE_ONLY	\N	DISABLED	2026-06-24 17:21:05.713197+00	\N	\N	\N	["review-cases", "forward-case", "audit-log", "edit-students"]	Smoke	Referral	DIRECTOR	{"school_ids": [10010001]}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-23	referral-outcome-smoke-1782321788918	SMOKE_ONLY	\N	DISABLED	2026-06-24 17:23:08.915387+00	1116515656156	\N	\N	["review-cases", "forward-case", "audit-log", "edit-students"]	Smoke	Referral	DIRECTOR	{"school_ids": [10010001]}	f	2026-07-01 14:51:19.143142+00	\N	1	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-18	referral-smoke-1782320563431	smoke	\N	DISABLED	2026-06-24 17:02:43.430622+00	\N	\N	\N	[]	\N	\N	ADMIN	{"school_ids": [10010002]}	f	2026-06-30 14:36:11.209277+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-19	referral-smoke-1782320616951	smoke	\N	DISABLED	2026-06-24 17:03:36.950697+00	\N	\N	\N	[]	\N	\N	ADMIN	{"school_ids": [10010002]}	f	2026-06-30 14:36:11.229874+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-20	referral-smoke-1782320710520	smoke	\N	DISABLED	2026-06-24 17:05:10.519599+00	\N	\N	\N	[]	\N	\N	ADMIN	{"school_ids": [10010002]}	f	2026-06-30 14:36:11.249592+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-25	auth_smoke_cleaned_25	$2b$12$o04BnDcuZ1.RO/Gy.fMCv.fxsLVsKi.IsJAeCpQ0edK.8.O5HU.A2	API smoke cleaned	DISABLED	2026-06-25 17:57:21.67544+00	7824102414597	\N	\N	[]	Cleaned	Smoke	STUDENT	{"own_only": true}	f	2026-06-30 14:36:11.291434+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-26	exec_smoke_cleaned_26	$2b$12$tkS95axCQBuuosSwQd.kkuoHOIbUNt5kdMMItFkoqUaC1kbIjdmba	API smoke cleaned	DISABLED	2026-06-25 18:03:41.091924+00	7824106210908	\N	\N	[]	Cleaned	ExecutiveSmoke	STUDENT	{"own_only": true}	f	2026-06-30 14:36:11.294527+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-436	role_scope_smoke_teacher_1782998733824_g9pa6h	$2b$12$3AGjn3591Zl/.LkGjbrF4OWppEXjh.1FY5Zb/ZERzcxeSCbZGiuly	Automated role scope smoke	DISABLED	2026-07-02 13:25:34.806075+00	9982998733824	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 13:25:35.270503+00	428	428	\N	2026-07-02 13:25:34.807+00	2026-07-09 13:25:34.807+00	2026-07-02 13:25:35.270503+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-6	seed_admin_province_cm	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	จังหวัดเชียงใหม่	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-province-001	0800000002	seed.admin.province@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	มณีรัตน์	ดูแลจังหวัด	ADMIN	{"provinces": ["เชียงใหม่"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-7	seed_admin_district_cm	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	อำเภอเมืองเชียงใหม่	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-district-001	0800000003	seed.admin.district@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	กิตติชัย	ดูแลอำเภอ	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-412	กฟกฟกฟกฟกฟก	$2b$12$wCGLHOMsJmaeihz1wpl1UOYNtXvGKe/aAnQIx.1gH/SIRJWYnUk4O	\N	ACTIVE	2026-07-01 05:33:10.736357+00	1231212312312	1231231231	adadad@dada.dad	[]	ก	ก	DIRECTOR	{"global": true}	t	2026-07-02 08:36:21.793227+00	1	1	\N	2026-07-01 05:33:10.736+00	2026-07-08 05:33:10.736+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-15	seed_student_cm_p3_1	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	1-3066-30387-54-9	0800000011	seed.student@example.test	[]	นักเรียน	ทดสอบระบบ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-27	10010001-3N5BY	$2b$12$ESeIEaD5N1b7Ewc7nNI6veim7iNhRPI83rq2yw/yNdWupwrcPQr6S	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	82b4aa6f-2691-4dc9-8e2c-b5a65f6a384b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-28	10010001-MTAG3	$2b$12$ULkMPswaHEIGMDzLtyGF1.WSMsKfvA/DBqWPpO.HtLjJSt1eUkyaa	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อภิวัฒน์	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	43fb4bc2-ea62-4eb9-b9ea-34edade019d2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-413	test	$2b$12$YTUqexjKze.fnGO7tbHSQ.pOshMqMt9YdhDspmk0XwjMcQQ2n2Ki.	\N	ACTIVE	2026-07-01 05:34:19.058212+00	1231231212312	1212312312	12daa@dada.dawd	[]	rtadawd	adadada	ADMIN	{"global": true}	t	2026-07-02 08:36:21.793227+00	1	1	\N	2026-07-01 05:34:19.058+00	2026-07-08 05:34:19.058+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-437	10010002-9NBXU	$2b$12$Wpv0leAgIYFdsD6c2567huzYEUzOciSMvrmGDH8ncbjX3gPHqVwj.	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 13:25:46.621062+00		\N	\N	["home", "student-self"]	ปัณฑิตา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-07-02 13:25:47.550193+00	422	422	7aa9e543-785b-4f01-8983-818f035c22a4	2026-07-02 13:25:47.078+00	2026-07-09 13:25:47.078+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-414	account_lifecycle_smoke_archived_414	$2b$12$9h4vjtIOFEfnerB.tKAf9eIPupZrsGzEUAzw0fz50cvd7pVLaGnRu	Automated account lifecycle smoke	DISABLED	2026-07-01 08:13:39.541898+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 08:14:08.304332+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-438	role_scope_smoke_teacher_1782999215637_paj37r	$2b$12$h75UV/M2iladedrHiUGFDOuMkajQgSkTzJn2tG8pFyWJGl2/kjgGi	Automated role scope smoke	DISABLED	2026-07-02 13:33:36.681866+00	9982999215637	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 13:33:37.214121+00	428	428	\N	2026-07-02 13:33:36.682+00	2026-07-09 13:33:36.682+00	2026-07-02 13:33:37.214121+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-415	account_lifecycle_smoke_archived_415	$2b$12$8OfGrie1fLB.a2YAcc3c9OmwT1u8yy97Wt7pAWcrYnsDEV7DZXQ5G	Automated account lifecycle smoke	DISABLED	2026-07-01 08:13:39.545161+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-01 08:14:08.304332+00	\N	\N	\N	\N	\N	2026-07-01 08:14:08.304332+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-416	account_lifecycle_smoke_archived_416	$2b$12$qr0e0peFQ8/qjOyC2DPA/O1vqMAe0JS22oTEV0Kn0Sv47iiCUabGW	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:08.741212+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 08:14:09.491077+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-417	account_lifecycle_smoke_archived_417	$2b$12$ZCtqqwM8u2zzZab/qTTh0eWyg5pZgKM6DgijZDR6nt6908jJ6QyL2	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:08.744898+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-01 08:14:09.491077+00	\N	\N	\N	\N	\N	2026-07-01 08:14:09.491077+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-439	10010002-QLKT2	$2b$12$4ZqPqnyTxJ2kSLb5dqOx..zoaR2p3Djh5AUPEGYMXXhhr0qcikKh6	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 13:33:41.330649+00		\N	\N	["home", "student-self"]	มณีรัตน์	ลือชา	STUDENT	{"own_only": true}	t	2026-07-02 13:33:42.369214+00	422	422	69c0c792-a464-4101-934f-ba7eb2ed0377	2026-07-02 13:33:41.843+00	2026-07-09 13:33:41.843+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-418	account_lifecycle_smoke_archived_418	$2b$12$qI6nR65ey7PjriphABFZi.wL.MbCVGFuNYDYd8boLVv3LplZgESBu	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:54.231447+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	2026-07-01 08:14:54.973837+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-440	role_scope_smoke_teacher_1783001301751_7uisi1	$2b$12$7rhQBA37z/KvnY3.gc0aseJiOtzfd35cH/PVexqgZQYYFXR5N7y9y	Automated role scope smoke	DISABLED	2026-07-02 14:08:22.786526+00	9983001301751	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 14:08:23.255627+00	428	428	\N	2026-07-02 14:08:22.788+00	2026-07-09 14:08:22.788+00	2026-07-02 14:08:23.255627+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-419	account_lifecycle_smoke_archived_419	$2b$12$5AaRsge06m/yInvNAaqXfOaB59bNuc.CdsaybSUO.HzIvhgpbDnpm	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:54.236789+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-01 08:14:54.973837+00	\N	\N	\N	\N	\N	2026-07-01 08:14:54.973837+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-441	role_scope_smoke_teacher_1783001872531_bdpic6	$2b$12$l14TslDRdW1JDzij4n172ul/OM/fOoo2jSydsudy/nN3gpS/cfq0G	Automated role scope smoke	DISABLED	2026-07-02 14:17:53.503909+00	9983001872531	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-02 14:17:53.963674+00	428	428	\N	2026-07-02 14:17:53.491+00	2026-07-09 14:17:53.491+00	2026-07-02 14:17:53.963674+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-420	account_lifecycle_smoke_admin	$2b$12$6J.tfRVvMTf9MTfXNyZbgO3yuYdmOLpYcG3YL2TsyhtXQ.gk4PdPK	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.947477+00	\N	\N	\N	["manage-users-list"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-02 14:18:00.849999+00	\N	\N	\N	\N	\N	2026-07-02 14:18:00.849999+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-421	account_lifecycle_smoke_teacher	$2b$12$FLszDf8C6su8vbhYT2tV/.y7HwFrA6wAjtHvlmf5hxEH827lGLHfW	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.951823+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-02 14:18:00.849999+00	\N	\N	\N	\N	\N	2026-07-02 14:18:00.849999+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-442	10010002-C37GN	$2b$12$02smRbd30sXMluPP/c/C0OMZezqR7d8dBzx0zJ9tzkcGhdHlmbwDO	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 14:18:24.326687+00		\N	\N	["home", "student-self"]	ดรุณี	สุดสวย	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.256296+00	422	422	ff1a2091-ac4d-49bf-9f2f-27874853da6d	2026-07-02 14:18:24.784+00	2026-07-09 14:18:24.784+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-422	student_accounts_smoke_admin	$2b$12$Uz0Zx9zJvcwgv/8Olhjao..YhHIb1kMsLSaR0G9w91mcvi8Xhm9Sy	Automated student accounts smoke	DISABLED	2026-07-01 08:24:06.634877+00	\N	\N	\N	["manage-student-accounts"]	Student	Accounts Admin	ADMIN	{"global": true}	f	2026-07-02 14:18:25.481326+00	\N	\N	\N	\N	\N	2026-07-02 14:18:25.481326+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-168	10010004-MTY9N	$2b$12$a2dX/7LmvRhGfriiwwBFCe9hs30Tjpmd0R0PYC3jL3cUxAZrJvN9m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ธนภัทร	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bf9f4436-67f9-4466-a467-fb89c22216ef	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-169	10010004-YA4V5	$2b$12$oAhRXyadfE.ENkwwrp8n.Oky5u5Oe19bzjPWzqjChXKvR5jJlOqPe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	แสงดาว	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	00e37249-c621-4fe2-adb9-e06d4155a523	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-170	10010004-HU3JE	$2b$12$JIgqeltvuK6cghOw6bVzWuqJ7feuLRl/1GSyr9gOlFf5TZOrOhbYu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ทัศนัย	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4bbaf978-5c5c-4e07-ac93-78b52aa6fb8e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-10	seed_director_10010002	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-director-001	0800000006	seed.director@example.test	[]	ปรียา	ผู้อำนวยการ	DIRECTOR	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-171	10010004-5RCQP	$2b$12$rzGH8t6/F6/H2GNyLMk.1uTzPB/Z6Av0fT8OsPhKSt9pU0bY0VUpS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สิรภพ	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b31148d1-3034-4626-ac06-9eaa90a60a25	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-172	10010004-TLF4Y	$2b$12$GI7/XWAX/JimAoSFhpZJx.E7DE9gEHJ7iw0NLbErqknMoZUWPoqcW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ภูมิพัฒน์	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a048c6f8-d9ad-47d7-8b17-3e6330528d48	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-173	10010004-52HXK	$2b$12$zioEfwTBhbJLCdbci.cOG.ImLRxf7X7HDLRDyB2xTm7/S68gZ3S9i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	นพรัตน์	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a6bcdf1a-809a-4e3f-9c99-ecbffecccb9f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-174	10010004-R9WFY	$2b$12$pjS1ETS.PY.wqRbw.LTXcOb.VbCjztZLjcNb7vC8fdpvDSct.MSu6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ทักษิณ	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7ae835ea-e17b-456c-8fac-4a2ebb73429e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-175	10010004-YHB5Q	$2b$12$n6cnKiYw36VAmQ2d2ivMHeDZUwjUY3rj4IUa.fI9KB32Gmix7rRhe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f66e90b7-a562-4ecd-b7a7-079dd460ff6b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-176	10010004-E7KPU	$2b$12$cWmQ/p4gfkasB0mZp3vzBe2DdXpWfi6Ygo/R8Be49a1XFG9R2SqX6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	16609140-551c-486c-93cf-e859f2997d36	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-177	10010004-JYTZ9	$2b$12$7rPisLdI8/WX5r6zF57oUOTpdDcwCz6SH7bdwLiNjzc6ZovgOu3j6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เกวลิน	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a2ff5a1b-ae80-4ef2-a72b-567785f55ed6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-178	10010004-DNMCQ	$2b$12$dnUG9CcpVbmbTvc5LJR.Ruj5tCsSEf1o6Is91A0qOMG/WFHcxsvqS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	รุ่งอรุณ	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	88246604-ef1b-4b3a-a1d7-07967fad5fa5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-179	10010004-V8TXW	$2b$12$RliT1qxIG23PELVkrvyq9Oi3wUpK4BV1WdiZq.eZPb78Vi.ez3rIm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3de74062-e87a-451d-9b8a-297098a9cebd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-180	10010004-MK43X	$2b$12$mH.MKgt/mFHDoPVuAtTGleF3c7d2n74KEojChR3txrUlBLkspHizW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ศิริพร	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	15aceb5e-ea7e-4792-8f12-4e6eaaf8aedd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-181	10010004-E63LZ	$2b$12$YdzkFCCNZ6CzciP5fa0se.7zR3GCc36DEhT54Ol1J0KWwgNLc3f7y	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ณัฐนิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0de5aba3-143d-4d85-b160-f6e8069036dd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-182	10010004-XJH9B	$2b$12$ga/F27/PrNoph8PfVesbieJizQ2LSdRYlq3KzGe5ji1ltKQDj8Zum	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ธนพัฒน์	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bb34a779-b2d1-4a51-a3fa-4ebe2e91e9d0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-183	10010004-SH6W7	$2b$12$iMu3oLml8ejihkZaWLpzRuqHvi0WhIjgpetIrg63kLEkZ630NvXlK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ดวงใจ	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	611d5358-e9aa-4f10-a155-c361d10fa803	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-184	10010004-FMD65	$2b$12$tC73kCM5VY6bHxfbXjViNO2SHx6VDw4YbitMNqQON4BGPMYQPyDGe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ทัศนัย	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2639c69-bee9-411e-be94-44f29f16767a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-185	10010004-6WJ75	$2b$12$Q32u6QfCzfA3NypmW3TMPO.IBEiopB5PHbE8FsCWtibPlK6cgU56G	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ศิวกร	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fec98964-2585-4379-8e00-b4b23f72c2c3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-186	10010004-4BLYU	$2b$12$usuWqZZGmhp5S/LnZM8xUu0JLFLdiLsaI4Mu0imNpVrrJZJpFq52e	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	be9bd698-e468-46e5-ab6b-f351e68dba1f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-187	10010004-SW4Y7	$2b$12$sFnpoU8NuhBKHAzDETGfx.4Yrm4YRaWBLDPmuaeTgS1Tzs2I8vbxq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ธัชพล	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	cf8dd8f9-6c31-484c-ac53-b42976f94d39	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-188	10010004-RNRN5	$2b$12$eXxsN.bNI2fFw.x7BgxPbOznTjke4ApHvLxdkBk/zvTw0Za38PGkC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ประภา	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c410558d-19c2-4178-9898-9ab51d4d0d34	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-189	10010004-RSKWK	$2b$12$4DserYKiWJx0UDPGlEsbOOQXzlL3aW6Do5F1UO5QYJb696m2KfU8K	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	มาลัย	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	83509c86-83c2-4dd7-b02a-16599f133280	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-190	10010004-3LQNN	$2b$12$Br5cmjmhoN1pqraZy8zzEuPQ65QSFFyn2n2m2KFrqg46yO82PZXvu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เจษฎา	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	df19fac3-969f-45ed-a8ce-52d805088275	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-191	10010004-FXPMW	$2b$12$KYmNcDLF7KCszb71A/5Z/uYDyC0ptjoIav0kSGLMlkJNRZbhF1Cm6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ชลธิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	15cb8b36-5ea4-4582-9db7-964411e36787	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-192	10010004-XZQWE	$2b$12$aazXA5ko8cw.jvMWL7Bf6uHohQGw6Zv5SKtsywOwaz5tSdfxs5gee	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ณัฐนิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b4f16cb1-4aa0-41b6-8886-6313bb77143d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-193	10010004-67EPN	$2b$12$sIuHOcvALUVfddy02b.tluWLd.tCUnZS6FoFOrG9CinkRd.qMY8dG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	บุษยา	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	30100734-7ecf-4667-a909-34389a7cd9c6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-194	10010004-9QVVH	$2b$12$uKSgWazU2nMTXSHEX0DkO.vF7.JG/9EUjCnii7OvhC.Vfoa.cT2nu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	กาญจนา	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a6cc5b5c-3b0e-478e-8794-d301c86fae3f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-195	10010004-4592L	$2b$12$c/dDboGRbg39oxhvEKb7KOnWARX.Wqd6sP93N3vEaATcE/tU.MOvy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	วิชญ์พล	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	42512c29-4f49-4090-b815-d6bdaca543ab	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-196	10010004-V3HS3	$2b$12$8ZsqaTGWS.y7sQ2LXR.b2u5xINNXpsF1NsHNIoNa5z31ijn4cTe9.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	นวลจันทร์	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c735a2f9-9ba9-411a-a542-09ef9250c264	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-197	10010004-ELAWP	$2b$12$fLVnKj/tH3xv8nLEsSpJNOQWgpbe1KV3mZthNdB1RCDsBJ6z4uR4G	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุภัสสรา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8a9e12ac-1299-4780-a4d9-500a309ba623	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-198	10010004-FFK5Q	$2b$12$kojg051.GTDh.MgouLspTe3TlxaIkdmq39iwA2N0jIQ4iNmF87eDu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	พรทิพย์	ประสิทธิ์ผล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	91e27af0-8ea2-47db-8b31-9c5e48cf467e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-199	10010004-6GPTW	$2b$12$VlK6AYBKpx/UciWfsDY5P.wwKe/vRmm/SZy40xadfhExM1oIf0vgS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุมาลี	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	55d2f910-04ba-47fe-8e29-b8934e10968e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-200	10010004-92M2J	$2b$12$VYT/17gPFiGjcSuI.gIZOuSmnDolsYadKHmN8ImC.mmaK1dbhJQl6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	นันทพร	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e0f9df6b-008b-4cfa-8720-e884b604d374	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-201	10010004-M2PGJ	$2b$12$TGSaKc7ozSaBIo5a.l0FeO8CpKVQUrVWFezd97ykSmAobiu0fCQ/2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5a2f65e6-dac8-409b-9b37-86750f532c75	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-202	10010004-JKCFT	$2b$12$D1Rowjs6cTGo/ASMiIbbn.kdZA27MudjsmotQN94G8ZBWU/YBSKZi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วิชญ์พล	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5c8a99ea-9845-4f22-b20a-14a3bb6c5d79	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-203	10010004-ZMUEW	$2b$12$OFWqnGYMXGrcWC3Egq26POZketqfbwLKcJUO4nTCg7pVltcgAcEiy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	393d1ecd-af9f-4b7c-adcd-544e3ba2f407	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-204	10010004-K5UAH	$2b$12$Nxao.pTs12b6P22RecneuOkIZHtTqFosasZZtZ1CiSiVZGzmXxg3m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ปัณณทัต	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2bcb6ef-0f37-4dcf-b6ee-2697dc275bbb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-205	10010004-7UKFB	$2b$12$qF1GfLHQzfuhsZYOxEiXceuyBBGOy2zPzyOV4RbLmbD2OOFHHTsE.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ทักษิณ	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1b46d3ee-79c4-4642-a393-5c37866dfc75	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-206	10010004-EEQM3	$2b$12$ctZ0svNbPXKmAqhVfHYvM.pGrphcOd5Ff8EHgEEXlTVZsrII4koUi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ลลิตา	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d8eaca76-b44e-43c4-9709-065915a447dc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-207	10010004-3BKF9	$2b$12$uzMzeufeZ2m1boiU10tteeAj4QSutRdd.1Q6psdobsV.3rH3mIwL6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	มณีรัตน์	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8084b6aa-7f3a-4986-9d21-b4fd7f355619	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-208	10010004-F7KNL	$2b$12$SBVHu85OmSirBLF42KiwQuPVt2dOH0Amx58fyEJZPRTTbFz3lXXj.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ประพันธ์	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1b11bce0-c33a-49e0-b3c4-5ae9a4ede631	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-209	10010004-6TMJU	$2b$12$3TQUklDBw8ijZjQG8jAHSudLGmklKbHcHUu62PpG7lfGdbZWaYQOO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กิตติภณ	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9170886-d941-4b06-8e9e-d90f405ff65c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-210	10010004-LA2UZ	$2b$12$ghr0Gm/37a.KsGzEucTu0OkmaG2YnArsop2Jccg2yjlVQ/HBYRGte	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	เกวลิน	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ec89d8e-62ca-440d-8ff4-00fd510e6450	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-211	10010004-ZLUNU	$2b$12$U7aIQcAjNqmhJfFG5/1zu.DabVtgij/cqheIfT/V2aLN.o1eb97Ya	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วสันต์	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	04675911-be1e-4095-a83a-5f66460432d2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-212	10010004-6KW77	$2b$12$ToYFMH2BEq0.HaoZ018KTujDfxbVFZ/1ZJS9hv/X0tPYjMDh1OtCm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	นพรัตน์	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2a570b50-9e4a-4893-ae1b-360eff978441	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-213	10010004-NHSKP	$2b$12$mGgPP7MsXCI9EJ2TLyEpxeY.vS/q/b91AGm11dygmon27H/McM7Ca	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชูเกียรติ	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a2f4d11e-c679-459f-b624-43f9799667c5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-214	10010004-7R4ZS	$2b$12$OxPGlmETgpiNBUaSkUHiEugPpGUu9l8u5djLwW6uaCHw5kpTfyIYa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สุนิสา	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3f36f360-4b65-4adf-adba-2c899c9ed4fa	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-215	10010004-GHUF6	$2b$12$d/GLNAr/ml9CenY3yh2jNuitl4xbNqwEyo/m9rbzbVl24bWdt05h.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วิมลรัตน์	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	34f0b130-6e97-4209-a6d1-c1edc9c872f6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-216	10010004-9VE6R	$2b$12$B5P7G6GTffhDUSpDXXufQeyqj.TlFWCjE2I8FJK5n31wH9q0lG3nu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วรรณภา	ประสิทธิ์ผล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	554a7385-9fb6-4e84-a41f-97063da9956d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-217	10010004-T6JMH	$2b$12$kcBQ/tOSu9pDSCdnVQNIZeNkcUspXjzjf6F6bz4AvrX0g8n74a8tq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กัญญา	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	da19bef1-5f44-4317-99b0-f3db484ca363	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-218	10010004-2JSTT	$2b$12$nX8JQBLbTBlf5Wpk5vxb5OxeHS19wrlLifq02o9JZ8WBfGFOKpnBS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อัมพร	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c87ec271-de72-419b-90c6-3f9f92fcaf92	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-219	10010004-JKAQ6	$2b$12$JBYKBWvSfIiHyD1xB6HUMe7CBqTE9.x2nsOT0aGbGqbcRRx63ubEq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	มณีรัตน์	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	17dbc2f8-d7d4-4b32-b636-5047c74f0f1f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-220	10010004-DQUFR	$2b$12$lu8InYrLBb18qiCjnT4yhubyLt1JM3FDPbjByobh7XzydpB8RPsmi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อภิวัฒน์	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	158e1dcc-13c9-4ba1-bde2-50c0527506ee	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-221	10010004-Z2NUW	$2b$12$jBbQ0y4TLIKXI3yZHhT/TOaWHGTgw0L/lPPpjIPGtqv8PzDcf5AVW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สุภัสสรา	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a78a8fb1-86c2-4a6e-920f-fef6f883961e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-222	10010004-TWP7J	$2b$12$zOxyKUUYGq4AU/gBWdTckuqwEPHM0uRkHSe5EjOCptkd4yYF6dJda	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อนุชา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4fd70d04-acc6-4e80-93db-65e0c094b411	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-223	10010004-L7LHG	$2b$12$PeeMnSsKIQWxYHrdLpeJweLhv/tXOvPXxwE0iyNgYdOYucMePeZaa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อัมพร	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a0831a7b-f04d-4c3f-857e-1632cc0a7764	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-224	10010004-8KEFB	$2b$12$o5GJ9BoDEzEwx07BdEaHgu41FpjwpU9NMuP1Jik3D.EZJlDC/y7h6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	เอกพงษ์	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	60f0fc18-73b3-4981-aba7-bb7881d2ea27	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-225	10010004-NMZX2	$2b$12$Vx7qFuywndCCxRix4ChzCeYT1v4zuK0m.S7Sq/TY5d1RVWBkJE1Yi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ลลิตา	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	89e1e334-e02b-4d6e-851e-e031a6c10a40	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-226	10010004-C5CUS	$2b$12$Ah/k7ewyw7QbQXW6pjd0eODetn/R5tI2V/7k7pqwsyFcsvacQ63ay	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธนพัฒน์	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5d14b3be-8a88-4d7f-b891-5dfc17e1dca3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-227	10010004-ECDZG	$2b$12$SKH7HwemVkKhfaxEMqpJteWNs6P/QTdvELgcF/yoOHJXA0qZHz74O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	นวลจันทร์	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	172da4cb-756b-476c-a968-5ff83ea7a072	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-228	10010004-6EP79	$2b$12$uW74dDHUSXFI0.QPVOJy4OYx7gbb5IZapH15rgSKzBYmawV/k2Xq2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	เอกพงษ์	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c4dabd38-44f3-4ebf-9e2e-4ac357f8a09b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-229	10010004-ULCUG	$2b$12$mKCTPZ220uhrNVnDGpgfFO6OCj9SnAhtyNW6pemK2SF8bDztLgwxy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ปัณณทัต	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ed21b6bd-9387-4dbe-bfac-3b3960e96b6d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-230	10010004-QTTSJ	$2b$12$Kk5o7SH3oK.7a17dZjac.uASLgs1TPd/iMQAwlgUJA7unOG0E3Kyu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชนิดา	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	38f69c3b-6f54-4483-aa7b-572f8928306b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-231	10010004-9FYHL	$2b$12$0BvLdIw8swJMxxyg/0P2Buh/dyg62ydkRLlcUIVDPYAzrN5hXO0au	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กัญญา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	96a0807f-429f-4903-bfc8-4eb5329f2b6d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-232	10010004-S5DVR	$2b$12$lRBjcLPgQ19nC00OkgvEgubEXMd6Yn6DEPhyT2eyrrEG/uaM0zZN6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	25939a7e-4160-4f1a-b825-6e0c969dc0bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-233	10010004-C79GU	$2b$12$iJabQKQKLOg8Dd3Vd97nOupzjPwXLafJJ4SBSgVoI.4QlPR7cSGsy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธัชพล	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	56b069b6-1d10-4597-805c-86d2cd0e658c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-234	10010004-C3UQE	$2b$12$okvMLhZJVfM2q.CyQKwzR..GM0yYkyvjfNWSRdt2vZoxd7bTVuvc.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ศิริพร	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7f64d84e-929c-45c5-a536-e4aa3523b068	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-235	10010004-HNVTC	$2b$12$jx/9/bYv62KDAXUNwAQsoOeIEplOuoAtEyjs/7bNFBa8ZiBGI120W	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธนพัฒน์	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4cf67748-44d8-4907-8ac5-b61856947fb6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-236	10010004-LPY8V	$2b$12$9Ug.3Oo7jFRmjmp2RWynvuwKjjoFI8jSHOKWNrbfkZrxbAC9scDcm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สิรภพ	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9e8885d1-5fe3-4367-87c1-25dfdc4ccf02	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-237	10010004-4CUDM	$2b$12$wf15NK.eDWxVKEoMCfGkOek67b6eV2x5Mm/FXZ5gEspOnLGmQITEm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชนิดา	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	14371976-3aff-40e8-8abe-580acc2a9012	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-238	10010004-R9PMT	$2b$12$eET3jpmktrw.HyyUSCfCT.X3.M2sAcU9UTOurX3.kl3ItQvWgZq.W	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธนภัทร	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f8c872b4-0ad5-4ddf-b0a3-0a5ee3794167	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-239	10010004-DJ66B	$2b$12$5viYQrqeihP1R0vmarqVAO5/MDWjIqAh0Ro9Zc8BmiJfQJzvCBofa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1e0c20e2-0442-46ba-b957-c80e268e52ae	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-240	10010004-BJVGX	$2b$12$ij8jHBTUJMQuI/uCFFV9K.OBgEs4LjM1CxNaRF9fkoi6bDMYwhVYG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วรรณภา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ee4c7d1-72b1-43eb-86b0-930615009d70	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-241	10010004-ALA2P	$2b$12$6vsOVUQDQhtazxR0uQmrRezvFqE4BK7Dx/hMBTUnC35V78NlSMGRK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กิตติภณ	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	68834cd4-5051-4674-844c-e561197f87f1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-242	10010004-P5733	$2b$12$C7aHmQScMAbcWZMg0OphoOGkRe4tnv/YnyMthAXXoBdRdfG/9N0.q	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชัยชนะ	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	440d73fe-0105-471f-9f5d-3cdbe4bdaecb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-243	10010004-KH386	$2b$12$gzUr4Z/vZWJfdmd6bY8Kee14BqJwcWnu9G30roJZEw4R20Un4t7nG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ลลิตา	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	889bb6bf-09d7-4e92-9906-07af1f407b25	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-244	10010004-D2MYE	$2b$12$eko3RFX6tKEcfL02L5fvxOAkBFhy9ZPc1rIrkOHQ4freEyU6zR.aa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วรพล	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce36ed03-6640-4ec7-8e69-d806a8088e3c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-245	10010004-5LW6V	$2b$12$qKMmORWzDk40cLfIBDWFPOtwbVuB9p3k.I6tV4b2RVJPKxpnq9DDC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ศิริพร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3b7f1d25-ae1e-4ccf-9259-f3e28a96428a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-246	10010004-ARQKP	$2b$12$7ZXNgXXffoMRe2gjd.t9sOQH9arBEb9e5de4CSXlkb1b5kALe7lNe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ปัณณทัต	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0ddf32f2-8f48-4848-a5de-b6550ceb0a86	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-247	10010004-Z49AF	$2b$12$O2LjIFlhdc6Lks/zLllUDe3gmMxgOruaFiNiY18j9qPYcovUZlqV2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	นวลจันทร์	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	12cbfde0-121e-4397-96ce-e1be28139981	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-248	10010004-3DUZM	$2b$12$Z69YjNE4xvhAwD.M6PG0We2g1qnYHpcc5MXpul36USBArxf1euzoS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	จิตรลดา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	53b307b2-8b4a-4b5a-8ff6-0cb9c0ebe687	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-249	10010004-HT3KL	$2b$12$/JH3iZvia4LKTw7lBiXW8Owd/81Jodg8fGjjqVrk02XXCMYjV6BkK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	กุลธิดา	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	167d2bda-3d78-4698-be1f-5a39f5844187	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-250	10010004-L5HRM	$2b$12$.THcfSMIx7yffaqE2XpBUuxYJ4fHMGwf6mpzSctrjWDuv/zRYw2tm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พรรษา	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2d78a5b9-0bdc-486a-871f-12ef2f6ba331	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-251	10010004-TE8YS	$2b$12$cks7bYl/sq5XybnMi8kC2e2djwExXaoBAJkdQxNI.XFS/Nd7e3ORq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	อนุชา	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	dc9f07fe-9ca2-49ee-bfc6-bdf353534fc2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-252	10010004-BKRPU	$2b$12$TjAg49sMk2oRmwYZy7Lf..LiEqZjhMJPAbGP6A4bZ9/mKjYEQqkWu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5e3d3de9-fda0-46aa-a5e6-a5194418f843	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-253	10010004-256NS	$2b$12$itMzBFvHdqTnRPflIm9YIewEkeeNbZuUppHwVohtXm2mi8AtTjxgu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9d40eec3-19a9-4480-b23d-d97fc213ba7c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-254	10010004-2JJ3H	$2b$12$RKXS5o28qWmTtGAq0uYOZOW3NUVH..7dH/LG9d1TNfgwxtiOKQ9gK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รุ่งอรุณ	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce068d80-7137-4d54-ac14-cb9cac43f7bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-255	10010004-LV99F	$2b$12$M7K567oYfAQQbKSLrpANRedeW1NtWqL6tv7KJ4qA53Mrjnr/wfnRC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	จิราพร	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c4119e41-82f5-44e5-a839-f52e9fbca34e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-256	10010004-UTLDJ	$2b$12$kRwPqUUlnyCUdKwSKTn5HOe6vJM2NLMxVATE2UukApGZQysNfEJTe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วรากร	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3b7ca217-401d-4df5-8bef-c668e685ee35	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-257	10010004-6TGXZ	$2b$12$nR7FpnSOKiMPosOdpn4FD.ou7a6/.JyWDSswMmR83iod55HE8saRC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ลลิตา	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d0103dbd-f5d8-4a77-bb7a-d547b892b378	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-258	10010004-HMZH7	$2b$12$t60vswXdbv4Kwry94JiJc.iKZ8xQ2zbW7QmYEIf8GRSRZ1g25F43e	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วาสนา	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0408f49c-d192-4623-8444-5f65bb9bb4fc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-259	10010004-JN6NZ	$2b$12$huD.wnPHZR2pgT6d8kcffeGWYxheoWW77XCu694U/p7mkK5yKXHo2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ธัญชนก	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a2526812-133a-446d-8568-a89d9d7ee9eb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-260	10010004-8HH8N	$2b$12$mOS94rH/A.0uECB02m2mEOkNxFPoBUC0TGzoJ.anq3b1u8Kt1W2Ey	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ศิริพร	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	37ff5d80-e993-445e-91d0-c30e4ccb3d8a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-261	10010004-MB29L	$2b$12$EgVxu/vYvgaUH8B0.FCG2eYVyc7odvFlvIGoLWGrHng492VPjg.kK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ปัณณทัต	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	243e27a3-4ea3-4f2c-9587-93e088b03280	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-262	10010004-LR42C	$2b$12$mZ3/ecUg.Hao.4M.JPXSEudi8jOBV1KTuAwFkfc42ypipTXFGvwGK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รชานนท์	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a5258ac2-9681-4855-a866-e9d804ed9c55	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-263	10010004-NHRQE	$2b$12$zBEZ4kLerSByFvP8ZpGmge4ck6yt7MvTt2YbC8WMK3ycqUVf.MxnO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b74ffcbd-a9e6-486b-ba06-c1ca0adb90a6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-264	10010004-6AW4T	$2b$12$NAv19vaTLKC2HKlap2bnoOV.39H1Niec2toWsdew5VSJ9d6Pz5wBK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	กุลธิดา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ec83f398-0f02-4d41-b9a6-bb41dd9afdbe	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-265	10010004-CSSKE	$2b$12$yX7Kw617NFq8LvdBakaf6.JvQNziKqqTPKYUkIpY2yVMOnlUEMrES	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วิมลรัตน์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	543d6f1c-0fe6-4e25-b784-90ecbcb47cd8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-266	10010004-CXQAW	$2b$12$iPVZWfgsVNBzzOhZnIc/heTooLfml0CsQz7LJ5P5mIeyCqOVpf1aC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ดรุณี	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7800d0bc-af64-4395-bd20-80fd130b0a5e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-267	10010004-STENR	$2b$12$vsPIoh264AYdz8aiRfAyMurcGRTkJxvVLfjT7dlATkr80OeUxFq9q	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	มาลัย	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	dae1351f-8d23-457e-bcb3-f8b50bc68e95	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-268	10010004-6MWFP	$2b$12$uIE1VskvmkYGk6Jk1ikEs.LTf4W3zjwxarLdczzAxv4NGGz98NS0S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	สิริมา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ba2c400-6d95-4ce5-aa79-342566d22591	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-269	10010004-7444A	$2b$12$rBWyRE9EeP75YB9eTZIBKOuVS5L8hS1/0dMlncDOYetbq9.4aRUm6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	เอกพงษ์	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0db7184f-837b-4731-81b4-8b409a58e48c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-270	10010004-2JHR3	$2b$12$cyYbqkKGXzgYMnGHJqa0iOMcxptiJZbmYROCxoFKQD8zwpAn/WtBy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ชนะชัย	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ac0d67d8-8cdc-4ba7-9f67-c52b647727c5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-271	10010004-Q4HSA	$2b$12$6KjWgjINNm.KYVXGJuP9k.A6s7tkqrraWZI96YfRVvKby4EJgaBIO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ดวงใจ	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	73b7bce9-6b76-4a93-96e6-1af806d01dc7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-272	10010004-8PGDY	$2b$12$octIZ.5ZpbCTQeCyKT9JYeauVPwATSasPXvePIzJ7cfb/xvVfWaRC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ประพันธ์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5beaeef1-5194-4551-8054-915ae67e5709	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-273	10010004-T2UWQ	$2b$12$BwaX0qsLpXeyqroEihf42ujZtRLklL3xq3baES8306gArgc0R8Ut6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	024e04a1-544c-4745-af52-fbfef183157d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-274	10010004-HBDZA	$2b$12$glTcRXIIVjaZuFz4Zoo1Bu5w4daQ0xJIhe5RzBBsfZtk9L12DnaIC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	891f88bf-4494-4903-99ef-5eee8969fbd3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-275	10010004-3S63H	$2b$12$zuKxB0UoOCJ0rdreAlRFYeELeIrtvVdvRB1U9F4AW2bfnXSfIQbVC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	สุดารัตน์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71a2c1a7-de54-4198-9ff0-62c42142bd86	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-276	10010004-TGW4K	$2b$12$r.zlwI0iTafCDIgEck7BOu6p.KkHxffJUPXLACqtLkU1CHGxDDNqS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วรรณภา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c1a2e9e5-08e3-4ed5-8da9-06500757760d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-277	10010004-95R97	$2b$12$5rSEp7lzjbqmxfouiaFkZOHwXg6vk8e/fpwu72b8QuG3cT58fCLZm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ธนภัทร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ab7c5d34-aded-4392-b661-04192ec3e304	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-278	10010004-4SLZD	$2b$12$06zmINlkF6ICYRQM47Y4deAfP008c3AE0INTU9W0RUePPXmx05KvK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7538786d-46ba-4059-a533-d5b0272f5a68	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-279	10010004-SRXCR	$2b$12$Tq2itoayCtN8LhgDwIIF6eulbLvMseQuZxad3aY5v2agma7tqZPtG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ภัคพล	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9a7f3b97-28a8-4f8b-b350-a29dde720bc0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-280	10010004-44DMF	$2b$12$qmo186gJ2bARNk4tdfm1HOe8YGztQelM8OldnbqHynPIRBZwhRKyq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วาสนา	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	36d1df61-d262-43e4-82b0-ed3196b68896	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-281	10010004-Y4SZ3	$2b$12$yoKWGpi2Bn5x6a5azJose.UkKiM2hDQPDUNr.UPr9rmQhkNfz8Q0i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4a1d2158-0805-43a9-91ae-2fd7aef9b972	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-282	10010004-PJ9GC	$2b$12$zE6vOohX56gBmkJqW4s9rOMMQ0mhb5HcdoA4jEIsnirRn3nUxqw1C	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	แสงสว่าง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce18833f-0fe0-4540-816b-aceb5c329712	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-283	10010004-S4A4K	$2b$12$A/7rM2Z2yhlAex8rl4a8MOW.bm1PqJO..rL9LcZZvcaUyB0PZpCMe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	อนุชา	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ab76c6d-fe01-4dda-879b-c1176da5d5d8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-284	10010004-YQ26D	$2b$12$Jl.HXBtTqH2w1Uyjbmf50egYmU44RzVIjiLJlOWDNHrirkO8aDeTO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	50f2bd59-c5b4-4e6b-a8c7-648e51c0a5bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-285	10010004-2AKDR	$2b$12$b33JawyntLisiZdzx0GmUeXLD.J9ujf1TgeBK9F9rBnD9ks9RoIXW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ธัชพล	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4ee1f318-2e9f-46dd-85ca-e846092f7517	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-286	10010003-WBU6R	$2b$12$OWMBmTT3wN9X9t9eZ1xpQeA9lJIbNu2UITEX/SKAsjcZZSDf6/Qva	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ศิริพร	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2a6d7a1e-05ec-47f1-a507-5799a63ed646	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-287	10010003-KHZEJ	$2b$12$ijmYX7vQDJvrL00T2YQZx.jkxWeFsKipAbvzz8EagDefXuJaBU3S.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	สุภัสสรา	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f4bd17fc-e36b-4b17-a767-60691a70807e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-288	10010003-UZPCH	$2b$12$WBSLIGxakUCCkC3eKib/JO4F24tYKo4BVn.l7ChbFGh89HMlBbgW.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ดวงใจ	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ad29b559-07cf-46c7-b8fa-fb66db99e3a3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-289	10010003-ML6MT	$2b$12$quUdWVZA65/Ek4.3F0kx6u0U/Xf5S3tpSniKAf3X.FyL4FsRzS2Vq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ดิศรณ์	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7ae69e15-7320-406b-a115-ce55351760e1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-290	10010003-ATECR	$2b$12$z9Fw8HgCxPMgaSRDiWT0v.PH1nnqdghl3xskP5Rdt1Q9IqnkbWpFu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	กันตภณ	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	37f09562-9854-455d-a1e4-a791f8c69666	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-291	10010003-JMS39	$2b$12$ROF5NNyHLoDw8eIUUz5Etup5uQhfrIiIFzyu2MB2R4C6EOCHUsVi.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ดิศรณ์	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ce7f788-2783-49a7-b3a0-6185c1274c25	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-292	10010003-TF8G8	$2b$12$PQkUGbx/X7fKK9G4FccCUuxmg.BhtsZl5RlpwaUCIyb1WCPdEG3P2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	กวินท์	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9410d5a1-db9e-4bb4-9ff9-092ceef235b7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-161	10010004-2GLL9	$2b$12$wtrdTGut1/hBWxPVJPIyeOBGvKcdj0JGK4UpsHelZjM6PnisaBPSG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ศิวกร	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f8eece5c-6062-41e1-9e30-0eedfab5b4d3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-162	10010004-QZBPQ	$2b$12$LdGk2LdaZH6RUuVneFDkVO7fT9lE03Ax.OWIBtkX3w1MFx55g5A.O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	วิมลรัตน์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a8416957-0f72-427b-b82c-8a49ec5dd715	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-163	10010004-VHY2P	$2b$12$xHYQgIca6mn6wNInQst37O56qlJqXut7NAW3q4XzntN7rO.5GoiH.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	พิพัฒน์	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ecfd058-cde6-486b-8d15-8ba9fde8625b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-164	10010004-UJUC8	$2b$12$fgPJqHGS956BzLMzgG2TJuaShzQBZyd3vWbGQwhQqpKBvO2.TIMuu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ณัฐนิชา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	35d25970-efed-4695-a425-ac80870aa7f0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-165	10010004-F3PAG	$2b$12$PQDhC9zU1toNXW/gdJQtO.8Z9W62ceWyGz2FVOaCGy1tGIruC8SCG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	กุลธิดา	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c7566c3f-3adb-4c56-8b06-5b33b153ab1a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-166	10010004-N6MBA	$2b$12$AvNhPVV/fmsMaZ2wMZinBuw5kH9C4K19W6OYocQXKRYqN7YIG8xnG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เอกพงษ์	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fd2069d5-dd4c-4f3d-b061-be9262b63f67	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-167	10010004-98X4P	$2b$12$Iq0ulPaU1CbobHgiGK14fODPT/lbkRuf5fnz72Gz7.ggFqsYWbXE2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4db562c6-428b-4ae0-bf29-ee1aaa5f38bb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-293	10010003-D4DAS	$2b$12$.K8et8Qjlb3h.A7ADxkB6ue4PA3QrIW0YH3csoqUoW3ibHSyqH0s6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	สมหญิง	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2679858c-f67c-4745-a5d1-00a98c7e6eeb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-294	10010003-K4SEZ	$2b$12$fMnc0pU/Eblc.RagoT9H3OsTGfwH3AcMXLvm54Wn70L/yGop0so1q	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ภัคพล	บริบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	cfbcdf80-1ee6-48b4-befd-916442e95ca4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-295	10010003-WA43V	$2b$12$AYiLaaVKpMnGg7NGe2UNPOOBMJzEb.SLkG.mL5O0o2icaB84/ZPJ2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	97e75fd0-fb1f-4099-9afe-ab25cf3e4e2f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-296	10010003-N3SZF	$2b$12$TaRpgW/1Uit54vGuZxNZmuzLeu3J5.qespF4Zp7WAScC/Z6tu.ah.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	คุณากร	บริบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7b9e6bdf-acd6-4aa6-b413-ceaa521880fe	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-297	10010003-ZGR38	$2b$12$75Yh7IYIfyZ3hkHW60D7KusxWcR8/IEnm0wznPn8YIcEckR3rCPVm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ปรเมศวร์	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d75611f1-4fc3-47bc-8e82-3f42ed6bfdc2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-298	10010003-7J43W	$2b$12$Q5fyimEWu4/0yave/WtuQ.a0SKM5vALDKqBC2o4iURJaVZUrlrwwu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	นภาพร	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bfa0816e-befd-44d6-b1f6-526bb9f0aa2b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-299	10010003-HUAA5	$2b$12$zdC38wTBtnGN4O/BqIO5I.1sjR9Fndty4IhX3.f3EwRzt0rlvgYae	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุมาลี	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	97af6da0-b5b8-416f-b01f-166958a2598b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-300	10010003-NNFKJ	$2b$12$/nOCWZbHd8TJ6ZP5HTQqWe.UCZONOBWmWfcur1NXdYgYZcuSZ8r7e	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ธนภัทร	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d2c0cb43-fd00-4430-a58a-36ff2c9eda73	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-301	10010003-4LGKV	$2b$12$tyjakUqLjzRUHDVhMR3pGexAZeCMW31gF52RwTApwATH3m46sW.eW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	กิตติภณ	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6e54f133-03de-429f-b2ee-950ef932d642	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-13	seed_teacher_cm_p6_2	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-teacher-002	0800000009	seed.teacher.p6r2@example.test	[]	ชาญวิทย์	ใจมั่น	TEACHER	{"room_ids": [2], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": [106], "sub_districts": ["สุเทพ"]}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-14	seed_teacher_ud_p6_1	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนเตรียมอุดมภาคภูมิ	ACTIVE	2026-06-10 16:00:32.709641+00	seed-teacher-003	0800000010	seed.teacher.ud.p6r1@example.test	[]	ณรงค์ศักดิ์	แก้วมณี	TEACHER	{"room_ids": [1], "districts": ["เมืองอุดรธานี"], "provinces": ["อุดรธานี"], "school_ids": [10010005], "grade_levels": [106], "sub_districts": ["บ้านขาว"]}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-302	10010003-V5QDU	$2b$12$mMGiKy83wRNcvh4Qk6Uw9.ssMKZ/MfZr/G2eTQ4qDmTxTXBAxcq1O	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุมาลี	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9d28cec8-5c8d-47f9-a292-bb3ab118d6f6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-303	10010003-VMJC4	$2b$12$/PfOtqACCsvz.rMgwnhyouGPZYz/E7SDVNTseU3cZ5p6sgsgLfEAy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	นลินทิพย์	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bee18788-fc47-4532-b44b-df9d0fc12c46	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-304	10010003-ASZY4	$2b$12$cC.CMG74VYdSdNLbVTTXeuCHh1taFFmYbVnJn5IO.zTGbpdGZuYz.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ec1ec8f6-1045-4c74-9fa2-e3a42255d6bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-305	10010003-3HUGQ	$2b$12$sWb01pV.mXBZ6fcyNreaGeohaFeQSBUgTZXk.YVbI..Iqo5el9BEm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ชัยชนะ	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	539bc1ff-88a1-48d7-9e09-2563d2846026	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-306	10010003-QQ6EM	$2b$12$FFV//Z5STLDGPlhRpHs3GuNKaSVzDixEI6nLcfVi1uNynv55UrZiu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	วรรณภา	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce0be46f-a5d1-4755-94bf-eff2716bdb9c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-307	10010003-JL3K2	$2b$12$hNIDeCSjIFZzC8rNYgXHheu9THvfYV.3eSw2v7eunXcZC9BMwlPOq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ปัณณทัต	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ea74e4b-c006-411f-9a5f-4430357b60ad	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-308	10010003-747GB	$2b$12$rSRVauQ87dZaZIHb985ECOw74yWAiiR0J4Eyb2RcIO9qND/4VSAvu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	กวินท์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2fa4dba-1447-4a71-843b-8914f44616da	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-309	10010003-L6VUH	$2b$12$F1zI8h0WI4ohMggYwXFl7ee8IvLDVc/G7ytwtgnmWAXDI/6NgW9VS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	กัญญา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2ec18bc-a7a9-4ccb-981e-504e2a1e491e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-310	10010003-Q6PDS	$2b$12$8zyH7oLnZ0pFIortjgVxn.D9gwZ3Y2.O0e1eImeqZ.P93RqHswshK	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุดารัตน์	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d9cc5e5a-fbff-4987-9e6a-eb2a42e41eb0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-311	10010003-QPKWX	$2b$12$zHyCRmj7072KhwF5u6aju.COxZIWukK0p9L4bUEeFSZpZ1USoeIAi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ศิวกร	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3da9d59b-80cc-4634-92a9-567518fbaddc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-312	10010003-8HMZJ	$2b$12$kpmeIdDWmb9zU3F/FuBMHujvcOiBFt42/1zrDo91NQuzcR.axWVdm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สมชาย	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6784c414-ebdd-4b1f-8da8-020d89afa214	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-332	10010003-FWCWT	$2b$12$u7gLEUGhRZSOqfXnKbP6aeyJJXYrwzpBR3wNB10dxl1whPNrvJUpO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	คุณากร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	861195a1-71cc-4e1b-ad84-cb922ff55e49	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-333	10010003-QQTHU	$2b$12$LRYyp8eVN6H05dlN8SBATeRIg5PcUevGe8SMuiaP1uBCg0qc1gH2i	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ประพันธ์	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e7a18f87-d370-41c8-be79-6644ab5b3a02	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-334	10010003-NQPAZ	$2b$12$nIkQCMMitKSBqNv2cNfOPuFtyWb2NzBLIcoKM4G0.luatJXxJ1mje	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f4063735-5ebb-4808-ab90-92934dbdd88c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-335	10010003-6ACN4	$2b$12$DOKizbe/zJDknMvoGkqJOOTQ6ImlSRGxa1rtWC5JR1.I/6VhTriDW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธนภัทร	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2329b9b6-4bd6-4088-b1cd-d69f492b25f6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-336	10010003-ZWFD3	$2b$12$I5DzDMb4wagP7ceJXAlRMeTF4IT8a1SN35o9jGBdr5SfH1i3wn7dS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จิราพร	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	101643c9-d841-4fa4-81bc-e9b65170fe2b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-337	10010003-W3VEF	$2b$12$3ck.cFu9RaDSfPK0zgqSfOyfVzIYG97tgWz9Y81n2ZGY9Gh/ct7QW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	วิมลรัตน์	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	656e66f1-97b7-4377-ad13-cfbbf6ca2953	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-338	10010003-CQHHC	$2b$12$FHuEHJ/cWekHW5kK29HKOeAMNU3rjQ7boWvwNfe.bbWd3qzUT6N4W	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐวรรธน์	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8ed4c829-b0b5-46d5-917d-a8b1b6f18889	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-339	10010003-KNKBA	$2b$12$AzenJZf/LsyJOSfMM0GGaepk6aKEN5J4HZLLFYRQGhtTiRsoiyEQe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐนิชา	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0c0397d2-42b2-4896-a37e-f8d5310488f4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-340	10010003-2AQAY	$2b$12$h/XFSaYPtJFLQSxzAHxtV.sznjKbm3ddtXaDAdc/WSkS3GtyWnZ5e	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9d0bdc3-b9b1-4e87-b2fa-8ab703f3e669	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-341	10010003-YS3JB	$2b$12$lbfYb9eMYDh8VIS8zBKf5O.PLznft8RluDpFxzHzXg/YRnmkvo/02	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กิตติภณ	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	958f315c-0ffd-4e6f-992c-3aa5352c7726	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-342	10010003-7EZY8	$2b$12$94C.D0WHWj79Iabov8gwuuttmfI/bHC/i1NmmAzUcFS8A2KlHhW.i	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	บุญยิ่ง	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	97e15be2-6438-4f82-b740-f016fe11ed06	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-343	10010003-W7SQL	$2b$12$qZ.n9VVnYpfFjf03U1p0V.RNF8RA3OUpDP5Dol5aW.ckpPLo6aJvq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธัญชนก	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b47c5dbb-6388-4542-bbf4-c76f8d2a5343	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-344	10010003-RVYYX	$2b$12$oJ/rW9zrqdNDx.S2AzIxNeVxHmcoQ1yXuDE7aH8lQklPrSF3XYaKe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	สิรภพ	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	07354257-348d-482d-aa9f-a5dc248ee09f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-345	10010003-JEKQ5	$2b$12$902lWlDlTJcCPNGVdtgO7OgNzt3POTMCSQwMi6TOG99pOFI.JfiGy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0c0f2496-5532-4f33-9dff-20e77fd0e6b9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-346	10010003-2GUDW	$2b$12$xrsdQrbG3QH14mu6SJ7AVuwxmwEq9Q5bxQGsBIF.VM143B0Hf123i	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ทัศนัย	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c3d3e217-1dc7-46c0-b629-3babd96c88f2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-347	10010003-APG99	$2b$12$twwmLGtEJhS68sncVHJ/numJBF7R/hb9VB5VloUQdtWCPRnD04r9q	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นพรัตน์	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0671b541-37dc-44ea-8f64-c4f9b0527b39	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-348	10010003-6QDK2	$2b$12$0wZ8eZr1avIlD1QDHXqbzOTMLCIYKuMBmMsQ3EBR8NsdmJYLe2yWi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐพล	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f3ac8cdf-4c83-43cc-9de1-9d1485433765	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-349	10010003-Z9VYV	$2b$12$E7U6hqDAFdmkjUYUlAQ1BOkyZ00F5sW8pBKDbdiePIRYkMferZmJC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	พรทิพย์	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d2d79c00-17ed-4d34-b1f8-21748e90b3a8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-350	10010003-D4LPK	$2b$12$m/VKoL0QfXbC2WujhQzIMOt/UZKq9E54zfLT7cVv7tvnKNbWpGaA6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธนาธิป	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	195ce040-c244-4202-b8a3-e303bac73eaf	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-351	10010003-YDNNN	$2b$12$DFaTixgimB/TlGbjnKfiMOWA0ltGRaveHzzyJabGdXP6vo33ZHp9O	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐพล	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e73b8c1d-ed80-4d5b-a097-b379d9718725	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-352	10010003-EE8MJ	$2b$12$Q127bNcXvs6dNsF1vmACW.4b0av4esS0M.SsDkOZV0FVgErzodPm.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	วันวิสา	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9e7061cc-efd3-4acd-b74e-e9ba05485099	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-353	10010003-4QSU6	$2b$12$iUSds9F09KiCRq22TylPiObA5UcMd8cpACfhPJ7zsb4qlJjhCHiG6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กาญจนา	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	07786e60-178a-4235-97ad-98d8fcbf2acf	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-354	10010003-FH5BP	$2b$12$Jbf.7rPXL1wRlmuB.b9mLOHQJ28RLt8YQ9MwzNSKxtUaBdQYIVa0m	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	มาลัย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	17fd8169-3051-4dbc-9960-daee43c3de8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-355	10010003-EYG6J	$2b$12$TV7ak95IMrheNvIo85R2kutp7VZ6zCLujIhPP9dlzb.U3y62g6eZG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	สมชาย	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	348dad01-f5a0-4b8d-957e-5e3b9cf62c03	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-356	10010003-3FPX9	$2b$12$YJEgun1gtjEcsthrmuyZie.pqpykdliTZ2Xg6rSTIYIG13YR7kd2W	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นันทพร	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8f217067-7d43-4ed9-a979-8d5835f2d0b4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-357	10010003-GREV2	$2b$12$UjzIaZGosr5RjYmn/AvvhuBcAH/1xOT3.f9NqSoEccrhPzal36dxa	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นันทพร	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fc409eb0-4757-4516-a3a8-360b17090ef9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-358	10010003-9BVAD	$2b$12$mPzLME4xnvVL6J48iLpor.yz7a7Vx3laTMqzGnjlhm6ovqzUxf9WS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ดิศรณ์	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	36c3ff15-3557-45c7-8442-dcb376d7b7b5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-359	10010003-XCLL5	$2b$12$EbO1.djt64ns7U4ilo.gVeud236oEKEN9fsv7i4QROyUwrA0ErPqS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นภาพร	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c78c9eb4-bbad-4ede-80e6-aae24b856371	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-360	10010003-Z8V3C	$2b$12$b6tvCMFVyCmtVs83qurJqe/d1S2dmUBLSUbTVzaNoYlPsyEWgjBxW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ศิวกร	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0d538bb1-7b90-4627-aedd-b0d68f7c2d87	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-361	10010003-5AC2T	$2b$12$GnwziquR4ZWqQXMsGcI0geUVWmQbt5k3lkXiiVrHiu4PlMyMwPEke	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ดวงใจ	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	94388188-8222-49a3-a714-5cd89cd8452f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-362	10010003-SAHZS	$2b$12$O/ozWLJHn4V/emp0Xq20NOrcO6h7VHKoETeGeV5J7PgbmfNL9dGXu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ดวงใจ	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	258cc69d-9f84-4c46-8d2b-247ce1b3cfed	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-363	10010003-FRH9M	$2b$12$9q.7SObGXf5iloVOOy4p/Ol.mddk2DdJn9H3V8fJ5A2eMq/G72gK.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธนภัทร	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3fe6530c-076b-47ea-8147-c9ba40e35d7a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-364	10010003-7RU9D	$2b$12$uuJiCvYaULxqyZegKQ1p1uJ8zCeLQdN/Ctp.5wbhXQfMq7LfoWU8G	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	อภิวัฒน์	ปัญญาดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	66077172-1429-410b-a546-96f6749ad2de	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-365	10010003-XBXMS	$2b$12$fdWjhRBgw.kNS2.n7Hqu/O5r/FAWmZR.kTnbFBUfcXO.LOkYSnqT6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ประภา	บริบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	99198d72-96d1-42df-add4-70c2dd3ab07c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-366	10010003-XPS9P	$2b$12$0gbJHUb8Sjcz1.7V3AhtCulKK4Nu1WM7Epxv9QAe2qXjcTtOfjuXy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	สิริมา	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	95f9b291-5622-4665-9adf-552d47fc070d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-367	10010003-9PKXH	$2b$12$UkKjJqqbVPk4rtDCGO4wo.4lfZexmkHQ5doflZt3w.Lv83pMgdIbK	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธัชพล	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	64d155af-0b3e-421d-b15f-9a6e67d697ff	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-368	10010003-FDT9H	$2b$12$c0o1tj1VS9HBZYYfjXgpCuBhTQAoIYq3G850TS3Hj4g3YXhiehmIu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จันทร์เพ็ญ	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0dd57a80-d8ec-4561-9eff-b9558bf71187	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-369	10010003-FKU72	$2b$12$R8sPDrmiDSS/VKibcOkwIOcgwU7d/FJvdx6J1VYdWgColmzQWyxIe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นภาพร	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	afb3b2fa-bc4a-402c-bbd3-e1ae6cf0cec8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-370	10010003-ZKYZ9	$2b$12$bO7lNzd4p8Gzv0QYJmehZ.SGy43heQvtELrcy6bs1ln0zeWNxfP5y	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชนิดา	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b2db3a26-7a0b-4894-a809-9197c7f796ac	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-371	10010003-PXLRJ	$2b$12$pie.U0g8mNRyL28K1HX8duqjiKaMi/zREw.FooACuISUveAVqLPlG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วาสนา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3fa00c6e-82ba-48d5-b700-b6cbd117de67	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-372	10010003-EVB7P	$2b$12$1fFePV5KXaoPyMgVT4rFqOvrEigfKnHcZJajn5fUEL9ZBCtWsv1oq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ธัชพล	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	df6e26f9-6446-43ff-aa8e-df55c545fe99	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-373	10010003-EBZ7U	$2b$12$xRZsfOQs96J0lST14LmOFeeZTxKlGrgrqUaJzbLhflV1zIQ3b0HgW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นพรัตน์	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	552c43f1-d624-4005-a452-7c6294563b5c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-374	10010003-GC942	$2b$12$dNwGzaafUpLNAYeGmjKQfusoQVarpKDCYHwxfrRRag9XDUWrRR2Ha	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	จิราพร	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5f03a61c-7b36-4cdf-90a6-c697e4790900	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-375	10010003-H3YLW	$2b$12$nHr2G0uDZijiAnhcB2rrWOgaMHsTVmX00WZIJ19IRF81l9ubA1y6y	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชูเกียรติ	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	33afdd46-49aa-41b6-8a90-50cfbdb554ff	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-376	10010003-HJTDV	$2b$12$BbXXIKPY3ra/JPBb/IdJIe8uGKfngfL3yIjEJq9hUnxuUuWHqvxZ6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ประภา	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	30a1ea48-9949-4d60-9ff4-e1251ec048a6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-377	10010003-S62NS	$2b$12$0qxz.fgiHHLAVu80xoFzJuTT7ltgoFjV8xTD3fN0HkQjYdSowxQdW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	รัฐนนท์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	be8a72cb-83ca-42a1-812f-ef9d5f4b2ebb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-378	10010003-GTLWX	$2b$12$k5R1RatF6V1JmMqV2U8oxu6Dx9uhqmXWTcg8EIC/nwdtP/nF1eOH6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อภิวัฒน์	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	df9dc3ce-be92-43ae-8daa-39a750dfdf41	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-379	10010003-F4GEC	$2b$12$/W/IgkgaE0JSKjipJ6uTOescXbSelwP2LpqEJOYVz3MsYbk/.UFMG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ดิศรณ์	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	50524404-18a4-4072-9c34-6d342290caa1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-380	10010003-LELNG	$2b$12$cL5PTdKTKqv0w7WO2DDmiumDeerZIh6kfi5QBlb6.jHk/GUMxoocy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	แสงดาว	ปัญญาดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2247dc90-04ea-4931-9e55-bbc84f73abdc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-381	10010003-73ZB9	$2b$12$fL0EQIhhRtJnE9fAF6qece9sva3QkjYRl9pFqY4gLB6xNE0IUzmzG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	กิตติภณ	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	58d673f0-a743-4099-9a2c-f3126f50c482	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-382	10010003-KBRY4	$2b$12$86pUmEIvXpCzbST.WJLVOOqkUipYzXpW7vWPV8PBhtJTQ8hqRWqfS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นลินทิพย์	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	966a414b-245d-4e7b-80b4-346549fc1dbe	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-383	10010003-JV76A	$2b$12$YsXLdhophuHZ4bTevB/XwufH9XBwELDgnDRTORhOwVSRAAN8aubHK	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สิริมา	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6fc67451-e14a-4143-be0f-a1b8cc9b530a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-384	10010003-QQHLQ	$2b$12$ZVTkIHl8MvFz4OtFTf/Y1e0A2.stM6lEXMLfw043ZEhar1UbN1dky	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	กวินท์	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7fa97b74-d8d2-4033-9e2d-5515b022f607	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-385	10010003-JUD2G	$2b$12$Q4DJfRNIZLBNfzkiBKrHye/o8zwvcSZcCWDD/LBAhwxITHQu5Uj7y	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ธนภัทร	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9a51b4c1-b96e-43fc-866a-ba4668f712ee	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-386	10010003-882QW	$2b$12$3T8/V5CsLlZ9FXhhKfiGWO0gKxwPvu3Pdvn4P5Ite4Fi321Hw/yFO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นลินทิพย์	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a32384a0-36ec-47dd-90f8-e4754b7a22b8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-387	10010003-6Y7XM	$2b$12$0ZyopHgostKF4xwdqXbhfugjCFBrl2WIXZPTh9ctQnyGbtiQ5/6fy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สมศักดิ์	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5c584184-adf2-4232-8102-f0b02aa84065	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-389	10010003-UR4WR	$2b$12$Y.l4Nu36l7ZANjoHJEaX/.M2Z94uVFexqY7FXNkPBgr6Fh/IvfgeC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ดิศรณ์	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9f3567c5-9240-4454-98f4-f073e5e1cf9d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-390	10010003-4TSW8	$2b$12$5WAQVFsRhACRvPZnDcYld.p9N5HBGhZJ8ETGzFj3VXXsPISnXP3kq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชนะชัย	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d830fcdf-170d-4517-a2c2-3b683fc9ef07	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-391	10010003-J54NL	$2b$12$uWzXMrwMpb4aEynoTkxSw.K4WpLYVVABDtkKxmagUzJUHORVp.AwS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วันวิสา	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1ca3f9f2-4da9-4f94-99fd-060741a8221f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-392	10010003-DQQG9	$2b$12$dXg9iqoXYeQslkJ.4M/JE.BIdGDsLw.P3xxaiHr0gKJSvaqa7AGK.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อนุชา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b51911ec-68ec-453e-98f6-073be36a802f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-393	10010003-4WXDL	$2b$12$G8kTobF34X.YFvJTdIUbGOa0pi7gzRBcHDBrq7WVhpdebKGGhPFU6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สุภัสสรา	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ae620347-171e-4238-aa3a-a57bb0d98f14	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-394	10010003-PZHF9	$2b$12$T0xbe16SvVMWZu/grD1ZY.zBKDBlUdvr2O2.Kle7TKNFgCOxmqqK2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	จิราพร	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	08706d78-2114-4ef1-bf70-290a88835c35	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-395	10010003-HCBSH	$2b$12$.aVtI2NeTuaOO6VQvO9GjO6O0F1RJZyjBwRCiuxmxqs9viX2O9Mv6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ประภา	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	cb2cbb3e-dfde-4a78-94ba-6c0934b834ba	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-396	10010003-NSHUZ	$2b$12$vCyfshrJg7bB99Z0XZQTIenXlTbvEohIY9lGfkUMWv1WkdETNOcqC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สมชาย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fd16c5d7-eb66-4a03-a5ec-9f8bec8a807b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-397	10010003-4CL2J	$2b$12$bbN8COYI91BRSBXEqd8PUeTJG6eof1aBw8KqWIgQk.8S4pKSI4Ese	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ศิริพร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9e84520-cc5e-4d70-a0ed-ff19e657cc53	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-398	10010003-CXAGD	$2b$12$6lqMFkQdU4gtMR8vmxF7bOTzbEeKH1zHga1h1AOi5EwCtpywJlYpi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	พรรษา	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	948c5615-d9e3-4888-9c86-1fc8535b32ef	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-388	10010003-EBS87	$2b$12$fb/0rSwCLOqy/3IO1Eo2UO2C/SnALcYU9kRzDd2Vyt6eduPQZ520O	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ดรุณี	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	19190b69-56fe-4791-aedf-2544dbc0d211	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-399	10010003-YMERT	$2b$12$W8PJzDwnRC5ZbIyQyWptAuKQeMzO0i0NjnBmVu18k300xXzhWacha	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชัยชนะ	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2fad9bc2-d2f1-4422-a1c8-5cc905c487bb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-400	10010003-U4ZSJ	$2b$12$pyqKfDoWgopPQYKaJcIrB.kB.wmSSteWmCBEuFhDDnhR2DrIVKktW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ธัชพล	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9a12e959-d5d1-453d-bbbe-efd737a38d56	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-401	10010003-P5CZ8	$2b$12$.bZN0wobSZtjJZj6DdHbauXeAEebrketg10FqLFNWxhRwX2E5ePBW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ประภา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	92fc80f0-fa35-4e27-84bb-53c53194b6bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-402	10010003-K69BE	$2b$12$b/l6pqC81awSdLbfQo3lxueyPnfTyuSrQSwhA6arng2AJ33L4KwQS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	13515c58-71d0-447a-95a5-639aa0216421	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-403	10010003-9YLGP	$2b$12$LmhoSQuMnX28FWhUCgMFoOs0Twh0qsdpFAdAD2Vnj24M7hbkBvpSy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วรพล	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2fa16995-fdbf-4f28-9563-3f57b3c7971e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-404	10010003-S7J97	$2b$12$W9UBfpayG.8eFpJjCS4utummzQ9Nd6mwhUDWWUgtZOBySlUk0CY9K	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วรากร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	72336da7-79ac-43dc-b2e0-98559310e2b9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-405	10010003-HGENT	$2b$12$PiXggEaM8FpJUhtby98lbO.n9xZY.9Qwjz6TtId5fWWJOMacDN6m6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นลินทิพย์	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4e9655b0-6fdf-4a17-8210-a84a6763d5e1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-406	10010003-UMKTY	$2b$12$poy2PzwiRP7fRYjm7Qhl.u0Mx6FAKlMachEypxB8xrwmpLJa/yING	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ณัฐพล	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6816f979-d9d5-4ee6-8b61-00b26a95856f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-407	10010003-F9J7R	$2b$12$LmN3oz4Znqtqr7Ythjk0MeFWwgFRARgp89WqlUonjU5Hq8Jzzi7MG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ปัณฑิตา	แสงสว่าง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ce7c8e1-0391-4b91-b7ac-2eb70d3dca47	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-408	10010003-BYLMB	$2b$12$eN8kJGnnRkAq6k1eaeyPSucmTyP9m9CwJCgGALSx44Xl.MkufJGma	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อัมพร	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	487bca51-1b95-4a3c-87b7-ec63787b6a9e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-409	10010003-2LX3R	$2b$12$zaScWMDHe3NvoINzn0pDBuhyDE3O4DUkweeQu02dzkME0arM.ukSO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อนุชา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	89d613d5-7742-4a98-b808-d6e20d247d80	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-410	10010003-VYB97	$2b$12$AwrfoP5lkdByRphugQpRuuxfVhusaO0vEf2KFMOKkJ53TZFaYM.0m	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชินดนัย	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9a41df0-e64e-4710-9805-d36c845178c9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-411	10010003-TM4T4	$2b$12$qAhh8uaDlDGdQJqZlDsL4.DF/gza0hIGM1qu4pKr40kDR3IdtgsUe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ศิวกร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a4922b71-bb15-41e6-8a28-43776e75a7bc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-47	10010001-SNZEF	$2b$12$E0F109Bby7lby9iqPsAwr.vGZgJLW64eBvSBZ2QVzZKO5Fu.3eG.q	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	บุญยิ่ง	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7043c49f-910e-464b-b8a9-6cb2dcedea91	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-48	10010001-BWUVC	$2b$12$OGbXETcc/tbh44zdp6NijOUs/porExmTkH3fmenxw5opSQ6TRWV5W	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	รัฐนนท์	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	29abad9a-0e9b-432c-81a0-84c63d4dfa4b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-49	10010001-ABPQR	$2b$12$bUV6cPpMMDd31O4euy4rae09fiJn4eN5naI5oG25EbOQ5pAoTLaAO	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุดารัตน์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71117562-4a31-443a-9185-93ef5cc3f8bc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-50	10010001-VQL95	$2b$12$K6OxKXIKGf7pNF6dQSwzAeiyoXBuSwsVaSub2Z8RH9j1JhqmlkXHi	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	กัญญา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f87dd004-1361-48c5-b0e4-c4d4689937c2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-51	10010001-Y2E9L	$2b$12$RjFwukAlaEYZbXL0RTF.buoq199TVGvxniO2lD29tO/8gKFnPlxxm	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วาสนา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	87651da7-1272-4873-a44b-8c4d3c1e9924	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-52	10010001-MYFCW	$2b$12$cMN7gRSC4lMOvkr88BYVruBs71VaCD/r6nnk5KqFCNY3xLCqLs1ve	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วันวิสา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	aa4220fa-6541-43f3-8067-ea5729643edb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-53	10010001-5RGXE	$2b$12$kndDMSPunWxqtpeSOYboAeOBd70wMM.J2yldL3iTREhsK/KSKnMea	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวรรธน์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	00b43130-8962-4f20-b974-c9f7fcccd247	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-54	10010001-386LB	$2b$12$ZhwJkU/oOcovQ1yNsMTLnOBZz1MYtr/PaedxNSns63PAtvD3aSkOq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐพล	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	142e7256-9054-4090-8956-95d19fa09ac1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-12	seed_teacher_cm_p3_1	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-teacher-001	0800000008	seed.teacher.p3r1@example.test	[]	สุภาวดี	วัฒนานุกูล	TEACHER	{"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": [103], "sub_districts": ["สุเทพ"]}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-5	seed_admin	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ส่วนกลาง	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-001	0800000001	seed.admin@example.test	[]	อรทัย	บริหารกลาง	ADMIN	{"global": true}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-423	10010002-U878T	$2b$12$eNjW9KCJWzf6H5mgVw5qtuUu/AnfwBD.d4R76.Z8zHrhGLKEgvkaO	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:06.911102+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:07.597+00	2026-07-08 08:24:07.597+00	2026-07-01 08:24:08.08752+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-1	newnew	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	BUU	ACTIVE	2026-03-13 18:14:37.679195+00	1264646406406	0640649024	new@gmail.com	[]	ณัฐพล	สิทธิบุศย์​	ADMIN	{"global": true}	f	2026-06-29 14:22:56.965575+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-8	seed_admin_subdistrict_suthep	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ตำบลสุเทพ	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-subdistrict-001	0800000004	seed.admin.subdistrict@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	พัชรินทร์	ดูแลตำบล	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "sub_districts": ["สุเทพ"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-313	10010003-54AWR	$2b$12$hXK.TyLeOXD0Ztp7ucHuLuJEBxzOUudQNxvce7jwqjWGjpGEYhT1a	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ทักษิณ	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	23c654f4-88bf-4c57-b71c-b45a33a92d8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-314	10010003-643KL	$2b$12$LrrOGCjGRiniaCtRnzQvhOLJgfPNMKl6NeaW0Lr./fdlekqeRczmC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	วีรชัย	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	243af253-4b7d-46cc-a0b5-cea8e39c7baa	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-315	10010003-H84K5	$2b$12$NcHR/ks.MwAdj31r/77r/.GLfwt92j3mOqQn182UgQePzBmltjTo6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	448f921d-d088-451b-a8fe-2b60f6abbe75	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-316	10010003-JY2KE	$2b$12$r/peRwfxyM.yrE75UcULH.ve6tlq3pLS2n2PNLNEqrG67GSEdMJJ2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ธัญชนก	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d004f098-1471-45ae-a431-0b834c11318d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-11	seed_executive	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ผู้บริหารภาพรวม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-executive-001	0800000007	seed.executive@example.test	[]	ธนากร	ผู้บริหาร	EXECUTIVE	{"global": true}	t	2026-06-30 11:00:01.845207+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-317	10010003-J6ZBN	$2b$12$JpJgGvbbCryUoYEBxpnttOT6Pxc8ZcGHEbwGQHb3LRPwln7Usvldu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	อภิญญา	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	29aaa6db-d3e9-4864-a254-3e02f6c99008	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-318	10010003-AMALY	$2b$12$1.VaMXNf/avZo62Puom7DuUq40ERYvn8jkjSa6Z.4suxWkjQR.0sy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	เอกพงษ์	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8ae0be7a-9b51-484d-afb2-46c5c1824414	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-319	10010003-QNZPK	$2b$12$Hz5aejEeGwCshzeSHvnxu.NBFqKBDQFg2Rm.Qw1wfNcdTcYNwwHJq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ณัฐวรรธน์	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c01d9ed0-7643-48f2-b541-0db0a3558dae	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-55	10010001-CWQED	$2b$12$.7Vm.0cWIGU9JDxTgsdpAe5t/7UAi/ddFU/fAhjvR/Dg31M8VFKAC	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c002a87f-a8b7-4634-8f15-e2102a89c281	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-56	10010001-EE5PM	$2b$12$VNNNmNdgeqicKHEOJWx.iOl9djN5lzjmOnvS8rDkxL/IzMGfDXcR2	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ภูมิพัฒน์	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6e164bd9-4645-45ad-9057-8ffbf1a0c9d3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-424	10010002-P4N35	$2b$12$kaRgJ1.ouiwxI1LgQKHm1Ok2hY3ceKuz1XfKWlsY7aXLeAJgz2Hh2	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:31.721893+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:32.179+00	2026-07-08 08:24:32.179+00	2026-07-01 08:24:32.879027+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-320	10010003-BJ2DL	$2b$12$KaRsyRySI3W1QOX0nTi2OOQQJXInFe.b9Q7NNMvtG8cixXGO6pFna	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สมหญิง	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2128cfa7-7df9-4249-b51f-88bc7710ceeb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-9	seed_admin_school_10010002	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-school-001	0800000005	seed.admin.school@example.test	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	วรพล	ดูแลโรงเรียน	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}	t	2026-07-01 14:51:19.143142+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-321	10010003-D8UUC	$2b$12$h7urSTuc2itBN0A9sGm4xeZVQItDLMS7HL8H/3KSSIrMYY8Iv9WzO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	พรรษา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	61ade533-68f0-48bd-8292-a675ba848724	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-322	10010003-R9JBU	$2b$12$vOpTSlulfBlK8Rw9KUxiyOTQiesm3qhbOUY1vHGdxQ0Kmjjo.eyuC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	วรพล	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d51c077b-b215-412f-abde-fa66deb09448	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-57	10010001-LCUES	$2b$12$0kGb/BL52oXDd3FOGfdo3.xqz9VDHSyjvxJqyCTNmJpoVzmEPeOyG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุภัสสรา	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3006a1b2-00bf-439c-ba08-3562824947ef	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-58	10010001-G2RZN	$2b$12$D9Jr7vwqnvWdgA7SXhknGuvnKz378pY5K/yA1JCKHa4H/d36CN6oy	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ประภา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	dec3eea9-8a11-4167-995b-a711dd02bdb1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-29	10010001-7U7KC	$2b$12$e9uQwzQyLqc7/sf.qVlTq.7inDgVLHFMwF82SDpBa/usMKFgrsmvS	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อรณิชา	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	eff3e255-72d1-4c73-87d0-7b1093edb5bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-30	10010001-6MM9K	$2b$12$Vz.a7sDNecmray3xNOg/N.Q7l8SG5PqbiQlJCGTdkX.UL4lvwB7sq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	พิพัฒน์	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0eda2b60-7723-4364-b1a1-14b61f11b94a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-31	10010001-J5F44	$2b$12$71IqHwwJTzlHvQqrDADhmuisToLRZs233429wadz.JUBei.F8k2sG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชนิดา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5bcee74b-e37b-4503-8d60-aa2979661f08	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-32	10010001-ETQ73	$2b$12$6qEs5eGUJjLKnapCvdyT1OdVBhGuULEkjlvowJab1qkVvZdeYegN.	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชนิดา	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6f717f20-2dcb-4c06-a4ec-5e556fc10607	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-33	10010001-CHFU8	$2b$12$2R35xKzG3Os9XUM4.scco.IKNH4cDhrY9eiEFymi7G0/FFLxO6X7K	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	116dc992-3987-49ba-9424-ea6e7fc7006f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-34	10010001-BRTNL	$2b$12$fhUpqo72AJwsdIs.EyxIF.C7va3HLcFa13gmw1Sk7gIVUong7hy7.	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e73803c8-0bbb-46c7-8c16-d389aabffe47	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-35	10010001-HGV2B	$2b$12$DFmg4zgVadjHx9C61gAPKOvbaCFwgOyxLxSExH4ZN6FYh5tKAuBJK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุมาลี	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	25a5f554-6f59-40f0-b115-3be89034b7cb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-36	10010001-RTBT4	$2b$12$.y4VP8JGNQOsbQWQ1c8Z/uJ6JEiADixJ0XNsbJS9DO/hn4cIvUjIW	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	พิพัฒน์	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5d089ce1-24a8-4ce9-b470-87b462c66c62	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-37	10010001-J8XHD	$2b$12$7uDAzpckGIax0sme.fLmau6.7BLjT0WY/HoVKmnYb43oUG.TixRYG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ธัชพล	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	68c362c6-e368-4981-aa8c-ae00a754e817	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-38	10010001-C5ZWM	$2b$12$6SH5niBBvCQo98.br6BV0OF5U/YhgDVMH7FwK9paWs2rXu1s3C3B2	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชลธิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8c0f1cdc-db38-43d3-bae3-cf53e8bd41e0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-39	10010001-7JBZC	$2b$12$Kgj2XCuv/843nDD8C6y.MOTxas4CbYHEdOIBbAoPuQAXsP75D.TQu	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สิรภพ	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9f46bd9b-fa6b-4d26-994d-b3303cdb024b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-425	10010002-PTYVF	$2b$12$ByMLOaA1SWxYgUXMYybJLOTuFIButFZrYOUoCctwxcXZXj3gl88Sq	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:40.636928+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:41.095+00	2026-07-08 08:24:41.095+00	2026-07-01 08:24:41.793754+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-40	10010001-V842Q	$2b$12$AyBALrvnZ83qydB8zOD4beIyvNFVbvHPDoPTTrjsEjUmVWmm.jmqW	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐนิชา	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	190fd5a8-6e44-4385-b3fc-e4be68847952	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-41	10010001-C76QC	$2b$12$v7jUkwIjwQwQA2J.QM.6b.wNFrZqb6W.smzZcgPWMogPapbizttau	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อัมพร	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6aeb5902-15e3-4dca-9a8f-9c77b9b365bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-42	10010001-K8KT5	$2b$12$zCB8gKhS.0CJP66Ip8qpAuYL4H8nn0ByHiBvj21mVXyQj9FmUvOdK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bcce8cfc-fb1d-4cdc-960a-f896c98f08b8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-43	10010001-ECWTJ	$2b$12$5r6QVLo93Jqig0tfUKq6XeuxomX2ADkKLiY0z7Qjxx0rJ.SJdBy0G	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ธนาธิป	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	13c7161a-c3f8-4b1d-8454-1b76512108d1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-44	10010001-6QKS6	$2b$12$vaP.XoSRaI.OzSGFuCo.o.YCJETpNWOiTHJM9c34zQCL8Ct5oq4Xi	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชูเกียรติ	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	906db2d4-4392-4ab4-8faf-fc315c8ee0f8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-45	10010001-HL5WJ	$2b$12$iMh.mvCtxR7xtp8Hpy76EehKaJAHvbNcgUiuB3.YRJ8H3CGtQ6.GK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	นรวิชญ์	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	00c3fb63-dc03-4b24-a4a8-5cc4a4dad02f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-46	10010001-2GM5V	$2b$12$2SutygoLs4uXtcWlUF6Lu.TqvH8kljNq754F6CW2xXvSQBa4YFgIe	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	นภาพร	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b58e18f8-5864-4827-882d-36524b71c6c8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-59	10010001-2XQWF	$2b$12$BtkPliLWZpfczV4APQxa7ed/3m031GP/DXYnfpiVl9jqffl3SVdz6	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อนุชา	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b20c93f6-15da-4823-9499-27ee92f24a3e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-60	10010001-6JLC3	$2b$12$BqA4ByADc6Dyz.1PTc4VoeYCrB3D1BMHN8BcYgN3w8zxBO4jXTKYK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	459af1fd-23fb-4ad5-a184-ef89f9108adf	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-61	10010001-T79XY	$2b$12$JErZ3jVU0na9FAiNX9YxruZgywb7plVV0NQPvQn10fN6aPrhOapwK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	135d09fa-b227-43fb-b9f9-e73ce4fd6a38	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-62	10010001-9SMVH	$2b$12$suUSkoNflBxTpezC31MlA.9zwYhZW79P4zzDEvRxhOfplcBVj3/72	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สมชาย	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f75158aa-6d5e-4e56-9653-ec06675547f3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-63	10010001-BGRSU	$2b$12$54S3yzKZWXekcX6xkcVcQO99YB0JfUO5vAMmLOCj11reHwPusXYIS	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ลลิตา	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e0c408d5-f394-4ec9-b50f-4b415491e011	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-64	10010001-N6TTR	$2b$12$bP.XMr1QWfHNKGoJO1s6sOsf/SSqqDl1wHGl0kf4o6pa9X/Crcx26	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	503ef3f6-8aec-4fb7-9f60-33ea8a04d83a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-65	10010001-7U6SX	$2b$12$72C99VqqmkTWSZf0YV5WqOCZPp3BaTGcy3MkttwG0KR36RMJYioGC	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c614bd31-a83b-4571-907e-94eb863d2939	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-66	10010001-7MTYW	$2b$12$ZO43UHFj5MkotMt1sLRiuuQJb5jfaxyw.XhGeC6kIGwmxd0k37vJe	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	พิพัฒน์	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f7ecfc87-f944-4e14-9962-deb1b3a42500	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-67	10010001-3RXDE	$2b$12$LlVFpiCZeHXHE4Pyjqh58O1OEk9h5z0wE.6oxIawamu09GUPs7c.O	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	มานพ	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f40633f3-9758-4f22-821e-eb5c8257bd93	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-68	10010001-79ZWA	$2b$12$kYXnfF.QulwSjeQGf6pQleIep.xCXS6Pe9uBxtOwekWU68RIre1oi	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	นันทพร	ประสิทธิ์ผล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	49c5492b-8daf-4990-ba8d-1e436ed8c974	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-69	10010001-WVXBB	$2b$12$4U9vF.uIXkyze/61nGS.t.C512XwKHuI93qZgbUExYIZr94Z7IgCa	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	แสงสว่าง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	575331b6-8924-457d-bc02-34ace5125a72	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-70	10010001-GMRLF	$2b$12$gGssDpXfceKyXFYhuXdgYuKijilHGoh2CbiIEDFTkj1rpyL7hYGOe	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชนิดา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8bab9ae6-c904-44b2-82b7-2cad79a67169	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-71	10010001-24PHB	$2b$12$d/TwdvVQCaRsb8H79smPxeFrF2lH2jNK8EFAtdCGMI2ZSyMYR.igG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วสันต์	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5aaec2f9-21ab-4272-833b-81e0a0016c8e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-72	10010001-KLFEC	$2b$12$ILdoGnlC8YawhFJ5vmINVuULLsJNFmklsybG1/UpcR1lr.t.L2fjq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f7341b04-dc21-419d-9d8b-a6f034013ace	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-73	10010001-BZVWM	$2b$12$S5niiXVCvqMVMbU6ZBP.PONW7GkWJBDWiXxVwMlvUFIqBHFQH4OFa	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	รัฐนนท์	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ca9b3bca-f090-46a8-a80e-dc2477ee048a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-74	10010001-H667H	$2b$12$AI4MS9e9DkYsCylp3Kf.nezQgWnXeqAT5o/sqipagvjoQAen2cGwu	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุนิสา	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f15039a5-7881-48fc-b3bd-7d3b1ebe124a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-75	10010001-4VVST	$2b$12$PnoxfjOi8rZv2CAnMNgDf.kN7ieAVAfLS6/nLBNaysTyNba7kFjO.	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วสันต์	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2e0d2e55-3a29-41ee-ac17-3fc8e22917a5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-76	10010001-9NUKN	$2b$12$PW/cPzSfLWCBXnI5Vclg6OU2g57fFxp3co8TIz/OE4Y8mHJe/OIaq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	กันตภณ	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bbd65c65-e86a-470d-b7e4-7669ee9e44c7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-77	10010004-PTCC5	$2b$12$HDwjBfqgKaCBo5R4jnSKnuR/0gOlo.VEy6HT9lpwiDxqhRuCJMM5S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สมหญิง	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0fca192a-3414-424f-b501-60dadd533483	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-78	10010004-2TF2M	$2b$12$bLRtFKq1LssigDauXIv9gOcreHZkwtJPk8W0F1gWDQXDsmacXBp7O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	อนุชา	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce24c72e-ff42-4e26-b72f-1d2d9a2d548e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-79	10010004-28Q2B	$2b$12$ZKzq9IO2y38d/JRzswcbL.4U6PWizgyJTy/gaEXGjR6cT2MKG0IJS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ศิวกร	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7e85ef04-e81f-4be7-a0da-332b2aade64b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-80	10010004-Y42GX	$2b$12$JxJsLrGCQDPPTfPpXhCzre6sTiU/omf5bgenDv.GmHkG481eYp7Cm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชัยชนะ	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c69a5d7e-dfa1-432b-be4d-de021f32f4ca	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-81	10010004-QNVZ4	$2b$12$ayzbOuqc79HTkIfdlvGv9.aD.NID0iDudWKj3f2Iu6HgpBt8dABHK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ภัทรวดี	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8ce26197-7791-4e54-8dfe-649d9767f2e6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-82	10010004-3J36C	$2b$12$0X8HyGwNfOOODig/Nsse8eXwBIZ56/POKBryLfWhg9XArYi/7kt26	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สิรภพ	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	faf2a4e4-9c37-4300-9d5b-4f6d0e466f98	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-83	10010004-HQ4JH	$2b$12$5AdtLHoM2Z5XOeipeYSlxeThdnRyU3y22op3VC2W0oqTroSV6oSQG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กวินท์	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f58787fd-9dbd-407b-a97e-63c607a1e69c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-84	10010004-FCEYW	$2b$12$55jvmEc.utscx5th84YkAOSbagGUDfgmgCP9VuPmCn76sDTWZAzYm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปรเมศวร์	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b1f2c972-a837-4358-a3a1-21394632388f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-85	10010004-WQQNE	$2b$12$FpNaJPE9PvTr2wj0roEYz.4kf6raSRIsJSGXhgDSPQTvyH4H/7fmO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	พรทิพย์	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f9f0b479-dd63-40c2-a77b-e3692341e63d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-86	10010004-QEQ6H	$2b$12$mEGXjDao80I/rUMfiCGufOv/tUQRiV3V.IvYsVrUoJzqodepngNky	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กาญจนา	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	74028d96-76be-4e3e-a75b-47391d0e605f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-87	10010004-XE5RX	$2b$12$qfRwT4FhyTWDM3XnumJuv.qH0kHooAayT/if3cIRt4YK2TPZtzAFO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปรเมศวร์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8700a7d1-3660-4d76-9668-237fc69aa2fb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-88	10010004-HE38S	$2b$12$M5AefUdBPz7.8YXtWvz/J.4WanV1DRnbSzyrH6NjMYIZpBNRW1iXO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปิยนุช	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fc5f3852-0733-4561-befa-eb5769399f0a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-89	10010004-JHXE3	$2b$12$Cg/kKpLjBuC1yBVD8n4BwO8LcXy4XgCmfZZmYt1oEKFpXrg6E.5C6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	วสันต์	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	086ada13-9cf0-40ce-a375-e30c998bb68c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-90	10010004-L6WYK	$2b$12$LVr63yK/eLRTvyZleWBfmeU2IEP3Klu0DOiL5BD8jpMiI6ia9TmTW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	มณีรัตน์	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2efc6fd8-5eff-4b1d-ab9d-9cdf54152a4f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-91	10010004-Q7MTU	$2b$12$m3wus/tRaIaMz0KEX1CuRu0F6XcPctd1K1L.KKJJ.tNAepfrVSIZa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	วาสนา	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7ced825a-c639-4582-a57d-e57a30f5d729	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-92	10010004-2MWX3	$2b$12$bcp8frHeYMziKYC77W1TMuKV7OkfCOuNsFCa0MvfQFIBli6y7MSfS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e62b0c83-f006-49d3-a96d-9ba69a3c0772	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-93	10010004-HPRF2	$2b$12$wjw0BiLUeWgKkg7/iSf1aODZkJbvSaNsx4gAFxnb4jd1MX/CnLq/y	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2151eb22-401e-4845-af27-477a85bef2ec	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-94	10010004-6PESX	$2b$12$7D8z/l.dIhC5T2Iy1RQQY.PnqJAyCHxj8LxBhKvrLuh1bqoiTsCEe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	รุ่งอรุณ	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	76d26d88-5760-464c-a22c-d987f52e7ec5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-95	10010004-6HP5T	$2b$12$ho0Bp7IY99n6/AHsz27qOObd0Fs/zL8IzEUiMsE5Xjhyb9jYoyVpG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	จิราพร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	68db1529-9584-42f8-bdbb-0b53610db037	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-96	10010004-CVX5J	$2b$12$aXoEQ5KMYunPwE3Jr32TzuxpkdhmhFeuCXoP.JvvkpZ5x0JTQwU8u	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	นวลจันทร์	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d3288f69-0d8f-4f17-814b-7f762f948162	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-97	10010004-SHEB9	$2b$12$fl.Q/yxzwqESyyuF3pjpmOWeZezbDmXj3Hjp7z/7Rq50Dh7QaxAkC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปวีณา	วัฒนากุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a9e10125-1cd7-4d6d-994d-25dfed7531f8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-98	10010004-HL778	$2b$12$uCZlVsZLb/UCgpGWhI3sleIFb5iX5IFUcyYJQQzx9HpihSawP0kii	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สุมาลี	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bd3154a5-2d7d-42e2-9f99-5f664f0efb20	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-99	10010004-UH2P7	$2b$12$wEoQ7pxcIryZVcMrAdbmieErz4HNWgiD2oFv.aXK1TaiDleYvUSDK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชัยชนะ	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8e8b8b55-d7ac-49fb-8b27-dd9d07fd6937	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-100	10010004-UBCUU	$2b$12$z0ojS6eCydchRpoWOkIVY.EFiW38wq3zb5oLlOBplvDUahumLJ2Mu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ศิริพร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	edb2d487-e643-408a-ac07-7afdbd693a58	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-101	10010004-GY292	$2b$12$OuccIwTYgQREtIyBqYR16.xYlBhWWduTS1m98DRtzjFGvfLuDcWHS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	พรทิพย์	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1beafb01-46b2-41d2-85df-ad04775e5144	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-102	10010004-WC2B3	$2b$12$b6Apja85ghp1On5C0CKNoe045ZUkK3TmQGOkB6LfrxUvLbsHD6gEm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กวินท์	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5c87899e-ccd1-45ec-b484-558fdd73dc4f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-103	10010004-DA4KJ	$2b$12$0IYhJyymetw6uMFBZCO4hegylpdxOgxxedjd4Jfnivemhoxobea7.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ดรุณี	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e893e598-69cf-4aaf-aadc-28111f475e1b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-104	10010004-9RGPE	$2b$12$2MMCga7K.O09GQEGucmunOizoKAAw0M3rb2I1DGGSgjLqsXzUfotW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สิริมา	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0a05f584-3380-4f04-b819-134534598c08	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-105	10010004-2D5D7	$2b$12$QxomnKtFFEL4T2ANjBxtUOk7hTGAmEw7AkMwPi5d.320yUxwXx4gS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	นลินทิพย์	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	16ec39e3-67db-4384-882c-d8468fa47088	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-106	10010004-5LN84	$2b$12$j7jd/U.NnofCnso0hD5Gnuf2z2rad8Y1DsBym1yXtKUuLLcwPZW/S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ณัฐนิชา	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9a2d691-7dda-46a4-bfc0-05eaf6d03d01	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-107	10010004-EG9Z8	$2b$12$p4GHkMNe2P.lRlhpKdLVpeTOQnlToQPv/Gh2jKMYHfAFswJF1r/Di	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สมชาย	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	47724f20-39b3-4177-adb3-5753b119db48	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-108	10010004-XBTG7	$2b$12$jhyfCCjLZrm60DmiIpxC9OZ5OiWUxaDOcxwQ3eFAoZ5/mhGm98LWS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สุดารัตน์	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	26d92594-4824-4f6a-8494-a080baeaa5f5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-109	10010004-L8MBM	$2b$12$4CIiMOGcHw25Ce/KPGbdx.gDI7uaXAcNlxmlSSbiAhL6S.QLdgICu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	อัมพร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b3f1e01b-f93a-42ab-b346-64a453dff7cd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-110	10010004-UA867	$2b$12$AnsI.ua/tqusHeU0sBO1PeUyj4g5DXiaQ4t7sGykIBiz/wmzi2F0W	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	เจษฎา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	30a3a507-ec30-4715-a90e-150b37ba0f4d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-111	10010004-ADGC2	$2b$12$jQzad0MrrgcWP7BVOB6/z.3oMI0cZ3pEi5P3m8yh.JWSa8X01406O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ธัชพล	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	32503136-1732-4256-a7d8-25037c28d813	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-112	10010004-XFFDQ	$2b$12$ctE9CQAtnRQ0zaCNqD47BekQN25HLuxtWNZ.jlWMaUMfloVwn/vkW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ณัฐนิชา	เพ็งพา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	553c07c1-6713-4ca3-bae3-c0dee467cb85	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-113	10010004-UCD9D	$2b$12$diSGM.A1/qtR1KlB3A7qQuecxH6ILuwPIvisoCag9ZnA.lPWMyN3i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กาญจนา	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3d2bd049-446b-49db-a5c3-55ff1dcfb919	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-114	10010004-HRCKU	$2b$12$XHnkJ59r8ZiAYRfiPofF6uiiZ7fd9Bp3bONtUafxDD/ggHlmEx2jy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชลธิชา	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c857e4ea-c9e7-46f1-ac58-7598a8e79b40	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-115	10010004-ZWNWY	$2b$12$l4iGKqssD86rYkxdQ0TRJuHtfhKe2NTpK2VH0GeLzoawjUZUqqnDu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กิตติภณ	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	118a5980-f972-415c-9389-372b4744ba5f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-116	10010004-V9G5B	$2b$12$SFNnTh0O9HhHNawesP9R.uS9YJgiL2utWIRwfMXf2vxvVZ.C4NybW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	นรวิชญ์	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	652d2e75-e8a7-4562-a185-6c93e0b1c902	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-117	10010004-5QUR3	$2b$12$2asuGeL0PGLwA5uhS1SBmefUMzh1EPgZoUS8ZUMPDmTSkmF7CEm8u	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชูเกียรติ	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	62edccbb-0cea-455b-bba6-878c3d0f90a5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-118	10010004-7GYY7	$2b$12$rbpVCtaomb9O4AusGi21yu4PBqsJlEAN5O9ysDJ7JZQDf0U8WYcGS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	077a3d0c-d4ba-4022-bb33-467705f42e27	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-119	10010004-LWYV6	$2b$12$QvYfLGo.t1jMOp28yb8dbOIbcoVbeY8RmekRgGXZ27cxOqe1Ac7Ai	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	อรณิชา	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2b21c6a4-fba0-4de6-b8b7-de76c7bfad69	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-120	10010004-KQPBQ	$2b$12$8LDywze6NwsFTb1r7TPh4e.sHhM8KzmdDPGnhboHhK1ztiKM8HTjW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชาตรี	เพ็งพา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5e28bd45-1dd1-40b1-8416-6c35bcf3b727	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-121	10010004-MGHFF	$2b$12$qRWVs4UJ8U/4cdIofiv0Ve9d0oCyAf2s9gQeMXGeX58X8im1EIW5.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชนะชัย	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b4756be6-2650-4fff-9e02-0b325af5ff5d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-122	10010004-544W7	$2b$12$rXxv3SQ3m1auEAHCzDcGCO3yhVTHjd7RHJ3IoVhNY3L/0DtDd/BEm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ประภา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0862d705-21a5-4cda-9482-cb82077ad498	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-123	10010004-CEXZ4	$2b$12$4gsNiNVYzxzUBiKMt.YaDe1A0HvPSsIcaiMNOftj0M1RfQEcMDFKq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุนิสา	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7bf6422c-5e26-434a-acd2-ee4ef7cff915	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-124	10010004-Q79EH	$2b$12$5tM6YQRlvmqE0HTKp7T8remfTuKAD4GjR19PkJHUa1YlWVz1zAkWC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	วรรณภา	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f76a4b6d-5ece-4966-b6ac-161685ffba86	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-125	10010004-RPSKX	$2b$12$pmjZHArWEQvTk3vq.rZ95.rIbk2By/R/hXX7K3Y90rymXl67AK1cS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ทักษิณ	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c20c44cd-174f-4ee5-9661-5f92ae1f5631	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-126	10010004-WK9FX	$2b$12$5LQ2X2xyp1y4Z2nabyYdH.ZoQ/awG8yTMEyI4IJBWLK11K6SBzz5m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กุลธิดา	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6101ece8-9a7e-46fb-998a-d5d8270f8c98	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-127	10010004-AQCJX	$2b$12$cZs688smq4KbJvKkLTeNZOC4UaFpR3yepcrbBPl909ATVerNrLIDW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นันทพร	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	272932c1-2013-4f82-9400-f2f32c8fcc51	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-128	10010004-ZMY88	$2b$12$aIHqZ1rHsTOD.GdBv6j.0eBZAHdW2RBEuka5NdpTrepgFC3OKCy6S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชูเกียรติ	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	263ffc2e-472e-4f95-b4e5-9ccd2d41781e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-129	10010004-NLA67	$2b$12$4pyCjWe/lTUNUhivTp4b4O3yshii7/m.ZGf3z/6hynfmnR0B5W0ga	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ปิยังกูร	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ac55f503-dca5-4faf-8be2-eb71dc76797b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-130	10010004-ADZD2	$2b$12$zKhhljNE738llaRVNeMF5uYTnSmd0XBch4shFSChNWx84nAEtUZzC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	คุณากร	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2f167875-5532-41d4-ac27-c6776399033b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-131	10010004-F5LLH	$2b$12$S4CUlM504WtA9hNP4QbTeuHDF8/UK1KIbk4nfS8GwpME38kdiTlae	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9660482e-35c2-47c0-b293-3b7b26920dc2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-132	10010004-XC4L8	$2b$12$ynM/Wwenl1y28VFzHZZQY.FiYXiiFg0ZHx0nFOSpXfptOneHifjMy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นพรัตน์	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	276e758d-f226-4895-acab-e456869d869f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-133	10010004-JBKE4	$2b$12$sAs/HYkJN3au3pEyRpVzOeVmGP9ytK3fun/2X/5rzmrCNFLenzORK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นพรัตน์	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	74d5f961-0ae5-4b26-8cce-0da4fdebca2f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-134	10010004-8858X	$2b$12$BqUK5l7DhUUtJd1TAHKP6.byeYjfXDBrYZjn0lS5X97Rz2hn0rqAm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ธนพัฒน์	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	59473825-7409-4f24-9e20-9df64ebecee9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-135	10010004-A62QP	$2b$12$z76dbLNTfuWuzwVo8sH2yey5i7RWzn85rkpm3hOEHu9asEWMCiGqy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	พรทิพย์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f6c48c33-3fe7-47ca-b30f-e0a10e14c4a4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-136	10010004-7L5HA	$2b$12$Cd97/pYrk1uS.pfMho/2jOEgpc6JMvHZ2XSnYpBgH5cVFJ9lhsJ0a	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ปัณฑิตา	ปัญญาดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8bc64818-7449-4a5c-bb08-7df2916f7b2a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-137	10010004-34JZ9	$2b$12$G9sgHkKbddoQ9jolUxJUKuCfpn0XzTyfTvO8cJEayXktmvUUSvIZ2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สิริมา	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7e8694bf-13be-4605-83ad-2064541d1da1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-138	10010004-CV9HB	$2b$12$2r2NLaPH4AkPY8j78HW9X.89c3xMV334ZsfTIA8iXOswSI/yOH.ye	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	อัมพร	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9703197c-1180-4b16-8655-13692f1981db	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-139	10010004-4EMLM	$2b$12$H2qTq5T6AqgPzyZXsTxgUOk9QbDq/nzXqnoIGbwtn7DEejyCcFLJG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6b00cedf-3bf3-41cd-903b-9106467cf0a2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-140	10010004-67MLV	$2b$12$6zatekEUx3vN0iZXMFDlguy3Ggr9AAsSdIpG1SrRB71TjgKdRif.m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กันตภณ	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	11ff5373-7d84-4689-8f55-77a2c9fcd5ec	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-323	10010003-U2Z9X	$2b$12$6jWwEY1s/oGnhU13yPn25.I1ORp3AVPuGM4FfzSaGVqNr2BxjahaW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	นภาพร	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1c21f8fc-5849-4bdf-94d6-f4f284194158	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-324	10010003-WLGRH	$2b$12$gHCO61GRCVAukhVcZQsQquN71uy0vDSwILhmWqbbHszbDQMjz2bmC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	จิราพร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bedb8e0a-a2a1-4bd7-9ec0-13e47531c9ac	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-325	10010003-G5FQQ	$2b$12$wjypjTVPgxHNtpL1DLLKke4erU5/nYLCKEWuEupfOhFDnrS9JynAm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	มณีรัตน์	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	48f91ca6-63d8-4cf1-8f31-95276af5bcf6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-326	10010003-E96VH	$2b$12$ACTeIQGQZzNKJzGiCqysxO8Krx5Wb4CNJhIe7.i1kORc4n0JMWiHq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	698cf0c3-fcd4-45f3-b937-0ce7076099bb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-327	10010003-ZBT7F	$2b$12$lsgDkR8BaJ3xE6WYHfPp0O84RTzQ3S6azrJirn2owADorTGKY4agi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ปิยังกูร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	07d5b5d0-78e5-4790-86e4-61432c363c1b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-328	10010003-P6QUE	$2b$12$mvEWG/eTs0m5gAt342cJbOjZxf8uDh89dC/.7.edsBK0T1uj.uwya	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จิตรลดา	เพ็งพา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6c7966b5-fb9e-45c3-acde-fc5e91306b3f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-329	10010003-63PVS	$2b$12$Y8QavtCd1PL.1X4cWM22EOyMnJyXU2yDQSMoQJQndWyNdU04GK4ze	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จิราพร	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b328f0f7-2a90-47f9-b88d-6ad060e1aa9b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-330	10010003-QE4DT	$2b$12$/QqleJr.FU/pr9pzOofayuOqX7L3D07dMilqZBJnRph.Fx0HdbxK2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กัญญาณัฐ	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	61a988b5-4a37-40db-b67f-45cb231ae1b5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-331	10010003-HFKAY	$2b$12$uZhi/JcdUAN9Vo5Ynj6X.eiUJeC3sN1XenZGOLPSENdo43oZpZlfu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กุลธิดา	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e296f6d7-f70c-4a55-9d5e-ec6adfb680d8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-141	10010004-GQ5BQ	$2b$12$rsU8JjwDDFLQiL84B/Gm3uhPz18P8AYFU2r5vr2YMwxRJeoP4465y	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ณัฐนิชา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	296d09af-8079-4635-9779-61fea5b0897c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-142	10010004-YQSZ8	$2b$12$7tZ7eqxWvIO6E5QJMiW4Pep.HgHigsVkHFuNzlhkyuhElfd88obLu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0ba65afd-4784-488a-9737-894ce2807f62	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-143	10010004-XTFFV	$2b$12$z7pnNmbPURnrxaAudgtzn.eUWeBuEpXug.nHsBMh8Qgu/7ymmz4Iy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	มานพ	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a74f671f-c8de-48cb-92ac-d4d7cfbe4a31	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-144	10010004-TZKJC	$2b$12$TTLPduYl4v8P9UytnNL4xeCLpYPbMfWICi1toBNfG1flOv6EMHf2q	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นภาพร	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	32b3ce02-15d5-4d8b-bc36-22bf2d118df4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-145	10010004-RTEXE	$2b$12$ZUGqX0vsv.m8QvvHP9ahyO.odlT1XBsdA/IFlPLRgAMicvRk30LEy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กัญญา	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e580fe04-8d7b-4424-aaec-b0da691b0242	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-426	10010002-DYH9A	$2b$12$eyuNpgNDKp2BvRg5RMBkAe/CzyIEJC6CIb8dAaFgQFWhA1QDXNqfe	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:26:00.206266+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:26:00.695+00	2026-07-08 08:26:00.695+00	2026-07-01 08:26:01.417646+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-429	role_scope_smoke_teacher	$2b$12$DSvBOgJswlklr210OKkVOeCvkHM9UKZ1MAv.lphSSXSJUCMkoTRTG	Automated role scope smoke	DISABLED	2026-07-01 08:30:53.19538+00	9900000000001	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:31:11.898761+00	428	428	\N	2026-07-01 08:30:53.196+00	2026-07-08 08:30:53.196+00	2026-07-01 08:30:53.654501+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-427	role_scope_smoke_global_admin	$2b$12$Oh47sIAOHL8iK.0GmvyGdO.VFNKaFXGZ12LuUzmCagi8ig0lF27QC	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.477154+00	\N	\N	\N	["manage-users-list", "home", "attendance"]	Role	Scope Admin	ADMIN	{"global": true}	f	2026-07-02 14:17:53.963674+00	\N	\N	\N	\N	\N	2026-07-02 14:17:53.963674+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-428	role_scope_smoke_school_admin	$2b$12$ALuMnn2SsLXz4RvQOJOtMuJz8TGQDin0s58Em2bg6h8jC.6n.UeOy	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.698448+00	\N	\N	\N	["manage-users-list", "home", "attendance"]	Role	Scope Admin	ADMIN	{"school_ids": ["10010002"]}	f	2026-07-02 14:17:53.963674+00	\N	\N	\N	\N	\N	2026-07-02 14:17:53.963674+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-431	role_scope_smoke_teacher_1782894714327_mmc1p0	$2b$12$3adjFNmGByXdO9PXT1B1FO2oJmPzvWkygxbPIOrV5QcPzWzgmI3Zu	Automated role scope smoke	DISABLED	2026-07-01 08:31:55.268939+00	9982894714327	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:31:55.769949+00	428	428	\N	2026-07-01 08:31:55.269+00	2026-07-08 08:31:55.269+00	2026-07-01 08:31:55.769949+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-432	role_scope_smoke_teacher_1782894721505_x9cglx	$2b$12$VYiehrqvDfEcvFwlqHjxrOr8uESj1vVDrv65kEFBqFjhaIApMTzL6	Automated role scope smoke	DISABLED	2026-07-01 08:32:02.434948+00	9982894721505	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:32:02.918781+00	428	428	\N	2026-07-01 08:32:02.435+00	2026-07-08 08:32:02.435+00	2026-07-01 08:32:02.918781+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-433	role_scope_smoke_teacher_1782894788742_8irdn4	$2b$12$ZXb5rm/PKKULe6HbefMaLeRhYDt1lXBdn6wBckECHswjIBRdLcRvy	Automated role scope smoke	DISABLED	2026-07-01 08:33:09.674962+00	9982894788742	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 08:33:10.146654+00	428	428	\N	2026-07-01 08:33:09.678+00	2026-07-08 08:33:09.678+00	2026-07-01 08:33:10.146654+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-434	role_scope_smoke_teacher_1782896698932_n7uzta	$2b$12$QC2Gg7NSREsX4vE61nXXsuori0dw9EP0GGA7GknXp11xfdR9eaif.	Automated role scope smoke	ACTIVE	2026-07-01 09:04:59.874589+00	9982896698932	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-01 09:08:15.962453+00	428	428	\N	2026-07-01 09:04:59.875+00	2026-07-08 09:04:59.875+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-435	10010002-K36WJ	$2b$12$HKwpBvqCKkAJaIABsq8Uk.wwxUEP4dMqPOCdhEI9p/f47OWSp7Leu	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 09:05:44.025618+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.481326+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 09:05:44.484+00	2026-07-08 09:05:44.484+00	2026-07-01 09:05:45.216066+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-146	10010004-XZ4ST	$2b$12$80B/0SwbSih9RYmsdtU2p.nguCqif0rfHUC9Pa0CCahjfX61aTD2a	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	เกวลิน	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2bb29287-fa05-45ca-9988-7d21039defbc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-147	10010004-6R7PB	$2b$12$8wM6kIDUqR/LWkRx8bIGruOOUMkrXYoVES6zsGp2M78l7QLq3Zghu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	อนุชา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4207f945-2d75-4f02-ac2c-1acd90a04f8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-148	10010004-Y228F	$2b$12$9/h/vvNdqxYNP28vLGphSeRmhYP9wel3t0/CAomY/LuZhY8N6I.Lq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นภาพร	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d373db90-a6c3-4400-a735-6fc395acd8e7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-149	10010004-RQXGT	$2b$12$cWYNZbAGgARJqUBzJEpQ9uJOkeJjtkaN/mdso0RQ4gjUMO2NwQ.cu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	รัฐนนท์	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e80c95a8-44c8-4616-bce8-7d69125d52c3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-150	10010004-T7ABV	$2b$12$iEec/1rLCwoepSpx5bvHkO9rq0AsosC1A2SYzF5HsuFaeioRqk.vW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	แสงดาว	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fea5ce59-b3ff-4de0-b54d-df3d046f4940	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-151	10010004-VMR6H	$2b$12$z91ArNqVM3EIIenKK7HOveVzbCazRKxP6i2OvlR/UOnblZIZBG2.i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ธนาธิป	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce6d4866-88cc-466f-8df4-72a065a2b588	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-152	10010004-NQKGX	$2b$12$i1NiZBc848pMWv42kBh4t.FdgiEDZjDVk8x7W7UGwT94YHTQkbK3K	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุรชัย	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	89b4ef1e-2c3f-47dc-a3a1-8d2ec6671f21	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-153	10010004-GVTR8	$2b$12$GaqmD3o6Wb8.UIzrQV41DuHeLPAMHnnJdYmNnH74V6I/XTfT66rQG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	มาลัย	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	688a46e1-a18f-455e-8df9-fc6126b6d4af	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-154	10010004-YXTX3	$2b$12$RGwoF3sx6exOVMH4mlOE7.F8uMt5vWPw69R7bLD2iUM7PhuLQTGYu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1ecbe799-7474-47bb-b0c5-71b00b728615	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-155	10010004-2HCZ3	$2b$12$yfiKhV1/so4I.Te62IVO5ulkfULFhpFYEvh2snb0y8dUL0LEKELuW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุรชัย	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7552c6b7-f432-42de-a099-4f8bd239e0e0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-156	10010004-SBPZZ	$2b$12$kotPmgkrXLoJ5mfJLLA2a.io5lsc43VW8sIqi2oSjloUm1YZtF3Ea	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ปัณณทัต	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71de3ae7-42db-4615-93e0-1ed58eb4d078	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-157	10010004-YCJKS	$2b$12$A7pcsVQ64n/igwZdn/JMe.sBSeM0qocU0RQNKDkcZ.A3aVJoK8w.2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	วีรชัย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8def3e02-3aa7-440b-8e30-04042287e6e8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-158	10010004-ZCSAG	$2b$12$89YRnPQYtfA0quu72Lyol.eGIjQIR0NTnGqE1TRDwLqFvd6KdHOyC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a1dc72be-0184-4baa-be78-83fd5114d595	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-159	10010004-SXFU8	$2b$12$rIkAm6MlvivQS6vUT4/Y6O0QHNPFral0nRKHkZPCE8Y5iaS2MS/rm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กาญจนา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71ec0062-a255-4a20-8531-33a8d5455aa9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
-160	10010004-6PUXH	$2b$12$2GwAYpF/AVwKAYW/a/5Sn.cQ48EUx5zzelRTEjwQlw6ZTuxhrTE7S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชนะชัย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d9bac52c-ddd9-4424-b1f4-70adc4bfa6bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+COPY public.users (id, username, password, affiliation, status, created_at, "PersonID_Onec", phone, email, permissions, "FirstName", "LastName", role, data_scope, must_change_password, updated_at, created_by, updated_by, person_uuid, temporary_password_issued_at, temporary_password_expires_at, deactivated_at, deactivated_by, deactivation_reason_code, deactivation_note, line_id, address_line, address_sub_district, address_district, address_province, address_postal_code, address_latitude, address_longitude, address_village_no, address_street, address_soi, address_trok, data_origin_code) FROM stdin;
+22	referral-outcome-smoke-1782321665716	SMOKE_ONLY	\N	DISABLED	2026-06-24 17:21:05.713197+00	\N	\N	\N	["review-cases", "forward-case", "audit-log", "edit-students"]	Smoke	Referral	DIRECTOR	{"school_ids": [10010001]}	f	2026-07-01 14:51:19.143142+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+23	referral-outcome-smoke-1782321788918	SMOKE_ONLY	\N	DISABLED	2026-06-24 17:23:08.915387+00	1116515656156	\N	\N	["review-cases", "forward-case", "audit-log", "edit-students"]	Smoke	Referral	DIRECTOR	{"school_ids": [10010001]}	f	2026-07-01 14:51:19.143142+00	\N	1	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+18	referral-smoke-1782320563431	smoke	\N	DISABLED	2026-06-24 17:02:43.430622+00	\N	\N	\N	[]	\N	\N	ADMIN	{"school_ids": [10010002]}	f	2026-06-30 14:36:11.209277+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+19	referral-smoke-1782320616951	smoke	\N	DISABLED	2026-06-24 17:03:36.950697+00	\N	\N	\N	[]	\N	\N	ADMIN	{"school_ids": [10010002]}	f	2026-06-30 14:36:11.229874+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+20	referral-smoke-1782320710520	smoke	\N	DISABLED	2026-06-24 17:05:10.519599+00	\N	\N	\N	[]	\N	\N	ADMIN	{"school_ids": [10010002]}	f	2026-06-30 14:36:11.249592+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+25	auth_smoke_cleaned_25	$2b$12$o04BnDcuZ1.RO/Gy.fMCv.fxsLVsKi.IsJAeCpQ0edK.8.O5HU.A2	API smoke cleaned	DISABLED	2026-06-25 17:57:21.67544+00	7824102414597	\N	\N	[]	Cleaned	Smoke	STUDENT	{"own_only": true}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+6	maneerat.d	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	จังหวัดเชียงใหม่	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-province-001	0800000002	maneerat.d@sts-demo.ac.th	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	มณีรัตน์	จันทร์เพ็ญ	ADMIN	{"provinces": ["เชียงใหม่"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+7	kittichai.d	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	อำเภอเมืองเชียงใหม่	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-district-001	0800000003	kittichai.d@sts-demo.ac.th	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	กิตติชัย	พงษ์พานิช	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+26	exec_smoke_cleaned_26	$2b$12$tkS95axCQBuuosSwQd.kkuoHOIbUNt5kdMMItFkoqUaC1kbIjdmba	API smoke cleaned	DISABLED	2026-06-25 18:03:41.091924+00	7824106210908	\N	\N	[]	Cleaned	ExecutiveSmoke	STUDENT	{"own_only": true}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+436	role_scope_smoke_teacher_1782998733824_g9pa6h	$2b$12$3AGjn3591Zl/.LkGjbrF4OWppEXjh.1FY5Zb/ZERzcxeSCbZGiuly	Automated role scope smoke	DISABLED	2026-07-02 13:25:34.806075+00	9982998733824	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-02 13:25:34.807+00	2026-07-09 13:25:34.807+00	2026-07-02 13:25:35.270503+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+412	กฟกฟกฟกฟกฟก	$2b$12$wCGLHOMsJmaeihz1wpl1UOYNtXvGKe/aAnQIx.1gH/SIRJWYnUk4O	\N	ACTIVE	2026-07-01 05:33:10.736357+00	1231212312312	1231231231	adadad@dada.dad	[]	ก	ก	DIRECTOR	{"global": true}	t	2026-07-02 08:36:21.793227+00	1	1	\N	2026-07-01 05:33:10.736+00	2026-07-08 05:33:10.736+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+455	profile_self_edit_browser_smoke	$2b$12$PR3Wlr7jyrLdT.Dx9xMaj.tfoY3BHVSArijIA/di7CF89KUHoWkZe	Automated profile browser smoke updated	DISABLED	2026-07-04 16:23:02.562478+00	\N	0897654321	profile.browser.smoke@example.invalid	["home", "audit-log", "manage-users-list", "attendance-dashboard"]	ProfileBrowserSmoke	Verified	ADMIN	{"global": true}	f	2026-07-04 17:43:32.340202+00	\N	455	\N	\N	\N	2026-07-04 17:43:32.340202+00	\N	OTHER	Retained automated profile browser smoke fixture	profile-browser-smoke-line	99/7	สีกัน	ดอนเมือง	กรุงเทพมหานคร	10210	13.9293601	100.5914843	5	ทดสอบ	ทดสอบ	ทดสอบ	OPERATIONAL
+15	10010002-P7XKD	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	1-3066-30387-54-9	0800000011	\N	[]	ณัฐพงศ์	สุขเจริญ	STUDENT	{"own_only": true}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+27	10010001-3N5BY	$2b$12$ESeIEaD5N1b7Ewc7nNI6veim7iNhRPI83rq2yw/yNdWupwrcPQr6S	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	82b4aa6f-2691-4dc9-8e2c-b5a65f6a384b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+28	10010001-MTAG3	$2b$12$ULkMPswaHEIGMDzLtyGF1.WSMsKfvA/DBqWPpO.HtLjJSt1eUkyaa	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อภิวัฒน์	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	43fb4bc2-ea62-4eb9-b9ea-34edade019d2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+448	profile_self_edit_smoke	$2b$12$cMnmN5tfKu5Ww5iGScPmy.EsjbMO7lW.KHvysJniLkBQb3o./o46W	Automated profile self-edit smoke updated	DISABLED	2026-07-03 17:49:18.745529+00	\N	0897654321	profile.self.edit.smoke@example.invalid	["home", "audit-log"]	ProfileSmoke	Verified	ADMIN	{"global": true}	f	2026-07-04 17:40:58.042646+00	\N	448	\N	\N	\N	2026-07-04 17:40:58.042646+00	\N	OTHER	Retained automated profile smoke fixture	profile-smoke-line	99/7 อาคารทดสอบ	คลองถนน	สายไหม	กรุงเทพมหานคร	10220	13.912345	100.612345	5	ทดสอบ	ทดสอบ	ทดสอบ	AUTOMATED_TEST
+456	student_status_browser_settings	$2b$12$Uvy3wNBhxHpUsSrRU.JAvefmskvxwKAxqcQMW0FaQBLuXaMjU1Rjm	Automated student-status browser smoke	DISABLED	2026-07-04 17:51:49.426475+00	\N	\N	\N	["home", "settings", "manage-attendance-calendar"]	Student Status	Browser Smoke	ADMIN	{"global": true}	f	2026-07-06 01:49:55.878627+00	\N	\N	\N	\N	\N	2026-07-04 18:17:54.941503+00	\N	OTHER	Retained automated student-status browser smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+449	student_status_smoke_settings	$2b$12$j0yVPg099lsCBtNKe/AeLe/GJvLi/i2N6X3RFhdeTM.N4RvgLeOC6	Automated student-status smoke	DISABLED	2026-07-03 17:54:31.787778+00	\N	\N	\N	["settings", "manage-attendance-calendar"]	Student Status	Smoke	ADMIN	{"global": true}	f	2026-07-06 01:49:55.878627+00	\N	\N	\N	\N	\N	2026-07-04 18:18:00.880072+00	\N	OTHER	Retained automated student-status smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+413	test	$2b$12$YTUqexjKze.fnGO7tbHSQ.pOshMqMt9YdhDspmk0XwjMcQQ2n2Ki.	\N	ACTIVE	2026-07-01 05:34:19.058212+00	1231231212312	1212312312	12daa@dada.dawd	[]	rtadawd	adadada	ADMIN	{"global": true}	t	2026-07-02 08:36:21.793227+00	1	1	\N	2026-07-01 05:34:19.058+00	2026-07-08 05:34:19.058+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+437	10010002-9NBXU	$2b$12$Wpv0leAgIYFdsD6c2567huzYEUzOciSMvrmGDH8ncbjX3gPHqVwj.	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 13:25:46.621062+00		\N	\N	["home", "student-self"]	ปัณฑิตา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-07-02 13:25:47.550193+00	422	422	7aa9e543-785b-4f01-8983-818f035c22a4	2026-07-02 13:25:47.078+00	2026-07-09 13:25:47.078+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+447	student_import_quarantine_smoke_no_permission	$2b$12$.ND3pkdfs6FeUwnyuQH0ruHya0ZpexC6WzCJlroc0I52XIYsGPncS	Automated student import quarantine smoke	DISABLED	2026-07-02 16:32:12.293549+00	\N	\N	\N	["home"]	Import	Quarantine Smoke	ADMIN	{"global": true}	f	2026-07-03 18:14:58.737213+00	\N	\N	\N	\N	\N	2026-07-03 18:14:58.737213+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+457	student_status_browser_no_permission	$2b$12$9LS55v.hP6vPXQQwX9Ooee67YolxaIOXvPc3TbcGNXx5xrVwiGVPC	Automated student-status browser smoke	DISABLED	2026-07-04 17:51:49.651376+00	\N	\N	\N	["home"]	Student Status	Browser Smoke	ADMIN	{"global": true}	f	2026-07-04 18:17:54.941503+00	\N	\N	\N	\N	\N	2026-07-04 18:17:54.941503+00	\N	OTHER	Retained automated student-status browser smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+450	student_status_smoke_import	$2b$12$hRXBicEb5Nl8h2Y.9c0w3eFm3Ht/6MBNLHqJJYCSh42GNWzMbSTcS	Automated student-status smoke	DISABLED	2026-07-03 17:54:32.011904+00	\N	\N	\N	["import-data"]	Student Status	Smoke	ADMIN	{"global": true}	f	2026-07-04 18:18:00.880072+00	\N	\N	\N	\N	\N	2026-07-04 18:18:00.880072+00	\N	OTHER	Retained automated student-status smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+451	student_status_smoke_no_permission	$2b$12$qKYXNLhsc4AF1LD9N9lDpe8Hrp5oqxt5z./hAd4dpQdjgrOs4IY7O	Automated student-status smoke	DISABLED	2026-07-03 17:54:32.233199+00	\N	\N	\N	["home"]	Student Status	Smoke	ADMIN	{"global": true}	f	2026-07-04 18:18:00.880072+00	\N	\N	\N	\N	\N	2026-07-04 18:18:00.880072+00	\N	OTHER	Retained automated student-status smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+414	account_lifecycle_smoke_archived_414	$2b$12$9h4vjtIOFEfnerB.tKAf9eIPupZrsGzEUAzw0fz50cvd7pVLaGnRu	Automated account lifecycle smoke	DISABLED	2026-07-01 08:13:39.541898+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	2026-07-01 08:14:08.304332+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+438	role_scope_smoke_teacher_1782999215637_paj37r	$2b$12$h75UV/M2iladedrHiUGFDOuMkajQgSkTzJn2tG8pFyWJGl2/kjgGi	Automated role scope smoke	DISABLED	2026-07-02 13:33:36.681866+00	9982999215637	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-02 13:33:36.682+00	2026-07-09 13:33:36.682+00	2026-07-02 13:33:37.214121+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+415	account_lifecycle_smoke_archived_415	$2b$12$8OfGrie1fLB.a2YAcc3c9OmwT1u8yy97Wt7pAWcrYnsDEV7DZXQ5G	Automated account lifecycle smoke	DISABLED	2026-07-01 08:13:39.545161+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	2026-07-01 08:14:08.304332+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+452	role_scope_smoke_teacher_1783101389575_smvq47	$2b$12$X5z/b03ziMxVNx5jtsS0Je6s3RI0txZmn27WPa20krrXlLcbzSzYq	Automated role scope smoke	DISABLED	2026-07-03 17:56:30.559518+00	9983101389575	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 17:56:31.056952+00	428	428	\N	2026-07-03 17:56:30.56+00	2026-07-10 17:56:30.56+00	2026-07-03 17:56:31.056952+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+458	account_lifecycle_browser_admin	$2b$12$0Z.3KN58HQgbTg07W87O3.kea4kuzPJGmaUlH5PIZryufU88FbsMm	Automated account lifecycle browser smoke	DISABLED	2026-07-04 18:22:36.018807+00	\N	\N	\N	["home", "manage-users-list"]	Account Browser	Admin	ADMIN	{"global": true}	f	2026-07-04 18:26:49.481966+00	\N	\N	\N	\N	\N	2026-07-04 18:26:49.481966+00	\N	OTHER	Retained automated account lifecycle browser smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	DEMO
+459	account_lifecycle_browser_teacher	$2b$12$VkeKGOZbsVA2LBUbkakG3eKyG8Hj3/yenvTOl02Mh9rE2GWYttjKG	Automated account lifecycle browser smoke	DISABLED	2026-07-04 18:22:36.248912+00	\N	\N	\N	["home", "attendance"]	Account Browser	Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-04 18:26:49.481966+00	\N	\N	\N	\N	\N	2026-07-04 18:26:49.481966+00	\N	OTHER	Retained automated account lifecycle browser smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	DEMO
+416	account_lifecycle_smoke_archived_416	$2b$12$qr0e0peFQ8/qjOyC2DPA/O1vqMAe0JS22oTEV0Kn0Sv47iiCUabGW	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:08.741212+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	2026-07-01 08:14:09.491077+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+417	account_lifecycle_smoke_archived_417	$2b$12$ZCtqqwM8u2zzZab/qTTh0eWyg5pZgKM6DgijZDR6nt6908jJ6QyL2	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:08.744898+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	2026-07-01 08:14:09.491077+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+439	10010002-QLKT2	$2b$12$4ZqPqnyTxJ2kSLb5dqOx..zoaR2p3Djh5AUPEGYMXXhhr0qcikKh6	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 13:33:41.330649+00		\N	\N	["home", "student-self"]	มณีรัตน์	ลือชา	STUDENT	{"own_only": true}	t	2026-07-02 13:33:42.369214+00	422	422	69c0c792-a464-4101-934f-ba7eb2ed0377	2026-07-02 13:33:41.843+00	2026-07-09 13:33:41.843+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+453	10010002-A66CB	$2b$12$U5/4zIf.67JGEhxrKT04o.MdWXGkVCzA1onVYNsN8ZJHfi7vt/Zx6	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-03 17:58:53.847417+00		\N	\N	["home", "student-self"]	วันวิสา	เพ็งพา	STUDENT	{"own_only": true}	t	2026-07-03 17:58:54.93824+00	422	422	6225fab2-33f5-4bf5-9357-161291c07b69	2026-07-03 17:58:54.388+00	2026-07-10 17:58:54.388+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+460	home_visit_browser_creator	$2b$12$GcKGCkE2aJKzfyfLV3nMfuSVGGz1jQLuUM9EYfFxLj0s92kCJBA2a	Automated home visit browser smoke	DISABLED	2026-07-04 18:41:27.586193+00	\N	\N	\N	["home", "create"]	Home Visit Creator	Smoke	ADMIN	{"global": true}	f	2026-07-04 18:45:53.602798+00	\N	\N	\N	\N	\N	2026-07-04 18:45:53.602798+00	\N	OTHER	Retained automated home visit browser smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+461	home_visit_browser_no_permission	$2b$12$st5MwlbWYBBRiQD16zoqM.T7WGARrdq6GGzbH.8FywItzyGb4iyVa	Automated home visit browser smoke	DISABLED	2026-07-04 18:41:27.80967+00	\N	\N	\N	["home"]	Home Visit No Create	Smoke	ADMIN	{"global": true}	f	2026-07-04 18:45:53.602798+00	\N	\N	\N	\N	\N	2026-07-04 18:45:53.602798+00	\N	OTHER	Retained automated home visit browser smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+418	account_lifecycle_smoke_archived_418	$2b$12$qI6nR65ey7PjriphABFZi.wL.MbCVGFuNYDYd8boLVv3LplZgESBu	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:54.231447+00	\N	\N	\N	["manage-users-list", "edit-students"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	2026-07-01 08:14:54.973837+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+440	role_scope_smoke_teacher_1783001301751_7uisi1	$2b$12$7rhQBA37z/KvnY3.gc0aseJiOtzfd35cH/PVexqgZQYYFXR5N7y9y	Automated role scope smoke	DISABLED	2026-07-02 14:08:22.786526+00	9983001301751	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-02 14:08:22.788+00	2026-07-09 14:08:22.788+00	2026-07-02 14:08:23.255627+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+419	account_lifecycle_smoke_archived_419	$2b$12$5AaRsge06m/yInvNAaqXfOaB59bNuc.CdsaybSUO.HzIvhgpbDnpm	Automated account lifecycle smoke	DISABLED	2026-07-01 08:14:54.236789+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	2026-07-01 08:14:54.973837+00	\N	OTHER	Archived automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+14	narongsak.k	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนเตรียมอุดมภาคภูมิ	ACTIVE	2026-06-10 16:00:32.709641+00	seed-teacher-003	0800000010	narongsak.k@sts-demo.ac.th	[]	ณรงค์ศักดิ์	แก้วมณี	TEACHER	{"room_ids": [1], "districts": ["เมืองอุดรธานี"], "provinces": ["อุดรธานี"], "school_ids": [10010005], "grade_levels": [106], "sub_districts": ["บ้านขาว"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+454	10010002-W558S	$2b$12$IA0vXtG83Klf.yh9ge.rh.kDL0Zy4bsG6pszGUoMlp3cK5Au0H9jO	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-03 18:15:07.470258+00		\N	\N	["home", "student-self"]	นวลจันทร์	สีดา	STUDENT	{"own_only": true}	t	2026-07-03 18:15:08.572762+00	422	422	1c5c39b5-d93a-4f46-9f7a-64d03811637b	2026-07-03 18:15:08.021+00	2026-07-10 18:15:08.021+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+441	role_scope_smoke_teacher_1783001872531_bdpic6	$2b$12$l14TslDRdW1JDzij4n172ul/OM/fOoo2jSydsudy/nN3gpS/cfq0G	Automated role scope smoke	DISABLED	2026-07-02 14:17:53.503909+00	9983001872531	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-02 14:17:53.491+00	2026-07-09 14:17:53.491+00	2026-07-02 14:17:53.963674+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+420	account_lifecycle_smoke_admin	$2b$12$GWo0fMZW5vfDIiG4mQMjyupHW4PN0xnVEvsFAZUs7lavpPGlPt2EC	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.947477+00	\N	\N	\N	["manage-users-list"]	Account	Lifecycle Admin	ADMIN	{"global": true}	f	2026-07-04 18:27:21.313606+00	\N	\N	\N	\N	\N	2026-07-04 18:27:21.313606+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+421	account_lifecycle_smoke_teacher	$2b$12$Ra02rCd72gUsrrgxbYHit.mWQhUvJssrfqIMdg.wiuuCQU3PjD9Eu	Automated account lifecycle smoke	DISABLED	2026-07-01 08:16:27.951823+00	\N	\N	\N	["home", "attendance"]	Account	Lifecycle Teacher	TEACHER	{"school_ids": [10010002]}	f	2026-07-04 18:27:21.313606+00	\N	\N	\N	\N	\N	2026-07-04 18:27:21.313606+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+10	preeya.p	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-director-001	0800000006	preeya.p@sts-demo.ac.th	[]	ปรียา	ศรีประเสริฐ	DIRECTOR	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+422	student_accounts_smoke_admin	$2b$12$dv2jv3npepuMIpQ5himur.v0Og0ecNtYtXetsRXuHJkG1OL5bvhQm	Automated student accounts smoke	DISABLED	2026-07-01 08:24:06.634877+00	\N	\N	\N	["manage-student-accounts"]	Student	Accounts Admin	ADMIN	{"global": true}	f	2026-07-03 18:15:08.809413+00	\N	\N	\N	\N	\N	2026-07-03 18:15:08.809413+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+442	10010002-C37GN	$2b$12$02smRbd30sXMluPP/c/C0OMZezqR7d8dBzx0zJ9tzkcGhdHlmbwDO	โรงเรียนบ้านหนองขาม	ACTIVE	2026-07-02 14:18:24.326687+00		\N	\N	["home", "student-self"]	ดรุณี	สุดสวย	STUDENT	{"own_only": true}	t	2026-07-02 14:18:25.256296+00	422	422	ff1a2091-ac4d-49bf-9f2f-27874853da6d	2026-07-02 14:18:24.784+00	2026-07-09 14:18:24.784+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+168	10010004-MTY9N	$2b$12$a2dX/7LmvRhGfriiwwBFCe9hs30Tjpmd0R0PYC3jL3cUxAZrJvN9m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ธนภัทร	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bf9f4436-67f9-4466-a467-fb89c22216ef	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+169	10010004-YA4V5	$2b$12$oAhRXyadfE.ENkwwrp8n.Oky5u5Oe19bzjPWzqjChXKvR5jJlOqPe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	แสงดาว	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	00e37249-c621-4fe2-adb9-e06d4155a523	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+170	10010004-HU3JE	$2b$12$JIgqeltvuK6cghOw6bVzWuqJ7feuLRl/1GSyr9gOlFf5TZOrOhbYu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ทัศนัย	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4bbaf978-5c5c-4e07-ac93-78b52aa6fb8e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+171	10010004-5RCQP	$2b$12$rzGH8t6/F6/H2GNyLMk.1uTzPB/Z6Av0fT8OsPhKSt9pU0bY0VUpS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สิรภพ	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b31148d1-3034-4626-ac06-9eaa90a60a25	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+172	10010004-TLF4Y	$2b$12$GI7/XWAX/JimAoSFhpZJx.E7DE9gEHJ7iw0NLbErqknMoZUWPoqcW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ภูมิพัฒน์	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a048c6f8-d9ad-47d7-8b17-3e6330528d48	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+173	10010004-52HXK	$2b$12$zioEfwTBhbJLCdbci.cOG.ImLRxf7X7HDLRDyB2xTm7/S68gZ3S9i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	นพรัตน์	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a6bcdf1a-809a-4e3f-9c99-ecbffecccb9f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+174	10010004-R9WFY	$2b$12$pjS1ETS.PY.wqRbw.LTXcOb.VbCjztZLjcNb7vC8fdpvDSct.MSu6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ทักษิณ	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7ae835ea-e17b-456c-8fac-4a2ebb73429e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+175	10010004-YHB5Q	$2b$12$n6cnKiYw36VAmQ2d2ivMHeDZUwjUY3rj4IUa.fI9KB32Gmix7rRhe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f66e90b7-a562-4ecd-b7a7-079dd460ff6b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+176	10010004-E7KPU	$2b$12$cWmQ/p4gfkasB0mZp3vzBe2DdXpWfi6Ygo/R8Be49a1XFG9R2SqX6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	16609140-551c-486c-93cf-e859f2997d36	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+177	10010004-JYTZ9	$2b$12$7rPisLdI8/WX5r6zF57oUOTpdDcwCz6SH7bdwLiNjzc6ZovgOu3j6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เกวลิน	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a2ff5a1b-ae80-4ef2-a72b-567785f55ed6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+178	10010004-DNMCQ	$2b$12$dnUG9CcpVbmbTvc5LJR.Ruj5tCsSEf1o6Is91A0qOMG/WFHcxsvqS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	รุ่งอรุณ	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	88246604-ef1b-4b3a-a1d7-07967fad5fa5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+179	10010004-V8TXW	$2b$12$RliT1qxIG23PELVkrvyq9Oi3wUpK4BV1WdiZq.eZPb78Vi.ez3rIm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3de74062-e87a-451d-9b8a-297098a9cebd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+180	10010004-MK43X	$2b$12$mH.MKgt/mFHDoPVuAtTGleF3c7d2n74KEojChR3txrUlBLkspHizW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ศิริพร	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	15aceb5e-ea7e-4792-8f12-4e6eaaf8aedd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+181	10010004-E63LZ	$2b$12$YdzkFCCNZ6CzciP5fa0se.7zR3GCc36DEhT54Ol1J0KWwgNLc3f7y	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ณัฐนิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0de5aba3-143d-4d85-b160-f6e8069036dd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+182	10010004-XJH9B	$2b$12$ga/F27/PrNoph8PfVesbieJizQ2LSdRYlq3KzGe5ji1ltKQDj8Zum	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ธนพัฒน์	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bb34a779-b2d1-4a51-a3fa-4ebe2e91e9d0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+183	10010004-SH6W7	$2b$12$iMu3oLml8ejihkZaWLpzRuqHvi0WhIjgpetIrg63kLEkZ630NvXlK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ดวงใจ	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	611d5358-e9aa-4f10-a155-c361d10fa803	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+184	10010004-FMD65	$2b$12$tC73kCM5VY6bHxfbXjViNO2SHx6VDw4YbitMNqQON4BGPMYQPyDGe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ทัศนัย	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2639c69-bee9-411e-be94-44f29f16767a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+185	10010004-6WJ75	$2b$12$Q32u6QfCzfA3NypmW3TMPO.IBEiopB5PHbE8FsCWtibPlK6cgU56G	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ศิวกร	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fec98964-2585-4379-8e00-b4b23f72c2c3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+186	10010004-4BLYU	$2b$12$usuWqZZGmhp5S/LnZM8xUu0JLFLdiLsaI4Mu0imNpVrrJZJpFq52e	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	be9bd698-e468-46e5-ab6b-f351e68dba1f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+187	10010004-SW4Y7	$2b$12$sFnpoU8NuhBKHAzDETGfx.4Yrm4YRaWBLDPmuaeTgS1Tzs2I8vbxq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ธัชพล	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	cf8dd8f9-6c31-484c-ac53-b42976f94d39	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+188	10010004-RNRN5	$2b$12$eXxsN.bNI2fFw.x7BgxPbOznTjke4ApHvLxdkBk/zvTw0Za38PGkC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ประภา	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c410558d-19c2-4178-9898-9ab51d4d0d34	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+189	10010004-RSKWK	$2b$12$4DserYKiWJx0UDPGlEsbOOQXzlL3aW6Do5F1UO5QYJb696m2KfU8K	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	มาลัย	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	83509c86-83c2-4dd7-b02a-16599f133280	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+190	10010004-3LQNN	$2b$12$Br5cmjmhoN1pqraZy8zzEuPQ65QSFFyn2n2m2KFrqg46yO82PZXvu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เจษฎา	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	df19fac3-969f-45ed-a8ce-52d805088275	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+191	10010004-FXPMW	$2b$12$KYmNcDLF7KCszb71A/5Z/uYDyC0ptjoIav0kSGLMlkJNRZbhF1Cm6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ชลธิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	15cb8b36-5ea4-4582-9db7-964411e36787	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+192	10010004-XZQWE	$2b$12$aazXA5ko8cw.jvMWL7Bf6uHohQGw6Zv5SKtsywOwaz5tSdfxs5gee	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ณัฐนิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b4f16cb1-4aa0-41b6-8886-6313bb77143d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+193	10010004-67EPN	$2b$12$sIuHOcvALUVfddy02b.tluWLd.tCUnZS6FoFOrG9CinkRd.qMY8dG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	บุษยา	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	30100734-7ecf-4667-a909-34389a7cd9c6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+194	10010004-9QVVH	$2b$12$uKSgWazU2nMTXSHEX0DkO.vF7.JG/9EUjCnii7OvhC.Vfoa.cT2nu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	กาญจนา	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a6cc5b5c-3b0e-478e-8794-d301c86fae3f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+195	10010004-4592L	$2b$12$c/dDboGRbg39oxhvEKb7KOnWARX.Wqd6sP93N3vEaATcE/tU.MOvy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	วิชญ์พล	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	42512c29-4f49-4090-b815-d6bdaca543ab	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+196	10010004-V3HS3	$2b$12$8ZsqaTGWS.y7sQ2LXR.b2u5xINNXpsF1NsHNIoNa5z31ijn4cTe9.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	นวลจันทร์	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c735a2f9-9ba9-411a-a542-09ef9250c264	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+197	10010004-ELAWP	$2b$12$fLVnKj/tH3xv8nLEsSpJNOQWgpbe1KV3mZthNdB1RCDsBJ6z4uR4G	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุภัสสรา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8a9e12ac-1299-4780-a4d9-500a309ba623	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+198	10010004-FFK5Q	$2b$12$kojg051.GTDh.MgouLspTe3TlxaIkdmq39iwA2N0jIQ4iNmF87eDu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	พรทิพย์	ประสิทธิ์ผล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	91e27af0-8ea2-47db-8b31-9c5e48cf467e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+199	10010004-6GPTW	$2b$12$VlK6AYBKpx/UciWfsDY5P.wwKe/vRmm/SZy40xadfhExM1oIf0vgS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	สุมาลี	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	55d2f910-04ba-47fe-8e29-b8934e10968e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+200	10010004-92M2J	$2b$12$VYT/17gPFiGjcSuI.gIZOuSmnDolsYadKHmN8ImC.mmaK1dbhJQl6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	นันทพร	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e0f9df6b-008b-4cfa-8720-e884b604d374	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+201	10010004-M2PGJ	$2b$12$TGSaKc7ozSaBIo5a.l0FeO8CpKVQUrVWFezd97ykSmAobiu0fCQ/2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5a2f65e6-dac8-409b-9b37-86750f532c75	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+202	10010004-JKCFT	$2b$12$D1Rowjs6cTGo/ASMiIbbn.kdZA27MudjsmotQN94G8ZBWU/YBSKZi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วิชญ์พล	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5c8a99ea-9845-4f22-b20a-14a3bb6c5d79	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+203	10010004-ZMUEW	$2b$12$OFWqnGYMXGrcWC3Egq26POZketqfbwLKcJUO4nTCg7pVltcgAcEiy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	393d1ecd-af9f-4b7c-adcd-544e3ba2f407	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+204	10010004-K5UAH	$2b$12$Nxao.pTs12b6P22RecneuOkIZHtTqFosasZZtZ1CiSiVZGzmXxg3m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ปัณณทัต	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2bcb6ef-0f37-4dcf-b6ee-2697dc275bbb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+205	10010004-7UKFB	$2b$12$qF1GfLHQzfuhsZYOxEiXceuyBBGOy2zPzyOV4RbLmbD2OOFHHTsE.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ทักษิณ	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1b46d3ee-79c4-4642-a393-5c37866dfc75	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+206	10010004-EEQM3	$2b$12$ctZ0svNbPXKmAqhVfHYvM.pGrphcOd5Ff8EHgEEXlTVZsrII4koUi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ลลิตา	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d8eaca76-b44e-43c4-9709-065915a447dc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+207	10010004-3BKF9	$2b$12$uzMzeufeZ2m1boiU10tteeAj4QSutRdd.1Q6psdobsV.3rH3mIwL6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	มณีรัตน์	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8084b6aa-7f3a-4986-9d21-b4fd7f355619	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+208	10010004-F7KNL	$2b$12$SBVHu85OmSirBLF42KiwQuPVt2dOH0Amx58fyEJZPRTTbFz3lXXj.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ประพันธ์	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1b11bce0-c33a-49e0-b3c4-5ae9a4ede631	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+209	10010004-6TMJU	$2b$12$3TQUklDBw8ijZjQG8jAHSudLGmklKbHcHUu62PpG7lfGdbZWaYQOO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กิตติภณ	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9170886-d941-4b06-8e9e-d90f405ff65c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+210	10010004-LA2UZ	$2b$12$ghr0Gm/37a.KsGzEucTu0OkmaG2YnArsop2Jccg2yjlVQ/HBYRGte	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	เกวลิน	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ec89d8e-62ca-440d-8ff4-00fd510e6450	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+211	10010004-ZLUNU	$2b$12$U7aIQcAjNqmhJfFG5/1zu.DabVtgij/cqheIfT/V2aLN.o1eb97Ya	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วสันต์	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	04675911-be1e-4095-a83a-5f66460432d2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+212	10010004-6KW77	$2b$12$ToYFMH2BEq0.HaoZ018KTujDfxbVFZ/1ZJS9hv/X0tPYjMDh1OtCm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	นพรัตน์	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2a570b50-9e4a-4893-ae1b-360eff978441	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+213	10010004-NHSKP	$2b$12$mGgPP7MsXCI9EJ2TLyEpxeY.vS/q/b91AGm11dygmon27H/McM7Ca	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชูเกียรติ	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a2f4d11e-c679-459f-b624-43f9799667c5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+214	10010004-7R4ZS	$2b$12$OxPGlmETgpiNBUaSkUHiEugPpGUu9l8u5djLwW6uaCHw5kpTfyIYa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สุนิสา	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3f36f360-4b65-4adf-adba-2c899c9ed4fa	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+215	10010004-GHUF6	$2b$12$d/GLNAr/ml9CenY3yh2jNuitl4xbNqwEyo/m9rbzbVl24bWdt05h.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วิมลรัตน์	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	34f0b130-6e97-4209-a6d1-c1edc9c872f6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+216	10010004-9VE6R	$2b$12$B5P7G6GTffhDUSpDXXufQeyqj.TlFWCjE2I8FJK5n31wH9q0lG3nu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วรรณภา	ประสิทธิ์ผล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	554a7385-9fb6-4e84-a41f-97063da9956d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+217	10010004-T6JMH	$2b$12$kcBQ/tOSu9pDSCdnVQNIZeNkcUspXjzjf6F6bz4AvrX0g8n74a8tq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กัญญา	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	da19bef1-5f44-4317-99b0-f3db484ca363	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+218	10010004-2JSTT	$2b$12$nX8JQBLbTBlf5Wpk5vxb5OxeHS19wrlLifq02o9JZ8WBfGFOKpnBS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อัมพร	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c87ec271-de72-419b-90c6-3f9f92fcaf92	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+219	10010004-JKAQ6	$2b$12$JBYKBWvSfIiHyD1xB6HUMe7CBqTE9.x2nsOT0aGbGqbcRRx63ubEq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	มณีรัตน์	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	17dbc2f8-d7d4-4b32-b636-5047c74f0f1f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+220	10010004-DQUFR	$2b$12$lu8InYrLBb18qiCjnT4yhubyLt1JM3FDPbjByobh7XzydpB8RPsmi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อภิวัฒน์	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	158e1dcc-13c9-4ba1-bde2-50c0527506ee	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+221	10010004-Z2NUW	$2b$12$jBbQ0y4TLIKXI3yZHhT/TOaWHGTgw0L/lPPpjIPGtqv8PzDcf5AVW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สุภัสสรา	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a78a8fb1-86c2-4a6e-920f-fef6f883961e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+222	10010004-TWP7J	$2b$12$zOxyKUUYGq4AU/gBWdTckuqwEPHM0uRkHSe5EjOCptkd4yYF6dJda	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อนุชา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4fd70d04-acc6-4e80-93db-65e0c094b411	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+223	10010004-L7LHG	$2b$12$PeeMnSsKIQWxYHrdLpeJweLhv/tXOvPXxwE0iyNgYdOYucMePeZaa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	อัมพร	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a0831a7b-f04d-4c3f-857e-1632cc0a7764	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+224	10010004-8KEFB	$2b$12$o5GJ9BoDEzEwx07BdEaHgu41FpjwpU9NMuP1Jik3D.EZJlDC/y7h6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	เอกพงษ์	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	60f0fc18-73b3-4981-aba7-bb7881d2ea27	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+225	10010004-NMZX2	$2b$12$Vx7qFuywndCCxRix4ChzCeYT1v4zuK0m.S7Sq/TY5d1RVWBkJE1Yi	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ลลิตา	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	89e1e334-e02b-4d6e-851e-e031a6c10a40	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+226	10010004-C5CUS	$2b$12$Ah/k7ewyw7QbQXW6pjd0eODetn/R5tI2V/7k7pqwsyFcsvacQ63ay	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธนพัฒน์	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5d14b3be-8a88-4d7f-b891-5dfc17e1dca3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+227	10010004-ECDZG	$2b$12$SKH7HwemVkKhfaxEMqpJteWNs6P/QTdvELgcF/yoOHJXA0qZHz74O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	นวลจันทร์	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	172da4cb-756b-476c-a968-5ff83ea7a072	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+228	10010004-6EP79	$2b$12$uW74dDHUSXFI0.QPVOJy4OYx7gbb5IZapH15rgSKzBYmawV/k2Xq2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	เอกพงษ์	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c4dabd38-44f3-4ebf-9e2e-4ac357f8a09b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+229	10010004-ULCUG	$2b$12$mKCTPZ220uhrNVnDGpgfFO6OCj9SnAhtyNW6pemK2SF8bDztLgwxy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ปัณณทัต	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ed21b6bd-9387-4dbe-bfac-3b3960e96b6d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+230	10010004-QTTSJ	$2b$12$Kk5o7SH3oK.7a17dZjac.uASLgs1TPd/iMQAwlgUJA7unOG0E3Kyu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชนิดา	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	38f69c3b-6f54-4483-aa7b-572f8928306b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+231	10010004-9FYHL	$2b$12$0BvLdIw8swJMxxyg/0P2Buh/dyg62ydkRLlcUIVDPYAzrN5hXO0au	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กัญญา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	96a0807f-429f-4903-bfc8-4eb5329f2b6d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+232	10010004-S5DVR	$2b$12$lRBjcLPgQ19nC00OkgvEgubEXMd6Yn6DEPhyT2eyrrEG/uaM0zZN6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	25939a7e-4160-4f1a-b825-6e0c969dc0bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+233	10010004-C79GU	$2b$12$iJabQKQKLOg8Dd3Vd97nOupzjPwXLafJJ4SBSgVoI.4QlPR7cSGsy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธัชพล	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	56b069b6-1d10-4597-805c-86d2cd0e658c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+234	10010004-C3UQE	$2b$12$okvMLhZJVfM2q.CyQKwzR..GM0yYkyvjfNWSRdt2vZoxd7bTVuvc.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ศิริพร	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7f64d84e-929c-45c5-a536-e4aa3523b068	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+235	10010004-HNVTC	$2b$12$jx/9/bYv62KDAXUNwAQsoOeIEplOuoAtEyjs/7bNFBa8ZiBGI120W	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธนพัฒน์	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4cf67748-44d8-4907-8ac5-b61856947fb6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+236	10010004-LPY8V	$2b$12$9Ug.3Oo7jFRmjmp2RWynvuwKjjoFI8jSHOKWNrbfkZrxbAC9scDcm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	สิรภพ	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9e8885d1-5fe3-4367-87c1-25dfdc4ccf02	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+237	10010004-4CUDM	$2b$12$wf15NK.eDWxVKEoMCfGkOek67b6eV2x5Mm/FXZ5gEspOnLGmQITEm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชนิดา	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	14371976-3aff-40e8-8abe-580acc2a9012	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+238	10010004-R9PMT	$2b$12$eET3jpmktrw.HyyUSCfCT.X3.M2sAcU9UTOurX3.kl3ItQvWgZq.W	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ธนภัทร	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f8c872b4-0ad5-4ddf-b0a3-0a5ee3794167	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+239	10010004-DJ66B	$2b$12$5viYQrqeihP1R0vmarqVAO5/MDWjIqAh0Ro9Zc8BmiJfQJzvCBofa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1e0c20e2-0442-46ba-b957-c80e268e52ae	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+240	10010004-BJVGX	$2b$12$ij8jHBTUJMQuI/uCFFV9K.OBgEs4LjM1CxNaRF9fkoi6bDMYwhVYG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	วรรณภา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ee4c7d1-72b1-43eb-86b0-930615009d70	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+241	10010004-ALA2P	$2b$12$6vsOVUQDQhtazxR0uQmrRezvFqE4BK7Dx/hMBTUnC35V78NlSMGRK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	กิตติภณ	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	68834cd4-5051-4674-844c-e561197f87f1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+242	10010004-P5733	$2b$12$C7aHmQScMAbcWZMg0OphoOGkRe4tnv/YnyMthAXXoBdRdfG/9N0.q	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ชัยชนะ	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	440d73fe-0105-471f-9f5d-3cdbe4bdaecb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+243	10010004-KH386	$2b$12$gzUr4Z/vZWJfdmd6bY8Kee14BqJwcWnu9G30roJZEw4R20Un4t7nG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:27.381624+00		\N	\N	["home", "student-self"]	ลลิตา	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	889bb6bf-09d7-4e92-9906-07af1f407b25	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+244	10010004-D2MYE	$2b$12$eko3RFX6tKEcfL02L5fvxOAkBFhy9ZPc1rIrkOHQ4freEyU6zR.aa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วรพล	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce36ed03-6640-4ec7-8e69-d806a8088e3c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+245	10010004-5LW6V	$2b$12$qKMmORWzDk40cLfIBDWFPOtwbVuB9p3k.I6tV4b2RVJPKxpnq9DDC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ศิริพร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3b7f1d25-ae1e-4ccf-9259-f3e28a96428a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+246	10010004-ARQKP	$2b$12$7ZXNgXXffoMRe2gjd.t9sOQH9arBEb9e5de4CSXlkb1b5kALe7lNe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ปัณณทัต	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0ddf32f2-8f48-4848-a5de-b6550ceb0a86	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+247	10010004-Z49AF	$2b$12$O2LjIFlhdc6Lks/zLllUDe3gmMxgOruaFiNiY18j9qPYcovUZlqV2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	นวลจันทร์	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	12cbfde0-121e-4397-96ce-e1be28139981	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+248	10010004-3DUZM	$2b$12$Z69YjNE4xvhAwD.M6PG0We2g1qnYHpcc5MXpul36USBArxf1euzoS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	จิตรลดา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	53b307b2-8b4a-4b5a-8ff6-0cb9c0ebe687	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+249	10010004-HT3KL	$2b$12$/JH3iZvia4LKTw7lBiXW8Owd/81Jodg8fGjjqVrk02XXCMYjV6BkK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	กุลธิดา	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	167d2bda-3d78-4698-be1f-5a39f5844187	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+250	10010004-L5HRM	$2b$12$.THcfSMIx7yffaqE2XpBUuxYJ4fHMGwf6mpzSctrjWDuv/zRYw2tm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พรรษา	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2d78a5b9-0bdc-486a-871f-12ef2f6ba331	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+251	10010004-TE8YS	$2b$12$cks7bYl/sq5XybnMi8kC2e2djwExXaoBAJkdQxNI.XFS/Nd7e3ORq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	อนุชา	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	dc9f07fe-9ca2-49ee-bfc6-bdf353534fc2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+252	10010004-BKRPU	$2b$12$TjAg49sMk2oRmwYZy7Lf..LiEqZjhMJPAbGP6A4bZ9/mKjYEQqkWu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5e3d3de9-fda0-46aa-a5e6-a5194418f843	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+253	10010004-256NS	$2b$12$itMzBFvHdqTnRPflIm9YIewEkeeNbZuUppHwVohtXm2mi8AtTjxgu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9d40eec3-19a9-4480-b23d-d97fc213ba7c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+254	10010004-2JJ3H	$2b$12$RKXS5o28qWmTtGAq0uYOZOW3NUVH..7dH/LG9d1TNfgwxtiOKQ9gK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รุ่งอรุณ	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce068d80-7137-4d54-ac14-cb9cac43f7bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+255	10010004-LV99F	$2b$12$M7K567oYfAQQbKSLrpANRedeW1NtWqL6tv7KJ4qA53Mrjnr/wfnRC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	จิราพร	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c4119e41-82f5-44e5-a839-f52e9fbca34e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+256	10010004-UTLDJ	$2b$12$kRwPqUUlnyCUdKwSKTn5HOe6vJM2NLMxVATE2UukApGZQysNfEJTe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วรากร	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3b7ca217-401d-4df5-8bef-c668e685ee35	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+257	10010004-6TGXZ	$2b$12$nR7FpnSOKiMPosOdpn4FD.ou7a6/.JyWDSswMmR83iod55HE8saRC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ลลิตา	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d0103dbd-f5d8-4a77-bb7a-d547b892b378	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+258	10010004-HMZH7	$2b$12$t60vswXdbv4Kwry94JiJc.iKZ8xQ2zbW7QmYEIf8GRSRZ1g25F43e	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วาสนา	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0408f49c-d192-4623-8444-5f65bb9bb4fc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+259	10010004-JN6NZ	$2b$12$huD.wnPHZR2pgT6d8kcffeGWYxheoWW77XCu694U/p7mkK5yKXHo2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ธัญชนก	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a2526812-133a-446d-8568-a89d9d7ee9eb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+260	10010004-8HH8N	$2b$12$mOS94rH/A.0uECB02m2mEOkNxFPoBUC0TGzoJ.anq3b1u8Kt1W2Ey	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ศิริพร	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	37ff5d80-e993-445e-91d0-c30e4ccb3d8a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+261	10010004-MB29L	$2b$12$EgVxu/vYvgaUH8B0.FCG2eYVyc7odvFlvIGoLWGrHng492VPjg.kK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ปัณณทัต	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	243e27a3-4ea3-4f2c-9587-93e088b03280	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+262	10010004-LR42C	$2b$12$mZ3/ecUg.Hao.4M.JPXSEudi8jOBV1KTuAwFkfc42ypipTXFGvwGK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รชานนท์	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a5258ac2-9681-4855-a866-e9d804ed9c55	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+263	10010004-NHRQE	$2b$12$zBEZ4kLerSByFvP8ZpGmge4ck6yt7MvTt2YbC8WMK3ycqUVf.MxnO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b74ffcbd-a9e6-486b-ba06-c1ca0adb90a6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+264	10010004-6AW4T	$2b$12$NAv19vaTLKC2HKlap2bnoOV.39H1Niec2toWsdew5VSJ9d6Pz5wBK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	กุลธิดา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ec83f398-0f02-4d41-b9a6-bb41dd9afdbe	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+265	10010004-CSSKE	$2b$12$yX7Kw617NFq8LvdBakaf6.JvQNziKqqTPKYUkIpY2yVMOnlUEMrES	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วิมลรัตน์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	543d6f1c-0fe6-4e25-b784-90ecbcb47cd8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+266	10010004-CXQAW	$2b$12$iPVZWfgsVNBzzOhZnIc/heTooLfml0CsQz7LJ5P5mIeyCqOVpf1aC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ดรุณี	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7800d0bc-af64-4395-bd20-80fd130b0a5e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+267	10010004-STENR	$2b$12$vsPIoh264AYdz8aiRfAyMurcGRTkJxvVLfjT7dlATkr80OeUxFq9q	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	มาลัย	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	dae1351f-8d23-457e-bcb3-f8b50bc68e95	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+268	10010004-6MWFP	$2b$12$uIE1VskvmkYGk6Jk1ikEs.LTf4W3zjwxarLdczzAxv4NGGz98NS0S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	สิริมา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ba2c400-6d95-4ce5-aa79-342566d22591	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+269	10010004-7444A	$2b$12$rBWyRE9EeP75YB9eTZIBKOuVS5L8hS1/0dMlncDOYetbq9.4aRUm6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	เอกพงษ์	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0db7184f-837b-4731-81b4-8b409a58e48c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+270	10010004-2JHR3	$2b$12$cyYbqkKGXzgYMnGHJqa0iOMcxptiJZbmYROCxoFKQD8zwpAn/WtBy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ชนะชัย	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ac0d67d8-8cdc-4ba7-9f67-c52b647727c5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+271	10010004-Q4HSA	$2b$12$6KjWgjINNm.KYVXGJuP9k.A6s7tkqrraWZI96YfRVvKby4EJgaBIO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ดวงใจ	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	73b7bce9-6b76-4a93-96e6-1af806d01dc7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+272	10010004-8PGDY	$2b$12$octIZ.5ZpbCTQeCyKT9JYeauVPwATSasPXvePIzJ7cfb/xvVfWaRC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ประพันธ์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5beaeef1-5194-4551-8054-915ae67e5709	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+273	10010004-T2UWQ	$2b$12$BwaX0qsLpXeyqroEihf42ujZtRLklL3xq3baES8306gArgc0R8Ut6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	024e04a1-544c-4745-af52-fbfef183157d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+274	10010004-HBDZA	$2b$12$glTcRXIIVjaZuFz4Zoo1Bu5w4daQ0xJIhe5RzBBsfZtk9L12DnaIC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	891f88bf-4494-4903-99ef-5eee8969fbd3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+275	10010004-3S63H	$2b$12$zuKxB0UoOCJ0rdreAlRFYeELeIrtvVdvRB1U9F4AW2bfnXSfIQbVC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	สุดารัตน์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71a2c1a7-de54-4198-9ff0-62c42142bd86	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+276	10010004-TGW4K	$2b$12$r.zlwI0iTafCDIgEck7BOu6p.KkHxffJUPXLACqtLkU1CHGxDDNqS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วรรณภา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c1a2e9e5-08e3-4ed5-8da9-06500757760d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+277	10010004-95R97	$2b$12$5rSEp7lzjbqmxfouiaFkZOHwXg6vk8e/fpwu72b8QuG3cT58fCLZm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ธนภัทร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ab7c5d34-aded-4392-b661-04192ec3e304	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+278	10010004-4SLZD	$2b$12$06zmINlkF6ICYRQM47Y4deAfP008c3AE0INTU9W0RUePPXmx05KvK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7538786d-46ba-4059-a533-d5b0272f5a68	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+279	10010004-SRXCR	$2b$12$Tq2itoayCtN8LhgDwIIF6eulbLvMseQuZxad3aY5v2agma7tqZPtG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ภัคพล	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9a7f3b97-28a8-4f8b-b350-a29dde720bc0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+280	10010004-44DMF	$2b$12$qmo186gJ2bARNk4tdfm1HOe8YGztQelM8OldnbqHynPIRBZwhRKyq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	วาสนา	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	36d1df61-d262-43e4-82b0-ed3196b68896	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+281	10010004-Y4SZ3	$2b$12$yoKWGpi2Bn5x6a5azJose.UkKiM2hDQPDUNr.UPr9rmQhkNfz8Q0i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4a1d2158-0805-43a9-91ae-2fd7aef9b972	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+282	10010004-PJ9GC	$2b$12$zE6vOohX56gBmkJqW4s9rOMMQ0mhb5HcdoA4jEIsnirRn3nUxqw1C	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	แสงสว่าง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce18833f-0fe0-4540-816b-aceb5c329712	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+283	10010004-S4A4K	$2b$12$A/7rM2Z2yhlAex8rl4a8MOW.bm1PqJO..rL9LcZZvcaUyB0PZpCMe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	อนุชา	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ab76c6d-fe01-4dda-879b-c1176da5d5d8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+284	10010004-YQ26D	$2b$12$Jl.HXBtTqH2w1Uyjbmf50egYmU44RzVIjiLJlOWDNHrirkO8aDeTO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	50f2bd59-c5b4-4e6b-a8c7-648e51c0a5bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+285	10010004-2AKDR	$2b$12$b33JawyntLisiZdzx0GmUeXLD.J9ujf1TgeBK9F9rBnD9ks9RoIXW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:42:45.752225+00		\N	\N	["home", "student-self"]	ธัชพล	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4ee1f318-2e9f-46dd-85ca-e846092f7517	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+286	10010003-WBU6R	$2b$12$OWMBmTT3wN9X9t9eZ1xpQeA9lJIbNu2UITEX/SKAsjcZZSDf6/Qva	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ศิริพร	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2a6d7a1e-05ec-47f1-a507-5799a63ed646	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+287	10010003-KHZEJ	$2b$12$ijmYX7vQDJvrL00T2YQZx.jkxWeFsKipAbvzz8EagDefXuJaBU3S.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	สุภัสสรา	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f4bd17fc-e36b-4b17-a767-60691a70807e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+288	10010003-UZPCH	$2b$12$WBSLIGxakUCCkC3eKib/JO4F24tYKo4BVn.l7ChbFGh89HMlBbgW.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ดวงใจ	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ad29b559-07cf-46c7-b8fa-fb66db99e3a3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+289	10010003-ML6MT	$2b$12$quUdWVZA65/Ek4.3F0kx6u0U/Xf5S3tpSniKAf3X.FyL4FsRzS2Vq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ดิศรณ์	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7ae69e15-7320-406b-a115-ce55351760e1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+290	10010003-ATECR	$2b$12$z9Fw8HgCxPMgaSRDiWT0v.PH1nnqdghl3xskP5Rdt1Q9IqnkbWpFu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	กันตภณ	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	37f09562-9854-455d-a1e4-a791f8c69666	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+291	10010003-JMS39	$2b$12$ROF5NNyHLoDw8eIUUz5Etup5uQhfrIiIFzyu2MB2R4C6EOCHUsVi.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ดิศรณ์	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ce7f788-2783-49a7-b3a0-6185c1274c25	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+292	10010003-TF8G8	$2b$12$PQkUGbx/X7fKK9G4FccCUuxmg.BhtsZl5RlpwaUCIyb1WCPdEG3P2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	กวินท์	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9410d5a1-db9e-4bb4-9ff9-092ceef235b7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+161	10010004-2GLL9	$2b$12$wtrdTGut1/hBWxPVJPIyeOBGvKcdj0JGK4UpsHelZjM6PnisaBPSG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ศิวกร	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f8eece5c-6062-41e1-9e30-0eedfab5b4d3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+162	10010004-QZBPQ	$2b$12$LdGk2LdaZH6RUuVneFDkVO7fT9lE03Ax.OWIBtkX3w1MFx55g5A.O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	วิมลรัตน์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a8416957-0f72-427b-b82c-8a49ec5dd715	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+163	10010004-VHY2P	$2b$12$xHYQgIca6mn6wNInQst37O56qlJqXut7NAW3q4XzntN7rO.5GoiH.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	พิพัฒน์	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ecfd058-cde6-486b-8d15-8ba9fde8625b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+164	10010004-UJUC8	$2b$12$fgPJqHGS956BzLMzgG2TJuaShzQBZyd3vWbGQwhQqpKBvO2.TIMuu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	ณัฐนิชา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	35d25970-efed-4695-a425-ac80870aa7f0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+165	10010004-F3PAG	$2b$12$PQDhC9zU1toNXW/gdJQtO.8Z9W62ceWyGz2FVOaCGy1tGIruC8SCG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	กุลธิดา	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c7566c3f-3adb-4c56-8b06-5b33b153ab1a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+166	10010004-N6MBA	$2b$12$AvNhPVV/fmsMaZ2wMZinBuw5kH9C4K19W6OYocQXKRYqN7YIG8xnG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	เอกพงษ์	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fd2069d5-dd4c-4f3d-b061-be9262b63f67	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+167	10010004-98X4P	$2b$12$Iq0ulPaU1CbobHgiGK14fODPT/lbkRuf5fnz72Gz7.ggFqsYWbXE2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 13:39:48.533762+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4db562c6-428b-4ae0-bf29-ee1aaa5f38bb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+293	10010003-D4DAS	$2b$12$.K8et8Qjlb3h.A7ADxkB6ue4PA3QrIW0YH3csoqUoW3ibHSyqH0s6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	สมหญิง	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2679858c-f67c-4745-a5d1-00a98c7e6eeb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+294	10010003-K4SEZ	$2b$12$fMnc0pU/Eblc.RagoT9H3OsTGfwH3AcMXLvm54Wn70L/yGop0so1q	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ภัคพล	บริบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	cfbcdf80-1ee6-48b4-befd-916442e95ca4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+295	10010003-WA43V	$2b$12$AYiLaaVKpMnGg7NGe2UNPOOBMJzEb.SLkG.mL5O0o2icaB84/ZPJ2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	97e75fd0-fb1f-4099-9afe-ab25cf3e4e2f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+296	10010003-N3SZF	$2b$12$TaRpgW/1Uit54vGuZxNZmuzLeu3J5.qespF4Zp7WAScC/Z6tu.ah.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	คุณากร	บริบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7b9e6bdf-acd6-4aa6-b413-ceaa521880fe	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+297	10010003-ZGR38	$2b$12$75Yh7IYIfyZ3hkHW60D7KusxWcR8/IEnm0wznPn8YIcEckR3rCPVm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	ปรเมศวร์	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d75611f1-4fc3-47bc-8e82-3f42ed6bfdc2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+298	10010003-7J43W	$2b$12$Q5fyimEWu4/0yave/WtuQ.a0SKM5vALDKqBC2o4iURJaVZUrlrwwu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-28 14:15:06.223024+00		\N	\N	["home", "student-self"]	นภาพร	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bfa0816e-befd-44d6-b1f6-526bb9f0aa2b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+299	10010003-HUAA5	$2b$12$zdC38wTBtnGN4O/BqIO5I.1sjR9Fndty4IhX3.f3EwRzt0rlvgYae	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุมาลี	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	97af6da0-b5b8-416f-b01f-166958a2598b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+300	10010003-NNFKJ	$2b$12$/nOCWZbHd8TJ6ZP5HTQqWe.UCZONOBWmWfcur1NXdYgYZcuSZ8r7e	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ธนภัทร	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d2c0cb43-fd00-4430-a58a-36ff2c9eda73	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+301	10010003-4LGKV	$2b$12$tyjakUqLjzRUHDVhMR3pGexAZeCMW31gF52RwTApwATH3m46sW.eW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	กิตติภณ	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6e54f133-03de-429f-b2ee-950ef932d642	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+443	master_data_lookup_smoke_settings	$2b$12$hV3ajPWkVI6DldKuJQHcZeIywU1z8Klfq2q43yScvHUievphuHaUG	Automated master-data lookup smoke	DISABLED	2026-07-02 15:09:00.770039+00	\N	\N	\N	["settings", "manage-attendance-calendar"]	Master Data	Lookup Smoke	ADMIN	{"global": true}	f	2026-07-06 01:49:55.878627+00	\N	\N	\N	\N	\N	2026-07-02 15:17:48.613074+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+302	10010003-V5QDU	$2b$12$mMGiKy83wRNcvh4Qk6Uw9.ssMKZ/MfZr/G2eTQ4qDmTxTXBAxcq1O	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุมาลี	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9d28cec8-5c8d-47f9-a292-bb3ab118d6f6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+303	10010003-VMJC4	$2b$12$/PfOtqACCsvz.rMgwnhyouGPZYz/E7SDVNTseU3cZ5p6sgsgLfEAy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	นลินทิพย์	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bee18788-fc47-4532-b44b-df9d0fc12c46	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+304	10010003-ASZY4	$2b$12$cC.CMG74VYdSdNLbVTTXeuCHh1taFFmYbVnJn5IO.zTGbpdGZuYz.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ไกรวุฒิ	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ec1ec8f6-1045-4c74-9fa2-e3a42255d6bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+305	10010003-3HUGQ	$2b$12$sWb01pV.mXBZ6fcyNreaGeohaFeQSBUgTZXk.YVbI..Iqo5el9BEm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ชัยชนะ	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	539bc1ff-88a1-48d7-9e09-2563d2846026	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+306	10010003-QQ6EM	$2b$12$FFV//Z5STLDGPlhRpHs3GuNKaSVzDixEI6nLcfVi1uNynv55UrZiu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	วรรณภา	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce0be46f-a5d1-4755-94bf-eff2716bdb9c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+307	10010003-JL3K2	$2b$12$hNIDeCSjIFZzC8rNYgXHheu9THvfYV.3eSw2v7eunXcZC9BMwlPOq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ปัณณทัต	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2ea74e4b-c006-411f-9a5f-4430357b60ad	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+308	10010003-747GB	$2b$12$rSRVauQ87dZaZIHb985ECOw74yWAiiR0J4Eyb2RcIO9qND/4VSAvu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	กวินท์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2fa4dba-1447-4a71-843b-8914f44616da	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+309	10010003-L6VUH	$2b$12$F1zI8h0WI4ohMggYwXFl7ee8IvLDVc/G7ytwtgnmWAXDI/6NgW9VS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	กัญญา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f2ec18bc-a7a9-4ccb-981e-504e2a1e491e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+310	10010003-Q6PDS	$2b$12$8zyH7oLnZ0pFIortjgVxn.D9gwZ3Y2.O0e1eImeqZ.P93RqHswshK	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุดารัตน์	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d9cc5e5a-fbff-4987-9e6a-eb2a42e41eb0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+311	10010003-QPKWX	$2b$12$zHyCRmj7072KhwF5u6aju.COxZIWukK0p9L4bUEeFSZpZ1USoeIAi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ศิวกร	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3da9d59b-80cc-4634-92a9-567518fbaddc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+312	10010003-8HMZJ	$2b$12$kpmeIdDWmb9zU3F/FuBMHujvcOiBFt42/1zrDo91NQuzcR.axWVdm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สมชาย	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6784c414-ebdd-4b1f-8da8-020d89afa214	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+13	chanwit.j	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-teacher-002	0800000009	chanwit.j@sts-demo.ac.th	[]	ชาญวิทย์	ใจมั่น	TEACHER	{"room_ids": [2], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": [106], "sub_districts": ["สุเทพ"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+444	master_data_lookup_smoke_no_settings	$2b$12$Jj7liZmnD9TbJT1iV013XeX/3JefTuzFFmfGmwWipwDnb4Z6dYdGq	Automated master-data lookup smoke	DISABLED	2026-07-02 15:09:00.99305+00	\N	\N	\N	["home"]	Master Data	Lookup Smoke	ADMIN	{"global": true}	f	2026-07-03 09:41:03.943278+00	\N	\N	\N	\N	\N	2026-07-02 15:17:48.613074+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+332	10010003-FWCWT	$2b$12$u7gLEUGhRZSOqfXnKbP6aeyJJXYrwzpBR3wNB10dxl1whPNrvJUpO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	คุณากร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	861195a1-71cc-4e1b-ad84-cb922ff55e49	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+333	10010003-QQTHU	$2b$12$LRYyp8eVN6H05dlN8SBATeRIg5PcUevGe8SMuiaP1uBCg0qc1gH2i	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ประพันธ์	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e7a18f87-d370-41c8-be79-6644ab5b3a02	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+334	10010003-NQPAZ	$2b$12$nIkQCMMitKSBqNv2cNfOPuFtyWb2NzBLIcoKM4G0.luatJXxJ1mje	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f4063735-5ebb-4808-ab90-92934dbdd88c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+335	10010003-6ACN4	$2b$12$DOKizbe/zJDknMvoGkqJOOTQ6ImlSRGxa1rtWC5JR1.I/6VhTriDW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธนภัทร	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2329b9b6-4bd6-4088-b1cd-d69f492b25f6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+336	10010003-ZWFD3	$2b$12$I5DzDMb4wagP7ceJXAlRMeTF4IT8a1SN35o9jGBdr5SfH1i3wn7dS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จิราพร	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	101643c9-d841-4fa4-81bc-e9b65170fe2b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+337	10010003-W3VEF	$2b$12$3ck.cFu9RaDSfPK0zgqSfOyfVzIYG97tgWz9Y81n2ZGY9Gh/ct7QW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	วิมลรัตน์	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	656e66f1-97b7-4377-ad13-cfbbf6ca2953	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+338	10010003-CQHHC	$2b$12$FHuEHJ/cWekHW5kK29HKOeAMNU3rjQ7boWvwNfe.bbWd3qzUT6N4W	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐวรรธน์	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8ed4c829-b0b5-46d5-917d-a8b1b6f18889	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+339	10010003-KNKBA	$2b$12$AzenJZf/LsyJOSfMM0GGaepk6aKEN5J4HZLLFYRQGhtTiRsoiyEQe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐนิชา	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0c0397d2-42b2-4896-a37e-f8d5310488f4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+340	10010003-2AQAY	$2b$12$h/XFSaYPtJFLQSxzAHxtV.sznjKbm3ddtXaDAdc/WSkS3GtyWnZ5e	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9d0bdc3-b9b1-4e87-b2fa-8ab703f3e669	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+341	10010003-YS3JB	$2b$12$lbfYb9eMYDh8VIS8zBKf5O.PLznft8RluDpFxzHzXg/YRnmkvo/02	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กิตติภณ	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	958f315c-0ffd-4e6f-992c-3aa5352c7726	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+342	10010003-7EZY8	$2b$12$94C.D0WHWj79Iabov8gwuuttmfI/bHC/i1NmmAzUcFS8A2KlHhW.i	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	บุญยิ่ง	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	97e15be2-6438-4f82-b740-f016fe11ed06	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+343	10010003-W7SQL	$2b$12$qZ.n9VVnYpfFjf03U1p0V.RNF8RA3OUpDP5Dol5aW.ckpPLo6aJvq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธัญชนก	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b47c5dbb-6388-4542-bbf4-c76f8d2a5343	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+344	10010003-RVYYX	$2b$12$oJ/rW9zrqdNDx.S2AzIxNeVxHmcoQ1yXuDE7aH8lQklPrSF3XYaKe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	สิรภพ	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	07354257-348d-482d-aa9f-a5dc248ee09f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+345	10010003-JEKQ5	$2b$12$902lWlDlTJcCPNGVdtgO7OgNzt3POTMCSQwMi6TOG99pOFI.JfiGy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0c0f2496-5532-4f33-9dff-20e77fd0e6b9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+346	10010003-2GUDW	$2b$12$xrsdQrbG3QH14mu6SJ7AVuwxmwEq9Q5bxQGsBIF.VM143B0Hf123i	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ทัศนัย	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c3d3e217-1dc7-46c0-b629-3babd96c88f2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+347	10010003-APG99	$2b$12$twwmLGtEJhS68sncVHJ/numJBF7R/hb9VB5VloUQdtWCPRnD04r9q	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นพรัตน์	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0671b541-37dc-44ea-8f64-c4f9b0527b39	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+348	10010003-6QDK2	$2b$12$0wZ8eZr1avIlD1QDHXqbzOTMLCIYKuMBmMsQ3EBR8NsdmJYLe2yWi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐพล	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f3ac8cdf-4c83-43cc-9de1-9d1485433765	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+349	10010003-Z9VYV	$2b$12$E7U6hqDAFdmkjUYUlAQ1BOkyZ00F5sW8pBKDbdiePIRYkMferZmJC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	พรทิพย์	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d2d79c00-17ed-4d34-b1f8-21748e90b3a8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+350	10010003-D4LPK	$2b$12$m/VKoL0QfXbC2WujhQzIMOt/UZKq9E54zfLT7cVv7tvnKNbWpGaA6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธนาธิป	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	195ce040-c244-4202-b8a3-e303bac73eaf	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+351	10010003-YDNNN	$2b$12$DFaTixgimB/TlGbjnKfiMOWA0ltGRaveHzzyJabGdXP6vo33ZHp9O	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ณัฐพล	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e73b8c1d-ed80-4d5b-a097-b379d9718725	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+352	10010003-EE8MJ	$2b$12$Q127bNcXvs6dNsF1vmACW.4b0av4esS0M.SsDkOZV0FVgErzodPm.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	วันวิสา	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9e7061cc-efd3-4acd-b74e-e9ba05485099	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+353	10010003-4QSU6	$2b$12$iUSds9F09KiCRq22TylPiObA5UcMd8cpACfhPJ7zsb4qlJjhCHiG6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กาญจนา	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	07786e60-178a-4235-97ad-98d8fcbf2acf	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+354	10010003-FH5BP	$2b$12$Jbf.7rPXL1wRlmuB.b9mLOHQJ28RLt8YQ9MwzNSKxtUaBdQYIVa0m	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	มาลัย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	17fd8169-3051-4dbc-9960-daee43c3de8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+355	10010003-EYG6J	$2b$12$TV7ak95IMrheNvIo85R2kutp7VZ6zCLujIhPP9dlzb.U3y62g6eZG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	สมชาย	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	348dad01-f5a0-4b8d-957e-5e3b9cf62c03	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+356	10010003-3FPX9	$2b$12$YJEgun1gtjEcsthrmuyZie.pqpykdliTZ2Xg6rSTIYIG13YR7kd2W	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นันทพร	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8f217067-7d43-4ed9-a979-8d5835f2d0b4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+357	10010003-GREV2	$2b$12$UjzIaZGosr5RjYmn/AvvhuBcAH/1xOT3.f9NqSoEccrhPzal36dxa	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นันทพร	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fc409eb0-4757-4516-a3a8-360b17090ef9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+358	10010003-9BVAD	$2b$12$mPzLME4xnvVL6J48iLpor.yz7a7Vx3laTMqzGnjlhm6ovqzUxf9WS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ดิศรณ์	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	36c3ff15-3557-45c7-8442-dcb376d7b7b5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+359	10010003-XCLL5	$2b$12$EbO1.djt64ns7U4ilo.gVeud236oEKEN9fsv7i4QROyUwrA0ErPqS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นภาพร	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c78c9eb4-bbad-4ede-80e6-aae24b856371	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+360	10010003-Z8V3C	$2b$12$b6tvCMFVyCmtVs83qurJqe/d1S2dmUBLSUbTVzaNoYlPsyEWgjBxW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ศิวกร	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0d538bb1-7b90-4627-aedd-b0d68f7c2d87	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+361	10010003-5AC2T	$2b$12$GnwziquR4ZWqQXMsGcI0geUVWmQbt5k3lkXiiVrHiu4PlMyMwPEke	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ดวงใจ	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	94388188-8222-49a3-a714-5cd89cd8452f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+362	10010003-SAHZS	$2b$12$O/ozWLJHn4V/emp0Xq20NOrcO6h7VHKoETeGeV5J7PgbmfNL9dGXu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ดวงใจ	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	258cc69d-9f84-4c46-8d2b-247ce1b3cfed	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+363	10010003-FRH9M	$2b$12$9q.7SObGXf5iloVOOy4p/Ol.mddk2DdJn9H3V8fJ5A2eMq/G72gK.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธนภัทร	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3fe6530c-076b-47ea-8147-c9ba40e35d7a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+364	10010003-7RU9D	$2b$12$uuJiCvYaULxqyZegKQ1p1uJ8zCeLQdN/Ctp.5wbhXQfMq7LfoWU8G	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	อภิวัฒน์	ปัญญาดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	66077172-1429-410b-a546-96f6749ad2de	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+365	10010003-XBXMS	$2b$12$fdWjhRBgw.kNS2.n7Hqu/O5r/FAWmZR.kTnbFBUfcXO.LOkYSnqT6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ประภา	บริบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	99198d72-96d1-42df-add4-70c2dd3ab07c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+366	10010003-XPS9P	$2b$12$0gbJHUb8Sjcz1.7V3AhtCulKK4Nu1WM7Epxv9QAe2qXjcTtOfjuXy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	สิริมา	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	95f9b291-5622-4665-9adf-552d47fc070d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+367	10010003-9PKXH	$2b$12$UkKjJqqbVPk4rtDCGO4wo.4lfZexmkHQ5doflZt3w.Lv83pMgdIbK	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	ธัชพล	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	64d155af-0b3e-421d-b15f-9a6e67d697ff	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+368	10010003-FDT9H	$2b$12$c0o1tj1VS9HBZYYfjXgpCuBhTQAoIYq3G850TS3Hj4g3YXhiehmIu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จันทร์เพ็ญ	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0dd57a80-d8ec-4561-9eff-b9558bf71187	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+369	10010003-FKU72	$2b$12$R8sPDrmiDSS/VKibcOkwIOcgwU7d/FJvdx6J1VYdWgColmzQWyxIe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	นภาพร	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	afb3b2fa-bc4a-402c-bbd3-e1ae6cf0cec8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+370	10010003-ZKYZ9	$2b$12$bO7lNzd4p8Gzv0QYJmehZ.SGy43heQvtELrcy6bs1ln0zeWNxfP5y	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชนิดา	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b2db3a26-7a0b-4894-a809-9197c7f796ac	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+371	10010003-PXLRJ	$2b$12$pie.U0g8mNRyL28K1HX8duqjiKaMi/zREw.FooACuISUveAVqLPlG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วาสนา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3fa00c6e-82ba-48d5-b700-b6cbd117de67	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+372	10010003-EVB7P	$2b$12$1fFePV5KXaoPyMgVT4rFqOvrEigfKnHcZJajn5fUEL9ZBCtWsv1oq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ธัชพล	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	df6e26f9-6446-43ff-aa8e-df55c545fe99	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+373	10010003-EBZ7U	$2b$12$xRZsfOQs96J0lST14LmOFeeZTxKlGrgrqUaJzbLhflV1zIQ3b0HgW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นพรัตน์	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	552c43f1-d624-4005-a452-7c6294563b5c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+374	10010003-GC942	$2b$12$dNwGzaafUpLNAYeGmjKQfusoQVarpKDCYHwxfrRRag9XDUWrRR2Ha	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	จิราพร	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5f03a61c-7b36-4cdf-90a6-c697e4790900	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+375	10010003-H3YLW	$2b$12$nHr2G0uDZijiAnhcB2rrWOgaMHsTVmX00WZIJ19IRF81l9ubA1y6y	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชูเกียรติ	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	33afdd46-49aa-41b6-8a90-50cfbdb554ff	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+376	10010003-HJTDV	$2b$12$BbXXIKPY3ra/JPBb/IdJIe8uGKfngfL3yIjEJq9hUnxuUuWHqvxZ6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ประภา	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	30a1ea48-9949-4d60-9ff4-e1251ec048a6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+377	10010003-S62NS	$2b$12$0qxz.fgiHHLAVu80xoFzJuTT7ltgoFjV8xTD3fN0HkQjYdSowxQdW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	รัฐนนท์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	be8a72cb-83ca-42a1-812f-ef9d5f4b2ebb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+378	10010003-GTLWX	$2b$12$k5R1RatF6V1JmMqV2U8oxu6Dx9uhqmXWTcg8EIC/nwdtP/nF1eOH6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อภิวัฒน์	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	df9dc3ce-be92-43ae-8daa-39a750dfdf41	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+379	10010003-F4GEC	$2b$12$/W/IgkgaE0JSKjipJ6uTOescXbSelwP2LpqEJOYVz3MsYbk/.UFMG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ดิศรณ์	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	50524404-18a4-4072-9c34-6d342290caa1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+380	10010003-LELNG	$2b$12$cL5PTdKTKqv0w7WO2DDmiumDeerZIh6kfi5QBlb6.jHk/GUMxoocy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	แสงดาว	ปัญญาดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2247dc90-04ea-4931-9e55-bbc84f73abdc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+381	10010003-73ZB9	$2b$12$fL0EQIhhRtJnE9fAF6qece9sva3QkjYRl9pFqY4gLB6xNE0IUzmzG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	กิตติภณ	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	58d673f0-a743-4099-9a2c-f3126f50c482	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+382	10010003-KBRY4	$2b$12$86pUmEIvXpCzbST.WJLVOOqkUipYzXpW7vWPV8PBhtJTQ8hqRWqfS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นลินทิพย์	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	966a414b-245d-4e7b-80b4-346549fc1dbe	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+383	10010003-JV76A	$2b$12$YsXLdhophuHZ4bTevB/XwufH9XBwELDgnDRTORhOwVSRAAN8aubHK	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สิริมา	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6fc67451-e14a-4143-be0f-a1b8cc9b530a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+384	10010003-QQHLQ	$2b$12$ZVTkIHl8MvFz4OtFTf/Y1e0A2.stM6lEXMLfw043ZEhar1UbN1dky	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	กวินท์	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7fa97b74-d8d2-4033-9e2d-5515b022f607	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+385	10010003-JUD2G	$2b$12$Q4DJfRNIZLBNfzkiBKrHye/o8zwvcSZcCWDD/LBAhwxITHQu5Uj7y	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ธนภัทร	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9a51b4c1-b96e-43fc-866a-ba4668f712ee	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+386	10010003-882QW	$2b$12$3T8/V5CsLlZ9FXhhKfiGWO0gKxwPvu3Pdvn4P5Ite4Fi321Hw/yFO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นลินทิพย์	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a32384a0-36ec-47dd-90f8-e4754b7a22b8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+387	10010003-6Y7XM	$2b$12$0ZyopHgostKF4xwdqXbhfugjCFBrl2WIXZPTh9ctQnyGbtiQ5/6fy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สมศักดิ์	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5c584184-adf2-4232-8102-f0b02aa84065	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+389	10010003-UR4WR	$2b$12$Y.l4Nu36l7ZANjoHJEaX/.M2Z94uVFexqY7FXNkPBgr6Fh/IvfgeC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ดิศรณ์	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9f3567c5-9240-4454-98f4-f073e5e1cf9d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+390	10010003-4TSW8	$2b$12$5WAQVFsRhACRvPZnDcYld.p9N5HBGhZJ8ETGzFj3VXXsPISnXP3kq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชนะชัย	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d830fcdf-170d-4517-a2c2-3b683fc9ef07	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+391	10010003-J54NL	$2b$12$uWzXMrwMpb4aEynoTkxSw.K4WpLYVVABDtkKxmagUzJUHORVp.AwS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วันวิสา	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1ca3f9f2-4da9-4f94-99fd-060741a8221f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+392	10010003-DQQG9	$2b$12$dXg9iqoXYeQslkJ.4M/JE.BIdGDsLw.P3xxaiHr0gKJSvaqa7AGK.	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อนุชา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b51911ec-68ec-453e-98f6-073be36a802f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+393	10010003-4WXDL	$2b$12$G8kTobF34X.YFvJTdIUbGOa0pi7gzRBcHDBrq7WVhpdebKGGhPFU6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สุภัสสรา	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ae620347-171e-4238-aa3a-a57bb0d98f14	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+394	10010003-PZHF9	$2b$12$T0xbe16SvVMWZu/grD1ZY.zBKDBlUdvr2O2.Kle7TKNFgCOxmqqK2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	จิราพร	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	08706d78-2114-4ef1-bf70-290a88835c35	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+395	10010003-HCBSH	$2b$12$.aVtI2NeTuaOO6VQvO9GjO6O0F1RJZyjBwRCiuxmxqs9viX2O9Mv6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ประภา	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	cb2cbb3e-dfde-4a78-94ba-6c0934b834ba	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+396	10010003-NSHUZ	$2b$12$vCyfshrJg7bB99Z0XZQTIenXlTbvEohIY9lGfkUMWv1WkdETNOcqC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สมชาย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fd16c5d7-eb66-4a03-a5ec-9f8bec8a807b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+397	10010003-4CL2J	$2b$12$bbN8COYI91BRSBXEqd8PUeTJG6eof1aBw8KqWIgQk.8S4pKSI4Ese	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ศิริพร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9e84520-cc5e-4d70-a0ed-ff19e657cc53	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+398	10010003-CXAGD	$2b$12$6lqMFkQdU4gtMR8vmxF7bOTzbEeKH1zHga1h1AOi5EwCtpywJlYpi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	พรรษา	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	948c5615-d9e3-4888-9c86-1fc8535b32ef	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+388	10010003-EBS87	$2b$12$fb/0rSwCLOqy/3IO1Eo2UO2C/SnALcYU9kRzDd2Vyt6eduPQZ520O	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ดรุณี	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	19190b69-56fe-4791-aedf-2544dbc0d211	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+399	10010003-YMERT	$2b$12$W8PJzDwnRC5ZbIyQyWptAuKQeMzO0i0NjnBmVu18k300xXzhWacha	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชัยชนะ	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2fad9bc2-d2f1-4422-a1c8-5cc905c487bb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+400	10010003-U4ZSJ	$2b$12$pyqKfDoWgopPQYKaJcIrB.kB.wmSSteWmCBEuFhDDnhR2DrIVKktW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ธัชพล	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9a12e959-d5d1-453d-bbbe-efd737a38d56	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+401	10010003-P5CZ8	$2b$12$.bZN0wobSZtjJZj6DdHbauXeAEebrketg10FqLFNWxhRwX2E5ePBW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ประภา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	92fc80f0-fa35-4e27-84bb-53c53194b6bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+402	10010003-K69BE	$2b$12$b/l6pqC81awSdLbfQo3lxueyPnfTyuSrQSwhA6arng2AJ33L4KwQS	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	13515c58-71d0-447a-95a5-639aa0216421	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+403	10010003-9YLGP	$2b$12$LmhoSQuMnX28FWhUCgMFoOs0Twh0qsdpFAdAD2Vnj24M7hbkBvpSy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วรพล	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2fa16995-fdbf-4f28-9563-3f57b3c7971e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+404	10010003-S7J97	$2b$12$W9UBfpayG.8eFpJjCS4utummzQ9Nd6mwhUDWWUgtZOBySlUk0CY9K	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	วรากร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	72336da7-79ac-43dc-b2e0-98559310e2b9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+405	10010003-HGENT	$2b$12$PiXggEaM8FpJUhtby98lbO.n9xZY.9Qwjz6TtId5fWWJOMacDN6m6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	นลินทิพย์	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4e9655b0-6fdf-4a17-8210-a84a6763d5e1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+406	10010003-UMKTY	$2b$12$poy2PzwiRP7fRYjm7Qhl.u0Mx6FAKlMachEypxB8xrwmpLJa/yING	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ณัฐพล	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6816f979-d9d5-4ee6-8b61-00b26a95856f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+407	10010003-F9J7R	$2b$12$LmN3oz4Znqtqr7Ythjk0MeFWwgFRARgp89WqlUonjU5Hq8Jzzi7MG	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ปัณฑิตา	แสงสว่าง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3ce7c8e1-0391-4b91-b7ac-2eb70d3dca47	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+408	10010003-BYLMB	$2b$12$eN8kJGnnRkAq6k1eaeyPSucmTyP9m9CwJCgGALSx44Xl.MkufJGma	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อัมพร	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	487bca51-1b95-4a3c-87b7-ec63787b6a9e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+409	10010003-2LX3R	$2b$12$zaScWMDHe3NvoINzn0pDBuhyDE3O4DUkweeQu02dzkME0arM.ukSO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	อนุชา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	89d613d5-7742-4a98-b808-d6e20d247d80	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+410	10010003-VYB97	$2b$12$AwrfoP5lkdByRphugQpRuuxfVhusaO0vEf2KFMOKkJ53TZFaYM.0m	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ชินดนัย	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9a41df0-e64e-4710-9805-d36c845178c9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+411	10010003-TM4T4	$2b$12$qAhh8uaDlDGdQJqZlDsL4.DF/gza0hIGM1qu4pKr40kDR3IdtgsUe	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:28:26.145607+00		\N	\N	["home", "student-self"]	ศิวกร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a4922b71-bb15-41e6-8a28-43776e75a7bc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+47	10010001-SNZEF	$2b$12$E0F109Bby7lby9iqPsAwr.vGZgJLW64eBvSBZ2QVzZKO5Fu.3eG.q	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	บุญยิ่ง	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7043c49f-910e-464b-b8a9-6cb2dcedea91	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+48	10010001-BWUVC	$2b$12$OGbXETcc/tbh44zdp6NijOUs/porExmTkH3fmenxw5opSQ6TRWV5W	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	รัฐนนท์	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	29abad9a-0e9b-432c-81a0-84c63d4dfa4b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+49	10010001-ABPQR	$2b$12$bUV6cPpMMDd31O4euy4rae09fiJn4eN5naI5oG25EbOQ5pAoTLaAO	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุดารัตน์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71117562-4a31-443a-9185-93ef5cc3f8bc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+50	10010001-VQL95	$2b$12$K6OxKXIKGf7pNF6dQSwzAeiyoXBuSwsVaSub2Z8RH9j1JhqmlkXHi	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	กัญญา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f87dd004-1361-48c5-b0e4-c4d4689937c2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+51	10010001-Y2E9L	$2b$12$RjFwukAlaEYZbXL0RTF.buoq199TVGvxniO2lD29tO/8gKFnPlxxm	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วาสนา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	87651da7-1272-4873-a44b-8c4d3c1e9924	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+52	10010001-MYFCW	$2b$12$cMN7gRSC4lMOvkr88BYVruBs71VaCD/r6nnk5KqFCNY3xLCqLs1ve	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วันวิสา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	aa4220fa-6541-43f3-8067-ea5729643edb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+53	10010001-5RGXE	$2b$12$kndDMSPunWxqtpeSOYboAeOBd70wMM.J2yldL3iTREhsK/KSKnMea	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวรรธน์	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	00b43130-8962-4f20-b974-c9f7fcccd247	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+54	10010001-386LB	$2b$12$ZhwJkU/oOcovQ1yNsMTLnOBZz1MYtr/PaedxNSns63PAtvD3aSkOq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐพล	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	142e7256-9054-4090-8956-95d19fa09ac1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+5	orathai.b	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ส่วนกลาง	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-001	0800000001	orathai.b@sts-demo.ac.th	[]	อรทัย	ศรีสุวรรณ	ADMIN	{"global": true}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+12	suphawadi.w	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-teacher-001	0800000008	suphawadi.w@sts-demo.ac.th	[]	สุภาวดี	วัฒนานุกูล	TEACHER	{"room_ids": [1], "districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "grade_levels": [103], "sub_districts": ["สุเทพ"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+445	student_import_quarantine_smoke_global	$2b$12$.ND3pkdfs6FeUwnyuQH0ruHya0ZpexC6WzCJlroc0I52XIYsGPncS	Automated student import quarantine smoke	DISABLED	2026-07-02 16:32:12.235356+00	\N	\N	\N	["import-data"]	Import	Quarantine Smoke	ADMIN	{"global": true}	f	2026-07-03 18:14:58.737213+00	\N	\N	\N	\N	\N	2026-07-03 18:14:58.737213+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+446	student_import_quarantine_smoke_out_scope	$2b$12$.ND3pkdfs6FeUwnyuQH0ruHya0ZpexC6WzCJlroc0I52XIYsGPncS	Automated student import quarantine smoke	DISABLED	2026-07-02 16:32:12.291884+00	\N	\N	\N	["import-data"]	Import	Quarantine Smoke	ADMIN	{"school_ids": [11010000]}	f	2026-07-03 18:14:58.737213+00	\N	\N	\N	\N	\N	2026-07-03 18:14:58.737213+00	\N	OTHER	Retained automated smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+423	10010002-U878T	$2b$12$eNjW9KCJWzf6H5mgVw5qtuUu/AnfwBD.d4R76.Z8zHrhGLKEgvkaO	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:06.911102+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-03 18:15:08.809413+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:07.597+00	2026-07-08 08:24:07.597+00	2026-07-01 08:24:08.08752+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+1	newnew	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	BUU	ACTIVE	2026-03-13 18:14:37.679195+00	1264646406406	0640649024	new@gmail.com	[]	ณัฐพล	สิทธิบุศย์​	ADMIN	{"global": true}	f	2026-06-29 14:22:56.965575+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+313	10010003-54AWR	$2b$12$hXK.TyLeOXD0Ztp7ucHuLuJEBxzOUudQNxvce7jwqjWGjpGEYhT1a	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ทักษิณ	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	23c654f4-88bf-4c57-b71c-b45a33a92d8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+314	10010003-643KL	$2b$12$LrrOGCjGRiniaCtRnzQvhOLJgfPNMKl6NeaW0Lr./fdlekqeRczmC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	วีรชัย	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	243af253-4b7d-46cc-a0b5-cea8e39c7baa	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+315	10010003-H84K5	$2b$12$NcHR/ks.MwAdj31r/77r/.GLfwt92j3mOqQn182UgQePzBmltjTo6	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	448f921d-d088-451b-a8fe-2b60f6abbe75	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+316	10010003-JY2KE	$2b$12$r/peRwfxyM.yrE75UcULH.ve6tlq3pLS2n2PNLNEqrG67GSEdMJJ2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ธัญชนก	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d004f098-1471-45ae-a431-0b834c11318d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+317	10010003-J6ZBN	$2b$12$JpJgGvbbCryUoYEBxpnttOT6Pxc8ZcGHEbwGQHb3LRPwln7Usvldu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	อภิญญา	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	29aaa6db-d3e9-4864-a254-3e02f6c99008	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+318	10010003-AMALY	$2b$12$1.VaMXNf/avZo62Puom7DuUq40ERYvn8jkjSa6Z.4suxWkjQR.0sy	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	เอกพงษ์	สุดสวย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8ae0be7a-9b51-484d-afb2-46c5c1824414	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+319	10010003-QNZPK	$2b$12$Hz5aejEeGwCshzeSHvnxu.NBFqKBDQFg2Rm.Qw1wfNcdTcYNwwHJq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ณัฐวรรธน์	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c01d9ed0-7643-48f2-b541-0db0a3558dae	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+55	10010001-CWQED	$2b$12$.7Vm.0cWIGU9JDxTgsdpAe5t/7UAi/ddFU/fAhjvR/Dg31M8VFKAC	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c002a87f-a8b7-4634-8f15-e2102a89c281	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+56	10010001-EE5PM	$2b$12$VNNNmNdgeqicKHEOJWx.iOl9djN5lzjmOnvS8rDkxL/IzMGfDXcR2	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ภูมิพัฒน์	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6e164bd9-4645-45ad-9057-8ffbf1a0c9d3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+8	phatcharin.d	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ตำบลสุเทพ	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-subdistrict-001	0800000004	phatcharin.d@sts-demo.ac.th	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	พัชรินทร์	ดวงแก้ว	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "sub_districts": ["สุเทพ"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+11	thanakorn.p	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	ผู้บริหารภาพรวม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-executive-001	0800000007	thanakorn.p@sts-demo.ac.th	[]	ธนากร	พิพัฒน์กุล	EXECUTIVE	{"global": true}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+424	10010002-P4N35	$2b$12$kaRgJ1.ouiwxI1LgQKHm1Ok2hY3ceKuz1XfKWlsY7aXLeAJgz2Hh2	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:31.721893+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-03 18:15:08.809413+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:32.179+00	2026-07-08 08:24:32.179+00	2026-07-01 08:24:32.879027+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+320	10010003-BJ2DL	$2b$12$KaRsyRySI3W1QOX0nTi2OOQQJXInFe.b9Q7NNMvtG8cixXGO6pFna	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	สมหญิง	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2128cfa7-7df9-4249-b51f-88bc7710ceeb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+9	worapon.d	$2b$12$SQzXcd1Y7WARRtrBT7ijwOtQXcqSi6TrWHK4aMKuMtB7W057DRqoW	โรงเรียนบ้านหนองขาม	ACTIVE	2026-06-10 16:00:32.709641+00	seed-admin-school-001	0800000005	worapon.d@sts-demo.ac.th	["home", "dashboard", "students", "review-cases", "close-case", "forward-case", "create", "attendance", "attendance-dashboard", "manage-users-list", "login-links", "manage-student-accounts", "audit-log", "attendance-operations", "edit-students"]	วรพล	ธรรมโชติ	ADMIN	{"districts": ["เมืองเชียงใหม่"], "provinces": ["เชียงใหม่"], "school_ids": [10010002], "sub_districts": ["สุเทพ"]}	t	2026-07-05 15:56:43.966492+00	\N	\N	\N	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+321	10010003-D8UUC	$2b$12$h7urSTuc2itBN0A9sGm4xeZVQItDLMS7HL8H/3KSSIrMYY8Iv9WzO	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	พรรษา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	61ade533-68f0-48bd-8292-a675ba848724	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+322	10010003-R9JBU	$2b$12$vOpTSlulfBlK8Rw9KUxiyOTQiesm3qhbOUY1vHGdxQ0Kmjjo.eyuC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	วรพล	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d51c077b-b215-412f-abde-fa66deb09448	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+57	10010001-LCUES	$2b$12$0kGb/BL52oXDd3FOGfdo3.xqz9VDHSyjvxJqyCTNmJpoVzmEPeOyG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุภัสสรา	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3006a1b2-00bf-439c-ba08-3562824947ef	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+58	10010001-G2RZN	$2b$12$D9Jr7vwqnvWdgA7SXhknGuvnKz378pY5K/yA1JCKHa4H/d36CN6oy	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ประภา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	dec3eea9-8a11-4167-995b-a711dd02bdb1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+29	10010001-7U7KC	$2b$12$e9uQwzQyLqc7/sf.qVlTq.7inDgVLHFMwF82SDpBa/usMKFgrsmvS	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อรณิชา	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	eff3e255-72d1-4c73-87d0-7b1093edb5bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+30	10010001-6MM9K	$2b$12$Vz.a7sDNecmray3xNOg/N.Q7l8SG5PqbiQlJCGTdkX.UL4lvwB7sq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	พิพัฒน์	ศรีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0eda2b60-7723-4364-b1a1-14b61f11b94a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+31	10010001-J5F44	$2b$12$71IqHwwJTzlHvQqrDADhmuisToLRZs233429wadz.JUBei.F8k2sG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชนิดา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5bcee74b-e37b-4503-8d60-aa2979661f08	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+32	10010001-ETQ73	$2b$12$6qEs5eGUJjLKnapCvdyT1OdVBhGuULEkjlvowJab1qkVvZdeYegN.	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชนิดา	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6f717f20-2dcb-4c06-a4ec-5e556fc10607	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+33	10010001-CHFU8	$2b$12$2R35xKzG3Os9XUM4.scco.IKNH4cDhrY9eiEFymi7G0/FFLxO6X7K	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	116dc992-3987-49ba-9424-ea6e7fc7006f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+34	10010001-BRTNL	$2b$12$fhUpqo72AJwsdIs.EyxIF.C7va3HLcFa13gmw1Sk7gIVUong7hy7.	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e73803c8-0bbb-46c7-8c16-d389aabffe47	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+35	10010001-HGV2B	$2b$12$DFmg4zgVadjHx9C61gAPKOvbaCFwgOyxLxSExH4ZN6FYh5tKAuBJK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุมาลี	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	25a5f554-6f59-40f0-b115-3be89034b7cb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+36	10010001-RTBT4	$2b$12$.y4VP8JGNQOsbQWQ1c8Z/uJ6JEiADixJ0XNsbJS9DO/hn4cIvUjIW	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	พิพัฒน์	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5d089ce1-24a8-4ce9-b470-87b462c66c62	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+37	10010001-J8XHD	$2b$12$7uDAzpckGIax0sme.fLmau6.7BLjT0WY/HoVKmnYb43oUG.TixRYG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ธัชพล	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	68c362c6-e368-4981-aa8c-ae00a754e817	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+38	10010001-C5ZWM	$2b$12$6SH5niBBvCQo98.br6BV0OF5U/YhgDVMH7FwK9paWs2rXu1s3C3B2	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชลธิชา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8c0f1cdc-db38-43d3-bae3-cf53e8bd41e0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+39	10010001-7JBZC	$2b$12$Kgj2XCuv/843nDD8C6y.MOTxas4CbYHEdOIBbAoPuQAXsP75D.TQu	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สิรภพ	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9f46bd9b-fa6b-4d26-994d-b3303cdb024b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+425	10010002-PTYVF	$2b$12$ByMLOaA1SWxYgUXMYybJLOTuFIButFZrYOUoCctwxcXZXj3gl88Sq	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:24:40.636928+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-03 18:15:08.809413+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:24:41.095+00	2026-07-08 08:24:41.095+00	2026-07-01 08:24:41.793754+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+40	10010001-V842Q	$2b$12$AyBALrvnZ83qydB8zOD4beIyvNFVbvHPDoPTTrjsEjUmVWmm.jmqW	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐนิชา	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	190fd5a8-6e44-4385-b3fc-e4be68847952	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+41	10010001-C76QC	$2b$12$v7jUkwIjwQwQA2J.QM.6b.wNFrZqb6W.smzZcgPWMogPapbizttau	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อัมพร	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6aeb5902-15e3-4dca-9a8f-9c77b9b365bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+42	10010001-K8KT5	$2b$12$zCB8gKhS.0CJP66Ip8qpAuYL4H8nn0ByHiBvj21mVXyQj9FmUvOdK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bcce8cfc-fb1d-4cdc-960a-f896c98f08b8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+43	10010001-ECWTJ	$2b$12$5r6QVLo93Jqig0tfUKq6XeuxomX2ADkKLiY0z7Qjxx0rJ.SJdBy0G	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ธนาธิป	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	13c7161a-c3f8-4b1d-8454-1b76512108d1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+44	10010001-6QKS6	$2b$12$vaP.XoSRaI.OzSGFuCo.o.YCJETpNWOiTHJM9c34zQCL8Ct5oq4Xi	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชูเกียรติ	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	906db2d4-4392-4ab4-8faf-fc315c8ee0f8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+45	10010001-HL5WJ	$2b$12$iMh.mvCtxR7xtp8Hpy76EehKaJAHvbNcgUiuB3.YRJ8H3CGtQ6.GK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	นรวิชญ์	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	00c3fb63-dc03-4b24-a4a8-5cc4a4dad02f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+46	10010001-2GM5V	$2b$12$2SutygoLs4uXtcWlUF6Lu.TqvH8kljNq754F6CW2xXvSQBa4YFgIe	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	นภาพร	สง่างาม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b58e18f8-5864-4827-882d-36524b71c6c8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+59	10010001-2XQWF	$2b$12$BtkPliLWZpfczV4APQxa7ed/3m031GP/DXYnfpiVl9jqffl3SVdz6	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	อนุชา	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b20c93f6-15da-4823-9499-27ee92f24a3e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+60	10010001-6JLC3	$2b$12$BqA4ByADc6Dyz.1PTc4VoeYCrB3D1BMHN8BcYgN3w8zxBO4jXTKYK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	459af1fd-23fb-4ad5-a184-ef89f9108adf	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+61	10010001-T79XY	$2b$12$JErZ3jVU0na9FAiNX9YxruZgywb7plVV0NQPvQn10fN6aPrhOapwK	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	135d09fa-b227-43fb-b9f9-e73ce4fd6a38	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+62	10010001-9SMVH	$2b$12$suUSkoNflBxTpezC31MlA.9zwYhZW79P4zzDEvRxhOfplcBVj3/72	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สมชาย	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f75158aa-6d5e-4e56-9653-ec06675547f3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+63	10010001-BGRSU	$2b$12$54S3yzKZWXekcX6xkcVcQO99YB0JfUO5vAMmLOCj11reHwPusXYIS	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ลลิตา	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e0c408d5-f394-4ec9-b50f-4b415491e011	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+64	10010001-N6TTR	$2b$12$bP.XMr1QWfHNKGoJO1s6sOsf/SSqqDl1wHGl0kf4o6pa9X/Crcx26	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	คุณากร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	503ef3f6-8aec-4fb7-9f60-33ea8a04d83a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+65	10010001-7U6SX	$2b$12$72C99VqqmkTWSZf0YV5WqOCZPp3BaTGcy3MkttwG0KR36RMJYioGC	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c614bd31-a83b-4571-907e-94eb863d2939	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+66	10010001-7MTYW	$2b$12$ZO43UHFj5MkotMt1sLRiuuQJb5jfaxyw.XhGeC6kIGwmxd0k37vJe	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	พิพัฒน์	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f7ecfc87-f944-4e14-9962-deb1b3a42500	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+67	10010001-3RXDE	$2b$12$LlVFpiCZeHXHE4Pyjqh58O1OEk9h5z0wE.6oxIawamu09GUPs7c.O	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	มานพ	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f40633f3-9758-4f22-821e-eb5c8257bd93	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+68	10010001-79ZWA	$2b$12$kYXnfF.QulwSjeQGf6pQleIep.xCXS6Pe9uBxtOwekWU68RIre1oi	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	นันทพร	ประสิทธิ์ผล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	49c5492b-8daf-4990-ba8d-1e436ed8c974	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+69	10010001-WVXBB	$2b$12$4U9vF.uIXkyze/61nGS.t.C512XwKHuI93qZgbUExYIZr94Z7IgCa	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	แสงสว่าง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	575331b6-8924-457d-bc02-34ace5125a72	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+70	10010001-GMRLF	$2b$12$gGssDpXfceKyXFYhuXdgYuKijilHGoh2CbiIEDFTkj1rpyL7hYGOe	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ชนิดา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8bab9ae6-c904-44b2-82b7-2cad79a67169	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+71	10010001-24PHB	$2b$12$d/TwdvVQCaRsb8H79smPxeFrF2lH2jNK8EFAtdCGMI2ZSyMYR.igG	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วสันต์	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5aaec2f9-21ab-4272-833b-81e0a0016c8e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+72	10010001-KLFEC	$2b$12$ILdoGnlC8YawhFJ5vmINVuULLsJNFmklsybG1/UpcR1lr.t.L2fjq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f7341b04-dc21-419d-9d8b-a6f034013ace	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+73	10010001-BZVWM	$2b$12$S5niiXVCvqMVMbU6ZBP.PONW7GkWJBDWiXxVwMlvUFIqBHFQH4OFa	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	รัฐนนท์	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ca9b3bca-f090-46a8-a80e-dc2477ee048a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+74	10010001-H667H	$2b$12$AI4MS9e9DkYsCylp3Kf.nezQgWnXeqAT5o/sqipagvjoQAen2cGwu	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	สุนิสา	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f15039a5-7881-48fc-b3bd-7d3b1ebe124a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+75	10010001-4VVST	$2b$12$PnoxfjOi8rZv2CAnMNgDf.kN7ieAVAfLS6/nLBNaysTyNba7kFjO.	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	วสันต์	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2e0d2e55-3a29-41ee-ac17-3fc8e22917a5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+76	10010001-9NUKN	$2b$12$PW/cPzSfLWCBXnI5Vclg6OU2g57fFxp3co8TIz/OE4Y8mHJe/OIaq	โรงเรียนอนุบาลวัดกลาง	ACTIVE	2026-06-28 03:27:08.491711+00		\N	\N	["home", "student-self"]	กันตภณ	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bbd65c65-e86a-470d-b7e4-7669ee9e44c7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+77	10010004-PTCC5	$2b$12$HDwjBfqgKaCBo5R4jnSKnuR/0gOlo.VEy6HT9lpwiDxqhRuCJMM5S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สมหญิง	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0fca192a-3414-424f-b501-60dadd533483	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+78	10010004-2TF2M	$2b$12$bLRtFKq1LssigDauXIv9gOcreHZkwtJPk8W0F1gWDQXDsmacXBp7O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	อนุชา	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce24c72e-ff42-4e26-b72f-1d2d9a2d548e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+79	10010004-28Q2B	$2b$12$ZKzq9IO2y38d/JRzswcbL.4U6PWizgyJTy/gaEXGjR6cT2MKG0IJS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ศิวกร	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7e85ef04-e81f-4be7-a0da-332b2aade64b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+80	10010004-Y42GX	$2b$12$JxJsLrGCQDPPTfPpXhCzre6sTiU/omf5bgenDv.GmHkG481eYp7Cm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชัยชนะ	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c69a5d7e-dfa1-432b-be4d-de021f32f4ca	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+81	10010004-QNVZ4	$2b$12$ayzbOuqc79HTkIfdlvGv9.aD.NID0iDudWKj3f2Iu6HgpBt8dABHK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ภัทรวดี	ทั่วถึง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8ce26197-7791-4e54-8dfe-649d9767f2e6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+82	10010004-3J36C	$2b$12$0X8HyGwNfOOODig/Nsse8eXwBIZ56/POKBryLfWhg9XArYi/7kt26	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สิรภพ	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	faf2a4e4-9c37-4300-9d5b-4f6d0e466f98	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+83	10010004-HQ4JH	$2b$12$5AdtLHoM2Z5XOeipeYSlxeThdnRyU3y22op3VC2W0oqTroSV6oSQG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กวินท์	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f58787fd-9dbd-407b-a97e-63c607a1e69c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+84	10010004-FCEYW	$2b$12$55jvmEc.utscx5th84YkAOSbagGUDfgmgCP9VuPmCn76sDTWZAzYm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปรเมศวร์	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b1f2c972-a837-4358-a3a1-21394632388f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+85	10010004-WQQNE	$2b$12$FpNaJPE9PvTr2wj0roEYz.4kf6raSRIsJSGXhgDSPQTvyH4H/7fmO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	พรทิพย์	สุวรรณภูมิ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f9f0b479-dd63-40c2-a77b-e3692341e63d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+86	10010004-QEQ6H	$2b$12$mEGXjDao80I/rUMfiCGufOv/tUQRiV3V.IvYsVrUoJzqodepngNky	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กาญจนา	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	74028d96-76be-4e3e-a75b-47391d0e605f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+87	10010004-XE5RX	$2b$12$qfRwT4FhyTWDM3XnumJuv.qH0kHooAayT/if3cIRt4YK2TPZtzAFO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปรเมศวร์	มงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8700a7d1-3660-4d76-9668-237fc69aa2fb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+88	10010004-HE38S	$2b$12$M5AefUdBPz7.8YXtWvz/J.4WanV1DRnbSzyrH6NjMYIZpBNRW1iXO	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปิยนุช	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fc5f3852-0733-4561-befa-eb5769399f0a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+89	10010004-JHXE3	$2b$12$Cg/kKpLjBuC1yBVD8n4BwO8LcXy4XgCmfZZmYt1oEKFpXrg6E.5C6	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	วสันต์	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	086ada13-9cf0-40ce-a375-e30c998bb68c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+90	10010004-L6WYK	$2b$12$LVr63yK/eLRTvyZleWBfmeU2IEP3Klu0DOiL5BD8jpMiI6ia9TmTW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	มณีรัตน์	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2efc6fd8-5eff-4b1d-ab9d-9cdf54152a4f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+91	10010004-Q7MTU	$2b$12$m3wus/tRaIaMz0KEX1CuRu0F6XcPctd1K1L.KKJJ.tNAepfrVSIZa	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	วาสนา	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7ced825a-c639-4582-a57d-e57a30f5d729	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+92	10010004-2MWX3	$2b$12$bcp8frHeYMziKYC77W1TMuKV7OkfCOuNsFCa0MvfQFIBli6y7MSfS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	ศักดิ์สิทธิ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e62b0c83-f006-49d3-a96d-9ba69a3c0772	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+93	10010004-HPRF2	$2b$12$wjw0BiLUeWgKkg7/iSf1aODZkJbvSaNsx4gAFxnb4jd1MX/CnLq/y	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	วุฒิพงษ์	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2151eb22-401e-4845-af27-477a85bef2ec	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+94	10010004-6PESX	$2b$12$7D8z/l.dIhC5T2Iy1RQQY.PnqJAyCHxj8LxBhKvrLuh1bqoiTsCEe	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	รุ่งอรุณ	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	76d26d88-5760-464c-a22c-d987f52e7ec5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+95	10010004-6HP5T	$2b$12$ho0Bp7IY99n6/AHsz27qOObd0Fs/zL8IzEUiMsE5Xjhyb9jYoyVpG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	จิราพร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	68db1529-9584-42f8-bdbb-0b53610db037	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+96	10010004-CVX5J	$2b$12$aXoEQ5KMYunPwE3Jr32TzuxpkdhmhFeuCXoP.JvvkpZ5x0JTQwU8u	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	นวลจันทร์	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d3288f69-0d8f-4f17-814b-7f762f948162	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+97	10010004-SHEB9	$2b$12$fl.Q/yxzwqESyyuF3pjpmOWeZezbDmXj3Hjp7z/7Rq50Dh7QaxAkC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ปวีณา	วัฒนากุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a9e10125-1cd7-4d6d-994d-25dfed7531f8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+98	10010004-HL778	$2b$12$uCZlVsZLb/UCgpGWhI3sleIFb5iX5IFUcyYJQQzx9HpihSawP0kii	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สุมาลี	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bd3154a5-2d7d-42e2-9f99-5f664f0efb20	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+99	10010004-UH2P7	$2b$12$wEoQ7pxcIryZVcMrAdbmieErz4HNWgiD2oFv.aXK1TaiDleYvUSDK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชัยชนะ	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8e8b8b55-d7ac-49fb-8b27-dd9d07fd6937	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+100	10010004-UBCUU	$2b$12$z0ojS6eCydchRpoWOkIVY.EFiW38wq3zb5oLlOBplvDUahumLJ2Mu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ศิริพร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	edb2d487-e643-408a-ac07-7afdbd693a58	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+101	10010004-GY292	$2b$12$OuccIwTYgQREtIyBqYR16.xYlBhWWduTS1m98DRtzjFGvfLuDcWHS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	พรทิพย์	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1beafb01-46b2-41d2-85df-ad04775e5144	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+102	10010004-WC2B3	$2b$12$b6Apja85ghp1On5C0CKNoe045ZUkK3TmQGOkB6LfrxUvLbsHD6gEm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กวินท์	ชัยมงคล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5c87899e-ccd1-45ec-b484-558fdd73dc4f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+103	10010004-DA4KJ	$2b$12$0IYhJyymetw6uMFBZCO4hegylpdxOgxxedjd4Jfnivemhoxobea7.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ดรุณี	ชูศรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e893e598-69cf-4aaf-aadc-28111f475e1b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+104	10010004-9RGPE	$2b$12$2MMCga7K.O09GQEGucmunOizoKAAw0M3rb2I1DGGSgjLqsXzUfotW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สิริมา	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0a05f584-3380-4f04-b819-134534598c08	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+105	10010004-2D5D7	$2b$12$QxomnKtFFEL4T2ANjBxtUOk7hTGAmEw7AkMwPi5d.320yUxwXx4gS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	นลินทิพย์	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	16ec39e3-67db-4384-882c-d8468fa47088	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+106	10010004-5LN84	$2b$12$j7jd/U.NnofCnso0hD5Gnuf2z2rad8Y1DsBym1yXtKUuLLcwPZW/S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ณัฐนิชา	พันธุ์ดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e9a2d691-7dda-46a4-bfc0-05eaf6d03d01	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+107	10010004-EG9Z8	$2b$12$p4GHkMNe2P.lRlhpKdLVpeTOQnlToQPv/Gh2jKMYHfAFswJF1r/Di	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สมชาย	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	47724f20-39b3-4177-adb3-5753b119db48	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+108	10010004-XBTG7	$2b$12$jhyfCCjLZrm60DmiIpxC9OZ5OiWUxaDOcxwQ3eFAoZ5/mhGm98LWS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	สุดารัตน์	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	26d92594-4824-4f6a-8494-a080baeaa5f5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+109	10010004-L8MBM	$2b$12$4CIiMOGcHw25Ce/KPGbdx.gDI7uaXAcNlxmlSSbiAhL6S.QLdgICu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	อัมพร	คงพิทักษ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b3f1e01b-f93a-42ab-b346-64a453dff7cd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+110	10010004-UA867	$2b$12$AnsI.ua/tqusHeU0sBO1PeUyj4g5DXiaQ4t7sGykIBiz/wmzi2F0W	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	เจษฎา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	30a3a507-ec30-4715-a90e-150b37ba0f4d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+111	10010004-ADGC2	$2b$12$jQzad0MrrgcWP7BVOB6/z.3oMI0cZ3pEi5P3m8yh.JWSa8X01406O	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ธัชพล	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	32503136-1732-4256-a7d8-25037c28d813	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+112	10010004-XFFDQ	$2b$12$ctE9CQAtnRQ0zaCNqD47BekQN25HLuxtWNZ.jlWMaUMfloVwn/vkW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ณัฐนิชา	เพ็งพา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	553c07c1-6713-4ca3-bae3-c0dee467cb85	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+113	10010004-UCD9D	$2b$12$diSGM.A1/qtR1KlB3A7qQuecxH6ILuwPIvisoCag9ZnA.lPWMyN3i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กาญจนา	มณีรัตน์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	3d2bd049-446b-49db-a5c3-55ff1dcfb919	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+114	10010004-HRCKU	$2b$12$XHnkJ59r8ZiAYRfiPofF6uiiZ7fd9Bp3bONtUafxDD/ggHlmEx2jy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชลธิชา	ลือชา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c857e4ea-c9e7-46f1-ac58-7598a8e79b40	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+115	10010004-ZWNWY	$2b$12$l4iGKqssD86rYkxdQ0TRJuHtfhKe2NTpK2VH0GeLzoawjUZUqqnDu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	กิตติภณ	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	118a5980-f972-415c-9389-372b4744ba5f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+116	10010004-V9G5B	$2b$12$SFNnTh0O9HhHNawesP9R.uS9YJgiL2utWIRwfMXf2vxvVZ.C4NybW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	นรวิชญ์	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	652d2e75-e8a7-4562-a185-6c93e0b1c902	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+117	10010004-5QUR3	$2b$12$2asuGeL0PGLwA5uhS1SBmefUMzh1EPgZoUS8ZUMPDmTSkmF7CEm8u	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	ชูเกียรติ	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	62edccbb-0cea-455b-bba6-878c3d0f90a5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+118	10010004-7GYY7	$2b$12$rbpVCtaomb9O4AusGi21yu4PBqsJlEAN5O9ysDJ7JZQDf0U8WYcGS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:30:34.278518+00		\N	\N	["home", "student-self"]	รัตนาภรณ์	รุ่งเรือง	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	077a3d0c-d4ba-4022-bb33-467705f42e27	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+119	10010004-LWYV6	$2b$12$QvYfLGo.t1jMOp28yb8dbOIbcoVbeY8RmekRgGXZ27cxOqe1Ac7Ai	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	อรณิชา	หอมหวาน	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2b21c6a4-fba0-4de6-b8b7-de76c7bfad69	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+120	10010004-KQPBQ	$2b$12$8LDywze6NwsFTb1r7TPh4e.sHhM8KzmdDPGnhboHhK1ztiKM8HTjW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชาตรี	เพ็งพา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	5e28bd45-1dd1-40b1-8416-6c35bcf3b727	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+121	10010004-MGHFF	$2b$12$qRWVs4UJ8U/4cdIofiv0Ve9d0oCyAf2s9gQeMXGeX58X8im1EIW5.	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชนะชัย	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b4756be6-2650-4fff-9e02-0b325af5ff5d	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+122	10010004-544W7	$2b$12$rXxv3SQ3m1auEAHCzDcGCO3yhVTHjd7RHJ3IoVhNY3L/0DtDd/BEm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ประภา	บุญรอด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0862d705-21a5-4cda-9482-cb82077ad498	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+123	10010004-CEXZ4	$2b$12$4gsNiNVYzxzUBiKMt.YaDe1A0HvPSsIcaiMNOftj0M1RfQEcMDFKq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุนิสา	กิตติคุณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7bf6422c-5e26-434a-acd2-ee4ef7cff915	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+124	10010004-Q79EH	$2b$12$5tM6YQRlvmqE0HTKp7T8remfTuKAD4GjR19PkJHUa1YlWVz1zAkWC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	วรรณภา	สกุลดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f76a4b6d-5ece-4966-b6ac-161685ffba86	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+125	10010004-RPSKX	$2b$12$pmjZHArWEQvTk3vq.rZ95.rIbk2By/R/hXX7K3Y90rymXl67AK1cS	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ทักษิณ	เจริญชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	c20c44cd-174f-4ee5-9661-5f92ae1f5631	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+126	10010004-WK9FX	$2b$12$5LQ2X2xyp1y4Z2nabyYdH.ZoQ/awG8yTMEyI4IJBWLK11K6SBzz5m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กุลธิดา	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6101ece8-9a7e-46fb-998a-d5d8270f8c98	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+127	10010004-AQCJX	$2b$12$cZs688smq4KbJvKkLTeNZOC4UaFpR3yepcrbBPl909ATVerNrLIDW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นันทพร	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	272932c1-2013-4f82-9400-f2f32c8fcc51	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+128	10010004-ZMY88	$2b$12$aIHqZ1rHsTOD.GdBv6j.0eBZAHdW2RBEuka5NdpTrepgFC3OKCy6S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชูเกียรติ	ยิ้มแย้ม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	263ffc2e-472e-4f95-b4e5-9ccd2d41781e	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+129	10010004-NLA67	$2b$12$4pyCjWe/lTUNUhivTp4b4O3yshii7/m.ZGf3z/6hynfmnR0B5W0ga	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ปิยังกูร	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ac55f503-dca5-4faf-8be2-eb71dc76797b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+130	10010004-ADZD2	$2b$12$zKhhljNE738llaRVNeMF5uYTnSmd0XBch4shFSChNWx84nAEtUZzC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	คุณากร	มีสุข	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2f167875-5532-41d4-ac27-c6776399033b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+131	10010004-F5LLH	$2b$12$S4CUlM504WtA9hNP4QbTeuHDF8/UK1KIbk4nfS8GwpME38kdiTlae	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุทธิพงษ์	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9660482e-35c2-47c0-b293-3b7b26920dc2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+132	10010004-XC4L8	$2b$12$ynM/Wwenl1y28VFzHZZQY.FiYXiiFg0ZHx0nFOSpXfptOneHifjMy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นพรัตน์	สุขสันต์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	276e758d-f226-4895-acab-e456869d869f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+133	10010004-JBKE4	$2b$12$sAs/HYkJN3au3pEyRpVzOeVmGP9ytK3fun/2X/5rzmrCNFLenzORK	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นพรัตน์	วังขวา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	74d5f961-0ae5-4b26-8cce-0da4fdebca2f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+134	10010004-8858X	$2b$12$BqUK5l7DhUUtJd1TAHKP6.byeYjfXDBrYZjn0lS5X97Rz2hn0rqAm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ธนพัฒน์	เพียรดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	59473825-7409-4f24-9e20-9df64ebecee9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+135	10010004-A62QP	$2b$12$z76dbLNTfuWuzwVo8sH2yey5i7RWzn85rkpm3hOEHu9asEWMCiGqy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	พรทิพย์	วงษ์สุวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	f6c48c33-3fe7-47ca-b30f-e0a10e14c4a4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+136	10010004-7L5HA	$2b$12$Cd97/pYrk1uS.pfMho/2jOEgpc6JMvHZ2XSnYpBgH5cVFJ9lhsJ0a	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ปัณฑิตา	ปัญญาดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8bc64818-7449-4a5c-bb08-7df2916f7b2a	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+137	10010004-34JZ9	$2b$12$G9sgHkKbddoQ9jolUxJUKuCfpn0XzTyfTvO8cJEayXktmvUUSvIZ2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สิริมา	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7e8694bf-13be-4605-83ad-2064541d1da1	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+138	10010004-CV9HB	$2b$12$2r2NLaPH4AkPY8j78HW9X.89c3xMV334ZsfTIA8iXOswSI/yOH.ye	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	อัมพร	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	9703197c-1180-4b16-8655-13692f1981db	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+139	10010004-4EMLM	$2b$12$H2qTq5T6AqgPzyZXsTxgUOk9QbDq/nzXqnoIGbwtn7DEejyCcFLJG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	วิไลวรรณ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6b00cedf-3bf3-41cd-903b-9106467cf0a2	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+140	10010004-67MLV	$2b$12$6zatekEUx3vN0iZXMFDlguy3Ggr9AAsSdIpG1SrRB71TjgKdRif.m	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กันตภณ	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	11ff5373-7d84-4689-8f55-77a2c9fcd5ec	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+323	10010003-U2Z9X	$2b$12$6jWwEY1s/oGnhU13yPn25.I1ORp3AVPuGM4FfzSaGVqNr2BxjahaW	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	นภาพร	ดำรงค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1c21f8fc-5849-4bdf-94d6-f4f284194158	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+324	10010003-WLGRH	$2b$12$gHCO61GRCVAukhVcZQsQquN71uy0vDSwILhmWqbbHszbDQMjz2bmC	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	จิราพร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	bedb8e0a-a2a1-4bd7-9ec0-13e47531c9ac	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+325	10010003-G5FQQ	$2b$12$wjypjTVPgxHNtpL1DLLKke4erU5/nYLCKEWuEupfOhFDnrS9JynAm	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	มณีรัตน์	นามมนตรี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	48f91ca6-63d8-4cf1-8f31-95276af5bcf6	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+326	10010003-E96VH	$2b$12$ACTeIQGQZzNKJzGiCqysxO8Krx5Wb4CNJhIe7.i1kORc4n0JMWiHq	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	เพ็ญพักตร์	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	698cf0c3-fcd4-45f3-b937-0ce7076099bb	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+327	10010003-ZBT7F	$2b$12$lsgDkR8BaJ3xE6WYHfPp0O84RTzQ3S6azrJirn2owADorTGKY4agi	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:18:41.104744+00		\N	\N	["home", "student-self"]	ปิยังกูร	สุขสบาย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	07d5b5d0-78e5-4790-86e4-61432c363c1b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+328	10010003-P6QUE	$2b$12$mvEWG/eTs0m5gAt342cJbOjZxf8uDh89dC/.7.edsBK0T1uj.uwya	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จิตรลดา	เพ็งพา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	6c7966b5-fb9e-45c3-acde-fc5e91306b3f	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+329	10010003-63PVS	$2b$12$Y8QavtCd1PL.1X4cWM22EOyMnJyXU2yDQSMoQJQndWyNdU04GK4ze	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	จิราพร	บุญมี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	b328f0f7-2a90-47f9-b88d-6ad060e1aa9b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+330	10010003-QE4DT	$2b$12$/QqleJr.FU/pr9pzOofayuOqX7L3D07dMilqZBJnRph.Fx0HdbxK2	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กัญญาณัฐ	สุจริต	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	61a988b5-4a37-40db-b67f-45cb231ae1b5	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+331	10010003-HFKAY	$2b$12$uZhi/JcdUAN9Vo5Ynj6X.eiUJeC3sN1XenZGOLPSENdo43oZpZlfu	โรงเรียนสาธิตมหาวิทยาลัย	ACTIVE	2026-06-29 06:25:55.130448+00		\N	\N	["home", "student-self"]	กุลธิดา	วิริยะ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e296f6d7-f70c-4a55-9d5e-ec6adfb680d8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+141	10010004-GQ5BQ	$2b$12$rsU8JjwDDFLQiL84B/Gm3uhPz18P8AYFU2r5vr2YMwxRJeoP4465y	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ณัฐนิชา	จันทร์แก้ว	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	296d09af-8079-4635-9779-61fea5b0897c	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+142	10010004-YQSZ8	$2b$12$7tZ7eqxWvIO6E5QJMiW4Pep.HgHigsVkHFuNzlhkyuhElfd88obLu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ทิพย์สุดา	เกียรติสกุล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	0ba65afd-4784-488a-9737-894ce2807f62	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+143	10010004-XTFFV	$2b$12$z7pnNmbPURnrxaAudgtzn.eUWeBuEpXug.nHsBMh8Qgu/7ymmz4Iy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	มานพ	สมบูรณ์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a74f671f-c8de-48cb-92ac-d4d7cfbe4a31	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+144	10010004-TZKJC	$2b$12$TTLPduYl4v8P9UytnNL4xeCLpYPbMfWICi1toBNfG1flOv6EMHf2q	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นภาพร	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	32b3ce02-15d5-4d8b-bc36-22bf2d118df4	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+145	10010004-RTEXE	$2b$12$ZUGqX0vsv.m8QvvHP9ahyO.odlT1XBsdA/IFlPLRgAMicvRk30LEy	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กัญญา	คงมั่น	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e580fe04-8d7b-4424-aaec-b0da691b0242	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+426	10010002-DYH9A	$2b$12$eyuNpgNDKp2BvRg5RMBkAe/CzyIEJC6CIb8dAaFgQFWhA1QDXNqfe	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 08:26:00.206266+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-03 18:15:08.809413+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 08:26:00.695+00	2026-07-08 08:26:00.695+00	2026-07-01 08:26:01.417646+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+429	role_scope_smoke_teacher	$2b$12$DSvBOgJswlklr210OKkVOeCvkHM9UKZ1MAv.lphSSXSJUCMkoTRTG	Automated role scope smoke	DISABLED	2026-07-01 08:30:53.19538+00	9900000000001	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-01 08:30:53.196+00	2026-07-08 08:30:53.196+00	2026-07-01 08:30:53.654501+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+427	role_scope_smoke_global_admin	$2b$12$JNqdcXkc2DhrSgK4pleQZ.YemeV4513xM..U5X75GHyuWG3YjWx1W	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.477154+00	\N	\N	\N	["manage-users-list", "home", "attendance"]	Role	Scope Admin	ADMIN	{"global": true}	f	2026-07-03 17:56:31.056952+00	\N	\N	\N	\N	\N	2026-07-03 17:56:31.056952+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+428	role_scope_smoke_school_admin	$2b$12$fwXezL6ap6Fx0FvI3bsURuhCmeSCYPhh8yrzTTG4B/5ofcDMELuUe	Automated role scope smoke	DISABLED	2026-07-01 08:30:52.698448+00	\N	\N	\N	["manage-users-list", "home", "attendance"]	Role	Scope Admin	ADMIN	{"school_ids": ["10010002"]}	f	2026-07-03 17:56:31.056952+00	\N	\N	\N	\N	\N	2026-07-03 17:56:31.056952+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+431	role_scope_smoke_teacher_1782894714327_mmc1p0	$2b$12$3adjFNmGByXdO9PXT1B1FO2oJmPzvWkygxbPIOrV5QcPzWzgmI3Zu	Automated role scope smoke	DISABLED	2026-07-01 08:31:55.268939+00	9982894714327	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-01 08:31:55.269+00	2026-07-08 08:31:55.269+00	2026-07-01 08:31:55.769949+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+432	role_scope_smoke_teacher_1782894721505_x9cglx	$2b$12$VYiehrqvDfEcvFwlqHjxrOr8uESj1vVDrv65kEFBqFjhaIApMTzL6	Automated role scope smoke	DISABLED	2026-07-01 08:32:02.434948+00	9982894721505	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-01 08:32:02.435+00	2026-07-08 08:32:02.435+00	2026-07-01 08:32:02.918781+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+433	role_scope_smoke_teacher_1782894788742_8irdn4	$2b$12$ZXb5rm/PKKULe6HbefMaLeRhYDt1lXBdn6wBckECHswjIBRdLcRvy	Automated role scope smoke	DISABLED	2026-07-01 08:33:09.674962+00	9982894788742	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-01 08:33:09.678+00	2026-07-08 08:33:09.678+00	2026-07-01 08:33:10.146654+00	\N	OTHER	Retained automated role scope smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+434	role_scope_smoke_teacher_1782896698932_n7uzta	$2b$12$QC2Gg7NSREsX4vE61nXXsuori0dw9EP0GGA7GknXp11xfdR9eaif.	Automated role scope smoke	ACTIVE	2026-07-01 09:04:59.874589+00	9982896698932	0990000001	role.scope.smoke@example.invalid	["home", "attendance"]	Role Updated	Scope Smoke	TEACHER	{"school_ids": ["10010002"]}	t	2026-07-03 09:41:03.943278+00	428	428	\N	2026-07-01 09:04:59.875+00	2026-07-08 09:04:59.875+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+435	10010002-K36WJ	$2b$12$HKwpBvqCKkAJaIABsq8Uk.wwxUEP4dMqPOCdhEI9p/f47OWSp7Leu	โรงเรียนบ้านหนองขาม	DISABLED	2026-07-01 09:05:44.025618+00		\N	\N	["home", "student-self"]	Smoke	Student Account	STUDENT	{"own_only": true}	t	2026-07-03 18:15:08.809413+00	422	422	10000000-0000-4000-8000-000000000001	2026-07-01 09:05:44.484+00	2026-07-08 09:05:44.484+00	2026-07-01 09:05:45.216066+00	\N	OTHER	Retained automated student account smoke fixture	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	AUTOMATED_TEST
+146	10010004-XZ4ST	$2b$12$80B/0SwbSih9RYmsdtU2p.nguCqif0rfHUC9Pa0CCahjfX61aTD2a	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	เกวลิน	ทองดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	2bb29287-fa05-45ca-9988-7d21039defbc	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+147	10010004-6R7PB	$2b$12$8wM6kIDUqR/LWkRx8bIGruOOUMkrXYoVES6zsGp2M78l7QLq3Zghu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	อนุชา	อ่อนน้อม	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	4207f945-2d75-4f02-ac2c-1acd90a04f8b	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+148	10010004-Y228F	$2b$12$9/h/vvNdqxYNP28vLGphSeRmhYP9wel3t0/CAomY/LuZhY8N6I.Lq	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	นภาพร	นิ่มนวล	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d373db90-a6c3-4400-a735-6fc395acd8e7	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+149	10010004-RQXGT	$2b$12$cWYNZbAGgARJqUBzJEpQ9uJOkeJjtkaN/mdso0RQ4gjUMO2NwQ.cu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	รัฐนนท์	รักษ์ไทย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	e80c95a8-44c8-4616-bce8-7d69125d52c3	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+150	10010004-T7ABV	$2b$12$iEec/1rLCwoepSpx5bvHkO9rq0AsosC1A2SYzF5HsuFaeioRqk.vW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	แสงดาว	ใจดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	fea5ce59-b3ff-4de0-b54d-df3d046f4940	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+151	10010004-VMR6H	$2b$12$z91ArNqVM3EIIenKK7HOveVzbCazRKxP6i2OvlR/UOnblZIZBG2.i	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ธนาธิป	ขาวสะอาด	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	ce6d4866-88cc-466f-8df4-72a065a2b588	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+152	10010004-NQKGX	$2b$12$i1NiZBc848pMWv42kBh4t.FdgiEDZjDVk8x7W7UGwT94YHTQkbK3K	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุรชัย	ดีสมัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	89b4ef1e-2c3f-47dc-a3a1-8d2ec6671f21	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+153	10010004-GVTR8	$2b$12$GaqmD3o6Wb8.UIzrQV41DuHeLPAMHnnJdYmNnH74V6I/XTfT66rQG	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	มาลัย	ธนาคาร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	688a46e1-a18f-455e-8df9-fc6126b6d4af	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+154	10010004-YXTX3	$2b$12$RGwoF3sx6exOVMH4mlOE7.F8uMt5vWPw69R7bLD2iUM7PhuLQTGYu	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	พิมพ์ชนก	พรสวรรค์	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	1ecbe799-7474-47bb-b0c5-71b00b728615	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+155	10010004-2HCZ3	$2b$12$yfiKhV1/so4I.Te62IVO5ulkfULFhpFYEvh2snb0y8dUL0LEKELuW	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	สุรชัย	สีดา	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	7552c6b7-f432-42de-a099-4f8bd239e0e0	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+156	10010004-SBPZZ	$2b$12$kotPmgkrXLoJ5mfJLLA2a.io5lsc43VW8sIqi2oSjloUm1YZtF3Ea	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ปัณณทัต	งามดี	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71de3ae7-42db-4615-93e0-1ed58eb4d078	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+157	10010004-YCJKS	$2b$12$A7pcsVQ64n/igwZdn/JMe.sBSeM0qocU0RQNKDkcZ.A3aVJoK8w.2	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	วีรชัย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	8def3e02-3aa7-440b-8e30-04042287e6e8	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+158	10010004-ZCSAG	$2b$12$89YRnPQYtfA0quu72Lyol.eGIjQIR0NTnGqE1TRDwLqFvd6KdHOyC	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ณัฐวุฒิ	อินทร์ชัย	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	a1dc72be-0184-4baa-be78-83fd5114d595	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+159	10010004-SXFU8	$2b$12$rIkAm6MlvivQS6vUT4/Y6O0QHNPFral0nRKHkZPCE8Y5iaS2MS/rm	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	กาญจนา	พงษ์ไพร	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	71ec0062-a255-4a20-8531-33a8d5455aa9	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
+160	10010004-6PUXH	$2b$12$2GwAYpF/AVwKAYW/a/5Sn.cQ48EUx5zzelRTEjwQlw6ZTuxhrTE7S	โรงเรียนเทพศิรินทร์ราชดำริ	ACTIVE	2026-06-28 03:31:07.911593+00		\N	\N	["home", "student-self"]	ชนะชัย	พรประเสริฐ	STUDENT	{"own_only": true}	t	2026-06-30 11:00:01.845207+00	1	1	d9bac52c-ddd9-4424-b1f4-70adc4bfa6bd	2026-06-30 11:00:01.845207+00	2026-07-07 11:00:01.845207+00	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	OPERATIONAL
 \.
 
 
@@ -19775,14 +21350,14 @@ COPY public.users (id, username, password, affiliation, status, created_at, "Per
 -- Name: absence_reason_categories_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.absence_reason_categories_id_seq', 1, false);
+SELECT pg_catalog.setval('public.absence_reason_categories_id_seq', 5, true);
 
 
 --
 -- Name: absence_reasons_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.absence_reasons_id_seq', 1, false);
+SELECT pg_catalog.setval('public.absence_reasons_id_seq', 5, true);
 
 
 --
@@ -19803,14 +21378,14 @@ SELECT pg_catalog.setval('public."attendance_AttendanceID_seq"', 185, true);
 -- Name: audit_log_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.audit_log_id_seq', 257, true);
+SELECT pg_catalog.setval('public.audit_log_id_seq', 614, true);
 
 
 --
 -- Name: cases_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.cases_id_seq', 1021, true);
+SELECT pg_catalog.setval('public.cases_id_seq', 1023, true);
 
 
 --
@@ -19852,7 +21427,7 @@ SELECT pg_catalog.setval('public."external_users_ExternalID_seq"', 1, false);
 -- Name: migrations_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.migrations_id_seq', 60, true);
+SELECT pg_catalog.setval('public.migrations_id_seq', 90, true);
 
 
 --
@@ -19867,6 +21442,13 @@ SELECT pg_catalog.setval('public.non_follow_up_reasons_id_seq', 1, false);
 --
 
 SELECT pg_catalog.setval('public.pii_access_events_id_seq', 3, true);
+
+
+--
+-- Name: pii_export_events_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.pii_export_events_id_seq', 1, false);
 
 
 --
@@ -19926,24 +21508,31 @@ SELECT pg_catalog.setval('public.student_account_batch_job_item_id_seq', 1, fals
 
 
 --
+-- Name: student_import_quarantine_rows_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.student_import_quarantine_rows_id_seq', 136, true);
+
+
+--
 -- Name: student_person_identifier_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.student_person_identifier_id_seq', 5501, true);
+SELECT pg_catalog.setval('public.student_person_identifier_id_seq', 5745, true);
 
 
 --
 -- Name: task_submissions_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.task_submissions_id_seq', 2, true);
+SELECT pg_catalog.setval('public.task_submissions_id_seq', 3, true);
 
 
 --
 -- Name: users_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.users_id_seq', 442, true);
+SELECT pg_catalog.setval('public.users_id_seq', 461, true);
 
 
 --
@@ -19987,6 +21576,14 @@ ALTER TABLE ONLY public.absence_reasons
 
 
 --
+-- Name: application_display_states application_display_states_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.application_display_states
+    ADD CONSTRAINT application_display_states_pkey PRIMARY KEY (domain_code, code);
+
+
+--
 -- Name: assistance_measures assistance_measures_label_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -20011,6 +21608,30 @@ ALTER TABLE ONLY public.attendance
 
 
 --
+-- Name: attendance_record_statuses attendance_record_statuses_internal_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_record_statuses
+    ADD CONSTRAINT attendance_record_statuses_internal_code_key UNIQUE (internal_code);
+
+
+--
+-- Name: attendance_record_statuses attendance_record_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_record_statuses
+    ADD CONSTRAINT attendance_record_statuses_pkey PRIMARY KEY (code);
+
+
+--
+-- Name: attendance_session_statuses attendance_session_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_session_statuses
+    ADD CONSTRAINT attendance_session_statuses_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: attendance_sessions attendance_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -20024,6 +21645,14 @@ ALTER TABLE ONLY public.attendance_sessions
 
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_referral_statuses case_referral_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_referral_statuses
+    ADD CONSTRAINT case_referral_statuses_pkey PRIMARY KEY (code);
 
 
 --
@@ -20051,6 +21680,14 @@ ALTER TABLE ONLY public.case_student_uuid_backfill_20260702_backup
 
 
 --
+-- Name: case_workflow_statuses case_workflow_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_workflow_statuses
+    ADD CONSTRAINT case_workflow_statuses_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: cases cases_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -20064,6 +21701,14 @@ ALTER TABLE ONLY public.cases
 
 ALTER TABLE public.pii_access_events
     ADD CONSTRAINT chk_pii_access_events_subject_type CHECK (((subject_type)::text = ANY ((ARRAY['STUDENT'::character varying, 'USER'::character varying])::text[]))) NOT VALID;
+
+
+--
+-- Name: data_record_origins data_record_origins_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.data_record_origins
+    ADD CONSTRAINT data_record_origins_pkey PRIMARY KEY (code);
 
 
 --
@@ -20163,11 +21808,43 @@ ALTER TABLE ONLY public.non_follow_up_reasons
 
 
 --
+-- Name: notification_types notification_types_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.notification_types
+    ADD CONSTRAINT notification_types_pkey PRIMARY KEY (code);
+
+
+--
+-- Name: notifications notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.notifications
+    ADD CONSTRAINT notifications_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: pii_access_events pii_access_events_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.pii_access_events
     ADD CONSTRAINT pii_access_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pii_export_events pii_export_events_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pii_export_events
+    ADD CONSTRAINT pii_export_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pii_export_requests pii_export_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pii_export_requests
+    ADD CONSTRAINT pii_export_requests_pkey PRIMARY KEY (id);
 
 
 --
@@ -20251,11 +21928,27 @@ ALTER TABLE ONLY public.school_affiliations
 
 
 --
+-- Name: school_calendar_day_types school_calendar_day_types_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_calendar_day_types
+    ADD CONSTRAINT school_calendar_day_types_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: school_calendar_days school_calendar_days_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.school_calendar_days
     ADD CONSTRAINT school_calendar_days_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: school_term_statuses school_term_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_term_statuses
+    ADD CONSTRAINT school_term_statuses_pkey PRIMARY KEY (code);
 
 
 --
@@ -20275,6 +21968,14 @@ ALTER TABLE ONLY public.schools
 
 
 --
+-- Name: student_account_batch_item_statuses student_account_batch_item_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_item_statuses
+    ADD CONSTRAINT student_account_batch_item_statuses_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: student_account_batch_job_item student_account_batch_job_item_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -20291,11 +21992,67 @@ ALTER TABLE ONLY public.student_account_batch_job
 
 
 --
+-- Name: student_account_batch_job_statuses student_account_batch_job_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_job_statuses
+    ADD CONSTRAINT student_account_batch_job_statuses_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: student_dropouts student_dropouts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.student_dropouts
     ADD CONSTRAINT student_dropouts_pkey PRIMARY KEY ("PersonID_Onec");
+
+
+--
+-- Name: student_import_batch_statuses student_import_batch_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batch_statuses
+    ADD CONSTRAINT student_import_batch_statuses_pkey PRIMARY KEY (code);
+
+
+--
+-- Name: student_import_batches student_import_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batches
+    ADD CONSTRAINT student_import_batches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: student_import_quarantine_reason_codes student_import_quarantine_reason_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_reason_codes
+    ADD CONSTRAINT student_import_quarantine_reason_codes_pkey PRIMARY KEY (code);
+
+
+--
+-- Name: student_import_quarantine_resolution_states student_import_quarantine_resolution_states_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_resolution_states
+    ADD CONSTRAINT student_import_quarantine_resolution_states_pkey PRIMARY KEY (code);
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: student_import_quarantine_statuses student_import_quarantine_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_statuses
+    ADD CONSTRAINT student_import_quarantine_statuses_pkey PRIMARY KEY (code);
 
 
 --
@@ -20312,6 +22069,14 @@ ALTER TABLE ONLY public.student_person_identifier
 
 ALTER TABLE ONLY public.student_person
     ADD CONSTRAINT student_person_pkey PRIMARY KEY (person_uuid);
+
+
+--
+-- Name: student_status_categories student_status_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_status_categories
+    ADD CONSTRAINT student_status_categories_pkey PRIMARY KEY (code);
 
 
 --
@@ -20355,6 +22120,14 @@ ALTER TABLE ONLY public.task_link_scope_backfill_20260702_backup
 
 
 --
+-- Name: task_link_statuses task_link_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_link_statuses
+    ADD CONSTRAINT task_link_statuses_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: task_links task_links_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -20376,6 +22149,14 @@ ALTER TABLE ONLY public.task_links
 
 ALTER TABLE ONLY public.task_submissions
     ADD CONSTRAINT task_submissions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_workflow_statuses task_workflow_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_workflow_statuses
+    ADD CONSTRAINT task_workflow_statuses_pkey PRIMARY KEY (code);
 
 
 --
@@ -20432,6 +22213,14 @@ ALTER TABLE ONLY public.student_term
 
 ALTER TABLE ONLY public.student_term
     ADD CONSTRAINT uq_student_term_student_uuid UNIQUE (student_uuid);
+
+
+--
+-- Name: user_account_statuses user_account_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_account_statuses
+    ADD CONSTRAINT user_account_statuses_pkey PRIMARY KEY (code);
 
 
 --
@@ -20530,6 +22319,13 @@ CREATE INDEX idx_audit_log_created_at ON public.audit_log USING btree (created_a
 
 
 --
+-- Name: idx_audit_log_data_origin_created_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_audit_log_data_origin_created_at ON public.audit_log USING btree (data_origin_code, created_at DESC);
+
+
+--
 -- Name: idx_audit_log_target; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -20572,6 +22368,20 @@ CREATE INDEX idx_cases_school_id ON public.cases USING btree (school_id);
 
 
 --
+-- Name: idx_cases_sla_breach_due; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_cases_sla_breach_due ON public.cases USING btree (sla_breached_notified_at, sla_due_at) WHERE ((deleted_at IS NULL) AND (sla_due_at IS NOT NULL) AND (sla_breached_notified_at IS NULL) AND (status <> ALL (ARRAY['RESOLVED'::text, 'CANCELLED'::text])));
+
+
+--
+-- Name: idx_cases_sla_warning_due; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_cases_sla_warning_due ON public.cases USING btree (sla_warning_notified_at, sla_due_at) WHERE ((deleted_at IS NULL) AND (sla_due_at IS NOT NULL) AND (sla_warning_notified_at IS NULL) AND (status <> ALL (ARRAY['RESOLVED'::text, 'CANCELLED'::text])));
+
+
+--
 -- Name: idx_cases_status; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -20600,6 +22410,20 @@ CREATE INDEX idx_external_agencies_type_active ON public.external_agencies USING
 
 
 --
+-- Name: idx_notifications_recipient_created; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_notifications_recipient_created ON public.notifications USING btree (recipient_user_id, created_at DESC);
+
+
+--
+-- Name: idx_notifications_recipient_unread; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_notifications_recipient_unread ON public.notifications USING btree (recipient_user_id, created_at DESC) WHERE (read_at IS NULL);
+
+
+--
 -- Name: idx_pii_access_events_actor; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -20618,6 +22442,34 @@ CREATE INDEX idx_pii_access_events_subject ON public.pii_access_events USING btr
 --
 
 CREATE INDEX idx_pii_access_events_typed_subject ON public.pii_access_events USING btree (subject_type, subject_ref, created_at);
+
+
+--
+-- Name: idx_pii_export_events_actor; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pii_export_events_actor ON public.pii_export_events USING btree (actor_user_id, created_at DESC);
+
+
+--
+-- Name: idx_pii_export_events_request; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pii_export_events_request ON public.pii_export_events USING btree (request_id, created_at DESC);
+
+
+--
+-- Name: idx_pii_export_requests_requester; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pii_export_requests_requester ON public.pii_export_requests USING btree (requester_user_id, created_at DESC);
+
+
+--
+-- Name: idx_pii_export_requests_status; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pii_export_requests_status ON public.pii_export_requests USING btree (status, created_at DESC);
 
 
 --
@@ -20667,6 +22519,34 @@ CREATE INDEX idx_student_account_batch_job_status ON public.student_account_batc
 --
 
 CREATE INDEX idx_student_dropouts_person_uuid ON public.student_dropouts USING btree (person_uuid);
+
+
+--
+-- Name: idx_student_import_batches_created_by; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_student_import_batches_created_by ON public.student_import_batches USING btree (created_by, created_at DESC);
+
+
+--
+-- Name: idx_student_import_batches_source; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_student_import_batches_source ON public.student_import_batches USING btree (target, source_sha256, created_at DESC);
+
+
+--
+-- Name: idx_student_import_quarantine_batch_status; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_student_import_quarantine_batch_status ON public.student_import_quarantine_rows USING btree (batch_id, status);
+
+
+--
+-- Name: idx_student_import_quarantine_school_status; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_student_import_quarantine_school_status ON public.student_import_quarantine_rows USING btree (school_id, status, created_at DESC);
 
 
 --
@@ -20733,6 +22613,13 @@ CREATE INDEX idx_tasks_type_status ON public.tasks USING btree (task_type, statu
 
 
 --
+-- Name: idx_users_data_origin_code; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_users_data_origin_code ON public.users USING btree (data_origin_code);
+
+
+--
 -- Name: idx_users_person_uuid; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -20747,6 +22634,13 @@ CREATE UNIQUE INDEX uq_attendance_uuid_date_period ON public.attendance USING bt
 
 
 --
+-- Name: uq_pii_export_requests_active_token; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX uq_pii_export_requests_active_token ON public.pii_export_requests USING btree (download_token_hash) WHERE (download_token_hash IS NOT NULL);
+
+
+--
 -- Name: uq_school_terms_one_active_per_school; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -20758,6 +22652,13 @@ CREATE UNIQUE INDEX uq_school_terms_one_active_per_school ON public.school_terms
 --
 
 CREATE UNIQUE INDEX uq_student_account_batch_job_item_person ON public.student_account_batch_job_item USING btree (job_id, person_uuid);
+
+
+--
+-- Name: uq_student_import_quarantine_pending_row; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX uq_student_import_quarantine_pending_row ON public.student_import_quarantine_rows USING btree (row_fingerprint, reason_code) WHERE (((status)::text = 'PENDING'::text) AND (deleted_at IS NULL));
 
 
 --
@@ -20782,10 +22683,31 @@ CREATE TRIGGER trg_absence_reasons_set_updated_at BEFORE UPDATE ON public.absenc
 
 
 --
+-- Name: application_display_states trg_application_display_states_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_application_display_states_set_updated_at BEFORE UPDATE ON public.application_display_states FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: assistance_measures trg_assistance_measures_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trg_assistance_measures_set_updated_at BEFORE UPDATE ON public.assistance_measures FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: attendance_record_statuses trg_attendance_record_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_attendance_record_statuses_set_updated_at BEFORE UPDATE ON public.attendance_record_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: attendance_session_statuses trg_attendance_session_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_attendance_session_statuses_set_updated_at BEFORE UPDATE ON public.attendance_session_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -20810,6 +22732,13 @@ CREATE TRIGGER trg_audit_log_immutable BEFORE DELETE OR UPDATE ON public.audit_l
 
 
 --
+-- Name: case_referral_statuses trg_case_referral_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_case_referral_statuses_set_updated_at BEFORE UPDATE ON public.case_referral_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: case_referrals trg_case_referrals_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -20824,10 +22753,24 @@ CREATE TRIGGER trg_case_reviews_set_updated_at BEFORE UPDATE ON public.case_revi
 
 
 --
+-- Name: case_workflow_statuses trg_case_workflow_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_case_workflow_statuses_set_updated_at BEFORE UPDATE ON public.case_workflow_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: cases trg_cases_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trg_cases_set_updated_at BEFORE UPDATE ON public.cases FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: data_record_origins trg_data_record_origins_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_data_record_origins_set_updated_at BEFORE UPDATE ON public.data_record_origins FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -20887,6 +22830,13 @@ CREATE TRIGGER trg_pii_access_events_immutable BEFORE DELETE OR UPDATE ON public
 
 
 --
+-- Name: pii_export_events trg_pii_export_events_immutable; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_pii_export_events_immutable BEFORE DELETE OR UPDATE ON public.pii_export_events FOR EACH ROW EXECUTE FUNCTION public.pii_export_events_block_mutation();
+
+
+--
 -- Name: related_agencies trg_related_agencies_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -20922,10 +22872,24 @@ CREATE TRIGGER trg_school_affiliations_set_updated_at BEFORE UPDATE ON public.sc
 
 
 --
+-- Name: school_calendar_day_types trg_school_calendar_day_types_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_school_calendar_day_types_set_updated_at BEFORE UPDATE ON public.school_calendar_day_types FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: school_calendar_days trg_school_calendar_days_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trg_school_calendar_days_set_updated_at BEFORE UPDATE ON public.school_calendar_days FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: school_term_statuses trg_school_term_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_school_term_statuses_set_updated_at BEFORE UPDATE ON public.school_term_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -20943,6 +22907,13 @@ CREATE TRIGGER trg_schools_set_updated_at BEFORE UPDATE ON public.schools FOR EA
 
 
 --
+-- Name: student_account_batch_item_statuses trg_student_account_batch_item_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_account_batch_item_statuses_set_updated_at BEFORE UPDATE ON public.student_account_batch_item_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: student_account_batch_job trg_student_account_batch_job_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -20950,10 +22921,59 @@ CREATE TRIGGER trg_student_account_batch_job_set_updated_at BEFORE UPDATE ON pub
 
 
 --
+-- Name: student_account_batch_job_statuses trg_student_account_batch_job_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_account_batch_job_statuses_set_updated_at BEFORE UPDATE ON public.student_account_batch_job_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: student_dropouts trg_student_dropouts_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trg_student_dropouts_set_updated_at BEFORE UPDATE ON public.student_dropouts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: student_import_batch_statuses trg_student_import_batch_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_import_batch_statuses_set_updated_at BEFORE UPDATE ON public.student_import_batch_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: student_import_batches trg_student_import_batches_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_import_batches_set_updated_at BEFORE UPDATE ON public.student_import_batches FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: student_import_quarantine_reason_codes trg_student_import_quarantine_reason_codes_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_import_quarantine_reason_codes_set_updated_at BEFORE UPDATE ON public.student_import_quarantine_reason_codes FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: student_import_quarantine_resolution_states trg_student_import_quarantine_resolution_states_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_import_quarantine_resolution_states_set_updated_at BEFORE UPDATE ON public.student_import_quarantine_resolution_states FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: student_import_quarantine_rows trg_student_import_quarantine_rows_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_import_quarantine_rows_set_updated_at BEFORE UPDATE ON public.student_import_quarantine_rows FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: student_import_quarantine_statuses trg_student_import_quarantine_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_import_quarantine_statuses_set_updated_at BEFORE UPDATE ON public.student_import_quarantine_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -20968,6 +22988,13 @@ CREATE TRIGGER trg_student_person_identifier_set_updated_at BEFORE UPDATE ON pub
 --
 
 CREATE TRIGGER trg_student_person_set_updated_at BEFORE UPDATE ON public.student_person FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: student_status_categories trg_student_status_categories_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_student_status_categories_set_updated_at BEFORE UPDATE ON public.student_status_categories FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -20992,6 +23019,13 @@ CREATE TRIGGER trg_system_settings_set_updated_at BEFORE UPDATE ON public.system
 
 
 --
+-- Name: task_link_statuses trg_task_link_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_task_link_statuses_set_updated_at BEFORE UPDATE ON public.task_link_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: task_links trg_task_links_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -21006,10 +23040,24 @@ CREATE TRIGGER trg_task_submissions_set_updated_at BEFORE UPDATE ON public.task_
 
 
 --
+-- Name: task_workflow_statuses trg_task_workflow_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_task_workflow_statuses_set_updated_at BEFORE UPDATE ON public.task_workflow_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: tasks trg_tasks_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trg_tasks_set_updated_at BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: user_account_statuses trg_user_account_statuses_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_user_account_statuses_set_updated_at BEFORE UPDATE ON public.user_account_statuses FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -21076,6 +23124,30 @@ ALTER TABLE ONLY public.absence_reasons
 
 
 --
+-- Name: application_display_states application_display_states_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.application_display_states
+    ADD CONSTRAINT application_display_states_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: application_display_states application_display_states_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.application_display_states
+    ADD CONSTRAINT application_display_states_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: application_display_states application_display_states_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.application_display_states
+    ADD CONSTRAINT application_display_states_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: assistance_measures assistance_measures_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21113,6 +23185,54 @@ ALTER TABLE ONLY public.attendance
 
 ALTER TABLE ONLY public.attendance
     ADD CONSTRAINT attendance_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: attendance_record_statuses attendance_record_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_record_statuses
+    ADD CONSTRAINT attendance_record_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: attendance_record_statuses attendance_record_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_record_statuses
+    ADD CONSTRAINT attendance_record_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: attendance_record_statuses attendance_record_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_record_statuses
+    ADD CONSTRAINT attendance_record_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: attendance_session_statuses attendance_session_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_session_statuses
+    ADD CONSTRAINT attendance_session_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: attendance_session_statuses attendance_session_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_session_statuses
+    ADD CONSTRAINT attendance_session_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: attendance_session_statuses attendance_session_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_session_statuses
+    ADD CONSTRAINT attendance_session_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -21169,6 +23289,30 @@ ALTER TABLE ONLY public.attendance
 
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_actor_user_id_fkey FOREIGN KEY (actor_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: case_referral_statuses case_referral_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_referral_statuses
+    ADD CONSTRAINT case_referral_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: case_referral_statuses case_referral_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_referral_statuses
+    ADD CONSTRAINT case_referral_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: case_referral_statuses case_referral_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_referral_statuses
+    ADD CONSTRAINT case_referral_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -21244,6 +23388,30 @@ ALTER TABLE ONLY public.case_reviews
 
 
 --
+-- Name: case_workflow_statuses case_workflow_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_workflow_statuses
+    ADD CONSTRAINT case_workflow_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: case_workflow_statuses case_workflow_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_workflow_statuses
+    ADD CONSTRAINT case_workflow_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: case_workflow_statuses case_workflow_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_workflow_statuses
+    ADD CONSTRAINT case_workflow_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: cases cases_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21273,6 +23441,30 @@ ALTER TABLE ONLY public.cases
 
 ALTER TABLE ONLY public.cases
     ADD CONSTRAINT cases_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: data_record_origins data_record_origins_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.data_record_origins
+    ADD CONSTRAINT data_record_origins_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: data_record_origins data_record_origins_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.data_record_origins
+    ADD CONSTRAINT data_record_origins_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: data_record_origins data_record_origins_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.data_record_origins
+    ADD CONSTRAINT data_record_origins_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -21372,6 +23564,14 @@ ALTER TABLE ONLY public.external_users
 
 
 --
+-- Name: attendance fk_attendance_record_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance
+    ADD CONSTRAINT fk_attendance_record_status FOREIGN KEY ("AttendanceStatus") REFERENCES public.attendance_record_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
 -- Name: attendance fk_attendance_session; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21396,6 +23596,14 @@ ALTER TABLE ONLY public.attendance_sessions
 
 
 --
+-- Name: attendance_sessions fk_attendance_sessions_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance_sessions
+    ADD CONSTRAINT fk_attendance_sessions_status FOREIGN KEY (status) REFERENCES public.attendance_session_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
 -- Name: attendance_sessions fk_attendance_sessions_term; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21412,11 +23620,67 @@ ALTER TABLE ONLY public.attendance
 
 
 --
+-- Name: audit_log fk_audit_log_data_origin; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.audit_log
+    ADD CONSTRAINT fk_audit_log_data_origin FOREIGN KEY (data_origin_code) REFERENCES public.data_record_origins(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: case_referrals fk_case_referrals_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.case_referrals
+    ADD CONSTRAINT fk_case_referrals_status FOREIGN KEY (status) REFERENCES public.case_referral_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
 -- Name: cases fk_cases_student_uuid; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.cases
     ADD CONSTRAINT fk_cases_student_uuid FOREIGN KEY (student_uuid) REFERENCES public.student_term(student_uuid);
+
+
+--
+-- Name: cases fk_cases_workflow_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cases
+    ADD CONSTRAINT fk_cases_workflow_status FOREIGN KEY (status) REFERENCES public.case_workflow_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: pii_export_events fk_pii_export_events_actor; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pii_export_events
+    ADD CONSTRAINT fk_pii_export_events_actor FOREIGN KEY (actor_user_id) REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: pii_export_events fk_pii_export_events_request; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pii_export_events
+    ADD CONSTRAINT fk_pii_export_events_request FOREIGN KEY (request_id) REFERENCES public.pii_export_requests(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: pii_export_requests fk_pii_export_requests_approver; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pii_export_requests
+    ADD CONSTRAINT fk_pii_export_requests_approver FOREIGN KEY (approver_user_id) REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: pii_export_requests fk_pii_export_requests_requester; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pii_export_requests
+    ADD CONSTRAINT fk_pii_export_requests_requester FOREIGN KEY (requester_user_id) REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 
 --
@@ -21428,11 +23692,43 @@ ALTER TABLE ONLY public.school_calendar_days
 
 
 --
+-- Name: school_calendar_days fk_school_calendar_days_type; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_calendar_days
+    ADD CONSTRAINT fk_school_calendar_days_type FOREIGN KEY (day_type) REFERENCES public.school_calendar_day_types(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
 -- Name: school_terms fk_school_terms_school; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.school_terms
     ADD CONSTRAINT fk_school_terms_school FOREIGN KEY (school_id) REFERENCES public.schools(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: school_terms fk_school_terms_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_terms
+    ADD CONSTRAINT fk_school_terms_status FOREIGN KEY (status) REFERENCES public.school_term_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: student_account_batch_job_item fk_student_account_batch_item_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_job_item
+    ADD CONSTRAINT fk_student_account_batch_item_status FOREIGN KEY (status) REFERENCES public.student_account_batch_item_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: student_account_batch_job fk_student_account_batch_job_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_job
+    ADD CONSTRAINT fk_student_account_batch_job_status FOREIGN KEY (status) REFERENCES public.student_account_batch_job_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 
 --
@@ -21449,6 +23745,38 @@ ALTER TABLE ONLY public.student_dropouts
 
 ALTER TABLE ONLY public.student_dropouts
     ADD CONSTRAINT fk_student_dropouts_school FOREIGN KEY ("SchoolID_Onec") REFERENCES public.schools(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_batches fk_student_import_batches_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batches
+    ADD CONSTRAINT fk_student_import_batches_status FOREIGN KEY (status) REFERENCES public.student_import_batch_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: student_import_quarantine_rows fk_student_import_quarantine_rows_reason_code; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT fk_student_import_quarantine_rows_reason_code FOREIGN KEY (reason_code) REFERENCES public.student_import_quarantine_reason_codes(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: student_import_quarantine_rows fk_student_import_quarantine_rows_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT fk_student_import_quarantine_rows_status FOREIGN KEY (status) REFERENCES public.student_import_quarantine_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: student_status fk_student_status_category; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_status
+    ADD CONSTRAINT fk_student_status_category FOREIGN KEY (category) REFERENCES public.student_status_categories(code) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 
 --
@@ -21473,6 +23801,38 @@ ALTER TABLE ONLY public.student_term
 
 ALTER TABLE ONLY public.student_term
     ADD CONSTRAINT fk_student_term_student_status FOREIGN KEY (student_status_code) REFERENCES public.student_status(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: task_links fk_task_links_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_links
+    ADD CONSTRAINT fk_task_links_status FOREIGN KEY (status) REFERENCES public.task_link_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: tasks fk_tasks_workflow_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT fk_tasks_workflow_status FOREIGN KEY (status) REFERENCES public.task_workflow_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: users fk_users_account_status; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT fk_users_account_status FOREIGN KEY (status) REFERENCES public.user_account_statuses(code) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: users fk_users_data_origin; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT fk_users_data_origin FOREIGN KEY (data_origin_code) REFERENCES public.data_record_origins(code) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 
 --
@@ -21537,6 +23897,22 @@ ALTER TABLE ONLY public.non_follow_up_reasons
 
 ALTER TABLE ONLY public.non_follow_up_reasons
     ADD CONSTRAINT non_follow_up_reasons_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: notifications notifications_recipient_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.notifications
+    ADD CONSTRAINT notifications_recipient_user_id_fkey FOREIGN KEY (recipient_user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: notifications notifications_type_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.notifications
+    ADD CONSTRAINT notifications_type_code_fkey FOREIGN KEY (type_code) REFERENCES public.notification_types(code) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 
 --
@@ -21636,6 +24012,30 @@ ALTER TABLE ONLY public.school_affiliations
 
 
 --
+-- Name: school_calendar_day_types school_calendar_day_types_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_calendar_day_types
+    ADD CONSTRAINT school_calendar_day_types_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_calendar_day_types school_calendar_day_types_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_calendar_day_types
+    ADD CONSTRAINT school_calendar_day_types_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_calendar_day_types school_calendar_day_types_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_calendar_day_types
+    ADD CONSTRAINT school_calendar_day_types_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: school_calendar_days school_calendar_days_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21657,6 +24057,30 @@ ALTER TABLE ONLY public.school_calendar_days
 
 ALTER TABLE ONLY public.school_calendar_days
     ADD CONSTRAINT school_calendar_days_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_term_statuses school_term_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_term_statuses
+    ADD CONSTRAINT school_term_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_term_statuses school_term_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_term_statuses
+    ADD CONSTRAINT school_term_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: school_term_statuses school_term_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.school_term_statuses
+    ADD CONSTRAINT school_term_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -21700,6 +24124,30 @@ ALTER TABLE ONLY public.schools
 
 
 --
+-- Name: student_account_batch_item_statuses student_account_batch_item_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_item_statuses
+    ADD CONSTRAINT student_account_batch_item_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_account_batch_item_statuses student_account_batch_item_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_item_statuses
+    ADD CONSTRAINT student_account_batch_item_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_account_batch_item_statuses student_account_batch_item_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_item_statuses
+    ADD CONSTRAINT student_account_batch_item_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: student_account_batch_job student_account_batch_job_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21724,6 +24172,30 @@ ALTER TABLE ONLY public.student_account_batch_job_item
 
 
 --
+-- Name: student_account_batch_job_statuses student_account_batch_job_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_job_statuses
+    ADD CONSTRAINT student_account_batch_job_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_account_batch_job_statuses student_account_batch_job_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_job_statuses
+    ADD CONSTRAINT student_account_batch_job_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_account_batch_job_statuses student_account_batch_job_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_account_batch_job_statuses
+    ADD CONSTRAINT student_account_batch_job_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: student_dropouts student_dropouts_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21745,6 +24217,182 @@ ALTER TABLE ONLY public.student_dropouts
 
 ALTER TABLE ONLY public.student_dropouts
     ADD CONSTRAINT student_dropouts_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_batch_statuses student_import_batch_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batch_statuses
+    ADD CONSTRAINT student_import_batch_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_batch_statuses student_import_batch_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batch_statuses
+    ADD CONSTRAINT student_import_batch_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_batch_statuses student_import_batch_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batch_statuses
+    ADD CONSTRAINT student_import_batch_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_batches student_import_batches_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batches
+    ADD CONSTRAINT student_import_batches_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_batches student_import_batches_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batches
+    ADD CONSTRAINT student_import_batches_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_batches student_import_batches_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_batches
+    ADD CONSTRAINT student_import_batches_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_reason_codes student_import_quarantine_reason_codes_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_reason_codes
+    ADD CONSTRAINT student_import_quarantine_reason_codes_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_reason_codes student_import_quarantine_reason_codes_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_reason_codes
+    ADD CONSTRAINT student_import_quarantine_reason_codes_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_reason_codes student_import_quarantine_reason_codes_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_reason_codes
+    ADD CONSTRAINT student_import_quarantine_reason_codes_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_resolution_states student_import_quarantine_resolution_states_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_resolution_states
+    ADD CONSTRAINT student_import_quarantine_resolution_states_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_resolution_states student_import_quarantine_resolution_states_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_resolution_states
+    ADD CONSTRAINT student_import_quarantine_resolution_states_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_resolution_states student_import_quarantine_resolution_states_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_resolution_states
+    ADD CONSTRAINT student_import_quarantine_resolution_states_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_batch_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_batch_id_fkey FOREIGN KEY (batch_id) REFERENCES public.student_import_batches(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_resolved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_resolved_person_uuid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_resolved_person_uuid_fkey FOREIGN KEY (resolved_person_uuid) REFERENCES public.student_person(person_uuid) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_school_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_school_id_fkey FOREIGN KEY (school_id) REFERENCES public.schools(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: student_import_quarantine_rows student_import_quarantine_rows_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_rows
+    ADD CONSTRAINT student_import_quarantine_rows_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_statuses student_import_quarantine_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_statuses
+    ADD CONSTRAINT student_import_quarantine_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_statuses student_import_quarantine_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_statuses
+    ADD CONSTRAINT student_import_quarantine_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_import_quarantine_statuses student_import_quarantine_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_import_quarantine_statuses
+    ADD CONSTRAINT student_import_quarantine_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -21812,6 +24460,30 @@ ALTER TABLE ONLY public.student_person
 
 
 --
+-- Name: student_status_categories student_status_categories_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_status_categories
+    ADD CONSTRAINT student_status_categories_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_status_categories student_status_categories_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_status_categories
+    ADD CONSTRAINT student_status_categories_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: student_status_categories student_status_categories_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.student_status_categories
+    ADD CONSTRAINT student_status_categories_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: student_status student_status_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21873,6 +24545,30 @@ ALTER TABLE ONLY public.system_settings
 
 ALTER TABLE ONLY public.system_settings
     ADD CONSTRAINT system_settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_link_statuses task_link_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_link_statuses
+    ADD CONSTRAINT task_link_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_link_statuses task_link_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_link_statuses
+    ADD CONSTRAINT task_link_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_link_statuses task_link_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_link_statuses
+    ADD CONSTRAINT task_link_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -21948,6 +24644,30 @@ ALTER TABLE ONLY public.task_submissions
 
 
 --
+-- Name: task_workflow_statuses task_workflow_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_workflow_statuses
+    ADD CONSTRAINT task_workflow_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_workflow_statuses task_workflow_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_workflow_statuses
+    ADD CONSTRAINT task_workflow_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_workflow_statuses task_workflow_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.task_workflow_statuses
+    ADD CONSTRAINT task_workflow_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: tasks tasks_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -21988,6 +24708,30 @@ ALTER TABLE ONLY public.tasks
 
 
 --
+-- Name: user_account_statuses user_account_statuses_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_account_statuses
+    ADD CONSTRAINT user_account_statuses_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: user_account_statuses user_account_statuses_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_account_statuses
+    ADD CONSTRAINT user_account_statuses_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: user_account_statuses user_account_statuses_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_account_statuses
+    ADD CONSTRAINT user_account_statuses_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: users users_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -22014,5 +24758,5 @@ REVOKE USAGE ON SCHEMA public FROM PUBLIC;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hepZhfzga8jNWLtybVdUcEMfL2Uelhn7UudkihTbZq2S5ZKbRbHoTtK3Zjmzgul
+\unrestrict YHQEkGz6r83gG7EW0TbEKCTJOdp1RxqXsJS0tU7kgwe0mktdA6THpu8S6iygYkf
 
