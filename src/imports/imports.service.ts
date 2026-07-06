@@ -56,7 +56,6 @@ const PREVIEW_CHANGE_FIELDS: ReadonlyArray<{ column: string; label: string }> = 
 ];
 
 const IMPORT_TARGET_LABELS: Record<ImportTarget, string> = {
-  student_dropouts: 'ข้อมูลนักเรียนออกกลางคัน',
   student_term: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
 };
 
@@ -131,12 +130,10 @@ const QUARANTINE_EDITABLE_FIELDS: Readonly<Record<string, readonly string[]>> = 
 };
 
 const REQUIRED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
-  student_dropouts: ['PersonID_Onec'],
   student_term: ['PersonID_Onec', 'AcademicYear_Onec', 'Semester_Onec', 'SchoolID_Onec'],
 };
 
 const RECOMMENDED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
-  student_dropouts: ['SchoolID_Onec', 'GradeLevelID_Onec', 'RoomID_Onec'],
   student_term: [
     'AcademicYear_Onec',
     'Semester_Onec',

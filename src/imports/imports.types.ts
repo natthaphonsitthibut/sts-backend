@@ -1,4 +1,4 @@
-export const IMPORT_TARGETS = ['student_term', 'student_dropouts'] as const;
+export const IMPORT_TARGETS = ['student_term'] as const;
 
 export type ImportTarget = (typeof IMPORT_TARGETS)[number];
 
@@ -39,32 +39,6 @@ export const IMPORT_TARGET_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = 
     'DistrictNameThai_Onec',
     'SubDistrictNameThai_Onec',
   ]),
-  student_dropouts: new Set([
-    'ProvinceNameThai_Onec',
-    'DistrictNameThai_Onec',
-    'SubDistrictNameThai_Onec',
-    'PersonID_Onec',
-    'Fullname_Onec',
-    'Gender_Onec',
-    'NationalityName_Onec',
-    'BirthDate_Onec',
-    'HouseNumber_Onec',
-    'VillageNumber_Onec',
-    'Street_Onec',
-    'Soi_Onec',
-    'Trok_Onec',
-    'StatusCodeCause_Onec',
-    'Remark_Onec',
-    'SchoolName_Onec',
-    'GradeLevelID_Onec',
-    'AcademicYearPresent_Onec',
-    'DropoutTransferID_Onec',
-    'ACADYEAR',
-    'RoomID_Onec',
-    'SchoolID_Onec',
-    'GenderID_Onec',
-    'GPAX_Onec',
-  ]),
 };
 
 export const SERVER_INJECTED_COLUMNS: ReadonlySet<string> = new Set([
@@ -75,7 +49,6 @@ export const SERVER_INJECTED_COLUMNS: ReadonlySet<string> = new Set([
 /** Input-only fields transformed into canonical table columns before persistence. */
 export const DERIVED_IMPORT_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = {
   student_term: new Set(['FullName_Onec']),
-  student_dropouts: new Set(),
 };
 
 export const STUDENT_TERM_NATURAL_KEY_COLUMNS: readonly string[] = [

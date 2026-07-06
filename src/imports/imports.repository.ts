@@ -1011,43 +1011,30 @@ export class ImportsRepository {
     const values = Object.values(row);
     const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ');
 
-    if (target === 'student_term') {
-      const mutableColumns = columns.filter((column) =>
-        STUDENT_TERM_MUTABLE_IMPORT_COLUMNS.has(column),
-      );
-      const updateAssignments = mutableColumns.map(
-        (column) => `"${column}" = COALESCE(EXCLUDED."${column}", student_term."${column}")`,
-      );
-      // Always execute the conflict branch so repeated imports are observable as
-      // updates even when the file contains only natural-key columns.
-      if (updateAssignments.length === 0) {
-        updateAssignments.push('"PersonID_Onec" = student_term."PersonID_Onec"');
-      }
-
-      const result = await queryExecutor.query<{ inserted: boolean }>(
-        `
-          INSERT INTO student_term (${columns.map((column) => `"${column}"`).join(', ')})
-          VALUES (${placeholders})
-          ON CONFLICT (${STUDENT_TERM_NATURAL_KEY_COLUMNS.map((column) => `"${column}"`).join(', ')})
-          DO UPDATE SET ${updateAssignments.join(', ')}
-          RETURNING (xmax = 0) AS inserted
-        `,
-        values,
-      );
-
-      return result.rows[0]?.inserted ? 'inserted' : 'updated';
+    const mutableColumns = columns.filter((column) =>
+      STUDENT_TERM_MUTABLE_IMPORT_COLUMNS.has(column),
+    );
+    const updateAssignments = mutableColumns.map(
+      (column) => `"${column}" = COALESCE(EXCLUDED."${column}", student_term."${column}")`,
+    );
+    // Always execute the conflict branch so repeated imports are observable as
+    // updates even when the file contains only natural-key columns.
+    if (updateAssignments.length === 0) {
+      updateAssignments.push('"PersonID_Onec" = student_term."PersonID_Onec"');
     }
 
-    const result = await queryExecutor.query(
+    const result = await queryExecutor.query<{ inserted: boolean }>(
       `
         INSERT INTO ${target} (${columns.map((column) => `"${column}"`).join(', ')})
         VALUES (${placeholders})
-        ON CONFLICT ("PersonID_Onec") DO NOTHING
+        ON CONFLICT (${STUDENT_TERM_NATURAL_KEY_COLUMNS.map((column) => `"${column}"`).join(', ')})
+        DO UPDATE SET ${updateAssignments.join(', ')}
+        RETURNING (xmax = 0) AS inserted
       `,
       values,
     );
 
-    return result.rowCount > 0 ? 'inserted' : 'skipped';
+    return result.rows[0]?.inserted ? 'inserted' : 'updated';
   }
 
   async bulkUpsertStudentTerms(

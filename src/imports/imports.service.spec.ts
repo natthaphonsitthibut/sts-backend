@@ -583,18 +583,22 @@ describe('ImportsService', () => {
     ).resolves.toEqual({ missingSchools: [] });
   });
 
-  it('does not apply student-term school resolution to dropout preview', async () => {
+  it('rejects dropout import preview targets', async () => {
     const { service } = createService();
     const file = makeImportFile([{ PersonID_Onec: 'DROPOUT-001', SchoolID_Onec: 2002 }]);
 
-    const preview = await service.previewImport(file, 'student_dropouts', '{}', GLOBAL_ACTOR);
+    await expect(
+      service.previewImport(file, 'student_dropouts', '{}', GLOBAL_ACTOR),
+    ).rejects.toThrow('Invalid target database');
+  });
 
-    expect(preview).toMatchObject({
-      canImport: true,
-      rowsReady: 1,
-      missingSchoolRows: 0,
-      missingSchools: [],
-    });
+  it('rejects dropout bulk import targets', async () => {
+    const { service } = createService();
+    const file = makeImportFile([{ PersonID_Onec: 'DROPOUT-001', SchoolID_Onec: 2002 }]);
+
+    await expect(
+      service.processImport(file, 'student_dropouts', '{}', undefined, GLOBAL_ACTOR),
+    ).rejects.toThrow('Invalid target database');
   });
 
   it('requires missing-school resolution before bulk import', async () => {
