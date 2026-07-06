@@ -8,6 +8,7 @@ import {
 import { resolveActorDataScope, type AuthenticatedRequestUser, type DataScope } from '../auth';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { AutomationService, NewCase } from '../automation/automation.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceRepository } from './attendance.repository';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type {
@@ -32,6 +33,7 @@ export class AttendanceWriteService {
     private readonly attendanceRepository: AttendanceRepository,
     private readonly attendanceOperationsRepository: AttendanceOperationsRepository,
     private readonly automationService: AutomationService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
 
   async saveAttendance(records: AttendanceSaveRecordInput[], actor?: AuthenticatedRequestUser) {
@@ -55,6 +57,12 @@ export class AttendanceWriteService {
     );
 
     const triggerType = await this.attendanceRepository.getAlertTriggerType();
+    await this.riskProfileService
+      ?.enqueueStudents(result.affectedStudentIds, 'attendance-save')
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to enqueue attendance risk profile recalculation: ${message}`);
+      });
     let newCases: NewCase[] = [];
 
     if (triggerType === 'IMMEDIATE' && result.calendarConfigured) {
@@ -78,6 +86,7 @@ export class AttendanceWriteService {
   ): Promise<{
     session: { id: string; status: string; revision: number };
     calendarConfigured: boolean;
+    affectedStudentIds: string[];
   }> {
     const normalizedRecords = this.normalizeRecords(records);
     const studentIds = normalizedRecords.map((record) => record.student_id);
@@ -239,6 +248,7 @@ export class AttendanceWriteService {
     return {
       session: { id: session.id, status: 'SUBMITTED', revision: session.revision },
       calendarConfigured,
+      affectedStudentIds: studentIds,
     };
   }
 
@@ -246,7 +256,7 @@ export class AttendanceWriteService {
     records: AttendanceSaveRecordInput[],
     context: AttendanceWriteContext,
     executor: QueryExecutor,
-  ): Promise<Array<{ calendarConfigured: boolean }>> {
+  ): Promise<Array<{ calendarConfigured: boolean; affectedStudentIds: string[] }>> {
     const normalizedRecords = this.normalizeRecords(records);
     const studentIds = normalizedRecords.map((record) => record.student_id);
     const metadataRows = await this.attendanceOperationsRepository.findClassMetadata(
@@ -273,7 +283,7 @@ export class AttendanceWriteService {
       groups.set(key, group);
     }
 
-    const results: Array<{ calendarConfigured: boolean }> = [];
+    const results: Array<{ calendarConfigured: boolean; affectedStudentIds: string[] }> = [];
     for (const group of groups.values()) {
       results.push(
         await this.saveAttendanceWithinTransaction(

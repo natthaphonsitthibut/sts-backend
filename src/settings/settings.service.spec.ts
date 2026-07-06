@@ -32,6 +32,7 @@ describe('SettingsService catalog validation', () => {
   };
   let automationService: { refreshDynamicCron: jest.Mock };
   let auditLog: { recordAtomic: jest.Mock };
+  let riskProfileService: { enqueueFull: jest.Mock };
   let service: SettingsService;
 
   const buildRow = (overrides: Partial<SystemSettingRow> = {}): SystemSettingRow => ({
@@ -65,10 +66,12 @@ describe('SettingsService catalog validation', () => {
     };
     automationService = { refreshDynamicCron: jest.fn().mockResolvedValue(undefined) };
     auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
+    riskProfileService = { enqueueFull: jest.fn().mockResolvedValue(undefined) };
     service = new SettingsService(
       settingsRepository as unknown as SettingsRepository,
       automationService as unknown as AutomationService,
       auditLog as unknown as AuditLogService,
+      riskProfileService as never,
     );
   });
 
@@ -153,6 +156,9 @@ describe('SettingsService catalog validation', () => {
     expect(result.data.setting_value).toBe('5');
     expect(result.data.value_type).toBe('integer');
     expect(automationService.refreshDynamicCron).not.toHaveBeenCalled();
+    expect(riskProfileService.enqueueFull).toHaveBeenCalledWith(
+      'setting-change:CASE_RISK_LOW_ABSENCE_DAYS',
+    );
   });
 
   it('skips the audit record when the value is unchanged', async () => {
@@ -160,6 +166,7 @@ describe('SettingsService catalog validation', () => {
 
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
     expect(automationService.refreshDynamicCron).not.toHaveBeenCalled();
+    expect(riskProfileService.enqueueFull).not.toHaveBeenCalled();
   });
 
   it('refreshes the dynamic cron when an alert setting changes', async () => {

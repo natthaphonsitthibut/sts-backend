@@ -40,6 +40,7 @@ const EMPTY_RISK_DASHBOARD_SUMMARY: RiskDashboardSummary = {
 
 interface RiskDashboardSummaryRow extends QueryResultRow, RiskDashboardSummary {
   total_count: number | string;
+  missing_profile_count?: number | string;
 }
 
 export interface LoginLinkListFilters {
@@ -2065,16 +2066,8 @@ export class TaskRepository {
       return { rows: [], totalCount: 0, summary: { ...EMPTY_RISK_DASHBOARD_SUMMARY } };
     }
 
-    const params: unknown[] = [
-      thresholds.lowConsecutiveAbsentDays,
-      thresholds.mediumConsecutiveAbsentDays,
-      thresholds.highConsecutiveAbsentDays,
-      thresholds.watchProgressRatio,
-      thresholds.lowAttendancePercent,
-      thresholds.mediumAttendancePercent,
-      thresholds.highAttendancePercent,
-      thresholds.lateWeight,
-    ];
+    void thresholds;
+    const params: unknown[] = [];
     const conditions: string[] = [];
 
     if (actor.data_scope) {
@@ -2132,17 +2125,26 @@ export class TaskRepository {
       WITH base_students AS (
         SELECT
           s.student_uuid,
-          s.person_uuid,
-          s."PersonID_Onec" AS person_id,
-          s."AcademicYear_Onec" AS academic_year,
-          s."Semester_Onec" AS semester,
           s."SchoolID_Onec" AS school_id,
-          s."GradeLevelID_Onec" AS grade_level_id,
-          s."RoomID_Onec" AS room_id,
           (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS student_name,
           COALESCE(gl.label, 'ไม่ทราบ') AS grade,
           s."RoomID_Onec"::text AS room,
-          sc.name AS school_name
+          sc.name AS school_name,
+          COALESCE(profile.consecutive_absent_days, 0)::int AS consecutive_absent_days,
+          COALESCE(profile.absent_days, 0)::int AS absent_days,
+          COALESCE(profile.late_count, 0)::int AS late_count,
+          COALESCE(profile.school_day_count, 0)::int AS school_day_count,
+          COALESCE(profile.weighted_absence_days, 0)::numeric AS weighted_absence_days,
+          profile.weighted_attendance_percent,
+          COALESCE(profile.risk_tier, 'NORMAL') AS risk_tier,
+          COALESCE(profile.risk_severity, 0)::int AS risk_severity,
+          COALESCE(profile.risk_score, 0)::numeric AS risk_score,
+          COALESCE(profile.open_case_count, 0)::int AS open_case_count,
+          profile.latest_open_case_id,
+          latest_case.reason_flagged AS latest_open_case_reason,
+          profile.latest_open_task_id,
+          latest_case.created_at AS latest_case_at,
+          (profile.student_uuid IS NULL) AS missing_profile
         FROM student_term s
         JOIN student_current_enrollment_resolution current_enrollment
           ON current_enrollment.person_uuid = s.person_uuid
@@ -2150,179 +2152,11 @@ export class TaskRepository {
          AND current_enrollment.resolution_state = 'ACTIVE'
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+        LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
+        LEFT JOIN cases latest_case
+          ON latest_case.id = profile.latest_open_case_id
+         AND latest_case.deleted_at IS NULL
         ${whereSql}
-      ),
-      attendance_daily AS (
-        SELECT
-          a.student_uuid,
-          a."AttendanceDate"::date AS attendance_date,
-          BOOL_AND(a."AttendanceStatus" = 2) AS is_absent_day,
-          COUNT(*) FILTER (WHERE a."AttendanceStatus" = 2)::int AS absent_records,
-          COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late_records
-        FROM attendance a
-        JOIN base_students b ON b.student_uuid = a.student_uuid
-        WHERE a."AcademicYear_Onec" = b.academic_year
-          AND a."Semester_Onec" = b.semester
-        GROUP BY a.student_uuid, a."AttendanceDate"
-      ),
-      ranked_attendance_days AS (
-        SELECT
-          student_uuid,
-          attendance_date,
-          is_absent_day,
-          ROW_NUMBER() OVER (PARTITION BY student_uuid ORDER BY attendance_date DESC) AS rn
-        FROM attendance_daily
-      ),
-      streak_boundaries AS (
-        SELECT
-          student_uuid,
-          rn,
-          is_absent_day,
-          MIN(CASE WHEN NOT is_absent_day THEN rn END) OVER (PARTITION BY student_uuid) AS first_non_absent_rn
-        FROM ranked_attendance_days
-      ),
-      absence_streak AS (
-        SELECT student_uuid, COUNT(*)::int AS consecutive_absent_days
-        FROM streak_boundaries
-        WHERE is_absent_day
-          AND (first_non_absent_rn IS NULL OR rn < first_non_absent_rn)
-        GROUP BY student_uuid
-      ),
-      attendance_summary AS (
-        SELECT
-          student_uuid,
-          COUNT(*) FILTER (WHERE is_absent_day)::int AS absent_days,
-          COALESCE(SUM(late_records), 0)::int AS late_count,
-          COUNT(*)::int AS recorded_day_count
-        FROM attendance_daily
-        GROUP BY student_uuid
-      ),
-      calendar_counts AS (
-        SELECT
-          b.student_uuid,
-          COUNT(cd.id)::int AS school_day_count
-        FROM base_students b
-        JOIN school_terms st
-          ON st.school_id = b.school_id
-         AND st.academic_year = b.academic_year
-         AND st.semester = b.semester
-         AND st.deleted_at IS NULL
-        JOIN school_calendar_days cd
-          ON cd.school_term_id = st.id
-         AND cd.day_type = 'SCHOOL_DAY'
-         AND cd.deleted_at IS NULL
-         AND cd.calendar_date <= CURRENT_DATE
-        GROUP BY b.student_uuid
-      ),
-      case_summary AS (
-        SELECT
-          c.student_uuid,
-          COUNT(*)::int AS open_case_count,
-          (array_agg(c.id ORDER BY c.created_at DESC, c.id DESC))[1] AS latest_open_case_id,
-          (array_agg(c.reason_flagged ORDER BY c.created_at DESC, c.id DESC))[1] AS latest_open_case_reason,
-          (array_agg(latest_task.task_id ORDER BY c.created_at DESC, c.id DESC))[1] AS latest_open_task_id,
-          MAX(c.created_at) AS latest_case_at
-        FROM cases c
-        JOIN base_students b ON b.student_uuid = c.student_uuid
-        LEFT JOIN LATERAL (
-          SELECT t.id AS task_id
-          FROM tasks t
-          WHERE t.case_id = c.id
-            AND t.deleted_at IS NULL
-          ORDER BY t.created_at DESC, t.id DESC
-          LIMIT 1
-        ) latest_task ON true
-        WHERE c.deleted_at IS NULL
-          AND c.status <> 'RESOLVED'
-        GROUP BY c.student_uuid
-      ),
-      metrics AS (
-        SELECT
-          b.student_uuid,
-          b.student_name,
-          b.school_id,
-          b.school_name,
-          b.grade,
-          b.room,
-          COALESCE(streak.consecutive_absent_days, 0)::int AS consecutive_absent_days,
-          COALESCE(attendance.absent_days, 0)::int AS absent_days,
-          COALESCE(attendance.late_count, 0)::int AS late_count,
-          COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::int AS school_day_count,
-          (COALESCE(attendance.absent_days, 0)::numeric + (COALESCE(attendance.late_count, 0)::numeric * $8::numeric)) AS weighted_absence_days,
-          CASE
-            WHEN COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0) > 0 THEN
-              ROUND(
-                GREATEST(
-                  0,
-                  (COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
-                    - (COALESCE(attendance.absent_days, 0)::numeric + (COALESCE(attendance.late_count, 0)::numeric * $8::numeric)))
-                  * 100 / COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
-                ),
-                1
-              )
-            ELSE NULL
-          END AS weighted_attendance_percent,
-          COALESCE(cases.open_case_count, 0)::int AS open_case_count,
-          cases.latest_open_case_id,
-          cases.latest_open_case_reason,
-          cases.latest_open_task_id,
-          cases.latest_case_at
-        FROM base_students b
-        LEFT JOIN absence_streak streak ON streak.student_uuid = b.student_uuid
-        LEFT JOIN attendance_summary attendance ON attendance.student_uuid = b.student_uuid
-        LEFT JOIN calendar_counts calendar ON calendar.student_uuid = b.student_uuid
-        LEFT JOIN case_summary cases ON cases.student_uuid = b.student_uuid
-      ),
-      scored AS (
-        SELECT
-          metrics.*,
-          CASE
-            WHEN metrics.consecutive_absent_days >= $3::int
-              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $7::numeric)
-              THEN 'HIGH'
-            WHEN metrics.consecutive_absent_days >= $2::int
-              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $6::numeric)
-              THEN 'MEDIUM'
-            WHEN metrics.consecutive_absent_days >= $1::int
-              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $5::numeric)
-              THEN 'LOW'
-            WHEN metrics.consecutive_absent_days >= CEIL($1::numeric * $4::numeric)
-              OR metrics.absent_days >= CEIL($3::numeric * $4::numeric)
-              OR (
-                metrics.weighted_attendance_percent IS NOT NULL
-                AND metrics.weighted_attendance_percent <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
-              )
-              THEN 'WATCH'
-            ELSE 'NORMAL'
-          END AS risk_tier,
-          CASE
-            WHEN metrics.consecutive_absent_days >= $3::int
-              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $7::numeric)
-              THEN 4
-            WHEN metrics.consecutive_absent_days >= $2::int
-              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $6::numeric)
-              THEN 3
-            WHEN metrics.consecutive_absent_days >= $1::int
-              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $5::numeric)
-              THEN 2
-            WHEN metrics.consecutive_absent_days >= CEIL($1::numeric * $4::numeric)
-              OR metrics.absent_days >= CEIL($3::numeric * $4::numeric)
-              OR (
-                metrics.weighted_attendance_percent IS NOT NULL
-                AND metrics.weighted_attendance_percent <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
-              )
-              THEN 1
-            ELSE 0
-          END AS risk_severity,
-          GREATEST(
-            metrics.consecutive_absent_days::numeric / NULLIF($3::numeric, 0),
-            metrics.absent_days::numeric / NULLIF($3::numeric, 0),
-            CASE
-              WHEN metrics.weighted_attendance_percent IS NULL THEN 0
-              ELSE (100::numeric - metrics.weighted_attendance_percent) / NULLIF(100::numeric - $7::numeric, 0)
-            END
-          ) AS risk_score
-        FROM metrics
       )
     `;
 
@@ -2339,7 +2173,7 @@ export class TaskRepository {
               return `WHERE risk_tier = $${filteredParams.length}`;
             })()
           : '';
-    const filteredCte = `${baseCte}, filtered AS (SELECT * FROM scored ${riskWhere})`;
+    const filteredCte = `${baseCte}, filtered AS (SELECT * FROM base_students ${riskWhere})`;
 
     const summaryResult = await this.query<RiskDashboardSummaryRow>(
       `
@@ -2350,8 +2184,9 @@ export class TaskRepository {
           COUNT(*) FILTER (WHERE risk_tier = 'MEDIUM')::int AS "MEDIUM",
           COUNT(*) FILTER (WHERE risk_tier = 'LOW')::int AS "LOW",
           COUNT(*) FILTER (WHERE risk_tier = 'WATCH')::int AS "WATCH",
-          COUNT(*) FILTER (WHERE risk_tier = 'NORMAL')::int AS "NORMAL"
-        FROM scored
+          COUNT(*) FILTER (WHERE risk_tier = 'NORMAL')::int AS "NORMAL",
+          COUNT(*) FILTER (WHERE missing_profile)::int AS missing_profile_count
+        FROM base_students
       `,
       params,
     );
@@ -2372,6 +2207,10 @@ export class TaskRepository {
       WATCH: Number.parseInt(String(summaryResult.rows[0]?.WATCH || '0'), 10),
       NORMAL: Number.parseInt(String(summaryResult.rows[0]?.NORMAL || '0'), 10),
     };
+    const missingProfileCount = Number.parseInt(
+      String(summaryResult.rows[0]?.missing_profile_count || '0'),
+      10,
+    );
 
     const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
     const page = filters.page && filters.page > 0 ? filters.page : 1;
@@ -2426,7 +2265,7 @@ export class TaskRepository {
       rowParams,
     );
 
-    return { rows: rowsResult.rows, totalCount, summary };
+    return { rows: rowsResult.rows, totalCount, summary, missingProfileCount };
   }
 
   async findDelegationLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {

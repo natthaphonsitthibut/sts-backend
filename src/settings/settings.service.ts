@@ -4,6 +4,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import { AutomationService } from '../automation/automation.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import {
   findSystemSettingCatalogEntry,
   getSystemSettingSortIndex,
@@ -16,6 +17,11 @@ import { SettingsRepository } from './settings.repository';
 import type { SystemSettingResponse, SystemSettingRow } from './settings.types';
 
 const CRON_REFRESH_KEYS = new Set(['ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME']);
+const RISK_PROFILE_REFRESH_KEYS = new Set([
+  'CASE_RISK_LOW_ABSENCE_DAYS',
+  'CASE_RISK_MEDIUM_ABSENCE_DAYS',
+  'CASE_RISK_HIGH_ABSENCE_DAYS',
+]);
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
@@ -25,6 +31,7 @@ export class SettingsService implements OnModuleInit {
     private readonly settingsRepository: SettingsRepository,
     private readonly automationService: AutomationService,
     private readonly auditLog: AuditLogService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
 
   /**
@@ -148,6 +155,14 @@ export class SettingsService implements OnModuleInit {
     if (changed && CRON_REFRESH_KEYS.has(key)) {
       this.logger.log(`Setting ${key} changed. Triggering dynamic cron refresh.`);
       await this.automationService.refreshDynamicCron();
+    }
+    if (changed && RISK_PROFILE_REFRESH_KEYS.has(key)) {
+      await this.riskProfileService?.enqueueFull(`setting-change:${key}`).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Failed to enqueue risk profile recalculation after setting edit: ${message}`,
+        );
+      });
     }
 
     return { success: true, data: this.toResponse(setting) };

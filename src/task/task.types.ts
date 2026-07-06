@@ -104,6 +104,7 @@ export interface RiskDashboardResult {
   rows: RiskDashboardRow[];
   totalCount: number;
   summary: RiskDashboardSummary;
+  missingProfileCount?: number;
 }
 
 export function getTaskErrorMessage(error: unknown, fallback = 'เกิดข้อผิดพลาด'): string {

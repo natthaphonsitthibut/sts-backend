@@ -10,6 +10,7 @@ import {
 import { AutomationService } from '../automation/automation.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { hashToken } from '../common/utils/helpers';
 import { SaveTaskSubmissionDto, TaskAttendanceRecordDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
@@ -25,6 +26,7 @@ export class TaskSubmissionService {
     private readonly automationService: AutomationService,
     private readonly attendanceWriteService: AttendanceWriteService,
     private readonly notificationsService: NotificationsService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
@@ -158,6 +160,7 @@ export class TaskSubmissionService {
       }
 
       let calendarConfigured = false;
+      let affectedStudentIds: string[] = [];
       await this.taskRepository.withTransaction(async (executor) => {
         const live = await this.taskRepository.lockLiveTaskLink(String(link.link_id), executor);
         if (!live) {
@@ -174,7 +177,17 @@ export class TaskSubmissionService {
         );
         calendarConfigured =
           results.length > 0 && results.every((result) => result.calendarConfigured);
+        affectedStudentIds = results.flatMap((result) => result.affectedStudentIds);
       });
+
+      await this.riskProfileService
+        ?.enqueueStudents(affectedStudentIds, 'attendance-task-link-save')
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(
+            `Failed to enqueue task attendance risk profile recalculation: ${message}`,
+          );
+        });
 
       const triggerType = await this.taskRepository.getSystemSettingValue('ALERT_TRIGGER_TYPE');
 

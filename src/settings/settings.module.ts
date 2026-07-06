@@ -3,10 +3,11 @@ import { SettingsService } from './settings.service';
 import { SettingsController } from './settings.controller';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { AutomationModule } from '../automation/automation.module';
+import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 import { SettingsRepository } from './settings.repository';
 
 @Module({
-  imports: [AutomationModule, AuditLogModule],
+  imports: [AutomationModule, AuditLogModule, RiskProfileModule],
   controllers: [SettingsController],
   providers: [SettingsService, SettingsRepository],
   exports: [SettingsService],

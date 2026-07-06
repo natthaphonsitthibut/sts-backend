@@ -1328,6 +1328,23 @@ export const DATABASE_BASELINE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_attendance_person_id ON attendance("PersonID_Onec");
   CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance("AttendanceDate");
   CREATE INDEX IF NOT EXISTS idx_attendance_student_uuid ON attendance(student_uuid);
+  CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_scope
+    ON student_risk_profiles (school_id, grade_level_id, room_id);
+  CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_tier
+    ON student_risk_profiles (risk_tier);
+  CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_sort
+    ON student_risk_profiles (risk_severity DESC, risk_score DESC, student_uuid);
+  CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_calculated_at
+    ON student_risk_profiles (profile_calculated_at);
+  CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_term_school
+    ON student_risk_profiles (academic_year, semester, school_id);
+  CREATE INDEX IF NOT EXISTS idx_attendance_risk_profile_recalc
+    ON attendance (student_uuid, "AcademicYear_Onec", "Semester_Onec", "AttendanceDate" DESC);
+  CREATE INDEX IF NOT EXISTS idx_cases_risk_profile_open_student
+    ON cases (student_uuid, created_at DESC, id DESC)
+    WHERE deleted_at IS NULL AND status <> 'RESOLVED';
+  CREATE INDEX IF NOT EXISTS idx_school_calendar_days_risk_profile
+    ON school_calendar_days (school_term_id, day_type, deleted_at, calendar_date);
 
   ALTER TABLE task_links ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE;
   ALTER TABLE task_links ALTER COLUMN otp_expires_at TYPE TIMESTAMP WITH TIME ZONE USING otp_expires_at AT TIME ZONE 'UTC';
@@ -1418,6 +1435,41 @@ export const DATABASE_BASELINE_SQL = `
       END IF;
   END
   $$;
+
+  CREATE TABLE IF NOT EXISTS student_risk_profiles (
+    student_uuid UUID PRIMARY KEY
+      CONSTRAINT fk_student_risk_profiles_student
+      REFERENCES student_term(student_uuid) ON DELETE CASCADE ON UPDATE CASCADE,
+    school_id INTEGER NOT NULL,
+    grade_level_id INTEGER NULL,
+    room_id INTEGER NULL,
+    academic_year INTEGER NOT NULL,
+    semester INTEGER NOT NULL,
+    consecutive_absent_days INTEGER NOT NULL DEFAULT 0,
+    absent_days INTEGER NOT NULL DEFAULT 0,
+    late_count INTEGER NOT NULL DEFAULT 0,
+    school_day_count INTEGER NOT NULL DEFAULT 0,
+    weighted_absence_days NUMERIC(8,2) NOT NULL DEFAULT 0,
+    weighted_attendance_percent NUMERIC(5,2) NULL,
+    risk_tier VARCHAR(16) NOT NULL
+      CONSTRAINT chk_student_risk_profiles_tier
+      CHECK (risk_tier IN ('HIGH', 'MEDIUM', 'LOW', 'WATCH', 'NORMAL')),
+    risk_severity SMALLINT NOT NULL
+      CONSTRAINT chk_student_risk_profiles_severity
+      CHECK (risk_severity BETWEEN 0 AND 4),
+    risk_score NUMERIC(10,4) NOT NULL DEFAULT 0,
+    open_case_count INTEGER NOT NULL DEFAULT 0,
+    latest_open_case_id INTEGER NULL
+      CONSTRAINT fk_student_risk_profiles_latest_case
+      REFERENCES cases(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    latest_open_task_id TEXT NULL
+      CONSTRAINT fk_student_risk_profiles_latest_task
+      REFERENCES tasks(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    profile_calculated_at TIMESTAMPTZ NOT NULL,
+    source_updated_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
 
   CREATE TABLE IF NOT EXISTS system_settings (
     setting_key TEXT PRIMARY KEY,

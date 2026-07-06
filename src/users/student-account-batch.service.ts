@@ -311,6 +311,12 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
           attempts: 3,
           backoffMs: 30_000,
         },
+        riskProfile: {
+          mode: 'inline',
+          queueName: 'student-risk-profile',
+          attempts: 3,
+          backoffMs: 30_000,
+        },
       }
     );
   }

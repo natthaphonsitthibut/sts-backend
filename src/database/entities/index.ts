@@ -18,7 +18,12 @@ import {
   SchoolAffiliationEntity,
   StudentStatusEntity,
 } from './master-data.entities';
-import { AttendanceEntity, StudentDropoutEntity, StudentTermEntity } from './student.entities';
+import {
+  AttendanceEntity,
+  StudentDropoutEntity,
+  StudentRiskProfileEntity,
+  StudentTermEntity,
+} from './student.entities';
 import {
   AttendanceSessionEntity,
   SchoolCalendarDayEntity,
@@ -45,6 +50,7 @@ export const DATABASE_ENTITIES = [
   TaskSubmissionEntity,
   CaseReviewEntity,
   StudentTermEntity,
+  StudentRiskProfileEntity,
   StudentDropoutEntity,
   AttendanceEntity,
   SchoolTermEntity,
@@ -88,6 +94,7 @@ export {
   SchoolCalendarDayEntity,
   SchoolTermEntity,
   StudentDropoutEntity,
+  StudentRiskProfileEntity,
   StudentStatusEntity,
   StudentTermEntity,
   SystemSettingEntity,

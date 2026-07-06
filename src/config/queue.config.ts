@@ -1,12 +1,19 @@
 import { registerAs } from '@nestjs/config';
 
 export type StudentAccountBatchQueueMode = 'inline' | 'bullmq';
+export type RiskProfileQueueMode = 'inline' | 'bullmq';
 
 export interface QueueRuntimeConfig {
   redisUrl?: string;
   requireRedis: boolean;
   studentAccountBatch: {
     mode: StudentAccountBatchQueueMode;
+    queueName: string;
+    attempts: number;
+    backoffMs: number;
+  };
+  riskProfile: {
+    mode: RiskProfileQueueMode;
     queueName: string;
     attempts: number;
     backoffMs: number;
@@ -26,7 +33,7 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 function parseQueueMode(
   value: string | undefined,
   hasRedis: boolean,
-): StudentAccountBatchQueueMode {
+): StudentAccountBatchQueueMode | RiskProfileQueueMode {
   const normalized = clean(value)?.toLowerCase();
   if (normalized === 'bullmq' || normalized === 'redis') {
     return 'bullmq';
@@ -49,6 +56,12 @@ export function getQueueConfigFromEnv(): QueueRuntimeConfig {
       queueName: clean(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_NAME) ?? 'student-account-batch',
       attempts: parsePositiveInt(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_ATTEMPTS, 3),
       backoffMs: parsePositiveInt(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_BACKOFF_MS, 30_000),
+    },
+    riskProfile: {
+      mode: parseQueueMode(process.env.RISK_PROFILE_QUEUE_MODE, Boolean(redisUrl)),
+      queueName: clean(process.env.RISK_PROFILE_QUEUE_NAME) ?? 'student-risk-profile',
+      attempts: parsePositiveInt(process.env.RISK_PROFILE_QUEUE_ATTEMPTS, 3),
+      backoffMs: parsePositiveInt(process.env.RISK_PROFILE_QUEUE_BACKOFF_MS, 30_000),
     },
   };
 }

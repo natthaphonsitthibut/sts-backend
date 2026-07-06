@@ -154,3 +154,89 @@ export class AttendanceEntity {
   @Column({ name: 'RecordedBy', type: 'varchar', length: 100, nullable: true })
   recordedBy!: string | null;
 }
+
+@Entity({ name: 'student_risk_profiles' })
+@Index('idx_student_risk_profiles_scope', ['schoolId', 'gradeLevelId', 'roomId'])
+@Index('idx_student_risk_profiles_tier', ['riskTier'])
+@Index('idx_student_risk_profiles_sort', ['riskSeverity', 'riskScore', 'studentUuid'])
+@Index('idx_student_risk_profiles_calculated_at', ['profileCalculatedAt'])
+@Index('idx_student_risk_profiles_term_school', ['academicYear', 'semester', 'schoolId'])
+export class StudentRiskProfileEntity {
+  @PrimaryColumn({ name: 'student_uuid', type: 'uuid' })
+  studentUuid!: string;
+
+  @Column({ name: 'school_id', type: 'integer' })
+  schoolId!: number;
+
+  @Column({ name: 'grade_level_id', type: 'integer', nullable: true })
+  gradeLevelId!: number | null;
+
+  @Column({ name: 'room_id', type: 'integer', nullable: true })
+  roomId!: number | null;
+
+  @Column({ name: 'academic_year', type: 'integer' })
+  academicYear!: number;
+
+  @Column({ name: 'semester', type: 'integer' })
+  semester!: number;
+
+  @Column({ name: 'consecutive_absent_days', type: 'integer', default: 0 })
+  consecutiveAbsentDays!: number;
+
+  @Column({ name: 'absent_days', type: 'integer', default: 0 })
+  absentDays!: number;
+
+  @Column({ name: 'late_count', type: 'integer', default: 0 })
+  lateCount!: number;
+
+  @Column({ name: 'school_day_count', type: 'integer', default: 0 })
+  schoolDayCount!: number;
+
+  @Column({
+    name: 'weighted_absence_days',
+    type: 'numeric',
+    precision: 8,
+    scale: 2,
+    default: 0,
+  })
+  weightedAbsenceDays!: string;
+
+  @Column({
+    name: 'weighted_attendance_percent',
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
+  weightedAttendancePercent!: string | null;
+
+  @Column({ name: 'risk_tier', type: 'varchar', length: 16 })
+  riskTier!: string;
+
+  @Column({ name: 'risk_severity', type: 'smallint' })
+  riskSeverity!: number;
+
+  @Column({ name: 'risk_score', type: 'numeric', precision: 10, scale: 4, default: 0 })
+  riskScore!: string;
+
+  @Column({ name: 'open_case_count', type: 'integer', default: 0 })
+  openCaseCount!: number;
+
+  @Column({ name: 'latest_open_case_id', type: 'integer', nullable: true })
+  latestOpenCaseId!: number | null;
+
+  @Column({ name: 'latest_open_task_id', type: 'text', nullable: true })
+  latestOpenTaskId!: string | null;
+
+  @Column({ name: 'profile_calculated_at', type: 'timestamptz' })
+  profileCalculatedAt!: Date;
+
+  @Column({ name: 'source_updated_at', type: 'timestamptz', nullable: true })
+  sourceUpdatedAt!: Date | null;
+
+  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })
+  createdAt!: Date;
+
+  @Column({ name: 'updated_at', type: 'timestamptz', default: () => 'now()' })
+  updatedAt!: Date;
+}

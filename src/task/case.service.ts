@@ -7,6 +7,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import {
   ReviewCaseDto,
   type CaseReferralOutcomeStatus,
@@ -42,6 +43,7 @@ export class CaseService {
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
     private readonly notificationsService: NotificationsService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
 
   private normalizeText(value: unknown): string {
@@ -265,6 +267,20 @@ export class CaseService {
         nextStatus,
         actorUserId: resolveAuditActorId(actor),
       });
+      const riskProfileStudentUuid =
+        typeof caseRecord.student_uuid === 'string'
+          ? this.normalizeText(caseRecord.student_uuid) || null
+          : null;
+      if (riskProfileStudentUuid) {
+        await this.riskProfileService
+          ?.enqueueStudents([riskProfileStudentUuid], 'case-review')
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error(
+              `Failed to enqueue case review risk profile recalculation: ${message}`,
+            );
+          });
+      }
 
       return {
         success: true,

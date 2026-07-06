@@ -8,6 +8,7 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
@@ -24,6 +25,7 @@ export class TaskLifecycleService {
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
     private readonly notificationsService?: NotificationsService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
 
   /**
@@ -252,6 +254,7 @@ export class TaskLifecycleService {
     const magicLink = `${baseUrl}/task/${token}`;
     let auditCaseId: number | null = null;
     let auditTargetSchoolId: number | null = null;
+    let riskProfileStudentUuid: string | null = null;
     const auditTargetGrade = clean(data.target_grade) || null;
     const auditTargetRoom = clean(data.target_room) || null;
 
@@ -291,6 +294,10 @@ export class TaskLifecycleService {
             }
             resolvedTargetSchoolId = resolvedTargetSchoolId ?? existingCaseSchoolId;
             caseId = existingCaseId;
+            riskProfileStudentUuid =
+              typeof existingCase.student_uuid === 'string'
+                ? clean(existingCase.student_uuid) || null
+                : null;
             await this.taskRepository.updateCaseStatus(
               caseId,
               'IN_PROGRESS',
@@ -317,6 +324,7 @@ export class TaskLifecycleService {
                 postalCode,
               );
             const studentUuid = clean(data.student_id) || null;
+            riskProfileStudentUuid = studentUuid;
             if (!studentName) {
               throw new Error('student_name is required for Field Visit');
             }
@@ -416,6 +424,14 @@ export class TaskLifecycleService {
         },
         ip: null,
       });
+      if (riskProfileStudentUuid) {
+        await this.riskProfileService
+          ?.enqueueStudents([riskProfileStudentUuid], 'case-task-create')
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error(`Failed to enqueue case risk profile recalculation: ${message}`);
+          });
+      }
 
       let qrDataUrl: string | null = null;
       try {

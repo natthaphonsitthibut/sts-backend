@@ -153,46 +153,20 @@ describe('TaskRepository', () => {
     expect(result.summary.WATCH).toBe(1);
     expect(result.rows[0].student_uuid).toBe('00000000-0000-4000-8000-000000000001');
     expect(queries).toHaveLength(3);
-    expect(queries[0].params).toEqual([3, 5, 7, 0.7, 95, 90, 80, 0.25, [101], 101, '%เด็ก%']);
-    expect(queries[1].params).toEqual([
-      3,
-      5,
-      7,
-      0.7,
-      95,
-      90,
-      80,
-      0.25,
-      [101],
-      101,
-      '%เด็ก%',
-      'HIGH',
-    ]);
-    expect(queries[2].params).toEqual([
-      3,
-      5,
-      7,
-      0.7,
-      95,
-      90,
-      80,
-      0.25,
-      [101],
-      101,
-      '%เด็ก%',
-      'HIGH',
-      10,
-      10,
-    ]);
+    expect(queries[0].params).toEqual([[101], 101, '%เด็ก%']);
+    expect(queries[1].params).toEqual([[101], 101, '%เด็ก%', 'HIGH']);
+    expect(queries[2].params).toEqual([[101], 101, '%เด็ก%', 'HIGH', 10, 10]);
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
-    expect(queries[0].sql).toContain('s."SchoolID_Onec" = ANY($9::int[])');
-    expect(queries[0].sql).toContain('s."SchoolID_Onec" = $10');
-    expect(queries[0].sql).not.toContain('risk_tier = $12');
-    expect(queries[1].sql).toContain('risk_tier = $12');
+    expect(queries[0].sql).toContain('LEFT JOIN student_risk_profiles profile');
+    expect(queries[0].sql).not.toContain('FROM attendance a');
+    expect(queries[0].sql).toContain('s."SchoolID_Onec" = ANY($1::int[])');
+    expect(queries[0].sql).toContain('s."SchoolID_Onec" = $2');
+    expect(queries[0].sql).not.toContain('risk_tier = $4');
+    expect(queries[1].sql).toContain('risk_tier = $4');
     expect(queries[2].sql).toContain(
       'ORDER BY weighted_attendance_percent ASC NULLS LAST, risk_severity DESC, student_name ASC',
     );
-    expect(queries[2].sql).toContain('LIMIT $13 OFFSET $14');
+    expect(queries[2].sql).toContain('LIMIT $5 OFFSET $6');
   });
 
   it('fails closed for own-only actors on the risk dashboard', async () => {

@@ -34,9 +34,13 @@ describe('AttendanceWriteService', () => {
   let attendanceRepository: jest.Mocked<
     Pick<
       AttendanceRepository,
-      'filterStudentIdsInScope' | 'upsertAttendanceBatch' | 'listAttendanceStatuses'
+      | 'filterStudentIdsInScope'
+      | 'upsertAttendanceBatch'
+      | 'listAttendanceStatuses'
+      | 'getAlertTriggerType'
     >
   >;
+  let riskProfileService: { enqueueStudents: jest.Mock };
   let operationsRepository: jest.Mocked<
     Pick<
       AttendanceOperationsRepository,
@@ -46,6 +50,7 @@ describe('AttendanceWriteService', () => {
       | 'findOrCreateSessionForUpdate'
       | 'updateSessionSubmitted'
       | 'recordSessionAudit'
+      | 'withTransaction'
     >
   >;
   let service: AttendanceWriteService;
@@ -55,7 +60,9 @@ describe('AttendanceWriteService', () => {
       filterStudentIdsInScope: jest.fn().mockResolvedValue(STUDENT_IDS),
       upsertAttendanceBatch: jest.fn().mockResolvedValue(undefined),
       listAttendanceStatuses: jest.fn().mockResolvedValue([]),
+      getAlertTriggerType: jest.fn().mockResolvedValue('SCHEDULED'),
     };
+    riskProfileService = { enqueueStudents: jest.fn().mockResolvedValue(undefined) };
     operationsRepository = {
       findClassMetadata: jest.fn().mockResolvedValue(
         STUDENT_IDS.map((studentUuid) => ({
@@ -84,11 +91,13 @@ describe('AttendanceWriteService', () => {
       findOrCreateSessionForUpdate: jest.fn().mockResolvedValue(buildSession()),
       updateSessionSubmitted: jest.fn().mockResolvedValue(undefined),
       recordSessionAudit: jest.fn().mockResolvedValue(undefined),
+      withTransaction: jest.fn(async (callback) => await callback(executor)),
     };
     service = new AttendanceWriteService(
       attendanceRepository as unknown as AttendanceRepository,
       operationsRepository as unknown as AttendanceOperationsRepository,
       { checkConsecutiveAbsences: jest.fn() } as never,
+      riskProfileService as never,
     );
   });
 
@@ -106,10 +115,20 @@ describe('AttendanceWriteService', () => {
         revision: 1,
       },
       calendarConfigured: false,
+      affectedStudentIds: STUDENT_IDS,
     });
     expect(attendanceRepository.upsertAttendanceBatch).toHaveBeenCalledTimes(1);
     expect(operationsRepository.updateSessionSubmitted).toHaveBeenCalledTimes(1);
     expect(operationsRepository.recordSessionAudit).toHaveBeenCalledTimes(1);
+  });
+
+  it('enqueues risk profile recalculation after attendance is committed', async () => {
+    await service.saveAttendance(
+      STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
+      { id: 5, username: 'teacher', roles: ['TEACHER'], permissions: ['attendance'] },
+    );
+
+    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(STUDENT_IDS, 'attendance-save');
   });
 
   it('rejects a stale partial roster before writing attendance', async () => {

@@ -10,6 +10,7 @@ import { Cron } from '@nestjs/schedule';
 import { resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { CalendarDayType, SchoolTermStatus } from './attendance-operations.types';
 
@@ -24,7 +25,15 @@ export class AttendanceOperationsService {
   constructor(
     private readonly repository: AttendanceOperationsRepository,
     private readonly notificationsService?: NotificationsService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
+
+  private async enqueueRiskProfileRefresh(reason: string): Promise<void> {
+    await this.riskProfileService?.enqueueFull(reason).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to enqueue calendar risk profile recalculation: ${message}`);
+    });
+  }
 
   /**
    * Notify staff who check attendance (permission `attendance`, in the session's
@@ -119,6 +128,7 @@ export class AttendanceOperationsService {
         }
         return saved;
       });
+      await this.enqueueRiskProfileRefresh('school-term-change');
       return {
         data: {
           id: row.id,
@@ -151,6 +161,7 @@ export class AttendanceOperationsService {
     await this.repository.withTransaction(async (executor) => {
       await this.repository.generateCalendar(termId, schoolDays, actor?.id ?? null, executor);
     });
+    await this.enqueueRiskProfileRefresh('school-calendar-generate');
     return await this.listCalendar(termId, actor);
   }
 
@@ -191,6 +202,7 @@ export class AttendanceOperationsService {
         ),
     );
     if (!updated) throw new NotFoundException('ไม่พบวันในปฏิทิน');
+    await this.enqueueRiskProfileRefresh('school-calendar-day-change');
     return {
       data: {
         id: updated.id,

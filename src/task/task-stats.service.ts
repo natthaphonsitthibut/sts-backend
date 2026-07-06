@@ -156,18 +156,24 @@ export class TaskStatsService {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);
       const thresholds = await this.getRiskDashboardThresholds();
-      const { rows, totalCount, summary } = await this.taskRepository.listRiskDashboardStudents(
-        currentActor,
-        {
-          ...filters,
-          riskTier: this.normalizeRiskTier(filters.riskTier),
-          page,
-          limit,
-          sortBy: filters.sortBy ?? 'risk',
-          sortDirection: filters.sortDirection ?? 'desc',
-        },
-        thresholds,
-      );
+      const { rows, totalCount, summary, missingProfileCount } =
+        await this.taskRepository.listRiskDashboardStudents(
+          currentActor,
+          {
+            ...filters,
+            riskTier: this.normalizeRiskTier(filters.riskTier),
+            page,
+            limit,
+            sortBy: filters.sortBy ?? 'risk',
+            sortDirection: filters.sortDirection ?? 'desc',
+          },
+          thresholds,
+        );
+      if (missingProfileCount && missingProfileCount > 0) {
+        this.logger.warn(
+          `Risk dashboard has ${missingProfileCount} active enrollment(s) without risk profiles`,
+        );
+      }
 
       return {
         success: true,

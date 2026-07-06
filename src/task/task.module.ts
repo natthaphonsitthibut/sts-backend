@@ -19,9 +19,10 @@ import { TaskReadService } from './task-read.service';
 import { TaskSubmissionService } from './task-submission.service';
 import { TaskStatsService } from './task-stats.service';
 import { AttendanceModule } from '../attendance/attendance.module';
+import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 
 @Module({
-  imports: [AutomationModule, AttendanceModule, NotificationsModule],
+  imports: [AutomationModule, AttendanceModule, NotificationsModule, RiskProfileModule],
   controllers: [
     TaskController,
     AdminController,
