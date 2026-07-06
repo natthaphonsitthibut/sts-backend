@@ -15,11 +15,13 @@ import type { ConfigType } from '@nestjs/config';
 import type { Request } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { TaskService } from './task.service';
+import { Public } from '../auth';
 import { appConfig } from '../config/app.config';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { processVisitPhoto } from '../common/file-upload/visit-photo.util';
 import { getHeaderValue } from './task.types';
 
+@Public()
 @Controller('api/tasks')
 export class SubmissionController {
   private readonly logger = new Logger(SubmissionController.name);

@@ -26,6 +26,7 @@ import {
   CurrentUser,
   OptionalAuthGuard,
   PermissionsGuard,
+  Public,
   RequirePermission,
   SessionCookieService,
   type AuthenticatedRequestUser,
@@ -606,6 +607,7 @@ export class UsersController {
     return result;
   }
 
+  @Public()
   @ThrottleLogin()
   @Post('login')
   async login(
@@ -633,6 +635,7 @@ export class UsersController {
     return user;
   }
 
+  @Public()
   @UseGuards(OptionalAuthGuard)
   @Post('logout')
   async logout(

@@ -12,10 +12,12 @@ import type { ConfigType } from '@nestjs/config';
 import { DelegationService } from './delegation.service';
 import type { Request } from 'express';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
+import { Public } from '../auth';
 import { appConfig } from '../config/app.config';
 import { DelegateTaskDto } from './dto/task.dto';
 import { getHeaderValue, getTaskErrorMessage } from './task.types';
 
+@Public()
 @Controller('api/tasks')
 export class DelegationController {
   constructor(

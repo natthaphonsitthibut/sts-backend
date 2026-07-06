@@ -2,10 +2,12 @@ import { Body, Controller, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ThrottleMockLogin } from '../config/throttle.decorators';
+import { Public } from './public.decorator';
 import { MockThaIdLoginDto } from './dto/auth.dto';
 import { StudentAuthService } from './student-auth.service';
 import { SessionCookieService } from './session-cookie.service';
 
+@Public()
 @Controller('api/auth/thaid')
 export class AuthController {
   constructor(

@@ -7,15 +7,27 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY, ROLES_KEY } from './permissions.decorator';
+import { IS_PUBLIC_KEY } from './public.decorator';
 import { hasPermission } from './permissions.constants';
 import { AuthActorService } from './auth-actor.service';
 import type { RequestWithUser } from './auth.types';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(private readonly authActorService: AuthActorService) {}
+  constructor(
+    private readonly authActorService: AuthActorService,
+    private readonly reflector: Reflector,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest<RequestWithUser>();
 
     const user = await this.authActorService.loadRequiredUser(request);

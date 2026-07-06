@@ -15,7 +15,7 @@ import {
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
 import type { Request } from 'express';
-import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
+import { AuthGuard, CurrentUser, PermissionsGuard, Public, RequirePermission } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
@@ -81,6 +81,7 @@ export class TaskController {
     });
   }
 
+  @Public()
   @Get(':token')
   async getTask(@Param('token') token: string, @Req() req: Request) {
     const sessionToken = getHeaderValue(req.headers['x-magic-session']);
@@ -94,11 +95,13 @@ export class TaskController {
     return task;
   }
 
+  @Public()
   @Get(':token/students')
   async getTaskStudents(@Param('token') token: string) {
     return await this.taskService.getTaskStudents(token);
   }
 
+  @Public()
   @Get(':token/login-verify')
   async verifyMagicLogin(@Param('token') token: string, @Req() req: Request) {
     try {
@@ -109,6 +112,7 @@ export class TaskController {
     }
   }
 
+  @Public()
   @Get(':token/history')
   async getTaskHistory(@Param('token') token: string, @Query('date') date: string) {
     const targetDate = date || getBangkokDateString();
@@ -128,6 +132,7 @@ export class TaskController {
     return result;
   }
 
+  @Public()
   @Post(':token/attendance')
   async saveTaskAttendance(
     @Param('token') token: string,
@@ -138,6 +143,7 @@ export class TaskController {
     return await this.taskService.saveTaskAttendance(token, body.records, sessionToken);
   }
 
+  @Public()
   @Post(':token/submission')
   async saveTaskSubmission(
     @Param('token') token: string,
@@ -148,12 +154,14 @@ export class TaskController {
     return await this.taskService.saveTaskSubmission(token, body, sessionToken);
   }
 
+  @Public()
   @ThrottleOtpRequest()
   @Post(':token/otp')
   async requestOtp(@Param('token') token: string) {
     return await this.taskService.requestOtp(token);
   }
 
+  @Public()
   @ThrottleOtpVerify()
   @Post(':token/verify')
   async verifyOtp(@Param('token') token: string, @Body('otp') otp: string) {

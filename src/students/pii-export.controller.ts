@@ -4,6 +4,7 @@ import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
+  Public,
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
@@ -60,6 +61,7 @@ export class PiiExportController {
   }
 }
 
+@Public()
 @Controller('api/students/pii-export-download')
 export class PiiExportDownloadController {
   constructor(private readonly piiExportService: PiiExportService) {}
