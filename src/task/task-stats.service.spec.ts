@@ -42,7 +42,7 @@ describe('TaskStatsService', () => {
     };
     const taskRepository = {
       countStudents: jest.fn().mockResolvedValue(120),
-      countStudentDropouts: jest.fn().mockResolvedValue(4),
+      countActiveCases: jest.fn().mockResolvedValue(4),
       countAtRiskStudents: jest.fn().mockResolvedValue(9),
       countCases: jest
         .fn()
@@ -62,7 +62,7 @@ describe('TaskStatsService', () => {
       success: true,
       data: {
         totalStudents: 120,
-        dropoutStudents: 4,
+        activeCases: 4,
         atRiskStudents: 9,
         helpStats: {
           waiting: 3,
@@ -71,6 +71,7 @@ describe('TaskStatsService', () => {
         },
       },
     });
+    expect(taskRepository.countActiveCases).toHaveBeenCalledWith(actor);
     expect(taskRepository.countAtRiskStudents).toHaveBeenCalledWith(actor);
   });
 });

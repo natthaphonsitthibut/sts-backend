@@ -1905,6 +1905,17 @@ export class TaskRepository {
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
+  async countActiveCases(actor?: ActorContext): Promise<number> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 1);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await this.query<CountRow>(
+      `SELECT count(*) FROM cases c WHERE c.status <> 'RESOLVED' AND c.deleted_at IS NULL${scopeSql}`,
+      scopeQuery.params,
+    );
+
+    return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
+  }
+
   async countAtRiskStudents(actor?: ActorContext): Promise<number> {
     const activeStatuses = ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'];
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
