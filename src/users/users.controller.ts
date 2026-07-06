@@ -533,7 +533,7 @@ export class UsersController {
       actorUserId: resolveAuditActorId(actor),
       actorLabel: actor?.username,
       targetType: 'user',
-      metadata: { username: data.username },
+      metadata: { username: data.username, actorScope: actor?.data_scope ?? {} },
       ip: requestIp(req),
     });
     return result;
@@ -555,7 +555,7 @@ export class UsersController {
       actorLabel: actor?.username,
       targetType: 'user',
       targetId: String(id),
-      metadata: { fields: Object.keys(data) },
+      metadata: { fields: Object.keys(data), actorScope: actor?.data_scope ?? {} },
       ip: requestIp(req),
     });
     return result;

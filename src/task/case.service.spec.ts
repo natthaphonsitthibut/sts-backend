@@ -126,6 +126,13 @@ describe('CaseService', () => {
       }),
       undefined,
     );
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_REVIEW',
+        targetType: 'case',
+        targetId: '10',
+      }),
+    );
   });
 
   it('rejects CLOSE without close-case permission before mutating', async () => {

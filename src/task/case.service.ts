@@ -243,22 +243,25 @@ export class CaseService {
               (referral) => referral.id === referralId,
             ) || null
           : null;
-      if (reviewAction === 'CLOSE' || reviewAction === 'FORWARD') {
-        await this.auditLog.record({
-          actorUserId: resolveAuditActorId(actor),
-          actorLabel: this.actorLabel(actor),
-          action: reviewAction === 'CLOSE' ? 'CASE_CLOSE' : 'CASE_FORWARD',
-          targetType: 'case',
-          targetId: String(caseId),
-          metadata: {
-            reviewAction,
-            resolutionOutcome: reviewAction === 'CLOSE' ? resolutionOutcome : null,
-            referralId: referralRecord?.id ?? null,
-            agencyId: referralRecord?.agency_id ?? null,
-          },
-          ip: null,
-        });
-      }
+      await this.auditLog.record({
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: this.actorLabel(actor),
+        action:
+          reviewAction === 'CLOSE'
+            ? 'CASE_CLOSE'
+            : reviewAction === 'FORWARD'
+              ? 'CASE_FORWARD'
+              : 'CASE_REVIEW',
+        targetType: 'case',
+        targetId: String(caseId),
+        metadata: {
+          reviewAction,
+          resolutionOutcome: reviewAction === 'CLOSE' ? resolutionOutcome : null,
+          referralId: referralRecord?.id ?? null,
+          agencyId: referralRecord?.agency_id ?? null,
+        },
+        ip: null,
+      });
 
       await this.notificationsService.notifyCaseStatusChanged({
         caseId,

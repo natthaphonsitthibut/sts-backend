@@ -2,6 +2,60 @@ import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 
+/**
+ * Closed vocabulary of audited sensitive actions. Centralised so both the
+ * users/auth wiring and the task/imports/master-data wiring stay in sync and
+ * a typo can't silently create an un-greppable action.
+ */
+export const AUDIT_ACTIONS = [
+  'LOGIN',
+  'LOGIN_FAILED',
+  'LOGOUT',
+  'USER_CREATE',
+  'USER_UPDATE',
+  'USER_PROFILE_UPDATE',
+  'USER_DELETE',
+  'USER_DEACTIVATE',
+  'USER_REACTIVATE',
+  'USER_TEMP_PASSWORD_REISSUE',
+  'STUDENT_CREATE',
+  'STUDENT_UPDATE',
+  'STUDENT_DELETE',
+  'STUDENT_ACCOUNT_BULK_GENERATE',
+  'STUDENT_ACCOUNT_BATCH_ENQUEUE',
+  'STUDENT_ACCOUNT_BATCH_RESUME',
+  'STUDENT_ACCOUNT_BATCH_CANCEL',
+  'STUDENT_ACCOUNT_DEACTIVATE',
+  'STUDENT_ACCOUNT_REACTIVATE',
+  'STUDENT_TEMP_PASSWORD_REISSUE',
+  'ROLE_GROUP_CREATE',
+  'ROLE_GROUP_UPDATE',
+  'ROLE_GROUP_DELETE',
+  'CASE_CLOSE',
+  'CASE_FORWARD',
+  'CASE_REFERRAL_OUTCOME_UPDATE',
+  'CASE_REVIEW',
+  'CASE_AUTO_CANCEL',
+  'CASE_RISK_TIER_ESCALATE',
+  'CASE_SLA_WARNING',
+  'CASE_SLA_BREACHED',
+  'ATTENDANCE_SUBMIT',
+  'ATTENDANCE_REOPEN',
+  'TASK_CREATE',
+  'TASK_DELETE',
+  'LINK_LOCK',
+  'LINK_UNLOCK',
+  'DELEGATION',
+  'DATA_IMPORT',
+  'IMPORT_QUARANTINE_RESOLVED',
+  'IMPORT_QUARANTINE_REJECTED',
+  'IMPORT_QUARANTINE_EXPORT',
+  'MASTER_DATA_EDIT',
+  'SYSTEM_SETTING_EDIT',
+] as const;
+
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
 export const AUDIT_LOG_DOMAINS = [
   'student_accounts',
   'imports',
@@ -24,8 +78,8 @@ export class GetAuditLogQueryDto extends PaginationQueryDto {
   domain!: AuditLogDomain;
 
   @IsOptional()
-  @IsString()
-  action?: string;
+  @IsIn(AUDIT_ACTIONS)
+  action?: AuditAction;
 
   @IsOptional()
   @IsString()
