@@ -180,6 +180,36 @@ describe('StudentAccountBatchService', () => {
     expect(result.data.id).toBe('job-1');
   });
 
+  it('dispatches queued jobs through BullMQ when Redis queue mode is enabled', async () => {
+    const bullService = new StudentAccountBatchService(
+      batchRepository as unknown as StudentAccountBatchRepository,
+      usersRepository as unknown as UsersRepository,
+      usersPolicyService as unknown as UsersPolicyService,
+      passwordService as unknown as PasswordService,
+      auditLog as unknown as AuditLogService,
+      notificationsService as unknown as NotificationsService,
+      {
+        redisUrl: 'redis://localhost:6379',
+        requireRedis: false,
+        studentAccountBatch: {
+          mode: 'bullmq',
+          queueName: 'student-account-batch-test',
+          attempts: 3,
+          backoffMs: 30_000,
+        },
+      },
+    );
+    const queue = { add: jest.fn().mockResolvedValue(undefined) };
+    (bullService as unknown as { queue: { add: jest.Mock<Promise<void>, unknown[]> } }).queue =
+      queue;
+
+    const result = await bullService.enqueue(actor, { schoolId: 10010002 });
+
+    expect(queue.add).toHaveBeenCalledWith('process', { jobId: 'job-1' }, { jobId: 'job-1' });
+    expect(batchRepository.claimJobForRun).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+  });
+
   it('rejects enqueue when room is specified without grade', async () => {
     await expect(service.enqueue(actor, { schoolId: 10010002, room: 1 })).rejects.toBeInstanceOf(
       BadRequestException,

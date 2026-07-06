@@ -1,16 +1,22 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  type OnApplicationShutdown,
   type OnModuleInit,
 } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
+import { Queue, Worker } from 'bullmq';
 import { randomInt, randomUUID } from 'crypto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PasswordService } from '../auth/password.service';
+import { queueConfig } from '../config/queue.config';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
 import {
@@ -45,23 +51,24 @@ interface BatchScopeSnapshot {
   room: number | null;
 }
 
+interface StudentAccountBatchQueuePayload {
+  jobId: string;
+}
+
 /**
  * Async large-batch student-account generation. The HTTP request only enqueues
- * a durable job and returns immediately; processing runs in-process in fixed
- * chunks that commit as they go, so progress survives failures and the job is
- * resumable. Idempotent by construction: created accounts leave the candidate
- * set and every processed candidate keeps a job-item row, so a re-run continues
- * where it stopped and always terminates. Credentials are never stored — a
- * printable sheet is produced on demand by rotating temporary passwords through
- * the existing reissue path.
- *
- * NOTE: the concurrency guard is in-process only. A durable queue / advisory
- * locks for multi-instance safety is deferred to the Redis/queue phase.
+ * a durable job and returns immediately. When Redis is configured, BullMQ owns
+ * cross-process dispatch; local/test environments can still use the inline
+ * fallback. Chunks commit as they go, so progress survives failures and the job
+ * is resumable. Credentials are never stored — a printable sheet is produced on
+ * demand by rotating temporary passwords through the existing reissue path.
  */
 @Injectable()
-export class StudentAccountBatchService implements OnModuleInit {
+export class StudentAccountBatchService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(StudentAccountBatchService.name);
   private readonly runningJobs = new Set<string>();
+  private queue?: Queue;
+  private worker?: Worker;
 
   constructor(
     private readonly batchRepository: StudentAccountBatchRepository,
@@ -70,9 +77,21 @@ export class StudentAccountBatchService implements OnModuleInit {
     private readonly passwordService: PasswordService,
     private readonly auditLog: AuditLogService,
     private readonly notificationsService: NotificationsService,
+    @Optional()
+    @Inject(queueConfig.KEY)
+    private readonly runtimeQueueConfig?: ConfigType<typeof queueConfig>,
   ) {}
 
   async onModuleInit(): Promise<void> {
+    const config = this.queueRuntimeConfig();
+    if (config.requireRedis && !config.redisUrl) {
+      throw new Error('REDIS_URL or QUEUE_REDIS_URL is required for production queue processing');
+    }
+    if (config.studentAccountBatch.mode === 'bullmq') {
+      await this.initializeBullQueue(config);
+      return;
+    }
+
     try {
       const interrupted = await this.batchRepository.markRunningJobsInterrupted();
       if (interrupted > 0) {
@@ -85,6 +104,10 @@ export class StudentAccountBatchService implements OnModuleInit {
         `Failed to recover interrupted student-account batch jobs: ${this.errorMessage(error)}`,
       );
     }
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    await this.closeBullQueue();
   }
 
   async enqueue(actor: ActorContext | undefined, filters: GenerateStudentAccountsDto) {
@@ -127,9 +150,7 @@ export class StudentAccountBatchService implements OnModuleInit {
         room: scope.room,
       },
     });
-    void this.runJob(job.id).catch((error) => {
-      this.logger.error(`Batch job ${job.id} crashed: ${this.errorMessage(error)}`);
-    });
+    await this.dispatchJob(job.id);
     return { success: true, data: this.toJobResponse(job) };
   }
 
@@ -162,9 +183,7 @@ export class StudentAccountBatchService implements OnModuleInit {
     if (!['INTERRUPTED', 'FAILED'].includes(job.status)) {
       throw new ForbiddenException('งานนี้ไม่อยู่ในสถานะที่ทำต่อได้');
     }
-    void this.runJob(jobId).catch((error) => {
-      this.logger.error(`Batch job ${jobId} crashed on resume: ${this.errorMessage(error)}`);
-    });
+    await this.dispatchJob(jobId);
     await this.auditLog.record({
       action: 'STUDENT_ACCOUNT_BATCH_RESUME',
       actorUserId: actorId,
@@ -280,6 +299,92 @@ export class StudentAccountBatchService implements OnModuleInit {
   }
 
   // --- processing engine -------------------------------------------------
+
+  private queueRuntimeConfig(): ConfigType<typeof queueConfig> {
+    return (
+      this.runtimeQueueConfig ?? {
+        redisUrl: undefined,
+        requireRedis: false,
+        studentAccountBatch: {
+          mode: 'inline',
+          queueName: 'student-account-batch',
+          attempts: 3,
+          backoffMs: 30_000,
+        },
+      }
+    );
+  }
+
+  private async initializeBullQueue(config: ConfigType<typeof queueConfig>): Promise<void> {
+    if (!config.redisUrl) {
+      throw new Error('Redis URL is required when STUDENT_ACCOUNT_BATCH_QUEUE_MODE=bullmq');
+    }
+    const connection = {
+      url: config.redisUrl,
+      maxRetriesPerRequest: null,
+    };
+    this.queue = new Queue(config.studentAccountBatch.queueName, {
+      connection,
+      defaultJobOptions: {
+        attempts: config.studentAccountBatch.attempts,
+        backoff: { type: 'exponential', delay: config.studentAccountBatch.backoffMs },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    });
+    this.worker = new Worker(
+      config.studentAccountBatch.queueName,
+      async (job) => {
+        const payload = job.data as StudentAccountBatchQueuePayload;
+        await this.runJob(payload.jobId);
+      },
+      { connection, concurrency: 1 },
+    );
+    this.worker.on('failed', (job, error) => {
+      const failedPayload = job?.data as Partial<StudentAccountBatchQueuePayload> | undefined;
+      this.logger.error(
+        `Student-account batch queue job ${failedPayload?.jobId ?? job?.id ?? 'unknown'} failed: ${this.errorMessage(error)}`,
+      );
+    });
+    this.worker.on('error', (error) => {
+      this.logger.error(`Student-account batch queue error: ${this.errorMessage(error)}`);
+    });
+    const queue = this.queue;
+    const worker = this.worker;
+    await Promise.all([queue.waitUntilReady(), worker.waitUntilReady()]);
+    this.logger.log(
+      `Student-account batch queue enabled (${config.studentAccountBatch.queueName})`,
+    );
+  }
+
+  private async closeBullQueue(): Promise<void> {
+    const closeResults = await Promise.allSettled([this.worker?.close(), this.queue?.close()]);
+    for (const result of closeResults) {
+      if (result.status === 'rejected') {
+        this.logger.warn(
+          `Failed to close student-account batch queue cleanly: ${this.errorMessage(result.reason)}`,
+        );
+      }
+    }
+  }
+
+  private async dispatchJob(jobId: string): Promise<void> {
+    const config = this.queueRuntimeConfig();
+    if (config.studentAccountBatch.mode === 'bullmq') {
+      if (!this.queue) {
+        await this.batchRepository.setJobStatus(jobId, 'FAILED', {
+          errorSummary: 'Student-account batch queue is not ready',
+          finished: true,
+        });
+        throw new BadRequestException('ระบบคิวงานยังไม่พร้อม กรุณาลองใหม่อีกครั้ง');
+      }
+      await this.queue.add('process', { jobId }, { jobId });
+      return;
+    }
+    void this.runJob(jobId).catch((error) => {
+      this.logger.error(`Batch job ${jobId} crashed: ${this.errorMessage(error)}`);
+    });
+  }
 
   private async runJob(jobId: string): Promise<void> {
     if (this.runningJobs.has(jobId)) {

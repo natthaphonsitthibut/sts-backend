@@ -23,6 +23,7 @@ import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
 import { geoConfig } from './config/geo.config';
 import { piiConfig } from './config/pii.config';
+import { queueConfig } from './config/queue.config';
 import { throttleConfig } from './config/throttle.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
 import { GeoModule } from './geo/geo.module';
@@ -40,6 +41,7 @@ import { NotificationsModule } from './notifications/notifications.module';
         emailConfig,
         geoConfig,
         piiConfig,
+        queueConfig,
         throttleConfig,
       ],
     }),
