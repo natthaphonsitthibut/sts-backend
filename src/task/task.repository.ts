@@ -9,6 +9,11 @@ import type {
   QueryExecutor,
   QueryResultLike,
   QueryResultRow,
+  RiskDashboardFilters,
+  RiskDashboardResult,
+  RiskDashboardRow,
+  RiskDashboardSummary,
+  RiskDashboardThresholds,
   RoleDefinition,
 } from './task.types';
 
@@ -23,6 +28,18 @@ export interface CaseListFilters {
   room?: string;
   page?: number;
   limit?: number;
+}
+
+const EMPTY_RISK_DASHBOARD_SUMMARY: RiskDashboardSummary = {
+  HIGH: 0,
+  MEDIUM: 0,
+  LOW: 0,
+  WATCH: 0,
+  NORMAL: 0,
+};
+
+interface RiskDashboardSummaryRow extends QueryResultRow, RiskDashboardSummary {
+  total_count: number | string;
 }
 
 export interface LoginLinkListFilters {
@@ -2037,6 +2054,359 @@ export class TaskRepository {
       params,
     );
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
+  }
+
+  async listRiskDashboardStudents(
+    actor: ActorContext,
+    filters: RiskDashboardFilters,
+    thresholds: RiskDashboardThresholds,
+  ): Promise<RiskDashboardResult> {
+    if (actor.data_scope?.own_only === true) {
+      return { rows: [], totalCount: 0, summary: { ...EMPTY_RISK_DASHBOARD_SUMMARY } };
+    }
+
+    const params: unknown[] = [
+      thresholds.lowConsecutiveAbsentDays,
+      thresholds.mediumConsecutiveAbsentDays,
+      thresholds.highConsecutiveAbsentDays,
+      thresholds.watchProgressRatio,
+      thresholds.lowAttendancePercent,
+      thresholds.mediumAttendancePercent,
+      thresholds.highAttendancePercent,
+      thresholds.lateWeight,
+    ];
+    const conditions: string[] = [];
+
+    if (actor.data_scope) {
+      const scopeResult = buildDataScopeQuery(
+        actor.data_scope,
+        {
+          school_id: `s."SchoolID_Onec"`,
+          grade: `s."GradeLevelID_Onec"`,
+          room: `s."RoomID_Onec"::text`,
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+      if (scopeResult.sql) {
+        conditions.push(`(${scopeResult.sql})`);
+        params.push(...scopeResult.params);
+      }
+    }
+
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(`sc.province = $${params.length}`);
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(`sc.district = $${params.length}`);
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(`sc.sub_district = $${params.length}`);
+    }
+    if (typeof filters.schoolId === 'number') {
+      params.push(filters.schoolId);
+      conditions.push(`s."SchoolID_Onec" = $${params.length}`);
+    }
+    if (filters.grade) {
+      params.push(filters.grade);
+      conditions.push(`gl.label = $${params.length}`);
+    }
+    if (filters.room) {
+      params.push(filters.room);
+      conditions.push(`s."RoomID_Onec"::text = $${params.length}`);
+    }
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      conditions.push(
+        `((s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length} OR s."PersonID_Onec" ILIKE $${params.length})`,
+      );
+    }
+
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const baseCte = `
+      WITH base_students AS (
+        SELECT
+          s.student_uuid,
+          s.person_uuid,
+          s."PersonID_Onec" AS person_id,
+          s."AcademicYear_Onec" AS academic_year,
+          s."Semester_Onec" AS semester,
+          s."SchoolID_Onec" AS school_id,
+          s."GradeLevelID_Onec" AS grade_level_id,
+          s."RoomID_Onec" AS room_id,
+          (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS student_name,
+          COALESCE(gl.label, 'ไม่ทราบ') AS grade,
+          s."RoomID_Onec"::text AS room,
+          sc.name AS school_name
+        FROM student_term s
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
+        LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
+        LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+        ${whereSql}
+      ),
+      attendance_daily AS (
+        SELECT
+          a.student_uuid,
+          a."AttendanceDate"::date AS attendance_date,
+          BOOL_AND(a."AttendanceStatus" = 2) AS is_absent_day,
+          COUNT(*) FILTER (WHERE a."AttendanceStatus" = 2)::int AS absent_records,
+          COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late_records
+        FROM attendance a
+        JOIN base_students b ON b.student_uuid = a.student_uuid
+        WHERE a."AcademicYear_Onec" = b.academic_year
+          AND a."Semester_Onec" = b.semester
+        GROUP BY a.student_uuid, a."AttendanceDate"
+      ),
+      ranked_attendance_days AS (
+        SELECT
+          student_uuid,
+          attendance_date,
+          is_absent_day,
+          ROW_NUMBER() OVER (PARTITION BY student_uuid ORDER BY attendance_date DESC) AS rn
+        FROM attendance_daily
+      ),
+      streak_boundaries AS (
+        SELECT
+          student_uuid,
+          rn,
+          is_absent_day,
+          MIN(CASE WHEN NOT is_absent_day THEN rn END) OVER (PARTITION BY student_uuid) AS first_non_absent_rn
+        FROM ranked_attendance_days
+      ),
+      absence_streak AS (
+        SELECT student_uuid, COUNT(*)::int AS consecutive_absent_days
+        FROM streak_boundaries
+        WHERE is_absent_day
+          AND (first_non_absent_rn IS NULL OR rn < first_non_absent_rn)
+        GROUP BY student_uuid
+      ),
+      attendance_summary AS (
+        SELECT
+          student_uuid,
+          COUNT(*) FILTER (WHERE is_absent_day)::int AS absent_days,
+          COALESCE(SUM(late_records), 0)::int AS late_count,
+          COUNT(*)::int AS recorded_day_count
+        FROM attendance_daily
+        GROUP BY student_uuid
+      ),
+      calendar_counts AS (
+        SELECT
+          b.student_uuid,
+          COUNT(cd.id)::int AS school_day_count
+        FROM base_students b
+        JOIN school_terms st
+          ON st.school_id = b.school_id
+         AND st.academic_year = b.academic_year
+         AND st.semester = b.semester
+         AND st.deleted_at IS NULL
+        JOIN school_calendar_days cd
+          ON cd.school_term_id = st.id
+         AND cd.day_type = 'SCHOOL_DAY'
+         AND cd.deleted_at IS NULL
+         AND cd.calendar_date <= CURRENT_DATE
+        GROUP BY b.student_uuid
+      ),
+      case_summary AS (
+        SELECT
+          c.student_uuid,
+          COUNT(*) FILTER (WHERE c.status <> 'RESOLVED' AND c.deleted_at IS NULL)::int AS open_case_count,
+          MAX(c.created_at) FILTER (WHERE c.status <> 'RESOLVED' AND c.deleted_at IS NULL) AS latest_case_at
+        FROM cases c
+        JOIN base_students b ON b.student_uuid = c.student_uuid
+        WHERE c.deleted_at IS NULL
+        GROUP BY c.student_uuid
+      ),
+      metrics AS (
+        SELECT
+          b.student_uuid,
+          b.student_name,
+          b.school_id,
+          b.school_name,
+          b.grade,
+          b.room,
+          COALESCE(streak.consecutive_absent_days, 0)::int AS consecutive_absent_days,
+          COALESCE(attendance.absent_days, 0)::int AS absent_days,
+          COALESCE(attendance.late_count, 0)::int AS late_count,
+          COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::int AS school_day_count,
+          (COALESCE(attendance.absent_days, 0)::numeric + (COALESCE(attendance.late_count, 0)::numeric * $8::numeric)) AS weighted_absence_days,
+          CASE
+            WHEN COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0) > 0 THEN
+              ROUND(
+                GREATEST(
+                  0,
+                  (COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
+                    - (COALESCE(attendance.absent_days, 0)::numeric + (COALESCE(attendance.late_count, 0)::numeric * $8::numeric)))
+                  * 100 / COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
+                ),
+                1
+              )
+            ELSE NULL
+          END AS weighted_attendance_percent,
+          COALESCE(cases.open_case_count, 0)::int AS open_case_count,
+          cases.latest_case_at
+        FROM base_students b
+        LEFT JOIN absence_streak streak ON streak.student_uuid = b.student_uuid
+        LEFT JOIN attendance_summary attendance ON attendance.student_uuid = b.student_uuid
+        LEFT JOIN calendar_counts calendar ON calendar.student_uuid = b.student_uuid
+        LEFT JOIN case_summary cases ON cases.student_uuid = b.student_uuid
+      ),
+      scored AS (
+        SELECT
+          metrics.*,
+          CASE
+            WHEN metrics.consecutive_absent_days >= $3::int
+              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $7::numeric)
+              THEN 'HIGH'
+            WHEN metrics.consecutive_absent_days >= $2::int
+              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $6::numeric)
+              THEN 'MEDIUM'
+            WHEN metrics.consecutive_absent_days >= $1::int
+              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $5::numeric)
+              THEN 'LOW'
+            WHEN metrics.consecutive_absent_days >= CEIL($1::numeric * $4::numeric)
+              OR metrics.absent_days >= CEIL($3::numeric * $4::numeric)
+              OR (
+                metrics.weighted_attendance_percent IS NOT NULL
+                AND metrics.weighted_attendance_percent <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
+              )
+              THEN 'WATCH'
+            ELSE 'NORMAL'
+          END AS risk_tier,
+          CASE
+            WHEN metrics.consecutive_absent_days >= $3::int
+              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $7::numeric)
+              THEN 4
+            WHEN metrics.consecutive_absent_days >= $2::int
+              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $6::numeric)
+              THEN 3
+            WHEN metrics.consecutive_absent_days >= $1::int
+              OR (metrics.weighted_attendance_percent IS NOT NULL AND metrics.weighted_attendance_percent < $5::numeric)
+              THEN 2
+            WHEN metrics.consecutive_absent_days >= CEIL($1::numeric * $4::numeric)
+              OR metrics.absent_days >= CEIL($3::numeric * $4::numeric)
+              OR (
+                metrics.weighted_attendance_percent IS NOT NULL
+                AND metrics.weighted_attendance_percent <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
+              )
+              THEN 1
+            ELSE 0
+          END AS risk_severity,
+          GREATEST(
+            metrics.consecutive_absent_days::numeric / NULLIF($3::numeric, 0),
+            metrics.absent_days::numeric / NULLIF($3::numeric, 0),
+            CASE
+              WHEN metrics.weighted_attendance_percent IS NULL THEN 0
+              ELSE (100::numeric - metrics.weighted_attendance_percent) / NULLIF(100::numeric - $7::numeric, 0)
+            END
+          ) AS risk_score
+        FROM metrics
+      )
+    `;
+
+    const filteredParams = [...params];
+    const riskWhere =
+      filters.riskTier && filters.riskTier !== 'NORMAL'
+        ? (() => {
+            filteredParams.push(filters.riskTier);
+            return `WHERE risk_tier = $${filteredParams.length}`;
+          })()
+        : filters.riskTier === 'NORMAL'
+          ? (() => {
+              filteredParams.push('NORMAL');
+              return `WHERE risk_tier = $${filteredParams.length}`;
+            })()
+          : '';
+    const filteredCte = `${baseCte}, filtered AS (SELECT * FROM scored ${riskWhere})`;
+
+    const summaryResult = await this.query<RiskDashboardSummaryRow>(
+      `
+        ${baseCte}
+        SELECT
+          COUNT(*)::int AS total_count,
+          COUNT(*) FILTER (WHERE risk_tier = 'HIGH')::int AS "HIGH",
+          COUNT(*) FILTER (WHERE risk_tier = 'MEDIUM')::int AS "MEDIUM",
+          COUNT(*) FILTER (WHERE risk_tier = 'LOW')::int AS "LOW",
+          COUNT(*) FILTER (WHERE risk_tier = 'WATCH')::int AS "WATCH",
+          COUNT(*) FILTER (WHERE risk_tier = 'NORMAL')::int AS "NORMAL"
+        FROM scored
+      `,
+      params,
+    );
+    const totalCountResult = await this.query<CountRow>(
+      `
+        ${filteredCte}
+        SELECT COUNT(*)::int AS count
+        FROM filtered
+      `,
+      filteredParams,
+    );
+
+    const totalCount = Number.parseInt(String(totalCountResult.rows[0]?.count || '0'), 10);
+    const summary: RiskDashboardSummary = {
+      HIGH: Number.parseInt(String(summaryResult.rows[0]?.HIGH || '0'), 10),
+      MEDIUM: Number.parseInt(String(summaryResult.rows[0]?.MEDIUM || '0'), 10),
+      LOW: Number.parseInt(String(summaryResult.rows[0]?.LOW || '0'), 10),
+      WATCH: Number.parseInt(String(summaryResult.rows[0]?.WATCH || '0'), 10),
+      NORMAL: Number.parseInt(String(summaryResult.rows[0]?.NORMAL || '0'), 10),
+    };
+
+    const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const offset = (page - 1) * limit;
+    const rowParams = [...filteredParams, limit, offset];
+    const limitPlaceholder = rowParams.length - 1;
+    const offsetPlaceholder = rowParams.length;
+
+    const sortDirection = filters.sortDirection === 'asc' ? 'ASC' : 'DESC';
+    const orderBy =
+      filters.sortBy === 'name'
+        ? `student_name ${sortDirection}, school_name ASC NULLS LAST, grade ASC, room ASC`
+        : filters.sortBy === 'school'
+          ? `school_name ${sortDirection} NULLS LAST, grade ASC, room ASC, student_name ASC`
+          : filters.sortBy === 'grade'
+            ? `grade ${sortDirection}, room ASC, student_name ASC`
+            : filters.sortBy === 'room'
+              ? `room ${sortDirection}, grade ASC, student_name ASC`
+              : filters.sortBy === 'attendance'
+                ? `weighted_attendance_percent ${sortDirection} NULLS LAST, risk_severity DESC, student_name ASC`
+                : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
+
+    const rowsResult = await this.query<RiskDashboardRow>(
+      `
+        ${filteredCte}
+        SELECT
+          student_uuid,
+          student_name,
+          school_id,
+          school_name,
+          grade,
+          room,
+          consecutive_absent_days,
+          absent_days,
+          late_count,
+          school_day_count,
+          ROUND(weighted_absence_days, 2) AS weighted_absence_days,
+          weighted_attendance_percent,
+          risk_tier,
+          ROUND(risk_score, 4) AS risk_score,
+          open_case_count,
+          latest_case_at
+        FROM filtered
+        ORDER BY ${orderBy}
+        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+      `,
+      rowParams,
+    );
+
+    return { rows: rowsResult.rows, totalCount, summary };
   }
 
   async findDelegationLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {

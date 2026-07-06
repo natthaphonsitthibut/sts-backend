@@ -7,7 +7,23 @@ import {
 } from '../common/pagination/pagination.util';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository, type CaseListFilters } from './task.repository';
-import type { ActorContext } from './task.types';
+import type {
+  ActorContext,
+  RiskDashboardFilters,
+  RiskDashboardThresholds,
+  RiskDashboardTier,
+} from './task.types';
+
+const DEFAULT_RISK_DASHBOARD_THRESHOLDS: RiskDashboardThresholds = {
+  lowConsecutiveAbsentDays: 3,
+  mediumConsecutiveAbsentDays: 5,
+  highConsecutiveAbsentDays: 7,
+  watchProgressRatio: 0.7,
+  lowAttendancePercent: 95,
+  mediumAttendancePercent: 90,
+  highAttendancePercent: 80,
+  lateWeight: 0.25,
+};
 
 @Injectable()
 export class TaskStatsService {
@@ -88,6 +104,103 @@ export class TaskStatsService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`getOverviewStats error: ${message}`);
+      throw err;
+    }
+  }
+
+  private parsePositiveInteger(value: string | null, fallback: number): number {
+    const parsed = value ? Number.parseInt(value, 10) : fallback;
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private async getRiskDashboardThresholds(): Promise<RiskDashboardThresholds> {
+    const [low, medium, high] = await Promise.all([
+      this.taskRepository.getSystemSettingValue('ABSENT_THRESHOLD_DAYS'),
+      this.taskRepository.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
+      this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
+    ]);
+
+    return {
+      ...DEFAULT_RISK_DASHBOARD_THRESHOLDS,
+      lowConsecutiveAbsentDays: this.parsePositiveInteger(
+        low,
+        DEFAULT_RISK_DASHBOARD_THRESHOLDS.lowConsecutiveAbsentDays,
+      ),
+      mediumConsecutiveAbsentDays: this.parsePositiveInteger(
+        medium,
+        DEFAULT_RISK_DASHBOARD_THRESHOLDS.mediumConsecutiveAbsentDays,
+      ),
+      highConsecutiveAbsentDays: this.parsePositiveInteger(
+        high,
+        DEFAULT_RISK_DASHBOARD_THRESHOLDS.highConsecutiveAbsentDays,
+      ),
+    };
+  }
+
+  private normalizeRiskTier(value?: string): RiskDashboardTier | undefined {
+    if (
+      value === 'HIGH' ||
+      value === 'MEDIUM' ||
+      value === 'LOW' ||
+      value === 'WATCH' ||
+      value === 'NORMAL'
+    ) {
+      return value;
+    }
+    return undefined;
+  }
+
+  async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    try {
+      const page = resolvePage(filters.page);
+      const limit = resolveLimit(filters.limit);
+      const thresholds = await this.getRiskDashboardThresholds();
+      const { rows, totalCount, summary } = await this.taskRepository.listRiskDashboardStudents(
+        currentActor,
+        {
+          ...filters,
+          riskTier: this.normalizeRiskTier(filters.riskTier),
+          page,
+          limit,
+          sortBy: filters.sortBy ?? 'risk',
+          sortDirection: filters.sortDirection ?? 'desc',
+        },
+        thresholds,
+      );
+
+      return {
+        success: true,
+        data: rows.map((row) => ({
+          studentId: row.student_uuid,
+          studentName: row.student_name,
+          schoolId: row.school_id,
+          schoolName: row.school_name,
+          grade: row.grade,
+          room: row.room,
+          consecutiveAbsentDays: Number(row.consecutive_absent_days ?? 0),
+          absentDays: Number(row.absent_days ?? 0),
+          lateCount: Number(row.late_count ?? 0),
+          schoolDayCount: Number(row.school_day_count ?? 0),
+          weightedAbsenceDays: Number(row.weighted_absence_days ?? 0),
+          weightedAttendancePercent:
+            row.weighted_attendance_percent === null
+              ? null
+              : Number(row.weighted_attendance_percent),
+          riskTier: row.risk_tier,
+          riskScore: Number(row.risk_score ?? 0),
+          openCaseCount: Number(row.open_case_count ?? 0),
+          latestCaseAt: row.latest_case_at,
+        })),
+        meta: {
+          ...buildPaginationMeta(page, limit, totalCount),
+          summary,
+          thresholds,
+        },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`getRiskDashboard error: ${message}`);
       throw err;
     }
   }

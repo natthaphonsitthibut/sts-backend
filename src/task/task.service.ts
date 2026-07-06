@@ -14,7 +14,7 @@ import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
 import type { CaseListFilters, LoginLinkListFilters } from './task.repository';
-import type { ActorContext } from './task.types';
+import type { ActorContext, RiskDashboardFilters } from './task.types';
 
 @Injectable()
 export class TaskService {
@@ -138,5 +138,9 @@ export class TaskService {
 
   async getOverviewStats(actor?: ActorContext) {
     return await this.taskStatsService.getOverviewStats(actor);
+  }
+
+  async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {
+    return await this.taskStatsService.getRiskDashboard(actor, filters);
   }
 }

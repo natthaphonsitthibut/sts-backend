@@ -299,6 +299,60 @@ export class GetCasesQueryDto extends PaginationQueryDto {
   room?: string;
 }
 
+export const RISK_DASHBOARD_TIERS = ['ALL', 'HIGH', 'MEDIUM', 'LOW', 'WATCH', 'NORMAL'] as const;
+export const RISK_DASHBOARD_SORT_FIELDS = [
+  'risk',
+  'name',
+  'school',
+  'grade',
+  'room',
+  'attendance',
+] as const;
+export const RISK_DASHBOARD_SORT_DIRECTIONS = ['asc', 'desc'] as const;
+
+export class GetRiskDashboardQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsIn(RISK_DASHBOARD_TIERS)
+  riskTier?: (typeof RISK_DASHBOARD_TIERS)[number];
+
+  @IsOptional()
+  @IsString()
+  searchTerm?: string;
+
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+
+  @IsOptional()
+  @IsString()
+  grade?: string;
+
+  @IsOptional()
+  @IsString()
+  room?: string;
+
+  @IsOptional()
+  @IsIn(RISK_DASHBOARD_SORT_FIELDS)
+  sortBy?: (typeof RISK_DASHBOARD_SORT_FIELDS)[number];
+
+  @IsOptional()
+  @IsIn(RISK_DASHBOARD_SORT_DIRECTIONS)
+  sortDirection?: (typeof RISK_DASHBOARD_SORT_DIRECTIONS)[number];
+}
+
 export class GetLoginLinksQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'])
