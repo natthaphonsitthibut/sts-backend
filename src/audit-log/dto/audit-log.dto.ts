@@ -52,6 +52,8 @@ export const AUDIT_ACTIONS = [
   'IMPORT_QUARANTINE_EXPORT',
   'MASTER_DATA_EDIT',
   'SYSTEM_SETTING_EDIT',
+  'FIELD_FOLLOWER_APPLY',
+  'FIELD_FOLLOWER_REVIEW',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -65,6 +67,7 @@ export const AUDIT_LOG_DOMAINS = [
   'cases',
   'tasks',
   'attendance',
+  'field_followers',
 ] as const;
 
 export type AuditLogDomain = (typeof AUDIT_LOG_DOMAINS)[number];

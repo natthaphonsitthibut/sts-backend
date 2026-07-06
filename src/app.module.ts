@@ -31,6 +31,7 @@ import { createTypeOrmOptions } from './database/typeorm.config';
 import { GeoModule } from './geo/geo.module';
 import { StatusCatalogModule } from './status-catalog/status-catalog.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { FieldFollowersModule } from './field-followers/field-followers.module';
 
 @Module({
   imports: [
@@ -62,6 +63,11 @@ import { NotificationsModule } from './notifications/notifications.module';
           { name: 'otpVerify', ttl: config.otpVerify.ttlMs, limit: config.otpVerify.limit },
           { name: 'mockLogin', ttl: config.mockLogin.ttlMs, limit: config.mockLogin.limit },
           { name: 'geocode', ttl: config.geocode.ttlMs, limit: config.geocode.limit },
+          {
+            name: 'followerApplication',
+            ttl: config.followerApplication.ttlMs,
+            limit: config.followerApplication.limit,
+          },
         ],
       }),
     }),
@@ -83,6 +89,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     GeoModule,
     StatusCatalogModule,
     NotificationsModule,
+    FieldFollowersModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],

@@ -1471,6 +1471,27 @@ export const DATABASE_BASELINE_SQL = `
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 
+  CREATE TABLE IF NOT EXISTS field_followers (
+    id BIGSERIAL PRIMARY KEY,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    phone VARCHAR(20) NOT NULL,
+    sub_district TEXT NULL,
+    district TEXT NULL,
+    province TEXT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'APPLIED'
+      CONSTRAINT chk_field_followers_status
+      CHECK (status IN ('APPLIED', 'VERIFIED', 'ACTIVE', 'SUSPENDED')),
+    trust_level VARCHAR(20) NOT NULL DEFAULT 'STANDARD',
+    applied_via VARCHAR(20) NOT NULL DEFAULT 'PUBLIC_FORM',
+    reviewed_by_user_id INTEGER NULL
+      CONSTRAINT fk_field_followers_reviewed_by
+      REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    reviewed_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
   CREATE TABLE IF NOT EXISTS system_settings (
     setting_key TEXT PRIMARY KEY,
     setting_value TEXT NOT NULL,

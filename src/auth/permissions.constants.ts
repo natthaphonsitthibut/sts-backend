@@ -70,6 +70,7 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
   },
   { id: 'settings', label: 'ตั้งค่าระบบ' },
   { id: 'audit-log', label: 'บันทึกการใช้งาน' },
+  { id: 'field-monitor', label: 'ติดตามภาคสนาม' },
 ];
 
 function collectLeafPermissions(items: PermissionMenuItem[]): Array<{ id: string; label: string }> {
@@ -111,6 +112,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'settings',
       'import-data',
       'audit-log',
+      'field-monitor',
     ],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
@@ -137,6 +139,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'login-links',
       'settings',
       'audit-log',
+      'field-monitor',
     ],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',

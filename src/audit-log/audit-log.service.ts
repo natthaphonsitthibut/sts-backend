@@ -363,6 +363,19 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ลบข้อมูลนักเรียน',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่เกี่ยวข้อง' }],
   },
+  FIELD_FOLLOWER_APPLY: {
+    domain: 'field_followers',
+    label: 'สมัครเป็นผู้ติดตามภาคสนาม',
+    detailKeys: [{ key: 'province', label: 'จังหวัด' }],
+  },
+  FIELD_FOLLOWER_REVIEW: {
+    domain: 'field_followers',
+    label: 'ตรวจสอบผู้สมัครติดตามภาคสนาม',
+    detailKeys: [
+      { key: 'reviewAction', label: 'การดำเนินการ' },
+      { key: 'toStatus', label: 'สถานะใหม่' },
+    ],
+  },
 };
 
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
@@ -374,6 +387,7 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   cases: ['review-cases'],
   tasks: ['create', 'review-cases', 'attendance-dashboard'],
   attendance: ['attendance', 'attendance-dashboard'],
+  field_followers: ['field-monitor'],
 };
 
 @Injectable()
