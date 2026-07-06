@@ -6,6 +6,17 @@ import type { AuditLogService } from '../audit-log/audit-log.service';
 import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import type { SystemSettingRow } from './settings.types';
 
+const STORED_VALUES: Record<string, string> = {
+  CASE_RISK_LOW_ABSENCE_DAYS: '3',
+  CASE_RISK_MEDIUM_ABSENCE_DAYS: '5',
+  CASE_RISK_HIGH_ABSENCE_DAYS: '7',
+  CASE_SLA_HIGH_DAYS: '3',
+  CASE_SLA_MEDIUM_DAYS: '7',
+  CASE_SLA_LOW_DAYS: '14',
+  ALERT_TRIGGER_TYPE: 'SCHEDULED',
+  ALERT_SCHEDULE_TIME: '18:00',
+};
+
 describe('SettingsService catalog validation', () => {
   const actor = {
     id: 7,
@@ -24,9 +35,9 @@ describe('SettingsService catalog validation', () => {
   let service: SettingsService;
 
   const buildRow = (overrides: Partial<SystemSettingRow> = {}): SystemSettingRow => ({
-    setting_key: 'ABSENT_THRESHOLD_DAYS',
+    setting_key: 'CASE_RISK_LOW_ABSENCE_DAYS',
     setting_value: '3',
-    description: 'จำนวนวันขาดเรียนติดต่อกันก่อนที่จะแจ้งเตือนหรือเปิดเคสอัตโนมัติ',
+    description: 'จำนวนวันขาดเรียนติดต่อกันที่ระบบเปิดเคสอัตโนมัติ',
     updated_at: null,
     ...overrides,
   });
@@ -34,7 +45,11 @@ describe('SettingsService catalog validation', () => {
   beforeEach(() => {
     settingsRepository = {
       listSettings: jest.fn().mockResolvedValue([]),
-      findSettingByKey: jest.fn().mockResolvedValue(buildRow()),
+      findSettingByKey: jest
+        .fn()
+        .mockImplementation((key: string) =>
+          Promise.resolve(buildRow({ setting_key: key, setting_value: STORED_VALUES[key] ?? '3' })),
+        ),
       upsertSetting: jest
         .fn()
         .mockImplementation((key: string, value: string) =>
@@ -65,10 +80,16 @@ describe('SettingsService catalog validation', () => {
     expect(settingsRepository.upsertSetting).not.toHaveBeenCalled();
   });
 
+  it('rejects the retired ABSENT_THRESHOLD_DAYS key after the rename', async () => {
+    await expect(service.updateSetting(actor, 'ABSENT_THRESHOLD_DAYS', '3')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
   it.each([
-    ['ABSENT_THRESHOLD_DAYS', 'abc'],
-    ['ABSENT_THRESHOLD_DAYS', '0'],
-    ['ABSENT_THRESHOLD_DAYS', '9999'],
+    ['CASE_RISK_LOW_ABSENCE_DAYS', 'abc'],
+    ['CASE_RISK_LOW_ABSENCE_DAYS', '0'],
+    ['CASE_RISK_LOW_ABSENCE_DAYS', '9999'],
     ['ALERT_SCHEDULE_TIME', '99:99'],
     ['ALERT_SCHEDULE_TIME', '18.00'],
     ['ALERT_TRIGGER_TYPE', 'SOMETIMES'],
@@ -80,13 +101,39 @@ describe('SettingsService catalog validation', () => {
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
   });
 
-  it('persists a valid change with an atomic audit record', async () => {
-    settingsRepository.findSettingByKey.mockResolvedValue(buildRow({ setting_value: '3' }));
+  it.each([
+    // low (6) would exceed medium (5)
+    ['CASE_RISK_LOW_ABSENCE_DAYS', '6'],
+    // medium (8) would exceed high (7)
+    ['CASE_RISK_MEDIUM_ABSENCE_DAYS', '8'],
+    // high-risk SLA (20) would exceed the low-risk SLA (14)
+    ['CASE_SLA_HIGH_DAYS', '20'],
+    // low-risk SLA (2) would undercut the high-risk SLA (3)
+    ['CASE_SLA_LOW_DAYS', '2'],
+  ])('rejects %s = "%s" because it breaks the ladder ordering', async (key, value) => {
+    await expect(service.updateSetting(actor, key, value)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(settingsRepository.upsertSetting).not.toHaveBeenCalled();
+    expect(auditLog.recordAtomic).not.toHaveBeenCalled();
+  });
 
-    const result = await service.updateSetting(actor, 'ABSENT_THRESHOLD_DAYS', '5');
+  it('accepts a ladder value that stays within its neighbors', async () => {
+    const result = await service.updateSetting(actor, 'CASE_RISK_MEDIUM_ABSENCE_DAYS', '6');
+    expect(result.success).toBe(true);
+    expect(settingsRepository.upsertSetting).toHaveBeenCalledWith(
+      'CASE_RISK_MEDIUM_ABSENCE_DAYS',
+      '6',
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+
+  it('persists a valid change with an atomic audit record', async () => {
+    const result = await service.updateSetting(actor, 'CASE_RISK_LOW_ABSENCE_DAYS', '5');
 
     expect(settingsRepository.upsertSetting).toHaveBeenCalledWith(
-      'ABSENT_THRESHOLD_DAYS',
+      'CASE_RISK_LOW_ABSENCE_DAYS',
       '5',
       expect.any(String),
       expect.anything(),
@@ -95,7 +142,7 @@ describe('SettingsService catalog validation', () => {
       expect.objectContaining({
         actorUserId: 7,
         action: 'SYSTEM_SETTING_EDIT',
-        targetId: 'ABSENT_THRESHOLD_DAYS',
+        targetId: 'CASE_RISK_LOW_ABSENCE_DAYS',
       }),
       expect.anything(),
     );
@@ -109,34 +156,24 @@ describe('SettingsService catalog validation', () => {
   });
 
   it('skips the audit record when the value is unchanged', async () => {
-    settingsRepository.findSettingByKey.mockResolvedValue(buildRow({ setting_value: '3' }));
-
-    await service.updateSetting(actor, 'ABSENT_THRESHOLD_DAYS', '3');
+    await service.updateSetting(actor, 'CASE_RISK_LOW_ABSENCE_DAYS', '3');
 
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
     expect(automationService.refreshDynamicCron).not.toHaveBeenCalled();
   });
 
   it('refreshes the dynamic cron when an alert setting changes', async () => {
-    settingsRepository.findSettingByKey.mockResolvedValue(
-      buildRow({ setting_key: 'ALERT_SCHEDULE_TIME', setting_value: '18:00' }),
-    );
-
     await service.updateSetting(actor, 'ALERT_SCHEDULE_TIME', '07:30');
 
     expect(automationService.refreshDynamicCron).toHaveBeenCalledTimes(1);
   });
 
   it('ignores the client-supplied description and uses the catalog description', async () => {
-    settingsRepository.findSettingByKey.mockResolvedValue(
-      buildRow({ setting_key: 'ALERT_TRIGGER_TYPE', setting_value: 'SCHEDULED' }),
-    );
-
     await service.updateSetting(actor, 'ALERT_TRIGGER_TYPE', 'IMMEDIATE');
 
     const upsertCalls = settingsRepository.upsertSetting.mock.calls as unknown[][];
     const description = upsertCalls[0][2] as string;
-    expect(description).toContain('รูปแบบการทำงาน');
+    expect(description).toContain('ตัวตรวจขาดเรียนอัตโนมัติ');
   });
 
   it('enriches settings with catalog metadata and marks unknown rows read-only', async () => {
@@ -150,7 +187,27 @@ describe('SettingsService catalog validation', () => {
     expect(rows[0].editable).toBe(true);
     expect(rows[0].value_type).toBe('integer');
     expect(rows[0].min).toBe(1);
+    expect(rows[0].group).toBeTruthy();
     expect(rows[1].editable).toBe(false);
     expect(rows[1].value_type).toBeNull();
+    expect(rows[1].group).toBeNull();
+  });
+
+  it('returns settings in catalog order with unknown keys last', async () => {
+    settingsRepository.listSettings.mockResolvedValue([
+      buildRow({ setting_key: 'ALERT_SCHEDULE_TIME', setting_value: '18:00' }),
+      buildRow({ setting_key: 'LEGACY_KEY', setting_value: 'x' }),
+      buildRow({ setting_key: 'CASE_SLA_HIGH_DAYS', setting_value: '3' }),
+      buildRow(),
+    ]);
+
+    const rows = await service.getSettings();
+
+    expect(rows.map((row) => row.setting_key)).toEqual([
+      'CASE_RISK_LOW_ABSENCE_DAYS',
+      'CASE_SLA_HIGH_DAYS',
+      'ALERT_SCHEDULE_TIME',
+      'LEGACY_KEY',
+    ]);
   });
 });

@@ -4,12 +4,18 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AutomationRepository } from './automation.repository';
 import type {
   CaseAutoCancelAuditEvent,
+  CaseRiskTier,
+  CaseRiskTierEscalationAuditEvent,
   ConsecutiveAbsentStudentRow,
   NewCase,
 } from './automation.types';
 import { getBangkokDateString } from '../common/utils/date.util';
 
-type CaseRiskTier = 'HIGH' | 'MEDIUM' | 'LOW';
+const CASE_RISK_TIER_RANK: Record<CaseRiskTier, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+
+function normalizeCaseRiskTier(value: string | null): CaseRiskTier {
+  return value === 'HIGH' || value === 'MEDIUM' ? value : 'LOW';
+}
 
 @Injectable()
 export class AbsenceMonitorService {
@@ -90,8 +96,9 @@ export class AbsenceMonitorService {
   async checkConsecutiveAbsences(): Promise<NewCase[]> {
     this.logger.log('Starting CRON Job: Checking consecutive absences...');
 
-    const thresholdSetting =
-      await this.automationRepository.getSystemSettingValue('ABSENT_THRESHOLD_DAYS');
+    const thresholdSetting = await this.automationRepository.getSystemSettingValue(
+      'CASE_RISK_LOW_ABSENCE_DAYS',
+    );
     const thresholdDays = thresholdSetting ? Number.parseInt(thresholdSetting, 10) : 3;
     const riskHighDays = this.parsePositiveIntegerSetting(
       await this.automationRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
@@ -115,12 +122,13 @@ export class AbsenceMonitorService {
     );
 
     if (!Number.isInteger(thresholdDays) || thresholdDays <= 0) {
-      this.logger.warn('ABSENT_THRESHOLD_DAYS is invalid. Skipping job.');
+      this.logger.warn('CASE_RISK_LOW_ABSENCE_DAYS is invalid. Skipping job.');
       return [];
     }
 
     const newCases: NewCase[] = [];
     const autoCancelAuditEvents: CaseAutoCancelAuditEvent[] = [];
+    const tierEscalationAuditEvents: CaseRiskTierEscalationAuditEvent[] = [];
 
     try {
       await this.automationRepository.withTransaction(async (executor) => {
@@ -197,24 +205,16 @@ export class AbsenceMonitorService {
 
           this.logger.log(`Checking existing cases for: ${studentName}`);
 
-          const existingCaseId = await this.automationRepository.findActiveAbsenceCaseByStudent(
+          const existingCase = await this.automationRepository.findActiveAbsenceCaseByStudent(
             studentUuid ?? '',
             studentName,
             schoolId,
             executor,
           );
 
-          this.logger.log(`Existing case count for ${studentName}: ${existingCaseId ? 1 : 0}`);
+          this.logger.log(`Existing case count for ${studentName}: ${existingCase ? 1 : 0}`);
 
-          if (existingCaseId) {
-            continue;
-          }
-
-          const schoolName =
-            this.normalizeText(student.school_name) ||
-            `School ID: ${this.normalizeText(student.school_id_onec)}`;
-          const address = this.buildStudentTermAddress(student) || null;
-          const reason = `ขาดเรียนติดต่อกัน ${thresholdDays} วัน`;
+          const reason = `ขาดเรียนติดต่อกัน ${student.consecutive_days} วัน`;
           const riskTier = this.deriveRiskTier(
             student.consecutive_days,
             riskHighDays,
@@ -223,6 +223,42 @@ export class AbsenceMonitorService {
           const slaDays =
             riskTier === 'HIGH' ? slaHighDays : riskTier === 'MEDIUM' ? slaMediumDays : slaLowDays;
           const slaDueAt = this.addDays(new Date(), slaDays);
+
+          if (existingCase) {
+            // The active case blocks a duplicate, but the streak keeps growing:
+            // escalate the existing case's tier (and tighten its SLA) when the
+            // streak crosses a higher threshold. Never downgrades.
+            const currentTier = normalizeCaseRiskTier(existingCase.risk_tier);
+            if (CASE_RISK_TIER_RANK[riskTier] > CASE_RISK_TIER_RANK[currentTier]) {
+              const escalated = await this.automationRepository.escalateCaseRiskTier(
+                {
+                  caseId: existingCase.id,
+                  riskTier,
+                  slaDueAt,
+                  reason,
+                },
+                executor,
+              );
+              if (escalated) {
+                tierEscalationAuditEvents.push({
+                  caseId: existingCase.id,
+                  studentUuid,
+                  fromTier: currentTier,
+                  toTier: riskTier,
+                  consecutiveDays: student.consecutive_days,
+                });
+                this.logger.log(
+                  `Escalated Case ${existingCase.id} risk tier ${currentTier} -> ${riskTier} (${student.consecutive_days} consecutive days).`,
+                );
+              }
+            }
+            continue;
+          }
+
+          const schoolName =
+            this.normalizeText(student.school_name) ||
+            `School ID: ${this.normalizeText(student.school_id_onec)}`;
+          const address = this.buildStudentTermAddress(student) || null;
 
           this.logger.log(`Inserting Case for ${studentName} with Reason: ${reason}`);
 
@@ -261,6 +297,24 @@ export class AbsenceMonitorService {
           metadata: {
             reason: 'attendance_corrected',
             studentUuid: event.studentUuid,
+          },
+          ip: null,
+        });
+      }
+
+      for (const event of tierEscalationAuditEvents) {
+        await this.auditLog.record({
+          actorUserId: null,
+          actorLabel: 'system:absence-monitor',
+          action: 'CASE_RISK_TIER_ESCALATE',
+          targetType: 'case',
+          targetId: String(event.caseId),
+          metadata: {
+            reason: 'consecutive_absence_growth',
+            studentUuid: event.studentUuid,
+            fromTier: event.fromTier,
+            toTier: event.toTier,
+            consecutiveDays: event.consecutiveDays,
           },
           ip: null,
         });

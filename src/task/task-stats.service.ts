@@ -115,7 +115,7 @@ export class TaskStatsService {
 
   private async getRiskDashboardThresholds(): Promise<RiskDashboardThresholds> {
     const [low, medium, high] = await Promise.all([
-      this.taskRepository.getSystemSettingValue('ABSENT_THRESHOLD_DAYS'),
+      this.taskRepository.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
       this.taskRepository.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
       this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
     ]);

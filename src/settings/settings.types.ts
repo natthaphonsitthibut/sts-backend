@@ -13,6 +13,7 @@ export interface SystemSettingResponse extends SystemSettingRow {
   min: number | null;
   max: number | null;
   editable: boolean;
+  group: string | null;
 }
 
 export interface QueryResultLike<T extends Record<string, unknown>> {

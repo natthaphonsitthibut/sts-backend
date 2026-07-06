@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
+  ActiveAbsenceCaseRow,
   ConsecutiveAbsentStudentRow,
   CreateAutomatedCaseInput,
   CreatedCaseRow,
+  EscalateCaseRiskTierInput,
   OpenAbsenceCaseRow,
   QueryExecutor,
   QueryResultLike,
@@ -96,20 +98,16 @@ export class AutomationRepository {
            AND cd.calendar_date <= $2::date
            AND cd.calendar_date BETWEEN enrollment.starts_on AND enrollment.ends_on
         ),
-        configured_evaluation AS (
+        configured_day_flags AS (
           SELECT
             days.student_uuid,
-            COUNT(*)::int AS school_day_count,
-            COUNT(*) FILTER (
-              WHERE session.status = 'SUBMITTED'
-                AND session.recorded_count = session.expected_roster_count
-                AND attendance."AttendanceID" IS NOT NULL
-            )::int AS evaluable_day_count,
-            COUNT(*) FILTER (
-              WHERE session.status = 'SUBMITTED'
-                AND session.recorded_count = session.expected_roster_count
-                AND attendance."AttendanceStatus" = 2
-            )::int AS absent_day_count
+            days.rn,
+            (
+              session.status = 'SUBMITTED'
+              AND session.recorded_count = session.expected_roster_count
+              AND attendance."AttendanceID" IS NOT NULL
+              AND attendance."AttendanceStatus" = 2
+            ) AS is_confirmed_absent_day
           FROM configured_days days
           LEFT JOIN attendance_sessions session
             ON session.school_term_id = days.school_term_id
@@ -122,15 +120,24 @@ export class AutomationRepository {
           LEFT JOIN attendance
             ON attendance.session_id = session.id
            AND attendance.student_uuid = days.student_uuid
-          WHERE days.rn <= $1
-          GROUP BY days.student_uuid
+        ),
+        configured_streak_boundaries AS (
+          SELECT
+            student_uuid,
+            rn,
+            is_confirmed_absent_day,
+            MIN(CASE WHEN NOT COALESCE(is_confirmed_absent_day, FALSE) THEN rn END) OVER (
+              PARTITION BY student_uuid
+            ) AS first_break_rn
+          FROM configured_day_flags
         ),
         configured_candidates AS (
-          SELECT student_uuid, $1::int AS consecutive_days
-          FROM configured_evaluation
-          WHERE school_day_count = $1
-            AND evaluable_day_count = $1
-            AND absent_day_count = $1
+          SELECT student_uuid, COUNT(*)::int AS consecutive_days
+          FROM configured_streak_boundaries
+          WHERE COALESCE(is_confirmed_absent_day, FALSE)
+            AND (first_break_rn IS NULL OR rn < first_break_rn)
+          GROUP BY student_uuid
+          HAVING COUNT(*) >= $1
         ),
         fallback_daily_attendance AS (
           SELECT
@@ -333,13 +340,13 @@ export class AutomationRepository {
     studentName: string,
     schoolId: number | null,
     executor?: QueryExecutor,
-  ): Promise<number | null> {
+  ): Promise<ActiveAbsenceCaseRow | null> {
     const queryExecutor = this.getExecutor(executor);
     // Match by stable student_uuid; fall back to name only for legacy rows
     // created before student_uuid was populated (student_uuid IS NULL).
-    const result = await queryExecutor.query<CreatedCaseRow>(
+    const result = await queryExecutor.query<ActiveAbsenceCaseRow>(
       `
-        SELECT id FROM cases
+        SELECT id, risk_tier FROM cases
         WHERE status = ANY($1::text[])
           AND deleted_at IS NULL
           AND reason_flagged LIKE 'ขาดเรียนติดต่อกัน%'
@@ -357,7 +364,38 @@ export class AutomationRepository {
       ],
     );
 
-    return result.rows[0]?.id ?? null;
+    return result.rows[0] ?? null;
+  }
+
+  async escalateCaseRiskTier(
+    input: EscalateCaseRiskTierInput,
+    executor?: QueryExecutor,
+  ): Promise<boolean> {
+    const queryExecutor = this.getExecutor(executor);
+    // Tighten, never loosen: keep the earlier of the existing due date and the
+    // new tier's due date. Reset SLA markers so the reminder cron re-evaluates
+    // warning/breach against the tightened deadline.
+    const result = await queryExecutor.query(
+      `
+        UPDATE cases
+        SET risk_tier = $2,
+            sla_due_at = LEAST(COALESCE(sla_due_at, $3::timestamptz), $3::timestamptz),
+            sla_warning_notified_at = NULL,
+            sla_breached_notified_at = NULL,
+            reason_flagged = $4
+        WHERE id = $1
+          AND deleted_at IS NULL
+          AND status = ANY($5::text[])
+      `,
+      [
+        input.caseId,
+        input.riskTier,
+        input.slaDueAt.toISOString(),
+        input.reason,
+        ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'],
+      ],
+    );
+    return result.rowCount > 0;
   }
 
   async createAutomatedCase(

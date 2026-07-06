@@ -26,6 +26,28 @@ export interface CaseAutoCancelAuditEvent {
   studentUuid: string | null;
 }
 
+export type CaseRiskTier = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface ActiveAbsenceCaseRow extends Record<string, unknown> {
+  id: number;
+  risk_tier: string | null;
+}
+
+export interface EscalateCaseRiskTierInput {
+  caseId: number;
+  riskTier: CaseRiskTier;
+  slaDueAt: Date;
+  reason: string;
+}
+
+export interface CaseRiskTierEscalationAuditEvent {
+  caseId: number;
+  studentUuid: string | null;
+  fromTier: CaseRiskTier;
+  toTier: CaseRiskTier;
+  consecutiveDays: number;
+}
+
 export interface ConsecutiveAbsentStudentRow extends Record<string, unknown> {
   student_uuid: string;
   consecutive_days: number;
@@ -52,7 +74,7 @@ export interface CreateAutomatedCaseInput {
   schoolName: string;
   studentAddress: string | null;
   reason: string;
-  riskTier: 'HIGH' | 'MEDIUM' | 'LOW';
+  riskTier: CaseRiskTier;
   slaDueAt: Date;
 }
 

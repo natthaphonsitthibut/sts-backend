@@ -17,7 +17,7 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9235);
 const USERNAME = 'settings_browser_smoke';
-const SETTING_KEYS = ['ABSENT_THRESHOLD_DAYS', 'ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME'];
+const SETTING_KEYS = ['CASE_RISK_LOW_ABSENCE_DAYS', 'ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME'];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -253,14 +253,25 @@ async function login(password) {
 }
 
 async function waitForSettingsPage(client) {
-  await waitFor(
-    async () =>
-      (await evaluate(client, 'location.pathname')) === '/settings' &&
-      String(await evaluate(client, 'document.body.innerText')).includes('ABSENT_THRESHOLD_DAYS') &&
-      String(await evaluate(client, 'document.body.innerText')).includes('ALERT_TRIGGER_TYPE') &&
-      String(await evaluate(client, 'document.body.innerText')).includes('ALERT_SCHEDULE_TIME'),
-    'Settings page did not render catalog rows',
-  );
+  try {
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) === '/settings' &&
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'CASE_RISK_LOW_ABSENCE_DAYS',
+        ) &&
+        String(await evaluate(client, 'document.body.innerText')).includes('ALERT_TRIGGER_TYPE') &&
+        String(await evaluate(client, 'document.body.innerText')).includes('ALERT_SCHEDULE_TIME'),
+      'Settings page did not render catalog rows',
+    );
+  } catch (error) {
+    const pathname = await evaluate(client, 'location.pathname').catch(() => 'unknown');
+    const snippet = String(await evaluate(client, 'document.body.innerText').catch(() => '')).slice(
+      0,
+      300,
+    );
+    throw new Error(`${errorMessage(error)} (pathname=${pathname}, body="${snippet}")`);
+  }
 }
 
 async function assertSettingsTabs(client) {
@@ -367,7 +378,7 @@ async function saveSetting(client, key) {
     `(() => {
       const card = findSettingCard(${JSON.stringify(key)});
       const button = [...card.querySelectorAll('button')]
-        .find((candidate) => candidate.textContent.includes('บันทึก'));
+        .find((candidate) => candidate.textContent.trim() === 'บันทึก');
       if (!button) throw new Error('Save button not found for ${key}');
       if (button.disabled) throw new Error('Save button is disabled for ${key}');
       button.click();
@@ -429,7 +440,7 @@ async function installBrowserHelpers(client) {
     `window.findSettingCard = (key) => {
       const candidates = [...document.querySelectorAll('div')]
         .filter((node) => node.innerText?.includes(key))
-        .filter((node) => [...node.querySelectorAll('button')].some((button) => button.textContent.includes('บันทึก')));
+        .filter((node) => [...node.querySelectorAll('button')].some((button) => button.textContent.trim() === 'บันทึก'));
       candidates.sort((left, right) => left.innerText.length - right.innerText.length);
       const card = candidates[0];
       if (!card) throw new Error('Setting card not found: ' + key);
@@ -454,8 +465,8 @@ async function main() {
 
   try {
     originalSettings = await getSettings(dataSource);
-    nextValues.ABSENT_THRESHOLD_DAYS =
-      originalSettings.ABSENT_THRESHOLD_DAYS === '7' ? '8' : '7';
+    nextValues.CASE_RISK_LOW_ABSENCE_DAYS =
+      originalSettings.CASE_RISK_LOW_ABSENCE_DAYS === '4' ? '3' : '4';
     nextValues.ALERT_TRIGGER_TYPE =
       originalSettings.ALERT_TRIGGER_TYPE === 'IMMEDIATE' ? 'SCHEDULED' : 'IMMEDIATE';
     nextValues.ALERT_SCHEDULE_TIME =
@@ -488,17 +499,17 @@ async function main() {
     await installBrowserHelpers(client);
     await assertSettingsTabs(client);
 
-    await setIntegerSetting(client, 'ABSENT_THRESHOLD_DAYS', nextValues.ABSENT_THRESHOLD_DAYS);
-    await saveSetting(client, 'ABSENT_THRESHOLD_DAYS');
-    await waitForDbValue(dataSource, 'ABSENT_THRESHOLD_DAYS', nextValues.ABSENT_THRESHOLD_DAYS);
+    await setIntegerSetting(client, 'CASE_RISK_LOW_ABSENCE_DAYS', nextValues.CASE_RISK_LOW_ABSENCE_DAYS);
+    await saveSetting(client, 'CASE_RISK_LOW_ABSENCE_DAYS');
+    await waitForDbValue(dataSource, 'CASE_RISK_LOW_ABSENCE_DAYS', nextValues.CASE_RISK_LOW_ABSENCE_DAYS);
     await waitForAudit(
       dataSource,
       userId,
-      'ABSENT_THRESHOLD_DAYS',
-      originalSettings.ABSENT_THRESHOLD_DAYS,
-      nextValues.ABSENT_THRESHOLD_DAYS,
+      'CASE_RISK_LOW_ABSENCE_DAYS',
+      originalSettings.CASE_RISK_LOW_ABSENCE_DAYS,
+      nextValues.CASE_RISK_LOW_ABSENCE_DAYS,
     );
-    await assertUiValue(client, 'ABSENT_THRESHOLD_DAYS', nextValues.ABSENT_THRESHOLD_DAYS);
+    await assertUiValue(client, 'CASE_RISK_LOW_ABSENCE_DAYS', nextValues.CASE_RISK_LOW_ABSENCE_DAYS);
 
     await setEnumSetting(client, 'ALERT_TRIGGER_TYPE', nextValues.ALERT_TRIGGER_TYPE);
     await saveSetting(client, 'ALERT_TRIGGER_TYPE');
@@ -542,6 +553,21 @@ async function main() {
     console.log(
       'settings browser smoke passed (typed controls, save/audit, desktop/mobile render)',
     );
+  } catch (error) {
+    if (chrome) {
+      try {
+        const cardText = await evaluate(
+          chrome.client,
+          `(() => { try { return findSettingCard('ALERT_TRIGGER_TYPE').innerText; } catch (e) { return 'card lookup failed: ' + e.message; } })()`,
+        );
+        console.error('ALERT_TRIGGER_TYPE card state:', JSON.stringify(cardText).slice(0, 600));
+        await capture(chrome.client, '/tmp/sts-settings-failure.png');
+        console.error('failure screenshot: /tmp/sts-settings-failure.png');
+      } catch {
+        // best-effort diagnostics only
+      }
+    }
+    throw error;
   } finally {
     await closeChrome(chrome);
     await restoreSettings(dataSource, originalSettings);

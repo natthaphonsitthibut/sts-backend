@@ -6,7 +6,9 @@ import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import { AutomationService } from '../automation/automation.service';
 import {
   findSystemSettingCatalogEntry,
+  getSystemSettingSortIndex,
   normalizeSystemSettingValue,
+  validateSystemSettingLadder,
   validateSystemSettingValue,
   type SystemSettingCatalogEntry,
 } from './settings-catalog';
@@ -64,12 +66,20 @@ export class SettingsService implements OnModuleInit {
       min: entry?.min ?? null,
       max: entry?.max ?? null,
       editable: entry !== null,
+      group: entry?.group ?? null,
     };
   }
 
   async getSettings(): Promise<SystemSettingResponse[]> {
     const rows = await this.settingsRepository.listSettings();
-    return rows.map((row) => this.toResponse(row));
+    // Catalog order groups related settings (risk ladder, SLA, monitor cadence)
+    // instead of the alphabetical order the table would give us.
+    const sorted = [...rows].sort(
+      (a, b) =>
+        getSystemSettingSortIndex(a.setting_key) - getSystemSettingSortIndex(b.setting_key) ||
+        a.setting_key.localeCompare(b.setting_key),
+    );
+    return sorted.map((row) => this.toResponse(row));
   }
 
   async getSettingByKey(key: string): Promise<SystemSettingResponse | null> {
@@ -96,6 +106,14 @@ export class SettingsService implements OnModuleInit {
     const actorId = resolveAuditActorId(actor);
     const { setting, changed } = await this.settingsRepository.withTransaction(
       async (queryRunner) => {
+        const ladderError = await validateSystemSettingLadder(key, normalizedValue, async (k) => {
+          const sibling = await this.settingsRepository.findSettingByKey(k, queryRunner);
+          return sibling?.setting_value ?? null;
+        });
+        if (ladderError) {
+          throw new BadRequestException(ladderError);
+        }
+
         const existing = await this.settingsRepository.findSettingByKey(key, queryRunner);
         const previousValue = existing?.setting_value ?? null;
         const row = await this.settingsRepository.upsertSetting(
