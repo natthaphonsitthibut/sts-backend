@@ -41,7 +41,7 @@ const studentAccount: StudentAccountManagementRow = {
   status: 'ACTIVE',
   must_change_password: true,
   temporary_password_issued_at: new Date('2026-06-29T00:00:00.000Z'),
-  temporary_password_expires_at: new Date('2026-07-06T00:00:00.000Z'),
+  temporary_password_expires_at: new Date('2099-07-06T00:00:00.000Z'),
   created_at: new Date('2026-06-29T00:00:00.000Z'),
   person_uuid: candidate.person_uuid,
   student_uuid: candidate.student_uuid,
