@@ -1,5 +1,6 @@
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AutomationRepository } from './automation.repository';
 import { AbsenceMonitorService } from './absence-monitor.service';
 import type { ConsecutiveAbsentStudentRow } from './automation.types';
@@ -42,6 +43,7 @@ describe('AbsenceMonitorService', () => {
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
   let notificationsService: jest.Mocked<Pick<NotificationsService, 'notifyCaseCreated'>>;
+  let riskProfileService: jest.Mocked<Pick<RiskProfileService, 'enqueueStudents'>>;
 
   beforeEach(() => {
     automationRepository = {
@@ -73,11 +75,15 @@ describe('AbsenceMonitorService', () => {
     notificationsService = {
       notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
     };
+    riskProfileService = {
+      enqueueStudents: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new AbsenceMonitorService(
       automationRepository as unknown as AutomationRepository,
       auditLog as unknown as AuditLogService,
       notificationsService as unknown as NotificationsService,
+      riskProfileService as unknown as RiskProfileService,
     );
   });
 
@@ -107,6 +113,10 @@ describe('AbsenceMonitorService', () => {
       },
       ip: null,
     });
+    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
+      ['student-uuid-1'],
+      'case-auto-monitor',
+    );
   });
 
   it('does not create a duplicate when an active absence case already exists', async () => {
@@ -177,6 +187,10 @@ describe('AbsenceMonitorService', () => {
       },
       ip: null,
     });
+    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
+      ['student-uuid-1'],
+      'case-auto-monitor',
+    );
   });
 
   it('does not escalate or downgrade when the streak stays within the current tier', async () => {
@@ -230,6 +244,16 @@ describe('AbsenceMonitorService', () => {
     const createdInput = automationRepository.createAutomatedCase.mock.calls[0]?.[0];
     expect(createdInput?.riskTier).toBe('HIGH');
     expect(createdInput?.slaDueAt).toBeInstanceOf(Date);
+    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
+      ['student-uuid-1'],
+      'case-auto-monitor',
+    );
+  });
+
+  it('does not enqueue a risk profile refresh when nothing changed', async () => {
+    await service.checkConsecutiveAbsences();
+
+    expect(riskProfileService.enqueueStudents).not.toHaveBeenCalled();
   });
 
   it('does not auto-cancel a legacy case without a stable student uuid', async () => {

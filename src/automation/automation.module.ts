@@ -4,9 +4,10 @@ import { AbsenceMonitorService } from './absence-monitor.service';
 import { AutomationRepository } from './automation.repository';
 import { AutomationSchedulerService } from './automation-scheduler.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, RiskProfileModule],
   providers: [
     AutomationService,
     AutomationRepository,

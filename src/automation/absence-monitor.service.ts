@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AutomationRepository } from './automation.repository';
 import type {
   CaseAutoCancelAuditEvent,
@@ -25,6 +26,7 @@ export class AbsenceMonitorService {
     private readonly automationRepository: AutomationRepository,
     private readonly auditLog: AuditLogService,
     private readonly notificationsService: NotificationsService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
 
   private normalizeText(value: unknown): string {
@@ -129,6 +131,7 @@ export class AbsenceMonitorService {
     const newCases: NewCase[] = [];
     const autoCancelAuditEvents: CaseAutoCancelAuditEvent[] = [];
     const tierEscalationAuditEvents: CaseRiskTierEscalationAuditEvent[] = [];
+    const riskProfileStudentUuids = new Set<string>();
 
     try {
       await this.automationRepository.withTransaction(async (executor) => {
@@ -178,6 +181,9 @@ export class AbsenceMonitorService {
                 caseId: openCase.id,
                 studentUuid: caseStudentUuid || null,
               });
+              if (caseStudentUuid) {
+                riskProfileStudentUuids.add(caseStudentUuid);
+              }
             }
             this.logger.log(
               `Deleted / Canceled Case ${openCase.id} for ${caseStudentName || caseStudentUuid} due to attendance correction.`,
@@ -247,6 +253,9 @@ export class AbsenceMonitorService {
                   toTier: riskTier,
                   consecutiveDays: student.consecutive_days,
                 });
+                if (studentUuid) {
+                  riskProfileStudentUuids.add(studentUuid);
+                }
                 this.logger.log(
                   `Escalated Case ${existingCase.id} risk tier ${currentTier} -> ${riskTier} (${student.consecutive_days} consecutive days).`,
                 );
@@ -284,6 +293,9 @@ export class AbsenceMonitorService {
             reason_flagged: reason,
             school_id: schoolId,
           });
+          if (studentUuid) {
+            riskProfileStudentUuids.add(studentUuid);
+          }
         }
       });
 
@@ -328,6 +340,17 @@ export class AbsenceMonitorService {
           schoolName: created.student_school,
           reason: created.reason_flagged,
         });
+      }
+
+      if (riskProfileStudentUuids.size > 0) {
+        await this.riskProfileService
+          ?.enqueueStudents([...riskProfileStudentUuids], 'case-auto-monitor')
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error(
+              `Failed to enqueue absence-monitor risk profile recalculation: ${message}`,
+            );
+          });
       }
     } catch (error) {
       this.logger.error('Error in checking consecutive absences', error);
