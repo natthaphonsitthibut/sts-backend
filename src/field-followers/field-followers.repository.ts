@@ -19,6 +19,7 @@ export interface ListFieldFollowersFilters {
   province?: string;
   district?: string;
   subDistrict?: string;
+  searchTerm?: string;
   page: number;
   limit: number;
 }
@@ -126,6 +127,13 @@ export class FieldFollowersRepository {
     if (filters.subDistrict) {
       params.push(filters.subDistrict);
       conditions.push(`sub_district = $${params.length}`);
+    }
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      const searchParam = params.length;
+      conditions.push(
+        `(first_name ILIKE $${searchParam} OR last_name ILIKE $${searchParam} OR phone ILIKE $${searchParam})`,
+      );
     }
 
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

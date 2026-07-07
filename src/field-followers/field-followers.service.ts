@@ -92,6 +92,7 @@ export class FieldFollowersService {
       province: query.province,
       district: query.district,
       subDistrict: query.subDistrict,
+      searchTerm: query.searchTerm,
       page,
       limit,
     });

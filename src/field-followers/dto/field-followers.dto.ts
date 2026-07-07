@@ -68,6 +68,11 @@ export class ListFieldFollowersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  searchTerm?: string;
 }
 
 export class ReviewFieldFollowerDto {
