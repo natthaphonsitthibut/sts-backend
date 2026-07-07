@@ -42,7 +42,9 @@ describe('AbsenceMonitorService', () => {
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
-  let notificationsService: jest.Mocked<Pick<NotificationsService, 'notifyCaseCreated'>>;
+  let notificationsService: jest.Mocked<
+    Pick<NotificationsService, 'notifyCaseCreated' | 'notifyCaseRiskEscalated'>
+  >;
   let riskProfileService: jest.Mocked<Pick<RiskProfileService, 'enqueueStudents'>>;
 
   beforeEach(() => {
@@ -74,6 +76,7 @@ describe('AbsenceMonitorService', () => {
     };
     notificationsService = {
       notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
+      notifyCaseRiskEscalated: jest.fn().mockResolvedValue(undefined),
     };
     riskProfileService = {
       enqueueStudents: jest.fn().mockResolvedValue(undefined),
@@ -187,6 +190,14 @@ describe('AbsenceMonitorService', () => {
       },
       ip: null,
     });
+    expect(notificationsService.notifyCaseRiskEscalated).toHaveBeenCalledWith({
+      caseId: 20,
+      studentName: 'สมชาย ใจดี',
+      schoolId: 10010002,
+      fromTier: 'LOW',
+      toTier: 'MEDIUM',
+      reason: 'ขาดเรียนติดต่อกัน 5 วัน',
+    });
     expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
@@ -205,6 +216,7 @@ describe('AbsenceMonitorService', () => {
     await service.checkConsecutiveAbsences();
 
     expect(automationRepository.escalateCaseRiskTier).not.toHaveBeenCalled();
+    expect(notificationsService.notifyCaseRiskEscalated).not.toHaveBeenCalled();
   });
 
   it('notifies eligible staff after creating an absence case', async () => {

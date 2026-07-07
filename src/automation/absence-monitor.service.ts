@@ -249,9 +249,12 @@ export class AbsenceMonitorService {
                 tierEscalationAuditEvents.push({
                   caseId: existingCase.id,
                   studentUuid,
+                  studentName,
+                  schoolId,
                   fromTier: currentTier,
                   toTier: riskTier,
                   consecutiveDays: student.consecutive_days,
+                  reason,
                 });
                 if (studentUuid) {
                   riskProfileStudentUuids.add(studentUuid);
@@ -329,6 +332,14 @@ export class AbsenceMonitorService {
             consecutiveDays: event.consecutiveDays,
           },
           ip: null,
+        });
+        await this.notificationsService.notifyCaseRiskEscalated({
+          caseId: event.caseId,
+          studentName: event.studentName,
+          schoolId: event.schoolId,
+          fromTier: event.fromTier,
+          toTier: event.toTier,
+          reason: event.reason,
         });
       }
 

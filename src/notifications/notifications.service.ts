@@ -200,6 +200,30 @@ export class NotificationsService {
     });
   }
 
+  async notifyCaseRiskEscalated(event: {
+    caseId: number;
+    studentName: string | null;
+    schoolId: number | null;
+    fromTier: string;
+    toTier: string;
+    reason: string | null;
+  }): Promise<void> {
+    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
+    const bodyParts = [
+      `เคสของ ${student}`,
+      `${event.fromTier} → ${event.toTier}`,
+      event.reason,
+    ].filter(Boolean);
+    await this.fanOutSafely({
+      typeCode: 'CASE_RISK_ESCALATED',
+      title: 'เคสถูกยกระดับความเสี่ยง',
+      body: bodyParts.join(' · '),
+      refEntity: 'case',
+      refId: String(event.caseId),
+      schoolId: event.schoolId,
+    });
+  }
+
   async notifyAttendanceIncomplete(event: {
     sessionId: string;
     schoolId: number;

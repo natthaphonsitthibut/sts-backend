@@ -43,9 +43,12 @@ export interface EscalateCaseRiskTierInput {
 export interface CaseRiskTierEscalationAuditEvent {
   caseId: number;
   studentUuid: string | null;
+  studentName: string | null;
+  schoolId: number | null;
   fromTier: CaseRiskTier;
   toTier: CaseRiskTier;
   consecutiveDays: number;
+  reason: string;
 }
 
 export interface ConsecutiveAbsentStudentRow extends Record<string, unknown> {
