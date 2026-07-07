@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class ListTimetableSlotsQueryDto {
   @Type(() => Number)
@@ -29,6 +29,17 @@ export class RoomSubjectsQueryDto {
   @IsInt()
   @Min(1)
   roomNo!: number;
+}
+
+export class TimetableTeachersQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  schoolId!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  searchTerm?: string;
 }
 
 export class CreateTimetableSlotDto {

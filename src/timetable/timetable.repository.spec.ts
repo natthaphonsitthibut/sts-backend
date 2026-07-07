@@ -54,4 +54,15 @@ describe('TimetableRepository', () => {
     expect(queries[0].sql).toContain('ts.teacher_user_id = $1');
     expect(queries[0].params).toEqual([42]);
   });
+
+  it('listTeacherCandidatesForSchool returns only active non-student scoped users', async () => {
+    const { repository, queries } = buildRepository([]);
+    await repository.listTeacherCandidatesForSchool(10010002, 'สมชาย');
+    expect(queries[0].sql).toContain(`u.status = 'ACTIVE'`);
+    expect(queries[0].sql).toContain(`COALESCE(u.role, '') <> 'STUDENT'`);
+    expect(queries[0].sql).toContain(`u.data_scope ->> 'global' = 'true'`);
+    expect(queries[0].sql).toContain(`jsonb_array_elements_text`);
+    expect(queries[0].sql).toContain('LIMIT 100');
+    expect(queries[0].params).toEqual([10010002, '%สมชาย%']);
+  });
 });

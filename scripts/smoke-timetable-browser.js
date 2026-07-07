@@ -23,6 +23,11 @@ const SCOPED_OTHER_SCHOOL_USERNAME = 'timetable_browser_other_school';
 const STAFF_USERNAME = 'timetable_browser_staff';
 const FIXTURE_MARKER_PREFIX = 'TTSMK';
 
+function toSlotDayOfWeek(date) {
+  const day = date.getDay();
+  return day === 0 ? 7 : day;
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -310,6 +315,25 @@ async function pickDifferentSchool(dataSource, excludeSchoolId) {
 
 async function cleanup(dataSource) {
   await dataSource.query(
+    `
+      DELETE FROM attendance
+      WHERE session_id IN (
+        SELECT sess.id
+        FROM attendance_sessions sess
+        JOIN subjects sub ON sub.id = sess.subject_id
+        WHERE sub.code LIKE $1
+      )
+    `,
+    [`${FIXTURE_MARKER_PREFIX}%`],
+  );
+  await dataSource.query(
+    `
+      DELETE FROM attendance_sessions
+      WHERE subject_id IN (SELECT id FROM subjects WHERE code LIKE $1)
+    `,
+    [`${FIXTURE_MARKER_PREFIX}%`],
+  );
+  await dataSource.query(
     `DELETE FROM task_links WHERE assigned_to_name = 'Timetable Smoke Assignee'`,
   );
   await dataSource.query(
@@ -379,11 +403,40 @@ async function main() {
   const password = `TimetableBrowser-${suffix}-Password`;
   const subjectCode = `${FIXTURE_MARKER_PREFIX}${suffix.slice(0, 8)}`;
   const subjectName = `วิชาทดสอบตารางสอน ${suffix.slice(0, 6)}`;
+  const todaySlotDay = toSlotDayOfWeek(new Date());
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowSlotDay = toSlotDayOfWeek(tomorrow);
+  const todayIso = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
   let chrome;
 
   try {
     await cleanup(dataSource);
     const room = await pickFixtureRoom(dataSource);
+    await dataSource.query(
+      `
+        UPDATE school_terms
+        SET starts_on = ($2::date - INTERVAL '7 days')::date,
+            ends_on = ($2::date + INTERVAL '30 days')::date,
+            status = 'ACTIVE'
+        WHERE id = $1
+      `,
+      [room.school_term_id, todayIso],
+    );
+    await dataSource.query(
+      `
+        INSERT INTO school_calendar_days (school_term_id, calendar_date, day_type, source)
+        VALUES ($1, $2::date, 'SCHOOL_DAY', 'MANUAL')
+        ON CONFLICT (school_term_id, calendar_date)
+        DO UPDATE SET day_type = 'SCHOOL_DAY', source = 'MANUAL'
+      `,
+      [room.school_term_id, todayIso],
+    );
     const otherSchoolId = await pickDifferentSchool(dataSource, room.school_id);
 
     // Seed the subject + a timetable slot directly — the create/admin CRUD
@@ -394,12 +447,21 @@ async function main() {
       `INSERT INTO subjects (code, name_th) VALUES ($1, $2) RETURNING id`,
       [subjectCode, subjectName],
     );
-    await dataSource.query(
+    const [todaySlot] = await dataSource.query(
       `
         INSERT INTO timetable_slots (school_term_id, school_id, grade_level_id, room_no, day_of_week, period, subject_id)
-        VALUES ($1, $2, $3, $4, 1, 1, $5)
+        VALUES ($1, $2, $3, $4, $5, 1, $6)
+        RETURNING id
       `,
-      [room.school_term_id, room.school_id, room.grade_level_id, room.room_no, subject.id],
+      [room.school_term_id, room.school_id, room.grade_level_id, room.room_no, todaySlotDay, subject.id],
+    );
+    const [tomorrowSlot] = await dataSource.query(
+      `
+        INSERT INTO timetable_slots (school_term_id, school_id, grade_level_id, room_no, day_of_week, period, subject_id)
+        VALUES ($1, $2, $3, $4, $5, 2, $6)
+        RETURNING id
+      `,
+      [room.school_term_id, room.school_id, room.grade_level_id, room.room_no, tomorrowSlotDay, subject.id],
     );
 
     const managerActor = await upsertActor(
@@ -544,6 +606,24 @@ async function main() {
       'Subject combobox did not show the seeded fixture subject',
     );
     await pickComboboxOption(client, '#subject_id', subjectName, 'Pick subject');
+    await fillInput(client, '#expires_value', '1');
+    await pickComboboxOption(client, '#expires_unit', 'ชั่วโมง', 'Pick hour expiry');
+
+    await click(
+      client,
+      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 1'))`,
+      'Today slot checkbox was not found',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 2'))`,
+      'Tomorrow slot checkbox was not found',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('อาจหมดอายุก่อนถึง'),
+      'Expiry warning did not render for a slot outside the link lifetime',
+    );
 
     await click(
       client,
@@ -556,7 +636,7 @@ async function main() {
     );
 
     const [createdLink] = await dataSource.query(
-      `SELECT subject, subject_id FROM task_links WHERE assigned_to_name = 'Timetable Smoke Assignee' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id, task_id, magic_link, subject, subject_id FROM task_links WHERE assigned_to_name = 'Timetable Smoke Assignee' ORDER BY created_at DESC LIMIT 1`,
     );
     assert(createdLink, 'Created task_link was not found');
     assert(
@@ -564,9 +644,61 @@ async function main() {
       `Expected subject_id ${subject.id}, got ${createdLink.subject_id}`,
     );
     assert(createdLink.subject === subjectName, `Expected subject label "${subjectName}", got "${createdLink.subject}"`);
+    const [slotBinding] = await dataSource.query(
+      `
+        SELECT COUNT(*)::int AS count
+        FROM task_link_timetable_slots
+        WHERE task_link_id = $1
+          AND timetable_slot_id = ANY($2::bigint[])
+      `,
+      [createdLink.id, [todaySlot.id, tomorrowSlot.id]],
+    );
+    assert(Number(slotBinding.count) === 2, `Expected 2 linked timetable slots, got ${slotBinding.count}`);
+    await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1`, [createdLink.id]);
+
+    const students = await dataSource.query(
+      `
+        SELECT student_uuid
+        FROM student_term
+        WHERE "SchoolID_Onec" = $1 AND "GradeLevelID_Onec" = $2 AND "RoomID_Onec" = $3
+        ORDER BY student_uuid
+      `,
+      [room.school_id, room.grade_level_id, room.room_no],
+    );
+    assert(students.length > 0, 'No fixture student was available for subject attendance detail smoke');
+    const token = String(createdLink.magic_link || '').split('/task/').pop();
+    assert(token, 'Created magic link did not contain a task token');
+    const attendanceRecords = students.map((student) => ({
+      student_id: student.student_uuid,
+      status: 'P_PRESENT',
+    }));
+    const submitResult = await evaluate(
+      client,
+      `(async () => {
+        const res = await fetch(${JSON.stringify(`${BROWSER_BACKEND_URL}/api/tasks/${token}/attendance`)}, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            timetable_slot_id: ${Number(todaySlot.id)},
+            records: ${JSON.stringify(attendanceRecords)}
+          })
+        });
+        return { status: res.status, body: await res.text() };
+      })()`,
+    );
+    assert(submitResult.status >= 200 && submitResult.status < 300, `Subject attendance submit failed: ${submitResult.status} ${submitResult.body}`);
+
+    await navigate(client, `${FRONTEND_URL}/attendance-links/${createdLink.id}`);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('รายวิชา') &&
+        String(await evaluate(client, 'document.body.innerText')).includes(subjectName),
+      'Admin attendance link detail did not show the subject attendance tag',
+    );
 
     console.log(
-      'timetable browser smoke passed (scope rejection over HTTP, admin vs staff view gating, CreateTaskPage subject combobox wired to subject_id)',
+      'timetable browser smoke passed (scope rejection, timetable UI gating, subject slot link creation, expiry warning, guest subject submit, subject detail tag)',
     );
   } finally {
     await closeChrome(chrome);

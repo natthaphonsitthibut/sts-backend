@@ -45,7 +45,7 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('FROM unnest($2::bigint[]) AS slot_id');
   });
 
-  it('lists attendance task history from daily rows only', async () => {
+  it('lists attendance task history from daily rows only when no link id is passed', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -62,6 +62,31 @@ describe('TaskRepository', () => {
 
     expect(queries).toHaveLength(1);
     expect(queries[0].sql).toContain("AND a.session_kind = 'DAILY'");
+  });
+
+  it('lists subject attendance history only for slots bound to the link', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new TaskRepository(dataSource as never);
+
+    await repository.listTaskHistory('2026-07-07', 'ม.1', '1', 10010002, 'link-1');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].sql).toContain('task_link_timetable_slots');
+    expect(queries[0].sql).toContain(
+      'LEFT JOIN attendance_sessions sess ON sess.id = a.session_id',
+    );
+    expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
+    expect(queries[0].sql).toContain('link_slot.timetable_slot_id = sess.timetable_slot_id');
+    expect(queries[0].params).toEqual(['2026-07-07', 'ม.1', 1, 10010002, 'link-1']);
   });
 
   it('counts distinct active-case students within the actor scope', async () => {

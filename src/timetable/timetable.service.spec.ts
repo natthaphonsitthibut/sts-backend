@@ -13,6 +13,7 @@ describe('TimetableService', () => {
       | 'listForRoom'
       | 'listForTeacher'
       | 'listDistinctSubjectsForRoom'
+      | 'listTeacherCandidatesForSchool'
       | 'resolveStudentRoom'
       | 'findById'
       | 'create'
@@ -59,6 +60,9 @@ describe('TimetableService', () => {
       listDistinctSubjectsForRoom: jest
         .fn()
         .mockResolvedValue([{ subject_id: 5, code: 'MATH101', name_th: 'คณิตศาสตร์' }]),
+      listTeacherCandidatesForSchool: jest
+        .fn()
+        .mockResolvedValue([{ id: 8, display_name: 'ครูสมชาย ใจดี' }]),
       resolveStudentRoom: jest
         .fn()
         .mockResolvedValue({ school_id: 10010002, grade_level_id: 423, room_no: 1 }),
@@ -201,6 +205,28 @@ describe('TimetableService', () => {
       });
       expect(repository.isSchoolInScope).toHaveBeenCalled();
       expect(result.data).toHaveLength(1);
+    });
+  });
+
+  describe('listTeacherCandidates', () => {
+    it('returns narrow teacher candidates for an in-scope school', async () => {
+      const result = await service.listTeacherCandidates(globalActor, 10010002, 'สมชาย');
+
+      expect(repository.isSchoolInScope).toHaveBeenCalledWith(10010002, globalActor.data_scope);
+      expect(repository.listTeacherCandidatesForSchool).toHaveBeenCalledWith(10010002, 'สมชาย');
+      expect(result).toEqual({
+        success: true,
+        data: [{ id: 8, display_name: 'ครูสมชาย ใจดี' }],
+      });
+    });
+
+    it('rejects teacher candidates when the school is outside actor scope', async () => {
+      repository.isSchoolInScope.mockResolvedValue(false);
+
+      await expect(service.listTeacherCandidates(globalActor, 999)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(repository.listTeacherCandidatesForSchool).not.toHaveBeenCalled();
     });
   });
 });

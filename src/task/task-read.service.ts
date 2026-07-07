@@ -56,6 +56,7 @@ export class TaskReadService {
           : typeof task.target_school_id === 'string' && task.target_school_id.trim().length > 0
             ? Number.parseInt(task.target_school_id, 10)
             : null,
+        typeof task.link_id === 'string' ? task.link_id : null,
       );
 
       return { success: true, data: rows };

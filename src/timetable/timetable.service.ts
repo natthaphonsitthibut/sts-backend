@@ -97,6 +97,22 @@ export class TimetableService {
     };
   }
 
+  async listTeacherCandidates(
+    actor: AuthenticatedRequestUser,
+    schoolId: number,
+    searchTerm?: string,
+  ) {
+    await this.assertSchoolAccess(schoolId, actor);
+    const rows = await this.repository.listTeacherCandidatesForSchool(schoolId, searchTerm);
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        id: row.id,
+        display_name: row.display_name,
+      })),
+    };
+  }
+
   /**
    * Role-aware "my schedule" view — a student always sees their own room
    * (resolved via current enrollment, ignoring any filters); a caller passing

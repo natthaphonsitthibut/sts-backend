@@ -541,6 +541,7 @@ export class TaskAccessService {
               typeof link.target_grade === 'string' ? link.target_grade : null,
               typeof link.target_room === 'string' ? link.target_room : null,
               Number.isInteger(schoolId) ? schoolId : null,
+              typeof link.id === 'string' ? link.id : null,
             )
           : [];
 

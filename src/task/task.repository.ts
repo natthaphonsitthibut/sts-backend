@@ -1170,24 +1170,66 @@ export class TaskRepository {
     targetGrade: string | null,
     targetRoom: string | null,
     targetSchoolId: number | null,
+    linkId?: string | null,
   ): Promise<QueryResultRow[]> {
+    const params: unknown[] = [
+      date,
+      targetGrade,
+      Number.parseInt(targetRoom || '0', 10),
+      targetSchoolId,
+    ];
+    const linkModeSql =
+      typeof linkId === 'string' && linkId.trim().length > 0
+        ? `
+        AND (
+          (
+            NOT EXISTS (
+              SELECT 1 FROM task_link_timetable_slots link_slot
+              WHERE link_slot.task_link_id = $5
+            )
+            AND a."Period" = 1
+            AND a.session_kind = 'DAILY'
+          )
+          OR (
+            a.session_kind = 'SUBJECT'
+            AND EXISTS (
+              SELECT 1 FROM task_link_timetable_slots link_slot
+              WHERE link_slot.task_link_id = $5
+                AND link_slot.timetable_slot_id = sess.timetable_slot_id
+            )
+          )
+        )
+      `
+        : `
+        AND a."Period" = 1
+        AND a.session_kind = 'DAILY'
+      `;
+    if (typeof linkId === 'string' && linkId.trim().length > 0) {
+      params.push(linkId.trim());
+    }
     const result = await this.query<QueryResultRow>(
       `
-      SELECT DISTINCT ON (a.student_uuid)
+      SELECT
         a.student_uuid AS student_id,
         (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS student_name,
-        a."AttendanceStatus" AS status
+        a."AttendanceStatus" AS status,
+        a.session_kind,
+        a."Period" AS period,
+        sess.timetable_slot_id,
+        sub.name_th AS subject_name_th,
+        sub.code AS subject_code
       FROM attendance a
       JOIN student_term s ON s.student_uuid = a.student_uuid
+      LEFT JOIN attendance_sessions sess ON sess.id = a.session_id
+      LEFT JOIN subjects sub ON sub.id = sess.subject_id
       WHERE a."AttendanceDate" = $1
         AND s."GradeLevelID_Onec" = (SELECT id FROM grade_levels WHERE label = $2)
         AND s."RoomID_Onec" = $3
-        AND a."Period" = 1
-        AND a.session_kind = 'DAILY'
         AND s."SchoolID_Onec" = $4
-      ORDER BY a.student_uuid ASC
+        ${linkModeSql}
+      ORDER BY a.student_uuid ASC, a."Period" ASC
     `,
-      [date, targetGrade, Number.parseInt(targetRoom || '0', 10), targetSchoolId],
+      params,
     );
 
     return result.rows;

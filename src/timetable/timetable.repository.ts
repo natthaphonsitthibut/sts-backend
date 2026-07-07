@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import type { DataScope } from '../auth';
 import { queryDataSource } from '../database/sql-query';
-import type { RoomSubjectRow, TimetableSlotRow } from './timetable.types';
+import type {
+  RoomSubjectRow,
+  TimetableSlotRow,
+  TimetableTeacherCandidateRow,
+} from './timetable.types';
 
 const SELECT_COLUMNS = `
   ts.id,
@@ -143,6 +147,63 @@ export class TimetableRepository {
         ORDER BY sub.name_th ASC
       `,
       [schoolId, gradeLevelId, roomNo],
+    );
+    return result.rows;
+  }
+
+  async listTeacherCandidatesForSchool(
+    schoolId: number,
+    searchTerm?: string,
+  ): Promise<TimetableTeacherCandidateRow[]> {
+    const params: unknown[] = [schoolId];
+    const conditions = [
+      `u.status = 'ACTIVE'`,
+      `COALESCE(u.role, '') <> 'STUDENT'`,
+      `(
+        u.data_scope ->> 'global' = 'true'
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'school_ids', '[]'::jsonb)) AS scope_school(id)
+          WHERE scope_school.id = sc.id::text
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'provinces', '[]'::jsonb)) AS scope_province(name)
+          WHERE scope_province.name = sc.province
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'districts', '[]'::jsonb)) AS scope_district(name)
+          WHERE scope_district.name = sc.district
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'sub_districts', '[]'::jsonb)) AS scope_sub_district(name)
+          WHERE scope_sub_district.name = sc.sub_district
+        )
+      )`,
+    ];
+    const trimmedSearch = searchTerm?.trim();
+    if (trimmedSearch) {
+      params.push(`%${trimmedSearch}%`);
+      conditions.push(`
+        (
+          COALESCE(u."FirstName", '') ILIKE $${params.length}
+          OR COALESCE(u."LastName", '') ILIKE $${params.length}
+          OR COALESCE(u.username, '') ILIKE $${params.length}
+        )
+      `);
+    }
+
+    const result = await queryDataSource<TimetableTeacherCandidateRow>(
+      this.dataSource,
+      `
+        SELECT
+          u.id,
+          COALESCE(NULLIF(TRIM(COALESCE(u."FirstName", '') || ' ' || COALESCE(u."LastName", '')), ''), u.username) AS display_name
+        FROM users u
+        JOIN schools sc ON sc.id = $1
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY display_name ASC, u.id ASC
+        LIMIT 100
+      `,
+      params,
     );
     return result.rows;
   }

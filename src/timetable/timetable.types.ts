@@ -20,3 +20,8 @@ export interface RoomSubjectRow extends Record<string, unknown> {
   code: string;
   name_th: string;
 }
+
+export interface TimetableTeacherCandidateRow extends Record<string, unknown> {
+  id: number;
+  display_name: string;
+}

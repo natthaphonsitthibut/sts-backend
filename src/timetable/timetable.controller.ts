@@ -15,6 +15,7 @@ import {
   CreateTimetableSlotDto,
   ListTimetableSlotsQueryDto,
   RoomSubjectsQueryDto,
+  TimetableTeachersQueryDto,
   UpdateTimetableSlotDto,
 } from './dto/timetable.dto';
 import { TimetableService } from './timetable.service';
@@ -54,6 +55,20 @@ export class TimetableController {
       query.schoolId,
       query.gradeLevelId,
       query.roomNo,
+    );
+  }
+
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('manage-timetable')
+  @Get('teachers')
+  async teachers(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Query() query: TimetableTeachersQueryDto,
+  ) {
+    return await this.timetableService.listTeacherCandidates(
+      actor,
+      query.schoolId,
+      query.searchTerm?.trim() || undefined,
     );
   }
 
