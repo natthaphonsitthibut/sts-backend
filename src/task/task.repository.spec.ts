@@ -1,6 +1,50 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('loads timetable slots for task-link validation with grade labels', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new TaskRepository(dataSource as never);
+
+    await repository.listTimetableSlotsForTaskLink([11, 12]);
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].params).toEqual([[11, 12]]);
+    expect(queries[0].sql).toContain('FROM timetable_slots ts');
+    expect(queries[0].sql).toContain('JOIN grade_levels gl ON gl.id = ts.grade_level_id');
+    expect(queries[0].sql).toContain('ts.id = ANY($1::bigint[])');
+    expect(queries[0].sql).toContain('ts.deleted_at IS NULL');
+  });
+
+  it('inserts timetable slot bindings for task links', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new TaskRepository(dataSource as never);
+
+    await repository.insertTaskLinkTimetableSlots('link-1', [11, 12], 7);
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].params).toEqual(['link-1', [11, 12], 7]);
+    expect(queries[0].sql).toContain('INSERT INTO task_link_timetable_slots');
+    expect(queries[0].sql).toContain('FROM unnest($2::bigint[]) AS slot_id');
+  });
+
   it('lists attendance task history from daily rows only', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {

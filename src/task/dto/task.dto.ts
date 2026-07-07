@@ -111,6 +111,10 @@ export class CreateTaskDto {
   subject_id?: string | number | null;
 
   @IsOptional()
+  @IsArray()
+  timetable_slot_ids?: Array<string | number>;
+
+  @IsOptional()
   target_school_id?: string | number | null;
 
   @IsOptional()

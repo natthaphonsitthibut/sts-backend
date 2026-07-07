@@ -26,6 +26,8 @@ describe('TaskLifecycleService', () => {
       | 'updateCaseStatus'
       | 'createTask'
       | 'createTaskLink'
+      | 'listTimetableSlotsForTaskLink'
+      | 'insertTaskLinkTimetableSlots'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
@@ -46,6 +48,8 @@ describe('TaskLifecycleService', () => {
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       createTask: jest.fn().mockResolvedValue(undefined),
       createTaskLink: jest.fn().mockResolvedValue(undefined),
+      listTimetableSlotsForTaskLink: jest.fn().mockResolvedValue([]),
+      insertTaskLinkTimetableSlots: jest.fn().mockResolvedValue(undefined),
     };
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
@@ -117,5 +121,88 @@ describe('TaskLifecycleService', () => {
       schoolId: 10010002,
       caseId: 123,
     });
+  });
+
+  it('binds validated timetable slots when creating an attendance link', async () => {
+    taskRepository.listTimetableSlotsForTaskLink.mockResolvedValue([
+      {
+        id: 11,
+        school_id: 10010002,
+        grade_level_id: 423,
+        grade_label: 'ม.6',
+        room_no: 1,
+        subject_id: 5,
+        day_of_week: 2,
+        period: 3,
+      },
+      {
+        id: 12,
+        school_id: 10010002,
+        grade_level_id: 423,
+        grade_label: 'ม.6',
+        room_no: 1,
+        subject_id: 5,
+        day_of_week: 4,
+        period: 2,
+      },
+    ]);
+
+    await service.createTask(
+      buildActor(),
+      {
+        task_type: 'ATTENDANCE',
+        assigned_to_name: 'ครูประจำวิชา',
+        target_school_id: 10010002,
+        target_grade: 'ม.6',
+        target_room: '1',
+        subject: 'คณิตศาสตร์',
+        subject_id: 5,
+        timetable_slot_ids: [11, '12'],
+      },
+      'https://app.example.invalid',
+    );
+
+    expect(taskRepository.listTimetableSlotsForTaskLink).toHaveBeenCalledWith([11, 12], undefined);
+    const createLinkCall = taskRepository.createTaskLink.mock.calls[0];
+    expect(createLinkCall?.[0]).toEqual(expect.objectContaining({ subjectId: 5 }));
+    expect(taskRepository.insertTaskLinkTimetableSlots).toHaveBeenCalledWith(
+      expect.any(String),
+      [11, 12],
+      7,
+      undefined,
+    );
+  });
+
+  it('rejects timetable slots outside the attendance link subject scope', async () => {
+    taskRepository.listTimetableSlotsForTaskLink.mockResolvedValue([
+      {
+        id: 11,
+        school_id: 10010002,
+        grade_level_id: 423,
+        grade_label: 'ม.6',
+        room_no: 1,
+        subject_id: 99,
+        day_of_week: 2,
+        period: 3,
+      },
+    ]);
+
+    await expect(
+      service.createTask(
+        buildActor(),
+        {
+          task_type: 'ATTENDANCE',
+          assigned_to_name: 'ครูประจำวิชา',
+          target_school_id: 10010002,
+          target_grade: 'ม.6',
+          target_room: '1',
+          subject_id: 5,
+          timetable_slot_ids: [11],
+        },
+        'https://app.example.invalid',
+      ),
+    ).rejects.toThrow('คาบเรียนไม่ตรงกับขอบเขตหรือวิชาของลิงก์');
+    expect(taskRepository.createTaskLink).not.toHaveBeenCalled();
+    expect(taskRepository.insertTaskLinkTimetableSlots).not.toHaveBeenCalled();
   });
 });

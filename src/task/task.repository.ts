@@ -115,6 +115,17 @@ interface CreateTaskLinkInput {
   loginDataScope: DataScope | Record<string, unknown>;
 }
 
+interface TaskLinkTimetableSlotRow extends QueryResultRow {
+  id: number | string;
+  school_id: number | string;
+  grade_level_id: number | string;
+  grade_label: string;
+  room_no: number | string;
+  subject_id: number | string;
+  day_of_week: number | string;
+  period: number | string;
+}
+
 interface TaskStudentFilters {
   targetGrade?: string | null;
   targetRoom?: string | null;
@@ -777,6 +788,61 @@ export class TaskRepository {
         JSON.stringify(data.loginPermissions),
         JSON.stringify(data.loginDataScope),
       ],
+    );
+  }
+
+  async listTimetableSlotsForTaskLink(
+    slotIds: number[],
+    executor?: QueryExecutor,
+  ): Promise<TaskLinkTimetableSlotRow[]> {
+    if (slotIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.getExecutor(executor).query<TaskLinkTimetableSlotRow>(
+      `
+        SELECT
+          ts.id,
+          ts.school_id,
+          ts.grade_level_id,
+          gl.label AS grade_label,
+          ts.room_no,
+          ts.subject_id,
+          ts.day_of_week,
+          ts.period
+        FROM timetable_slots ts
+        JOIN grade_levels gl ON gl.id = ts.grade_level_id
+        WHERE ts.id = ANY($1::bigint[])
+          AND ts.deleted_at IS NULL
+        ORDER BY array_position($1::bigint[], ts.id)
+      `,
+      [slotIds],
+    );
+    return result.rows;
+  }
+
+  async insertTaskLinkTimetableSlots(
+    linkId: string,
+    slotIds: number[],
+    actorUserId: number | null,
+    executor?: QueryExecutor,
+  ): Promise<void> {
+    if (slotIds.length === 0) {
+      return;
+    }
+
+    await this.getExecutor(executor).query(
+      `
+        INSERT INTO task_link_timetable_slots (
+          task_link_id,
+          timetable_slot_id,
+          created_by,
+          updated_by
+        )
+        SELECT $1, slot_id, $3, $3
+        FROM unnest($2::bigint[]) AS slot_id
+      `,
+      [linkId, slotIds, actorUserId],
     );
   }
 

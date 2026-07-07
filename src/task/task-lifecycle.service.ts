@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
@@ -86,6 +86,34 @@ export class TaskLifecycleService {
     }
 
     return 'hours';
+  }
+
+  private normalizePositiveIntList(value: unknown): number[] {
+    if (value == null) {
+      return [];
+    }
+    if (!Array.isArray(value)) {
+      throw new BadRequestException('timetable_slot_ids must be an array');
+    }
+
+    const normalized = value.map((item) => {
+      const parsed =
+        typeof item === 'number'
+          ? item
+          : typeof item === 'string' && item.trim().length > 0
+            ? Number(item)
+            : Number.NaN;
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new BadRequestException('timetable_slot_ids must contain positive integers');
+      }
+      return parsed;
+    });
+
+    if (new Set(normalized).size !== normalized.length) {
+      throw new BadRequestException('timetable_slot_ids must not contain duplicates');
+    }
+
+    return normalized;
   }
 
   private buildFullName(firstName: string | null, lastName: string | null): string | null {
@@ -187,6 +215,54 @@ export class TaskLifecycleService {
     return null;
   }
 
+  private async assertTimetableSlotsMatchTaskLink(
+    input: {
+      taskType: string;
+      slotIds: number[];
+      subjectId: number | null;
+      targetSchoolId: number | null;
+      targetGrade: string | null;
+      targetRoom: string | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<void> {
+    if (input.slotIds.length === 0) {
+      return;
+    }
+    if (input.taskType !== 'ATTENDANCE') {
+      throw new BadRequestException('timetable_slot_ids are only supported for ATTENDANCE tasks');
+    }
+    if (input.subjectId === null) {
+      throw new BadRequestException('subject_id is required when timetable_slot_ids are provided');
+    }
+    if (input.targetSchoolId === null || !input.targetGrade || !input.targetRoom) {
+      throw new BadRequestException(
+        'target_school_id, target_grade, and target_room are required for timetable slots',
+      );
+    }
+
+    const targetRoomNo = Number.parseInt(input.targetRoom, 10);
+    if (!Number.isInteger(targetRoomNo) || targetRoomNo <= 0) {
+      throw new BadRequestException('target_room must be a positive room number');
+    }
+
+    const slots = await this.taskRepository.listTimetableSlotsForTaskLink(input.slotIds, executor);
+    if (slots.length !== input.slotIds.length) {
+      throw new BadRequestException('ไม่พบคาบเรียนบางรายการหรือคาบเรียนถูกลบแล้ว');
+    }
+
+    for (const slot of slots) {
+      if (
+        Number(slot.school_id) !== input.targetSchoolId ||
+        String(slot.grade_label) !== input.targetGrade ||
+        Number(slot.room_no) !== targetRoomNo ||
+        Number(slot.subject_id) !== input.subjectId
+      ) {
+        throw new BadRequestException('คาบเรียนไม่ตรงกับขอบเขตหรือวิชาของลิงก์');
+      }
+    }
+  }
+
   async createTask(actor: ActorContext | undefined, data: CreateTaskDto, baseUrl: string) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     const taskType = clean(data.task_type) || clean(data.type) || 'VISIT';
@@ -257,6 +333,8 @@ export class TaskLifecycleService {
     let riskProfileStudentUuid: string | null = null;
     const auditTargetGrade = clean(data.target_grade) || null;
     const auditTargetRoom = clean(data.target_room) || null;
+    const subjectId = this.normalizeNumber(data.subject_id);
+    const timetableSlotIds = this.normalizePositiveIntList(data.timetable_slot_ids);
 
     try {
       await this.taskRepository.withTransaction(async (executor) => {
@@ -370,6 +448,18 @@ export class TaskLifecycleService {
         auditCaseId = caseId;
         auditTargetSchoolId = resolvedTargetSchoolId;
 
+        await this.assertTimetableSlotsMatchTaskLink(
+          {
+            taskType,
+            slotIds: timetableSlotIds,
+            subjectId,
+            targetSchoolId: resolvedTargetSchoolId,
+            targetGrade: auditTargetGrade,
+            targetRoom: auditTargetRoom,
+          },
+          executor,
+        );
+
         await this.taskRepository.createTask(
           {
             taskId,
@@ -396,7 +486,7 @@ export class TaskLifecycleService {
             assignedToEmail: assignedEmail,
             expiresAt,
             subject: clean(data.subject),
-            subjectId: this.normalizeNumber(data.subject_id),
+            subjectId,
             // Email-assigned links require OTP (start unverified); links with no
             // email can't be OTP'd, so mark them pre-verified to skip the gate.
             otpVerified: assignedEmail ? 0 : 1,
@@ -405,6 +495,12 @@ export class TaskLifecycleService {
             loginPermissions,
             loginDataScope,
           },
+          executor,
+        );
+        await this.taskRepository.insertTaskLinkTimetableSlots(
+          linkId,
+          timetableSlotIds,
+          resolveAuditActorId(currentActor),
           executor,
         );
       });
