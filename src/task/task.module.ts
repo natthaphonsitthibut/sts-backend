@@ -44,6 +44,13 @@ import { RiskProfileModule } from '../risk-profile/risk-profile.module';
     EmailService,
     CaseService,
   ],
-  exports: [TaskService, DelegationService, EmailService, CaseService, TaskPolicyService],
+  exports: [
+    TaskService,
+    DelegationService,
+    EmailService,
+    CaseService,
+    TaskPolicyService,
+    TaskAccessService,
+  ],
 })
 export class TaskModule {}
