@@ -151,6 +151,18 @@ export class TaskAccessService {
       }
     }
 
+    if (link.task_type === 'ATTENDANCE') {
+      const slots = await this.taskRepository.listLinkedTimetableSlots(String(link.id));
+      result.timetable_slots = slots.map((slot) => ({
+        id: Number(slot.id),
+        day_of_week: Number(slot.day_of_week),
+        period: Number(slot.period),
+        subject_id: Number(slot.subject_id),
+        subject_name_th: typeof slot.subject_name_th === 'string' ? slot.subject_name_th : null,
+        teacher_name: typeof slot.teacher_name === 'string' ? slot.teacher_name : null,
+      }));
+    }
+
     return result;
   }
 

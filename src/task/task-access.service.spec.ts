@@ -88,6 +88,78 @@ describe('TaskAccessService login-link usage', () => {
   });
 });
 
+describe('TaskAccessService attendance link slots', () => {
+  let service: TaskAccessService;
+  let taskRepository: jest.Mocked<
+    Pick<TaskRepository, 'findTaskLinkByTokenHash' | 'listLinkedTimetableSlots'>
+  >;
+
+  beforeEach(() => {
+    taskRepository = {
+      findTaskLinkByTokenHash: jest.fn().mockResolvedValue({
+        id: 'link-1',
+        task_id: 'task-1',
+        task_type: 'ATTENDANCE',
+        status: 'ACTIVE',
+        expires_at: '2999-01-01T00:00:00.000Z',
+        admin_locked: 0,
+        otp_verified: 1,
+        delegation_depth: 0,
+        max_delegation_depth: 0,
+        target_school_id: 10010002,
+        target_grade: 'ม.6',
+        target_room: '1',
+        assigned_to_name: 'ครูประจำวิชา',
+        subject: 'คณิตศาสตร์',
+        school_name: 'โรงเรียนทดสอบ',
+      }),
+      listLinkedTimetableSlots: jest.fn().mockResolvedValue([
+        {
+          id: 11,
+          school_id: 10010002,
+          grade_level_id: 423,
+          grade_label: 'ม.6',
+          room_no: 1,
+          subject_id: 5,
+          subject_name_th: 'คณิตศาสตร์',
+          teacher_name: 'ครูประจำวิชา',
+          day_of_week: 2,
+          period: 3,
+        },
+      ]),
+    };
+
+    service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      {} as EmailService,
+      {} as AuditLogService,
+      {
+        sessionSecret: 'test-session-secret-at-least-16-chars',
+        magicSessionTtlSeconds: 21_600,
+      } as AuthRuntimeConfig,
+      { enabled: false, user: '' } as EmailRuntimeConfig,
+    );
+  });
+
+  it('includes linked timetable slots for attendance guests', async () => {
+    await expect(service.getTaskByToken('public-token')).resolves.toMatchObject({
+      task_type: 'ATTENDANCE',
+      timetable_slots: [
+        {
+          id: 11,
+          day_of_week: 2,
+          period: 3,
+          subject_id: 5,
+          subject_name_th: 'คณิตศาสตร์',
+          teacher_name: 'ครูประจำวิชา',
+        },
+      ],
+    });
+    expect(taskRepository.listLinkedTimetableSlots).toHaveBeenCalledWith('link-1');
+  });
+});
+
 describe('TaskAccessService admin link audit', () => {
   const actor = {
     id: 53,

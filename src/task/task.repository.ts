@@ -122,6 +122,8 @@ interface TaskLinkTimetableSlotRow extends QueryResultRow {
   grade_label: string;
   room_no: number | string;
   subject_id: number | string;
+  subject_name_th?: string | null;
+  teacher_name?: string | null;
   day_of_week: number | string;
   period: number | string;
 }
@@ -859,11 +861,15 @@ export class TaskRepository {
           gl.label AS grade_label,
           ts.room_no,
           ts.subject_id,
+          sub.name_th AS subject_name_th,
+          NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), '') AS teacher_name,
           ts.day_of_week,
           ts.period
         FROM task_link_timetable_slots link_slot
         JOIN timetable_slots ts ON ts.id = link_slot.timetable_slot_id
         JOIN grade_levels gl ON gl.id = ts.grade_level_id
+        JOIN subjects sub ON sub.id = ts.subject_id
+        LEFT JOIN users teacher ON teacher.id = ts.teacher_user_id
         WHERE link_slot.task_link_id = $1
           AND link_slot.deleted_at IS NULL
         ORDER BY ts.day_of_week ASC, ts.period ASC, ts.id ASC
