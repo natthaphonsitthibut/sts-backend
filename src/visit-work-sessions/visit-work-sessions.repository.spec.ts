@@ -63,6 +63,30 @@ describe('VisitWorkSessionsRepository', () => {
     expect(queries[0].sql).toContain('(1=0)');
   });
 
+  it('listActiveForMonitor narrows further by the SchoolAreaSchoolFilter dimensions', async () => {
+    const { repository, queries } = buildRepository();
+
+    await repository.listActiveForMonitor(
+      { global: true },
+      { schoolId: 10010002, province: 'เชียงใหม่', grade: 'ป.6', room: '1' },
+    );
+
+    expect(queries[0].sql).toContain('c.school_id = $1');
+    expect(queries[0].sql).toContain('sc.province = $2');
+    expect(queries[0].sql).toContain('gl.label = $3');
+    expect(queries[0].sql).toContain('st."RoomID_Onec"::text = $4');
+    expect(queries[0].params).toEqual([10010002, 'เชียงใหม่', 'ป.6', '1']);
+  });
+
+  it('listRecentlyEnded narrows by the same filter dimensions', async () => {
+    const { repository, queries } = buildRepository();
+
+    await repository.listRecentlyEnded({ global: true }, 20, { schoolId: 10010002 });
+
+    expect(queries[0].sql).toContain('c.school_id = $1');
+    expect(queries[0].params).toEqual([10010002, 20]);
+  });
+
   it('claimTimedOutSessions closes sessions whose latest activity is before the cutoff', async () => {
     const { repository, queries } = buildRepository();
     const cutoff = new Date('2026-07-07T09:30:00Z');

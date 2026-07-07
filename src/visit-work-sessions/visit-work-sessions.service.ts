@@ -13,7 +13,7 @@ import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { TaskAccessService } from '../task/task-access.service';
 import type { AuthenticatedRequestUser } from '../auth';
 import type { EndWorkSessionDto } from './dto/visit-work-sessions.dto';
-import { VisitWorkSessionsRepository } from './visit-work-sessions.repository';
+import { VisitWorkSessionsRepository, type MonitorFilters } from './visit-work-sessions.repository';
 import type { WorkSessionEndReason } from './visit-work-sessions.types';
 
 const PING_INTERVAL_SECONDS = 30;
@@ -160,7 +160,7 @@ export class VisitWorkSessionsService {
     return { success: true };
   }
 
-  async listForMonitor(actor: AuthenticatedRequestUser) {
+  async listForMonitor(actor: AuthenticatedRequestUser, filters: MonitorFilters = {}) {
     const scope = actor.data_scope ?? {};
     if (scope.own_only === true) {
       await this.recordMonitorView(actor, 0);
@@ -168,8 +168,8 @@ export class VisitWorkSessionsService {
     }
 
     const [active, recentlyEnded] = await Promise.all([
-      this.repository.listActiveForMonitor(scope),
-      this.repository.listRecentlyEnded(scope),
+      this.repository.listActiveForMonitor(scope, filters),
+      this.repository.listRecentlyEnded(scope, 20, filters),
     ]);
     await this.recordMonitorView(actor, active.length);
 

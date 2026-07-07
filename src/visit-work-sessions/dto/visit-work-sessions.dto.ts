@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsNumber, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class StartWorkSessionDto {
   @IsBoolean()
@@ -13,6 +13,33 @@ export class EndWorkSessionDto {
   @IsOptional()
   @IsIn(GUEST_WORK_SESSION_END_REASONS)
   reason?: GuestWorkSessionEndReason;
+}
+
+export class ListWorkSessionMonitorQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
+  grade?: string;
+
+  @IsOptional()
+  @IsString()
+  room?: string;
 }
 
 export class PositionPingDto {

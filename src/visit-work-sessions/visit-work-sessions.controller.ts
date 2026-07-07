@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthGuard, CurrentUser, PermissionsGuard, Public, RequirePermission } from '../auth';
 import type { AuthenticatedRequestUser } from '../auth';
 import { getHeaderValue } from '../task/task.types';
 import {
   EndWorkSessionDto,
+  ListWorkSessionMonitorQueryDto,
   PositionPingDto,
   StartWorkSessionDto,
 } from './dto/visit-work-sessions.dto';
@@ -58,7 +59,17 @@ export class WorkSessionMonitorController {
   constructor(private readonly workSessionsService: VisitWorkSessionsService) {}
 
   @Get('work-sessions')
-  async list(@CurrentUser() actor: AuthenticatedRequestUser) {
-    return await this.workSessionsService.listForMonitor(actor);
+  async list(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Query() query: ListWorkSessionMonitorQueryDto,
+  ) {
+    return await this.workSessionsService.listForMonitor(actor, {
+      schoolId: query.schoolId,
+      province: query.province,
+      district: query.district,
+      subDistrict: query.subDistrict,
+      grade: query.grade,
+      room: query.room,
+    });
   }
 }

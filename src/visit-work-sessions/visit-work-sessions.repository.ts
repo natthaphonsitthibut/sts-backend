@@ -16,7 +16,18 @@ const MONITOR_JOIN_SQL = `
   JOIN tasks t ON t.id = tl.task_id
   LEFT JOIN cases c ON c.id = t.case_id
   LEFT JOIN schools sc ON sc.id = c.school_id
+  LEFT JOIN student_term st ON st.student_uuid = c.student_uuid
+  LEFT JOIN grade_levels gl ON gl.id = st."GradeLevelID_Onec"
 `;
+
+export interface MonitorFilters {
+  schoolId?: number;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  grade?: string;
+  room?: string;
+}
 
 @Injectable()
 export class VisitWorkSessionsRepository {
@@ -91,7 +102,38 @@ export class VisitWorkSessionsRepository {
     );
   }
 
-  async listActiveForMonitor(scope: DataScope): Promise<MonitorWorkSessionRow[]> {
+  /** Narrows within the actor's scope — same dimensions as SchoolAreaSchoolFilter. */
+  private filterConditions(filters: MonitorFilters, params: unknown[], conditions: string[]): void {
+    if (typeof filters.schoolId === 'number') {
+      params.push(filters.schoolId);
+      conditions.push(`c.school_id = $${params.length}`);
+    }
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(`sc.province = $${params.length}`);
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(`sc.district = $${params.length}`);
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(`sc.sub_district = $${params.length}`);
+    }
+    if (filters.grade) {
+      params.push(filters.grade);
+      conditions.push(`gl.label = $${params.length}`);
+    }
+    if (filters.room) {
+      params.push(filters.room);
+      conditions.push(`st."RoomID_Onec"::text = $${params.length}`);
+    }
+  }
+
+  async listActiveForMonitor(
+    scope: DataScope,
+    filters: MonitorFilters = {},
+  ): Promise<MonitorWorkSessionRow[]> {
     const params: unknown[] = [];
     const conditions: string[] = ['vws.ended_at IS NULL'];
     const scopeResult = this.scopeClause(scope, params.length + 1);
@@ -99,6 +141,7 @@ export class VisitWorkSessionsRepository {
       conditions.push(`(${scopeResult.sql})`);
       params.push(...scopeResult.params);
     }
+    this.filterConditions(filters, params, conditions);
 
     const result = await queryDataSource<MonitorWorkSessionRow>(
       this.dataSource,
@@ -130,7 +173,11 @@ export class VisitWorkSessionsRepository {
     return result.rows;
   }
 
-  async listRecentlyEnded(scope: DataScope, limit = 20): Promise<RecentlyEndedWorkSessionRow[]> {
+  async listRecentlyEnded(
+    scope: DataScope,
+    limit = 20,
+    filters: MonitorFilters = {},
+  ): Promise<RecentlyEndedWorkSessionRow[]> {
     const params: unknown[] = [];
     const conditions: string[] = ['vws.ended_at IS NOT NULL'];
     const scopeResult = this.scopeClause(scope, params.length + 1);
@@ -138,6 +185,7 @@ export class VisitWorkSessionsRepository {
       conditions.push(`(${scopeResult.sql})`);
       params.push(...scopeResult.params);
     }
+    this.filterConditions(filters, params, conditions);
     params.push(limit);
 
     const result = await queryDataSource<RecentlyEndedWorkSessionRow>(
