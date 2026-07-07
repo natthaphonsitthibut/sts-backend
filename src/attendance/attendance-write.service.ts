@@ -138,6 +138,7 @@ export class AttendanceWriteService {
     }
 
     const today = getBangkokDateString();
+    const sessionContext = context.session ?? { kind: 'DAILY' as const, period: 1 };
     const term = await this.attendanceOperationsRepository.findOrCreateTermForClass(
       first,
       context.actorUserId,
@@ -168,7 +169,10 @@ export class AttendanceWriteService {
         gradeLevelId: first.grade_level_id,
         roomId: first.room_id,
         attendanceDate: today,
-        period: 1,
+        period: sessionContext.period,
+        sessionKind: sessionContext.kind,
+        subjectId: sessionContext.subjectId ?? null,
+        timetableSlotId: sessionContext.timetableSlotId ?? null,
       },
       rosterIds.length,
       context.actorUserId,
@@ -183,8 +187,13 @@ export class AttendanceWriteService {
 
     const statusCodes = normalizedRecords.map((record) => STATUS_CODE_MAP[record.status]);
     const previousStatuses =
-      session.status === 'REOPENED'
-        ? await this.attendanceRepository.listAttendanceStatuses(studentIds, today, 1, executor)
+      session.status === 'REOPENED' && sessionContext.kind === 'DAILY'
+        ? await this.attendanceRepository.listAttendanceStatuses(
+            studentIds,
+            today,
+            sessionContext.period,
+            executor,
+          )
         : [];
     const previousStatusByStudent = new Map(
       previousStatuses.map((row) => [row.student_uuid, row.attendance_status] as const),
@@ -205,7 +214,8 @@ export class AttendanceWriteService {
         studentIds,
         statusCodes,
         date: today,
-        period: 1,
+        period: sessionContext.period,
+        sessionKind: sessionContext.kind,
         recordedBy: context.recorder,
         sessionId: session.id,
         metadata: {
@@ -235,6 +245,10 @@ export class AttendanceWriteService {
           gradeLevelId: first.grade_level_id,
           roomId: first.room_id,
           attendanceDate: today,
+          sessionKind: sessionContext.kind,
+          period: sessionContext.period,
+          subjectId: sessionContext.subjectId ?? null,
+          timetableSlotId: sessionContext.timetableSlotId ?? null,
           expectedRosterCount: rosterIds.length,
           recordedCount: studentIds.length,
           revision: session.revision,

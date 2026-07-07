@@ -764,12 +764,19 @@ export class AttendanceRepository {
       statusCodes: number[];
       date: string;
       period: number;
+      sessionKind?: 'DAILY' | 'SUBJECT';
       recordedBy: string;
       sessionId: string;
       metadata: StudentAttendanceMetadataRow;
     },
     executor: QueryExecutor,
   ): Promise<void> {
+    const sessionKind = input.sessionKind ?? 'DAILY';
+    const conflictTarget =
+      sessionKind === 'SUBJECT'
+        ? `ON CONFLICT (student_uuid, "AttendanceDate", "Period") WHERE session_kind = 'SUBJECT' DO UPDATE SET`
+        : `ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY' DO UPDATE SET`;
+
     await executor.query(
       `
         INSERT INTO attendance (
@@ -796,13 +803,13 @@ export class AttendanceRepository {
           $7,
           $8,
           $9,
-          'DAILY',
+          $10,
           input.status_code,
           now(),
-          $10,
-          $11
+          $11,
+          $12
         FROM UNNEST($1::uuid[], $2::smallint[]) AS input(student_uuid, status_code)
-        ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY' DO UPDATE SET
+        ${conflictTarget}
           "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
           "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
           "RoomID_Onec" = EXCLUDED."RoomID_Onec",
@@ -823,6 +830,7 @@ export class AttendanceRepository {
         input.metadata.Semester_Onec,
         input.date,
         input.period,
+        sessionKind,
         input.recordedBy,
         input.sessionId,
       ],

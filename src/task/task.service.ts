@@ -95,10 +95,10 @@ export class TaskService {
 
   async saveTaskAttendance(
     token: string,
-    records: SaveTaskAttendanceDto['records'],
+    data: SaveTaskAttendanceDto | SaveTaskAttendanceDto['records'],
     sessionToken?: string,
   ) {
-    return await this.taskSubmissionService.saveTaskAttendance(token, records, sessionToken);
+    return await this.taskSubmissionService.saveTaskAttendance(token, data, sessionToken);
   }
 
   async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto, sessionToken?: string) {

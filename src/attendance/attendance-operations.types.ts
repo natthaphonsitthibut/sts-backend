@@ -37,7 +37,7 @@ export interface AttendanceSessionRow extends Record<string, unknown> {
   room_id: number;
   attendance_date: string;
   period: number;
-  session_kind: 'DAILY';
+  session_kind: 'DAILY' | 'SUBJECT';
   status: AttendanceSessionStatus;
   expected_roster_count: number;
   recorded_count: number;
@@ -100,4 +100,7 @@ export interface AttendanceSessionIdentity {
   roomId: number;
   attendanceDate: string;
   period: number;
+  sessionKind?: 'DAILY' | 'SUBJECT';
+  subjectId?: number | null;
+  timetableSlotId?: number | null;
 }

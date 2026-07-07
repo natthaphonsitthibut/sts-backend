@@ -147,6 +147,12 @@ export interface AttendanceWriteContext {
   actorLabel: string;
   recorder: string;
   allowedStudentIds?: string[];
+  session?: {
+    kind: 'DAILY' | 'SUBJECT';
+    period: number;
+    subjectId?: number | null;
+    timetableSlotId?: number | null;
+  };
 }
 
 export type AttendanceScope = DataScope | undefined;

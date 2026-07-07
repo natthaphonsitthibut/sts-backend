@@ -846,6 +846,33 @@ export class TaskRepository {
     );
   }
 
+  async listLinkedTimetableSlots(
+    linkId: string,
+    executor?: QueryExecutor,
+  ): Promise<TaskLinkTimetableSlotRow[]> {
+    const result = await this.getExecutor(executor).query<TaskLinkTimetableSlotRow>(
+      `
+        SELECT
+          ts.id,
+          ts.school_id,
+          ts.grade_level_id,
+          gl.label AS grade_label,
+          ts.room_no,
+          ts.subject_id,
+          ts.day_of_week,
+          ts.period
+        FROM task_link_timetable_slots link_slot
+        JOIN timetable_slots ts ON ts.id = link_slot.timetable_slot_id
+        JOIN grade_levels gl ON gl.id = ts.grade_level_id
+        WHERE link_slot.task_link_id = $1
+          AND link_slot.deleted_at IS NULL
+        ORDER BY ts.day_of_week ASC, ts.period ASC, ts.id ASC
+      `,
+      [linkId],
+    );
+    return result.rows;
+  }
+
   async markLoginLinkUsed(linkId: string): Promise<void> {
     await this.query(
       `

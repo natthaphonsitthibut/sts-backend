@@ -139,6 +139,41 @@ describe('AttendanceRepository', () => {
     );
   });
 
+  it('upserts subject attendance through the SUBJECT partial unique index', async () => {
+    const { queries, repository } = createRepository();
+    const executor = {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+    };
+
+    await repository.upsertAttendanceBatch(
+      {
+        studentIds: ['00000000-0000-4000-8000-000000000001'],
+        statusCodes: [2],
+        date: '2026-07-07',
+        period: 3,
+        sessionKind: 'SUBJECT',
+        recordedBy: 'teacher',
+        sessionId: '11111111-1111-4111-8111-111111111111',
+        metadata: {
+          SchoolID_Onec: 10010002,
+          GradeLevelID_Onec: 1,
+          RoomID_Onec: 1,
+          AcademicYear_Onec: 2026,
+          Semester_Onec: 1,
+        },
+      },
+      executor,
+    );
+
+    expect(queries[0].params?.[9]).toBe('SUBJECT');
+    expect(queries[0].sql).toContain(
+      'ON CONFLICT (student_uuid, "AttendanceDate", "Period") WHERE session_kind = \'SUBJECT\'',
+    );
+  });
+
   it('reads existing statuses only from daily attendance rows', async () => {
     const { queries, repository } = createRepository();
     const executor = {

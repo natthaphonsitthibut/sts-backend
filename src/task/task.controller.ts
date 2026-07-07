@@ -140,7 +140,7 @@ export class TaskController {
     @Req() req: Request,
   ) {
     const sessionToken = getHeaderValue(req.headers['x-magic-session']);
-    return await this.taskService.saveTaskAttendance(token, body.records, sessionToken);
+    return await this.taskService.saveTaskAttendance(token, body, sessionToken);
   }
 
   @Public()

@@ -469,14 +469,15 @@ export class AttendanceOperationsRepository {
     actorUserId: number | null,
     executor: QueryExecutor,
   ): Promise<AttendanceSessionRow> {
+    const sessionKind = identity.sessionKind ?? 'DAILY';
     await executor.query(
       `
         INSERT INTO attendance_sessions (
           school_term_id, school_id, grade_level_id, room_id, attendance_date,
-          period, session_kind, status, expected_roster_count, recorded_count,
+          period, session_kind, subject_id, timetable_slot_id, status, expected_roster_count, recorded_count,
           created_by, updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 'DAILY', 'OPEN', $7, 0, $8, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', $10, 0, $11, $11)
         ON CONFLICT (
           school_term_id, grade_level_id, room_id, attendance_date, period, session_kind
         ) DO NOTHING
@@ -488,6 +489,9 @@ export class AttendanceOperationsRepository {
         identity.roomId,
         identity.attendanceDate,
         identity.period,
+        sessionKind,
+        identity.subjectId ?? null,
+        identity.timetableSlotId ?? null,
         expectedRosterCount,
         actorUserId,
       ],
@@ -515,7 +519,7 @@ export class AttendanceOperationsRepository {
           AND room_id = $3
           AND attendance_date = $4
           AND period = $5
-          AND session_kind = 'DAILY'
+          AND session_kind = $6
         FOR UPDATE
       `,
       [
@@ -524,6 +528,7 @@ export class AttendanceOperationsRepository {
         identity.roomId,
         identity.attendanceDate,
         identity.period,
+        sessionKind,
       ],
     );
     return result.rows[0];

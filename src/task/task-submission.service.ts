@@ -11,10 +11,16 @@ import { AutomationService } from '../automation/automation.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import { getBangkokDateString } from '../common/utils/date.util';
 import { hashToken } from '../common/utils/helpers';
-import { SaveTaskSubmissionDto, TaskAttendanceRecordDto } from './dto/task.dto';
+import {
+  SaveTaskAttendanceDto,
+  SaveTaskSubmissionDto,
+  TaskAttendanceRecordDto,
+} from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
+import type { QueryExecutor } from './task.types';
 
 @Injectable()
 export class TaskSubmissionService {
@@ -111,11 +117,80 @@ export class TaskSubmissionService {
     return null;
   }
 
+  private normalizeOptionalPositiveInt(value: unknown, fieldName: string): number | null {
+    if (value == null || value === '') {
+      return null;
+    }
+    const parsed =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.trim().length > 0
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new BadRequestException(`${fieldName} must be a positive integer`);
+    }
+    return parsed;
+  }
+
+  private getBangkokIsoDayOfWeek(): number {
+    const [year, month, day] = getBangkokDateString().split('-').map(Number);
+    const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    return utcDay === 0 ? 7 : utcDay;
+  }
+
+  private async resolveAttendanceSessionContext(
+    linkId: string,
+    selectedSlotId: number | null,
+    executor: QueryExecutor,
+  ): Promise<
+    | {
+        kind: 'SUBJECT';
+        period: number;
+        subjectId: number;
+        timetableSlotId: number;
+      }
+    | undefined
+  > {
+    const linkedSlots = await this.taskRepository.listLinkedTimetableSlots(linkId, executor);
+    if (linkedSlots.length === 0) {
+      if (selectedSlotId !== null) {
+        throw new BadRequestException('ลิงก์นี้ไม่ได้ผูกคาบเรียน');
+      }
+      return undefined;
+    }
+
+    if (selectedSlotId === null) {
+      throw new BadRequestException('กรุณาเลือกคาบเรียนที่จะเช็คชื่อ');
+    }
+
+    const selected = linkedSlots.find((slot) => Number(slot.id) === selectedSlotId);
+    if (!selected) {
+      throw new ForbiddenException('คาบเรียนนี้ไม่อยู่ในขอบเขตของลิงก์');
+    }
+
+    const todayDayOfWeek = this.getBangkokIsoDayOfWeek();
+    if (Number(selected.day_of_week) !== todayDayOfWeek) {
+      throw new BadRequestException('คาบเรียนนี้ไม่ตรงกับวันปัจจุบัน');
+    }
+
+    return {
+      kind: 'SUBJECT',
+      period: Number(selected.period),
+      subjectId: Number(selected.subject_id),
+      timetableSlotId: selectedSlotId,
+    };
+  }
+
   async saveTaskAttendance(
     token: string,
-    records: TaskAttendanceRecordDto[] | undefined,
+    data: SaveTaskAttendanceDto | TaskAttendanceRecordDto[] | undefined,
     sessionToken?: string,
   ) {
+    const records = Array.isArray(data) ? data : data?.records;
+    const selectedSlotId = Array.isArray(data)
+      ? null
+      : this.normalizeOptionalPositiveInt(data?.timetable_slot_id, 'timetable_slot_id');
     const attendanceRecords = Array.isArray(records) ? records : [];
 
     try {
@@ -166,12 +241,18 @@ export class TaskSubmissionService {
         if (!live) {
           throw new ConflictException('ลิงก์นี้ถูกลบแล้ว');
         }
+        const sessionContext = await this.resolveAttendanceSessionContext(
+          String(link.link_id),
+          selectedSlotId,
+          executor,
+        );
         const results = await this.attendanceWriteService.saveAttendanceGroupsWithinTransaction(
           writerRecords,
           {
             actorUserId: null,
             actorLabel: `task-link:${String(link.link_id)}`,
             recorder,
+            session: sessionContext,
           },
           executor,
         );

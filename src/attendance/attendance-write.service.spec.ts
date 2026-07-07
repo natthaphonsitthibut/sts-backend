@@ -197,6 +197,10 @@ describe('AttendanceWriteService', () => {
           gradeLevelId: 6,
           roomId: 1,
           attendanceDate: TEST_ATTENDANCE_DATE,
+          sessionKind: 'DAILY',
+          period: 1,
+          subjectId: null,
+          timetableSlotId: null,
           expectedRosterCount: 2,
           recordedCount: 2,
           revision: 2,
@@ -212,5 +216,59 @@ describe('AttendanceWriteService', () => {
       },
       executor,
     );
+  });
+
+  it('submits subject attendance with subject session metadata', async () => {
+    operationsRepository.findOrCreateSessionForUpdate.mockResolvedValue(
+      buildSession({
+        period: 3,
+        session_kind: 'SUBJECT',
+      }),
+    );
+
+    await service.saveAttendanceWithinTransaction(
+      STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
+      {
+        actorUserId: null,
+        actorLabel: 'task-link:link-1',
+        recorder: 'subject-teacher',
+        session: {
+          kind: 'SUBJECT',
+          period: 3,
+          subjectId: 5,
+          timetableSlotId: 11,
+        },
+      },
+      executor,
+    );
+
+    expect(operationsRepository.findOrCreateSessionForUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        period: 3,
+        sessionKind: 'SUBJECT',
+        subjectId: 5,
+        timetableSlotId: 11,
+      }),
+      2,
+      null,
+      executor,
+    );
+    expect(attendanceRepository.upsertAttendanceBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        period: 3,
+        sessionKind: 'SUBJECT',
+        recordedBy: 'subject-teacher',
+      }),
+      executor,
+    );
+    const auditInput = operationsRepository.recordSessionAudit.mock.calls[0]?.[0] as
+      | { metadata?: Record<string, unknown> }
+      | undefined;
+    expect(auditInput?.metadata).toMatchObject({
+      sessionKind: 'SUBJECT',
+      period: 3,
+      subjectId: 5,
+      timetableSlotId: 11,
+    });
   });
 });

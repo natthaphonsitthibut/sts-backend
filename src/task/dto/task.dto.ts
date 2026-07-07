@@ -162,6 +162,9 @@ export class SaveTaskAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => TaskAttendanceRecordDto)
   records?: TaskAttendanceRecordDto[];
+
+  @IsOptional()
+  timetable_slot_id?: string | number | null;
 }
 
 // Loose unions coerced by the service; @IsOptional() keeps each field through the
