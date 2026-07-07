@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
+import { isUUID } from 'class-validator';
 import { CreateStudentDto } from './dto/create-student.dto';
 import {
   DEFAULT_STUDENT_PAGE_SIZE,
@@ -20,6 +21,7 @@ import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { piiConfig } from '../config/pii.config';
+import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import {
   PHASE1_MASKED_GROUPS,
   PII_FIELD_GROUPS,
@@ -141,6 +143,7 @@ function normalizeStudentListFilters(queryParams?: GetStudentsQueryDto): Student
       queryParams.studentStatusCode,
     ),
     enrollmentState: normalizeEnrollmentState(queryParams.enrollmentState),
+    riskTier: queryParams.riskTier as StudentListFilters['riskTier'],
     page: queryParams.page && queryParams.page > 0 ? queryParams.page : 1,
     limit:
       queryParams.limit && queryParams.limit > 0 ? queryParams.limit : DEFAULT_STUDENT_PAGE_SIZE,
@@ -214,6 +217,7 @@ export class StudentsService {
 
   constructor(
     private readonly studentsRepository: StudentsRepository,
+    private readonly geocodeCache: StudentGeocodeCacheService,
     @Inject(piiConfig.KEY)
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
   ) {}
@@ -319,8 +323,27 @@ export class StudentsService {
       // prefill it (instead of capturing the creator's current GPS), then mask
       // the sensitive groups (national id / passport) before the row leaves the
       // server — they are revealed on demand via revealPii (audited).
+      const address = buildStudentTermAddress(student);
+      const hasConfirmedLocation =
+        student.resolved_home_lat !== null && student.resolved_home_lat !== undefined;
+      const approximate = hasConfirmedLocation
+        ? null
+        : address
+          ? await this.geocodeCache.resolve(id, address)
+          : null;
+
       return maskStudentDetail(
-        { ...student, address: buildStudentTermAddress(student) },
+        {
+          ...student,
+          address,
+          resolved_home_lat: hasConfirmedLocation
+            ? student.resolved_home_lat
+            : (approximate?.lat ?? null),
+          resolved_home_lng: hasConfirmedLocation
+            ? student.resolved_home_lng
+            : (approximate?.lng ?? null),
+          is_approximate_home_location: !hasConfirmedLocation && approximate !== null,
+        },
         activeGroups,
       );
     } catch (err) {
@@ -521,6 +544,13 @@ export class StudentsService {
     requestedUuid: string,
     actor?: AuthenticatedRequestUser,
   ): Promise<void> {
+    // student_term.student_uuid is a `uuid` column — a malformed id (e.g. a
+    // legacy PersonID_Onec fallback) would otherwise reach the DB as a raw
+    // Postgres cast error instead of a clean 404.
+    if (!isUUID(requestedUuid)) {
+      throw new NotFoundException(`Student with ID ${requestedUuid} not found`);
+    }
+
     if (!isOwnOnlyStudentActor(actor)) {
       return;
     }

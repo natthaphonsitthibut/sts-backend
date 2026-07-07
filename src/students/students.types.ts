@@ -3,6 +3,17 @@ import type { SqlQueryResult } from '../database/sql-query';
 export const STUDENT_ENROLLMENT_STATES = ['current-active', 'all'] as const;
 export type StudentEnrollmentState = (typeof STUDENT_ENROLLMENT_STATES)[number];
 
+/** `AT_RISK` = every tier except NORMAL; mirrors `student_risk_profiles.risk_tier`. */
+export const STUDENT_RISK_TIER_FILTERS = [
+  'AT_RISK',
+  'HIGH',
+  'MEDIUM',
+  'LOW',
+  'WATCH',
+  'NORMAL',
+] as const;
+export type StudentRiskTierFilter = (typeof STUDENT_RISK_TIER_FILTERS)[number];
+
 export interface StudentListFilters {
   grade?: string;
   room?: number;
@@ -13,6 +24,7 @@ export interface StudentListFilters {
   searchTerm?: string;
   studentStatusCode?: number;
   enrollmentState?: StudentEnrollmentState;
+  riskTier?: StudentRiskTierFilter;
   page?: number;
   limit?: number;
 }

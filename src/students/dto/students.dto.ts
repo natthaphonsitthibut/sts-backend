@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import { STUDENT_ENROLLMENT_STATES } from '../students.types';
+import { STUDENT_ENROLLMENT_STATES, STUDENT_RISK_TIER_FILTERS } from '../students.types';
 
 /** Page sizes the student list UI offers; keep in sync with the frontend control. */
 export const STUDENT_PAGE_SIZES = [10, 20, 50] as const;
@@ -50,6 +50,10 @@ export class GetStudentsQueryDto {
   @IsOptional()
   @IsIn(STUDENT_ENROLLMENT_STATES)
   enrollmentState?: string;
+
+  @IsOptional()
+  @IsIn(STUDENT_RISK_TIER_FILTERS)
+  riskTier?: string;
 
   @IsOptional()
   @Type(() => Number)

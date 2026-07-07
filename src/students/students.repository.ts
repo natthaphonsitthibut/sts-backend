@@ -112,6 +112,13 @@ export class StudentsRepository {
       );
     }
 
+    if (filters.riskTier === 'AT_RISK') {
+      conditions.push(`COALESCE(risk.risk_tier, 'NORMAL') != 'NORMAL'`);
+    } else if (filters.riskTier) {
+      params.push(filters.riskTier);
+      conditions.push(`COALESCE(risk.risk_tier, 'NORMAL') = $${params.length}`);
+    }
+
     const currentEnrollmentJoin =
       filters.enrollmentState === 'all'
         ? ''
@@ -129,6 +136,7 @@ export class StudentsRepository {
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       LEFT JOIN student_status ss
         ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
+      LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid
       ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
     `;
 
@@ -306,12 +314,28 @@ export class StudentsRepository {
         sc.name as school_name,
         COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
         COALESCE(ss.category, 'UNMAPPED') as student_status_category,
-        COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant
+        COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant,
+        -- Latest home-visit case pin wins (most recent on-the-ground
+        -- observation); falls back to the student's own confirmed profile
+        -- coordinate (student_term.address_latitude/longitude, set via the
+        -- edit form) — mirrors field-monitor-map.repository.ts's priority.
+        COALESCE(latest_case.student_lat, s.address_latitude) AS resolved_home_lat,
+        COALESCE(latest_case.student_lng, s.address_longitude) AS resolved_home_lng
       FROM student_term s
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       LEFT JOIN student_status ss
         ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
+      LEFT JOIN LATERAL (
+        SELECT c.student_lat, c.student_lng
+        FROM cases c
+        WHERE c.student_uuid = s.student_uuid
+          AND c.student_lat IS NOT NULL
+          AND c.student_lng IS NOT NULL
+          AND c.deleted_at IS NULL
+        ORDER BY c.created_at DESC
+        LIMIT 1
+      ) latest_case ON true
       WHERE s.student_uuid = $1
     `;
     const params: unknown[] = [id];

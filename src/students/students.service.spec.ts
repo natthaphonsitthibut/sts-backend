@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { StudentsService } from './students.service';
 import { StudentsRepository } from './students.repository';
+import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import { piiConfig } from '../config/pii.config';
 
 describe('StudentsService', () => {
@@ -15,6 +16,7 @@ describe('StudentsService', () => {
     listActiveRevealGroups: jest.Mock;
     updateStudentByUuid: jest.Mock;
   };
+  let geocodeCache: { resolve: jest.Mock };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -34,6 +36,12 @@ describe('StudentsService', () => {
           },
         },
         {
+          provide: StudentGeocodeCacheService,
+          useValue: {
+            resolve: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
           provide: piiConfig.KEY,
           useValue: {
             hashPepper: 'test-pepper-at-least-16-chars',
@@ -46,6 +54,7 @@ describe('StudentsService', () => {
 
     service = module.get<StudentsService>(StudentsService);
     studentsRepository = module.get(StudentsRepository);
+    geocodeCache = module.get(StudentGeocodeCacheService);
   });
 
   it('should be defined', () => {
@@ -165,5 +174,49 @@ describe('StudentsService', () => {
     expect(studentsRepository.updateStudentByUuid).toHaveBeenCalledWith(student.student_uuid, {
       FirstName_Onec: 'สมศรี',
     });
+  });
+
+  it('findOne skips the geocode cache when the row already has a confirmed home coordinate', async () => {
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: '00000000-0000-4000-8000-000000000001',
+      PersonID_Onec: 'masked',
+      FirstName_Onec: 'สมชาย',
+      LastName_Onec: 'ใจดี',
+      resolved_home_lat: 18.79,
+      resolved_home_lng: 98.98,
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+
+    const result = await service.findOne('00000000-0000-4000-8000-000000000001');
+
+    expect(geocodeCache.resolve).not.toHaveBeenCalled();
+    expect(result.resolved_home_lat).toBe(18.79);
+    expect(result.resolved_home_lng).toBe(98.98);
+    expect(result.is_approximate_home_location).toBe(false);
+  });
+
+  it('findOne falls back to the geocode cache when there is no confirmed home coordinate', async () => {
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: '00000000-0000-4000-8000-000000000001',
+      PersonID_Onec: 'masked',
+      FirstName_Onec: 'สมชาย',
+      LastName_Onec: 'ใจดี',
+      resolved_home_lat: null,
+      resolved_home_lng: null,
+      ProvinceNameThai_Onec: 'เชียงใหม่',
+      DistrictNameThai_Onec: 'เมืองเชียงใหม่',
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+    geocodeCache.resolve.mockResolvedValue({ lat: 18.8, lng: 99.0 });
+
+    const result = await service.findOne('00000000-0000-4000-8000-000000000001');
+
+    expect(geocodeCache.resolve).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      'เมืองเชียงใหม่ เชียงใหม่',
+    );
+    expect(result.resolved_home_lat).toBe(18.8);
+    expect(result.resolved_home_lng).toBe(99.0);
+    expect(result.is_approximate_home_location).toBe(true);
   });
 });
