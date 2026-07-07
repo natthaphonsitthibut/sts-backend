@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { StudentGeocodeModule } from '../student-geocode/student-geocode.module';
 import {
   FieldFollowersController,
   PublicFollowerApplicationController,
@@ -11,7 +12,7 @@ import { FieldMonitorMapRepository } from './field-monitor-map.repository';
 import { FieldMonitorMapService } from './field-monitor-map.service';
 
 @Module({
-  imports: [AuditLogModule],
+  imports: [AuditLogModule, StudentGeocodeModule],
   controllers: [
     PublicFollowerApplicationController,
     FieldFollowersController,
