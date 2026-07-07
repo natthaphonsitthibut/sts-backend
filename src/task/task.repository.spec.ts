@@ -1,6 +1,25 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('lists attendance task history from daily rows only', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new TaskRepository(dataSource as never);
+
+    await repository.listTaskHistory('2026-07-07', 'ม.1', '1', 10010002);
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].sql).toContain("AND a.session_kind = 'DAILY'");
+  });
+
   it('counts distinct active-case students within the actor scope', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {

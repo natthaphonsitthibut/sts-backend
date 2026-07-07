@@ -781,6 +781,7 @@ export class AttendanceRepository {
           "Semester_Onec",
           "AttendanceDate",
           "Period",
+          session_kind,
           "AttendanceStatus",
           "RecordedAt",
           "RecordedBy",
@@ -795,12 +796,13 @@ export class AttendanceRepository {
           $7,
           $8,
           $9,
+          'DAILY',
           input.status_code,
           now(),
           $10,
           $11
         FROM UNNEST($1::uuid[], $2::smallint[]) AS input(student_uuid, status_code)
-        ON CONFLICT (student_uuid, "AttendanceDate", "Period") DO UPDATE SET
+        ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY' DO UPDATE SET
           "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
           "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
           "RoomID_Onec" = EXCLUDED."RoomID_Onec",
@@ -844,6 +846,7 @@ export class AttendanceRepository {
         WHERE student_uuid = ANY($1::uuid[])
           AND "AttendanceDate" = $2
           AND "Period" = $3
+          AND session_kind = 'DAILY'
       `,
       [studentIds, date, period],
     );

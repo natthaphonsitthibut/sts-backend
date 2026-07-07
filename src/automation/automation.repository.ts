@@ -147,6 +147,7 @@ export class AutomationRepository {
           FROM attendance a
           JOIN student_term current_enrollment ON current_enrollment.student_uuid = a.student_uuid
           WHERE a.student_uuid IS NOT NULL
+            AND a.session_kind = 'DAILY'
             AND a."AcademicYear_Onec" = current_enrollment."AcademicYear_Onec"
             AND a."Semester_Onec" = current_enrollment."Semester_Onec"
             AND current_enrollment.deleted_at IS NULL

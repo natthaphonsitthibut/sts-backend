@@ -103,4 +103,58 @@ describe('AttendanceRepository', () => {
     expect(queries).toHaveLength(1);
     expectCurrentEnrollmentPolicy(queries[0].sql);
   });
+
+  it('upserts daily attendance through the DAILY partial unique index', async () => {
+    const { queries, repository } = createRepository();
+    const executor = {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+    };
+
+    await repository.upsertAttendanceBatch(
+      {
+        studentIds: ['00000000-0000-4000-8000-000000000001'],
+        statusCodes: [1],
+        date: '2026-07-07',
+        period: 1,
+        recordedBy: 'teacher',
+        sessionId: '11111111-1111-4111-8111-111111111111',
+        metadata: {
+          SchoolID_Onec: 10010002,
+          GradeLevelID_Onec: 1,
+          RoomID_Onec: 1,
+          AcademicYear_Onec: 2026,
+          Semester_Onec: 1,
+        },
+      },
+      executor,
+    );
+
+    expect(queries[0].sql).toContain('session_kind');
+    expect(queries[0].sql).toContain("'DAILY'");
+    expect(queries[0].sql).toContain(
+      'ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = \'DAILY\'',
+    );
+  });
+
+  it('reads existing statuses only from daily attendance rows', async () => {
+    const { queries, repository } = createRepository();
+    const executor = {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+    };
+
+    await repository.listAttendanceStatuses(
+      ['00000000-0000-4000-8000-000000000001'],
+      '2026-07-07',
+      1,
+      executor,
+    );
+
+    expect(queries[0].sql).toContain("AND session_kind = 'DAILY'");
+  });
 });

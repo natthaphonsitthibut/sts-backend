@@ -79,4 +79,14 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain('COALESCE(s.student_status_code, s."StudentStatusID_Onec")');
     expect(queries[1]).toContain('COALESCE(s.student_status_code, s."StudentStatusID_Onec")');
   });
+
+  it('lists student attendance history from daily rows only', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.listAttendanceByStudentId('00000000-0000-4000-8000-000000000001');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("AND a.session_kind = 'DAILY'");
+  });
 });

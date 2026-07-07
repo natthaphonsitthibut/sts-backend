@@ -47,6 +47,7 @@ describe('RiskProfileRepository', () => {
     ]);
     expect(queries[0].sql).toContain('INSERT INTO student_risk_profiles');
     expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($9::uuid[])');
+    expect(queries[0].sql).toContain("AND a.session_kind = 'DAILY'");
     expect(queries[0].sql).toContain('ON CONFLICT (student_uuid) DO UPDATE SET');
     expect(queries[0].sql).toContain('JOIN student_current_enrollment_resolution');
   });

@@ -25,6 +25,7 @@ describe('AutomationRepository', () => {
     expect(queries[0].sql).toContain('session.recorded_count = session.expected_roster_count');
     expect(queries[0].sql).toContain('GROUP BY a.student_uuid, a."AttendanceDate"');
     expect(queries[0].sql).toContain('BOOL_AND(a."AttendanceStatus" = 2)');
+    expect(queries[0].sql).toContain("AND a.session_kind = 'DAILY'");
     expect(queries[0].sql).toContain('fallback_absence_streak');
     expect(queries[0].sql).toContain('FROM school_terms managed_term');
     expect(queries[0].sql).toContain(

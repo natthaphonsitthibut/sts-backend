@@ -145,6 +145,9 @@ export class AttendanceEntity {
   @Column({ name: 'Period', type: 'integer' })
   period!: number;
 
+  @Column({ name: 'session_kind', type: 'varchar', length: 16, default: 'DAILY' })
+  sessionKind!: 'DAILY' | 'SUBJECT';
+
   @Column({ name: 'AttendanceStatus', type: 'smallint' })
   attendanceStatus!: number;
 

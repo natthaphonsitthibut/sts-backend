@@ -1084,6 +1084,7 @@ export class TaskRepository {
         AND s."GradeLevelID_Onec" = (SELECT id FROM grade_levels WHERE label = $2)
         AND s."RoomID_Onec" = $3
         AND a."Period" = 1
+        AND a.session_kind = 'DAILY'
         AND s."SchoolID_Onec" = $4
       ORDER BY a.student_uuid ASC
     `,

@@ -141,6 +141,7 @@ export class RiskProfileRepository {
           JOIN selected_students s ON s.student_uuid = a.student_uuid
           WHERE a."AcademicYear_Onec" = s.academic_year
             AND a."Semester_Onec" = s.semester
+            AND a.session_kind = 'DAILY'
           GROUP BY a.student_uuid, a."AttendanceDate"
         ),
         ranked_attendance_days AS (
