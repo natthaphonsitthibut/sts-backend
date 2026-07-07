@@ -56,6 +56,7 @@
     "smoke:field-monitor-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_BROWSER_BACKEND_URL=http://127.0.0.1:3001 SMOKE_CHROME_DEBUG_PORT=9234 node scripts/smoke-field-monitor-browser.js",
     "smoke:field-monitor-map-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_BROWSER_BACKEND_URL=http://127.0.0.1:3001 SMOKE_CHROME_DEBUG_PORT=9246 node scripts/smoke-field-monitor-map-browser.js",
     "smoke:work-session-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_BROWSER_BACKEND_URL=http://127.0.0.1:3001 SMOKE_CHROME_DEBUG_PORT=9248 node scripts/smoke-work-session-browser.js",
+    "smoke:timetable-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_BROWSER_BACKEND_URL=http://127.0.0.1:3001 SMOKE_CHROME_DEBUG_PORT=9249 node scripts/smoke-timetable-browser.js",
     "seed:attendance-anomalies": "node scripts/seed-attendance-anomalies.js",
     "seed:demo-student-status-roster": "node scripts/seed-demo-student-status-roster.js",
     "seed:demo-case-scenarios": "node scripts/seed-demo-case-scenarios.js",

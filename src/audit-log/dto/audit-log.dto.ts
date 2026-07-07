@@ -58,6 +58,11 @@ export const AUDIT_ACTIONS = [
   'WORK_SESSION_START',
   'WORK_SESSION_END',
   'WORK_SESSION_VIEW',
+  'SUBJECT_CREATE',
+  'SUBJECT_UPDATE',
+  'TIMETABLE_SLOT_CREATE',
+  'TIMETABLE_SLOT_UPDATE',
+  'TIMETABLE_SLOT_DELETE',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -72,6 +77,7 @@ export const AUDIT_LOG_DOMAINS = [
   'tasks',
   'attendance',
   'field_followers',
+  'timetable',
 ] as const;
 
 export type AuditLogDomain = (typeof AUDIT_LOG_DOMAINS)[number];

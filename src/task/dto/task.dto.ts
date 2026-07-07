@@ -108,6 +108,9 @@ export class CreateTaskDto {
   subject?: string | null;
 
   @IsOptional()
+  subject_id?: string | number | null;
+
+  @IsOptional()
   target_school_id?: string | number | null;
 
   @IsOptional()

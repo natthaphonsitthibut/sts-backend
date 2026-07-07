@@ -33,6 +33,8 @@ import { StatusCatalogModule } from './status-catalog/status-catalog.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FieldFollowersModule } from './field-followers/field-followers.module';
 import { VisitWorkSessionsModule } from './visit-work-sessions/visit-work-sessions.module';
+import { SubjectsModule } from './subjects/subjects.module';
+import { TimetableModule } from './timetable/timetable.module';
 
 @Module({
   imports: [
@@ -92,6 +94,8 @@ import { VisitWorkSessionsModule } from './visit-work-sessions/visit-work-sessio
     NotificationsModule,
     FieldFollowersModule,
     VisitWorkSessionsModule,
+    SubjectsModule,
+    TimetableModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],

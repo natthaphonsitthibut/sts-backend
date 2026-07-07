@@ -396,6 +396,40 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ดูช่วงปฏิบัติงานภาคสนาม',
     detailKeys: [{ key: 'activeCount', label: 'จำนวนที่กำลังทำงานอยู่' }],
   },
+  SUBJECT_CREATE: {
+    domain: 'timetable',
+    label: 'เพิ่มรายวิชา',
+    detailKeys: [{ key: 'code', label: 'รหัสวิชา' }],
+  },
+  SUBJECT_UPDATE: {
+    domain: 'timetable',
+    label: 'แก้ไขรายวิชา',
+    detailKeys: [{ key: 'code', label: 'รหัสวิชา' }],
+  },
+  TIMETABLE_SLOT_CREATE: {
+    domain: 'timetable',
+    label: 'เพิ่มคาบสอน',
+    detailKeys: [
+      { key: 'dayOfWeek', label: 'วัน' },
+      { key: 'period', label: 'คาบ' },
+    ],
+  },
+  TIMETABLE_SLOT_UPDATE: {
+    domain: 'timetable',
+    label: 'แก้ไขคาบสอน',
+    detailKeys: [
+      { key: 'dayOfWeek', label: 'วัน' },
+      { key: 'period', label: 'คาบ' },
+    ],
+  },
+  TIMETABLE_SLOT_DELETE: {
+    domain: 'timetable',
+    label: 'ลบคาบสอน',
+    detailKeys: [
+      { key: 'dayOfWeek', label: 'วัน' },
+      { key: 'period', label: 'คาบ' },
+    ],
+  },
 };
 
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
@@ -408,6 +442,7 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   tasks: ['create', 'review-cases', 'attendance-dashboard'],
   attendance: ['attendance', 'attendance-dashboard'],
   field_followers: ['field-monitor'],
+  timetable: ['manage-timetable'],
 };
 
 @Injectable()

@@ -107,6 +107,7 @@ interface CreateTaskLinkInput {
   assignedToEmail: string | null;
   expiresAt: string;
   subject: string | null;
+  subjectId: number | null;
   otpVerified: number;
   createdBy: number | null;
   loginRole: string | null;
@@ -728,6 +729,7 @@ export class TaskRepository {
         assigned_to_email,
         expires_at,
         subject,
+        subject_id,
         otp_verified,
         created_by,
         updated_by,
@@ -749,10 +751,11 @@ export class TaskRepository {
         $11,
         $12,
         $13,
-        $13,
+        $14,
         $14,
         $15,
-        $16
+        $16,
+        $17
       )
     `,
       [
@@ -767,6 +770,7 @@ export class TaskRepository {
         data.assignedToEmail,
         data.expiresAt,
         data.subject,
+        data.subjectId,
         data.otpVerified,
         data.createdBy,
         data.loginRole,

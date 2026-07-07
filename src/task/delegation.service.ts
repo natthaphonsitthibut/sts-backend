@@ -152,6 +152,7 @@ export class DelegationService {
           assignedToEmail: newAssigneeEmail,
           expiresAt,
           subject: null,
+          subjectId: null,
           otpVerified,
           createdBy: null,
           loginRole: null,
