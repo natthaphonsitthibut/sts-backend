@@ -6,10 +6,22 @@ import {
 } from './field-followers.controller';
 import { FieldFollowersRepository } from './field-followers.repository';
 import { FieldFollowersService } from './field-followers.service';
+import { FieldMonitorMapController } from './field-monitor-map.controller';
+import { FieldMonitorMapRepository } from './field-monitor-map.repository';
+import { FieldMonitorMapService } from './field-monitor-map.service';
 
 @Module({
   imports: [AuditLogModule],
-  controllers: [PublicFollowerApplicationController, FieldFollowersController],
-  providers: [FieldFollowersRepository, FieldFollowersService],
+  controllers: [
+    PublicFollowerApplicationController,
+    FieldFollowersController,
+    FieldMonitorMapController,
+  ],
+  providers: [
+    FieldFollowersRepository,
+    FieldFollowersService,
+    FieldMonitorMapRepository,
+    FieldMonitorMapService,
+  ],
 })
 export class FieldFollowersModule {}

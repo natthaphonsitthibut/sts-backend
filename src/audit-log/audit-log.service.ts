@@ -376,6 +376,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'toStatus', label: 'สถานะใหม่' },
     ],
   },
+  FIELD_MAP_VIEW: {
+    domain: 'field_followers',
+    label: 'เปิดแผนที่เด็กเสี่ยง',
+    detailKeys: [{ key: 'studentCount', label: 'จำนวนที่เลือก' }],
+  },
 };
 
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {

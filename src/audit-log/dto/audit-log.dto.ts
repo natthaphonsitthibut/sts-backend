@@ -54,6 +54,7 @@ export const AUDIT_ACTIONS = [
   'SYSTEM_SETTING_EDIT',
   'FIELD_FOLLOWER_APPLY',
   'FIELD_FOLLOWER_REVIEW',
+  'FIELD_MAP_VIEW',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
