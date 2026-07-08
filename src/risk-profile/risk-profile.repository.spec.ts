@@ -29,6 +29,8 @@ describe('RiskProfileRepository', () => {
         mediumAttendancePercent: 90,
         highAttendancePercent: 80,
         lateWeight: 0.25,
+        subjectLateWindowDays: 30,
+        subjectLateWatchCount: 5,
       },
     );
 
@@ -43,11 +45,15 @@ describe('RiskProfileRepository', () => {
       90,
       80,
       0.25,
+      30,
+      5,
       ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'],
     ]);
     expect(queries[0].sql).toContain('INSERT INTO student_risk_profiles');
-    expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($9::uuid[])');
+    expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($11::uuid[])');
     expect(queries[0].sql).toContain("AND a.session_kind = 'DAILY'");
+    expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
+    expect(queries[0].sql).toContain('subject_late_count');
     expect(queries[0].sql).toContain('ON CONFLICT (student_uuid) DO UPDATE SET');
     expect(queries[0].sql).toContain('JOIN student_current_enrollment_resolution');
   });
@@ -74,9 +80,11 @@ describe('RiskProfileRepository', () => {
       mediumAttendancePercent: 90,
       highAttendancePercent: 80,
       lateWeight: 0.25,
+      subjectLateWindowDays: 30,
+      subjectLateWatchCount: 5,
     });
 
-    expect(queries[0].params).toEqual([3, 5, 7, 0.7, 95, 90, 80, 0.25]);
-    expect(queries[0].sql).not.toContain('ANY($9::uuid[])');
+    expect(queries[0].params).toEqual([3, 5, 7, 0.7, 95, 90, 80, 0.25, 30, 5]);
+    expect(queries[0].sql).not.toContain('ANY($11::uuid[])');
   });
 });

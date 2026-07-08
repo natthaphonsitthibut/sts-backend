@@ -16,6 +16,8 @@ const DEFAULT_RISK_PROFILE_THRESHOLDS: RiskDashboardThresholds = {
   mediumAttendancePercent: 90,
   highAttendancePercent: 80,
   lateWeight: 0.25,
+  subjectLateWindowDays: 30,
+  subjectLateWatchCount: 5,
 };
 
 @Injectable()
@@ -32,12 +34,15 @@ export class RiskProfileRepository {
   }
 
   async getRiskThresholds(): Promise<RiskDashboardThresholds> {
-    const [low, medium, high, highAttendancePercent] = await Promise.all([
-      this.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
-      this.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
-      this.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
-      this.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
-    ]);
+    const [low, medium, high, highAttendancePercent, subjectLateWindowDays, subjectLateWatchCount] =
+      await Promise.all([
+        this.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
+        this.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
+        this.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
+        this.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
+        this.getSystemSettingValue('SUBJECT_RISK_LATE_WINDOW_DAYS'),
+        this.getSystemSettingValue('SUBJECT_RISK_LATE_WATCH_COUNT'),
+      ]);
 
     return {
       ...DEFAULT_RISK_PROFILE_THRESHOLDS,
@@ -57,6 +62,14 @@ export class RiskProfileRepository {
         highAttendancePercent,
         DEFAULT_RISK_PROFILE_THRESHOLDS.highAttendancePercent,
       ),
+      subjectLateWindowDays: this.parsePositiveInteger(
+        subjectLateWindowDays,
+        DEFAULT_RISK_PROFILE_THRESHOLDS.subjectLateWindowDays,
+      ),
+      subjectLateWatchCount: this.parsePositiveInteger(
+        subjectLateWatchCount,
+        DEFAULT_RISK_PROFILE_THRESHOLDS.subjectLateWatchCount,
+      ),
     };
   }
 
@@ -70,7 +83,7 @@ export class RiskProfileRepository {
     if (uniqueStudentUuids.length === 0) {
       return 0;
     }
-    return await this.upsertProfiles(thresholds, 'WHERE s.student_uuid = ANY($9::uuid[])', [
+    return await this.upsertProfiles(thresholds, 'WHERE s.student_uuid = ANY($11::uuid[])', [
       uniqueStudentUuids,
     ]);
   }
@@ -115,6 +128,8 @@ export class RiskProfileRepository {
       thresholds.mediumAttendancePercent,
       thresholds.highAttendancePercent,
       thresholds.lateWeight,
+      thresholds.subjectLateWindowDays,
+      thresholds.subjectLateWatchCount,
       ...extraParams,
     ];
     const result = await queryDataSource<CountRow>(
@@ -183,6 +198,24 @@ export class RiskProfileRepository {
           FROM attendance_daily
           GROUP BY student_uuid
         ),
+        subject_late_summary AS (
+          SELECT
+            a.student_uuid,
+            COUNT(*)::int AS subject_late_count,
+            MAX(a."AttendanceDate")::timestamptz AS latest_subject_late_at
+          FROM attendance a
+          JOIN selected_students s ON s.student_uuid = a.student_uuid
+          JOIN attendance_sessions sess ON sess.id = a.session_id
+          WHERE a."AcademicYear_Onec" = s.academic_year
+            AND a."Semester_Onec" = s.semester
+            AND a.session_kind = 'SUBJECT'
+            AND a."AttendanceStatus" = 3
+            AND sess.session_kind = 'SUBJECT'
+            AND sess.status = 'SUBMITTED'
+            AND sess.deleted_at IS NULL
+            AND a."AttendanceDate"::date >= CURRENT_DATE - (($9::int - 1) * INTERVAL '1 day')
+          GROUP BY a.student_uuid
+        ),
         calendar_counts AS (
           SELECT
             s.student_uuid,
@@ -233,6 +266,7 @@ export class RiskProfileRepository {
             COALESCE(streak.consecutive_absent_days, 0)::int AS consecutive_absent_days,
             COALESCE(attendance.absent_days, 0)::int AS absent_days,
             COALESCE(attendance.late_count, 0)::int AS late_count,
+            COALESCE(subject_late.subject_late_count, 0)::int AS subject_late_count,
             COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::int
               AS school_day_count,
             (
@@ -262,11 +296,13 @@ export class RiskProfileRepository {
             cases.latest_open_task_id,
             GREATEST(
               COALESCE(attendance.latest_attendance_at, '-infinity'::timestamptz),
+              COALESCE(subject_late.latest_subject_late_at, '-infinity'::timestamptz),
               COALESCE(cases.latest_case_at, '-infinity'::timestamptz)
             ) AS source_updated_at
           FROM selected_students s
           LEFT JOIN absence_streak streak ON streak.student_uuid = s.student_uuid
           LEFT JOIN attendance_summary attendance ON attendance.student_uuid = s.student_uuid
+          LEFT JOIN subject_late_summary subject_late ON subject_late.student_uuid = s.student_uuid
           LEFT JOIN calendar_counts calendar ON calendar.student_uuid = s.student_uuid
           LEFT JOIN case_summary cases ON cases.student_uuid = s.student_uuid
         ),
@@ -293,6 +329,7 @@ export class RiskProfileRepository {
                   AND metrics.weighted_attendance_percent
                     <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
                 )
+                OR metrics.subject_late_count >= $10::int
                 THEN 'WATCH'
               ELSE 'NORMAL'
             END AS risk_tier,
@@ -316,12 +353,14 @@ export class RiskProfileRepository {
                   AND metrics.weighted_attendance_percent
                     <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
                 )
+                OR metrics.subject_late_count >= $10::int
                 THEN 1
               ELSE 0
             END AS risk_severity,
             GREATEST(
               metrics.consecutive_absent_days::numeric / NULLIF($3::numeric, 0),
               metrics.absent_days::numeric / NULLIF($3::numeric, 0),
+              metrics.subject_late_count::numeric / NULLIF($10::numeric, 0),
               CASE
                 WHEN metrics.weighted_attendance_percent IS NULL THEN 0
                 ELSE (100::numeric - metrics.weighted_attendance_percent)
@@ -341,6 +380,7 @@ export class RiskProfileRepository {
             consecutive_absent_days,
             absent_days,
             late_count,
+            subject_late_count,
             school_day_count,
             weighted_absence_days,
             weighted_attendance_percent,
@@ -364,6 +404,7 @@ export class RiskProfileRepository {
             consecutive_absent_days,
             absent_days,
             late_count,
+            subject_late_count,
             school_day_count,
             ROUND(weighted_absence_days, 2),
             weighted_attendance_percent,
@@ -386,6 +427,7 @@ export class RiskProfileRepository {
             consecutive_absent_days = EXCLUDED.consecutive_absent_days,
             absent_days = EXCLUDED.absent_days,
             late_count = EXCLUDED.late_count,
+            subject_late_count = EXCLUDED.subject_late_count,
             school_day_count = EXCLUDED.school_day_count,
             weighted_absence_days = EXCLUDED.weighted_absence_days,
             weighted_attendance_percent = EXCLUDED.weighted_attendance_percent,

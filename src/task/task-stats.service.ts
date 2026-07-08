@@ -23,6 +23,8 @@ const DEFAULT_RISK_DASHBOARD_THRESHOLDS: RiskDashboardThresholds = {
   mediumAttendancePercent: 90,
   highAttendancePercent: 80,
   lateWeight: 0.25,
+  subjectLateWindowDays: 30,
+  subjectLateWatchCount: 5,
 };
 
 @Injectable()
@@ -114,12 +116,15 @@ export class TaskStatsService {
   }
 
   private async getRiskDashboardThresholds(): Promise<RiskDashboardThresholds> {
-    const [low, medium, high, highAttendancePercent] = await Promise.all([
-      this.taskRepository.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
-      this.taskRepository.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
-      this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
-      this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
-    ]);
+    const [low, medium, high, highAttendancePercent, subjectLateWindowDays, subjectLateWatchCount] =
+      await Promise.all([
+        this.taskRepository.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
+        this.taskRepository.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
+        this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
+        this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
+        this.taskRepository.getSystemSettingValue('SUBJECT_RISK_LATE_WINDOW_DAYS'),
+        this.taskRepository.getSystemSettingValue('SUBJECT_RISK_LATE_WATCH_COUNT'),
+      ]);
 
     return {
       ...DEFAULT_RISK_DASHBOARD_THRESHOLDS,
@@ -138,6 +143,14 @@ export class TaskStatsService {
       highAttendancePercent: this.parsePositiveInteger(
         highAttendancePercent,
         DEFAULT_RISK_DASHBOARD_THRESHOLDS.highAttendancePercent,
+      ),
+      subjectLateWindowDays: this.parsePositiveInteger(
+        subjectLateWindowDays,
+        DEFAULT_RISK_DASHBOARD_THRESHOLDS.subjectLateWindowDays,
+      ),
+      subjectLateWatchCount: this.parsePositiveInteger(
+        subjectLateWatchCount,
+        DEFAULT_RISK_DASHBOARD_THRESHOLDS.subjectLateWatchCount,
       ),
     };
   }
@@ -192,6 +205,7 @@ export class TaskStatsService {
           consecutiveAbsentDays: Number(row.consecutive_absent_days ?? 0),
           absentDays: Number(row.absent_days ?? 0),
           lateCount: Number(row.late_count ?? 0),
+          subjectLateCount: Number(row.subject_late_count ?? 0),
           schoolDayCount: Number(row.school_day_count ?? 0),
           weightedAbsenceDays: Number(row.weighted_absence_days ?? 0),
           weightedAttendancePercent:

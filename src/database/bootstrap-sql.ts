@@ -1450,6 +1450,7 @@ export const DATABASE_BASELINE_SQL = `
     consecutive_absent_days INTEGER NOT NULL DEFAULT 0,
     absent_days INTEGER NOT NULL DEFAULT 0,
     late_count INTEGER NOT NULL DEFAULT 0,
+    subject_late_count INTEGER NOT NULL DEFAULT 0,
     school_day_count INTEGER NOT NULL DEFAULT 0,
     weighted_absence_days NUMERIC(8,2) NOT NULL DEFAULT 0,
     weighted_attendance_percent NUMERIC(5,2) NULL,

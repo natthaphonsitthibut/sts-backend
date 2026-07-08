@@ -68,6 +68,8 @@ export interface RiskDashboardThresholds {
   mediumAttendancePercent: number;
   highAttendancePercent: number;
   lateWeight: number;
+  subjectLateWindowDays: number;
+  subjectLateWatchCount: number;
 }
 
 export interface RiskDashboardSummary {
@@ -88,6 +90,7 @@ export interface RiskDashboardRow extends QueryResultRow {
   consecutive_absent_days: number | string;
   absent_days: number | string;
   late_count: number | string;
+  subject_late_count: number | string;
   school_day_count: number | string;
   weighted_absence_days: number | string;
   weighted_attendance_percent: number | string | null;

@@ -232,6 +232,8 @@ describe('TaskRepository', () => {
         mediumAttendancePercent: 90,
         highAttendancePercent: 80,
         lateWeight: 0.25,
+        subjectLateWindowDays: 30,
+        subjectLateWatchCount: 5,
       },
     );
 
@@ -285,6 +287,8 @@ describe('TaskRepository', () => {
           mediumAttendancePercent: 90,
           highAttendancePercent: 80,
           lateWeight: 0.25,
+          subjectLateWindowDays: 30,
+          subjectLateWatchCount: 5,
         },
       ),
     ).resolves.toEqual({
