@@ -114,10 +114,11 @@ export class TaskStatsService {
   }
 
   private async getRiskDashboardThresholds(): Promise<RiskDashboardThresholds> {
-    const [low, medium, high] = await Promise.all([
+    const [low, medium, high, highAttendancePercent] = await Promise.all([
       this.taskRepository.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
       this.taskRepository.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
       this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
+      this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
     ]);
 
     return {
@@ -133,6 +134,10 @@ export class TaskStatsService {
       highConsecutiveAbsentDays: this.parsePositiveInteger(
         high,
         DEFAULT_RISK_DASHBOARD_THRESHOLDS.highConsecutiveAbsentDays,
+      ),
+      highAttendancePercent: this.parsePositiveInteger(
+        highAttendancePercent,
+        DEFAULT_RISK_DASHBOARD_THRESHOLDS.highAttendancePercent,
       ),
     };
   }

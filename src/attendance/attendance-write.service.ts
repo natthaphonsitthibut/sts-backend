@@ -68,6 +68,8 @@ export class AttendanceWriteService {
     if (triggerType === 'IMMEDIATE' && result.calendarConfigured) {
       this.logger.log('Attendance saved. Trigger Type is IMMEDIATE. Executing absence check...');
       newCases = await this.automationService.checkConsecutiveAbsences();
+      const subjectRiskCases = await this.automationService.checkSubjectRiskSignals();
+      newCases = [...newCases, ...subjectRiskCases];
     }
 
     return {

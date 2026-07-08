@@ -2,6 +2,10 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { maskName } from '../common/utils/helpers';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
+import {
+  STUDENT_RISK_WATCH_NOTIFICATION_TYPE,
+  STUDENT_RISK_WATCH_REF_ENTITY,
+} from '../automation/subject-risk-monitor.constants';
 import { NotificationsRepository } from './notifications.repository';
 import type { NotificationFanOutInput, NotificationListFilters } from './notifications.types';
 import type { DirectNotificationInput } from './notifications.types';
@@ -221,6 +225,27 @@ export class NotificationsService {
       refEntity: 'case',
       refId: String(event.caseId),
       schoolId: event.schoolId,
+    });
+  }
+
+  async notifyStudentRiskWatch(event: {
+    studentName: string | null;
+    schoolId: number | null;
+    gradeLevel: string | number | null;
+    roomId: string | number | null;
+    reason: string;
+    refId: string;
+  }): Promise<void> {
+    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
+    await this.fanOutSafely({
+      typeCode: STUDENT_RISK_WATCH_NOTIFICATION_TYPE,
+      title: 'นักเรียนเข้าเกณฑ์เฝ้าระวัง',
+      body: `เฝ้าระวัง ${student} · ${event.reason}`,
+      refEntity: STUDENT_RISK_WATCH_REF_ENTITY,
+      refId: event.refId,
+      schoolId: event.schoolId,
+      gradeLevel: event.gradeLevel,
+      roomId: event.roomId,
     });
   }
 

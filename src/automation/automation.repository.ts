@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
   ActiveAbsenceCaseRow,
+  ActiveAttendanceRiskCaseRow,
   ConsecutiveAbsentStudentRow,
   CreateAutomatedCaseInput,
   CreatedCaseRow,
@@ -11,7 +12,15 @@ import type {
   QueryExecutor,
   QueryResultLike,
   SettingValueRow,
+  SubjectLateWatchRow,
+  SubjectRiskCandidateRow,
 } from './automation.types';
+import {
+  ACTIVE_CASE_STATUSES,
+  ATTENDANCE_RISK_CASE_REASON_PREFIXES,
+  STUDENT_RISK_WATCH_NOTIFICATION_TYPE,
+  STUDENT_RISK_WATCH_REF_ENTITY,
+} from './subject-risk-monitor.constants';
 
 @Injectable()
 export class AutomationRepository {
@@ -357,11 +366,40 @@ export class AutomationRepository {
             OR (student_uuid IS NULL AND student_name = $3)
           )
       `,
+      [[...ACTIVE_CASE_STATUSES], studentUuid, studentName, schoolId],
+    );
+
+    return result.rows[0] ?? null;
+  }
+
+  async findActiveAttendanceRiskCaseByStudent(
+    studentUuid: string,
+    studentName: string,
+    schoolId: number | null,
+    executor?: QueryExecutor,
+  ): Promise<ActiveAttendanceRiskCaseRow | null> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<ActiveAttendanceRiskCaseRow>(
+      `
+        SELECT id, risk_tier, reason_flagged
+        FROM cases
+        WHERE status = ANY($1::text[])
+          AND deleted_at IS NULL
+          AND ($4::int IS NULL OR school_id = $4)
+          AND reason_flagged LIKE ANY($5::text[])
+          AND (
+            (student_uuid IS NOT NULL AND student_uuid = $2)
+            OR (student_uuid IS NULL AND student_name = $3)
+          )
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      `,
       [
-        ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'],
+        [...ACTIVE_CASE_STATUSES],
         studentUuid,
         studentName,
         schoolId,
+        [...ATTENDANCE_RISK_CASE_REASON_PREFIXES],
       ],
     );
 
@@ -393,7 +431,7 @@ export class AutomationRepository {
         input.riskTier,
         input.slaDueAt.toISOString(),
         input.reason,
-        ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'],
+        [...ACTIVE_CASE_STATUSES],
       ],
     );
     return result.rowCount > 0;
@@ -433,5 +471,317 @@ export class AutomationRepository {
     );
 
     return result.rows[0].id;
+  }
+
+  async insertSystemCaseReviewNote(
+    caseId: number,
+    reviewNote: string,
+    executor?: QueryExecutor,
+  ): Promise<void> {
+    const queryExecutor = this.getExecutor(executor);
+    await queryExecutor.query(
+      `
+        INSERT INTO case_reviews (
+          id,
+          case_id,
+          review_action,
+          review_note,
+          reviewed_by
+        )
+        VALUES (gen_random_uuid()::text, $1, 'ASSIST', $2, $3)
+      `,
+      [caseId, reviewNote, 'system:subject-risk-monitor'],
+    );
+  }
+
+  async hasSystemCaseReviewNote(
+    caseId: number,
+    reviewNote: string,
+    executor?: QueryExecutor,
+  ): Promise<boolean> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<{ id: string }>(
+      `
+        SELECT id
+        FROM case_reviews
+        WHERE case_id = $1
+          AND reviewed_by = $2
+          AND review_note = $3
+        LIMIT 1
+      `,
+      [caseId, 'system:subject-risk-monitor', reviewNote],
+    );
+    return result.rows.length > 0;
+  }
+
+  async listSubjectRiskCandidates(
+    input: {
+      asOfDate: string;
+      mixedWindowDays: number;
+      mixedAbsenceDays: number;
+      avoidanceWindowDays: number;
+      avoidanceConsecutivePeriods: number;
+      avoidanceAbsentPercent: number;
+      termAbsenceDays: number;
+      highAttendancePercent: number;
+    },
+    executor?: QueryExecutor,
+  ): Promise<SubjectRiskCandidateRow[]> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<SubjectRiskCandidateRow>(
+      `
+        WITH subject_attendance AS (
+          SELECT
+            a.student_uuid,
+            a."AttendanceDate"::date AS attendance_date,
+            a."AttendanceStatus" AS attendance_status,
+            sess.subject_id,
+            sess.period,
+            sub.name_th AS subject_name_th,
+            sub.code AS subject_code
+          FROM attendance a
+          JOIN attendance_sessions sess ON sess.id = a.session_id
+          JOIN subjects sub ON sub.id = sess.subject_id
+          WHERE a.student_uuid IS NOT NULL
+            AND a.session_kind = 'SUBJECT'
+            AND sess.session_kind = 'SUBJECT'
+            AND sess.status = 'SUBMITTED'
+            AND sess.deleted_at IS NULL
+            AND a."AttendanceDate"::date <= $1::date
+            AND a."AttendanceDate"::date >= $1::date - ((GREATEST($2::int, $4::int) - 1) * INTERVAL '1 day')
+        ),
+        mixed_days AS (
+          SELECT student_uuid, attendance_date
+          FROM subject_attendance
+          WHERE attendance_date >= $1::date - (($2::int - 1) * INTERVAL '1 day')
+          GROUP BY student_uuid, attendance_date
+          HAVING COUNT(*) FILTER (WHERE attendance_status = 2) > 0
+             AND COUNT(*) FILTER (WHERE attendance_status <> 2) > 0
+        ),
+        mixed_candidates AS (
+          SELECT
+            'MIXED_SUBJECT_ABSENCE'::text AS signal_code,
+            student_uuid,
+            COUNT(*)::int AS metric_value,
+            $3::int AS threshold_value,
+            NULL::int AS subject_id,
+            NULL::text AS subject_name_th,
+            NULL::text AS subject_code
+          FROM mixed_days
+          GROUP BY student_uuid
+          HAVING COUNT(*) >= $3
+        ),
+        subject_ranked AS (
+          SELECT
+            student_uuid,
+            subject_id,
+            subject_name_th,
+            subject_code,
+            attendance_status,
+            ROW_NUMBER() OVER (
+              PARTITION BY student_uuid, subject_id
+              ORDER BY attendance_date DESC, period DESC
+            ) AS rn
+          FROM subject_attendance
+          WHERE attendance_date >= $1::date - (($4::int - 1) * INTERVAL '1 day')
+        ),
+        subject_streak_boundaries AS (
+          SELECT
+            *,
+            MIN(CASE WHEN attendance_status <> 2 THEN rn END) OVER (
+              PARTITION BY student_uuid, subject_id
+            ) AS first_non_absent_rn
+          FROM subject_ranked
+        ),
+        subject_streak_candidates AS (
+          SELECT
+            'SUBJECT_AVOIDANCE_STREAK'::text AS signal_code,
+            student_uuid,
+            COUNT(*)::int AS metric_value,
+            $5::int AS threshold_value,
+            subject_id,
+            subject_name_th,
+            subject_code
+          FROM subject_streak_boundaries
+          WHERE attendance_status = 2
+            AND (first_non_absent_rn IS NULL OR rn < first_non_absent_rn)
+          GROUP BY student_uuid, subject_id, subject_name_th, subject_code
+          HAVING COUNT(*) >= $5
+        ),
+        subject_percent_candidates AS (
+          SELECT
+            'SUBJECT_AVOIDANCE_PERCENT'::text AS signal_code,
+            student_uuid,
+            ROUND(
+              (COUNT(*) FILTER (WHERE attendance_status = 2)::numeric / NULLIF(COUNT(*), 0)) * 100
+            )::int AS metric_value,
+            $6::int AS threshold_value,
+            subject_id,
+            subject_name_th,
+            subject_code
+          FROM subject_attendance
+          WHERE attendance_date >= $1::date - (($4::int - 1) * INTERVAL '1 day')
+          GROUP BY student_uuid, subject_id, subject_name_th, subject_code
+          HAVING (COUNT(*) FILTER (WHERE attendance_status = 2)::numeric / NULLIF(COUNT(*), 0)) * 100 >= $6
+        ),
+        daily_term_attendance AS (
+          SELECT
+            a.student_uuid,
+            a."AttendanceStatus" AS attendance_status
+          FROM attendance a
+          JOIN student_term current_enrollment
+            ON current_enrollment.student_uuid = a.student_uuid
+           AND current_enrollment."AcademicYear_Onec" = a."AcademicYear_Onec"
+           AND current_enrollment."Semester_Onec" = a."Semester_Onec"
+           AND current_enrollment.deleted_at IS NULL
+          WHERE a.student_uuid IS NOT NULL
+            AND a.session_kind = 'DAILY'
+            AND a."AttendanceDate"::date <= $1::date
+        ),
+        term_summary AS (
+          SELECT
+            student_uuid,
+            COUNT(*) FILTER (WHERE attendance_status = 2)::int AS absent_days,
+            ROUND(
+              (COUNT(*) FILTER (WHERE attendance_status <> 2)::numeric / NULLIF(COUNT(*), 0)) * 100
+            )::int AS attendance_percent
+          FROM daily_term_attendance
+          GROUP BY student_uuid
+        ),
+        term_absence_candidates AS (
+          SELECT
+            'TERM_ABSENCE_ACCUMULATION'::text AS signal_code,
+            student_uuid,
+            absent_days AS metric_value,
+            $7::int AS threshold_value,
+            NULL::int AS subject_id,
+            NULL::text AS subject_name_th,
+            NULL::text AS subject_code
+          FROM term_summary
+          WHERE absent_days >= $7
+        ),
+        low_attendance_candidates AS (
+          SELECT
+            'LOW_ATTENDANCE_PERCENT'::text AS signal_code,
+            student_uuid,
+            attendance_percent AS metric_value,
+            $8::int AS threshold_value,
+            NULL::int AS subject_id,
+            NULL::text AS subject_name_th,
+            NULL::text AS subject_code
+          FROM term_summary
+          WHERE attendance_percent < $8
+        ),
+        candidates AS (
+          SELECT * FROM mixed_candidates
+          UNION ALL
+          SELECT * FROM subject_streak_candidates
+          UNION ALL
+          SELECT * FROM subject_percent_candidates
+          UNION ALL
+          SELECT * FROM term_absence_candidates
+          UNION ALL
+          SELECT * FROM low_attendance_candidates
+        )
+        SELECT
+          candidates.signal_code,
+          candidates.student_uuid,
+          candidates.metric_value,
+          candidates.threshold_value,
+          candidates.subject_id,
+          candidates.subject_name_th,
+          candidates.subject_code,
+          s."FirstName_Onec" AS first_name_onec,
+          s."LastName_Onec" AS last_name_onec,
+          s."SchoolID_Onec" AS school_id_onec,
+          s."VillageNumber_Onec" AS village_number_onec,
+          s."Street_Onec" AS street_onec,
+          s."Soi_Onec" AS soi_onec,
+          s."SubDistrictNameThai_Onec" AS sub_district_name_thai_onec,
+          s."DistrictNameThai_Onec" AS district_name_thai_onec,
+          s."ProvinceNameThai_Onec" AS province_name_thai_onec,
+          s."GradeLevelID_Onec" AS grade_level_id_onec,
+          s."RoomID_Onec" AS room_id_onec,
+          sc.name AS school_name
+        FROM candidates
+        JOIN student_term s ON s.student_uuid = candidates.student_uuid
+        LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        WHERE s.deleted_at IS NULL
+        ORDER BY candidates.student_uuid, candidates.signal_code, candidates.metric_value DESC
+      `,
+      [
+        input.asOfDate,
+        input.mixedWindowDays,
+        input.mixedAbsenceDays,
+        input.avoidanceWindowDays,
+        input.avoidanceConsecutivePeriods,
+        input.avoidanceAbsentPercent,
+        input.termAbsenceDays,
+        input.highAttendancePercent,
+      ],
+    );
+
+    return result.rows;
+  }
+
+  async listSubjectLateWatchCandidates(
+    input: { asOfDate: string; lateWindowDays: number; lateWatchCount: number },
+    executor?: QueryExecutor,
+  ): Promise<SubjectLateWatchRow[]> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<SubjectLateWatchRow>(
+      `
+        WITH late_counts AS (
+          SELECT
+            a.student_uuid,
+            COUNT(*)::int AS late_count
+          FROM attendance a
+          JOIN attendance_sessions sess ON sess.id = a.session_id
+          WHERE a.student_uuid IS NOT NULL
+            AND a.session_kind = 'SUBJECT'
+            AND a."AttendanceStatus" = 3
+            AND sess.session_kind = 'SUBJECT'
+            AND sess.status = 'SUBMITTED'
+            AND sess.deleted_at IS NULL
+            AND a."AttendanceDate"::date <= $1::date
+            AND a."AttendanceDate"::date >= $1::date - (($2::int - 1) * INTERVAL '1 day')
+          GROUP BY a.student_uuid
+          HAVING COUNT(*) >= $3
+        )
+        SELECT
+          late_counts.student_uuid,
+          late_counts.late_count,
+          $3::int AS threshold_value,
+          s."FirstName_Onec" AS first_name_onec,
+          s."LastName_Onec" AS last_name_onec,
+          s."SchoolID_Onec" AS school_id_onec,
+          s."GradeLevelID_Onec" AS grade_level_id_onec,
+          s."RoomID_Onec" AS room_id_onec,
+          sc.name AS school_name
+        FROM late_counts
+        JOIN student_term s ON s.student_uuid = late_counts.student_uuid
+        LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        WHERE s.deleted_at IS NULL
+        ORDER BY late_counts.late_count DESC, late_counts.student_uuid
+      `,
+      [input.asOfDate, input.lateWindowDays, input.lateWatchCount],
+    );
+    return result.rows;
+  }
+
+  async hasRiskWatchNotification(refId: string, executor?: QueryExecutor): Promise<boolean> {
+    const queryExecutor = this.getExecutor(executor);
+    const result = await queryExecutor.query<{ id: string }>(
+      `
+        SELECT id
+        FROM notifications
+        WHERE type_code = $2
+          AND ref_entity = $3
+          AND ref_id = $1
+        LIMIT 1
+      `,
+      [refId, STUDENT_RISK_WATCH_NOTIFICATION_TYPE, STUDENT_RISK_WATCH_REF_ENTITY],
+    );
+    return result.rows.length > 0;
   }
 }

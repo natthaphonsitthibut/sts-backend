@@ -22,6 +22,7 @@ export interface SystemSettingCatalogEntry {
  * values are validated against the entry before they reach the database.
  */
 const GROUP_CASE_RISK = 'เกณฑ์เปิดเคสและระดับความเสี่ยง (นับวันเรียนที่ขาดติดต่อกัน)';
+const GROUP_SUBJECT_RISK = 'เกณฑ์ความเสี่ยงจากเช็คชื่อรายวิชา';
 const GROUP_CASE_SLA = 'กำหนดเวลาดำเนินการเคส (SLA)';
 const GROUP_ABSENCE_MONITOR = 'รอบการตรวจขาดเรียนอัตโนมัติ';
 
@@ -55,6 +56,87 @@ export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
     group: GROUP_CASE_RISK,
     description:
       'จำนวนวันขาดเรียนติดต่อกันที่จัดเป็นความเสี่ยงสูง — เคสที่เปิดอยู่จะถูกปรับระดับขึ้นอัตโนมัติเมื่อขาดถึงเกณฑ์นี้',
+  },
+  {
+    key: 'SUBJECT_RISK_MIXED_ABSENCE_WINDOW_DAYS',
+    valueType: 'integer',
+    defaultValue: '7',
+    min: 1,
+    max: 365,
+    group: GROUP_SUBJECT_RISK,
+    description: 'ช่วงวันย้อนหลังสำหรับตรวจโดดคาบแบบมาเรียนบางคาบและขาดบางคาบในวันเดียวกัน',
+  },
+  {
+    key: 'SUBJECT_RISK_MIXED_ABSENCE_DAYS',
+    valueType: 'integer',
+    defaultValue: '3',
+    min: 1,
+    max: 365,
+    group: GROUP_SUBJECT_RISK,
+    description: 'จำนวนวันที่พบการมาเรียนบางคาบแต่ขาดบางคาบในช่วงที่กำหนด ก่อนเปิดเคสระดับปานกลาง',
+  },
+  {
+    key: 'SUBJECT_RISK_AVOIDANCE_WINDOW_DAYS',
+    valueType: 'integer',
+    defaultValue: '30',
+    min: 1,
+    max: 365,
+    group: GROUP_SUBJECT_RISK,
+    description: 'ช่วงวันย้อนหลังสำหรับตรวจรูปแบบเลี่ยงวิชาเดิม',
+  },
+  {
+    key: 'SUBJECT_RISK_AVOIDANCE_CONSECUTIVE_PERIODS',
+    valueType: 'integer',
+    defaultValue: '3',
+    min: 1,
+    max: 365,
+    group: GROUP_SUBJECT_RISK,
+    description: 'จำนวนคาบติดกันของวิชาเดียวกันที่ขาด ก่อนเปิดเคสระดับปานกลาง',
+  },
+  {
+    key: 'SUBJECT_RISK_AVOIDANCE_ABSENT_PERCENT',
+    valueType: 'integer',
+    defaultValue: '30',
+    min: 1,
+    max: 100,
+    group: GROUP_SUBJECT_RISK,
+    description: 'เปอร์เซ็นต์คาบที่ขาดในวิชาเดียวกันภายในช่วงที่กำหนด ก่อนเปิดเคสระดับปานกลาง',
+  },
+  {
+    key: 'SUBJECT_RISK_LATE_WINDOW_DAYS',
+    valueType: 'integer',
+    defaultValue: '30',
+    min: 1,
+    max: 365,
+    group: GROUP_SUBJECT_RISK,
+    description: 'ช่วงวันย้อนหลังสำหรับตรวจการมาสายจากเช็คชื่อรายวิชา',
+  },
+  {
+    key: 'SUBJECT_RISK_LATE_WATCH_COUNT',
+    valueType: 'integer',
+    defaultValue: '5',
+    min: 1,
+    max: 365,
+    group: GROUP_SUBJECT_RISK,
+    description: 'จำนวนครั้งที่มาสายในช่วงที่กำหนด ก่อนแจ้งเตือนเฝ้าระวังโดยไม่เปิดเคส',
+  },
+  {
+    key: 'CASE_RISK_TERM_ABSENCE_DAYS',
+    valueType: 'integer',
+    defaultValue: '7',
+    min: 1,
+    max: 365,
+    group: GROUP_SUBJECT_RISK,
+    description: 'จำนวนวันขาดสะสมต่อเทอมที่เปิดเคสระดับปานกลาง',
+  },
+  {
+    key: 'CASE_RISK_HIGH_ATTENDANCE_PERCENT',
+    valueType: 'integer',
+    defaultValue: '80',
+    min: 1,
+    max: 100,
+    group: GROUP_SUBJECT_RISK,
+    description: 'เปอร์เซ็นต์เวลาเรียนต่ำกว่าเกณฑ์นี้ให้เปิดเคสระดับสูง',
   },
   {
     key: 'CASE_SLA_HIGH_DAYS',

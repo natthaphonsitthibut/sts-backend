@@ -32,10 +32,11 @@ export class RiskProfileRepository {
   }
 
   async getRiskThresholds(): Promise<RiskDashboardThresholds> {
-    const [low, medium, high] = await Promise.all([
+    const [low, medium, high, highAttendancePercent] = await Promise.all([
       this.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
       this.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
       this.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
+      this.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
     ]);
 
     return {
@@ -51,6 +52,10 @@ export class RiskProfileRepository {
       highConsecutiveAbsentDays: this.parsePositiveInteger(
         high,
         DEFAULT_RISK_PROFILE_THRESHOLDS.highConsecutiveAbsentDays,
+      ),
+      highAttendancePercent: this.parsePositiveInteger(
+        highAttendancePercent,
+        DEFAULT_RISK_PROFILE_THRESHOLDS.highAttendancePercent,
       ),
     };
   }

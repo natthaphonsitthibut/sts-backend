@@ -875,7 +875,8 @@ export const NOTIFICATION_TABLES_SQL = `
     ('IMPORT_FAILED', 'นำเข้าข้อมูลไม่สำเร็จ', 'import-data', 60),
     ('STUDENT_ACCOUNT_BATCH_COMPLETED', 'สร้างบัญชีนักเรียนเสร็จแล้ว', 'manage-student-accounts', 70),
     ('STUDENT_ACCOUNT_BATCH_FAILED', 'สร้างบัญชีนักเรียนไม่สำเร็จ', 'manage-student-accounts', 80),
-    ('CASE_RISK_ESCALATED', 'เคสถูกยกระดับความเสี่ยง', 'review-cases', 150)
+    ('CASE_RISK_ESCALATED', 'เคสถูกยกระดับความเสี่ยง', 'review-cases', 150),
+    ('STUDENT_RISK_WATCH', 'นักเรียนเข้าเกณฑ์เฝ้าระวัง', 'review-cases', 160)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS notifications (

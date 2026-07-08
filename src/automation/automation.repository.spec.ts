@@ -146,4 +146,74 @@ describe('AutomationRepository', () => {
 
     expect(queries[0].sql).toContain('SELECT id, student_name, student_uuid, school_id');
   });
+
+  it('queries subject risk candidates from subject rows without mixing daily and subject signals', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = {
+      createQueryRunner: jest.fn(() => queryRunner),
+    };
+    const repository = new AutomationRepository(dataSource as never);
+
+    await repository.listSubjectRiskCandidates({
+      asOfDate: '2026-07-08',
+      mixedWindowDays: 7,
+      mixedAbsenceDays: 3,
+      avoidanceWindowDays: 30,
+      avoidanceConsecutivePeriods: 3,
+      avoidanceAbsentPercent: 30,
+      termAbsenceDays: 7,
+      highAttendancePercent: 80,
+    });
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].params).toEqual(['2026-07-08', 7, 3, 30, 3, 30, 7, 80]);
+    expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
+    expect(queries[0].sql).toContain("sess.session_kind = 'SUBJECT'");
+    expect(queries[0].sql).toContain("a.session_kind = 'DAILY'");
+    expect(queries[0].sql).toContain('MIXED_SUBJECT_ABSENCE');
+    expect(queries[0].sql).toContain('LOW_ATTENDANCE_PERCENT');
+  });
+
+  it('deduplicates active attendance-risk cases using the approved reason families', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return {
+          records: [{ id: 44, risk_tier: 'MEDIUM', reason_flagged: 'โดดคาบ' }],
+          affected: 1,
+        };
+      }),
+    };
+    const dataSource = {
+      createQueryRunner: jest.fn(() => queryRunner),
+    };
+    const repository = new AutomationRepository(dataSource as never);
+
+    const result = await repository.findActiveAttendanceRiskCaseByStudent(
+      'student-uuid-1',
+      'สมชาย ใจดี',
+      10010002,
+    );
+
+    expect(result).toEqual({ id: 44, risk_tier: 'MEDIUM', reason_flagged: 'โดดคาบ' });
+    expect(queries[0].sql).toContain('reason_flagged LIKE ANY($5::text[])');
+    expect(queries[0].params?.[4]).toEqual([
+      'ขาดเรียนติดต่อกัน%',
+      'โดดคาบ%',
+      'เลี่ยงวิชา%',
+      'ขาดสะสมต่อเทอม%',
+      'เวลาเรียนต่ำกว่า%',
+    ]);
+  });
 });
