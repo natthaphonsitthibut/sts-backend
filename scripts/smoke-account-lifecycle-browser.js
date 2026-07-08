@@ -348,7 +348,7 @@ async function upsertUser(
             deactivation_reason_code = NULL,
             deactivation_note = NULL,
             affiliation = 'Automated account lifecycle browser smoke',
-            data_origin_code = 'DEMO',
+            data_origin_code = 'AUTOMATED_TEST',
             email = NULL,
             phone = NULL
         WHERE id = $1
@@ -372,7 +372,7 @@ async function upsertUser(
         username, password, "FirstName", "LastName", status, permissions, role,
         data_scope, must_change_password, affiliation, data_origin_code, email, phone
       )
-      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, FALSE, $8, 'DEMO', NULL, NULL)
+      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, FALSE, $8, 'AUTOMATED_TEST', NULL, NULL)
       RETURNING id
     `,
     [
