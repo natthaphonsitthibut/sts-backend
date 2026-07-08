@@ -11,14 +11,13 @@ import {
   Logger,
   Req,
 } from '@nestjs/common';
-import type { ConfigType } from '@nestjs/config';
 import type { Request } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { TaskService } from './task.service';
 import { Public } from '../auth';
-import { appConfig } from '../config/app.config';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { processVisitPhoto } from '../common/file-upload/visit-photo.util';
+import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
 import { getHeaderValue } from './task.types';
 
 @Public()
@@ -28,8 +27,8 @@ export class SubmissionController {
 
   constructor(
     private readonly taskService: TaskService,
-    @Inject(appConfig.KEY)
-    private readonly runtimeConfig: ConfigType<typeof appConfig>,
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage: FileStorageAdapter,
   ) {}
 
   private parseOptionalNumber(value?: string): number | null {
@@ -58,9 +57,7 @@ export class SubmissionController {
     // server-generated. Raw uploads stay in memory and are never written as-is.
     const photoPaths = files?.length
       ? await Promise.all(
-          files.map(
-            async (f) => `/uploads/${await processVisitPhoto(f, this.runtimeConfig.uploadsDir)}`,
-          ),
+          files.map(async (f) => `/uploads/${await processVisitPhoto(f, this.storage)}`),
         )
       : [];
 

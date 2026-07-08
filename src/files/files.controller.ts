@@ -8,12 +8,10 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import type { ConfigType } from '@nestjs/config';
 import type { Response } from 'express';
-import { existsSync } from 'fs';
-import { basename, join, resolve, sep } from 'path';
+import { basename } from 'path';
 import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
-import { appConfig } from '../config/app.config';
+import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from './storage/file-storage.types';
 
 // Visit-report uploads are sensitive minor PII (home-visit photos). They used to
 // be served as public static files (anyone with the URL, no login). This guarded
@@ -25,29 +23,30 @@ import { appConfig } from '../config/app.config';
 @Controller('uploads')
 export class FilesController {
   constructor(
-    @Inject(appConfig.KEY)
-    private readonly runtimeConfig: ConfigType<typeof appConfig>,
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage: FileStorageAdapter,
   ) {}
 
   @Get(':filename')
-  getUpload(@Param('filename') filename: string, @Res() res: Response): void {
+  async getUpload(@Param('filename') filename: string, @Res() res: Response): Promise<void> {
     // Reject anything that is not a bare, safe filename (path-traversal defense).
+    // Done here, before the adapter, since the local-disk adapter's own check
+    // still relies on the caller having already ruled out traversal attempts.
     const safeName = basename(filename);
     if (safeName !== filename || !/^[A-Za-z0-9._-]+$/.test(safeName) || safeName.includes('..')) {
       throw new BadRequestException('Invalid file name');
     }
 
-    const baseDir = resolve(this.runtimeConfig.uploadsDir);
-    const fullPath = resolve(join(baseDir, safeName));
-    // Belt-and-suspenders: the resolved path must stay inside the uploads dir.
-    if (fullPath !== join(baseDir, safeName) && !fullPath.startsWith(baseDir + sep)) {
-      throw new BadRequestException('Invalid file path');
-    }
-
-    if (!existsSync(fullPath)) {
+    const result = await this.storage.resolve(safeName);
+    if (!result) {
       throw new NotFoundException('File not found');
     }
 
-    res.sendFile(fullPath);
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+
+    res.sendFile(result.filePath);
   }
 }

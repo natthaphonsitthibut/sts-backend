@@ -1,8 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
-import { mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
 import sharp from 'sharp';
+import type { FileStorageAdapter } from '../../files/storage/file-storage.types';
 import { detectImageType } from './file-signature.util';
 
 // Process an uploaded home-visit photo before it is persisted:
@@ -11,11 +10,13 @@ import { detectImageType } from './file-signature.util';
 //     — including EXIF GPS, which on a child's home photo is sensitive PII (PDPA).
 //  3. Re-encoding also neutralizes any non-image payload smuggled past the MIME
 //     gate, since sharp fails on input that is not a real image.
-// The raw upload stays in memory (memoryStorage) and is never written to disk, so
-// the original GPS-bearing file never lands on the filesystem.
+// The raw upload stays in memory (memoryStorage) and is never written to disk
+// as-is, so the original GPS-bearing file never lands in storage. Where the
+// re-encoded result is persisted (local disk vs Supabase Storage) is the
+// injected adapter's concern, not this function's.
 export async function processVisitPhoto(
   file: Express.Multer.File,
-  uploadsDir: string,
+  storage: FileStorageAdapter,
 ): Promise<string> {
   const detected = detectImageType(file.buffer);
   if (!detected) {
@@ -42,7 +43,6 @@ export async function processVisitPhoto(
   }
 
   const filename = `${randomBytes(16).toString('hex')}${ext}`;
-  await mkdir(uploadsDir, { recursive: true });
-  await writeFile(join(uploadsDir, filename), output);
+  await storage.save(output, filename);
   return filename;
 }

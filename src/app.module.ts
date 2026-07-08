@@ -10,6 +10,7 @@ import { SettingsModule } from './settings/settings.module';
 import { MasterDataModule } from './master-data/master-data.module';
 import { AutomationModule } from './automation/automation.module';
 import { FilesModule } from './files/files.module';
+import { FileStorageModule } from './files/storage/file-storage.module';
 import { ImportsModule } from './imports/imports.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
@@ -26,6 +27,7 @@ import { emailConfig } from './config/email.config';
 import { geoConfig } from './config/geo.config';
 import { piiConfig } from './config/pii.config';
 import { queueConfig } from './config/queue.config';
+import { storageConfig } from './config/storage.config';
 import { throttleConfig } from './config/throttle.config';
 import { createTypeOrmOptions } from './database/typeorm.config';
 import { GeoModule } from './geo/geo.module';
@@ -50,9 +52,11 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
         geoConfig,
         piiConfig,
         queueConfig,
+        storageConfig,
         throttleConfig,
       ],
     }),
+    FileStorageModule,
     ScheduleModule.forRoot(),
     // IP rate limiting (in-memory store). Limits come from the runtime config
     // (so .env overrides apply), exposed as named throttlers. The guard is
