@@ -60,6 +60,7 @@
     "seed:attendance-anomalies": "node scripts/seed-attendance-anomalies.js",
     "seed:demo-student-status-roster": "node scripts/seed-demo-student-status-roster.js",
     "seed:demo-case-scenarios": "node scripts/seed-demo-case-scenarios.js",
+    "seed:demo-attendance-history": "node scripts/seed-demo-attendance-history.js",
     "commitlint": "commitlint --edit",
     "prepare": "husky",
     "test": "jest",
