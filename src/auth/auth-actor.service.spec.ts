@@ -1,10 +1,9 @@
 import { DataSource } from 'typeorm';
-import * as crypto from 'crypto';
 import { AuthActorService } from './auth-actor.service';
 import { StudentAuthService } from './student-auth.service';
 import { SessionCookieService } from './session-cookie.service';
+import { MagicSessionStoreService } from './magic-session-store.service';
 import type { AuthenticatedRequestUser } from './auth.types';
-import type { AuthRuntimeConfig } from '../config/auth.config';
 
 function buildActor(overrides: Partial<AuthenticatedRequestUser> = {}): AuthenticatedRequestUser {
   return {
@@ -17,17 +16,19 @@ function buildActor(overrides: Partial<AuthenticatedRequestUser> = {}): Authenti
   };
 }
 
-function signMagicSession(payload: Record<string, unknown>, secret: string): string {
-  const serialized = JSON.stringify(payload);
-  const signature = crypto.createHmac('sha256', secret).update(serialized).digest('hex');
-  return `${Buffer.from(serialized).toString('base64')}.${signature}`;
-}
-
 describe('AuthActorService', () => {
   let service: AuthActorService;
+  let dataSource: jest.Mocked<Pick<DataSource, 'createQueryRunner'>>;
+  let queryRunner: {
+    connect: jest.MockedFunction<() => Promise<void>>;
+    query: jest.MockedFunction<
+      (sql: string, params: unknown[] | undefined, structured: boolean) => Promise<unknown>
+    >;
+    release: jest.MockedFunction<() => Promise<void>>;
+  };
   let studentAuthService: jest.Mocked<Pick<StudentAuthService, 'loadVirtualStudentActor'>>;
   let sessionCookieService: jest.Mocked<Pick<SessionCookieService, 'readUserId'>>;
-  const sessionSecret = 'test-session-secret-value';
+  let magicSessionStore: jest.Mocked<Pick<MagicSessionStoreService, 'isVerified'>>;
 
   beforeEach(() => {
     studentAuthService = {
@@ -36,26 +37,23 @@ describe('AuthActorService', () => {
     sessionCookieService = {
       readUserId: jest.fn().mockReturnValue(null),
     };
-
-    const authRuntimeConfig: AuthRuntimeConfig = {
-      jwtSecret: 'test-jwt-secret-value',
-      sessionSecret,
-      magicSessionTtlSeconds: 60,
-      otpTtlSeconds: 60,
-      otpMaxAttempts: 5,
-      otpLockSeconds: 60,
-      cookieName: 'sts_session',
-      cookieSecure: false,
-      cookieSameSite: 'lax',
-      tokenTtlSeconds: 60,
-      thaidMode: 'mock',
+    magicSessionStore = {
+      isVerified: jest.fn().mockResolvedValue(false),
+    };
+    queryRunner = {
+      connect: jest.fn(() => Promise.resolve()),
+      query: jest.fn(() => Promise.resolve({ records: [] })),
+      release: jest.fn(() => Promise.resolve()),
+    };
+    dataSource = {
+      createQueryRunner: jest.fn().mockReturnValue(queryRunner),
     };
 
     service = new AuthActorService(
-      {} as DataSource,
+      dataSource as unknown as DataSource,
       studentAuthService as unknown as StudentAuthService,
       sessionCookieService as unknown as SessionCookieService,
-      authRuntimeConfig,
+      magicSessionStore as unknown as MagicSessionStoreService,
     );
   });
 
@@ -161,63 +159,39 @@ describe('AuthActorService', () => {
     expect(studentAuthService.loadVirtualStudentActor).not.toHaveBeenCalled();
   });
 
-  it('accepts a signed magic session within the configured TTL', () => {
-    const token = signMagicSession(
-      { link_id: 'link-1', verified: true, ts: Date.now() },
-      sessionSecret,
-    );
+  it('uses the shared magic session store for OTP-gated magic login actors', async () => {
+    magicSessionStore.isVerified.mockResolvedValue(true);
+    queryRunner.query.mockResolvedValue({
+      records: [
+        {
+          id: 'link-1',
+          assigned_to_email: 'teacher@example.test',
+          login_role: 'TEACHER',
+          login_permissions: ['home'],
+          role_default_permissions: [],
+          login_data_scope: { school_ids: [10010002] },
+          otp_verified: 0,
+          expires_at: '2999-01-01T00:00:00.000Z',
+          admin_locked: 0,
+          status: 'ACTIVE',
+          task_type: 'LOGIN',
+        },
+      ],
+    });
 
-    expect(
-      (
-        service as unknown as {
-          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
-        }
-      ).isMagicSessionVerified('link-1', token),
-    ).toBe(true);
-  });
+    const actor = await service.loadOptionalUser({
+      headers: {
+        'x-magic-link-token': 'public-token',
+        'x-magic-session': 'session-token',
+      },
+      session: {},
+    });
 
-  it('rejects expired magic sessions', () => {
-    const token = signMagicSession(
-      { link_id: 'link-1', verified: true, ts: Date.now() - 61_000 },
-      sessionSecret,
-    );
-
-    expect(
-      (
-        service as unknown as {
-          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
-        }
-      ).isMagicSessionVerified('link-1', token),
-    ).toBe(false);
-  });
-
-  it('rejects future-dated magic sessions', () => {
-    const token = signMagicSession(
-      { link_id: 'link-1', verified: true, ts: Date.now() + 1_000 },
-      sessionSecret,
-    );
-
-    expect(
-      (
-        service as unknown as {
-          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
-        }
-      ).isMagicSessionVerified('link-1', token),
-    ).toBe(false);
-  });
-
-  it('rejects magic sessions with an invalid signature', () => {
-    const token = signMagicSession(
-      { link_id: 'link-1', verified: true, ts: Date.now() },
-      'different-secret',
-    );
-
-    expect(
-      (
-        service as unknown as {
-          isMagicSessionVerified: (linkId: string, token?: string) => boolean;
-        }
-      ).isMagicSessionVerified('link-1', token),
-    ).toBe(false);
+    expect(actor).toMatchObject({
+      username: 'teacher@example.test',
+      virtual_login: true,
+      auth_source: 'MAGIC_LINK',
+    });
+    expect(magicSessionStore.isVerified).toHaveBeenCalledWith('link-1', 'session-token');
   });
 });

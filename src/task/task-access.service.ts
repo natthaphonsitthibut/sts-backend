@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -24,6 +25,7 @@ import {
   resolveLimit,
   resolvePage,
 } from '../common/pagination/pagination.util';
+import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 
 function maskName(name: string | null | undefined): string {
   if (!name) return '-';
@@ -49,11 +51,8 @@ export class TaskAccessService {
     private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
     @Inject(emailConfig.KEY)
     private readonly emailRuntimeConfig: ConfigType<typeof emailConfig>,
+    private readonly magicSessionStore: MagicSessionStoreService,
   ) {}
-
-  private get magicSessionSecret(): string {
-    return this.authRuntimeConfig.sessionSecret;
-  }
 
   async getTaskByToken(token: string, sessionToken?: string) {
     const tokenHash = hashToken(token);
@@ -93,7 +92,7 @@ export class TaskAccessService {
     const hasEmailForOtp =
       typeof link.assigned_to_email === 'string' && link.assigned_to_email.trim().length > 0;
     const sessionVerified = !link.otp_verified
-      ? this.isMagicSessionVerified(String(link.id), sessionToken)
+      ? await this.magicSessionStore.isVerified(String(link.id), sessionToken)
       : false;
 
     // OTP is gated on email actually being deliverable — both the transport
@@ -369,14 +368,11 @@ export class TaskAccessService {
     if (result.outcome === 'wrong') {
       throw new BadRequestException('รหัส OTP ไม่ถูกต้อง');
     }
+    if (!result.linkId) {
+      throw new InternalServerErrorException('ไม่สามารถยืนยัน OTP ได้');
+    }
 
-    const payload = JSON.stringify({
-      link_id: result.linkId,
-      verified: true,
-      ts: Date.now(),
-    });
-    const sign = crypto.createHmac('sha256', this.magicSessionSecret).update(payload).digest('hex');
-    const sessionToken = `${Buffer.from(payload).toString('base64')}.${sign}`;
+    const sessionToken = await this.magicSessionStore.issue(result.linkId);
 
     return { success: true, session_token: sessionToken };
   }
@@ -574,53 +570,6 @@ export class TaskAccessService {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`getAdminLinkDetail error: ${message}`);
       throw err;
-    }
-  }
-
-  private isMagicSessionVerified(linkId: string, sessionToken?: string): boolean {
-    if (!sessionToken) {
-      return false;
-    }
-
-    try {
-      const [base64Payload, signature] = sessionToken.split('.');
-      const payload = Buffer.from(base64Payload, 'base64').toString('utf-8');
-      const expectedSignature = crypto
-        .createHmac('sha256', this.magicSessionSecret)
-        .update(payload)
-        .digest('hex');
-
-      // Constant-time compare to avoid leaking the signature via timing.
-      const expectedBuf = Buffer.from(expectedSignature);
-      const providedBuf = Buffer.from(signature ?? '');
-      if (
-        expectedBuf.length !== providedBuf.length ||
-        !crypto.timingSafeEqual(expectedBuf, providedBuf)
-      ) {
-        return false;
-      }
-
-      const data = JSON.parse(payload) as {
-        link_id?: string;
-        verified?: boolean;
-        ts?: number;
-      };
-      if (data.link_id !== linkId || data.verified !== true) {
-        return false;
-      }
-
-      // Expire the session so a single OTP does not grant access for the link's
-      // entire lifetime — re-verification is required after the configured TTL.
-      const issuedAt = typeof data.ts === 'number' ? data.ts : 0;
-      const ageMs = Date.now() - issuedAt;
-      const ttlMs = this.authRuntimeConfig.magicSessionTtlSeconds * 1000;
-      if (!Number.isFinite(issuedAt) || issuedAt <= 0 || ageMs > ttlMs || ageMs < 0) {
-        return false;
-      }
-
-      return true;
-    } catch {
-      return false;
     }
   }
 

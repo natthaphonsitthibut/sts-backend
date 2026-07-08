@@ -35,6 +35,8 @@ import { FieldFollowersModule } from './field-followers/field-followers.module';
 import { VisitWorkSessionsModule } from './visit-work-sessions/visit-work-sessions.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { TimetableModule } from './timetable/timetable.module';
+import { RedisModule } from './redis/redis.module';
+import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
 
 @Module({
   imports: [
@@ -57,9 +59,11 @@ import { TimetableModule } from './timetable/timetable.module';
     // applied per-route via the Throttle* decorators (throttle.decorators.ts),
     // not globally, so only the sensitive credential endpoints are throttled.
     ThrottlerModule.forRootAsync({
-      inject: [throttleConfig.KEY],
-      useFactory: (config: ConfigType<typeof throttleConfig>) => ({
+      imports: [RedisModule],
+      inject: [throttleConfig.KEY, RedisThrottlerStorage],
+      useFactory: (config: ConfigType<typeof throttleConfig>, storage: RedisThrottlerStorage) => ({
         errorMessage: 'คำขอมากเกินไป กรุณาลองใหม่อีกครั้งภายหลัง',
+        storage,
         throttlers: [
           { name: 'login', ttl: config.login.ttlMs, limit: config.login.limit },
           { name: 'otpRequest', ttl: config.otpRequest.ttlMs, limit: config.otpRequest.limit },

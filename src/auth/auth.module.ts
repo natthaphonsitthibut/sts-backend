@@ -8,10 +8,13 @@ import { AuthActorService } from './auth-actor.service';
 import { StudentAuthService } from './student-auth.service';
 import { SessionCookieService } from './session-cookie.service';
 import { authConfig } from '../config/auth.config';
+import { RedisModule } from '../redis/redis.module';
+import { MagicSessionStoreService } from './magic-session-store.service';
 
 @Global()
 @Module({
   imports: [
+    RedisModule,
     JwtModule.registerAsync({
       inject: [authConfig.KEY],
       useFactory: (config: ConfigType<typeof authConfig>) => ({
@@ -26,6 +29,7 @@ import { authConfig } from '../config/auth.config';
     AuthActorService,
     StudentAuthService,
     SessionCookieService,
+    MagicSessionStoreService,
     AuthGuard,
     PermissionsGuard,
     RolesGuard,
@@ -36,6 +40,7 @@ import { authConfig } from '../config/auth.config';
     AuthActorService,
     StudentAuthService,
     SessionCookieService,
+    MagicSessionStoreService,
     AuthGuard,
     PermissionsGuard,
     RolesGuard,

@@ -2,6 +2,7 @@ import type { AuthRuntimeConfig } from '../config/auth.config';
 import type { EmailRuntimeConfig } from '../config/email.config';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from './email.service';
+import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 import { TaskAccessService } from './task-access.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
@@ -16,6 +17,7 @@ describe('TaskAccessService login-link usage', () => {
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let magicSessionStore: jest.Mocked<Pick<MagicSessionStoreService, 'issue' | 'isVerified'>>;
 
   beforeEach(() => {
     taskRepository = {
@@ -39,6 +41,10 @@ describe('TaskAccessService login-link usage', () => {
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
     };
+    magicSessionStore = {
+      issue: jest.fn().mockResolvedValue('session-token'),
+      isVerified: jest.fn().mockResolvedValue(false),
+    };
 
     service = new TaskAccessService(
       taskRepository as unknown as TaskRepository,
@@ -50,6 +56,7 @@ describe('TaskAccessService login-link usage', () => {
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
       { enabled: false, user: '' } as EmailRuntimeConfig,
+      magicSessionStore as unknown as MagicSessionStoreService,
     );
   });
 
@@ -139,6 +146,10 @@ describe('TaskAccessService attendance link slots', () => {
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
       { enabled: false, user: '' } as EmailRuntimeConfig,
+      {
+        issue: jest.fn().mockResolvedValue('session-token'),
+        isVerified: jest.fn().mockResolvedValue(false),
+      } as unknown as MagicSessionStoreService,
     );
   });
 
@@ -157,6 +168,58 @@ describe('TaskAccessService attendance link slots', () => {
       ],
     });
     expect(taskRepository.listLinkedTimetableSlots).toHaveBeenCalledWith('link-1');
+  });
+});
+
+describe('TaskAccessService OTP sessions', () => {
+  let service: TaskAccessService;
+  let taskRepository: jest.Mocked<
+    Pick<TaskRepository, 'withTransaction' | 'findOtpLinkByTokenHashForUpdate' | 'clearOtpAttempts'>
+  >;
+  let magicSessionStore: jest.Mocked<Pick<MagicSessionStoreService, 'issue' | 'isVerified'>>;
+
+  beforeEach(() => {
+    taskRepository = {
+      withTransaction: jest.fn(
+        async (callback: (executor: unknown) => Promise<unknown>) => await callback({}),
+      ),
+      findOtpLinkByTokenHashForUpdate: jest.fn().mockResolvedValue({
+        id: 'link-1',
+        otp_code: '123456',
+        otp_expires_at: '2999-01-01T00:00:00.000Z',
+        otp_locked_until: null,
+      }),
+      clearOtpAttempts: jest.fn().mockResolvedValue(undefined),
+    };
+    magicSessionStore = {
+      issue: jest.fn().mockResolvedValue('stored-session-token'),
+      isVerified: jest.fn().mockResolvedValue(false),
+    };
+
+    service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      {} as EmailService,
+      {} as AuditLogService,
+      {
+        sessionSecret: 'test-session-secret-at-least-16-chars',
+        magicSessionTtlSeconds: 21_600,
+        otpTtlSeconds: 600,
+        otpMaxAttempts: 5,
+        otpLockSeconds: 900,
+      } as AuthRuntimeConfig,
+      { enabled: false, user: '' } as EmailRuntimeConfig,
+      magicSessionStore as unknown as MagicSessionStoreService,
+    );
+  });
+
+  it('issues the verified magic session through the shared store', async () => {
+    await expect(service.verifyOtp('public-token', '123456')).resolves.toEqual({
+      success: true,
+      session_token: 'stored-session-token',
+    });
+    expect(taskRepository.clearOtpAttempts).toHaveBeenCalledWith('link-1', {});
+    expect(magicSessionStore.issue).toHaveBeenCalledWith('link-1');
   });
 });
 
@@ -210,6 +273,10 @@ describe('TaskAccessService admin link audit', () => {
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
       { enabled: false, user: '' } as EmailRuntimeConfig,
+      {
+        issue: jest.fn().mockResolvedValue('session-token'),
+        isVerified: jest.fn().mockResolvedValue(false),
+      } as unknown as MagicSessionStoreService,
     );
   });
 

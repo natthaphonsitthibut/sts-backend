@@ -1,5 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
-import type { ConfigType } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { hashToken } from '../common/utils/helpers';
 import { queryDataSource } from '../database/sql-query';
@@ -8,10 +7,9 @@ import {
   type AuthenticatedRequestUser,
   type RequestWithUser,
 } from './auth.types';
-import * as crypto from 'crypto';
 import { StudentAuthService } from './student-auth.service';
 import { SessionCookieService } from './session-cookie.service';
-import { authConfig } from '../config/auth.config';
+import { MagicSessionStoreService } from './magic-session-store.service';
 
 interface QueryResult<T extends Record<string, unknown>> {
   rows: T[];
@@ -73,8 +71,7 @@ export class AuthActorService {
     private readonly dataSource: DataSource,
     private readonly studentAuthService: StudentAuthService,
     private readonly sessionCookieService: SessionCookieService,
-    @Inject(authConfig.KEY)
-    private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
+    private readonly magicSessionStore: MagicSessionStoreService,
   ) {}
 
   async loadRequiredUser(
@@ -172,51 +169,6 @@ export class AuthActorService {
     }
   }
 
-  private isMagicSessionVerified(linkId: string, sessionToken?: string): boolean {
-    if (!sessionToken) {
-      return false;
-    }
-
-    try {
-      const [base64Payload, signature] = sessionToken.split('.');
-      const payload = Buffer.from(base64Payload, 'base64').toString('utf-8');
-      const expectedSign = crypto
-        .createHmac('sha256', this.authRuntimeConfig.sessionSecret)
-        .update(payload)
-        .digest('hex');
-
-      const expectedBuf = Buffer.from(expectedSign);
-      const providedBuf = Buffer.from(signature ?? '');
-      if (
-        expectedBuf.length !== providedBuf.length ||
-        !crypto.timingSafeEqual(expectedBuf, providedBuf)
-      ) {
-        return false;
-      }
-
-      const data = JSON.parse(payload) as {
-        link_id?: string;
-        verified?: boolean;
-        ts?: number;
-      };
-
-      if (data.link_id !== linkId || data.verified !== true) {
-        return false;
-      }
-
-      const issuedAt = typeof data.ts === 'number' ? data.ts : 0;
-      const ageMs = Date.now() - issuedAt;
-      const ttlMs = this.authRuntimeConfig.magicSessionTtlSeconds * 1000;
-      if (!Number.isFinite(issuedAt) || issuedAt <= 0 || ageMs > ttlMs || ageMs < 0) {
-        return false;
-      }
-
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   private buildVirtualUserId(linkId: string): number {
     const parsed = Number.parseInt(hashToken(linkId).slice(0, 8), 16);
     return Number.isFinite(parsed) && parsed > 0 ? -parsed : -1;
@@ -275,7 +227,11 @@ export class AuthActorService {
         typeof row.assigned_to_email === 'string' && row.assigned_to_email.trim().length > 0;
       const otpVerified = row.otp_verified === true || row.otp_verified === 1;
 
-      if (hasEmailForOtp && !otpVerified && !this.isMagicSessionVerified(row.id, sessionToken)) {
+      if (
+        hasEmailForOtp &&
+        !otpVerified &&
+        !(await this.magicSessionStore.isVerified(row.id, sessionToken))
+      ) {
         return null;
       }
 
