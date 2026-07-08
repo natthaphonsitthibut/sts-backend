@@ -290,6 +290,8 @@ export class AttendanceOperationsService {
     page: number,
     limit: number,
     actor?: AuthenticatedRequestUser,
+    gradeLevelId?: number,
+    room?: number,
   ) {
     const term = await this.getTerm(termId);
     await this.assertSchoolAccess(term.school_id, actor);
@@ -319,6 +321,8 @@ export class AttendanceOperationsService {
       resolveActorDataScope(actor),
       page,
       limit,
+      gradeLevelId,
+      room,
     );
     return {
       rows: result.rows.map((row) => ({
@@ -345,6 +349,8 @@ export class AttendanceOperationsService {
     page: number,
     limit: number,
     actor?: AuthenticatedRequestUser,
+    gradeLevelId?: number,
+    room?: number,
   ) {
     const term = await this.getTerm(termId);
     await this.assertSchoolAccess(term.school_id, actor);
@@ -356,6 +362,8 @@ export class AttendanceOperationsService {
       resolveActorDataScope(actor),
       page,
       limit,
+      gradeLevelId,
+      room,
     );
     return {
       rows: result.rows.map((row) => ({

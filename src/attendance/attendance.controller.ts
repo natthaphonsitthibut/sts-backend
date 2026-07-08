@@ -256,6 +256,8 @@ export class AttendanceController {
       resolvePage(query.page),
       resolveLimit(query.limit),
       actor,
+      query.gradeLevelId,
+      query.room,
     );
   }
 
@@ -271,6 +273,8 @@ export class AttendanceController {
       resolvePage(query.page),
       resolveLimit(query.limit),
       actor,
+      query.gradeLevelId,
+      query.room,
     );
   }
 }

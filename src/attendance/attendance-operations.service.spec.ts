@@ -159,6 +159,8 @@ describe('AttendanceOperationsService', () => {
       expect.objectContaining({ school_ids: [10010002], grade_levels: [3] }),
       1,
       20,
+      undefined,
+      undefined,
     );
     expect(result.rows).toEqual([
       expect.objectContaining({

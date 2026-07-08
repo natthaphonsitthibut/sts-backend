@@ -730,6 +730,8 @@ export class AttendanceOperationsRepository {
     scope: DataScope | undefined,
     page: number,
     limit: number,
+    gradeLevelId?: number,
+    room?: number,
   ): Promise<{
     rows: AttendanceReconciliationRow[];
     totalCount: number;
@@ -759,6 +761,14 @@ export class AttendanceOperationsRepository {
         conditions.push(`(${scoped.sql})`);
         pushParams(params, scoped.params);
       }
+    }
+    if (gradeLevelId) {
+      params.push(gradeLevelId);
+      conditions.push(`s."GradeLevelID_Onec" = $${params.length}`);
+    }
+    if (room) {
+      params.push(room);
+      conditions.push(`s."RoomID_Onec"::int = $${params.length}`);
     }
     const rosterSql = `
       SELECT s."GradeLevelID_Onec" AS grade_level_id,
@@ -860,6 +870,8 @@ export class AttendanceOperationsRepository {
     scope: DataScope | undefined,
     page: number,
     limit: number,
+    gradeLevelId?: number,
+    room?: number,
   ): Promise<{
     rows: AttendanceSessionAnomalyRow[];
     totalCount: number;
@@ -894,6 +906,14 @@ export class AttendanceOperationsRepository {
         conditions.push(`(${scoped.sql})`);
         pushParams(params, scoped.params);
       }
+    }
+    if (gradeLevelId) {
+      params.push(gradeLevelId);
+      conditions.push(`sess.grade_level_id = $${params.length}`);
+    }
+    if (room) {
+      params.push(room);
+      conditions.push(`sess.room_id = $${params.length}`);
     }
     const baseSql = `
       SELECT

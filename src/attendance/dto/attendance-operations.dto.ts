@@ -117,6 +117,18 @@ export class AttendanceReconciliationQueryDto extends PaginatedSearchQueryDto {
   @IsString()
   @Matches(ISO_DATE_PATTERN)
   date!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  room?: number;
 }
 
 export class AttendanceReconciliationAnomaliesQueryDto extends PaginatedSearchQueryDto {
@@ -124,6 +136,18 @@ export class AttendanceReconciliationAnomaliesQueryDto extends PaginatedSearchQu
   @IsInt()
   @Min(1)
   termId!: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  room?: number;
 }
 
 export class ReopenAttendanceSessionDto {
