@@ -19,6 +19,28 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9232);
 const USERNAME = 'profile_self_edit_browser_smoke';
+const PROFILE_AUDIT_ACTION = 'USER_PROFILE_UPDATE';
+const PROFILE_AUDIT_ACTION_LABEL = 'แก้ไขข้อมูลส่วนตัว';
+const PROFILE_AUDIT_FIELD_COUNT_LABEL = 'จำนวนข้อมูลที่แก้';
+const PROFILE_AUDIT_EXPECTED_FIELDS = [
+  'FirstName',
+  'LastName',
+  'phone',
+  'email',
+  'affiliation',
+  'line_id',
+  'address_line',
+  'address_village_no',
+  'address_street',
+  'address_soi',
+  'address_trok',
+  'address_sub_district',
+  'address_district',
+  'address_province',
+  'address_postal_code',
+  'address_latitude',
+  'address_longitude',
+];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -29,6 +51,10 @@ function errorMessage(error) {
     return error.errors.map((cause) => cause?.message || String(cause)).join(' | ');
   }
   return error?.message || String(error);
+}
+
+function returningRows(result) {
+  return Array.isArray(result?.[0]) ? result[0] : result;
 }
 
 async function waitFor(check, message, timeoutMs = 20_000) {
@@ -292,13 +318,91 @@ function formatCoordinate(value) {
   return Number(value).toFixed(6);
 }
 
+function getProfileAuditLeakCandidates(values, profile) {
+  return [
+    values.phone,
+    values.email,
+    values.affiliation,
+    values.lineId,
+    values.houseNo,
+    values.moo,
+    values.trok,
+    values.soi,
+    values.street,
+    values.subDistrict,
+    values.district,
+    values.province,
+    values.postalCode,
+    formatCoordinate(profile.address_latitude),
+    formatCoordinate(profile.address_longitude),
+  ].filter((value) => value !== null && value !== undefined && String(value).trim() !== '');
+}
+
+function assertProfileAuditDoesNotLeak(text, values, profile, context) {
+  for (const value of getProfileAuditLeakCandidates(values, profile)) {
+    assert(!text.includes(String(value)), `${context} leaked profile value: ${value}`);
+  }
+}
+
+async function getLatestProfileAuditId(dataSource, userId) {
+  const [row] = await dataSource.query(
+    `
+      SELECT COALESCE(MAX(id), 0)::bigint AS id
+      FROM audit_log
+      WHERE action = $1
+        AND target_id = $2
+    `,
+    [PROFILE_AUDIT_ACTION, String(userId)],
+  );
+  return Number(row?.id || 0);
+}
+
+async function getLatestProfileAudit(dataSource, userId, afterId) {
+  let audit;
+  await waitFor(async () => {
+    [audit] = await dataSource.query(
+      `
+        SELECT id, metadata
+        FROM audit_log
+        WHERE action = $1
+          AND target_id = $2
+          AND id > $3::bigint
+        ORDER BY id DESC
+        LIMIT 1
+      `,
+      [PROFILE_AUDIT_ACTION, String(userId), afterId],
+    );
+    return Boolean(audit);
+  }, 'USER_PROFILE_UPDATE audit row was not written for browser smoke');
+  return audit;
+}
+
+async function assertProfileAuditDetailPage(client, auditId, values, profile, context) {
+  await navigate(client, `${FRONTEND_URL}/audit-log/${auditId}`);
+  await waitFor(async () => {
+    const text = String(await evaluate(client, 'document.body.innerText'));
+    return (
+      text.includes('รายละเอียดรายการ') &&
+      text.includes(PROFILE_AUDIT_ACTION_LABEL) &&
+      text.includes(PROFILE_AUDIT_FIELD_COUNT_LABEL)
+    );
+  }, `${context} audit detail page did not render profile update details`);
+  assertProfileAuditDoesNotLeak(
+    String(await evaluate(client, 'document.body.innerText')),
+    values,
+    profile,
+    context,
+  );
+}
+
 async function upsertSmokeUser(dataSource, passwordHash) {
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
     USERNAME,
   ]);
   if (existing) {
-    const [updated] = await dataSource.query(
-      `
+    const [updated] = returningRows(
+      await dataSource.query(
+        `
         UPDATE users
         SET password = $2,
             "FirstName" = 'ProfileBrowser',
@@ -333,13 +437,15 @@ async function upsertSmokeUser(dataSource, passwordHash) {
         WHERE id = $1
         RETURNING id
       `,
-      [existing.id, passwordHash],
+        [existing.id, passwordHash],
+      ),
     );
     return updated;
   }
 
-  const [row] = await dataSource.query(
-    `
+  const [row] = returningRows(
+    await dataSource.query(
+      `
       INSERT INTO users (
         username, password, "FirstName", "LastName", status, permissions, role,
         data_scope, must_change_password, affiliation, data_origin_code, email, phone
@@ -352,7 +458,8 @@ async function upsertSmokeUser(dataSource, passwordHash) {
       )
       RETURNING id
     `,
-    [USERNAME, passwordHash],
+      [USERNAME, passwordHash],
+    ),
   );
   return row;
 }
@@ -517,6 +624,7 @@ async function main() {
         ),
       'Profile save button did not become enabled',
     );
+    const latestAuditIdBeforeSave = await getLatestProfileAuditId(dataSource, user.id);
     await click(
       client,
       `document.querySelector('button[type="submit"]')`,
@@ -545,6 +653,22 @@ async function main() {
       lat: formatCoordinate(savedProfile.address_latitude),
       lng: formatCoordinate(savedProfile.address_longitude),
     };
+    const profileAudit = await getLatestProfileAudit(dataSource, user.id, latestAuditIdBeforeSave);
+    assert(
+      Array.isArray(profileAudit.metadata?.fields),
+      'Profile browser audit metadata did not include fields',
+    );
+    const auditFields = profileAudit.metadata.fields;
+    assert(
+      PROFILE_AUDIT_EXPECTED_FIELDS.every((field) => auditFields.includes(field)),
+      `Profile browser audit metadata omitted fields: ${PROFILE_AUDIT_EXPECTED_FIELDS.filter(
+        (field) => !auditFields.includes(field),
+      ).join(', ')}`,
+    );
+    assert(
+      profileAudit.metadata.fieldCount === auditFields.length,
+      'Profile browser audit metadata field count does not match fields length',
+    );
     await capture(client, '/tmp/sts-profile-self-edit-desktop.png');
 
     await client.call('Page.reload');
@@ -573,6 +697,24 @@ async function main() {
     );
     await capture(client, '/tmp/sts-profile-self-edit-mobile.png');
 
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1366,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await assertProfileAuditDetailPage(client, profileAudit.id, values, savedProfile, 'Desktop');
+    await capture(client, '/tmp/sts-profile-self-edit-audit-detail-desktop.png');
+
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true,
+    });
+    await assertProfileAuditDetailPage(client, profileAudit.id, values, savedProfile, 'Mobile');
+    await capture(client, '/tmp/sts-profile-self-edit-audit-detail-mobile.png');
+
     assert(savedProfile.FirstName === values.firstName, 'FirstName did not persist through API refresh');
     assert(savedProfile.LastName === values.lastName, 'LastName did not persist through API refresh');
     assert(savedProfile.phone === values.phone, 'Phone did not persist through API refresh');
@@ -593,7 +735,7 @@ async function main() {
     );
 
     console.log(
-      'profile browser smoke passed (login, profile link, edit/geocode/map drag+click, save/refresh, mobile)',
+      'profile browser smoke passed (login, profile link, edit/geocode/map drag+click, save/refresh, mobile, audit detail no-leak)',
     );
   } finally {
     await closeChrome(chrome);
