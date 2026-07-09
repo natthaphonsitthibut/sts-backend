@@ -6,6 +6,7 @@ import { finalizePersistedDataScope } from '../auth/auth.types';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
@@ -24,6 +25,7 @@ export class TaskLifecycleService {
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
+    private readonly tokenEncryption: TokenEncryptionService,
     private readonly notificationsService?: NotificationsService,
     private readonly riskProfileService?: RiskProfileService,
   ) {}
@@ -328,6 +330,7 @@ export class TaskLifecycleService {
 
     const expiresAt = new Date(Date.now() + expiresMs).toISOString();
     const magicLink = `${baseUrl}/task/${token}`;
+    const tokenEncrypted = this.tokenEncryption.encrypt(token);
     let auditCaseId: number | null = null;
     let auditTargetSchoolId: number | null = null;
     let riskProfileStudentUuid: string | null = null;
@@ -479,7 +482,7 @@ export class TaskLifecycleService {
             taskId,
             parentLinkId: null,
             tokenHash,
-            magicLink,
+            tokenEncrypted,
             delegationDepth: 0,
             assignedToName: assignedName,
             assignedToPhone: clean(data.assigned_to_phone),

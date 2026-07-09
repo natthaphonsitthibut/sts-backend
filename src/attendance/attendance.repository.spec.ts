@@ -23,7 +23,11 @@ describe('AttendanceRepository', () => {
 
     return {
       queries,
-      repository: new AttendanceRepository(dataSource as never),
+      repository: new AttendanceRepository(
+        dataSource as never,
+        undefined as never,
+        undefined as never,
+      ),
     };
   }
 

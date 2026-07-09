@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TokenEncryptionModule } from '../common/crypto/token-encryption.module';
 import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
 import { AutomationModule } from '../automation/automation.module';
@@ -13,7 +14,13 @@ import { AttendanceOperationsRepository } from './attendance-operations.reposito
 import { AttendanceOperationsService } from './attendance-operations.service';
 
 @Module({
-  imports: [AuthModule, AutomationModule, NotificationsModule, RiskProfileModule],
+  imports: [
+    AuthModule,
+    AutomationModule,
+    NotificationsModule,
+    RiskProfileModule,
+    TokenEncryptionModule,
+  ],
   controllers: [AttendanceController],
   providers: [
     AttendanceRepository,

@@ -12,7 +12,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     await repository.listTimetableSlotsForTaskLink([11, 12]);
 
@@ -35,7 +39,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     await repository.insertTaskLinkTimetableSlots('link-1', [11, 12], 7);
 
@@ -56,7 +64,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     await repository.listTaskHistory('2026-07-07', 'ม.1', '1', 10010002);
 
@@ -75,7 +87,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     await repository.listTaskHistory('2026-07-07', 'ม.1', '1', 10010002, 'link-1');
 
@@ -102,7 +118,11 @@ describe('TaskRepository', () => {
     const dataSource = {
       createQueryRunner: jest.fn(() => queryRunner),
     };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     const count = await repository.countAtRiskStudents({
       id: 7,
@@ -143,7 +163,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     await repository.listCasesWithActiveLinks(undefined, {
       province: 'ขอนแก่น',
@@ -204,7 +228,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     const result = await repository.listRiskDashboardStudents(
       {
@@ -266,7 +294,11 @@ describe('TaskRepository', () => {
       query: jest.fn(),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
 
     await expect(
       repository.listRiskDashboardStudents(
@@ -310,7 +342,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
     const now = new Date('2026-07-09T00:00:00.000Z');
 
     await repository.claimCaseSlaWarnings(now);
@@ -337,7 +373,11 @@ describe('TaskRepository', () => {
       }),
     };
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(dataSource as never);
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
     const now = new Date('2026-07-11T00:00:00.000Z');
 
     await repository.claimCaseSlaBreaches(now);

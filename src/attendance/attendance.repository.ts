@@ -1,7 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
+import { appConfig } from '../config/app.config';
 import { buildDataScopeQuery, type DataScope } from '../common/utils/authorization';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
   AttendanceHistoryRow,
@@ -37,7 +40,19 @@ const CURRENT_ENROLLMENT_JOIN = `
 
 @Injectable()
 export class AttendanceRepository {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly tokenEncryption: TokenEncryptionService,
+    @Inject(appConfig.KEY)
+    private readonly appRuntimeConfig: ConfigType<typeof appConfig>,
+  ) {}
+
+  /** See TaskRepository.resolveMagicLink — same reconstruct-from-ciphertext logic. */
+  private resolveMagicLink(tokenEncrypted: string | null | undefined): string | null {
+    if (!tokenEncrypted) return null;
+    const token = this.tokenEncryption.decrypt(tokenEncrypted);
+    return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/task/${token}`;
+  }
 
   private async query<T extends Record<string, unknown>>(
     sql: string,
@@ -328,7 +343,7 @@ export class AttendanceRepository {
         t.status as task_status,
         t.created_at,
         tl.id as active_link_id,
-        tl.magic_link as active_link,
+        tl.token_encrypted as active_link_token_encrypted,
         tl.created_at as active_link_created_at,
         tl.expires_at as active_link_expires_at,
         tl.assigned_to_name as link_assigned_to,
@@ -397,7 +412,10 @@ export class AttendanceRepository {
     query += ' ORDER BY t.created_at DESC';
     const result = await this.query<AttendanceTaskRow>(query, params);
 
-    return result.rows;
+    return result.rows.map(({ active_link_token_encrypted, ...row }) => ({
+      ...row,
+      active_link: this.resolveMagicLink(active_link_token_encrypted as string | null),
+    }));
   }
 
   /**
@@ -563,7 +581,7 @@ export class AttendanceRepository {
         t.status as task_status,
         t.created_at,
         tl.id as active_link_id,
-        tl.magic_link as active_link,
+        tl.token_encrypted as active_link_token_encrypted,
         tl.created_at as active_link_created_at,
         tl.expires_at as active_link_expires_at,
         tl.assigned_to_name as link_assigned_to,
@@ -590,7 +608,10 @@ export class AttendanceRepository {
 
     const summaryRow = summaryResult.rows[0] || {};
     return {
-      rows: result.rows,
+      rows: result.rows.map(({ active_link_token_encrypted, ...row }) => ({
+        ...row,
+        active_link: this.resolveMagicLink(active_link_token_encrypted as string | null),
+      })),
       totalCount,
       summary: {
         total: Number(summaryRow.total || 0),

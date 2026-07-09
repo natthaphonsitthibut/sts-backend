@@ -11,6 +11,7 @@ import { hashToken, generateToken, clean } from '../common/utils/helpers';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { DelegateTaskDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
@@ -29,6 +30,7 @@ export class DelegationService {
     private readonly taskAccessService: TaskAccessService,
     private readonly auditLog: AuditLogService,
     private readonly notificationsService: NotificationsService,
+    private readonly tokenEncryption: TokenEncryptionService,
   ) {}
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
@@ -123,6 +125,7 @@ export class DelegationService {
     const otpVerified = newAssigneeEmail ? 0 : 1;
     const expiresAt = new Date(Date.now() + delegateHours * 60 * 60 * 1000).toISOString();
     const magicLink = `${baseUrl}/task/${newToken}`;
+    const tokenEncrypted = this.tokenEncryption.encrypt(newToken);
 
     const delegation = await this.taskRepository.withTransaction(async (executor) => {
       const lockedLink = this.validateLockedLink(
@@ -145,7 +148,7 @@ export class DelegationService {
           taskId: String(lockedLink.task_id),
           parentLinkId: String(lockedLink.id),
           tokenHash: newTokenHash,
-          magicLink,
+          tokenEncrypted,
           delegationDepth: nextDepth,
           assignedToName: newAssigneeName,
           assignedToPhone: newAssigneePhone,

@@ -1,8 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { DataSource } from 'typeorm';
+import { appConfig } from '../config/app.config';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import type {
   ActorContext,
   DataScope,
@@ -100,7 +103,8 @@ interface CreateTaskLinkInput {
   taskId: string;
   parentLinkId: string | null;
   tokenHash: string;
-  magicLink: string;
+  /** AES-256-GCM ciphertext of the raw token (see TokenEncryptionService). */
+  tokenEncrypted: string;
   delegationDepth: number;
   assignedToName: string;
   assignedToPhone: string | null;
@@ -229,7 +233,26 @@ interface SettingValueRow extends QueryResultRow {
 
 @Injectable()
 export class TaskRepository {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly tokenEncryption: TokenEncryptionService,
+    @Inject(appConfig.KEY)
+    private readonly appRuntimeConfig: ConfigType<typeof appConfig>,
+  ) {}
+
+  /**
+   * Reconstruct a magic-login URL from its encrypted-at-rest token. Reads
+   * never had a live `Request` to fall back to a request host (unlike link
+   * creation), so this always uses the configured FRONTEND_BASE_URL — falling
+   * back to a relative `/task/:token` path when unset, which the frontend's
+   * own `normalizeTaskPublicLink()` already resolves onto the current origin.
+   * Returns null for rows with no link yet (e.g. a task with no active link).
+   */
+  private resolveMagicLink(tokenEncrypted: string | null | undefined): string | null {
+    if (!tokenEncrypted) return null;
+    const token = this.tokenEncryption.decrypt(tokenEncrypted);
+    return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/task/${token}`;
+  }
 
   private normalizeScalar(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') {
@@ -735,7 +758,7 @@ export class TaskRepository {
         task_id,
         parent_link_id,
         token_hash,
-        magic_link,
+        token_encrypted,
         delegation_depth,
         assigned_to_name,
         assigned_to_phone,
@@ -776,7 +799,7 @@ export class TaskRepository {
         data.taskId,
         data.parentLinkId,
         data.tokenHash,
-        data.magicLink,
+        data.tokenEncrypted,
         data.delegationDepth,
         data.assignedToName,
         data.assignedToPhone,
@@ -986,7 +1009,6 @@ export class TaskRepository {
           OR tl.assigned_to_email ILIKE $${searchPlaceholder}
           OR tl.login_role ILIKE $${searchPlaceholder}
           OR r.label ILIKE $${searchPlaceholder}
-          OR tl.magic_link ILIKE $${searchPlaceholder}
           OR CASE (${linkStateSql})
             WHEN 'LOCKED' THEN 'ปิดใช้งาน'
             WHEN 'EXPIRED' THEN 'หมดอายุ'
@@ -1076,7 +1098,7 @@ export class TaskRepository {
         tl.assigned_to_email,
         tl.expires_at,
         tl.status,
-        tl.magic_link,
+        tl.token_encrypted,
         tl.admin_locked,
         tl.login_role,
         tl.login_permissions,
@@ -1096,7 +1118,10 @@ export class TaskRepository {
 
     const summaryRow = summaryResult.rows[0] || {};
     return {
-      rows: result.rows,
+      rows: result.rows.map(({ token_encrypted, ...row }) => ({
+        ...row,
+        magic_link: this.resolveMagicLink(token_encrypted as string | null),
+      })),
       totalCount,
       summary: {
         total: Number(summaryRow.total || 0),
@@ -1279,7 +1304,7 @@ export class TaskRepository {
         tl.status,
         tl.created_at,
         tl.expires_at,
-        tl.magic_link,
+        tl.token_encrypted,
         tl.admin_locked,
         tl.delegation_depth,
         parent.assigned_to_name AS delegated_by_name,
@@ -1296,7 +1321,10 @@ export class TaskRepository {
       [taskId],
     );
 
-    return result.rows;
+    return result.rows.map(({ token_encrypted, ...row }) => ({
+      ...row,
+      magic_link: this.resolveMagicLink(token_encrypted as string | null),
+    }));
   }
 
   // Chain view — explicit safe column list (no internal ids / audit columns /
@@ -1725,7 +1753,7 @@ export class TaskRepository {
         tl.assigned_to_email,
         tl.expires_at,
         tl.status,
-        tl.magic_link,
+        tl.token_encrypted,
         tl.admin_locked,
         tl.admin_lock_reason,
         tl.subject,
@@ -1751,7 +1779,10 @@ export class TaskRepository {
       [linkId],
     );
 
-    return result.rows[0] || null;
+    const { token_encrypted, ...row } = result.rows[0] || {};
+    return result.rows[0]
+      ? { ...row, magic_link: this.resolveMagicLink(token_encrypted as string | null) }
+      : null;
   }
 
   async updateAdminLockState(data: AdminLockUpdateInput, executor?: QueryExecutor): Promise<void> {
@@ -1894,7 +1925,7 @@ export class TaskRepository {
         student_match.student_id,
         t.id AS task_id,
         tl.id AS active_link_id,
-        tl.magic_link AS active_link,
+        tl.token_encrypted AS active_link_token_encrypted,
         tl.admin_locked AS active_link_locked,
         tl.admin_lock_reason AS active_link_lock_reason,
         tl.created_at AS active_link_created_at,
@@ -1954,7 +1985,14 @@ export class TaskRepository {
 
     const statusCounts = await this.countCaseStatuses(actor, { ...filters, status: undefined });
 
-    return { rows: result.rows, totalCount, statusCounts };
+    return {
+      rows: result.rows.map(({ active_link_token_encrypted, ...row }) => ({
+        ...row,
+        active_link: this.resolveMagicLink(active_link_token_encrypted as string | null),
+      })),
+      totalCount,
+      statusCounts,
+    };
   }
 
   async countCaseStatuses(

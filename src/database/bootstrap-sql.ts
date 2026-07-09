@@ -956,6 +956,10 @@ export const DATABASE_BASELINE_SQL = `
     parent_link_id TEXT REFERENCES task_links(id),
     token_hash TEXT NOT NULL UNIQUE,
     magic_link TEXT,
+    -- Encrypted (AES-256-GCM) raw token, redisplay source of truth going
+    -- forward — magic_link itself is legacy/plaintext and being phased out,
+    -- see tasks/task-magic-link-plaintext-token.md.
+    token_encrypted TEXT NULL,
     delegation_depth INTEGER DEFAULT 0,
     assigned_to_name TEXT,
     assigned_to_phone TEXT,

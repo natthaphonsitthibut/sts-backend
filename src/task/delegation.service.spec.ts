@@ -1,10 +1,13 @@
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { TaskAccessService } from './task-access.service';
 import { DelegationService } from './delegation.service';
 import { TaskRepository } from './task.repository';
 import type { QueryExecutor } from './task.types';
+
+const tokenEncryption = new TokenEncryptionService({ taskLinkKey: Buffer.alloc(32, 7) });
 
 type TransactionCallback = (executor: QueryExecutor) => Promise<unknown>;
 
@@ -103,6 +106,7 @@ describe('DelegationService', () => {
       taskAccessService as unknown as TaskAccessService,
       auditLog as unknown as AuditLogService,
       notificationsService as unknown as NotificationsService,
+      tokenEncryption,
     );
   });
 

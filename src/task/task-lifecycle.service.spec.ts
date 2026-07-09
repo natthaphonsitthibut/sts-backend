@@ -1,8 +1,11 @@
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
+
+const tokenEncryption = new TokenEncryptionService({ taskLinkKey: Buffer.alloc(32, 7) });
 
 function buildActor(): AuthenticatedRequestUser {
   return {
@@ -59,6 +62,7 @@ describe('TaskLifecycleService', () => {
       taskRepository as unknown as TaskRepository,
       new TaskPolicyService(taskRepository as unknown as TaskRepository),
       auditLog as unknown as AuditLogService,
+      tokenEncryption,
     );
   });
 

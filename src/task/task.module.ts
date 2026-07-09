@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TokenEncryptionModule } from '../common/crypto/token-encryption.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TaskService } from './task.service';
 import { TaskController } from './task.controller';
@@ -22,7 +23,13 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 
 @Module({
-  imports: [AutomationModule, AttendanceModule, NotificationsModule, RiskProfileModule],
+  imports: [
+    AutomationModule,
+    AttendanceModule,
+    NotificationsModule,
+    RiskProfileModule,
+    TokenEncryptionModule,
+  ],
   controllers: [
     TaskController,
     AdminController,

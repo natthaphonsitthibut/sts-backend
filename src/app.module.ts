@@ -24,6 +24,7 @@ import { appConfig } from './config/app.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
+import { encryptionConfig } from './config/encryption.config';
 import { geoConfig } from './config/geo.config';
 import { piiConfig } from './config/pii.config';
 import { queueConfig } from './config/queue.config';
@@ -49,6 +50,7 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
         authConfig,
         databaseConfig,
         emailConfig,
+        encryptionConfig,
         geoConfig,
         piiConfig,
         queueConfig,
