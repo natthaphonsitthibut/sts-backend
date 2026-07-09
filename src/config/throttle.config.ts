@@ -28,7 +28,8 @@ export type ThrottleName =
   | 'otpVerify'
   | 'mockLogin'
   | 'geocode'
-  | 'followerApplication';
+  | 'followerApplication'
+  | 'campaignLookup';
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10);
@@ -56,6 +57,8 @@ function rule(
  *  - mockLogin   10 / minute   (mock ThaID student login)
  *  - geocode     30 / minute   (billable Google Maps proxy + address PII)
  *  - followerApplication  3 / 10 min  (public อสม. application form — no auth, spam-prone)
+ *  - campaignLookup      20 / minute  (public recruitment-link lookup by code — normal page loads,
+ *                                      capped against scraping/DoS since the endpoint is unauthenticated)
  */
 export const throttleConfig = registerAs('throttle', () => ({
   login: rule(process.env.RATE_LIMIT_LOGIN, process.env.RATE_LIMIT_LOGIN_TTL, 5, 60),
@@ -73,5 +76,11 @@ export const throttleConfig = registerAs('throttle', () => ({
     process.env.RATE_LIMIT_FOLLOWER_APPLICATION_TTL,
     3,
     600,
+  ),
+  campaignLookup: rule(
+    process.env.RATE_LIMIT_CAMPAIGN_LOOKUP,
+    process.env.RATE_LIMIT_CAMPAIGN_LOOKUP_TTL,
+    20,
+    60,
   ),
 }));

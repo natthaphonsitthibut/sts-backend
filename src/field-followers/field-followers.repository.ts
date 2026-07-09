@@ -12,6 +12,7 @@ export interface CreateFieldFollowerInput {
   subDistrict: string | null;
   district: string | null;
   province: string | null;
+  campaignId: string | null;
 }
 
 export interface ListFieldFollowersFilters {
@@ -83,8 +84,10 @@ export class FieldFollowersRepository {
     const result = await queryDataSource<FieldFollowerRow>(
       this.dataSource,
       `
-        INSERT INTO field_followers (first_name, last_name, phone, sub_district, district, province)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO field_followers (
+          first_name, last_name, phone, sub_district, district, province, campaign_id, applied_via
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
       `,
       [
@@ -94,6 +97,8 @@ export class FieldFollowersRepository {
         input.subDistrict,
         input.district,
         input.province,
+        input.campaignId,
+        input.campaignId ? 'CAMPAIGN' : 'PUBLIC_FORM',
       ],
     );
     return result.rows[0];
@@ -143,10 +148,13 @@ export class FieldFollowersRepository {
     const result = await queryDataSource<FieldFollowerRow>(
       this.dataSource,
       `
-        SELECT *, COUNT(*) OVER ()::int AS total_count
+        SELECT field_followers.*, campaigns.name AS campaign_name,
+          COUNT(*) OVER ()::int AS total_count
         FROM field_followers
+        LEFT JOIN follower_recruitment_campaigns campaigns
+          ON campaigns.id = field_followers.campaign_id
         ${whereSql}
-        ORDER BY created_at DESC
+        ORDER BY field_followers.created_at DESC
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       params,
@@ -161,7 +169,13 @@ export class FieldFollowersRepository {
     const whereScope = scopeResult.sql ? ` AND (${scopeResult.sql})` : '';
     const result = await queryDataSource<FieldFollowerRow>(
       this.dataSource,
-      `SELECT * FROM field_followers WHERE id = $1${whereScope}`,
+      `
+        SELECT field_followers.*, campaigns.name AS campaign_name
+        FROM field_followers
+        LEFT JOIN follower_recruitment_campaigns campaigns
+          ON campaigns.id = field_followers.campaign_id
+        WHERE field_followers.id = $1${whereScope}
+      `,
       [id, ...scopeResult.params],
     );
     return result.rows[0] ?? null;

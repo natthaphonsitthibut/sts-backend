@@ -3,6 +3,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { FieldFollowersRepository } from './field-followers.repository';
 import { FieldFollowersService } from './field-followers.service';
 import type { FieldFollowerRow } from './field-followers.types';
+import type { FollowerRecruitmentCampaignService } from './follower-recruitment-campaign.service';
 
 describe('FieldFollowersService', () => {
   let service: FieldFollowersService;
@@ -13,6 +14,9 @@ describe('FieldFollowersService', () => {
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let campaignService: jest.Mocked<
+    Pick<FollowerRecruitmentCampaignService, 'resolveOpenCampaignByCode'>
+  >;
 
   const actor = {
     id: 1,
@@ -34,6 +38,8 @@ describe('FieldFollowersService', () => {
       status: 'APPLIED',
       trust_level: 'STANDARD',
       applied_via: 'PUBLIC_FORM',
+      campaign_id: null,
+      campaign_name: null,
       reviewed_by_user_id: null,
       reviewed_at: null,
       created_at: new Date('2026-07-06T00:00:00Z'),
@@ -52,10 +58,14 @@ describe('FieldFollowersService', () => {
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
     };
+    campaignService = {
+      resolveOpenCampaignByCode: jest.fn(),
+    };
 
     service = new FieldFollowersService(
       repository as unknown as FieldFollowersRepository,
       auditLog as unknown as AuditLogService,
+      campaignService as unknown as FollowerRecruitmentCampaignService,
     );
   });
 
@@ -74,6 +84,7 @@ describe('FieldFollowersService', () => {
         subDistrict: null,
         district: null,
         province: 'เชียงใหม่',
+        campaignId: null,
       });
       expect(auditLog.record).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'FIELD_FOLLOWER_APPLY' }),

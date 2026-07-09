@@ -44,6 +44,14 @@ export class CreateFollowerApplicationDto {
   @MaxLength(100)
   province?: string;
 
+  // Public recruitment-link code (follower_recruitment_campaigns.public_code)
+  // this application was submitted through. Optional for backward compat with
+  // the legacy static /apply/field-follower flow that predates campaigns.
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  campaign_code?: string;
+
   // Honeypot: a hidden field real users never see or fill. Bots that fill
   // every input trip this; a non-empty value silently drops the submission
   // (see FieldFollowersService#createApplication) without revealing the trap.

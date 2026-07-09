@@ -79,6 +79,11 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
             ttl: config.followerApplication.ttlMs,
             limit: config.followerApplication.limit,
           },
+          {
+            name: 'campaignLookup',
+            ttl: config.campaignLookup.ttlMs,
+            limit: config.campaignLookup.limit,
+          },
         ],
       }),
     }),

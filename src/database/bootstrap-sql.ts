@@ -1474,6 +1474,32 @@ export const DATABASE_BASELINE_SQL = `
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 
+  CREATE TABLE IF NOT EXISTS follower_recruitment_campaigns (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+      CONSTRAINT chk_frc_name_not_blank CHECK (btrim(name) <> ''),
+    description TEXT NULL,
+    public_code TEXT NOT NULL
+      CONSTRAINT uq_frc_public_code UNIQUE
+      CONSTRAINT chk_frc_public_code_format CHECK (public_code ~ '^[A-Za-z0-9_-]{12,64}$'),
+    data_scope JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    opens_at TIMESTAMPTZ NULL,
+    closes_at TIMESTAMPTZ NULL,
+    view_count BIGINT NOT NULL DEFAULT 0
+      CONSTRAINT chk_frc_view_count_nonneg CHECK (view_count >= 0),
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_frc_window CHECK (
+      opens_at IS NULL OR closes_at IS NULL OR closes_at > opens_at
+    )
+  );
+  ${auditUpdatedAtTriggerSql('follower_recruitment_campaigns')}
+  CREATE INDEX IF NOT EXISTS idx_frc_active_live
+    ON follower_recruitment_campaigns (is_active)
+    WHERE deleted_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_frc_created_at
+    ON follower_recruitment_campaigns (created_at DESC);
+
   CREATE TABLE IF NOT EXISTS field_followers (
     id BIGSERIAL PRIMARY KEY,
     first_name TEXT NOT NULL,
@@ -1487,6 +1513,9 @@ export const DATABASE_BASELINE_SQL = `
       CHECK (status IN ('APPLIED', 'VERIFIED', 'ACTIVE', 'SUSPENDED')),
     trust_level VARCHAR(20) NOT NULL DEFAULT 'STANDARD',
     applied_via VARCHAR(20) NOT NULL DEFAULT 'PUBLIC_FORM',
+    campaign_id BIGINT NULL
+      CONSTRAINT fk_field_followers_campaign
+      REFERENCES follower_recruitment_campaigns(id) ON DELETE RESTRICT ON UPDATE CASCADE,
     reviewed_by_user_id INTEGER NULL
       CONSTRAINT fk_field_followers_reviewed_by
       REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
@@ -1494,6 +1523,9 @@ export const DATABASE_BASELINE_SQL = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
+  CREATE INDEX IF NOT EXISTS idx_field_followers_campaign_id
+    ON field_followers (campaign_id)
+    WHERE campaign_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS system_settings (
     setting_key TEXT PRIMARY KEY,

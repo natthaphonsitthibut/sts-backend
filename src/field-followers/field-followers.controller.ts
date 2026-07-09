@@ -8,18 +8,28 @@ import {
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
-import { ThrottleFollowerApplication } from '../config/throttle.decorators';
+import { ThrottleCampaignLookup, ThrottleFollowerApplication } from '../config/throttle.decorators';
 import {
   CreateFollowerApplicationDto,
   ListFieldFollowersQueryDto,
   ReviewFieldFollowerDto,
 } from './dto/field-followers.dto';
 import { FieldFollowersService } from './field-followers.service';
+import { FollowerRecruitmentCampaignService } from './follower-recruitment-campaign.service';
 
 @Public()
 @Controller('api/public/follower-applications')
 export class PublicFollowerApplicationController {
-  constructor(private readonly fieldFollowersService: FieldFollowersService) {}
+  constructor(
+    private readonly fieldFollowersService: FieldFollowersService,
+    private readonly campaignService: FollowerRecruitmentCampaignService,
+  ) {}
+
+  @ThrottleCampaignLookup()
+  @Get('campaign/:code')
+  async getCampaign(@Param('code') code: string) {
+    return await this.campaignService.getPublicCampaignInfo(code);
+  }
 
   @ThrottleFollowerApplication()
   @Post()

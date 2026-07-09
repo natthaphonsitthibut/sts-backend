@@ -381,6 +381,21 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'เปิดแผนที่เด็กเสี่ยง',
     detailKeys: [{ key: 'studentCount', label: 'จำนวนที่เลือก' }],
   },
+  FOLLOWER_CAMPAIGN_CREATE: {
+    domain: 'field_followers',
+    label: 'สร้างลิงก์รับสมัคร อสม.',
+    detailKeys: [{ key: 'name', label: 'ชื่อลิงก์' }],
+  },
+  FOLLOWER_CAMPAIGN_UPDATE: {
+    domain: 'field_followers',
+    label: 'แก้ไขลิงก์รับสมัคร อสม.',
+    detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
+  },
+  FOLLOWER_CAMPAIGN_DELETE: {
+    domain: 'field_followers',
+    label: 'ปิดลิงก์รับสมัคร อสม. ถาวร',
+    detailKeys: [{ key: 'name', label: 'ชื่อลิงก์' }],
+  },
   WORK_SESSION_START: {
     domain: 'field_followers',
     label: 'เริ่มช่วงปฏิบัติงานภาคสนาม',

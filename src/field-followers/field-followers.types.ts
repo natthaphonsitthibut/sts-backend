@@ -11,6 +11,8 @@ export interface FieldFollowerRow extends Record<string, unknown> {
   status: FieldFollowerStatus;
   trust_level: string;
   applied_via: string;
+  campaign_id: string | null;
+  campaign_name?: string | null;
   reviewed_by_user_id: number | null;
   reviewed_at: Date | string | null;
   created_at: Date | string;

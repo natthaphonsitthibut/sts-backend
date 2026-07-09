@@ -15,6 +15,7 @@ import {
 } from './dto/field-followers.dto';
 import { FieldFollowersRepository } from './field-followers.repository';
 import type { FieldFollowerRow } from './field-followers.types';
+import { FollowerRecruitmentCampaignService } from './follower-recruitment-campaign.service';
 
 const REVIEW_TRANSITIONS: Record<
   FieldFollowerReviewAction,
@@ -38,6 +39,7 @@ export class FieldFollowersService {
   constructor(
     private readonly repository: FieldFollowersRepository,
     private readonly auditLog: AuditLogService,
+    private readonly campaignService: FollowerRecruitmentCampaignService,
   ) {}
 
   async createApplication(
@@ -58,6 +60,11 @@ export class FieldFollowersService {
       throw new BadRequestException('first_name, last_name และ phone ต้องไม่ว่าง');
     }
 
+    const campaignCode = clean(dto.campaign_code);
+    const campaign = campaignCode
+      ? await this.campaignService.resolveOpenCampaignByCode(campaignCode)
+      : null;
+
     const row = await this.repository.createApplication({
       firstName,
       lastName,
@@ -65,6 +72,7 @@ export class FieldFollowersService {
       subDistrict: clean(dto.sub_district),
       district: clean(dto.district),
       province: clean(dto.province),
+      campaignId: campaign?.id ?? null,
     });
 
     await this.auditLog.record({
@@ -77,6 +85,7 @@ export class FieldFollowersService {
         province: row.province,
         district: row.district,
         subDistrict: row.sub_district,
+        campaignId: row.campaign_id,
       },
       ip: meta.ip,
     });
@@ -164,6 +173,8 @@ export class FieldFollowersService {
       status: row.status,
       trust_level: row.trust_level,
       applied_via: row.applied_via,
+      campaign_id: row.campaign_id,
+      campaign_name: row.campaign_name ?? null,
       reviewed_by_user_id: row.reviewed_by_user_id,
       reviewed_at: row.reviewed_at,
       created_at: row.created_at,

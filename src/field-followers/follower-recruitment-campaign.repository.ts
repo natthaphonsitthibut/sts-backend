@@ -1,0 +1,175 @@
+import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import type { DataScope } from '../auth';
+import { queryDataSource } from '../database/sql-query';
+import type { FollowerRecruitmentCampaignRow } from './follower-recruitment-campaign.types';
+
+export interface CreateFollowerRecruitmentCampaignInput {
+  name: string;
+  description: string | null;
+  publicCode: string;
+  dataScope: DataScope;
+  opensAt: Date | null;
+  closesAt: Date | null;
+  createdBy: number | null;
+}
+
+export interface UpdateFollowerRecruitmentCampaignInput {
+  name?: string;
+  description?: string | null;
+  dataScope?: DataScope;
+  opensAt?: Date;
+  closesAt?: Date;
+  isActive?: boolean;
+  updatedBy: number | null;
+}
+
+const MAX_LIST_ROWS = 2000;
+
+@Injectable()
+export class FollowerRecruitmentCampaignRepository {
+  constructor(private readonly dataSource: DataSource) {}
+
+  async create(
+    input: CreateFollowerRecruitmentCampaignInput,
+  ): Promise<FollowerRecruitmentCampaignRow> {
+    const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
+      this.dataSource,
+      `
+        INSERT INTO follower_recruitment_campaigns (
+          name, description, public_code, data_scope, opens_at, closes_at, created_by, updated_by
+        )
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $7)
+        RETURNING *
+      `,
+      [
+        input.name,
+        input.description,
+        input.publicCode,
+        JSON.stringify(input.dataScope),
+        input.opensAt,
+        input.closesAt,
+        input.createdBy,
+      ],
+    );
+    return result.rows[0];
+  }
+
+  /**
+   * Every non-deleted campaign, newest first, with a live submission count
+   * joined in. Capped at MAX_LIST_ROWS as a safety valve, not real pagination
+   * — campaign counts are expected in the hundreds (admin-managed, not
+   * public-submitted rows), so scope/page filtering happens in the service
+   * layer via TaskPolicyService.isScopeSubsetOfActor rather than a JSONB
+   * scope-subset SQL predicate. Revisit if this table ever grows past that.
+   */
+  async listAll(): Promise<FollowerRecruitmentCampaignRow[]> {
+    const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
+      this.dataSource,
+      `
+        SELECT c.*, COUNT(ff.id)::int AS submission_count
+        FROM follower_recruitment_campaigns c
+        LEFT JOIN field_followers ff ON ff.campaign_id = c.id
+        WHERE c.deleted_at IS NULL
+        GROUP BY c.id
+        ORDER BY c.created_at DESC
+        LIMIT ${MAX_LIST_ROWS}
+      `,
+    );
+    return result.rows;
+  }
+
+  async findById(id: string): Promise<FollowerRecruitmentCampaignRow | null> {
+    const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
+      this.dataSource,
+      `SELECT * FROM follower_recruitment_campaigns WHERE id = $1 AND deleted_at IS NULL`,
+      [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findByPublicCode(code: string): Promise<FollowerRecruitmentCampaignRow | null> {
+    const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
+      this.dataSource,
+      `SELECT * FROM follower_recruitment_campaigns WHERE public_code = $1 AND deleted_at IS NULL`,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async update(
+    id: string,
+    input: UpdateFollowerRecruitmentCampaignInput,
+  ): Promise<FollowerRecruitmentCampaignRow | null> {
+    const setClauses: string[] = [`updated_by = $1`];
+    const params: unknown[] = [input.updatedBy];
+
+    if (input.name !== undefined) {
+      params.push(input.name);
+      setClauses.push(`name = $${params.length}`);
+    }
+    if (input.description !== undefined) {
+      params.push(input.description);
+      setClauses.push(`description = $${params.length}`);
+    }
+    if (input.dataScope !== undefined) {
+      params.push(JSON.stringify(input.dataScope));
+      setClauses.push(`data_scope = $${params.length}::jsonb`);
+    }
+    if (input.opensAt !== undefined) {
+      params.push(input.opensAt);
+      setClauses.push(`opens_at = $${params.length}`);
+    }
+    if (input.closesAt !== undefined) {
+      params.push(input.closesAt);
+      setClauses.push(`closes_at = $${params.length}`);
+    }
+    if (input.isActive !== undefined) {
+      params.push(input.isActive);
+      setClauses.push(`is_active = $${params.length}`);
+    }
+
+    params.push(id);
+    const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
+      this.dataSource,
+      `
+        UPDATE follower_recruitment_campaigns
+        SET ${setClauses.join(', ')}
+        WHERE id = $${params.length} AND deleted_at IS NULL
+        RETURNING *
+      `,
+      params,
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async softDelete(
+    id: string,
+    deletedBy: number | null,
+  ): Promise<FollowerRecruitmentCampaignRow | null> {
+    const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
+      this.dataSource,
+      `
+        UPDATE follower_recruitment_campaigns
+        SET deleted_at = now(), deleted_by = $2, is_active = false
+        WHERE id = $1 AND deleted_at IS NULL
+        RETURNING *
+      `,
+      [id, deletedBy],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Best-effort page-view counter — not billing-grade, minor races are fine. */
+  async incrementViewCount(id: string): Promise<void> {
+    await queryDataSource(
+      this.dataSource,
+      `
+        UPDATE follower_recruitment_campaigns
+        SET view_count = view_count + 1
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
+      [id],
+    );
+  }
+}
