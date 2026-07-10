@@ -694,6 +694,13 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('STUDENT_STATUS_FLAG', 'TERMINAL', 'สิ้นสุด', 'secondary', NULL, 20),
     ('STUDENT_STATUS_FLAG', 'FOLLOWUP_REQUIRED', 'ควรพิจารณาติดตาม', 'warning', NULL, 30),
     ('STUDENT_STATUS_FLAG', 'DISABLED', 'ปิดใช้งาน', 'destructive', NULL, 40),
+    ('FIELD_FOLLOWER_STATUS', 'APPLIED', 'รอตรวจสอบ', 'warning', NULL, 10),
+    ('FIELD_FOLLOWER_STATUS', 'VERIFIED', 'ยืนยันตัวตน', 'secondary', NULL, 20),
+    ('FIELD_FOLLOWER_STATUS', 'ACTIVE', 'ใช้งาน', 'success', NULL, 30),
+    ('FIELD_FOLLOWER_STATUS', 'SUSPENDED', 'ระงับ', 'destructive', NULL, 40),
+    ('RECRUITMENT_CAMPAIGN_STATE', 'ACTIVE', 'ใช้งาน', 'success', 'success', 10),
+    ('RECRUITMENT_CAMPAIGN_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', 'danger', 20),
+    ('RECRUITMENT_CAMPAIGN_STATE', 'EXPIRED', 'หมดอายุ', 'warning', 'warning', 30),
     ('ROLE_ORIGIN', 'SYSTEM', 'ระบบ', 'secondary', NULL, 10),
     ('ATTENDANCE_ANOMALY', 'HOLIDAY_ATTENDANCE', 'เช็คชื่อในวันหยุด', 'warning', NULL, 10),
     ('ATTENDANCE_ANOMALY', 'CANCELLED_ATTENDANCE', 'เช็คชื่อในวันที่ยกเลิกเรียน', 'warning', NULL, 20),
@@ -1488,6 +1495,8 @@ export const DATABASE_BASELINE_SQL = `
       CONSTRAINT chk_frc_public_code_format CHECK (public_code ~ '^[A-Za-z0-9_-]{12,64}$'),
     data_scope JSONB NOT NULL DEFAULT '{}'::jsonb,
     is_active BOOLEAN NOT NULL DEFAULT true,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+      CONSTRAINT chk_frc_status CHECK (status IN ('ACTIVE', 'LOCKED', 'EXPIRED')),
     opens_at TIMESTAMPTZ NULL,
     closes_at TIMESTAMPTZ NULL,
     view_count BIGINT NOT NULL DEFAULT 0

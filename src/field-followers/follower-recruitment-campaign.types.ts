@@ -7,6 +7,7 @@ export interface FollowerRecruitmentCampaignRow extends Record<string, unknown> 
   public_code: string;
   data_scope: DataScope;
   is_active: boolean;
+  status: 'ACTIVE' | 'LOCKED' | 'EXPIRED';
   opens_at: Date | string | null;
   closes_at: Date | string | null;
   view_count: string | number;

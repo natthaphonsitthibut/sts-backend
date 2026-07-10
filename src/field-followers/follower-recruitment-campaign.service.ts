@@ -260,6 +260,7 @@ export class FollowerRecruitmentCampaignService {
       public_code: row.public_code,
       data_scope: row.data_scope,
       is_active: row.is_active,
+      status: row.status,
       is_open: this.isEffectivelyOpen(row),
       opens_at: row.opens_at,
       closes_at: row.closes_at,

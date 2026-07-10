@@ -33,13 +33,22 @@ export class FollowerRecruitmentCampaignRepository {
   async create(
     input: CreateFollowerRecruitmentCampaignInput,
   ): Promise<FollowerRecruitmentCampaignRow> {
+    // Compute initial status from the time window
+    const now = new Date();
+    let status: 'ACTIVE' | 'EXPIRED' = 'ACTIVE';
+    if (input.closesAt && now >= input.closesAt) {
+      status = 'EXPIRED';
+    } else if (input.opensAt && now < input.opensAt) {
+      status = 'EXPIRED';
+    }
+
     const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
       this.dataSource,
       `
         INSERT INTO follower_recruitment_campaigns (
-          name, description, public_code, data_scope, opens_at, closes_at, created_by, updated_by
+          name, description, public_code, data_scope, opens_at, closes_at, status, created_by, updated_by
         )
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $7)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $8)
         RETURNING *
       `,
       [
@@ -49,6 +58,7 @@ export class FollowerRecruitmentCampaignRepository {
         JSON.stringify(input.dataScope),
         input.opensAt,
         input.closesAt,
+        status,
         input.createdBy,
       ],
     );
@@ -127,6 +137,37 @@ export class FollowerRecruitmentCampaignRepository {
     if (input.isActive !== undefined) {
       params.push(input.isActive);
       setClauses.push(`is_active = $${params.length}`);
+      // Sync status: toggling is_active off → LOCKED, on → ACTIVE
+      if (input.isActive === false) {
+        setClauses.push(`status = 'LOCKED'`);
+      } else {
+        // Re-evaluate: could be EXPIRED if window has passed
+        setClauses.push(
+          `status = CASE
+            WHEN closes_at IS NOT NULL AND closes_at <= now() THEN 'EXPIRED'
+            WHEN opens_at IS NOT NULL AND opens_at > now() THEN 'EXPIRED'
+            ELSE 'ACTIVE'
+          END`,
+        );
+      }
+    }
+
+    // If opens_at or closes_at changed, re-evaluate status for active campaigns
+    if (
+      (input.opensAt !== undefined || input.closesAt !== undefined) &&
+      input.isActive === undefined
+    ) {
+      setClauses.push(
+        `status = CASE
+          WHEN is_active = false THEN 'LOCKED'
+          WHEN COALESCE($${params.length + 1}::timestamptz, closes_at) IS NOT NULL
+               AND COALESCE($${params.length + 1}::timestamptz, closes_at) <= now() THEN 'EXPIRED'
+          WHEN COALESCE($${params.length + 2}::timestamptz, opens_at) IS NOT NULL
+               AND COALESCE($${params.length + 2}::timestamptz, opens_at) > now() THEN 'EXPIRED'
+          ELSE 'ACTIVE'
+        END`,
+      );
+      params.push(input.closesAt ?? null, input.opensAt ?? null);
     }
 
     params.push(id);
