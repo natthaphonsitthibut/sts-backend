@@ -44,12 +44,28 @@ export class AttendanceService {
     return await this.attendanceReadService.getStudents(grade, room, schoolId, userScope);
   }
 
-  async getHistory(date: string, userScope?: DataScope, schoolId?: number | null) {
-    return await this.attendanceReadService.getHistory(date, userScope, schoolId);
+  async getHistory(
+    date: string,
+    userScope?: DataScope,
+    schoolId?: number | null,
+    sessionKind?: 'DAILY' | 'SUBJECT',
+    timetableSlotId?: number,
+  ) {
+    return await this.attendanceReadService.getHistory(
+      date,
+      userScope,
+      schoolId,
+      sessionKind,
+      timetableSlotId,
+    );
   }
 
-  async saveAttendance(records: AttendanceSaveRecordInput[], actor?: AuthenticatedRequestUser) {
-    return await this.attendanceWriteService.saveAttendance(records, actor);
+  async saveAttendance(
+    records: AttendanceSaveRecordInput[],
+    actor?: AuthenticatedRequestUser,
+    timetableSlotId?: number,
+  ) {
+    return await this.attendanceWriteService.saveAttendance(records, actor, timetableSlotId);
   }
 
   async getAttendanceTasks(userScope?: DataScope) {

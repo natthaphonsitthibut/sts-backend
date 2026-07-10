@@ -16,6 +16,7 @@ import {
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 
 const ATTENDANCE_STATUS_VALUES = ['P_PRESENT', 'P_ABSENT', 'P_LATE'] as const;
+const ATTENDANCE_SESSION_KIND_VALUES = ['DAILY', 'SUBJECT'] as const;
 
 export const ATTENDANCE_LINK_STATE_VALUES = ['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'] as const;
 
@@ -101,6 +102,16 @@ export class GetHistoryQueryDto {
   @IsOptional()
   @IsString()
   schoolId?: string;
+
+  @IsOptional()
+  @IsIn(ATTENDANCE_SESSION_KIND_VALUES)
+  sessionKind?: (typeof ATTENDANCE_SESSION_KIND_VALUES)[number];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetableSlotId?: number;
 }
 
 export class GetRoomsQueryDto {
@@ -128,4 +139,10 @@ export class SaveAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => AttendanceRecordDto)
   records!: AttendanceRecordDto[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetable_slot_id?: number;
 }

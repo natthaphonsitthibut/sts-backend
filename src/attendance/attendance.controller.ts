@@ -108,6 +108,8 @@ export class AttendanceController {
       query.date,
       resolveActorDataScope(actor),
       Number.isInteger(schoolId) ? schoolId : null,
+      query.sessionKind,
+      query.timetableSlotId,
     );
   }
 
@@ -122,7 +124,7 @@ export class AttendanceController {
     @Body() body: SaveAttendanceDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return await this.attendanceService.saveAttendance(body.records, actor);
+    return await this.attendanceService.saveAttendance(body.records, actor, body.timetable_slot_id);
   }
 
   @Get('tasks')
@@ -229,6 +231,7 @@ export class AttendanceController {
       query.room,
       query.date,
       actor,
+      query.timetableSlotId,
     );
   }
 

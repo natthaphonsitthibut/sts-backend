@@ -10,6 +10,11 @@ const STUDENT_IDS = [
   '00000000-0000-4000-8000-000000000002',
 ];
 const TEST_ATTENDANCE_DATE = getBangkokDateString();
+const TEST_DAY_OF_WEEK = (() => {
+  const [year, month, day] = TEST_ATTENDANCE_DATE.split('-').map(Number);
+  const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return utcDay === 0 ? 7 : utcDay;
+})();
 
 const buildSession = (overrides: Partial<AttendanceSessionRow> = {}): AttendanceSessionRow => ({
   id: '10000000-0000-4000-8000-000000000001',
@@ -270,5 +275,60 @@ describe('AttendanceWriteService', () => {
       subjectId: 5,
       timetableSlotId: 11,
     });
+  });
+
+  it('resolves direct check-in timetable slot as a subject session', async () => {
+    executor.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 11,
+          school_term_id: 10,
+          school_id: 10010002,
+          grade_level_id: 6,
+          room_no: 1,
+          day_of_week: TEST_DAY_OF_WEEK,
+          period: 3,
+          subject_id: 5,
+        },
+      ],
+    });
+    operationsRepository.findOrCreateSessionForUpdate.mockResolvedValue(
+      buildSession({
+        period: 3,
+        session_kind: 'SUBJECT',
+      }),
+    );
+
+    await service.saveAttendanceWithinTransaction(
+      STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
+      {
+        actorUserId: 7,
+        actorLabel: 'teacher',
+        recorder: 'teacher',
+      },
+      executor,
+      undefined,
+      11,
+    );
+
+    expect(operationsRepository.findOrCreateSessionForUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        period: 3,
+        sessionKind: 'SUBJECT',
+        subjectId: 5,
+        timetableSlotId: 11,
+      }),
+      2,
+      7,
+      executor,
+    );
+    expect(attendanceRepository.upsertAttendanceBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        period: 3,
+        sessionKind: 'SUBJECT',
+        recordedBy: 'teacher',
+      }),
+      executor,
+    );
   });
 });

@@ -272,6 +272,8 @@ export class AttendanceRepository {
     date: string,
     userScope?: DataScope,
     schoolId?: number | null,
+    sessionKind?: 'DAILY' | 'SUBJECT',
+    timetableSlotId?: number,
   ): Promise<AttendanceHistoryRow[]> {
     // Self-only actors own no history rows (see listSchools note).
     if (userScope?.own_only === true) {
@@ -292,6 +294,7 @@ export class AttendanceRepository {
         s."RoomID_Onec"::text as room,
         a."AttendanceStatus" as status
       FROM attendance a
+      LEFT JOIN attendance_sessions sess ON sess.id = a.session_id
       JOIN student_term s ON s.student_uuid = a.student_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
@@ -299,6 +302,16 @@ export class AttendanceRepository {
         AND a."SchoolID_Onec" = $2
     `;
     const params: unknown[] = [date, schoolId];
+
+    if (sessionKind) {
+      params.push(sessionKind);
+      query += ` AND a.session_kind = $${params.length}`;
+    }
+
+    if (Number.isInteger(timetableSlotId)) {
+      params.push(timetableSlotId);
+      query += ` AND sess.timetable_slot_id = $${params.length}`;
+    }
 
     if (userScope) {
       const scopeResult = buildDataScopeQuery(

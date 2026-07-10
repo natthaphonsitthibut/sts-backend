@@ -25,6 +25,17 @@ const STATUS_CODE_MAP: Record<AttendanceSelectionStatus, number> = {
   P_LATE: 3,
 };
 
+interface TimetableSlotSessionRow extends Record<string, unknown> {
+  id: number | string;
+  school_term_id: number | string;
+  school_id: number;
+  grade_level_id: number;
+  room_no: number;
+  day_of_week: number;
+  period: number;
+  subject_id: number;
+}
+
 @Injectable()
 export class AttendanceWriteService {
   private readonly logger = new Logger(AttendanceWriteService.name);
@@ -36,7 +47,11 @@ export class AttendanceWriteService {
     private readonly riskProfileService?: RiskProfileService,
   ) {}
 
-  async saveAttendance(records: AttendanceSaveRecordInput[], actor?: AuthenticatedRequestUser) {
+  async saveAttendance(
+    records: AttendanceSaveRecordInput[],
+    actor?: AuthenticatedRequestUser,
+    timetableSlotId?: number,
+  ) {
     const normalizedRecords = this.normalizeRecords(records);
     if (normalizedRecords.length === 0) {
       return { success: true, newCases: [] as NewCase[] };
@@ -53,6 +68,7 @@ export class AttendanceWriteService {
           },
           executor,
           resolveActorDataScope(actor),
+          timetableSlotId,
         ),
     );
 
@@ -85,6 +101,7 @@ export class AttendanceWriteService {
     context: AttendanceWriteContext,
     executor: QueryExecutor,
     actorScope?: DataScope,
+    timetableSlotId?: number,
   ): Promise<{
     session: { id: string; status: string; revision: number };
     calendarConfigured: boolean;
@@ -140,12 +157,28 @@ export class AttendanceWriteService {
     }
 
     const today = getBangkokDateString();
-    const sessionContext = context.session ?? { kind: 'DAILY' as const, period: 1 };
+    const selectedSlot =
+      timetableSlotId !== undefined
+        ? await this.resolveDirectTimetableSlotSession(timetableSlotId, first, executor)
+        : null;
+    const sessionContext =
+      context.session ??
+      (selectedSlot
+        ? {
+            kind: 'SUBJECT' as const,
+            period: selectedSlot.period,
+            subjectId: selectedSlot.subject_id,
+            timetableSlotId: Number(selectedSlot.id),
+          }
+        : { kind: 'DAILY' as const, period: 1 });
     const term = await this.attendanceOperationsRepository.findOrCreateTermForClass(
       first,
       context.actorUserId,
       executor,
     );
+    if (selectedSlot && String(selectedSlot.school_term_id) !== String(term.id)) {
+      throw new BadRequestException('คาบเรียนนี้ไม่อยู่ในภาคเรียนปัจจุบันของห้อง');
+    }
     const calendarConfigured = term.status === 'ACTIVE';
     if (calendarConfigured) {
       if (!term.starts_on || !term.ends_on || today < term.starts_on || today > term.ends_on) {
@@ -320,6 +353,57 @@ export class AttendanceWriteService {
       return `user#${actor.id}`;
     }
     return 'Unknown';
+  }
+
+  private getBangkokIsoDayOfWeek(): number {
+    const [year, month, day] = getBangkokDateString().split('-').map(Number);
+    const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    return utcDay === 0 ? 7 : utcDay;
+  }
+
+  private async resolveDirectTimetableSlotSession(
+    timetableSlotId: number,
+    metadata: {
+      school_id: number;
+      grade_level_id: number;
+      room_id: number;
+    },
+    executor: QueryExecutor,
+  ): Promise<TimetableSlotSessionRow> {
+    const result = await executor.query<TimetableSlotSessionRow>(
+      `
+        SELECT
+          id,
+          school_term_id,
+          school_id,
+          grade_level_id,
+          room_no,
+          day_of_week,
+          period,
+          subject_id
+        FROM timetable_slots
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
+      [timetableSlotId],
+    );
+    const slot = result.rows[0];
+    if (!slot) {
+      throw new BadRequestException('ไม่พบคาบเรียนที่จะเช็คชื่อ');
+    }
+
+    if (
+      Number(slot.school_id) !== Number(metadata.school_id) ||
+      Number(slot.grade_level_id) !== Number(metadata.grade_level_id) ||
+      Number(slot.room_no) !== Number(metadata.room_id)
+    ) {
+      throw new BadRequestException('คาบเรียนนี้ไม่อยู่ในห้องที่เลือก');
+    }
+
+    if (Number(slot.day_of_week) !== this.getBangkokIsoDayOfWeek()) {
+      throw new BadRequestException('คาบเรียนนี้ไม่ตรงกับวันปัจจุบัน');
+    }
+
+    return slot;
   }
 
   private normalizeRecords(

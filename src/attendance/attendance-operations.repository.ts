@@ -539,6 +539,7 @@ export class AttendanceOperationsRepository {
     gradeLabel: string,
     roomId: number,
     date: string,
+    timetableSlotId?: number,
   ): Promise<{
     metadata: AttendanceClassMetadataRow | null;
     term: SchoolTermRow | null;
@@ -609,6 +610,12 @@ export class AttendanceOperationsRepository {
     if (!term) {
       return { metadata, term: null, calendarDay: null, session: null, expectedRosterCount: 0 };
     }
+    const sessionCondition = timetableSlotId
+      ? `AND attendance_date = $4 AND session_kind = 'SUBJECT' AND timetable_slot_id = $5`
+      : `AND attendance_date = $4 AND period = 1 AND session_kind = 'DAILY'`;
+    const sessionParams = timetableSlotId
+      ? [term.id, metadata.grade_level_id, roomId, date, timetableSlotId]
+      : [term.id, metadata.grade_level_id, roomId, date];
     const [calendarDay, rosterIds, sessionResult] = await Promise.all([
       this.findCalendarDay(term.id, date),
       this.listRosterIds(metadata),
@@ -621,9 +628,9 @@ export class AttendanceOperationsRepository {
             correction_reason
           FROM attendance_sessions
           WHERE school_term_id = $1 AND grade_level_id = $2 AND room_id = $3
-            AND attendance_date = $4 AND period = 1 AND session_kind = 'DAILY'
+            ${sessionCondition}
         `,
-        [term.id, metadata.grade_level_id, roomId, date],
+        sessionParams,
       ),
     ]);
     return {

@@ -26,8 +26,20 @@ export class AttendanceReadService {
     return { success: true, data };
   }
 
-  async getHistory(date: string, userScope?: DataScope, schoolId?: number | null) {
-    const rows = await this.attendanceRepository.listAttendanceHistory(date, userScope, schoolId);
+  async getHistory(
+    date: string,
+    userScope?: DataScope,
+    schoolId?: number | null,
+    sessionKind?: 'DAILY' | 'SUBJECT',
+    timetableSlotId?: number,
+  ) {
+    const rows = await this.attendanceRepository.listAttendanceHistory(
+      date,
+      userScope,
+      schoolId,
+      sessionKind,
+      timetableSlotId,
+    );
 
     const data = rows.map((row) => ({
       ...row,

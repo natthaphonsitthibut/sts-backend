@@ -221,9 +221,16 @@ export class AttendanceOperationsService {
     room: number,
     date: string,
     actor?: AuthenticatedRequestUser,
+    timetableSlotId?: number,
   ) {
     await this.assertSchoolAccess(schoolId, actor);
-    const context = await this.repository.findSessionContext(schoolId, grade, room, date);
+    const context = await this.repository.findSessionContext(
+      schoolId,
+      grade,
+      room,
+      date,
+      timetableSlotId,
+    );
     if (context.metadata) {
       this.assertClassScope(context.metadata.grade_level_id, room, actor);
     }
