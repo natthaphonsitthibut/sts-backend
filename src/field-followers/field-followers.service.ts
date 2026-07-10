@@ -118,6 +118,14 @@ export class FieldFollowersService {
     };
   }
 
+  async getFollower(id: string, actor: AuthenticatedRequestUser) {
+    const row = await this.repository.findByIdInScope(id, actor.data_scope ?? {});
+    if (!row) {
+      throw new NotFoundException('ไม่พบผู้สมัคร');
+    }
+    return { success: true, data: this.toResponse(row) };
+  }
+
   async reviewFollower(
     id: string,
     action: FieldFollowerReviewAction,

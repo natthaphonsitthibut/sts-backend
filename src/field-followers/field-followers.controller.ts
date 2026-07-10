@@ -52,6 +52,11 @@ export class FieldFollowersController {
     return await this.fieldFollowersService.listFollowers(actor, query);
   }
 
+  @Get(':id')
+  async getById(@Param('id') id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
+    return await this.fieldFollowersService.getFollower(id, actor);
+  }
+
   @Post(':id/review')
   async review(
     @Param('id') id: string,
