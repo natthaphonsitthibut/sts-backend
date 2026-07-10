@@ -25,3 +25,18 @@ export interface TimetableTeacherCandidateRow extends Record<string, unknown> {
   id: number;
   display_name: string;
 }
+
+export const SCHOOL_PERIOD_TIME_SOURCES = ['GENERATED', 'MANUAL', 'BACKFILL'] as const;
+export type SchoolPeriodTimeSource = (typeof SCHOOL_PERIOD_TIME_SOURCES)[number];
+
+export interface SchoolPeriodTimeRow extends Record<string, unknown> {
+  id: string;
+  school_id: number;
+  day_of_week: number;
+  period: number;
+  starts_at: string;
+  ends_at: string;
+  source: SchoolPeriodTimeSource;
+  created_at: Date | string;
+  updated_at: Date | string;
+}

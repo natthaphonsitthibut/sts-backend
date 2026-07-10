@@ -447,10 +447,13 @@ async function main() {
       `INSERT INTO subjects (code, name_th) VALUES ($1, $2) RETURNING id`,
       [subjectCode, subjectName],
     );
+    // Periods 7/8: the full-school demo timetable seed (`ff165a2`) occupies
+    // periods 1-6 for every room/day, so period 1 collides with
+    // uq_timetable_slots_slot on any non-empty roster fixture.
     const [todaySlot] = await dataSource.query(
       `
         INSERT INTO timetable_slots (school_term_id, school_id, grade_level_id, room_no, day_of_week, period, subject_id)
-        VALUES ($1, $2, $3, $4, $5, 1, $6)
+        VALUES ($1, $2, $3, $4, $5, 7, $6)
         RETURNING id
       `,
       [room.school_term_id, room.school_id, room.grade_level_id, room.room_no, todaySlotDay, subject.id],
@@ -458,7 +461,7 @@ async function main() {
     const [tomorrowSlot] = await dataSource.query(
       `
         INSERT INTO timetable_slots (school_term_id, school_id, grade_level_id, room_no, day_of_week, period, subject_id)
-        VALUES ($1, $2, $3, $4, $5, 2, $6)
+        VALUES ($1, $2, $3, $4, $5, 8, $6)
         RETURNING id
       `,
       [room.school_term_id, room.school_id, room.grade_level_id, room.room_no, tomorrowSlotDay, subject.id],
@@ -611,12 +614,12 @@ async function main() {
 
     await click(
       client,
-      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 1'))`,
+      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 7'))`,
       'Today slot checkbox was not found',
     );
     await click(
       client,
-      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 2'))`,
+      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 8'))`,
       'Tomorrow slot checkbox was not found',
     );
     await waitFor(

@@ -1,8 +1,8 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { TimetableRepository } from './timetable.repository';
-import { TimetableService } from './timetable.service';
-import type { TimetableSlotRow } from './timetable.types';
+import { generatePeriodTimes, TimetableService } from './timetable.service';
+import type { SchoolPeriodTimeRow, TimetableSlotRow } from './timetable.types';
 
 describe('TimetableService', () => {
   let service: TimetableService;
@@ -20,6 +20,9 @@ describe('TimetableService', () => {
       | 'update'
       | 'softDelete'
       | 'withTransaction'
+      | 'listPeriodTimesForSchool'
+      | 'replacePeriodTimesForDays'
+      | 'upsertPeriodTimeOverride'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'recordAtomic'>>;
@@ -40,6 +43,21 @@ describe('TimetableService', () => {
       teacher_name: null,
       created_at: new Date('2026-07-07T00:00:00Z'),
       updated_at: new Date('2026-07-07T00:00:00Z'),
+      ...overrides,
+    };
+  }
+
+  function periodTimeRow(overrides: Partial<SchoolPeriodTimeRow> = {}): SchoolPeriodTimeRow {
+    return {
+      id: '1',
+      school_id: 10010002,
+      day_of_week: 1,
+      period: 1,
+      starts_at: '08:30',
+      ends_at: '09:20',
+      source: 'GENERATED',
+      created_at: new Date('2026-07-09T00:00:00Z'),
+      updated_at: new Date('2026-07-09T00:00:00Z'),
       ...overrides,
     };
   }
@@ -71,6 +89,9 @@ describe('TimetableService', () => {
       update: jest.fn().mockResolvedValue(undefined),
       softDelete: jest.fn().mockResolvedValue(undefined),
       withTransaction: jest.fn((operation) => operation({} as never)),
+      listPeriodTimesForSchool: jest.fn().mockResolvedValue([periodTimeRow()]),
+      replacePeriodTimesForDays: jest.fn().mockResolvedValue(undefined),
+      upsertPeriodTimeOverride: jest.fn().mockResolvedValue(undefined),
     };
     auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
     service = new TimetableService(
@@ -227,6 +248,181 @@ describe('TimetableService', () => {
         ForbiddenException,
       );
       expect(repository.listTeacherCandidatesForSchool).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('generatePeriodTimes (pure)', () => {
+    it('lays out contiguous periods with no breaks configured', () => {
+      const periods = generatePeriodTimes({
+        schoolId: 10010002,
+        daysOfWeek: [1],
+        periodsCount: 3,
+        firstPeriodStartsAt: '08:30',
+        periodLengthMinutes: 50,
+      });
+
+      expect(periods).toEqual([
+        { period: 1, startsAt: '08:30', endsAt: '09:20' },
+        { period: 2, startsAt: '09:20', endsAt: '10:10' },
+        { period: 3, startsAt: '10:10', endsAt: '11:00' },
+      ]);
+    });
+
+    it('inserts a morning break and lunch gap after the configured periods', () => {
+      const periods = generatePeriodTimes({
+        schoolId: 10010002,
+        daysOfWeek: [1],
+        periodsCount: 5,
+        firstPeriodStartsAt: '08:30',
+        periodLengthMinutes: 50,
+        breakAfterPeriod: 1,
+        breakMinutes: 10,
+        lunchAfterPeriod: 4,
+        lunchMinutes: 70,
+      });
+
+      expect(periods[0]).toEqual({ period: 1, startsAt: '08:30', endsAt: '09:20' });
+      // 10-minute break after period 1: period 2 starts at 09:30, not 09:20.
+      expect(periods[1]).toEqual({ period: 2, startsAt: '09:30', endsAt: '10:20' });
+      expect(periods[3]).toEqual({ period: 4, startsAt: '11:10', endsAt: '12:00' });
+      // 70-minute lunch after period 4: period 5 starts at 13:10, not 12:00.
+      expect(periods[4]).toEqual({ period: 5, startsAt: '13:10', endsAt: '14:00' });
+    });
+
+    it('matches the current hardcoded PERIOD_TIME_LABELS schedule with the real break config', () => {
+      const periods = generatePeriodTimes({
+        schoolId: 10010002,
+        daysOfWeek: [1],
+        periodsCount: 8,
+        firstPeriodStartsAt: '08:30',
+        periodLengthMinutes: 50,
+        lunchAfterPeriod: 4,
+        lunchMinutes: 70,
+      });
+
+      expect(periods.map((p) => `${p.startsAt}-${p.endsAt}`)).toEqual([
+        '08:30-09:20',
+        '09:20-10:10',
+        '10:10-11:00',
+        '11:00-11:50',
+        '13:00-13:50',
+        '13:50-14:40',
+        '14:40-15:30',
+        '15:30-16:20',
+      ]);
+    });
+  });
+
+  describe('listPeriodTimes', () => {
+    it('returns period times for an in-scope school', async () => {
+      const result = await service.listPeriodTimes(globalActor, 10010002);
+
+      expect(repository.isSchoolInScope).toHaveBeenCalledWith(10010002, globalActor.data_scope);
+      expect(result).toEqual({
+        success: true,
+        data: [
+          {
+            id: '1',
+            school_id: 10010002,
+            day_of_week: 1,
+            period: 1,
+            starts_at: '08:30',
+            ends_at: '09:20',
+            source: 'GENERATED',
+          },
+        ],
+      });
+    });
+
+    it('rejects when the school is outside actor scope', async () => {
+      repository.isSchoolInScope.mockResolvedValue(false);
+
+      await expect(service.listPeriodTimes(globalActor, 999)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(repository.listPeriodTimesForSchool).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('generatePeriodTimesForSchool', () => {
+    it('replaces period times for the selected days and audits the action', async () => {
+      const result = await service.generatePeriodTimesForSchool(globalActor, {
+        schoolId: 10010002,
+        daysOfWeek: [1, 2, 3, 4, 5],
+        periodsCount: 8,
+        firstPeriodStartsAt: '08:30',
+        periodLengthMinutes: 50,
+        lunchAfterPeriod: 4,
+        lunchMinutes: 70,
+      });
+
+      expect(repository.replacePeriodTimesForDays).toHaveBeenCalledWith(
+        10010002,
+        [1, 2, 3, 4, 5],
+        expect.arrayContaining([{ period: 1, startsAt: '08:30', endsAt: '09:20' }]),
+        globalActor.id,
+        expect.anything(),
+      );
+      expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'PERIOD_TIME_GENERATE' }),
+        expect.anything(),
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects generation when the school is outside actor scope', async () => {
+      repository.isSchoolInScope.mockResolvedValue(false);
+
+      await expect(
+        service.generatePeriodTimesForSchool(globalActor, {
+          schoolId: 999,
+          daysOfWeek: [1],
+          periodsCount: 1,
+          firstPeriodStartsAt: '08:30',
+          periodLengthMinutes: 50,
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(repository.replacePeriodTimesForDays).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('overridePeriodTime', () => {
+    it('upserts a single period override and audits the action', async () => {
+      const result = await service.overridePeriodTime(globalActor, {
+        schoolId: 10010002,
+        dayOfWeek: 1,
+        period: 1,
+        startsAt: '08:00',
+        endsAt: '08:45',
+      });
+
+      expect(repository.upsertPeriodTimeOverride).toHaveBeenCalledWith(
+        10010002,
+        1,
+        1,
+        '08:00',
+        '08:45',
+        globalActor.id,
+        expect.anything(),
+      );
+      expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'PERIOD_TIME_OVERRIDE' }),
+        expect.anything(),
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects an override where ends_at is not after starts_at', async () => {
+      await expect(
+        service.overridePeriodTime(globalActor, {
+          schoolId: 10010002,
+          dayOfWeek: 1,
+          period: 1,
+          startsAt: '09:00',
+          endsAt: '08:45',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.upsertPeriodTimeOverride).not.toHaveBeenCalled();
     });
   });
 });

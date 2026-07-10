@@ -1,12 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import type { DataScope } from '../auth';
-import { queryDataSource } from '../database/sql-query';
+import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import type {
   RoomSubjectRow,
+  SchoolPeriodTimeRow,
   TimetableSlotRow,
   TimetableTeacherCandidateRow,
 } from './timetable.types';
+
+export interface GeneratedPeriodTime {
+  period: number;
+  startsAt: string;
+  endsAt: string;
+}
 
 const SELECT_COLUMNS = `
   ts.id,
@@ -227,17 +234,19 @@ export class TimetableRepository {
     return result.rows[0] ?? null;
   }
 
-  async findById(id: string): Promise<TimetableSlotRow | null> {
-    const result = await queryDataSource<TimetableSlotRow>(
-      this.dataSource,
-      `SELECT ${SELECT_COLUMNS} ${FROM_JOIN} WHERE ts.id = $1 AND ts.deleted_at IS NULL`,
-      [id],
-    );
+  async findById(id: string, queryRunner?: QueryRunner): Promise<TimetableSlotRow | null> {
+    const sql = `SELECT ${SELECT_COLUMNS} ${FROM_JOIN} WHERE ts.id = $1 AND ts.deleted_at IS NULL`;
+    if (queryRunner) {
+      const result = await createSqlQueryExecutor(queryRunner).query<TimetableSlotRow>(sql, [id]);
+      return result.rows[0] ?? null;
+    }
+
+    const result = await queryDataSource<TimetableSlotRow>(this.dataSource, sql, [id]);
     return result.rows[0] ?? null;
   }
 
-  async create(input: CreateSlotInput, queryRunner: QueryRunner): Promise<{ id: string }> {
-    const rows = (await queryRunner.query(
+  async create(input: CreateSlotInput, queryRunner: QueryRunner): Promise<{ id: string } | null> {
+    const result = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
       `
         INSERT INTO timetable_slots (
           school_term_id, school_id, grade_level_id, room_no, day_of_week, period,
@@ -257,8 +266,8 @@ export class TimetableRepository {
         input.teacherUserId,
         input.actorId,
       ],
-    )) as Array<{ id: string }>;
-    return rows[0];
+    );
+    return result.rows[0] ?? null;
   }
 
   async update(
@@ -289,6 +298,80 @@ export class TimetableRepository {
     await queryRunner.query(
       `UPDATE timetable_slots SET deleted_at = now(), deleted_by = $2 WHERE id = $1`,
       [id, actorId],
+    );
+  }
+
+  async listPeriodTimesForSchool(schoolId: number): Promise<SchoolPeriodTimeRow[]> {
+    const result = await queryDataSource<SchoolPeriodTimeRow>(
+      this.dataSource,
+      `
+        SELECT id, school_id, day_of_week, period, starts_at, ends_at, source, created_at, updated_at
+        FROM school_period_times
+        WHERE school_id = $1 AND deleted_at IS NULL
+        ORDER BY day_of_week ASC, period ASC
+      `,
+      [schoolId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Full replace for the given days — soft-deletes every existing period
+   * (regardless of source, including prior MANUAL overrides) for
+   * (schoolId, day) then inserts the freshly computed schedule as GENERATED.
+   * The service layer is responsible for warning the caller before this runs
+   * if MANUAL rows would be overwritten.
+   */
+  async replacePeriodTimesForDays(
+    schoolId: number,
+    days: number[],
+    periods: GeneratedPeriodTime[],
+    actorId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await queryRunner.query(
+      `
+        UPDATE school_period_times
+        SET deleted_at = now(), deleted_by = $3
+        WHERE school_id = $1 AND day_of_week = ANY($2::smallint[]) AND deleted_at IS NULL
+      `,
+      [schoolId, days, actorId],
+    );
+
+    for (const day of days) {
+      for (const p of periods) {
+        await queryRunner.query(
+          `
+            INSERT INTO school_period_times (
+              school_id, day_of_week, period, starts_at, ends_at, source, created_by, updated_by
+            )
+            VALUES ($1, $2, $3, $4, $5, 'GENERATED', $6, $6)
+          `,
+          [schoolId, day, p.period, p.startsAt, p.endsAt, actorId],
+        );
+      }
+    }
+  }
+
+  async upsertPeriodTimeOverride(
+    schoolId: number,
+    dayOfWeek: number,
+    period: number,
+    startsAt: string,
+    endsAt: string,
+    actorId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await queryRunner.query(
+      `
+        INSERT INTO school_period_times (
+          school_id, day_of_week, period, starts_at, ends_at, source, created_by, updated_by
+        )
+        VALUES ($1, $2, $3, $4, $5, 'MANUAL', $6, $6)
+        ON CONFLICT (school_id, day_of_week, period) WHERE deleted_at IS NULL
+        DO UPDATE SET starts_at = $4, ends_at = $5, source = 'MANUAL', updated_by = $6
+      `,
+      [schoolId, dayOfWeek, period, startsAt, endsAt, actorId],
     );
   }
 

@@ -13,7 +13,10 @@ import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../
 import type { AuthenticatedRequestUser } from '../auth';
 import {
   CreateTimetableSlotDto,
+  GeneratePeriodTimesDto,
+  ListPeriodTimesQueryDto,
   ListTimetableSlotsQueryDto,
+  OverridePeriodTimeDto,
   RoomSubjectsQueryDto,
   TimetableTeachersQueryDto,
   UpdateTimetableSlotDto,
@@ -56,6 +59,36 @@ export class TimetableController {
       query.gradeLevelId,
       query.roomNo,
     );
+  }
+
+  // Any authenticated user in the school's scope — the grid (visible to
+  // students/teachers/staff, not just admins) reads this to label periods.
+  @Get('period-times')
+  async periodTimes(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Query() query: ListPeriodTimesQueryDto,
+  ) {
+    return await this.timetableService.listPeriodTimes(actor, query.schoolId);
+  }
+
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('manage-timetable')
+  @Post('period-times/generate')
+  async generatePeriodTimes(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Body() body: GeneratePeriodTimesDto,
+  ) {
+    return await this.timetableService.generatePeriodTimesForSchool(actor, body);
+  }
+
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('manage-timetable')
+  @Patch('period-times/override')
+  async overridePeriodTime(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Body() body: OverridePeriodTimeDto,
+  ) {
+    return await this.timetableService.overridePeriodTime(actor, body);
   }
 
   @UseGuards(PermissionsGuard)

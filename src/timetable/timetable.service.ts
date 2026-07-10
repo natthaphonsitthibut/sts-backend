@@ -9,12 +9,54 @@ import type { AuthenticatedRequestUser } from '../auth';
 import { resolveActorDataScope } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
-import type { CreateTimetableSlotDto, UpdateTimetableSlotDto } from './dto/timetable.dto';
-import { TimetableRepository } from './timetable.repository';
-import type { TimetableSlotRow } from './timetable.types';
+import type {
+  CreateTimetableSlotDto,
+  GeneratePeriodTimesDto,
+  OverridePeriodTimeDto,
+  UpdateTimetableSlotDto,
+} from './dto/timetable.dto';
+import { TimetableRepository, type GeneratedPeriodTime } from './timetable.repository';
+import type { SchoolPeriodTimeRow, TimetableSlotRow } from './timetable.types';
 
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+}
+
+function parseHHMM(value: string): number {
+  const [hours, minutes] = value.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+function formatHHMM(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60) % 24;
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+/**
+ * Pure generator: period 1 starts at `firstPeriodStartsAt`, each period runs
+ * `periodLengthMinutes`, with an optional break/lunch gap inserted right
+ * after the given period number (owner-approved hybrid UX — see
+ * tasks/task-ui-data-feedback-round.md §C follow-up).
+ */
+export function generatePeriodTimes(dto: GeneratePeriodTimesDto): GeneratedPeriodTime[] {
+  const periods: GeneratedPeriodTime[] = [];
+  let cursor = parseHHMM(dto.firstPeriodStartsAt);
+
+  for (let period = 1; period <= dto.periodsCount; period += 1) {
+    const startsAt = cursor;
+    const endsAt = startsAt + dto.periodLengthMinutes;
+    periods.push({ period, startsAt: formatHHMM(startsAt), endsAt: formatHHMM(endsAt) });
+    cursor = endsAt;
+    if (dto.breakAfterPeriod === period) {
+      cursor += dto.breakMinutes ?? 0;
+    }
+    if (dto.lunchAfterPeriod === period) {
+      cursor += dto.lunchMinutes ?? 0;
+    }
+  }
+
+  return periods;
 }
 
 @Injectable()
@@ -172,6 +214,9 @@ export class TimetableService {
           },
           queryRunner,
         );
+        if (!created?.id) {
+          throw new BadRequestException('สร้างคาบสอนไม่สำเร็จ');
+        }
         await this.auditLog.recordAtomic(
           {
             actorUserId: actorId,
@@ -184,8 +229,11 @@ export class TimetableService {
           },
           queryRunner,
         );
-        const row = await this.repository.findById(created.id);
-        return { success: true, data: this.toResponse(row!) };
+        const row = await this.repository.findById(created.id, queryRunner);
+        if (!row) {
+          throw new BadRequestException('ไม่พบคาบสอนหลังสร้าง');
+        }
+        return { success: true, data: this.toResponse(row) };
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
@@ -226,8 +274,11 @@ export class TimetableService {
         },
         queryRunner,
       );
-      const row = await this.repository.findById(id);
-      return { success: true, data: this.toResponse(row!) };
+      const row = await this.repository.findById(id, queryRunner);
+      if (!row) {
+        throw new BadRequestException('ไม่พบคาบสอนหลังแก้ไข');
+      }
+      return { success: true, data: this.toResponse(row) };
     });
   }
 
@@ -256,5 +307,87 @@ export class TimetableService {
       );
     });
     return { success: true };
+  }
+
+  private toPeriodTimeResponse(row: SchoolPeriodTimeRow) {
+    return {
+      id: row.id,
+      school_id: row.school_id,
+      day_of_week: row.day_of_week,
+      period: row.period,
+      starts_at: row.starts_at,
+      ends_at: row.ends_at,
+      source: row.source,
+    };
+  }
+
+  async listPeriodTimes(actor: AuthenticatedRequestUser, schoolId: number) {
+    await this.assertSchoolAccess(schoolId, actor);
+    const rows = await this.repository.listPeriodTimesForSchool(schoolId);
+    return { success: true, data: rows.map((row) => this.toPeriodTimeResponse(row)) };
+  }
+
+  async generatePeriodTimesForSchool(actor: AuthenticatedRequestUser, dto: GeneratePeriodTimesDto) {
+    await this.assertSchoolAccess(dto.schoolId, actor);
+    const periods = generatePeriodTimes(dto);
+    const actorId = resolveAuditActorId(actor);
+
+    await this.repository.withTransaction(async (queryRunner) => {
+      await this.repository.replacePeriodTimesForDays(
+        dto.schoolId,
+        dto.daysOfWeek,
+        periods,
+        actorId,
+        queryRunner,
+      );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'PERIOD_TIME_GENERATE',
+          targetType: 'school_period_times',
+          targetId: String(dto.schoolId),
+          metadata: { days: dto.daysOfWeek, periodsCount: dto.periodsCount },
+          ip: null,
+        },
+        queryRunner,
+      );
+    });
+
+    return await this.listPeriodTimes(actor, dto.schoolId);
+  }
+
+  async overridePeriodTime(actor: AuthenticatedRequestUser, dto: OverridePeriodTimeDto) {
+    await this.assertSchoolAccess(dto.schoolId, actor);
+    if (parseHHMM(dto.startsAt) >= parseHHMM(dto.endsAt)) {
+      throw new BadRequestException('เวลาสิ้นสุดต้องอยู่หลังเวลาเริ่ม');
+    }
+    const actorId = resolveAuditActorId(actor);
+
+    await this.repository.withTransaction(async (queryRunner) => {
+      await this.repository.upsertPeriodTimeOverride(
+        dto.schoolId,
+        dto.dayOfWeek,
+        dto.period,
+        dto.startsAt,
+        dto.endsAt,
+        actorId,
+        queryRunner,
+      );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'PERIOD_TIME_OVERRIDE',
+          targetType: 'school_period_times',
+          targetId: String(dto.schoolId),
+          metadata: { dayOfWeek: dto.dayOfWeek, period: dto.period },
+          ip: null,
+        },
+        queryRunner,
+      );
+    });
+
+    return await this.listPeriodTimes(actor, dto.schoolId);
   }
 }
