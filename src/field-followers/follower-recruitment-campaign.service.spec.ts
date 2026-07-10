@@ -156,6 +156,34 @@ describe('FollowerRecruitmentCampaignService', () => {
       expect(result.data).toHaveLength(1);
       expect(result.data[0].id).toBe('1');
     });
+
+    it('derives status live so a past window reads EXPIRED, not a stale ACTIVE', async () => {
+      repository.listAll.mockResolvedValue([
+        campaignRow({
+          is_active: true,
+          status: 'ACTIVE',
+          closes_at: new Date('2000-01-01T00:00:00Z'),
+        }),
+      ]);
+
+      const result = await service.list(districtActor);
+
+      expect(result.data[0].status).toBe('EXPIRED');
+      expect(result.data[0].is_open).toBe(false);
+    });
+
+    it('reports a not-yet-opened campaign as SCHEDULED, distinct from LOCKED/EXPIRED', async () => {
+      repository.listAll.mockResolvedValue([
+        campaignRow({ id: 'future', is_active: true, opens_at: new Date('2999-01-01T00:00:00Z') }),
+        campaignRow({ id: 'off', is_active: false }),
+      ]);
+
+      const result = await service.list(districtActor);
+
+      const byId = Object.fromEntries(result.data.map((row) => [row.id, row.status]));
+      expect(byId.future).toBe('SCHEDULED');
+      expect(byId.off).toBe('LOCKED');
+    });
   });
 
   describe('update', () => {

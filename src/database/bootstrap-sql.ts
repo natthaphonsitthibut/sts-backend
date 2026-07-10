@@ -698,6 +698,7 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('FIELD_FOLLOWER_STATUS', 'VERIFIED', 'ยืนยันตัวตน', 'secondary', NULL, 20),
     ('FIELD_FOLLOWER_STATUS', 'ACTIVE', 'ใช้งาน', 'success', NULL, 30),
     ('FIELD_FOLLOWER_STATUS', 'SUSPENDED', 'ระงับ', 'destructive', NULL, 40),
+    ('RECRUITMENT_CAMPAIGN_STATE', 'SCHEDULED', 'รอเปิด', 'secondary', 'info', 5),
     ('RECRUITMENT_CAMPAIGN_STATE', 'ACTIVE', 'ใช้งาน', 'success', 'success', 10),
     ('RECRUITMENT_CAMPAIGN_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', 'danger', 20),
     ('RECRUITMENT_CAMPAIGN_STATE', 'EXPIRED', 'หมดอายุ', 'warning', 'warning', 30),
@@ -1496,7 +1497,7 @@ export const DATABASE_BASELINE_SQL = `
     data_scope JSONB NOT NULL DEFAULT '{}'::jsonb,
     is_active BOOLEAN NOT NULL DEFAULT true,
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
-      CONSTRAINT chk_frc_status CHECK (status IN ('ACTIVE', 'LOCKED', 'EXPIRED')),
+      CONSTRAINT chk_frc_status CHECK (status IN ('ACTIVE', 'LOCKED', 'EXPIRED', 'SCHEDULED')),
     opens_at TIMESTAMPTZ NULL,
     closes_at TIMESTAMPTZ NULL,
     view_count BIGINT NOT NULL DEFAULT 0

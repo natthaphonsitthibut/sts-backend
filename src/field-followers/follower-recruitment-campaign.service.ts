@@ -247,6 +247,24 @@ export class FollowerRecruitmentCampaignService {
     return true;
   }
 
+  /**
+   * Time-derived status, evaluated live at read time so a campaign whose window
+   * has passed never keeps showing a stale 'ACTIVE'. The persisted `status`
+   * column is maintained as a secondary cache (for direct SQL/sorting) but the
+   * API response always reflects the current clock — same posture as `is_open`.
+   */
+  private computeStatus(
+    row: FollowerRecruitmentCampaignRow,
+  ): 'ACTIVE' | 'LOCKED' | 'EXPIRED' | 'SCHEDULED' {
+    if (!row.is_active) return 'LOCKED';
+    const now = new Date();
+    const opensAt = this.toDateOrNull(row.opens_at);
+    const closesAt = this.toDateOrNull(row.closes_at);
+    if (closesAt && now >= closesAt) return 'EXPIRED';
+    if (opensAt && now < opensAt) return 'SCHEDULED';
+    return 'ACTIVE';
+  }
+
   private toDateOrNull(value: Date | string | null): Date | null {
     if (!value) return null;
     return value instanceof Date ? value : new Date(value);
@@ -260,7 +278,7 @@ export class FollowerRecruitmentCampaignService {
       public_code: row.public_code,
       data_scope: row.data_scope,
       is_active: row.is_active,
-      status: row.status,
+      status: this.computeStatus(row),
       is_open: this.isEffectivelyOpen(row),
       opens_at: row.opens_at,
       closes_at: row.closes_at,

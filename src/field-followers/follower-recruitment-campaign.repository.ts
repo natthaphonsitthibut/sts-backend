@@ -35,11 +35,11 @@ export class FollowerRecruitmentCampaignRepository {
   ): Promise<FollowerRecruitmentCampaignRow> {
     // Compute initial status from the time window
     const now = new Date();
-    let status: 'ACTIVE' | 'EXPIRED' = 'ACTIVE';
+    let status: 'ACTIVE' | 'EXPIRED' | 'SCHEDULED' = 'ACTIVE';
     if (input.closesAt && now >= input.closesAt) {
       status = 'EXPIRED';
     } else if (input.opensAt && now < input.opensAt) {
-      status = 'EXPIRED';
+      status = 'SCHEDULED';
     }
 
     const result = await queryDataSource<FollowerRecruitmentCampaignRow>(
@@ -137,37 +137,34 @@ export class FollowerRecruitmentCampaignRepository {
     if (input.isActive !== undefined) {
       params.push(input.isActive);
       setClauses.push(`is_active = $${params.length}`);
-      // Sync status: toggling is_active off → LOCKED, on → ACTIVE
-      if (input.isActive === false) {
-        setClauses.push(`status = 'LOCKED'`);
-      } else {
-        // Re-evaluate: could be EXPIRED if window has passed
-        setClauses.push(
-          `status = CASE
-            WHEN closes_at IS NOT NULL AND closes_at <= now() THEN 'EXPIRED'
-            WHEN opens_at IS NOT NULL AND opens_at > now() THEN 'EXPIRED'
-            ELSE 'ACTIVE'
-          END`,
-        );
-      }
     }
 
-    // If opens_at or closes_at changed, re-evaluate status for active campaigns
+    // Re-derive status whenever is_active or the window changes. Always evaluate
+    // against the *incoming* opens_at/closes_at (via COALESCE with the stored
+    // value) rather than bare columns — inside an UPDATE the bare columns still
+    // hold the pre-update row, so a combined "reactivate + extend window" PATCH
+    // would otherwise compute status from the old dates.
     if (
-      (input.opensAt !== undefined || input.closesAt !== undefined) &&
-      input.isActive === undefined
+      input.isActive !== undefined ||
+      input.opensAt !== undefined ||
+      input.closesAt !== undefined
     ) {
+      params.push(input.closesAt ?? null);
+      const closesParam = params.length;
+      params.push(input.opensAt ?? null);
+      const opensParam = params.length;
+      const lockedCondition =
+        input.isActive === undefined ? 'is_active = false' : input.isActive ? 'false' : 'true';
       setClauses.push(
         `status = CASE
-          WHEN is_active = false THEN 'LOCKED'
-          WHEN COALESCE($${params.length + 1}::timestamptz, closes_at) IS NOT NULL
-               AND COALESCE($${params.length + 1}::timestamptz, closes_at) <= now() THEN 'EXPIRED'
-          WHEN COALESCE($${params.length + 2}::timestamptz, opens_at) IS NOT NULL
-               AND COALESCE($${params.length + 2}::timestamptz, opens_at) > now() THEN 'EXPIRED'
+          WHEN ${lockedCondition} THEN 'LOCKED'
+          WHEN COALESCE($${closesParam}::timestamptz, closes_at) IS NOT NULL
+               AND COALESCE($${closesParam}::timestamptz, closes_at) <= now() THEN 'EXPIRED'
+          WHEN COALESCE($${opensParam}::timestamptz, opens_at) IS NOT NULL
+               AND COALESCE($${opensParam}::timestamptz, opens_at) > now() THEN 'SCHEDULED'
           ELSE 'ACTIVE'
         END`,
       );
-      params.push(input.closesAt ?? null, input.opensAt ?? null);
     }
 
     params.push(id);
