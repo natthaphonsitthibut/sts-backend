@@ -76,8 +76,8 @@ export class FieldMonitorMapService {
         risk_tier: row.risk_tier,
         has_coordinates: true,
         is_approximate: false,
-        lat: row.student_lat,
-        lng: row.student_lng,
+        lat: row.student_lat !== null ? Number(row.student_lat) : null,
+        lng: row.student_lng !== null ? Number(row.student_lng) : null,
       };
     }
 
@@ -91,8 +91,14 @@ export class FieldMonitorMapService {
       risk_tier: row.risk_tier,
       has_coordinates: approximate !== null,
       is_approximate: approximate !== null,
-      lat: approximate?.lat ?? null,
-      lng: approximate?.lng ?? null,
+      lat:
+        approximate?.lat !== null && approximate?.lat !== undefined
+          ? Number(approximate.lat)
+          : null,
+      lng:
+        approximate?.lng !== null && approximate?.lng !== undefined
+          ? Number(approximate.lng)
+          : null,
     };
   }
 }
