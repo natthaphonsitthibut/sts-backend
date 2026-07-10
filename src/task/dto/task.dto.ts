@@ -55,6 +55,10 @@ export class CreateTaskDto {
   @IsOptional()
   expires_unit?: string | null;
 
+  /** Optional ISO datetime the link becomes usable; omit/null = opens immediately. */
+  @IsOptional()
+  opens_at?: string | null;
+
   @IsOptional()
   student_name?: string | null;
 

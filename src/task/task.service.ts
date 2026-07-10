@@ -43,6 +43,10 @@ export class TaskService {
       throw new ForbiddenException('ลิงก์นี้ถูกปิดโดยผู้ดูแลระบบ');
     }
 
+    if (link.opens_at && new Date(link.opens_at as string) > new Date()) {
+      throw new ForbiddenException('ลิงก์นี้ยังไม่เปิดใช้งาน');
+    }
+
     if (link.status !== 'ACTIVE') {
       throw new ConflictException('ลิงก์นี้ไม่อยู่ในสถานะพร้อมใช้งาน');
     }

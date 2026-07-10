@@ -86,6 +86,9 @@ export class DelegationService {
     if (link.admin_locked) {
       throw new ForbiddenException('Link is disabled by admin');
     }
+    if (link.opens_at && new Date(link.opens_at as string) > new Date()) {
+      throw new ForbiddenException('ลิงก์นี้ยังไม่เปิดใช้งาน');
+    }
     if (link.status !== 'ACTIVE') {
       throw new ConflictException('Link is no longer active');
     }
@@ -154,6 +157,9 @@ export class DelegationService {
           assignedToPhone: newAssigneePhone,
           assignedToEmail: newAssigneeEmail,
           expiresAt,
+          // A delegated link opens immediately — delegation only happens after the
+          // parent link is already open (redemption is blocked before opens_at).
+          opensAt: null,
           subject: null,
           subjectId: null,
           otpVerified,

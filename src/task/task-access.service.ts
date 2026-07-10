@@ -73,6 +73,10 @@ export class TaskAccessService {
       };
     }
 
+    if (link.opens_at && new Date(link.opens_at as string) > new Date()) {
+      return { error: 'Link not yet open', status: 'SCHEDULED' };
+    }
+
     if (
       link.status === 'COMPLETED' &&
       link.task_type !== 'ATTENDANCE' &&
@@ -521,7 +525,14 @@ export class TaskAccessService {
       }
 
       const isExpired = new Date(String(link.expires_at)) < new Date();
-      const status = isExpired ? 'EXPIRED' : link.admin_locked ? 'LOCKED' : 'ACTIVE';
+      const isScheduled = !!link.opens_at && new Date(link.opens_at as string) > new Date();
+      const status = isExpired
+        ? 'EXPIRED'
+        : link.admin_locked
+          ? 'LOCKED'
+          : isScheduled
+            ? 'SCHEDULED'
+            : 'ACTIVE';
 
       const schoolId =
         typeof link.target_school_id === 'number'

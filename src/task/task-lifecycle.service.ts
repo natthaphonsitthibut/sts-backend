@@ -90,6 +90,27 @@ export class TaskLifecycleService {
     return 'hours';
   }
 
+  /**
+   * Validate an optional scheduled-open time against the link's expiry. A blank
+   * value (the common case) means the link opens immediately. A supplied time
+   * must be a valid instant strictly before expiry — a link that would "open"
+   * only after it expires is never usable and is rejected rather than stored.
+   */
+  private resolveOpensAt(value: string | null | undefined, expiresAt: string): string | null {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('รูปแบบเวลาที่เปิดใช้งานไม่ถูกต้อง');
+    }
+    if (parsed.getTime() >= new Date(expiresAt).getTime()) {
+      throw new BadRequestException('เวลาที่เปิดใช้งานต้องอยู่ก่อนเวลาหมดอายุของลิงก์');
+    }
+    return parsed.toISOString();
+  }
+
   private normalizePositiveIntList(value: unknown): number[] {
     if (value == null) {
       return [];
@@ -329,6 +350,7 @@ export class TaskLifecycleService {
     }
 
     const expiresAt = new Date(Date.now() + expiresMs).toISOString();
+    const opensAt = this.resolveOpensAt(data.opens_at, expiresAt);
     const magicLink = `${baseUrl}/task/${token}`;
     const tokenEncrypted = this.tokenEncryption.encrypt(token);
     let auditCaseId: number | null = null;
@@ -488,6 +510,7 @@ export class TaskLifecycleService {
             assignedToPhone: clean(data.assigned_to_phone),
             assignedToEmail: assignedEmail,
             expiresAt,
+            opensAt,
             subject: clean(data.subject),
             subjectId,
             // Email-assigned links require OTP (start unverified); links with no

@@ -67,6 +67,7 @@ export interface LoginLinkSummary {
   active: number;
   locked: number;
   expired: number;
+  scheduled: number;
 }
 
 interface CreateCaseInput {
@@ -110,6 +111,8 @@ interface CreateTaskLinkInput {
   assignedToPhone: string | null;
   assignedToEmail: string | null;
   expiresAt: string;
+  /** Optional future open time; null = usable immediately. */
+  opensAt: string | null;
   subject: string | null;
   subjectId: number | null;
   otpVerified: number;
@@ -771,7 +774,8 @@ export class TaskRepository {
         updated_by,
         login_role,
         login_permissions,
-        login_data_scope
+        login_data_scope,
+        opens_at
       )
       VALUES (
         $1,
@@ -791,7 +795,8 @@ export class TaskRepository {
         $14,
         $15,
         $16,
-        $17
+        $17,
+        $18
       )
     `,
       [
@@ -812,6 +817,7 @@ export class TaskRepository {
         data.loginRole,
         JSON.stringify(data.loginPermissions),
         JSON.stringify(data.loginDataScope),
+        data.opensAt,
       ],
     );
   }
@@ -966,6 +972,7 @@ export class TaskRepository {
       CASE
         WHEN tl.expires_at <= NOW() THEN 'EXPIRED'
         WHEN tl.admin_locked = 1 THEN 'LOCKED'
+        WHEN tl.opens_at IS NOT NULL AND tl.opens_at > NOW() THEN 'SCHEDULED'
         ELSE 'ACTIVE'
       END
     `;
@@ -1066,7 +1073,8 @@ export class TaskRepository {
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE link_state = 'ACTIVE')::int AS active,
         COUNT(*) FILTER (WHERE link_state = 'LOCKED')::int AS locked,
-        COUNT(*) FILTER (WHERE link_state = 'EXPIRED')::int AS expired
+        COUNT(*) FILTER (WHERE link_state = 'EXPIRED')::int AS expired,
+        COUNT(*) FILTER (WHERE link_state = 'SCHEDULED')::int AS scheduled
       FROM (
         SELECT ${linkStateSql} AS link_state
         ${fromSql}
@@ -1128,6 +1136,7 @@ export class TaskRepository {
         active: Number(summaryRow.active || 0),
         locked: Number(summaryRow.locked || 0),
         expired: Number(summaryRow.expired || 0),
+        scheduled: Number(summaryRow.scheduled || 0),
       },
     };
   }
@@ -1480,6 +1489,7 @@ export class TaskRepository {
          tl.task_id,
          tl.assigned_to_name,
          tl.expires_at,
+         tl.opens_at,
          tl.status,
          tl.admin_locked,
          tl.delegation_depth,
@@ -1958,6 +1968,7 @@ export class TaskRepository {
           CASE
             WHEN latest_active_link.expires_at <= NOW() THEN 'EXPIRED'
             WHEN latest_active_link.admin_locked = 1 THEN 'LOCKED'
+            WHEN latest_active_link.opens_at IS NOT NULL AND latest_active_link.opens_at > NOW() THEN 'SCHEDULED'
             ELSE 'ACTIVE'
           END AS link_state
         FROM task_links latest_active_link

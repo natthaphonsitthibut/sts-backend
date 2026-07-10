@@ -169,6 +169,27 @@ describe('TaskAccessService attendance link slots', () => {
     });
     expect(taskRepository.listLinkedTimetableSlots).toHaveBeenCalledWith('link-1');
   });
+
+  it('refuses a link whose opens_at is still in the future (SCHEDULED, no access)', async () => {
+    taskRepository.findTaskLinkByTokenHash.mockResolvedValue({
+      id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'ATTENDANCE',
+      status: 'ACTIVE',
+      expires_at: '2999-01-01T00:00:00.000Z',
+      opens_at: '2999-01-01T00:00:00.000Z',
+      admin_locked: 0,
+      otp_verified: 1,
+      delegation_depth: 0,
+      max_delegation_depth: 0,
+    });
+
+    await expect(service.getTaskByToken('public-token')).resolves.toMatchObject({
+      status: 'SCHEDULED',
+    });
+    // A not-yet-open link must never resolve to the usable task shape.
+    expect(taskRepository.listLinkedTimetableSlots).not.toHaveBeenCalled();
+  });
 });
 
 describe('TaskAccessService OTP sessions', () => {

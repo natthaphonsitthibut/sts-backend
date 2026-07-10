@@ -678,6 +678,7 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('USER_ACCOUNT_LIFECYCLE', 'ACTIVE', 'ใช้งาน', 'success', 'success', 20),
     ('USER_ACCOUNT_LIFECYCLE', 'TEMP_PASSWORD_EXPIRED', 'รหัสหมดอายุ', 'warning', 'warning', 30),
     ('USER_ACCOUNT_LIFECYCLE', 'DISABLED', 'ปิดใช้งาน', 'destructive', 'danger', 40),
+    ('TASK_LINK_STATE', 'SCHEDULED', 'รอเปิด', 'secondary', 'info', 5),
     ('TASK_LINK_STATE', 'ACTIVE', 'ใช้งาน', 'success', NULL, 10),
     ('TASK_LINK_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', NULL, 20),
     ('TASK_LINK_STATE', 'EXPIRED', 'หมดอายุ', 'warning', NULL, 30),
@@ -983,6 +984,7 @@ export const DATABASE_BASELINE_SQL = `
     admin_lock_reason TEXT,
     admin_lock_at TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    opens_at TIMESTAMP WITH TIME ZONE NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 

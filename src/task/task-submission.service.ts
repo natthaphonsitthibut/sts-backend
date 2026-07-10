@@ -90,6 +90,9 @@ export class TaskSubmissionService {
       if (status === 'ADMIN_LOCKED') {
         throw new ForbiddenException(message);
       }
+      if (status === 'SCHEDULED') {
+        throw new ForbiddenException('ลิงก์นี้ยังไม่เปิดใช้งาน');
+      }
       if (status === 'COMPLETED' || status === 'DELEGATED') {
         throw new ConflictException(message);
       }
