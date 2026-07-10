@@ -18,7 +18,11 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from './email.service';
 import { TaskPolicyService } from './task-policy.service';
-import { TaskRepository, type LoginLinkListFilters } from './task.repository';
+import {
+  TaskRepository,
+  type LoginLinkListFilters,
+  type VisitLinkListFilters,
+} from './task.repository';
 import { getTaskErrorMessage, type ActorContext } from './task.types';
 import {
   buildPaginationMeta,
@@ -268,6 +272,40 @@ export class TaskAccessService {
     }
   }
 
+  async getVisitLinks(actor?: ActorContext, filters: Partial<VisitLinkListFilters> = {}) {
+    try {
+      const currentActor = this.taskPolicyService.ensureActor(actor);
+      const page = resolvePage(filters.page);
+      const limit = resolveLimit(filters.limit);
+      const { rows, totalCount, summary } = await this.taskRepository.listVisitLinksPaginated(
+        currentActor,
+        {
+          status: filters.status,
+          searchTerm: filters.searchTerm,
+          province: filters.province,
+          district: filters.district,
+          subDistrict: filters.subDistrict,
+          schoolId: filters.schoolId,
+          gradeLevelId: filters.gradeLevelId,
+          room: filters.room,
+          page,
+          limit,
+        },
+      );
+
+      return {
+        success: true,
+        data: rows,
+        meta: buildPaginationMeta(page, limit, totalCount),
+        summary,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`getVisitLinks error: ${message}`);
+      throw err;
+    }
+  }
+
   async requestOtp(token: string) {
     const tokenHash = hashToken(token);
     const link = await this.taskRepository.findOtpLinkByTokenHash(tokenHash);
@@ -415,6 +453,7 @@ export class TaskAccessService {
             login_data_scope: link.login_data_scope,
             target_school_id: link.target_school_id,
             target_room: link.target_room,
+            case_created_by: link.case_created_by,
           },
           roleMap,
         )

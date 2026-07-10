@@ -23,6 +23,7 @@ import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decora
 import {
   CreateTaskDto,
   GetLoginLinksQueryDto,
+  GetVisitLinksQueryDto,
   SaveTaskAttendanceDto,
   SaveTaskSubmissionDto,
 } from './dto/task.dto';
@@ -68,6 +69,24 @@ export class TaskController {
   @Get('login-links')
   async getLoginLinks(@Req() req: RequestWithActor, @Query() query: GetLoginLinksQueryDto) {
     return await this.taskService.getLoginLinks(req.user, {
+      status: query.status,
+      searchTerm: query.searchTerm?.trim() || undefined,
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
+      gradeLevelId: query.gradeLevelId,
+      room: query.room?.trim() || undefined,
+      page: query.page,
+      limit: query.limit,
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('review-cases')
+  @Get('visit-links')
+  async getVisitLinks(@Req() req: RequestWithActor, @Query() query: GetVisitLinksQueryDto) {
+    return await this.taskService.getVisitLinks(req.user, {
       status: query.status,
       searchTerm: query.searchTerm?.trim() || undefined,
       province: query.province?.trim() || undefined,

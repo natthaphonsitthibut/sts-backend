@@ -70,6 +70,27 @@ export interface LoginLinkSummary {
   scheduled: number;
 }
 
+export interface VisitLinkListFilters {
+  status?: string;
+  searchTerm?: string;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  schoolId?: number;
+  gradeLevelId?: number;
+  room?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface VisitLinkSummary {
+  total: number;
+  active: number;
+  locked: number;
+  expired: number;
+  scheduled: number;
+}
+
 interface CreateCaseInput {
   studentName: string;
   studentFirstName: string | null;
@@ -1141,6 +1162,205 @@ export class TaskRepository {
     };
   }
 
+  async listVisitLinksPaginated(
+    actor: ActorContext | undefined,
+    filters: VisitLinkListFilters = {},
+  ): Promise<{ rows: QueryResultRow[]; totalCount: number; summary: VisitLinkSummary }> {
+    const params: unknown[] = [];
+    const baseConditions: string[] = [
+      `t.task_type = 'VISIT'`,
+      `tl.deleted_at IS NULL`,
+      `tl.status = 'ACTIVE'`,
+      `t.deleted_at IS NULL`,
+      `c.deleted_at IS NULL`,
+    ];
+    const linkStateSql = `
+      CASE
+        WHEN tl.expires_at <= NOW() THEN 'EXPIRED'
+        WHEN tl.admin_locked = 1 THEN 'LOCKED'
+        WHEN tl.opens_at IS NOT NULL AND tl.opens_at > NOW() THEN 'SCHEDULED'
+        ELSE 'ACTIVE'
+      END
+    `;
+
+    const scopeQuery = this.buildCaseScopeQuery(actor, params.length + 1, 'c');
+    if (scopeQuery.sql) {
+      baseConditions.push(scopeQuery.sql);
+      params.push(...scopeQuery.params);
+    }
+
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      const searchPlaceholder = params.length;
+      baseConditions.push(`
+        (
+          c.student_name ILIKE $${searchPlaceholder}
+          OR c.student_first_name ILIKE $${searchPlaceholder}
+          OR c.student_last_name ILIKE $${searchPlaceholder}
+          OR c.student_school ILIKE $${searchPlaceholder}
+          OR tl.assigned_to_name ILIKE $${searchPlaceholder}
+          OR tl.assigned_to_email ILIKE $${searchPlaceholder}
+        )
+      `);
+    }
+
+    if (filters.province) {
+      params.push(filters.province);
+      baseConditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.province = $${params.length})`,
+      );
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      baseConditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.district = $${params.length})`,
+      );
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      baseConditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.sub_district = $${params.length})`,
+      );
+    }
+    if (filters.schoolId) {
+      params.push(filters.schoolId);
+      baseConditions.push(`c.school_id = $${params.length}`);
+    }
+    if (filters.gradeLevelId) {
+      params.push(filters.gradeLevelId);
+      baseConditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM student_term case_student
+          WHERE case_student.student_uuid = c.student_uuid
+            AND case_student."GradeLevelID_Onec" = $${params.length}
+        )
+      `);
+    }
+    if (filters.room) {
+      params.push(filters.room);
+      baseConditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM student_term case_student
+          WHERE case_student.student_uuid = c.student_uuid
+            AND case_student."RoomID_Onec"::text = $${params.length}
+        )
+      `);
+    }
+
+    const filteredConditions = [...baseConditions];
+    if (filters.status && filters.status !== 'ALL') {
+      params.push(filters.status);
+      filteredConditions.push(`${linkStateSql} = $${params.length}`);
+    }
+
+    const baseParamCount = params.length - (filteredConditions.length - baseConditions.length);
+    const fromSql = `
+      FROM tasks t
+      JOIN cases c ON c.id = t.case_id
+      JOIN LATERAL (
+        SELECT latest_link.*
+        FROM task_links latest_link
+        WHERE latest_link.task_id = t.id
+          AND latest_link.status = 'ACTIVE'
+          AND latest_link.deleted_at IS NULL
+        ORDER BY latest_link.delegation_depth DESC, latest_link.created_at DESC
+        LIMIT 1
+      ) tl ON true
+      LEFT JOIN schools school ON school.id = c.school_id
+      LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
+      LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
+    `;
+    const baseWhereSql = `WHERE ${baseConditions.join(' AND ')}`;
+    const filteredWhereSql = `WHERE ${filteredConditions.join(' AND ')}`;
+
+    const summaryResult = await this.query<QueryResultRow>(
+      `
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE link_state = 'ACTIVE')::int AS active,
+        COUNT(*) FILTER (WHERE link_state = 'LOCKED')::int AS locked,
+        COUNT(*) FILTER (WHERE link_state = 'EXPIRED')::int AS expired,
+        COUNT(*) FILTER (WHERE link_state = 'SCHEDULED')::int AS scheduled
+      FROM (
+        SELECT ${linkStateSql} AS link_state
+        ${fromSql}
+        ${baseWhereSql}
+      ) scoped_visit_links
+    `,
+      params.slice(0, baseParamCount),
+    );
+
+    const countResult = await this.query<CountRow>(
+      `SELECT COUNT(*)::int AS count ${fromSql} ${filteredWhereSql}`,
+      params,
+    );
+    const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
+
+    const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const offset = (page - 1) * limit;
+    const selectParams = [...params, limit, offset];
+    const limitPlaceholder = selectParams.length - 1;
+    const offsetPlaceholder = selectParams.length;
+
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        tl.id,
+        tl.task_id,
+        t.case_id,
+        t.task_type,
+        tl.assigned_to_name,
+        tl.assigned_to_email,
+        tl.expires_at,
+        tl.opens_at,
+        tl.status,
+        tl.token_encrypted,
+        tl.admin_locked,
+        tl.admin_lock_reason,
+        tl.admin_lock_at,
+        tl.delegation_depth,
+        tl.created_at,
+        c.student_name,
+        c.student_first_name,
+        c.student_last_name,
+        c.student_school,
+        c.status AS case_status,
+        c.reason_flagged,
+        c.school_id,
+        school.name AS school_name,
+        student.student_uuid AS student_id,
+        grade.id AS grade_level_id,
+        grade.label AS grade_label,
+        student."RoomID_Onec" AS room,
+        ${linkStateSql} AS link_state
+      ${fromSql}
+      ${filteredWhereSql}
+      ORDER BY tl.created_at DESC, tl.id DESC
+      LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+    `,
+      selectParams,
+    );
+
+    const summaryRow = summaryResult.rows[0] || {};
+    return {
+      rows: result.rows.map(({ token_encrypted, ...row }) => ({
+        ...row,
+        magic_link: this.resolveMagicLink(token_encrypted as string | null),
+      })),
+      totalCount,
+      summary: {
+        total: Number(summaryRow.total || 0),
+        active: Number(summaryRow.active || 0),
+        locked: Number(summaryRow.locked || 0),
+        expired: Number(summaryRow.expired || 0),
+        scheduled: Number(summaryRow.scheduled || 0),
+      },
+    };
+  }
+
   /**
    * Soft-delete the whole task tree: tombstone the task and its delegation
    * links in one transaction so the accountability chain survives for audit
@@ -1735,9 +1955,11 @@ export class TaskRepository {
         t.task_type,
         t.target_grade,
         t.target_room,
-        t.target_school_id
+        t.target_school_id,
+        c.created_by AS case_created_by
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
+      LEFT JOIN cases c ON c.id = t.case_id
       WHERE tl.id = $1
         AND tl.deleted_at IS NULL
         AND t.deleted_at IS NULL

@@ -401,6 +401,7 @@ export class TaskPolicyService {
       login_data_scope?: unknown;
       target_school_id?: unknown;
       target_room?: unknown;
+      case_created_by?: unknown;
     },
     roleMap?: Map<string, RoleDefinition>,
   ): boolean {
@@ -422,8 +423,17 @@ export class TaskPolicyService {
     }
 
     if (taskType === 'VISIT') {
-      if (!this.hasPermission(actor, 'dashboard')) {
+      if (!this.hasPermission(actor, 'review-cases')) {
         return false;
+      }
+
+      const actorOwnOnly =
+        actor.data_scope &&
+        typeof actor.data_scope === 'object' &&
+        actor.data_scope.own_only === true;
+      if (actorOwnOnly) {
+        const caseCreatedBy = this.normalizeLinkScopeValue(link.case_created_by);
+        return caseCreatedBy !== undefined && String(caseCreatedBy) === String(actor.id);
       }
 
       const scope = this.buildManagedTaskLinkScope(link);

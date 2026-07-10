@@ -13,7 +13,11 @@ import { TaskReadService } from './task-read.service';
 import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
-import type { CaseListFilters, LoginLinkListFilters } from './task.repository';
+import type {
+  CaseListFilters,
+  LoginLinkListFilters,
+  VisitLinkListFilters,
+} from './task.repository';
 import type { ActorContext, RiskDashboardFilters } from './task.types';
 
 @Injectable()
@@ -79,6 +83,10 @@ export class TaskService {
 
   async getLoginLinks(actor?: ActorContext, filters: Partial<LoginLinkListFilters> = {}) {
     return await this.taskAccessService.getLoginLinks(actor, filters);
+  }
+
+  async getVisitLinks(actor?: ActorContext, filters: Partial<VisitLinkListFilters> = {}) {
+    return await this.taskAccessService.getVisitLinks(actor, filters);
   }
 
   async deleteTask(taskId: string, actor?: ActorContext, ip?: string | null) {
