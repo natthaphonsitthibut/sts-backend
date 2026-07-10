@@ -445,6 +445,22 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'period', label: 'คาบ' },
     ],
   },
+  PERIOD_TIME_GENERATE: {
+    domain: 'timetable',
+    label: 'สร้างเวลาคาบเรียนอัตโนมัติ',
+    detailKeys: [
+      { key: 'days', label: 'วันที่สร้าง' },
+      { key: 'periodsCount', label: 'จำนวนคาบ' },
+    ],
+  },
+  PERIOD_TIME_OVERRIDE: {
+    domain: 'timetable',
+    label: 'แก้ไขเวลาคาบเรียนรายคาบ',
+    detailKeys: [
+      { key: 'dayOfWeek', label: 'วัน' },
+      { key: 'period', label: 'คาบ' },
+    ],
+  },
 };
 
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {

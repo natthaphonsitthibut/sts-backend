@@ -66,6 +66,8 @@ export const AUDIT_ACTIONS = [
   'TIMETABLE_SLOT_CREATE',
   'TIMETABLE_SLOT_UPDATE',
   'TIMETABLE_SLOT_DELETE',
+  'PERIOD_TIME_GENERATE',
+  'PERIOD_TIME_OVERRIDE',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

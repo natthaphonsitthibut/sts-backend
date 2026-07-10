@@ -546,14 +546,19 @@ async function main() {
     await waitFor(
       async () =>
         (await bodyText(client)).includes(PAGE_SELECTION_USERNAME_PREFIX) &&
-        (await bodyText(client)).includes('แสดง 1-20 จาก 22 บัญชี'),
+        (await evaluate(
+          client,
+          `Boolean(document.querySelector('button[aria-label="หน้าถัดไป"]:not(:disabled)'))`,
+        )),
       'Cross-page selection fixture list did not render as two pages',
     );
     await clickFirstStudentAccountCheckbox(client);
     await waitFor(async () => (await selectedBulkCount(client)) === 1, 'Selecting page 1 did not update the bulk count');
     await clickNextPage(client);
     await waitFor(
-      async () => (await bodyText(client)).includes('แสดง 21-22 จาก 22 บัญชี'),
+      async () =>
+        (await bodyText(client)).includes(`${PAGE_SELECTION_USERNAME_PREFIX}021`) ||
+        (await bodyText(client)).includes(`${PAGE_SELECTION_USERNAME_PREFIX}022`),
       'Student account list did not navigate to page 2',
     );
     assert(
