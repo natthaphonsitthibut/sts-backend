@@ -32,6 +32,7 @@
     "smoke:recruitment-campaign": "DB_NAME=sts_smoke node scripts/smoke-recruitment-campaign.js",
     "smoke:recruitment-campaign-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9250 node scripts/smoke-recruitment-campaign-browser.js",
     "smoke:task-link-encryption": "DB_NAME=sts_smoke node scripts/smoke-task-link-encryption.js",
+    "smoke:task-link-scheduled": "DB_NAME=sts_smoke node scripts/smoke-task-link-scheduled.js",
     "smoke:school-period-times": "DB_NAME=sts_smoke node scripts/smoke-school-period-times.js",
     "smoke:student-import-quarantine": "DB_NAME=sts_smoke node scripts/smoke-student-import-quarantine.js",
     "smoke:quarantine-retention": "DB_NAME=sts_smoke node scripts/smoke-quarantine-retention.js",
