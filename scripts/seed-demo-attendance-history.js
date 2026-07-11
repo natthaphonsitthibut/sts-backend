@@ -3,6 +3,10 @@ const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { RiskProfileRepository } = require('../dist/risk-profile/risk-profile.repository');
 
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('Refusing to run demo attendance history seed with NODE_ENV=production');
+}
+
 const LOOKBACK_DAYS = 45;
 
 async function main() {
