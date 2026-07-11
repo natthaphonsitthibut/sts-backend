@@ -22,7 +22,11 @@ export class StudentGeocodeCacheRepository {
        WHERE student_uuid = $1`,
       [studentUuid],
     );
-    return result.rows[0] ?? null;
+    const row = result.rows[0];
+    if (!row) return null;
+    // NUMERIC(10,7) columns come back as strings from node-pg; coerce here so
+    // every caller of this shared cache actually gets the `number` the type declares.
+    return { ...row, lat: Number(row.lat), lng: Number(row.lng) };
   }
 
   async upsert(
