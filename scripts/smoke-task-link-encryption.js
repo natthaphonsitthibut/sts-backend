@@ -99,10 +99,10 @@ async function main() {
     console.log('task-link encryption smoke passed');
   } finally {
     if (createdTaskIds.length > 0) {
-      await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::text[])`, [
+      await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::uuid[])`, [
         createdTaskIds,
       ]);
-      await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::text[])`, [createdTaskIds]);
+      await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [createdTaskIds]);
     }
     await app.close();
   }

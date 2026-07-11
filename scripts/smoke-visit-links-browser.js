@@ -359,10 +359,10 @@ async function cleanupFixture(dataSource, fixture) {
   const taskIds = fixture.links.map((link) => link.taskId);
   const caseIds = fixture.links.map((link) => link.caseId);
   if (linkIds.length > 0) {
-    await dataSource.query(`DELETE FROM task_links WHERE id = ANY($1::text[])`, [linkIds]);
+    await dataSource.query(`DELETE FROM task_links WHERE id = ANY($1::uuid[])`, [linkIds]);
   }
   if (taskIds.length > 0) {
-    await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::text[])`, [taskIds]);
+    await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [taskIds]);
   }
   if (caseIds.length > 0) {
     await dataSource.query(`DELETE FROM cases WHERE id = ANY($1::int[])`, [caseIds]);

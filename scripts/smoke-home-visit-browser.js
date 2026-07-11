@@ -371,11 +371,11 @@ async function cleanupSmokeTasks(dataSource) {
   const taskIds = rows.map((row) => row.task_id).filter(Boolean);
   const caseIds = rows.map((row) => row.case_id).filter(Boolean);
   const linkIds = rows.map((row) => row.link_id).filter(Boolean);
-  await dataSource.query(`DELETE FROM task_submissions WHERE task_link_id = ANY($1::text[])`, [
+  await dataSource.query(`DELETE FROM task_submissions WHERE task_link_id = ANY($1::uuid[])`, [
     linkIds,
   ]);
-  await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::text[])`, [taskIds]);
-  await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::text[])`, [taskIds]);
+  await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::uuid[])`, [taskIds]);
+  await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [taskIds]);
   if (caseIds.length) {
     await dataSource.query(
       `
