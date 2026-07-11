@@ -12,6 +12,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run PII export smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const REQUESTER_USERNAME = 'pii_export_smoke_requester';
 const APPROVER_USERNAME = 'pii_export_smoke_approver';
 const PERSON_UUID = '20000000-0000-4000-8000-000000000001';

@@ -12,6 +12,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run account lifecycle notifications smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const ACTOR_USERNAME = 'account_noti_smoke_actor';
 const TARGET_USERNAME = 'account_noti_smoke_target';
 const DEACTIVATED = 'ACCOUNT_DEACTIVATED';

@@ -11,6 +11,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run role/scope browser smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const BACKEND_URL = process.env.SMOKE_BACKEND_URL || 'http://127.0.0.1:3000';
 const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5174';
 const CHROME_PATH =

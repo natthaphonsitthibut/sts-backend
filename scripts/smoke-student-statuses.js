@@ -12,6 +12,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run student-status smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const SETTINGS_USERNAME = 'student_status_smoke_settings';
 const IMPORT_USERNAME = 'student_status_smoke_import';
 const NO_PERMISSION_USERNAME = 'student_status_smoke_no_permission';

@@ -12,6 +12,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run role/scope smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const GLOBAL_ADMIN_USERNAME = 'role_scope_smoke_global_admin';
 const SCHOOL_ADMIN_USERNAME = 'role_scope_smoke_school_admin';
 const TARGET_USERNAME_PREFIX = 'role_scope_smoke_teacher';

@@ -8,6 +8,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run quarantine retention smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const SMOKE_KEY = 'quarantine-retention-smoke';
 const SCHOOL_ID = 10010002;
 const DAY_MS = 24 * 60 * 60 * 1000;

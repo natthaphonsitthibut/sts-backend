@@ -8,6 +8,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run task overdue notifications smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const TYPE_CODE = 'TASK_OVERDUE';
 
 function assert(condition, message) {

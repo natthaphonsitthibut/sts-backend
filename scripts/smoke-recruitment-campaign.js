@@ -12,6 +12,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run recruitment-campaign smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const GLOBAL_ADMIN_USERNAME = 'recruitment_campaign_smoke_global_admin';
 const DISTRICT_ADMIN_USERNAME = 'recruitment_campaign_smoke_district_admin';
 const SMOKE_ACTORS = [GLOBAL_ADMIN_USERNAME, DISTRICT_ADMIN_USERNAME];

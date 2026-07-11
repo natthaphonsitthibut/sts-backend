@@ -7,6 +7,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run case SLA smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }

@@ -8,6 +8,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run attendance incomplete notifications smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const TYPE_CODE = 'ATTENDANCE_INCOMPLETE';
 const SCHOOL_ID = 10010009;
 const GRADE_LEVEL_ID = 101;

@@ -6,6 +6,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run seed username rename smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 // Expected realistic usernames after migration 20260705150000-RenameSeedUsernames.
 const EXPECTED = [
   { username: 'orathai.b', role: 'ADMIN' },

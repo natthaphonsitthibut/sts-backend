@@ -12,6 +12,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run master-data lookup smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const SETTINGS_USERNAME = 'master_data_lookup_smoke_settings';
 const NO_SETTINGS_USERNAME = 'master_data_lookup_smoke_no_settings';
 

@@ -13,6 +13,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run student import quarantine smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const SMOKE_KEY = 'student-import-quarantine-smoke';
 const GLOBAL_USERNAME = 'student_import_quarantine_smoke_global';
 const OUT_OF_SCOPE_USERNAME = 'student_import_quarantine_smoke_out_scope';

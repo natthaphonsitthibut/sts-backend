@@ -12,6 +12,10 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run student accounts smoke with NODE_ENV=production');
 }
 
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
 const ADMIN_USERNAME = 'student_accounts_smoke_admin';
 const PERSON_UUID = '10000000-0000-4000-8000-000000000001';
 const STUDENT_UUID = '10000000-0000-4000-8000-000000000002';
