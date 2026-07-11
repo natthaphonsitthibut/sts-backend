@@ -556,6 +556,7 @@ export class TaskAccessService {
             login_data_scope: link.login_data_scope,
             target_school_id: link.target_school_id,
             target_room: link.target_room,
+            case_created_by: link.case_created_by,
           },
           roleMap,
         )

@@ -95,6 +95,81 @@ describe('TaskAccessService login-link usage', () => {
   });
 });
 
+describe('TaskAccessService.getAdminLinkDetail own_only VISIT reviewer access', () => {
+  let service: TaskAccessService;
+  let taskRepository: jest.Mocked<Pick<TaskRepository, 'findLinkDetailById' | 'listTaskHistory'>>;
+  let taskPolicyService: TaskPolicyService;
+
+  const ownOnlyReviewer = {
+    id: 42,
+    username: 'reviewer@example.test',
+    roles: ['REVIEWER'],
+    permissions: ['review-cases'],
+    data_scope: { own_only: true },
+  };
+
+  const baseVisitLink = {
+    id: 'link-visit-1',
+    task_id: 'task-1',
+    task_type: 'VISIT',
+    login_role: null,
+    login_data_scope: {},
+    target_school_id: 10010002,
+    target_room: '1',
+    expires_at: '2999-01-01T00:00:00.000Z',
+    admin_locked: 0,
+    opens_at: null,
+  };
+
+  beforeEach(() => {
+    taskRepository = {
+      findLinkDetailById: jest.fn(),
+      listTaskHistory: jest.fn().mockResolvedValue([]),
+    };
+    // Real TaskPolicyService (not mocked) so canManageAdminLink's own_only
+    // branch actually runs — a mocked policy would hide the getAdminLinkDetail
+    // -> canManageAdminLink wiring bug this test guards against.
+    taskPolicyService = new TaskPolicyService({
+      getRoleDefinitions: jest.fn().mockResolvedValue([]),
+    } as unknown as TaskRepository);
+
+    service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      taskPolicyService,
+      {} as EmailService,
+      { record: jest.fn().mockResolvedValue(undefined) } as unknown as AuditLogService,
+      {
+        sessionSecret: 'test-session-secret-at-least-16-chars',
+        magicSessionTtlSeconds: 21_600,
+      } as AuthRuntimeConfig,
+      { enabled: false, user: '' } as EmailRuntimeConfig,
+      {} as MagicSessionStoreService,
+    );
+  });
+
+  it('lets an own_only reviewer view a VISIT link on their own case', async () => {
+    taskRepository.findLinkDetailById.mockResolvedValue({
+      ...baseVisitLink,
+      case_created_by: ownOnlyReviewer.id,
+    });
+
+    await expect(
+      service.getAdminLinkDetail(ownOnlyReviewer, 'link-visit-1'),
+    ).resolves.toMatchObject({ link_id: 'link-visit-1' });
+  });
+
+  it("blocks an own_only reviewer from viewing a VISIT link on someone else's case", async () => {
+    taskRepository.findLinkDetailById.mockResolvedValue({
+      ...baseVisitLink,
+      case_created_by: 999,
+    });
+
+    await expect(service.getAdminLinkDetail(ownOnlyReviewer, 'link-visit-1')).rejects.toThrow(
+      'ไม่มีสิทธิ์ดูลิงก์นี้',
+    );
+  });
+});
+
 describe('TaskAccessService attendance link slots', () => {
   let service: TaskAccessService;
   let taskRepository: jest.Mocked<

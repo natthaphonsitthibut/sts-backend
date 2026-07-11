@@ -1999,11 +1999,13 @@ export class TaskRepository {
         t.target_grade,
         t.target_room,
         t.target_school_id,
-        s.name AS school_name
+        s.name AS school_name,
+        c.created_by AS case_created_by
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       LEFT JOIN schools s ON s.id = t.target_school_id
       LEFT JOIN roles r ON r.name = COALESCE(NULLIF(TRIM(tl.login_role), ''), 'TEACHER')
+      LEFT JOIN cases c ON c.id = t.case_id
       WHERE tl.id = $1
         AND tl.deleted_at IS NULL
         AND t.deleted_at IS NULL
