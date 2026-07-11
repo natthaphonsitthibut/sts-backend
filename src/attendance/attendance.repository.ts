@@ -454,20 +454,21 @@ export class AttendanceRepository {
   ): Promise<{
     rows: AttendanceTaskRow[];
     totalCount: number;
-    summary: { total: number; active: number; locked: number; expired: number };
+    summary: { total: number; active: number; locked: number; expired: number; scheduled: number };
   }> {
     // Self-only actors own no link rows (see listSchools note).
     if (userScope?.own_only === true) {
       return {
         rows: [],
         totalCount: 0,
-        summary: { total: 0, active: 0, locked: 0, expired: 0 },
+        summary: { total: 0, active: 0, locked: 0, expired: 0, scheduled: 0 },
       };
     }
     const linkStateSql = `
       CASE
         WHEN tl.id IS NULL OR tl.expires_at <= NOW() THEN 'EXPIRED'
         WHEN COALESCE(tl.admin_locked, 0) = 1 THEN 'LOCKED'
+        WHEN tl.opens_at IS NOT NULL AND tl.opens_at > NOW() THEN 'SCHEDULED'
         ELSE 'ACTIVE'
       END`;
     const fromSql = `
@@ -526,7 +527,8 @@ export class AttendanceRepository {
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE ${linkStateSql} = 'ACTIVE')::int AS active,
         COUNT(*) FILTER (WHERE ${linkStateSql} = 'LOCKED')::int AS locked,
-        COUNT(*) FILTER (WHERE ${linkStateSql} = 'EXPIRED')::int AS expired
+        COUNT(*) FILTER (WHERE ${linkStateSql} = 'EXPIRED')::int AS expired,
+        COUNT(*) FILTER (WHERE ${linkStateSql} = 'SCHEDULED')::int AS scheduled
       ${fromSql}
       ${policyWhereSql}
     `,
@@ -631,6 +633,7 @@ export class AttendanceRepository {
         active: Number(summaryRow.active || 0),
         locked: Number(summaryRow.locked || 0),
         expired: Number(summaryRow.expired || 0),
+        scheduled: Number(summaryRow.scheduled || 0),
       },
     };
   }
