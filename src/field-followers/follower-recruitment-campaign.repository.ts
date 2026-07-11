@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { DataScope } from '../auth';
 import { queryDataSource } from '../database/sql-query';
-import type { FollowerRecruitmentCampaignRow } from './follower-recruitment-campaign.types';
+import type {
+  FollowerAssignmentCandidateRow,
+  FollowerCampaignTargetRow,
+  FollowerRecruitmentCampaignRow,
+} from './follower-recruitment-campaign.types';
 
 export interface CreateFollowerRecruitmentCampaignInput {
   name: string;
@@ -209,5 +213,99 @@ export class FollowerRecruitmentCampaignRepository {
       `,
       [id],
     );
+  }
+
+  async addTargets(
+    campaignId: string,
+    caseIds: number[],
+    actorId: number | null,
+  ): Promise<FollowerCampaignTargetRow[]> {
+    const result = await queryDataSource<FollowerCampaignTargetRow>(
+      this.dataSource,
+      `
+        INSERT INTO follower_recruitment_campaign_targets (
+          campaign_id, case_id, created_by, updated_by
+        )
+        SELECT $1::bigint, unnest($2::int[]), $3, $3
+        ON CONFLICT (campaign_id, case_id) DO NOTHING
+        RETURNING *
+      `,
+      [campaignId, caseIds, actorId],
+    );
+    if (result.rows.length === 0) {
+      return await this.listTargets(campaignId);
+    }
+    return await this.listTargets(campaignId);
+  }
+
+  async listTargets(campaignId: string): Promise<FollowerCampaignTargetRow[]> {
+    const result = await queryDataSource<FollowerCampaignTargetRow>(
+      this.dataSource,
+      `
+        SELECT
+          target.*,
+          c.student_name AS case_student_name,
+          c.student_uuid::text AS case_student_id,
+          c.student_school AS case_student_school,
+          c.student_address AS case_student_address,
+          c.reason_flagged AS case_reason_flagged,
+          CONCAT_WS(' ', follower.first_name, follower.last_name) AS assigned_follower_name,
+          follower.email AS assigned_follower_email,
+          follower.phone AS assigned_follower_phone
+        FROM follower_recruitment_campaign_targets target
+        JOIN cases c ON c.id = target.case_id AND c.deleted_at IS NULL
+        LEFT JOIN field_followers follower ON follower.id = target.assigned_follower_id
+        WHERE target.campaign_id = $1
+          AND target.deleted_at IS NULL
+        ORDER BY target.created_at DESC, target.id DESC
+      `,
+      [campaignId],
+    );
+    return result.rows;
+  }
+
+  async findTargetById(id: string): Promise<FollowerCampaignTargetRow | null> {
+    const result = await queryDataSource<FollowerCampaignTargetRow>(
+      this.dataSource,
+      `
+        SELECT
+          target.*,
+          c.student_name AS case_student_name,
+          c.student_uuid::text AS case_student_id,
+          c.student_school AS case_student_school,
+          c.student_address AS case_student_address,
+          c.reason_flagged AS case_reason_flagged,
+          CONCAT_WS(' ', follower.first_name, follower.last_name) AS assigned_follower_name,
+          follower.email AS assigned_follower_email,
+          follower.phone AS assigned_follower_phone
+        FROM follower_recruitment_campaign_targets target
+        JOIN cases c ON c.id = target.case_id AND c.deleted_at IS NULL
+        LEFT JOIN field_followers follower ON follower.id = target.assigned_follower_id
+        WHERE target.id = $1
+          AND target.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findActiveFollowerForCampaign(
+    followerId: number,
+    campaignId: string,
+  ): Promise<FollowerAssignmentCandidateRow | null> {
+    const result = await queryDataSource<FollowerAssignmentCandidateRow>(
+      this.dataSource,
+      `
+        SELECT id, first_name, last_name, phone, email, status, campaign_id
+        FROM field_followers
+        WHERE id = $1
+          AND campaign_id = $2
+          AND status = 'ACTIVE'
+        LIMIT 1
+      `,
+      [followerId, campaignId],
+    );
+    return result.rows[0] ?? null;
   }
 }

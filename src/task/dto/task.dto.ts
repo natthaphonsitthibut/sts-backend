@@ -148,6 +148,12 @@ export class CreateTaskDto {
 
   @IsOptional()
   existing_case_id?: string | number | null;
+
+  @IsOptional()
+  source_field_follower_id?: string | number | null;
+
+  @IsOptional()
+  campaign_target_id?: string | number | null;
 }
 
 export class TaskAttendanceRecordDto {

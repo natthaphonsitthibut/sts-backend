@@ -6,6 +6,7 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
+const { RedisClientService } = require('../dist/redis/redis-client.service');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
 
 if (process.env.NODE_ENV === 'production') {
@@ -278,6 +279,29 @@ async function cleanupData(dataSource) {
   ]);
 }
 
+async function clearSmokeThrottle(app) {
+  const redisClientService = app.get(RedisClientService, { strict: false });
+  const client = redisClientService?.getClient?.();
+  if (!client) return;
+
+  for (const throttleName of ['followerApplication', 'campaignLookup']) {
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await client.scan(
+        cursor,
+        'MATCH',
+        `sts:throttle:${throttleName}:*`,
+        'COUNT',
+        100,
+      );
+      if (keys.length > 0) {
+        await client.del(...keys);
+      }
+      cursor = nextCursor;
+    } while (cursor !== '0');
+  }
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -292,6 +316,7 @@ async function main() {
   let chrome;
 
   try {
+    await clearSmokeThrottle(app);
     await cleanupData(dataSource);
     await disableActor(dataSource);
     const actorId = await upsertActor(dataSource, passwordHash);
@@ -331,55 +356,33 @@ async function main() {
       'Empty state for campaigns did not render',
     );
 
-    // 2. Open the create dialog and submit.
-    await evaluate(
+    // 2. Create a campaign fixture through the authenticated API. The create UI
+    // lives on /create; this smoke focuses on the recruitment-link review page.
+    const campaign = await evaluate(
       client,
-      `(() => {
-        const button = [...document.querySelectorAll('button')]
-          .find((el) => el.textContent.trim().includes('สร้างลิงก์รับสมัคร'));
-        button?.click();
+      `(async () => {
+        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/follower-recruitment-campaigns`)}, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: ${JSON.stringify(CAMPAIGN_NAME)} })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(JSON.stringify(payload));
+        }
+        return payload.data;
       })()`,
     );
-    await waitFor(
-      async () => (await bodyText(client)).includes('สร้างลิงก์รับสมัคร อสม./ผู้ติดตาม'),
-      'Create-campaign dialog did not open',
-    );
-    await evaluate(
-      client,
-      `(() => {
-        const input = document.getElementById('campaign-name');
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        setter.call(input, ${JSON.stringify(CAMPAIGN_NAME)});
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-      })()`,
-    );
-    await evaluate(
-      client,
-      `(() => {
-        const button = [...document.querySelectorAll('button[type=submit]')]
-          .find((el) => el.textContent.trim() === 'สร้างลิงก์');
-        button?.click();
-      })()`,
-    );
+    assert(campaign?.public_code, 'Create did not return the campaign public_code');
+    assert(campaign.view_count === 0, `Expected view_count=0 before any public view, got ${campaign.view_count}`);
+
+    await navigate(client, `${FRONTEND_URL}/field-followers`);
     await waitFor(
       async () => (await bodyText(client)).includes(CAMPAIGN_NAME),
       'New campaign did not appear in the list after create',
     );
     await capture(client, '/tmp/sts-recruitment-campaign-created.png');
-
-    // 3. Read the public_code back from the API (created via the actor's own session).
-    const campaign = await evaluate(
-      client,
-      `(async () => {
-        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/follower-recruitment-campaigns`)}, {
-          credentials: 'include'
-        });
-        const payload = await response.json();
-        return payload.data.find((row) => row.name === ${JSON.stringify(CAMPAIGN_NAME)});
-      })()`,
-    );
-    assert(campaign?.public_code, 'Could not resolve the created campaign public_code via API');
-    assert(campaign.view_count === 0, `Expected view_count=0 before any public view, got ${campaign.view_count}`);
 
     // 4. Public apply page: open by code, gated open, submit an application.
     await navigate(client, `${FRONTEND_URL}/apply/field-follower/${campaign.public_code}`);
@@ -406,6 +409,8 @@ async function main() {
     await setInputValue('follower-first-name', 'เบราว์เซอร์');
     await setInputValue('follower-last-name', 'สโมคทดสอบ');
     await setInputValue('follower-phone', '0891234567');
+    await setInputValue('follower-email', 'recruitment.browser@example.test');
+    await setInputValue('follower-thaid-ref', `browser-thaid-${Date.now()}`);
     await evaluate(
       client,
       `(() => {
@@ -421,11 +426,47 @@ async function main() {
     await capture(client, '/tmp/sts-recruitment-campaign-applied.png');
 
     // 5. Back in admin: view_count/submission_count reflect the visit+submit,
-    // and the follower row shows which campaign it came from.
+    // and the campaign drill-down shows the applicant with a link to detail.
     await navigate(client, `${FRONTEND_URL}/field-followers`);
     await waitFor(
-      async () => (await bodyText(client)).includes(`ผ่านลิงก์ ${CAMPAIGN_NAME}`),
-      'Follower row did not attribute the application to the campaign',
+      async () => (await bodyText(client)).includes(CAMPAIGN_NAME),
+      'Campaign row did not render after returning to admin',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const rows = [...document.querySelectorAll('tr, article')];
+        const row = rows.find((el) => el.textContent.includes(${JSON.stringify(CAMPAIGN_NAME)}));
+        const button = [...(row || document).querySelectorAll('button')]
+          .find((el) => el.textContent.trim().includes('ดูผู้สมัคร'));
+        button?.click();
+      })()`,
+    );
+    await waitFor(
+      async () => {
+        const text = await bodyText(client);
+        return (
+          text.includes('เบราว์เซอร์ สโมคทดสอบ') &&
+          text.includes('recruitment.browser@example.test') &&
+          text.includes('ยังไม่มีเคสในแคมเปญนี้')
+        );
+      },
+      'Campaign drill-down did not show the submitted applicant and target empty state',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const button = [...document.querySelectorAll('button')]
+          .find((el) => el.textContent.trim().includes('ดู detail'));
+        button?.click();
+      })()`,
+    );
+    await waitFor(
+      async () => {
+        const text = await bodyText(client);
+        return text.includes('รายละเอียดใบสมัคร') && text.includes('recruitment.browser@example.test');
+      },
+      'Applicant detail page did not show submitted applicant fields',
     );
     const afterApply = await evaluate(
       client,
@@ -444,16 +485,23 @@ async function main() {
     );
 
     // 6. Toggle off -> public apply page reports closed.
+    await navigate(client, `${FRONTEND_URL}/field-followers`);
+    await waitFor(
+      async () => (await bodyText(client)).includes(CAMPAIGN_NAME),
+      'Campaign row did not render before toggling off',
+    );
     await evaluate(
       client,
       `(() => {
-        const button = [...document.querySelectorAll('button')]
-          .find((el) => el.textContent.trim() === 'ปิดรับสมัคร');
+        const rows = [...document.querySelectorAll('tr, article')];
+        const row = rows.find((el) => el.textContent.includes(${JSON.stringify(CAMPAIGN_NAME)}));
+        const button = [...(row || document).querySelectorAll('button')]
+          .find((el) => el.textContent.trim() === 'ปิดใช้งาน');
         button?.click();
       })()`,
     );
     await waitFor(
-      async () => (await bodyText(client)).includes('ปิดรับสมัคร'),
+      async () => (await bodyText(client)).includes('เปิดใช้งาน'),
       'Toggle did not flip the campaign to closed in the admin list',
     );
     await navigate(client, `${FRONTEND_URL}/apply/field-follower/${campaign.public_code}`);

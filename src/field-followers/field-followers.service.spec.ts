@@ -38,10 +38,18 @@ describe('FieldFollowersService', () => {
       status: 'APPLIED',
       trust_level: 'STANDARD',
       applied_via: 'PUBLIC_FORM',
+      email: null,
+      gender: null,
+      verification_method: 'PENDING',
+      thaid_person_ref: null,
+      id_card_photo_filename: null,
+      id_card_photo_uploaded_at: null,
       campaign_id: null,
       campaign_name: null,
       reviewed_by_user_id: null,
       reviewed_at: null,
+      verified_by_user_id: null,
+      verified_at: null,
       created_at: new Date('2026-07-06T00:00:00Z'),
       updated_at: new Date('2026-07-06T00:00:00Z'),
       ...overrides,
@@ -72,7 +80,15 @@ describe('FieldFollowersService', () => {
   describe('createApplication', () => {
     it('creates the application and audits without PII beyond area', async () => {
       const result = await service.createApplication(
-        { first_name: 'สมชาย', last_name: 'ใจดี', phone: '0812345678', province: 'เชียงใหม่' },
+        {
+          first_name: 'สมชาย',
+          last_name: 'ใจดี',
+          phone: '0812345678',
+          email: 'somchai@example.test',
+          province: 'เชียงใหม่',
+          verification_method: 'THAID',
+          thaid_person_ref: 'mock-thaid-ref-1',
+        },
         { ip: '127.0.0.1' },
       );
 
@@ -81,6 +97,11 @@ describe('FieldFollowersService', () => {
         firstName: 'สมชาย',
         lastName: 'ใจดี',
         phone: '0812345678',
+        email: 'somchai@example.test',
+        gender: null,
+        verificationMethod: 'THAID',
+        thaidPersonRef: 'mock-thaid-ref-1',
+        idCardPhotoFilename: null,
         subDistrict: null,
         district: null,
         province: 'เชียงใหม่',
@@ -97,6 +118,9 @@ describe('FieldFollowersService', () => {
           first_name: 'bot',
           last_name: 'bot',
           phone: '0800000000',
+          email: 'bot@example.test',
+          verification_method: 'THAID',
+          thaid_person_ref: 'mock-thaid-ref-2',
           website: 'https://spam.example',
         },
         { ip: '127.0.0.1' },
@@ -110,7 +134,47 @@ describe('FieldFollowersService', () => {
     it('rejects an application with a blank name after trimming', async () => {
       await expect(
         service.createApplication(
-          { first_name: '   ', last_name: 'ใจดี', phone: '0812345678' },
+          {
+            first_name: '   ',
+            last_name: 'ใจดี',
+            phone: '0812345678',
+            email: 'somchai@example.test',
+            verification_method: 'THAID',
+            thaid_person_ref: 'mock-thaid-ref-1',
+          },
+          { ip: null },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.createApplication).not.toHaveBeenCalled();
+    });
+
+    it('requires a ThaID reference for ThaID verification', async () => {
+      await expect(
+        service.createApplication(
+          {
+            first_name: 'สมชาย',
+            last_name: 'ใจดี',
+            phone: '0812345678',
+            email: 'somchai@example.test',
+            verification_method: 'THAID',
+          },
+          { ip: null },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.createApplication).not.toHaveBeenCalled();
+    });
+
+    it('requires a safe uploaded filename for ID-card verification', async () => {
+      await expect(
+        service.createApplication(
+          {
+            first_name: 'สมชาย',
+            last_name: 'ใจดี',
+            phone: '0812345678',
+            email: 'somchai@example.test',
+            verification_method: 'ID_CARD_PHOTO',
+            id_card_photo_filename: '../unsafe.jpg',
+          },
           { ip: null },
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
@@ -119,16 +183,43 @@ describe('FieldFollowersService', () => {
   });
 
   describe('reviewFollower', () => {
-    it('approves an APPLIED follower and audits the transition', async () => {
+    it('verifies an APPLIED follower and audits the transition', async () => {
+      repository.updateStatus.mockResolvedValue(followerRow({ status: 'VERIFIED' }));
+
+      const result = await service.reviewFollower('1', 'VERIFY', actor, { ip: null });
+
+      expect(repository.updateStatus).toHaveBeenCalledWith('1', 'VERIFIED', actor.id, {
+        markVerified: true,
+      });
+      expect(result.data.status).toBe('VERIFIED');
+      const auditCall = auditLog.record.mock.calls[0]?.[0];
+      expect(auditCall?.action).toBe('FIELD_FOLLOWER_REVIEW');
+      expect(auditCall?.metadata).toEqual(
+        expect.objectContaining({ reviewAction: 'VERIFY', toStatus: 'VERIFIED' }),
+      );
+    });
+
+    it('approves a VERIFIED follower and audits the transition', async () => {
+      repository.findByIdInScope.mockResolvedValue(followerRow({ status: 'VERIFIED' }));
+
       const result = await service.reviewFollower('1', 'APPROVE', actor, { ip: null });
 
-      expect(repository.updateStatus).toHaveBeenCalledWith('1', 'ACTIVE', actor.id);
+      expect(repository.updateStatus).toHaveBeenCalledWith('1', 'ACTIVE', actor.id, {
+        markVerified: false,
+      });
       expect(result.data.status).toBe('ACTIVE');
       const auditCall = auditLog.record.mock.calls[0]?.[0];
       expect(auditCall?.action).toBe('FIELD_FOLLOWER_REVIEW');
       expect(auditCall?.metadata).toEqual(
         expect.objectContaining({ reviewAction: 'APPROVE', toStatus: 'ACTIVE' }),
       );
+    });
+
+    it('rejects direct approval before verification', async () => {
+      await expect(
+        service.reviewFollower('1', 'APPROVE', actor, { ip: null }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(repository.updateStatus).not.toHaveBeenCalled();
     });
 
     it('rejects an invalid transition (approve an already-active follower)', async () => {

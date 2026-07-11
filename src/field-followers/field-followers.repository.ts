@@ -2,13 +2,21 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { DataScope } from '../auth';
 import { queryDataSource } from '../database/sql-query';
-import type { FieldFollowerStatus } from './dto/field-followers.dto';
+import type {
+  FieldFollowerStatus,
+  FieldFollowerVerificationMethod,
+} from './dto/field-followers.dto';
 import type { FieldFollowerRow } from './field-followers.types';
 
 export interface CreateFieldFollowerInput {
   firstName: string;
   lastName: string;
   phone: string;
+  email: string;
+  gender: string | null;
+  verificationMethod: FieldFollowerVerificationMethod;
+  thaidPersonRef: string | null;
+  idCardPhotoFilename: string | null;
   subDistrict: string | null;
   district: string | null;
   province: string | null;
@@ -21,6 +29,7 @@ export interface ListFieldFollowersFilters {
   district?: string;
   subDistrict?: string;
   searchTerm?: string;
+  campaignId?: string;
   page: number;
   limit: number;
 }
@@ -85,15 +94,22 @@ export class FieldFollowersRepository {
       this.dataSource,
       `
         INSERT INTO field_followers (
-          first_name, last_name, phone, sub_district, district, province, campaign_id, applied_via
+          first_name, last_name, phone, email, gender, verification_method, thaid_person_ref,
+          id_card_photo_filename, id_card_photo_uploaded_at, sub_district, district, province,
+          campaign_id, applied_via
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END, $9, $10, $11, $12, $13)
         RETURNING *
       `,
       [
         input.firstName,
         input.lastName,
         input.phone,
+        input.email,
+        input.gender,
+        input.verificationMethod,
+        input.thaidPersonRef,
+        input.idCardPhotoFilename,
         input.subDistrict,
         input.district,
         input.province,
@@ -140,6 +156,10 @@ export class FieldFollowersRepository {
         `(first_name ILIKE $${searchParam} OR last_name ILIKE $${searchParam} OR phone ILIKE $${searchParam})`,
       );
     }
+    if (filters.campaignId) {
+      params.push(filters.campaignId);
+      conditions.push(`campaign_id = $${params.length}`);
+    }
 
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (filters.page - 1) * filters.limit;
@@ -185,12 +205,16 @@ export class FieldFollowersRepository {
     id: string,
     nextStatus: FieldFollowerStatus,
     reviewerUserId: number,
+    options: { markVerified?: boolean } = {},
   ): Promise<FieldFollowerRow | null> {
+    const reviewSetSql = options.markVerified
+      ? `verified_by_user_id = $3, verified_at = now()`
+      : `reviewed_by_user_id = $3, reviewed_at = now()`;
     const result = await queryDataSource<FieldFollowerRow>(
       this.dataSource,
       `
         UPDATE field_followers
-        SET status = $2, reviewed_by_user_id = $3, reviewed_at = now(), updated_at = now()
+        SET status = $2, ${reviewSetSql}, updated_at = now()
         WHERE id = $1
         RETURNING *
       `,

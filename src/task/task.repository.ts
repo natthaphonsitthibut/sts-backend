@@ -136,6 +136,7 @@ interface CreateTaskLinkInput {
   opensAt: string | null;
   subject: string | null;
   subjectId: number | null;
+  sourceFieldFollowerId: number | null;
   otpVerified: number;
   createdBy: number | null;
   loginRole: string | null;
@@ -796,7 +797,8 @@ export class TaskRepository {
         login_role,
         login_permissions,
         login_data_scope,
-        opens_at
+        opens_at,
+        source_field_follower_id
       )
       VALUES (
         $1,
@@ -817,7 +819,8 @@ export class TaskRepository {
         $15,
         $16,
         $17,
-        $18
+        $18,
+        $19
       )
     `,
       [
@@ -839,8 +842,55 @@ export class TaskRepository {
         JSON.stringify(data.loginPermissions),
         JSON.stringify(data.loginDataScope),
         data.opensAt,
+        data.sourceFieldFollowerId,
       ],
     );
+  }
+
+  async assignFollowerCampaignTarget(
+    data: {
+      campaignTargetId: number;
+      sourceFieldFollowerId: number;
+      taskLinkId: string;
+      caseId: number;
+      actorId: number | null;
+    },
+    executor?: QueryExecutor,
+  ): Promise<boolean> {
+    const result = await this.getExecutor(executor).query(
+      `
+        UPDATE follower_recruitment_campaign_targets target
+        SET
+          status = 'ASSIGNED',
+          assigned_follower_id = $2,
+          assigned_task_link_id = $3,
+          assigned_at = now(),
+          assigned_by = $5,
+          updated_by = $5,
+          updated_at = now()
+        WHERE target.id = $1
+          AND target.case_id = $4
+          AND target.status = 'OPEN'
+          AND target.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM field_followers follower
+            WHERE follower.id = $2
+              AND follower.campaign_id = target.campaign_id
+              AND follower.status = 'ACTIVE'
+              AND follower.email IS NOT NULL
+          )
+        RETURNING target.id
+      `,
+      [
+        data.campaignTargetId,
+        data.sourceFieldFollowerId,
+        data.taskLinkId,
+        data.caseId,
+        data.actorId,
+      ],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   async listTimetableSlotsForTaskLink(

@@ -396,6 +396,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ปิดลิงก์รับสมัคร อสม. ถาวร',
     detailKeys: [{ key: 'name', label: 'ชื่อลิงก์' }],
   },
+  FOLLOWER_CAMPAIGN_TARGETS_ADD: {
+    domain: 'field_followers',
+    label: 'เพิ่มเคสในแคมเปญรับสมัคร อสม.',
+    detailKeys: [{ key: 'caseCount', label: 'จำนวนเคส' }],
+  },
   WORK_SESSION_START: {
     domain: 'field_followers',
     label: 'เริ่มช่วงปฏิบัติงานภาคสนาม',

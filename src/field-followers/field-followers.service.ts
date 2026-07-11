@@ -24,7 +24,8 @@ const REVIEW_TRANSITIONS: Record<
     to: FieldFollowerStatus;
   }
 > = {
-  APPROVE: { from: ['APPLIED'], to: 'ACTIVE' },
+  VERIFY: { from: ['APPLIED'], to: 'VERIFIED' },
+  APPROVE: { from: ['VERIFIED'], to: 'ACTIVE' },
   REJECT: { from: ['APPLIED'], to: 'SUSPENDED' },
   SUSPEND: { from: ['VERIFIED', 'ACTIVE'], to: 'SUSPENDED' },
   REACTIVATE: { from: ['SUSPENDED'], to: 'ACTIVE' },
@@ -32,6 +33,10 @@ const REVIEW_TRANSITIONS: Record<
 
 function resolveAuditActorId(actor?: AuthenticatedRequestUser): number | null {
   return actor?.id ?? null;
+}
+
+function isSafeStoredFilename(filename: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(filename) && !filename.includes('..') && !filename.includes('/');
 }
 
 @Injectable()
@@ -56,8 +61,23 @@ export class FieldFollowersService {
     const firstName = clean(dto.first_name);
     const lastName = clean(dto.last_name);
     const phone = clean(dto.phone);
-    if (!firstName || !lastName || !phone) {
-      throw new BadRequestException('first_name, last_name และ phone ต้องไม่ว่าง');
+    const email = clean(dto.email)?.toLowerCase();
+    const verificationMethod = dto.verification_method;
+    const thaidPersonRef = clean(dto.thaid_person_ref);
+    const idCardPhotoFilename = clean(dto.id_card_photo_filename);
+    if (!firstName || !lastName || !phone || !email) {
+      throw new BadRequestException('first_name, last_name, phone และ email ต้องไม่ว่าง');
+    }
+    if (verificationMethod === 'THAID' && !thaidPersonRef) {
+      throw new BadRequestException('ต้องมีข้อมูลอ้างอิง ThaID สำหรับการยืนยันตัวตนแบบ ThaID');
+    }
+    if (verificationMethod === 'ID_CARD_PHOTO') {
+      if (!idCardPhotoFilename) {
+        throw new BadRequestException('ต้องอัปโหลดรูปบัตรสำหรับการยืนยันตัวตนแบบรูปบัตร');
+      }
+      if (!isSafeStoredFilename(idCardPhotoFilename)) {
+        throw new BadRequestException('ชื่อไฟล์รูปบัตรไม่ถูกต้อง');
+      }
     }
 
     const campaignCode = clean(dto.campaign_code);
@@ -69,6 +89,11 @@ export class FieldFollowersService {
       firstName,
       lastName,
       phone,
+      email,
+      gender: clean(dto.gender),
+      verificationMethod,
+      thaidPersonRef: verificationMethod === 'THAID' ? thaidPersonRef : null,
+      idCardPhotoFilename: verificationMethod === 'ID_CARD_PHOTO' ? idCardPhotoFilename : null,
       subDistrict: clean(dto.sub_district),
       district: clean(dto.district),
       province: clean(dto.province),
@@ -102,6 +127,7 @@ export class FieldFollowersService {
       district: query.district,
       subDistrict: query.subDistrict,
       searchTerm: query.searchTerm,
+      campaignId: query.campaignId,
       page,
       limit,
     });
@@ -147,7 +173,9 @@ export class FieldFollowersService {
       throw new ForbiddenException('ไม่พบตัวตนผู้ดำเนินการ');
     }
 
-    const updated = await this.repository.updateStatus(id, transition.to, actorId);
+    const updated = await this.repository.updateStatus(id, transition.to, actorId, {
+      markVerified: action === 'VERIFY',
+    });
     if (!updated) {
       throw new NotFoundException('ไม่พบผู้สมัคร');
     }
@@ -181,10 +209,18 @@ export class FieldFollowersService {
       status: row.status,
       trust_level: row.trust_level,
       applied_via: row.applied_via,
+      email: row.email,
+      gender: row.gender,
+      verification_method: row.verification_method,
+      thaid_person_ref: row.thaid_person_ref,
+      id_card_photo_filename: row.id_card_photo_filename,
+      id_card_photo_uploaded_at: row.id_card_photo_uploaded_at,
       campaign_id: row.campaign_id,
       campaign_name: row.campaign_name ?? null,
       reviewed_by_user_id: row.reviewed_by_user_id,
       reviewed_at: row.reviewed_at,
+      verified_by_user_id: row.verified_by_user_id,
+      verified_at: row.verified_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };

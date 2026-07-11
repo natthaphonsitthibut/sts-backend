@@ -162,6 +162,7 @@ export class DelegationService {
           opensAt: null,
           subject: null,
           subjectId: null,
+          sourceFieldFollowerId: null,
           otpVerified,
           createdBy: null,
           loginRole: null,

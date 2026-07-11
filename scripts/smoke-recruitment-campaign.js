@@ -7,6 +7,7 @@ const { AppExceptionFilter } = require('../dist/common/filters/app-exception.fil
 const {
   createValidationException,
 } = require('../dist/common/validation/validation-exception.factory');
+const { RedisClientService } = require('../dist/redis/redis-client.service');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run recruitment-campaign smoke with NODE_ENV=production');
@@ -135,6 +136,29 @@ async function disableActors(dataSource) {
   assert(activeActors.count === 0, 'Smoke actors were not disabled during cleanup');
 }
 
+async function clearSmokeThrottle(app) {
+  const redisClientService = app.get(RedisClientService, { strict: false });
+  const client = redisClientService?.getClient?.();
+  if (!client) return;
+
+  for (const throttleName of ['followerApplication', 'campaignLookup']) {
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await client.scan(
+        cursor,
+        'MATCH',
+        `sts:throttle:${throttleName}:*`,
+        'COUNT',
+        100,
+      );
+      if (keys.length > 0) {
+        await client.del(...keys);
+      }
+      cursor = nextCursor;
+    } while (cursor !== '0');
+  }
+}
+
 async function main() {
   const app = await NestFactory.create(AppModule, { logger: ['error', 'warn'] });
   app.useGlobalPipes(
@@ -159,6 +183,7 @@ async function main() {
   const namePrefix = `SMOKE_CAMPAIGN_${suffix.toUpperCase()}_`;
 
   try {
+    await clearSmokeThrottle(app);
     await cleanupData(dataSource, 'SMOKE_CAMPAIGN_');
     await upsertActor(dataSource, await passwordService.hash(password), {
       username: GLOBAL_ADMIN_USERNAME,
@@ -246,6 +271,9 @@ async function main() {
         first_name: 'สมศรี',
         last_name: 'ทดสอบ',
         phone: '0899999999',
+        email: 'recruitment.campaign.smoke@example.test',
+        verification_method: 'THAID',
+        thaid_person_ref: `mock-thaid-${suffix}`,
         campaign_code: campaign.public_code,
       },
     });
@@ -289,6 +317,9 @@ async function main() {
         first_name: 'สมศักดิ์',
         last_name: 'ทดสอบ',
         phone: '0888888888',
+        email: 'recruitment.campaign.closed@example.test',
+        verification_method: 'THAID',
+        thaid_person_ref: `mock-thaid-closed-${suffix}`,
         campaign_code: campaign.public_code,
       },
     });

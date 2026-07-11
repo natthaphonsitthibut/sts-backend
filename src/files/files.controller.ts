@@ -27,8 +27,21 @@ export class FilesController {
     private readonly storage: FileStorageAdapter,
   ) {}
 
+  @RequirePermission('field-monitor')
+  @Get('field-follower-id-cards/:filename')
+  async getFieldFollowerIdCard(
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.sendStoredFile(filename, res);
+  }
+
   @Get(':filename')
   async getUpload(@Param('filename') filename: string, @Res() res: Response): Promise<void> {
+    await this.sendStoredFile(filename, res);
+  }
+
+  private async sendStoredFile(filename: string, res: Response): Promise<void> {
     // Reject anything that is not a bare, safe filename (path-traversal defense).
     // Done here, before the adapter, since the local-disk adapter's own check
     // still relies on the caller having already ruled out traversal attempts.

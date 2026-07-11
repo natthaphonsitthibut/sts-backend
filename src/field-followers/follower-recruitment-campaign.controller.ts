@@ -8,6 +8,8 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import {
+  AddFollowerCampaignTargetsDto,
+  AssignFollowerCampaignTargetDto,
   CreateFollowerRecruitmentCampaignDto,
   UpdateFollowerRecruitmentCampaignDto,
 } from './dto/follower-recruitment-campaign.dto';
@@ -41,6 +43,30 @@ export class FollowerRecruitmentCampaignController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return await this.service.update(id, body, actor, { ip: req.ip ?? null });
+  }
+
+  @Get(':id/targets')
+  async listTargets(@Param('id') id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
+    return await this.service.listTargets(id, actor);
+  }
+
+  @Post(':id/targets')
+  async addTargets(
+    @Param('id') id: string,
+    @Body() body: AddFollowerCampaignTargetsDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return await this.service.addTargets(id, body, actor, { ip: req.ip ?? null });
+  }
+
+  @Post('targets/:targetId/assign-preview')
+  async prepareAssignment(
+    @Param('targetId') targetId: string,
+    @Body() body: AssignFollowerCampaignTargetDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return await this.service.prepareTargetAssignment(targetId, body, actor);
   }
 
   @Delete(':id')

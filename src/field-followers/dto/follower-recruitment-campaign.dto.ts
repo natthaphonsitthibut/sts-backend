@@ -1,12 +1,16 @@
 import {
+  ArrayNotEmpty,
   IsBoolean,
   IsDateString,
+  IsInt,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
+  Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import type { DataScope } from '../../auth';
 
 export class CreateFollowerRecruitmentCampaignDto {
@@ -70,4 +74,19 @@ export class ListFollowerRecruitmentCampaignsQueryDto {
   @IsString()
   @MaxLength(100)
   searchTerm?: string;
+}
+
+export class AddFollowerCampaignTargetsDto {
+  @ArrayNotEmpty()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  case_ids!: number[];
+}
+
+export class AssignFollowerCampaignTargetDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  follower_id!: number;
 }

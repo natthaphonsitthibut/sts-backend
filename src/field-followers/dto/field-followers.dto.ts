@@ -1,11 +1,14 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 
 export const FIELD_FOLLOWER_STATUSES = ['APPLIED', 'VERIFIED', 'ACTIVE', 'SUSPENDED'] as const;
 export type FieldFollowerStatus = (typeof FIELD_FOLLOWER_STATUSES)[number];
+export const FIELD_FOLLOWER_VERIFICATION_METHODS = ['THAID', 'ID_CARD_PHOTO'] as const;
+export type FieldFollowerVerificationMethod = (typeof FIELD_FOLLOWER_VERIFICATION_METHODS)[number];
 
 export const FIELD_FOLLOWER_REVIEW_ACTIONS = [
+  'VERIFY',
   'APPROVE',
   'REJECT',
   'SUSPEND',
@@ -28,6 +31,28 @@ export class CreateFollowerApplicationDto {
   @MinLength(9)
   @MaxLength(20)
   phone!: string;
+
+  @IsEmail()
+  @MaxLength(255)
+  email!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  gender?: string;
+
+  @IsIn(FIELD_FOLLOWER_VERIFICATION_METHODS)
+  verification_method!: FieldFollowerVerificationMethod;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  thaid_person_ref?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  id_card_photo_filename?: string;
 
   @IsOptional()
   @IsString()
@@ -81,6 +106,10 @@ export class ListFieldFollowersQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(100)
   searchTerm?: string;
+
+  @IsOptional()
+  @IsString()
+  campaignId?: string;
 }
 
 export class ReviewFieldFollowerDto {

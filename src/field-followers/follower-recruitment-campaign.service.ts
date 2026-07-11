@@ -10,12 +10,18 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { clean } from '../common/utils/helpers';
 import { TaskPolicyService } from '../task/task-policy.service';
+import { TaskService } from '../task/task.service';
 import type {
+  AddFollowerCampaignTargetsDto,
+  AssignFollowerCampaignTargetDto,
   CreateFollowerRecruitmentCampaignDto,
   UpdateFollowerRecruitmentCampaignDto,
 } from './dto/follower-recruitment-campaign.dto';
 import { FollowerRecruitmentCampaignRepository } from './follower-recruitment-campaign.repository';
-import type { FollowerRecruitmentCampaignRow } from './follower-recruitment-campaign.types';
+import type {
+  FollowerCampaignTargetRow,
+  FollowerRecruitmentCampaignRow,
+} from './follower-recruitment-campaign.types';
 
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
@@ -37,6 +43,7 @@ export class FollowerRecruitmentCampaignService {
   constructor(
     private readonly repository: FollowerRecruitmentCampaignRepository,
     private readonly taskPolicyService: TaskPolicyService,
+    private readonly taskService: TaskService,
     private readonly auditLog: AuditLogService,
   ) {}
 
@@ -223,6 +230,107 @@ export class FollowerRecruitmentCampaignService {
     return row;
   }
 
+  async addTargets(
+    campaignId: string,
+    dto: AddFollowerCampaignTargetsDto,
+    actor: AuthenticatedRequestUser,
+    meta: { ip: string | null },
+  ) {
+    await this.findAuthorized(campaignId, actor);
+    const caseIds = Array.from(new Set(dto.case_ids.map((id) => Number(id)))).filter((id) =>
+      Number.isInteger(id),
+    );
+    if (caseIds.length === 0) {
+      throw new BadRequestException('กรุณาเลือกเคสอย่างน้อย 1 รายการ');
+    }
+
+    for (const caseId of caseIds) {
+      const caseRecord = await this.taskService.findCaseForActor(caseId, actor);
+      if (!caseRecord) {
+        throw new NotFoundException('ไม่พบเคสในขอบเขตที่มีสิทธิ์');
+      }
+    }
+
+    const actorId = resolveAuditActorId(actor);
+    const rows = await this.repository.addTargets(campaignId, caseIds, actorId);
+    await this.auditLog.record({
+      action: 'FOLLOWER_CAMPAIGN_TARGETS_ADD',
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      targetType: 'follower_recruitment_campaign',
+      targetId: campaignId,
+      metadata: { caseCount: caseIds.length },
+      ip: meta.ip,
+    });
+
+    return {
+      success: true,
+      data: rows.map((row) => this.toTargetResponse(row)),
+      meta: { totalCount: rows.length },
+    };
+  }
+
+  async listTargets(campaignId: string, actor: AuthenticatedRequestUser) {
+    await this.findAuthorized(campaignId, actor);
+    const rows = await this.repository.listTargets(campaignId);
+    return {
+      success: true,
+      data: rows.map((row) => this.toTargetResponse(row)),
+      meta: { totalCount: rows.length },
+    };
+  }
+
+  async prepareTargetAssignment(
+    targetId: string,
+    dto: AssignFollowerCampaignTargetDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    const target = await this.repository.findTargetById(targetId);
+    if (!target) {
+      throw new NotFoundException('ไม่พบเคสในแคมเปญ');
+    }
+    await this.findAuthorized(String(target.campaign_id), actor);
+    const caseRecord = await this.taskService.findCaseForActor(Number(target.case_id), actor);
+    if (!caseRecord) {
+      throw new NotFoundException('ไม่พบเคสในขอบเขตที่มีสิทธิ์');
+    }
+    if (target.status !== 'OPEN') {
+      throw new BadRequestException('เคสนี้ไม่อยู่ในสถานะพร้อมมอบหมาย');
+    }
+
+    const follower = await this.repository.findActiveFollowerForCampaign(
+      Number(dto.follower_id),
+      String(target.campaign_id),
+    );
+    if (!follower) {
+      throw new BadRequestException('ผู้ติดตามต้องอยู่ในแคมเปญนี้และมีสถานะ ACTIVE');
+    }
+    if (!follower.email) {
+      throw new BadRequestException('ผู้ติดตามต้องมี email ก่อนมอบหมายงาน');
+    }
+
+    return {
+      success: true,
+      data: {
+        target: this.toTargetResponse(target),
+        prefill: {
+          task_type: 'VISIT',
+          existing_case_id: target.case_id,
+          student_id: target.case_student_id,
+          student_name: target.case_student_name,
+          student_school: target.case_student_school,
+          student_address: target.case_student_address,
+          reason_flagged: target.case_reason_flagged,
+          assigned_to_name: `${follower.first_name} ${follower.last_name}`.trim(),
+          assigned_to_phone: follower.phone,
+          assigned_to_email: follower.email,
+          source_field_follower_id: follower.id,
+          campaign_target_id: target.id,
+        },
+      },
+    };
+  }
+
   private async findAuthorized(
     id: string,
     actor: AuthenticatedRequestUser,
@@ -284,6 +392,35 @@ export class FollowerRecruitmentCampaignService {
       closes_at: row.closes_at,
       view_count: Number(row.view_count) || 0,
       submission_count: Number(row.submission_count ?? 0) || 0,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
+  private toTargetResponse(row: FollowerCampaignTargetRow) {
+    return {
+      id: row.id,
+      campaign_id: row.campaign_id,
+      case_id: row.case_id,
+      status: row.status,
+      assigned_follower_id: row.assigned_follower_id,
+      assigned_task_link_id: row.assigned_task_link_id,
+      assigned_at: row.assigned_at,
+      assigned_by: row.assigned_by,
+      case: {
+        student_name: row.case_student_name,
+        student_id: row.case_student_id,
+        student_school: row.case_student_school,
+        student_address: row.case_student_address,
+        reason_flagged: row.case_reason_flagged,
+      },
+      assigned_follower: row.assigned_follower_id
+        ? {
+            name: row.assigned_follower_name,
+            email: row.assigned_follower_email,
+            phone: row.assigned_follower_phone,
+          }
+        : null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };

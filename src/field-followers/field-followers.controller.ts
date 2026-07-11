@@ -1,4 +1,18 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import {
   AuthGuard,
@@ -8,7 +22,10 @@ import {
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
+import { processVisitPhoto } from '../common/file-upload/visit-photo.util';
+import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { ThrottleCampaignLookup, ThrottleFollowerApplication } from '../config/throttle.decorators';
+import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
 import {
   CreateFollowerApplicationDto,
   ListFieldFollowersQueryDto,
@@ -23,12 +40,31 @@ export class PublicFollowerApplicationController {
   constructor(
     private readonly fieldFollowersService: FieldFollowersService,
     private readonly campaignService: FollowerRecruitmentCampaignService,
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage: FileStorageAdapter,
   ) {}
 
   @ThrottleCampaignLookup()
   @Get('campaign/:code')
   async getCampaign(@Param('code') code: string) {
     return await this.campaignService.getPublicCampaignInfo(code);
+  }
+
+  @ThrottleFollowerApplication()
+  @Post('id-card-photo')
+  @UseInterceptors(FileInterceptor('photo', multerConfig))
+  async uploadIdCardPhoto(@UploadedFile() file?: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('กรุณาอัปโหลดรูปบัตร');
+    }
+    const filename = await processVisitPhoto(file, this.storage);
+    return {
+      success: true,
+      data: {
+        filename,
+        url: `/uploads/field-follower-id-cards/${filename}`,
+      },
+    };
   }
 
   @ThrottleFollowerApplication()

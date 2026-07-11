@@ -5,6 +5,10 @@ import { TaskLifecycleService } from './task-lifecycle.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 
+jest.mock('qrcode', () => ({
+  toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,unit-test'),
+}));
+
 const tokenEncryption = new TokenEncryptionService({ taskLinkKey: Buffer.alloc(32, 7) });
 
 function buildActor(): AuthenticatedRequestUser {
@@ -31,6 +35,7 @@ describe('TaskLifecycleService', () => {
       | 'createTaskLink'
       | 'listTimetableSlotsForTaskLink'
       | 'insertTaskLinkTimetableSlots'
+      | 'assignFollowerCampaignTarget'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
@@ -53,6 +58,7 @@ describe('TaskLifecycleService', () => {
       createTaskLink: jest.fn().mockResolvedValue(undefined),
       listTimetableSlotsForTaskLink: jest.fn().mockResolvedValue([]),
       insertTaskLinkTimetableSlots: jest.fn().mockResolvedValue(undefined),
+      assignFollowerCampaignTarget: jest.fn().mockResolvedValue(true),
     };
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
@@ -208,5 +214,58 @@ describe('TaskLifecycleService', () => {
     ).rejects.toThrow('คาบเรียนไม่ตรงกับขอบเขตหรือวิชาของลิงก์');
     expect(taskRepository.createTaskLink).not.toHaveBeenCalled();
     expect(taskRepository.insertTaskLinkTimetableSlots).not.toHaveBeenCalled();
+  });
+
+  it('records field follower assignment after creating a VISIT link', async () => {
+    await service.createTask(
+      buildActor(),
+      {
+        task_type: 'VISIT',
+        assigned_to_name: 'อสม ทดสอบ',
+        assigned_to_email: 'follower@example.invalid',
+        assigned_to_phone: '0812345678',
+        student_name: 'เด็กทดสอบ',
+        student_school: 'โรงเรียนทดสอบ',
+        target_school_id: 10010002,
+        source_field_follower_id: 7,
+        campaign_target_id: 99,
+      },
+      'https://app.example.invalid',
+    );
+
+    const linkId = taskRepository.createTaskLink.mock.calls[0]?.[0].linkId;
+    expect(taskRepository.createTaskLink.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ sourceFieldFollowerId: 7 }),
+    );
+    expect(taskRepository.assignFollowerCampaignTarget).toHaveBeenCalledWith(
+      {
+        campaignTargetId: 99,
+        sourceFieldFollowerId: 7,
+        taskLinkId: linkId,
+        caseId: 123,
+        actorId: 7,
+      },
+      undefined,
+    );
+  });
+
+  it('rejects campaign target assignment if the guarded update loses the race', async () => {
+    taskRepository.assignFollowerCampaignTarget.mockResolvedValue(false);
+
+    await expect(
+      service.createTask(
+        buildActor(),
+        {
+          task_type: 'VISIT',
+          assigned_to_name: 'อสม ทดสอบ',
+          assigned_to_email: 'follower@example.invalid',
+          student_name: 'เด็กทดสอบ',
+          target_school_id: 10010002,
+          source_field_follower_id: 7,
+          campaign_target_id: 99,
+        },
+        'https://app.example.invalid',
+      ),
+    ).rejects.toThrow('ไม่สามารถมอบหมายเคสนี้ได้');
   });
 });

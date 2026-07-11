@@ -1,9 +1,14 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { TaskPolicyService } from '../task/task-policy.service';
+import type { TaskService } from '../task/task.service';
 import { FollowerRecruitmentCampaignRepository } from './follower-recruitment-campaign.repository';
 import { FollowerRecruitmentCampaignService } from './follower-recruitment-campaign.service';
-import type { FollowerRecruitmentCampaignRow } from './follower-recruitment-campaign.types';
+import type {
+  FollowerAssignmentCandidateRow,
+  FollowerCampaignTargetRow,
+  FollowerRecruitmentCampaignRow,
+} from './follower-recruitment-campaign.types';
 
 describe('FollowerRecruitmentCampaignService', () => {
   let service: FollowerRecruitmentCampaignService;
@@ -17,9 +22,14 @@ describe('FollowerRecruitmentCampaignService', () => {
       | 'update'
       | 'softDelete'
       | 'incrementViewCount'
+      | 'addTargets'
+      | 'listTargets'
+      | 'findTargetById'
+      | 'findActiveFollowerForCampaign'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let taskService: jest.Mocked<Pick<TaskService, 'findCaseForActor'>>;
   // Real TaskPolicyService — its scope-subset logic is pure (no repository
   // access for the methods used here) and is the same logic this feature
   // deliberately reuses instead of duplicating (see task-ui-data-feedback-round.md §E).
@@ -50,6 +60,7 @@ describe('FollowerRecruitmentCampaignService', () => {
       public_code: 'abc123def456',
       data_scope: { districts: ['เมืองเชียงใหม่'] },
       is_active: true,
+      status: 'ACTIVE',
       opens_at: null,
       closes_at: null,
       view_count: 0,
@@ -63,6 +74,47 @@ describe('FollowerRecruitmentCampaignService', () => {
     };
   }
 
+  function targetRow(
+    overrides: Partial<FollowerCampaignTargetRow> = {},
+  ): FollowerCampaignTargetRow {
+    return {
+      id: '10',
+      campaign_id: '1',
+      case_id: 99,
+      status: 'OPEN',
+      assigned_follower_id: null,
+      assigned_task_link_id: null,
+      assigned_at: null,
+      assigned_by: null,
+      created_at: new Date('2026-07-11T00:00:00Z'),
+      updated_at: new Date('2026-07-11T00:00:00Z'),
+      case_student_name: 'เด็กทดสอบ',
+      case_student_id: 'student-1',
+      case_student_school: 'โรงเรียนทดสอบ',
+      case_student_address: 'บ้านทดสอบ',
+      case_reason_flagged: 'ต้องเยี่ยมบ้าน',
+      assigned_follower_name: null,
+      assigned_follower_email: null,
+      assigned_follower_phone: null,
+      ...overrides,
+    };
+  }
+
+  function followerCandidate(
+    overrides: Partial<FollowerAssignmentCandidateRow> = {},
+  ): FollowerAssignmentCandidateRow {
+    return {
+      id: '7',
+      first_name: 'อสม',
+      last_name: 'ทดสอบ',
+      phone: '0812345678',
+      email: 'follower@example.test',
+      status: 'ACTIVE',
+      campaign_id: '1',
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
     repository = {
       create: jest.fn().mockResolvedValue(campaignRow()),
@@ -72,12 +124,20 @@ describe('FollowerRecruitmentCampaignService', () => {
       update: jest.fn().mockResolvedValue(campaignRow()),
       softDelete: jest.fn().mockResolvedValue(campaignRow()),
       incrementViewCount: jest.fn().mockResolvedValue(undefined),
+      addTargets: jest.fn().mockResolvedValue([targetRow()]),
+      listTargets: jest.fn().mockResolvedValue([targetRow()]),
+      findTargetById: jest.fn().mockResolvedValue(targetRow()),
+      findActiveFollowerForCampaign: jest.fn().mockResolvedValue(followerCandidate()),
     };
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
+    taskService = {
+      findCaseForActor: jest.fn().mockResolvedValue({ id: 99, school_id: 10010002 }),
+    };
 
     service = new FollowerRecruitmentCampaignService(
       repository as unknown as FollowerRecruitmentCampaignRepository,
       taskPolicyService,
+      taskService as unknown as TaskService,
       auditLog as unknown as AuditLogService,
     );
   });
@@ -285,6 +345,63 @@ describe('FollowerRecruitmentCampaignService', () => {
       await expect(service.resolveOpenCampaignByCode('does-not-exist')).rejects.toBeInstanceOf(
         BadRequestException,
       );
+    });
+  });
+
+  describe('targets', () => {
+    it('adds campaign targets only after case scope checks pass', async () => {
+      const result = await service.addTargets('1', { case_ids: [99, 99] }, districtActor, {
+        ip: null,
+      });
+
+      expect(taskService.findCaseForActor).toHaveBeenCalledWith(99, districtActor);
+      expect(repository.addTargets).toHaveBeenCalledWith('1', [99], districtActor.id);
+      expect(result.data).toHaveLength(1);
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'FOLLOWER_CAMPAIGN_TARGETS_ADD' }),
+      );
+    });
+
+    it('blocks adding a target outside case scope', async () => {
+      taskService.findCaseForActor.mockResolvedValue(null);
+
+      await expect(
+        service.addTargets('1', { case_ids: [99] }, districtActor, { ip: null }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(repository.addTargets).not.toHaveBeenCalled();
+    });
+
+    it('returns assignment prefill for an active follower with email', async () => {
+      const result = await service.prepareTargetAssignment('10', { follower_id: 7 }, districtActor);
+
+      expect(repository.findActiveFollowerForCampaign).toHaveBeenCalledWith(7, '1');
+      expect(result.data.prefill).toEqual(
+        expect.objectContaining({
+          task_type: 'VISIT',
+          existing_case_id: 99,
+          assigned_to_email: 'follower@example.test',
+          source_field_follower_id: '7',
+          campaign_target_id: '10',
+        }),
+      );
+    });
+
+    it('blocks assignment preview when the target is no longer open', async () => {
+      repository.findTargetById.mockResolvedValue(targetRow({ status: 'ASSIGNED' }));
+
+      await expect(
+        service.prepareTargetAssignment('10', { follower_id: 7 }, districtActor),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('blocks assignment preview when follower email is missing', async () => {
+      repository.findActiveFollowerForCampaign.mockResolvedValue(
+        followerCandidate({ email: null }),
+      );
+
+      await expect(
+        service.prepareTargetAssignment('10', { follower_id: 7 }, districtActor),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 });

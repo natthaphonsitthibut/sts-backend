@@ -948,7 +948,7 @@ export const DATABASE_BASELINE_SQL = `
   );
 
   CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     status TEXT DEFAULT 'IN_PROGRESS',
     max_delegation_depth INTEGER DEFAULT 3,
@@ -960,9 +960,9 @@ export const DATABASE_BASELINE_SQL = `
   );
 
   CREATE TABLE IF NOT EXISTS task_links (
-    id TEXT PRIMARY KEY,
-    task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
-    parent_link_id TEXT REFERENCES task_links(id),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    parent_link_id UUID REFERENCES task_links(id),
     token_hash TEXT NOT NULL UNIQUE,
     magic_link TEXT,
     -- Encrypted (AES-256-GCM) raw token, redisplay source of truth going
@@ -990,7 +990,7 @@ export const DATABASE_BASELINE_SQL = `
 
   CREATE TABLE IF NOT EXISTS task_submissions (
     id SERIAL PRIMARY KEY,
-    task_link_id TEXT REFERENCES task_links(id),
+    task_link_id UUID REFERENCES task_links(id),
     visit_lat REAL,
     visit_lng REAL,
     cause_category TEXT,
@@ -1005,7 +1005,7 @@ export const DATABASE_BASELINE_SQL = `
   );
 
   CREATE TABLE IF NOT EXISTS case_reviews (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     review_action TEXT NOT NULL,
     review_note TEXT,
@@ -1479,7 +1479,7 @@ export const DATABASE_BASELINE_SQL = `
     latest_open_case_id INTEGER NULL
       CONSTRAINT fk_student_risk_profiles_latest_case
       REFERENCES cases(id) ON DELETE SET NULL ON UPDATE CASCADE,
-    latest_open_task_id TEXT NULL
+    latest_open_task_id UUID NULL
       CONSTRAINT fk_student_risk_profiles_latest_task
       REFERENCES tasks(id) ON DELETE SET NULL ON UPDATE CASCADE,
     profile_calculated_at TIMESTAMPTZ NOT NULL,
@@ -1521,6 +1521,8 @@ export const DATABASE_BASELINE_SQL = `
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     phone VARCHAR(20) NOT NULL,
+    email TEXT NULL,
+    gender VARCHAR(20) NULL,
     sub_district TEXT NULL,
     district TEXT NULL,
     province TEXT NULL,
@@ -1529,6 +1531,12 @@ export const DATABASE_BASELINE_SQL = `
       CHECK (status IN ('APPLIED', 'VERIFIED', 'ACTIVE', 'SUSPENDED')),
     trust_level VARCHAR(20) NOT NULL DEFAULT 'STANDARD',
     applied_via VARCHAR(20) NOT NULL DEFAULT 'PUBLIC_FORM',
+    verification_method VARCHAR(16) NOT NULL DEFAULT 'PENDING'
+      CONSTRAINT chk_field_followers_verification_method
+      CHECK (verification_method IN ('THAID', 'ID_CARD_PHOTO', 'PENDING')),
+    thaid_person_ref TEXT NULL,
+    id_card_photo_filename TEXT NULL,
+    id_card_photo_uploaded_at TIMESTAMPTZ NULL,
     campaign_id BIGINT NULL
       CONSTRAINT fk_field_followers_campaign
       REFERENCES follower_recruitment_campaigns(id) ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -1536,12 +1544,72 @@ export const DATABASE_BASELINE_SQL = `
       CONSTRAINT fk_field_followers_reviewed_by
       REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
     reviewed_at TIMESTAMPTZ NULL,
+    verified_by_user_id INTEGER NULL
+      CONSTRAINT fk_field_followers_verified_by
+      REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    verified_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   CREATE INDEX IF NOT EXISTS idx_field_followers_campaign_id
     ON field_followers (campaign_id)
     WHERE campaign_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_field_followers_verification_method
+    ON field_followers (verification_method);
+
+  ALTER TABLE task_links
+    ADD COLUMN IF NOT EXISTS source_field_follower_id BIGINT NULL;
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_links_field_follower'
+    ) THEN
+      ALTER TABLE task_links
+        ADD CONSTRAINT fk_task_links_field_follower
+        FOREIGN KEY (source_field_follower_id)
+        REFERENCES field_followers(id)
+        ON DELETE SET NULL ON UPDATE CASCADE;
+    END IF;
+  END $$;
+  CREATE INDEX IF NOT EXISTS idx_task_links_source_field_follower
+    ON task_links (source_field_follower_id)
+    WHERE source_field_follower_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS follower_recruitment_campaign_targets (
+    id BIGSERIAL PRIMARY KEY,
+    campaign_id BIGINT NOT NULL
+      CONSTRAINT fk_frct_campaign
+      REFERENCES follower_recruitment_campaigns(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    case_id INTEGER NOT NULL
+      CONSTRAINT fk_frct_case
+      REFERENCES cases(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    status VARCHAR(16) NOT NULL DEFAULT 'OPEN'
+      CONSTRAINT chk_frct_status
+      CHECK (status IN ('OPEN', 'ASSIGNED', 'COMPLETED', 'CANCELED')),
+    assigned_follower_id BIGINT NULL
+      CONSTRAINT fk_frct_follower
+      REFERENCES field_followers(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    assigned_task_link_id UUID NULL
+      CONSTRAINT fk_frct_task_link
+      REFERENCES task_links(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    assigned_at TIMESTAMPTZ NULL,
+    assigned_by INTEGER NULL
+      CONSTRAINT fk_frct_assigned_by
+      REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT uq_frct_campaign_case UNIQUE (campaign_id, case_id)
+  );
+  ${auditUpdatedAtTriggerSql('follower_recruitment_campaign_targets')}
+  CREATE INDEX IF NOT EXISTS idx_frct_campaign_status
+    ON follower_recruitment_campaign_targets (campaign_id, status);
+  CREATE INDEX IF NOT EXISTS idx_frct_follower
+    ON follower_recruitment_campaign_targets (assigned_follower_id)
+    WHERE assigned_follower_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS system_settings (
     setting_key TEXT PRIMARY KEY,

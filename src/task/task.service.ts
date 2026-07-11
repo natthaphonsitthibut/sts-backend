@@ -89,6 +89,10 @@ export class TaskService {
     return await this.taskAccessService.getVisitLinks(actor, filters);
   }
 
+  async findCaseForActor(caseId: number, actor?: ActorContext) {
+    return await this.taskRepository.findCaseById(caseId, undefined, actor);
+  }
+
   async deleteTask(taskId: string, actor?: ActorContext, ip?: string | null) {
     return await this.taskLifecycleService.deleteTask(taskId, actor, ip);
   }
