@@ -228,7 +228,7 @@ export class StudentRiskProfileEntity {
   @Column({ name: 'latest_open_case_id', type: 'integer', nullable: true })
   latestOpenCaseId!: number | null;
 
-  @Column({ name: 'latest_open_task_id', type: 'text', nullable: true })
+  @Column({ name: 'latest_open_task_id', type: 'uuid', nullable: true })
   latestOpenTaskId!: string | null;
 
   @Column({ name: 'profile_calculated_at', type: 'timestamptz' })

@@ -38,7 +38,7 @@ export class CaseEntity {
 
 @Entity({ name: 'tasks' })
 export class TaskEntity {
-  @PrimaryColumn({ name: 'id', type: 'text' })
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
   id!: string;
 
   @Column({ name: 'case_id', type: 'integer', nullable: true })
@@ -68,13 +68,13 @@ export class TaskEntity {
 
 @Entity({ name: 'task_links' })
 export class TaskLinkEntity {
-  @PrimaryColumn({ name: 'id', type: 'text' })
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
   id!: string;
 
-  @Column({ name: 'task_id', type: 'text' })
+  @Column({ name: 'task_id', type: 'uuid' })
   taskId!: string;
 
-  @Column({ name: 'parent_link_id', type: 'text', nullable: true })
+  @Column({ name: 'parent_link_id', type: 'uuid', nullable: true })
   parentLinkId!: string | null;
 
   @Column({ name: 'token_hash', type: 'text', unique: true })
@@ -164,7 +164,7 @@ export class TaskSubmissionEntity {
   @PrimaryGeneratedColumn({ name: 'id' })
   id!: number;
 
-  @Column({ name: 'task_link_id', type: 'text', nullable: true })
+  @Column({ name: 'task_link_id', type: 'uuid', nullable: true })
   taskLinkId!: string | null;
 
   @Column({ name: 'visit_lat', type: 'real', nullable: true })
@@ -203,7 +203,7 @@ export class TaskSubmissionEntity {
 
 @Entity({ name: 'case_reviews' })
 export class CaseReviewEntity {
-  @PrimaryColumn({ name: 'id', type: 'text' })
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
   id!: string;
 
   @Column({ name: 'case_id', type: 'integer' })
