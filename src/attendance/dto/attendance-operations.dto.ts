@@ -16,7 +16,7 @@ import {
 } from 'class-validator';
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+export const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TERM_STATUS_VALUES = ['DRAFT', 'ACTIVE', 'CLOSED'] as const;
 const CALENDAR_DAY_TYPE_VALUES = ['SCHOOL_DAY', 'HOLIDAY', 'CANCELLED'] as const;
 

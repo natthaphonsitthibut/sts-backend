@@ -8,12 +8,14 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
+import { ISO_DATE_PATTERN } from './attendance-operations.dto';
 
 const ATTENDANCE_STATUS_VALUES = ['P_PRESENT', 'P_ABSENT', 'P_LATE'] as const;
 const ATTENDANCE_SESSION_KIND_VALUES = ['DAILY', 'SUBJECT'] as const;
@@ -145,4 +147,9 @@ export class SaveAttendanceDto {
   @IsInt()
   @Min(1)
   timetable_slot_id?: number;
+
+  /** Attendance date to record for, `YYYY-MM-DD`; omit for today. */
+  @IsOptional()
+  @Matches(ISO_DATE_PATTERN)
+  date?: string;
 }

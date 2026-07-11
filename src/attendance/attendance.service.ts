@@ -64,8 +64,9 @@ export class AttendanceService {
     records: AttendanceSaveRecordInput[],
     actor?: AuthenticatedRequestUser,
     timetableSlotId?: number,
+    date?: string,
   ) {
-    return await this.attendanceWriteService.saveAttendance(records, actor, timetableSlotId);
+    return await this.attendanceWriteService.saveAttendance(records, actor, timetableSlotId, date);
   }
 
   async getAttendanceTasks(userScope?: DataScope) {

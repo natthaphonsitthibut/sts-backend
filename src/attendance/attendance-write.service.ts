@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { resolveActorDataScope, type AuthenticatedRequestUser, type DataScope } from '../auth';
-import { getBangkokDateString } from '../common/utils/date.util';
+import { getBangkokDateString, getIsoDayOfWeekFromDateString } from '../common/utils/date.util';
 import { AutomationService, NewCase } from '../automation/automation.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceRepository } from './attendance.repository';
@@ -51,10 +51,15 @@ export class AttendanceWriteService {
     records: AttendanceSaveRecordInput[],
     actor?: AuthenticatedRequestUser,
     timetableSlotId?: number,
+    date?: string,
   ) {
     const normalizedRecords = this.normalizeRecords(records);
     if (normalizedRecords.length === 0) {
       return { success: true, newCases: [] as NewCase[] };
+    }
+
+    if (date && date > getBangkokDateString()) {
+      throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าสำหรับวันที่ในอนาคตได้');
     }
 
     const result = await this.attendanceOperationsRepository.withTransaction(
@@ -69,6 +74,7 @@ export class AttendanceWriteService {
           executor,
           resolveActorDataScope(actor),
           timetableSlotId,
+          date,
         ),
     );
 
@@ -102,6 +108,7 @@ export class AttendanceWriteService {
     executor: QueryExecutor,
     actorScope?: DataScope,
     timetableSlotId?: number,
+    date?: string,
   ): Promise<{
     session: { id: string; status: string; revision: number };
     calendarConfigured: boolean;
@@ -156,10 +163,15 @@ export class AttendanceWriteService {
       throw new ConflictException('รายชื่อที่ส่งไม่ตรงกับ roster ปัจจุบัน กรุณาโหลดรายชื่อใหม่');
     }
 
-    const today = getBangkokDateString();
+    const attendanceDate = date ?? getBangkokDateString();
     const selectedSlot =
       timetableSlotId !== undefined
-        ? await this.resolveDirectTimetableSlotSession(timetableSlotId, first, executor)
+        ? await this.resolveDirectTimetableSlotSession(
+            timetableSlotId,
+            first,
+            attendanceDate,
+            executor,
+          )
         : null;
     const sessionContext =
       context.session ??
@@ -181,19 +193,24 @@ export class AttendanceWriteService {
     }
     const calendarConfigured = term.status === 'ACTIVE';
     if (calendarConfigured) {
-      if (!term.starts_on || !term.ends_on || today < term.starts_on || today > term.ends_on) {
-        throw new ConflictException('วันนี้อยู่นอกช่วงภาคเรียนที่เปิดใช้งาน');
+      if (
+        !term.starts_on ||
+        !term.ends_on ||
+        attendanceDate < term.starts_on ||
+        attendanceDate > term.ends_on
+      ) {
+        throw new ConflictException('วันที่เลือกอยู่นอกช่วงภาคเรียนที่เปิดใช้งาน');
       }
       const calendarDay = await this.attendanceOperationsRepository.findCalendarDay(
         term.id,
-        today,
+        attendanceDate,
         executor,
       );
       if (!calendarDay) {
-        throw new ConflictException('ปฏิทินภาคเรียนไม่มีข้อมูลสำหรับวันนี้');
+        throw new ConflictException('ปฏิทินภาคเรียนไม่มีข้อมูลสำหรับวันที่เลือก');
       }
       if (calendarDay.day_type !== 'SCHOOL_DAY') {
-        throw new ConflictException('วันนี้ไม่ใช่วันเรียนตามปฏิทินโรงเรียน');
+        throw new ConflictException('วันที่เลือกไม่ใช่วันเรียนตามปฏิทินโรงเรียน');
       }
     }
 
@@ -203,7 +220,7 @@ export class AttendanceWriteService {
         schoolId: first.school_id,
         gradeLevelId: first.grade_level_id,
         roomId: first.room_id,
-        attendanceDate: today,
+        attendanceDate,
         period: sessionContext.period,
         sessionKind: sessionContext.kind,
         subjectId: sessionContext.subjectId ?? null,
@@ -225,7 +242,7 @@ export class AttendanceWriteService {
       session.status === 'REOPENED' && sessionContext.kind === 'DAILY'
         ? await this.attendanceRepository.listAttendanceStatuses(
             studentIds,
-            today,
+            attendanceDate,
             sessionContext.period,
             executor,
           )
@@ -248,7 +265,7 @@ export class AttendanceWriteService {
       {
         studentIds,
         statusCodes,
-        date: today,
+        date: attendanceDate,
         period: sessionContext.period,
         sessionKind: sessionContext.kind,
         recordedBy: context.recorder,
@@ -279,7 +296,7 @@ export class AttendanceWriteService {
           schoolId: first.school_id,
           gradeLevelId: first.grade_level_id,
           roomId: first.room_id,
-          attendanceDate: today,
+          attendanceDate,
           sessionKind: sessionContext.kind,
           period: sessionContext.period,
           subjectId: sessionContext.subjectId ?? null,
@@ -355,12 +372,6 @@ export class AttendanceWriteService {
     return 'Unknown';
   }
 
-  private getBangkokIsoDayOfWeek(): number {
-    const [year, month, day] = getBangkokDateString().split('-').map(Number);
-    const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-    return utcDay === 0 ? 7 : utcDay;
-  }
-
   private async resolveDirectTimetableSlotSession(
     timetableSlotId: number,
     metadata: {
@@ -368,6 +379,7 @@ export class AttendanceWriteService {
       grade_level_id: number;
       room_id: number;
     },
+    attendanceDate: string,
     executor: QueryExecutor,
   ): Promise<TimetableSlotSessionRow> {
     const result = await executor.query<TimetableSlotSessionRow>(
@@ -399,8 +411,8 @@ export class AttendanceWriteService {
       throw new BadRequestException('คาบเรียนนี้ไม่อยู่ในห้องที่เลือก');
     }
 
-    if (Number(slot.day_of_week) !== this.getBangkokIsoDayOfWeek()) {
-      throw new BadRequestException('คาบเรียนนี้ไม่ตรงกับวันปัจจุบัน');
+    if (Number(slot.day_of_week) !== getIsoDayOfWeekFromDateString(attendanceDate)) {
+      throw new BadRequestException('คาบเรียนนี้ไม่ตรงกับวันที่เลือก');
     }
 
     return slot;

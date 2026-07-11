@@ -1,5 +1,5 @@
-import { ConflictException } from '@nestjs/common';
-import { getBangkokDateString } from '../common/utils/date.util';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import { getBangkokDateString, getIsoDayOfWeekFromDateString } from '../common/utils/date.util';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { AttendanceSessionRow } from './attendance-operations.types';
 import { AttendanceRepository } from './attendance.repository';
@@ -330,5 +330,93 @@ describe('AttendanceWriteService', () => {
       }),
       executor,
     );
+  });
+
+  it('resolves a direct check-in timetable slot against the backdated date, not today', async () => {
+    const pastDate = '2024-01-08'; // Monday — deliberately not "today" in test runs
+    const pastDayOfWeek = getIsoDayOfWeekFromDateString(pastDate);
+    executor.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 11,
+          school_term_id: 10,
+          school_id: 10010002,
+          grade_level_id: 6,
+          room_no: 1,
+          day_of_week: pastDayOfWeek,
+          period: 3,
+          subject_id: 5,
+        },
+      ],
+    });
+    operationsRepository.findOrCreateSessionForUpdate.mockResolvedValue(
+      buildSession({ period: 3, session_kind: 'SUBJECT', attendance_date: pastDate }),
+    );
+
+    await service.saveAttendanceWithinTransaction(
+      STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
+      { actorUserId: 7, actorLabel: 'teacher', recorder: 'teacher' },
+      executor,
+      undefined,
+      11,
+      pastDate,
+    );
+
+    expect(operationsRepository.findOrCreateSessionForUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ attendanceDate: pastDate, period: 3, sessionKind: 'SUBJECT' }),
+      2,
+      7,
+      executor,
+    );
+    expect(attendanceRepository.upsertAttendanceBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ date: pastDate }),
+      executor,
+    );
+  });
+
+  it('rejects a direct check-in slot whose weekday does not match the backdated date', async () => {
+    const pastDate = '2024-01-08'; // Monday
+    const wrongDayOfWeek = (getIsoDayOfWeekFromDateString(pastDate) % 7) + 1;
+    executor.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 11,
+          school_term_id: 10,
+          school_id: 10010002,
+          grade_level_id: 6,
+          room_no: 1,
+          day_of_week: wrongDayOfWeek,
+          period: 3,
+          subject_id: 5,
+        },
+      ],
+    });
+
+    await expect(
+      service.saveAttendanceWithinTransaction(
+        STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
+        { actorUserId: 7, actorLabel: 'teacher', recorder: 'teacher' },
+        executor,
+        undefined,
+        11,
+        pastDate,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(attendanceRepository.upsertAttendanceBatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects saving attendance for a future date before opening a transaction', async () => {
+    const [year, month, day] = getBangkokDateString().split('-').map(Number);
+    const futureDate = new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+
+    await expect(
+      service.saveAttendance(
+        STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
+        { id: 5, username: 'teacher', roles: ['TEACHER'], permissions: ['attendance'] },
+        undefined,
+        futureDate,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(operationsRepository.withTransaction).not.toHaveBeenCalled();
   });
 });

@@ -16,3 +16,10 @@ export function getBangkokDateString(date: Date = new Date()): string {
     day: '2-digit',
   }).format(date);
 }
+
+/** ISO weekday (1=Monday..7=Sunday) for a `YYYY-MM-DD` Bangkok calendar date. */
+export function getIsoDayOfWeekFromDateString(dateString: string): number {
+  const [year, month, day] = dateString.split('-').map(Number);
+  const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return utcDay === 0 ? 7 : utcDay;
+}

@@ -124,7 +124,12 @@ export class AttendanceController {
     @Body() body: SaveAttendanceDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return await this.attendanceService.saveAttendance(body.records, actor, body.timetable_slot_id);
+    return await this.attendanceService.saveAttendance(
+      body.records,
+      actor,
+      body.timetable_slot_id,
+      body.date,
+    );
   }
 
   @Get('tasks')
