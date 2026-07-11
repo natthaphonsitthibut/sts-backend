@@ -69,13 +69,6 @@ export class UpdateFollowerRecruitmentCampaignDto {
   is_active?: boolean;
 }
 
-export class ListFollowerRecruitmentCampaignsQueryDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  searchTerm?: string;
-}
-
 export class AddFollowerCampaignTargetsDto {
   @ArrayNotEmpty()
   @Type(() => Number)
