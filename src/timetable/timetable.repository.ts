@@ -315,6 +315,50 @@ export class TimetableRepository {
     return result.rows;
   }
 
+  /** Distinct days the school currently has an active bell schedule for. */
+  async listDaysWithPeriodTimes(schoolId: number): Promise<number[]> {
+    const result = await queryDataSource<{ day_of_week: number }>(
+      this.dataSource,
+      `
+        SELECT DISTINCT day_of_week
+        FROM school_period_times
+        WHERE school_id = $1 AND deleted_at IS NULL
+      `,
+      [schoolId],
+    );
+    return result.rows.map((row) => row.day_of_week);
+  }
+
+  /**
+   * Count subject assignments (`timetable_slots`, any room) that would be
+   * orphaned if the bell schedule for these days were replaced with only
+   * `periodNumbers` — i.e. a period a room still teaches that wouldn't exist
+   * in the new schedule. Pass an empty `periodNumbers` to count every
+   * assignment on these days regardless of period (used when a day is being
+   * dropped from the schedule entirely). The service layer blocks the
+   * regenerate when this is non-zero instead of silently leaving those
+   * assignments referencing a period/day the bell schedule no longer covers.
+   */
+  async countSlotsOutsidePeriods(
+    schoolId: number,
+    days: number[],
+    periodNumbers: number[],
+  ): Promise<number> {
+    const result = await queryDataSource<{ count: number }>(
+      this.dataSource,
+      `
+        SELECT COUNT(*)::int AS count
+        FROM timetable_slots
+        WHERE school_id = $1
+          AND day_of_week = ANY($2::smallint[])
+          AND period <> ALL($3::smallint[])
+          AND deleted_at IS NULL
+      `,
+      [schoolId, days, periodNumbers],
+    );
+    return result.rows[0]?.count ?? 0;
+  }
+
   /**
    * Full replace for the given days — soft-deletes every existing period
    * (regardless of source, including prior MANUAL overrides) for

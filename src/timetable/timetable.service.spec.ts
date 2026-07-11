@@ -21,6 +21,8 @@ describe('TimetableService', () => {
       | 'softDelete'
       | 'withTransaction'
       | 'listPeriodTimesForSchool'
+      | 'countSlotsOutsidePeriods'
+      | 'listDaysWithPeriodTimes'
       | 'replacePeriodTimesForDays'
       | 'upsertPeriodTimeOverride'
     >
@@ -90,6 +92,8 @@ describe('TimetableService', () => {
       softDelete: jest.fn().mockResolvedValue(undefined),
       withTransaction: jest.fn((operation) => operation({} as never)),
       listPeriodTimesForSchool: jest.fn().mockResolvedValue([periodTimeRow()]),
+      countSlotsOutsidePeriods: jest.fn().mockResolvedValue(0),
+      listDaysWithPeriodTimes: jest.fn().mockResolvedValue([1, 2, 3, 4, 5]),
       replacePeriodTimesForDays: jest.fn().mockResolvedValue(undefined),
       upsertPeriodTimeOverride: jest.fn().mockResolvedValue(undefined),
     };
@@ -383,6 +387,72 @@ describe('TimetableService', () => {
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(repository.replacePeriodTimesForDays).not.toHaveBeenCalled();
+    });
+
+    it('rejects shrinking the schedule when a subject is still assigned to a dropped period', async () => {
+      repository.countSlotsOutsidePeriods.mockResolvedValue(2);
+
+      await expect(
+        service.generatePeriodTimesForSchool(globalActor, {
+          schoolId: 10010002,
+          daysOfWeek: [1, 2, 3, 4, 5],
+          periodsCount: 7,
+          firstPeriodStartsAt: '08:30',
+          periodLengthMinutes: 50,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(repository.countSlotsOutsidePeriods).toHaveBeenCalledWith(
+        10010002,
+        [1, 2, 3, 4, 5],
+        [1, 2, 3, 4, 5, 6, 7],
+      );
+      expect(repository.replacePeriodTimesForDays).not.toHaveBeenCalled();
+    });
+
+    it('rejects dropping a day that still has an assigned subject', async () => {
+      repository.listDaysWithPeriodTimes.mockResolvedValue([1, 2, 3, 4, 5, 6]);
+      repository.countSlotsOutsidePeriods.mockImplementation((_schoolId, days) =>
+        Promise.resolve(days.includes(6) ? 1 : 0),
+      );
+
+      await expect(
+        service.generatePeriodTimesForSchool(globalActor, {
+          schoolId: 10010002,
+          daysOfWeek: [1, 2, 3, 4, 5],
+          periodsCount: 8,
+          firstPeriodStartsAt: '08:30',
+          periodLengthMinutes: 50,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(repository.countSlotsOutsidePeriods).toHaveBeenCalledWith(10010002, [6], []);
+      expect(repository.replacePeriodTimesForDays).not.toHaveBeenCalled();
+    });
+
+    it('clears a dropped day with no assigned subjects alongside the regenerate', async () => {
+      repository.listDaysWithPeriodTimes.mockResolvedValue([1, 2, 3, 4, 5, 6]);
+
+      await service.generatePeriodTimesForSchool(globalActor, {
+        schoolId: 10010002,
+        daysOfWeek: [1, 2, 3, 4, 5],
+        periodsCount: 8,
+        firstPeriodStartsAt: '08:30',
+        periodLengthMinutes: 50,
+      });
+
+      expect(repository.replacePeriodTimesForDays).toHaveBeenCalledWith(
+        10010002,
+        [6],
+        [],
+        globalActor.id,
+        expect.anything(),
+      );
+      expect(repository.replacePeriodTimesForDays).toHaveBeenCalledWith(
+        10010002,
+        [1, 2, 3, 4, 5],
+        expect.arrayContaining([{ period: 1, startsAt: '08:30', endsAt: '09:20' }]),
+        globalActor.id,
+        expect.anything(),
+      );
     });
   });
 

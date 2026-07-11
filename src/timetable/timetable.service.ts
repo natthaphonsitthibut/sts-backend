@@ -332,7 +332,51 @@ export class TimetableService {
     const periods = generatePeriodTimes(dto);
     const actorId = resolveAuditActorId(actor);
 
+    // Regenerating only replaces `school_period_times` — it never touches
+    // `timetable_slots`. Without this check, shrinking the period count
+    // silently leaves rooms with subjects assigned to a period the bell
+    // schedule no longer defines, with no warning at all.
+    const orphanedSlotCount = await this.repository.countSlotsOutsidePeriods(
+      dto.schoolId,
+      dto.daysOfWeek,
+      periods.map((p) => p.period),
+    );
+    if (orphanedSlotCount > 0) {
+      throw new ConflictException(
+        `มีวิชาที่มอบหมายไว้ในคาบที่จะหายไป ${orphanedSlotCount} รายการ กรุณาลบหรือย้ายวิชาเหล่านั้นในตารางสอนก่อน แล้วจึงตั้งเวลาคาบเรียนใหม่`,
+      );
+    }
+
+    // A day unchecked in "ใช้กับวัน" isn't touched by the replace above —
+    // its old bell schedule would otherwise linger forever even though it's
+    // no longer part of what was just generated. Clear it too, guarded the
+    // same way: block if that would orphan a subject still assigned on that
+    // day (any period), so removing a day can't silently strand data either.
+    const existingDays = await this.repository.listDaysWithPeriodTimes(dto.schoolId);
+    const droppedDays = existingDays.filter((day) => !dto.daysOfWeek.includes(day));
+    if (droppedDays.length > 0) {
+      const orphanedDayCount = await this.repository.countSlotsOutsidePeriods(
+        dto.schoolId,
+        droppedDays,
+        [],
+      );
+      if (orphanedDayCount > 0) {
+        throw new ConflictException(
+          `มีวิชาที่มอบหมายไว้ในวันที่จะถูกเอาออกจากตารางเวลา ${orphanedDayCount} รายการ กรุณาลบหรือย้ายวิชาเหล่านั้นในตารางสอนก่อน แล้วจึงตั้งเวลาคาบเรียนใหม่`,
+        );
+      }
+    }
+
     await this.repository.withTransaction(async (queryRunner) => {
+      if (droppedDays.length > 0) {
+        await this.repository.replacePeriodTimesForDays(
+          dto.schoolId,
+          droppedDays,
+          [],
+          actorId,
+          queryRunner,
+        );
+      }
       await this.repository.replacePeriodTimesForDays(
         dto.schoolId,
         dto.daysOfWeek,
@@ -347,7 +391,7 @@ export class TimetableService {
           action: 'PERIOD_TIME_GENERATE',
           targetType: 'school_period_times',
           targetId: String(dto.schoolId),
-          metadata: { days: dto.daysOfWeek, periodsCount: dto.periodsCount },
+          metadata: { days: dto.daysOfWeek, periodsCount: dto.periodsCount, droppedDays },
           ip: null,
         },
         queryRunner,
