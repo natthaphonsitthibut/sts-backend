@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
+  IsDateString,
   IsEmail,
   IsIn,
   IsInt,
@@ -57,6 +58,7 @@ export class CreateTaskDto {
 
   /** Optional ISO datetime the link becomes usable; omit/null = opens immediately. */
   @IsOptional()
+  @IsDateString()
   opens_at?: string | null;
 
   @IsOptional()
