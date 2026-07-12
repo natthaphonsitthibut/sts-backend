@@ -28,6 +28,8 @@ export interface BatchJobRow extends Record<string, unknown> {
   finished_at: string | Date | null;
   created_at: string | Date;
   updated_at: string | Date;
+  /** Resolved from `scope_snapshot->>'schoolId'` via a join — null if unset or the school no longer exists. */
+  school_name: string | null;
 }
 
 export interface CreateBatchJobInput {
@@ -101,7 +103,12 @@ export class StudentAccountBatchRepository {
   async findJobById(id: string, executor?: QueryExecutor): Promise<BatchJobRow | null> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<BatchJobRow>(
-      `SELECT * FROM student_account_batch_job WHERE id = $1`,
+      `
+        SELECT saj.*, s.name AS school_name
+        FROM student_account_batch_job saj
+        LEFT JOIN schools s ON s.id = (saj.scope_snapshot->>'schoolId')::int
+        WHERE saj.id = $1
+      `,
       [id],
     );
     return result.rows[0] ?? null;
@@ -114,11 +121,11 @@ export class StudentAccountBatchRepository {
     const params: unknown[] = [];
     if (filters.onlyOwn) {
       params.push(filters.createdBy);
-      conditions.push(`created_by = $${params.length}`);
+      conditions.push(`saj.created_by = $${params.length}`);
     }
     if (filters.status) {
       params.push(filters.status);
-      conditions.push(`status = $${params.length}`);
+      conditions.push(`saj.status = $${params.length}`);
     }
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = Math.min(Math.max(filters.limit, 1), 100);
@@ -127,15 +134,17 @@ export class StudentAccountBatchRepository {
     const [rowsResult, countResult] = await Promise.all([
       this.query<BatchJobRow>(
         `
-          SELECT * FROM student_account_batch_job
+          SELECT saj.*, s.name AS school_name
+          FROM student_account_batch_job saj
+          LEFT JOIN schools s ON s.id = (saj.scope_snapshot->>'schoolId')::int
           ${whereSql}
-          ORDER BY created_at DESC
+          ORDER BY saj.created_at DESC
           LIMIT $${selectParams.length - 1} OFFSET $${selectParams.length}
         `,
         selectParams,
       ),
       this.query<{ count: number | string }>(
-        `SELECT COUNT(*)::int AS count FROM student_account_batch_job ${whereSql}`,
+        `SELECT COUNT(*)::int AS count FROM student_account_batch_job saj ${whereSql}`,
         params,
       ),
     ]);

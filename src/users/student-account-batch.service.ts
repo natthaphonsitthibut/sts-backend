@@ -44,6 +44,8 @@ const CREDENTIAL_PAGE_LIMIT = 200;
 interface BatchScopeSnapshot {
   actorScope: DataScope;
   schoolId: number | null;
+  /** Resolved via join at read time — not persisted in the JSONB snapshot. */
+  schoolName: string | null;
   province: string | null;
   district: string | null;
   subDistrict: string | null;
@@ -615,6 +617,10 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
     return {
       actorScope: actor.data_scope ?? {},
       schoolId: typeof filters.schoolId === 'number' ? filters.schoolId : null,
+      // Resolved fresh from a join at read time (`readScopeSnapshot`) instead
+      // of frozen here — a school rename should show up immediately, not
+      // whatever name was current when the job was first created.
+      schoolName: null,
       province: cleanString(filters.province),
       district: cleanString(filters.district),
       subDistrict: cleanString(filters.subDistrict),
@@ -628,6 +634,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
     return {
       actorScope: (raw.actorScope as DataScope) ?? {},
       schoolId: typeof raw.schoolId === 'number' ? raw.schoolId : null,
+      schoolName: job.school_name ?? null,
       province: raw.province ?? null,
       district: raw.district ?? null,
       subDistrict: raw.subDistrict ?? null,
@@ -656,6 +663,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
       errorSummary: job.error_summary,
       scope: {
         schoolId: scope.schoolId,
+        schoolName: scope.schoolName,
         province: scope.province,
         district: scope.district,
         subDistrict: scope.subDistrict,
