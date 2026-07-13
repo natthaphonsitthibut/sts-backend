@@ -254,6 +254,14 @@ async function getCoordinates(client) {
   return await evaluate(
     client,
     `(() => {
+      const latitudeInput = document.querySelector('#address_latitude');
+      const longitudeInput = document.querySelector('#address_longitude');
+      if (latitudeInput && longitudeInput) {
+        return {
+          lat: latitudeInput.value || null,
+          lng: longitudeInput.value || null,
+        };
+      }
       const labels = [...document.querySelectorAll('div')]
         .filter((node) => ['Latitude', 'Longitude'].includes(node.textContent.trim()));
       const read = (name) => {
@@ -633,10 +641,40 @@ async function main() {
     await pickComboboxOption(client, 'address_sub_district', values.subDistrict);
     await fillInput(client, '#address_postal_code', values.postalCode);
 
+    const mapUxText = String(await evaluate(client, 'document.body.innerText'));
+    assert(
+      mapUxText.includes('ผลค้นหาเป็นตำแหน่งโดยประมาณ — ลากหมุดปรับให้ตรงจุดจริง'),
+      'Approximate geocode hint was not rendered',
+    );
+    assert(
+      mapUxText.includes('ใช้ที่อยู่ที่กรอกไว้'),
+      'Filled-address map shortcut was not rendered',
+    );
+    assert(
+      !mapUxText.includes('ค้นหาพิกัดจากที่อยู่'),
+      'Legacy address geocode button was still rendered',
+    );
+
+    await fillInput(client, 'input[placeholder="ค้นหาที่อยู่หรือสถานที่"]', 'เชียงใหม่ ประเทศไทย');
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ค้นหาพิกัด'))`,
-      'Geocode button was not found',
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ค้นหา')`,
+      'Map place-search button was not found',
+    );
+    await waitFor(async () => {
+      const text = String(await evaluate(client, 'document.body.innerText'));
+      if (text.includes('ค้นหาพิกัดไม่สำเร็จ')) {
+        throw new Error('Profile place-search request failed');
+      }
+      const coords = await getCoordinates(client);
+      return Boolean(coords.lat && coords.lng);
+    }, 'Map place search did not populate coordinates', 30_000);
+    const placeSearchCoordinates = await getCoordinates(client);
+
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ใช้ที่อยู่ที่กรอกไว้'))`,
+      'Filled-address map shortcut was not found',
     );
     await waitFor(async () => {
       const text = String(await evaluate(client, 'document.body.innerText'));
@@ -650,8 +688,30 @@ async function main() {
         throw new Error('Profile geocode request failed');
       }
       const coords = await getCoordinates(client);
-      return Boolean(coords.lat && coords.lng);
-    }, 'Geocode did not populate profile coordinates', 30_000);
+      return coordinatesChanged(placeSearchCoordinates, coords);
+    }, 'Filled-address shortcut did not update profile coordinates', 30_000);
+
+    await fillInput(client, '#address_latitude', '91');
+    await fillInput(client, '#address_longitude', '181');
+    await waitFor(async () => {
+      const text = String(await evaluate(client, 'document.body.innerText'));
+      return (
+        text.includes('ละติจูดต้องอยู่ระหว่าง -90 ถึง 90') &&
+        text.includes('ลองจิจูดต้องอยู่ระหว่าง -180 ถึง 180')
+      );
+    }, 'Coordinate range errors were not rendered in Thai');
+    const invalidCoordinates = await getCoordinates(client);
+    assert(
+      invalidCoordinates.lat === '91' && invalidCoordinates.lng === '181',
+      'Invalid coordinate input was cleared before the user could correct it',
+    );
+
+    await fillInput(client, '#address_latitude', '13.7563');
+    await fillInput(client, '#address_longitude', '100.5018');
+    await waitFor(async () => {
+      const coords = await getCoordinates(client);
+      return Number(coords.lat) === 13.7563 && Number(coords.lng) === 100.5018;
+    }, 'Direct coordinate input did not retain valid values');
 
     const geocodedCoordinates = await getCoordinates(client);
     await dragMapMarker(client);
@@ -791,7 +851,7 @@ async function main() {
     );
 
     console.log(
-      'profile browser smoke passed (login, profile link, edit/geocode/map drag+click, save/refresh, mobile, audit detail no-leak)',
+      'profile browser smoke passed (profile/password, map search/shortcut/coordinates, save/mobile/audit)',
     );
   } finally {
     await closeChrome(chrome);

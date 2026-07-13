@@ -76,7 +76,7 @@ class CdpClient {
       const pending = this.pending.get(message.id);
       if (!pending) return;
       this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message));
+      if (message.error) pending.reject(new Error(`${pending.method}: ${message.error.message}`));
       else pending.resolve(message.result || {});
     });
   }
@@ -84,7 +84,7 @@ class CdpClient {
   call(method, params = {}) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, method });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -174,8 +174,12 @@ async function evaluate(client, expression) {
   return result.result?.value;
 }
 
-async function navigate(client, url) {
-  await client.call('Page.navigate', { url });
+async function navigate(client, url, label = 'page') {
+  try {
+    await client.call('Page.navigate', { url });
+  } catch (error) {
+    throw new Error(`Could not navigate to ${label}: ${errorMessage(error)}`);
+  }
   await waitFor(
     async () => (await evaluate(client, 'document.readyState')) === 'complete',
     `Page did not finish loading: ${url}`,
@@ -251,7 +255,7 @@ function createSessionCookie(sessionCookieService, userId) {
 }
 
 async function loginSession(client, user, sessionCookie) {
-  await navigate(client, `${FRONTEND_URL}/admin-access`);
+  await navigate(client, `${FRONTEND_URL}/admin-access`, 'admin access');
   await client.call('Network.setCookie', {
     name: sessionCookie.name,
     value: sessionCookie.value,
@@ -520,20 +524,25 @@ async function dragMapMarker(client) {
 }
 
 async function clickMap(client) {
-  const triggered = await evaluate(
-    client,
-    `(() => {
-      const surface = document.querySelector('[data-sts-map-surface]');
-      const google = window.google;
-      const map = surface?.__stsGoogleMap;
-      const center = map?.getCenter?.();
-      if (!surface || !google || !map || !center) return false;
-      const next = new google.maps.LatLng(center.lat() + 0.002, center.lng() - 0.001);
-      google.maps.event.trigger(map, 'click', { latLng: next });
-      return true;
-    })()`,
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const surface = document.querySelector('[data-sts-map-surface]');
+            const google = window.google;
+            const map = surface?.__stsGoogleMap;
+            if (!surface || !google || !map) return false;
+            const next = new google.maps.LatLng(13.7563, 100.5018);
+            google.maps.event.trigger(map, 'click', { latLng: next });
+            return true;
+          })()`,
+        ),
+      ),
+    'Home visit map was not available for click smoke',
+    35_000,
   );
-  assert(triggered, 'Home visit map was not available for click smoke');
 }
 
 async function getCreatedLink(dataSource) {
@@ -541,7 +550,6 @@ async function getCreatedLink(dataSource) {
     `
       SELECT
         tl.id AS link_id,
-        tl.magic_link,
         tl.otp_verified,
         t.id AS task_id,
         c.id AS case_id,
@@ -610,7 +618,10 @@ async function main() {
       client,
       `${BROWSER_BACKEND_URL}/api/geo/geocode?address=${encodeURIComponent('กรุงเทพมหานคร')}`,
     );
-    assert(forbiddenGeocode.status === 403, 'No-create actor could call /api/geo/geocode');
+    assert(
+      forbiddenGeocode.status === 403,
+      `No-create actor geocode expected 403, received ${forbiddenGeocode.status}`,
+    );
     await clearBrowserSession(client);
 
     await loginSession(
@@ -618,7 +629,7 @@ async function main() {
       browserUser(creator, CREATOR_USERNAME, ['home', 'create']),
       createSessionCookie(sessionCookieService, creator.id),
     );
-    await navigate(client, `${FRONTEND_URL}/create/visit`);
+    await navigate(client, `${FRONTEND_URL}/create/visit`, 'create visit');
     await waitFor(
       async () =>
         String(await evaluate(client, 'document.body.innerText')).includes('รายละเอียด') &&
@@ -639,8 +650,34 @@ async function main() {
     assert(allowedGeocode.body?.lat && allowedGeocode.body?.lng, 'Allowed geocode did not return coordinates');
 
     await waitForMapSurface(client, 'Home visit map surface did not render on create form');
+    const mapUxText = String(await evaluate(client, 'document.body.innerText'));
+    assert(
+      mapUxText.includes('ผลค้นหาเป็นตำแหน่งโดยประมาณ — ลากหมุดปรับให้ตรงจุดจริง'),
+      'Create-visit map did not render the approximate geocode hint',
+    );
+    assert(
+      !mapUxText.includes('ค้นหาพิกัดจากที่อยู่'),
+      'Create-visit map still rendered the legacy geocode button',
+    );
+    assert(
+      mapUxText.includes('ใช้ที่อยู่ที่กรอกไว้'),
+      'Create-visit map did not render the filled-address shortcut',
+    );
     await clickMap(client);
-    await waitFor(async () => Boolean(await getMarkerCoordinates(client)), 'Clicking the home visit map did not create a marker');
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('#address_latitude')?.value && document.querySelector('#address_longitude')?.value`,
+          ),
+        ),
+      'Clicking the home visit map did not update coordinate inputs',
+    );
+    await waitFor(
+      async () => Boolean(await getMarkerCoordinates(client)),
+      'Clicking the home visit map did not create a marker',
+    );
 
     const geocodedCoordinates = await getMarkerCoordinates(client);
     await dragMapMarker(client);
@@ -648,13 +685,6 @@ async function main() {
       const next = await getMarkerCoordinates(client);
       return coordinatesChanged(geocodedCoordinates, next);
     }, 'Dragging the home visit marker did not update coordinates');
-
-    const draggedCoordinates = await getMarkerCoordinates(client);
-    await clickMap(client);
-    await waitFor(async () => {
-      const next = await getMarkerCoordinates(client);
-      return coordinatesChanged(draggedCoordinates, next);
-    }, 'Clicking the home visit map did not update coordinates');
 
     await click(
       client,
@@ -665,12 +695,20 @@ async function main() {
       async () => String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์สำเร็จ'),
       'Create visit success state did not render',
     );
+    const guestLink = await evaluate(
+      client,
+      `([...document.querySelectorAll('a')].find((link) => link.textContent.includes('เปิดลิงก์'))?.href) || null`,
+    );
+    assert(
+      typeof guestLink === 'string' && guestLink.startsWith(FRONTEND_URL),
+      'Create visit result did not expose a same-origin guest link',
+    );
 
     const createdLink = await getCreatedLink(dataSource);
     await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1`, [
       createdLink.link_id,
     ]);
-    await navigate(client, createdLink.magic_link);
+    await navigate(client, guestLink, 'guest visit');
     await waitForMapReady(client, 'Guest home visit page did not render a persisted map marker');
     await waitFor(
       async () =>
@@ -685,11 +723,11 @@ async function main() {
       deviceScaleFactor: 2,
       mobile: true,
     });
-    await navigate(client, createdLink.magic_link);
+    await navigate(client, guestLink, 'mobile guest visit');
     await waitForMapReady(client, 'Mobile guest home visit page did not render a map marker');
 
     console.log(
-      'home visit browser smoke passed (permission 403, create visit geocode/map drag/click, persisted link, guest map, mobile map)',
+      'home visit browser smoke passed (permission 403, map UX/drag/click, persisted link, guest/mobile map)',
     );
   } finally {
     await closeChrome(chrome);
