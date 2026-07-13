@@ -140,16 +140,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
       targetId: job.id,
       metadata: {
         totalCandidates: job.total_candidates,
-        scopeLabel:
-          !scope.province && !scope.district && !scope.subDistrict && !scope.schoolId
-            ? 'ทุกโรงเรียน'
-            : null,
-        province: scope.province,
-        district: scope.district,
-        subDistrict: scope.subDistrict,
-        schoolId: scope.schoolId,
-        grade: scope.grade,
-        room: scope.room,
+        ...this.auditScopeMetadata(scope),
       },
     });
     await this.dispatchJob(job.id);
@@ -192,7 +183,10 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
       actorLabel: actor?.username,
       targetType: 'student_account_batch_job',
       targetId: jobId,
-      metadata: { previousStatus: job.status },
+      metadata: {
+        previousStatus: job.status,
+        ...this.auditScopeMetadata(this.readScopeSnapshot(job)),
+      },
     });
     const refreshed = (await this.batchRepository.findJobById(jobId)) ?? job;
     return { success: true, data: this.toJobResponse(refreshed) };
@@ -210,7 +204,10 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
       actorLabel: actor?.username,
       targetType: 'student_account_batch_job',
       targetId: jobId,
-      metadata: { previousStatus: job.status },
+      metadata: {
+        previousStatus: job.status,
+        ...this.auditScopeMetadata(this.readScopeSnapshot(job)),
+      },
     });
     return { success: true, data: this.toJobResponse(canceled) };
   }
@@ -277,6 +274,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
             op: 'batch-credentials',
             jobId,
             expiresAt: credential.temporaryPasswordExpiresAt,
+            ...this.auditScopeMetadata(this.readScopeSnapshot(job)),
           },
         }),
       ),
@@ -400,6 +398,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
     }
     this.runningJobs.add(jobId);
     let createdBy: number | null = null;
+    let auditScope: BatchScopeSnapshot | null = null;
     try {
       const claimed = await this.batchRepository.claimJobForRun(jobId);
       if (!claimed) {
@@ -407,6 +406,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
       }
       createdBy = claimed.created_by;
       const scope = this.readScopeSnapshot(claimed);
+      auditScope = scope;
       for (;;) {
         const current = await this.batchRepository.findJobById(jobId);
         if (!current || current.status === 'CANCELED') {
@@ -434,6 +434,11 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
       const finalJob = await this.batchRepository.findJobById(jobId);
       if (finalJob && finalJob.status === 'RUNNING') {
         await this.batchRepository.setJobStatus(jobId, 'COMPLETED', { finished: true });
+        await this.recordJobOutcomeAudit({
+          action: 'STUDENT_ACCOUNT_BATCH_COMPLETED',
+          job: finalJob,
+          scope,
+        });
         if (createdBy !== null) {
           await this.notificationsService.notifyStudentAccountBatchCompleted({
             jobId,
@@ -452,6 +457,15 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
         .then(() => true)
         .catch(() => false);
       if (failurePersisted && createdBy !== null) {
+        const failedJob = await this.batchRepository.findJobById(jobId).catch(() => null);
+        if (failedJob && auditScope) {
+          await this.recordJobOutcomeAudit({
+            action: 'STUDENT_ACCOUNT_BATCH_FAILED',
+            job: failedJob,
+            scope: auditScope,
+            errorSummary: message.slice(0, 1000),
+          });
+        }
         await this.notificationsService.notifyStudentAccountBatchFailed({
           jobId,
           actorUserId: createdBy,
@@ -641,6 +655,50 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
       grade: raw.grade ?? null,
       room: typeof raw.room === 'number' ? raw.room : null,
     };
+  }
+
+  private auditScopeMetadata(scope: BatchScopeSnapshot): Record<string, unknown> {
+    return {
+      scopeLabel:
+        !scope.province && !scope.district && !scope.subDistrict && !scope.schoolId
+          ? 'ทุกโรงเรียนในขอบเขต'
+          : null,
+      scope: scope.actorScope,
+      province: scope.province,
+      district: scope.district,
+      subDistrict: scope.subDistrict,
+      schoolId: scope.schoolId,
+      schoolName: scope.schoolName,
+      grade: scope.grade,
+      room: scope.room,
+    };
+  }
+
+  private async recordJobOutcomeAudit(input: {
+    action: 'STUDENT_ACCOUNT_BATCH_COMPLETED' | 'STUDENT_ACCOUNT_BATCH_FAILED';
+    job: BatchJobRow;
+    scope: BatchScopeSnapshot;
+    errorSummary?: string;
+  }): Promise<void> {
+    try {
+      await this.auditLog.record({
+        action: input.action,
+        actorUserId: input.job.created_by,
+        targetType: 'student_account_batch_job',
+        targetId: input.job.id,
+        metadata: {
+          createdCount: input.job.created_count,
+          skippedCount: input.job.skipped_count,
+          failedCount: input.job.failed_count,
+          errorSummary: input.errorSummary ?? null,
+          ...this.auditScopeMetadata(input.scope),
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Audit write failed for student-account batch ${input.job.id} (${input.action}): ${this.errorMessage(error)}`,
+      );
+    }
   }
 
   private toJobResponse(job: BatchJobRow) {

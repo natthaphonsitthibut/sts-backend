@@ -99,7 +99,12 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   STUDENT_TEMP_PASSWORD_REISSUE: {
     domain: 'student_accounts',
     label: 'ออกรหัสชั่วคราวใหม่',
-    detailKeys: [{ key: 'expiresAt', label: 'รหัสหมดอายุ' }],
+    detailKeys: [
+      { key: 'expiresAt', label: 'รหัสหมดอายุ' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
+    ],
   },
   USER_TEMP_PASSWORD_REISSUE: {
     domain: 'users',
@@ -126,18 +131,58 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     detailKeys: [
       { key: 'reasonCode', label: 'รหัสเหตุผล' },
       { key: 'note', label: 'หมายเหตุ' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
     ],
   },
   STUDENT_ACCOUNT_REACTIVATE: {
     domain: 'student_accounts',
     label: 'เปิดใช้งานบัญชีนักเรียนอีกครั้ง',
-    detailKeys: [],
+    detailKeys: [
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
+    ],
   },
   STUDENT_ACCOUNT_BATCH_ENQUEUE: {
     domain: 'student_accounts',
-    label: 'สั่งงานสร้างบัญชีนักเรียนแบบชุดใหญ่',
+    label: 'สั่งสร้างบัญชีนักเรียน',
     detailKeys: [
       { key: 'totalCandidates', label: 'จำนวนที่ต้องสร้าง' },
+      { key: 'scopeLabel', label: 'ขอบเขต' },
+      { key: 'province', label: 'จังหวัด' },
+      { key: 'district', label: 'อำเภอ' },
+      { key: 'subDistrict', label: 'ตำบล' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
+    ],
+  },
+  STUDENT_ACCOUNT_BATCH_COMPLETED: {
+    domain: 'student_accounts',
+    label: 'สร้างบัญชีนักเรียนเสร็จ',
+    detailKeys: [
+      { key: 'createdCount', label: 'สร้างสำเร็จ' },
+      { key: 'skippedCount', label: 'ข้าม' },
+      { key: 'failedCount', label: 'ล้มเหลว' },
+      { key: 'scopeLabel', label: 'ขอบเขต' },
+      { key: 'province', label: 'จังหวัด' },
+      { key: 'district', label: 'อำเภอ' },
+      { key: 'subDistrict', label: 'ตำบล' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
+    ],
+  },
+  STUDENT_ACCOUNT_BATCH_FAILED: {
+    domain: 'student_accounts',
+    label: 'สร้างบัญชีนักเรียนไม่สำเร็จ',
+    detailKeys: [
+      { key: 'createdCount', label: 'สร้างสำเร็จ' },
+      { key: 'skippedCount', label: 'ข้าม' },
+      { key: 'failedCount', label: 'ล้มเหลว' },
+      { key: 'errorSummary', label: 'สาเหตุ' },
       { key: 'scopeLabel', label: 'ขอบเขต' },
       { key: 'province', label: 'จังหวัด' },
       { key: 'district', label: 'อำเภอ' },
@@ -150,12 +195,22 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   STUDENT_ACCOUNT_BATCH_RESUME: {
     domain: 'student_accounts',
     label: 'ทำงานสร้างบัญชีนักเรียนแบบชุดต่อ',
-    detailKeys: [{ key: 'previousStatus', label: 'สถานะเดิม' }],
+    detailKeys: [
+      { key: 'previousStatus', label: 'สถานะเดิม' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
+    ],
   },
   STUDENT_ACCOUNT_BATCH_CANCEL: {
     domain: 'student_accounts',
     label: 'ยกเลิกงานสร้างบัญชีนักเรียนแบบชุด',
-    detailKeys: [{ key: 'previousStatus', label: 'สถานะเดิม' }],
+    detailKeys: [
+      { key: 'previousStatus', label: 'สถานะเดิม' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'grade', label: 'ชั้นเรียน' },
+      { key: 'room', label: 'ห้อง' },
+    ],
   },
   DATA_IMPORT: {
     domain: 'imports',

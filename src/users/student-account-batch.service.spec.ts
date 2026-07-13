@@ -176,6 +176,12 @@ describe('StudentAccountBatchService', () => {
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'STUDENT_ACCOUNT_BATCH_ENQUEUE' }),
     );
+    const enqueueAudit = auditLog.record.mock.calls.find(
+      ([input]) => input.action === 'STUDENT_ACCOUNT_BATCH_ENQUEUE',
+    )?.[0];
+    expect(enqueueAudit?.metadata).toEqual(
+      expect.objectContaining({ schoolId: 10010002, scope: actor.data_scope }),
+    );
     expect(result.success).toBe(true);
     expect(result.data.id).toBe('job-1');
   });
@@ -243,6 +249,21 @@ describe('StudentAccountBatchService', () => {
       skippedCount: 0,
       failedCount: 0,
     });
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'STUDENT_ACCOUNT_BATCH_COMPLETED', targetId: 'job-1' }),
+    );
+    const completedAudit = auditLog.record.mock.calls.find(
+      ([input]) => input.action === 'STUDENT_ACCOUNT_BATCH_COMPLETED',
+    )?.[0];
+    expect(completedAudit?.metadata).toEqual(
+      expect.objectContaining({
+        createdCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+        schoolId: 10010002,
+        scope: actor.data_scope,
+      }),
+    );
     expect(notificationsService.notifyStudentAccountBatchFailed).not.toHaveBeenCalled();
   });
 
@@ -296,6 +317,19 @@ describe('StudentAccountBatchService', () => {
       jobId: 'job-1',
       actorUserId: 5,
     });
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'STUDENT_ACCOUNT_BATCH_FAILED', targetId: 'job-1' }),
+    );
+    const failedAudit = auditLog.record.mock.calls.find(
+      ([input]) => input.action === 'STUDENT_ACCOUNT_BATCH_FAILED',
+    )?.[0];
+    expect(failedAudit?.metadata).toEqual(
+      expect.objectContaining({
+        errorSummary: 'db down',
+        schoolId: 10010002,
+        scope: actor.data_scope,
+      }),
+    );
     expect(notificationsService.notifyStudentAccountBatchCompleted).not.toHaveBeenCalled();
   });
 
@@ -322,6 +356,16 @@ describe('StudentAccountBatchService', () => {
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'STUDENT_ACCOUNT_BATCH_RESUME' }),
     );
+    const resumeAudit = auditLog.record.mock.calls.find(
+      ([input]) => input.action === 'STUDENT_ACCOUNT_BATCH_RESUME',
+    )?.[0];
+    expect(resumeAudit?.metadata).toEqual(
+      expect.objectContaining({
+        previousStatus: 'INTERRUPTED',
+        schoolId: 10010002,
+        scope: actor.data_scope,
+      }),
+    );
     expect(result.success).toBe(true);
   });
 
@@ -346,6 +390,12 @@ describe('StudentAccountBatchService', () => {
     );
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'STUDENT_TEMP_PASSWORD_REISSUE' }),
+    );
+    const reissueAudit = auditLog.record.mock.calls.find(
+      ([input]) => input.action === 'STUDENT_TEMP_PASSWORD_REISSUE',
+    )?.[0];
+    expect(reissueAudit?.metadata).toEqual(
+      expect.objectContaining({ schoolId: 10010002, scope: actor.data_scope }),
     );
   });
 

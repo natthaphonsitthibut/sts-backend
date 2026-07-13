@@ -57,6 +57,7 @@ import type {
 interface LifecycleAuditMeta {
   ip?: string | null;
   action: AuditAction;
+  metadata?: Record<string, unknown>;
 }
 
 // Shared with StudentAccountBatchService so the async batch path can't drift
@@ -717,6 +718,7 @@ export class UsersService {
             reasonCode: reason.reasonCode,
             note: reason.note,
             reason: reason.note,
+            ...auditMeta.metadata,
           },
           ip: auditMeta.ip ?? null,
         },
@@ -772,7 +774,7 @@ export class UsersService {
           actorLabel: currentActor.username,
           targetType: 'user',
           targetId: String(userId),
-          metadata: { username: existingUser.username },
+          metadata: { username: existingUser.username, ...auditMeta.metadata },
           ip: auditMeta.ip ?? null,
         },
         executor,
@@ -890,6 +892,7 @@ export class UsersService {
       tempPassword,
       temporaryPasswordIssuedAt: issuedAt.toISOString(),
       temporaryPasswordExpiresAt: expiresAt.toISOString(),
+      auditMetadata: this.studentAccountAuditMetadata(row),
     };
   }
 
@@ -992,6 +995,7 @@ export class UsersService {
       tempPassword: string;
       studentName: string;
       schoolName: string | null;
+      schoolId: number | null;
       grade: string | null;
       room: number | null;
       temporaryPasswordIssuedAt: string;
@@ -1023,6 +1027,7 @@ export class UsersService {
         tempPassword,
         studentName: this.getStudentAccountManagementName(row),
         schoolName: row.school_name,
+        schoolId: row.school_id,
         grade: row.grade_label,
         room: row.room_id,
         temporaryPasswordIssuedAt: issuedAt.toISOString(),
@@ -1065,6 +1070,7 @@ export class UsersService {
     return await this.deactivateAccount(actor, userId, data, {
       action: 'STUDENT_ACCOUNT_DEACTIVATE',
       ip: auditMeta.ip ?? null,
+      metadata: this.studentAccountAuditMetadata(row),
     });
   }
 
@@ -1088,7 +1094,17 @@ export class UsersService {
     return await this.reactivateAccount(actor, userId, {
       action: 'STUDENT_ACCOUNT_REACTIVATE',
       ip: auditMeta.ip ?? null,
+      metadata: this.studentAccountAuditMetadata(row),
     });
+  }
+
+  private studentAccountAuditMetadata(row: StudentAccountManagementRow): Record<string, unknown> {
+    return {
+      schoolId: row.school_id,
+      schoolName: row.school_name,
+      grade: row.grade_label,
+      room: row.room_id,
+    };
   }
 
   async previewStudentAccounts(

@@ -411,6 +411,10 @@ export class UsersController {
           metadata: {
             op: 'bulk-reissue',
             expiresAt: credential.temporaryPasswordExpiresAt,
+            schoolId: credential.schoolId,
+            schoolName: credential.schoolName,
+            grade: credential.grade,
+            room: credential.room,
           },
           ip: requestIp(req),
         }),
@@ -433,6 +437,7 @@ export class UsersController {
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
     const result = await this.usersService.reissueStudentTemporaryPassword(actor, id);
+    const { auditMetadata, ...response } = result;
     try {
       await this.auditLog.record({
         action: 'STUDENT_TEMP_PASSWORD_REISSUE',
@@ -440,13 +445,16 @@ export class UsersController {
         actorLabel: actor?.username,
         targetType: 'user',
         targetId: String(id),
-        metadata: { expiresAt: result.temporaryPasswordExpiresAt },
+        metadata: {
+          expiresAt: result.temporaryPasswordExpiresAt,
+          ...auditMetadata,
+        },
         ip: requestIp(req),
       });
     } catch (error) {
       this.logAuditFailure('STUDENT_TEMP_PASSWORD_REISSUE', error);
     }
-    return result;
+    return response;
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
