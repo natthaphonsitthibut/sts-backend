@@ -316,16 +316,15 @@ export class TimetableRepository {
   }
 
   /** Distinct days the school currently has an active bell schedule for. */
-  async listDaysWithPeriodTimes(schoolId: number): Promise<number[]> {
-    const result = await queryDataSource<{ day_of_week: number }>(
-      this.dataSource,
-      `
-        SELECT DISTINCT day_of_week
-        FROM school_period_times
-        WHERE school_id = $1 AND deleted_at IS NULL
-      `,
-      [schoolId],
-    );
+  async listDaysWithPeriodTimes(schoolId: number, queryRunner?: QueryRunner): Promise<number[]> {
+    const sql = `
+      SELECT DISTINCT day_of_week
+      FROM school_period_times
+      WHERE school_id = $1 AND deleted_at IS NULL
+    `;
+    const result = queryRunner
+      ? await createSqlQueryExecutor(queryRunner).query<{ day_of_week: number }>(sql, [schoolId])
+      : await queryDataSource<{ day_of_week: number }>(this.dataSource, sql, [schoolId]);
     return result.rows.map((row) => row.day_of_week);
   }
 
@@ -343,19 +342,20 @@ export class TimetableRepository {
     schoolId: number,
     days: number[],
     periodNumbers: number[],
+    queryRunner?: QueryRunner,
   ): Promise<number> {
-    const result = await queryDataSource<{ count: number }>(
-      this.dataSource,
-      `
-        SELECT COUNT(*)::int AS count
-        FROM timetable_slots
-        WHERE school_id = $1
-          AND day_of_week = ANY($2::smallint[])
-          AND period <> ALL($3::smallint[])
-          AND deleted_at IS NULL
-      `,
-      [schoolId, days, periodNumbers],
-    );
+    const sql = `
+      SELECT COUNT(*)::int AS count
+      FROM timetable_slots
+      WHERE school_id = $1
+        AND day_of_week = ANY($2::smallint[])
+        AND period <> ALL($3::smallint[])
+        AND deleted_at IS NULL
+    `;
+    const params = [schoolId, days, periodNumbers];
+    const result = queryRunner
+      ? await createSqlQueryExecutor(queryRunner).query<{ count: number }>(sql, params)
+      : await queryDataSource<{ count: number }>(this.dataSource, sql, params);
     return result.rows[0]?.count ?? 0;
   }
 

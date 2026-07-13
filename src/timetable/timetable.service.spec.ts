@@ -405,6 +405,7 @@ describe('TimetableService', () => {
         10010002,
         [1, 2, 3, 4, 5],
         [1, 2, 3, 4, 5, 6, 7],
+        expect.anything(),
       );
       expect(repository.replacePeriodTimesForDays).not.toHaveBeenCalled();
     });
@@ -424,7 +425,12 @@ describe('TimetableService', () => {
           periodLengthMinutes: 50,
         }),
       ).rejects.toBeInstanceOf(ConflictException);
-      expect(repository.countSlotsOutsidePeriods).toHaveBeenCalledWith(10010002, [6], []);
+      expect(repository.countSlotsOutsidePeriods).toHaveBeenCalledWith(
+        10010002,
+        [6],
+        [],
+        expect.anything(),
+      );
       expect(repository.replacePeriodTimesForDays).not.toHaveBeenCalled();
     });
 

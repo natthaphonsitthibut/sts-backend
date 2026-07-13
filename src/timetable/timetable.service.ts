@@ -332,43 +332,45 @@ export class TimetableService {
     const periods = generatePeriodTimes(dto);
     const actorId = resolveAuditActorId(actor);
 
-    // Regenerating only replaces `school_period_times` — it never touches
-    // `timetable_slots`. Without this check, shrinking the period count
-    // silently leaves rooms with subjects assigned to a period the bell
-    // schedule no longer defines, with no warning at all.
-    const orphanedSlotCount = await this.repository.countSlotsOutsidePeriods(
-      dto.schoolId,
-      dto.daysOfWeek,
-      periods.map((p) => p.period),
-    );
-    if (orphanedSlotCount > 0) {
-      throw new ConflictException(
-        `มีวิชาที่มอบหมายไว้ในคาบที่จะหายไป ${orphanedSlotCount} รายการ กรุณาลบหรือย้ายวิชาเหล่านั้นในตารางสอนก่อน แล้วจึงตั้งเวลาคาบเรียนใหม่`,
-      );
-    }
-
-    // A day unchecked in "ใช้กับวัน" isn't touched by the replace above —
-    // its old bell schedule would otherwise linger forever even though it's
-    // no longer part of what was just generated. Clear it too, guarded the
-    // same way: block if that would orphan a subject still assigned on that
-    // day (any period), so removing a day can't silently strand data either.
-    const existingDays = await this.repository.listDaysWithPeriodTimes(dto.schoolId);
-    const droppedDays = existingDays.filter((day) => !dto.daysOfWeek.includes(day));
-    if (droppedDays.length > 0) {
-      const orphanedDayCount = await this.repository.countSlotsOutsidePeriods(
+    // Guards and replace share one transaction so a slot assigned between
+    // the check and the write can't slip past the orphan detection below —
+    // a throw rolls the whole regenerate back.
+    await this.repository.withTransaction(async (queryRunner) => {
+      // Regenerating only replaces `school_period_times` — it never touches
+      // `timetable_slots`. Without this check, shrinking the period count
+      // silently leaves rooms with subjects assigned to a period the bell
+      // schedule no longer defines, with no warning at all.
+      const orphanedSlotCount = await this.repository.countSlotsOutsidePeriods(
         dto.schoolId,
-        droppedDays,
-        [],
+        dto.daysOfWeek,
+        periods.map((p) => p.period),
+        queryRunner,
       );
-      if (orphanedDayCount > 0) {
+      if (orphanedSlotCount > 0) {
         throw new ConflictException(
-          `มีวิชาที่มอบหมายไว้ในวันที่จะถูกเอาออกจากตารางเวลา ${orphanedDayCount} รายการ กรุณาลบหรือย้ายวิชาเหล่านั้นในตารางสอนก่อน แล้วจึงตั้งเวลาคาบเรียนใหม่`,
+          `มีวิชาที่มอบหมายไว้ในคาบที่จะหายไป ${orphanedSlotCount} รายการ กรุณาลบหรือย้ายวิชาเหล่านั้นในตารางสอนก่อน แล้วจึงตั้งเวลาคาบเรียนใหม่`,
         );
       }
-    }
 
-    await this.repository.withTransaction(async (queryRunner) => {
+      // A day unchecked in "ใช้กับวัน" isn't touched by the replace above —
+      // its old bell schedule would otherwise linger forever even though it's
+      // no longer part of what was just generated. Clear it too, guarded the
+      // same way: block if that would orphan a subject still assigned on that
+      // day (any period), so removing a day can't silently strand data either.
+      const existingDays = await this.repository.listDaysWithPeriodTimes(dto.schoolId, queryRunner);
+      const droppedDays = existingDays.filter((day) => !dto.daysOfWeek.includes(day));
       if (droppedDays.length > 0) {
+        const orphanedDayCount = await this.repository.countSlotsOutsidePeriods(
+          dto.schoolId,
+          droppedDays,
+          [],
+          queryRunner,
+        );
+        if (orphanedDayCount > 0) {
+          throw new ConflictException(
+            `มีวิชาที่มอบหมายไว้ในวันที่จะถูกเอาออกจากตารางเวลา ${orphanedDayCount} รายการ กรุณาลบหรือย้ายวิชาเหล่านั้นในตารางสอนก่อน แล้วจึงตั้งเวลาคาบเรียนใหม่`,
+          );
+        }
         await this.repository.replacePeriodTimesForDays(
           dto.schoolId,
           droppedDays,
