@@ -65,7 +65,7 @@ interface SchoolScopeRow extends Record<string, unknown> {
 
 interface AuditLogListFilters {
   domain: AuditLogDomain;
-  action?: string;
+  action?: AuditAction;
   searchTerm?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -536,6 +536,20 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   timetable: ['manage-timetable'],
 };
 
+const LINK_HISTORY_ACTIONS: AuditAction[] = [
+  'TASK_CREATE',
+  'TASK_DELETE',
+  'LINK_LOCK',
+  'LINK_UNLOCK',
+  'DELEGATION',
+];
+
+const LINK_HISTORY_DOMAINS: Record<AuditLogTaskType, AuditLogDomain> = {
+  ATTENDANCE: 'tasks',
+  VISIT: 'tasks',
+  LOGIN: 'login_links',
+};
+
 @Injectable()
 export class AuditLogService {
   private readonly logger = new Logger(AuditLogService.name);
@@ -653,6 +667,32 @@ export class AuditLogService {
     if (!allowed || actor.data_scope?.own_only === true) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูประวัติส่วนนี้');
     }
+  }
+
+  private resolveListActions(filters: {
+    domain: AuditLogDomain;
+    taskType?: AuditLogTaskType;
+  }): AuditAction[] {
+    if (filters.taskType) {
+      if (LINK_HISTORY_DOMAINS[filters.taskType] !== filters.domain) {
+        throw new BadRequestException('taskType ไม่ตรงกับประเภทประวัติลิงก์');
+      }
+      return LINK_HISTORY_ACTIONS;
+    }
+    return Object.entries(ACTION_DEFINITIONS)
+      .filter(([, definition]) => definition.domain === filters.domain)
+      .map(([action]) => action as AuditAction);
+  }
+
+  getActionOptions(
+    actor: AuthenticatedRequestUser,
+    filters: { domain: AuditLogDomain; taskType?: AuditLogTaskType },
+  ) {
+    this.assertDomainPermission(actor, filters.domain);
+    const actions = this.resolveListActions(filters);
+    return {
+      data: actions.map((value) => ({ value, label: ACTION_DEFINITIONS[value].label })),
+    };
   }
 
   private appendScopeConditions(
@@ -836,9 +876,7 @@ export class AuditLogService {
     }
     await this.assertSchoolFilterAllowed(actor, filters.schoolId);
 
-    const actions = Object.entries(ACTION_DEFINITIONS)
-      .filter(([, definition]) => definition.domain === filters.domain)
-      .map(([action]) => action);
+    const actions = this.resolveListActions(filters);
     if (filters.action && !actions.includes(filters.action)) {
       throw new BadRequestException('action ไม่ตรงกับประเภทประวัติ');
     }
@@ -1031,7 +1069,14 @@ export class AuditLogService {
       throw new NotFoundException('ไม่พบประวัติรายการนี้');
     }
 
-    this.assertDomainPermission(actor, definition.domain);
+    const taskType = found.metadata?.['taskType'];
+    const permissionDomain =
+      LINK_HISTORY_ACTIONS.includes(found.action) &&
+      typeof taskType === 'string' &&
+      Object.prototype.hasOwnProperty.call(LINK_HISTORY_DOMAINS, taskType)
+        ? LINK_HISTORY_DOMAINS[taskType as AuditLogTaskType]
+        : definition.domain;
+    this.assertDomainPermission(actor, permissionDomain);
 
     const conditions = [`a.id = $1::bigint`, `a.data_origin_code <> 'AUTOMATED_TEST'`];
     const params: unknown[] = [id];

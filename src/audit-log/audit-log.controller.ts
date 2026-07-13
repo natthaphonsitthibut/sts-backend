@@ -7,12 +7,21 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import { AuditLogService } from './audit-log.service';
-import { GetAuditLogQueryDto } from './dto/audit-log.dto';
+import { GetAuditLogActionsQueryDto, GetAuditLogQueryDto } from './dto/audit-log.dto';
 
 @UseGuards(AuthGuard, PermissionsGuard)
 @Controller('api/audit-log')
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
+
+  @Get('actions')
+  @RequirePermission('audit-log')
+  getActions(
+    @Query() query: GetAuditLogActionsQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.auditLogService.getActionOptions(actor, query);
+  }
 
   @Get(':id')
   @RequirePermission('audit-log')
@@ -25,7 +34,7 @@ export class AuditLogController {
   async list(@Query() query: GetAuditLogQueryDto, @CurrentUser() actor: AuthenticatedRequestUser) {
     return await this.auditLogService.list(actor, {
       ...query,
-      action: query.action?.trim() || undefined,
+      action: query.action,
       searchTerm: query.searchTerm?.trim() || undefined,
       province: query.province?.trim() || undefined,
       district: query.district?.trim() || undefined,

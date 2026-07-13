@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from './audit-log.service';
 
@@ -98,6 +99,59 @@ describe('AuditLogService', () => {
 
     expect(queries[0].sql).toContain("a.metadata ->> 'taskType' = $");
     expect(queries[0].params).toContain('ATTENDANCE');
+    expect(queries[0].params?.[0]).toEqual(
+      expect.arrayContaining(['TASK_CREATE', 'LINK_LOCK', 'LINK_UNLOCK']),
+    );
+  });
+
+  it('accepts a cross-domain link action when taskType is present', async () => {
+    const taskActor: AuthenticatedRequestUser = {
+      ...actor,
+      permissions: ['attendance-dashboard'],
+      data_scope: { global: true },
+    };
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue({ records: [], affected: 0 }),
+    };
+    const service = new AuditLogService({
+      createQueryRunner: jest.fn(() => queryRunner),
+    } as never);
+
+    await expect(
+      service.list(taskActor, {
+        domain: 'tasks',
+        taskType: 'ATTENDANCE',
+        action: 'LINK_LOCK',
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects taskType paired with the wrong permission domain', async () => {
+    const service = new AuditLogService({} as never);
+
+    await expect(
+      service.list(
+        { ...actor, permissions: ['attendance-dashboard'], data_scope: { global: true } },
+        { domain: 'tasks', taskType: 'LOGIN' },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('serves action labels from the backend definitions', () => {
+    const service = new AuditLogService({} as never);
+    const result = service.getActionOptions(
+      { ...actor, permissions: ['login-links'], data_scope: { global: true } },
+      { domain: 'login_links', taskType: 'LOGIN' },
+    );
+
+    expect(result.data).toEqual(
+      expect.arrayContaining([
+        { value: 'TASK_CREATE', label: 'สร้างภารกิจหรือลิงก์' },
+        { value: 'LINK_LOCK', label: 'ปิดลิงก์' },
+      ]),
+    );
   });
 
   it('filters history by target type and id', async () => {

@@ -6,6 +6,7 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
+const { AuditLogService } = require('../dist/audit-log/audit-log.service');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run entity-history browser smoke with NODE_ENV=production');
@@ -26,6 +27,7 @@ const USER_ACTION_LABELS = [
   'สร้างผู้ใช้งาน', 'แก้ไขผู้ใช้งาน', 'ปิดใช้งานผู้ใช้งาน',
   'เปิดใช้งานผู้ใช้งานอีกครั้ง', 'ออกรหัสชั่วคราวใหม่', 'ปิดหรือลบผู้ใช้งาน',
 ];
+const LINK_ACTIONS = ['TASK_CREATE', 'TASK_DELETE', 'LINK_LOCK', 'LINK_UNLOCK', 'DELEGATION'];
 const ALL_PERMISSIONS = [
   'home', 'dashboard', 'students', 'edit-students', 'review-cases', 'close-case',
   'forward-case', 'student-self', 'create', 'import-data', 'attendance-dashboard',
@@ -204,7 +206,7 @@ async function upsertAdmin(dataSource, passwordHash) {
          SET password = $2, status = 'ACTIVE', role = 'ADMIN', permissions = $3::jsonb,
              data_scope = '{"global":true}'::jsonb, "PersonID_Onec" = '1000000000010',
              "FirstName" = 'History', "LastName" = 'Browser Smoke',
-             data_origin_code = 'AUTOMATED_TEST', must_change_password = FALSE,
+             data_origin_code = 'DEMO', must_change_password = FALSE,
              deactivated_at = NULL, deactivated_by = NULL,
              deactivation_reason_code = NULL, deactivation_note = NULL
          WHERE id = $1
@@ -221,7 +223,7 @@ async function upsertAdmin(dataSource, passwordHash) {
          (username, password, "FirstName", "LastName", "PersonID_Onec", status, permissions, role,
           data_scope, must_change_password, data_origin_code)
        VALUES ($1, $2, 'History', 'Browser Smoke', '1000000000010', 'ACTIVE', $3::jsonb, 'ADMIN',
-               '{"global":true}'::jsonb, FALSE, 'AUTOMATED_TEST')
+               '{"global":true}'::jsonb, FALSE, 'DEMO')
        RETURNING id`,
       [ADMIN_USERNAME, passwordHash, JSON.stringify(ALL_PERMISSIONS)],
     ),
@@ -235,7 +237,8 @@ async function disableAdmin(dataSource, id) {
   await dataSource.query(
     `UPDATE users
      SET status = 'DISABLED', deactivated_at = now(),
-         deactivation_reason_code = 'OTHER', deactivation_note = 'Browser smoke fixture'
+         deactivation_reason_code = 'OTHER', deactivation_note = 'Browser smoke fixture',
+         data_origin_code = 'AUTOMATED_TEST'
      WHERE id = $1 AND username = $2`,
     [id, ADMIN_USERNAME],
   );
@@ -258,6 +261,31 @@ async function login(password) {
     cookieName: cookiePair.slice(0, separator),
     cookieValue: cookiePair.slice(separator + 1),
   };
+}
+
+async function createCompletedStudentAccountJob(session) {
+  const cookie = `${session.cookieName}=${session.cookieValue}`;
+  const response = await fetch(`${BACKEND_URL}/api/users/student-accounts/batch-jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ schoolId: 10010002, grade: 'ม.6', room: 999 }),
+  });
+  const body = await response.json();
+  assert(response.status === 201, `Student-account batch enqueue returned ${response.status}`);
+  const jobId = body?.data?.id;
+  assert(jobId, 'Student-account batch enqueue did not return a job id');
+
+  let completedJob;
+  await waitFor(async () => {
+    const detailResponse = await fetch(
+      `${BACKEND_URL}/api/users/student-accounts/batch-jobs/${jobId}`,
+      { headers: { cookie } },
+    );
+    if (!detailResponse.ok) return false;
+    completedJob = (await detailResponse.json())?.data;
+    return completedJob?.status === 'COMPLETED';
+  }, 'Student-account batch job did not complete');
+  return completedJob;
 }
 
 async function waitForHistoryPanel(client, panelTitle) {
@@ -290,6 +318,37 @@ async function selectAction(client, value) {
   );
 }
 
+async function verifyActionFilters(client, context) {
+  for (const action of LINK_ACTIONS) {
+    await selectAction(client, action);
+    await waitFor(async () => {
+      const text = await bodyText(client);
+      return !text.includes('กำลังอัปเดต') && !text.includes('กำลังโหลดประวัติ');
+    }, `${context}: filter ${action} did not finish`);
+    assert(!(await bodyText(client)).includes('โหลดประวัติไม่สำเร็จ'), `${context}: ${action} returned an error`);
+  }
+  await selectAction(client, '');
+}
+
+async function recordLinkHistoryFixtures(auditLog, adminId, suffix) {
+  const fixtureIds = {
+    LOGIN: `history-login-${suffix}`,
+    ATTENDANCE: `history-attendance-${suffix}`,
+    VISIT: `history-visit-${suffix}`,
+  };
+  for (const [taskType, targetId] of Object.entries(fixtureIds)) {
+    await auditLog.record({
+      action: 'LINK_LOCK',
+      actorUserId: adminId,
+      actorLabel: ADMIN_USERNAME,
+      targetType: 'task_link',
+      targetId,
+      metadata: { taskType, scope: { global: true } },
+    });
+  }
+  return fixtureIds;
+}
+
 function assertNoSecretLeak(text, context) {
   // A raw national ID shows as a standalone 13-digit number. Exclude 13-digit
   // runs that are part of a longer token (e.g. the millisecond-timestamp suffix
@@ -309,6 +368,7 @@ async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false, abortOnError: false });
   const dataSource = app.get(DataSource);
   const passwordService = app.get(PasswordService);
+  const auditLog = app.get(AuditLogService);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const password = `History-${suffix}-Password`;
   let chrome;
@@ -316,7 +376,28 @@ async function main() {
 
   try {
     adminId = await upsertAdmin(dataSource, await passwordService.hash(password));
+    const linkFixtureIds = await recordLinkHistoryFixtures(auditLog, adminId, suffix);
+    const [attendanceLink] = await dataSource.query(
+      `SELECT tl.id
+       FROM task_links tl
+       JOIN tasks t ON t.id = tl.task_id
+       WHERE t.task_type = 'ATTENDANCE'
+         AND t.deleted_at IS NULL
+         AND tl.deleted_at IS NULL
+       ORDER BY tl.created_at DESC
+       LIMIT 1`,
+    );
+    assert(attendanceLink?.id, 'No attendance link is available for detail-history smoke');
+    await auditLog.record({
+      action: 'LINK_LOCK',
+      actorUserId: adminId,
+      actorLabel: ADMIN_USERNAME,
+      targetType: 'task_link',
+      targetId: String(attendanceLink.id),
+      metadata: { taskType: 'ATTENDANCE', scope: { global: true } },
+    });
     const session = await login(password);
+    const completedJob = await createCompletedStudentAccountJob(session);
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -372,6 +453,74 @@ async function main() {
     );
     assertNoSecretLeak(await bodyText(client), 'Users history (filtered)');
 
+    // --- Student-account history: a real background job produces enqueue + outcome rows ---
+    await navigate(client, `${FRONTEND_URL}/manage-student-accounts/history`);
+    await waitFor(async () => {
+      const text = await bodyText(client);
+      return text.includes('สั่งสร้างบัญชีนักเรียน') && text.includes('สร้างบัญชีนักเรียนเสร็จ');
+    }, 'Student-account history did not show the enqueue/completed event pair');
+    await selectAction(client, 'STUDENT_ACCOUNT_BATCH_COMPLETED');
+    await waitFor(async () => {
+      const text = await bodyText(client);
+      return text.includes('สร้างบัญชีนักเรียนเสร็จ') && text.includes('สร้างสำเร็จ: 0');
+    }, 'Completed student-account batch filter did not show result counts');
+
+    await selectAction(client, '');
+    await waitFor(
+      async () => (await bodyText(client)).includes('สั่งสร้างบัญชีนักเรียน'),
+      'Student-account history did not reset to all actions',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const row = [...document.querySelectorAll('tr')]
+          .find((node) => node.textContent.includes('สั่งสร้างบัญชีนักเรียน'));
+        const link = row?.querySelector('a');
+        if (!link) throw new Error('Batch enqueue detail link was not found');
+        link.click();
+      })()`,
+    );
+    await waitFor(async () => {
+      const url = String(await evaluate(client, 'location.href'));
+      const text = await bodyText(client);
+      return url.includes(`jobId=${encodeURIComponent(completedJob.id)}`) && text.includes('รายละเอียดงาน');
+    }, 'Batch enqueue detail link did not open the real job details');
+
+    // --- Link histories: each page gets its own taskType and every backend action stays valid ---
+    for (const page of [
+      { path: '/login-links/history', title: 'ประวัติลิงก์เข้าสู่ระบบ', taskType: 'LOGIN' },
+      { path: '/attendance-links/history', title: 'ประวัติลิงก์เช็คชื่อ', taskType: 'ATTENDANCE' },
+      { path: '/visit-links/history', title: 'ประวัติลิงก์ลงพื้นที่', taskType: 'VISIT' },
+    ]) {
+      await navigate(client, `${FRONTEND_URL}${page.path}`);
+      await waitFor(async () => (await bodyText(client)).includes(page.title), `${page.title} did not render`);
+      await waitFor(async () => (await bodyText(client)).includes(linkFixtureIds[page.taskType]), `${page.title} did not show its own fixture`);
+      const pageText = await bodyText(client);
+      for (const [otherType, otherId] of Object.entries(linkFixtureIds)) {
+        if (otherType !== page.taskType) {
+          assert(!pageText.includes(otherId), `${page.title} leaked ${otherType} history`);
+        }
+      }
+      await verifyActionFilters(client, page.title);
+    }
+
+    await navigate(client, `${FRONTEND_URL}/attendance-links/${attendanceLink.id}`);
+    await waitFor(
+      async () => (await bodyText(client)).includes('ประวัติลิงก์นี้'),
+      'Attendance link detail history did not render',
+    );
+    for (const action of ['LINK_LOCK', 'LINK_UNLOCK']) {
+      await selectAction(client, action);
+      await waitFor(async () => {
+        const text = await bodyText(client);
+        return !text.includes('กำลังอัปเดต') && !text.includes('กำลังโหลดประวัติ');
+      }, `Attendance detail filter ${action} did not finish`);
+      assert(
+        !(await bodyText(client)).includes('โหลดประวัติไม่สำเร็จ'),
+        `Attendance detail filter ${action} returned an error`,
+      );
+    }
+
     // --- Cases history: same shared panel wired to a different domain ---
     await navigate(client, `${FRONTEND_URL}/cases/history`);
     await waitForHistoryPanel(client, 'ประวัติเคสช่วยเหลือนักเรียน');
@@ -387,7 +536,7 @@ async function main() {
     await capture(client, '/tmp/sts-entity-history-users-mobile.png');
 
     console.log(
-      'entity history browser smoke passed (shared audit panel renders, action filter narrows, cross-domain reuse, no secret leak, desktop/mobile)',
+      'entity history browser smoke passed (shared audit panel, real batch outcome pair/detail link, filters, no secret leak, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);

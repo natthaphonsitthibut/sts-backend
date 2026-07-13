@@ -150,3 +150,12 @@ export class GetAuditLogQueryDto extends PaginationQueryDto {
   @Min(1)
   caseId?: number;
 }
+
+export class GetAuditLogActionsQueryDto {
+  @IsIn(AUDIT_LOG_DOMAINS)
+  domain!: AuditLogDomain;
+
+  @IsOptional()
+  @IsIn(AUDIT_LOG_TASK_TYPES)
+  taskType?: AuditLogTaskType;
+}
