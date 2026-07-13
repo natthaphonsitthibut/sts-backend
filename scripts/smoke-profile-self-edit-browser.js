@@ -411,6 +411,7 @@ async function upsertSmokeUser(dataSource, passwordHash) {
         SET password = $2,
             "FirstName" = 'ProfileBrowser',
             "LastName" = 'Smoke',
+            "PersonID_Onec" = NULL,
             status = 'ACTIVE',
             permissions = '["home","audit-log","manage-users-list","attendance-dashboard"]'::jsonb,
             role = 'ADMIN',
@@ -545,6 +546,57 @@ async function main() {
         String(await evaluate(client, 'document.body.innerText')).includes('โปรไฟล์ของฉัน') &&
         Boolean(await evaluate(client, `Boolean(document.querySelector('#FirstName'))`)),
       'Profile page did not render',
+    );
+    assert(
+      (await evaluate(client, `document.querySelector('#PersonID_Onec')?.value`)) === '',
+      'Missing national id did not render as an empty readonly input',
+    );
+    assert(
+      (await evaluate(client, `document.querySelector('#PersonID_Onec')?.placeholder`)) === 'ยังไม่ระบุ',
+      'Missing national id placeholder is incorrect',
+    );
+    assert(
+      Boolean(
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('a[href="/manage-users/${user.id}/edit"]'))`,
+        ),
+      ),
+      'Manage-users national-id edit link did not render for an authorized user',
+    );
+
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('เปลี่ยนรหัสผ่าน'))`,
+      'Change-password entry point was not found on profile',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === '/change-password',
+      'Voluntary change-password page did not open',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('กลับโปรไฟล์'),
+      'Voluntary change-password page did not finish rendering',
+    );
+    const voluntaryPasswordText = String(await evaluate(client, 'document.body.innerText'));
+    assert(
+      !voluntaryPasswordText.includes('ต้องเปลี่ยนรหัสผ่านก่อนใช้งานส่วนอื่นของระบบ'),
+      'Voluntary change-password page incorrectly showed the forced warning',
+    );
+    assert(
+      voluntaryPasswordText.includes('กลับโปรไฟล์'),
+      'Voluntary change-password page did not show the back button',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('กลับโปรไฟล์'))`,
+      'Back-to-profile button was not found',
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) === '/profile' &&
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#FirstName'))`)),
+      'Back-to-profile navigation did not complete',
     );
 
     const values = {
