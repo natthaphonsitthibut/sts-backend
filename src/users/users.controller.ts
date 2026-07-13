@@ -107,6 +107,7 @@ export class UsersController {
       schoolId: query.schoolId,
       gradeLevelId: query.gradeLevelId,
       room: query.room?.trim() || undefined,
+      accountStatus: query.accountStatus,
       page: query.page,
       limit: query.limit,
     });

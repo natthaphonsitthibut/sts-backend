@@ -134,6 +134,7 @@ export interface UserListFilters {
   schoolId?: number;
   gradeLevelId?: number;
   room?: string;
+  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
   page?: number;
   limit?: number;
 }
@@ -563,6 +564,24 @@ export class UsersRepository {
       addDataScopeFilter('room_ids', filters.room);
     }
 
+    const lifecycleStatusSql = `
+      CASE
+        WHEN u.status <> 'ACTIVE' THEN 'DISABLED'
+        WHEN u.must_change_password IS TRUE
+          AND u.temporary_password_expires_at IS NOT NULL
+          AND u.temporary_password_expires_at <= NOW()
+          THEN 'TEMP_PASSWORD_EXPIRED'
+        WHEN u.must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'
+        ELSE 'ACTIVE'
+      END
+    `;
+    const lifecycleWhereSql = `WHERE ${conditions.join(' AND ')}`;
+    const lifecycleParams = [...params];
+    if (filters.accountStatus) {
+      params.push(filters.accountStatus);
+      conditions.push(`(${lifecycleStatusSql}) = $${params.length}`);
+    }
+
     const whereSql = `WHERE ${conditions.join(' AND ')}`;
     const countResult = await this.query<CountRow>(
       `
@@ -579,22 +598,14 @@ export class UsersRepository {
         SELECT lifecycle_status AS status, COUNT(*)::int AS count
         FROM (
           SELECT
-            CASE
-              WHEN u.status <> 'ACTIVE' THEN 'DISABLED'
-              WHEN u.must_change_password IS TRUE
-                AND u.temporary_password_expires_at IS NOT NULL
-                AND u.temporary_password_expires_at <= NOW()
-                THEN 'TEMP_PASSWORD_EXPIRED'
-              WHEN u.must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'
-              ELSE 'ACTIVE'
-            END AS lifecycle_status
+            ${lifecycleStatusSql} AS lifecycle_status
           FROM users u
           LEFT JOIN roles r ON r.name = u.role
-          ${whereSql}
+          ${lifecycleWhereSql}
         ) scoped_users
         GROUP BY lifecycle_status
       `,
-      params,
+      lifecycleParams,
     );
     const lifecycleStatusCounts = lifecycleCountsResult.rows.reduce(
       (counts, row) => ({

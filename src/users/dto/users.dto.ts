@@ -65,6 +65,10 @@ export class GetUsersQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
   @IsString()
   room?: string;
+
+  @IsOptional()
+  @IsIn(['PENDING_FIRST_LOGIN', 'ACTIVE', 'TEMP_PASSWORD_EXPIRED', 'DISABLED'])
+  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
 }
 
 export class CreateUserDto {

@@ -190,6 +190,7 @@ export class UsersService {
         schoolId: filters.schoolId,
         gradeLevelId: filters.gradeLevelId,
         room: filters.room,
+        accountStatus: filters.accountStatus,
         page,
         limit,
       });

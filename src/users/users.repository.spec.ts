@@ -45,3 +45,44 @@ describe('UsersRepository student account queries', () => {
     expectCurrentEnrollmentPolicy(queries[1]);
   });
 });
+
+describe('UsersRepository user list queries', () => {
+  it('filters rows by lifecycle status without narrowing summary counts', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const repository = new UsersRepository({
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn().mockImplementation((sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params });
+          if (calls.length === 1) {
+            return Promise.resolve({ records: [{ count: 1 }], affected: 1 });
+          }
+          if (calls.length === 2) {
+            return Promise.resolve({ records: [{ status: 'ACTIVE', count: 1 }], affected: 1 });
+          }
+          return Promise.resolve({ records: [], affected: 0 });
+        }),
+      }),
+    } as never);
+
+    await repository.listUsersPaginated({
+      actorId: 1,
+      actorRole: 'ADMIN',
+      actorRank: 5,
+      accountStatus: 'ACTIVE',
+    });
+
+    expect(calls).toHaveLength(3);
+    expect(calls[0].params).toContain('ACTIVE');
+    expect(calls[2].params).toContain('ACTIVE');
+    expect(calls[0].sql).toContain(
+      "WHEN u.must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'",
+    );
+    expect(calls[2].sql).toContain(
+      "WHEN u.must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'",
+    );
+    expect(calls[1].params).not.toContain('ACTIVE');
+    expect(calls[1].sql).not.toMatch(/END\s*\)\s*=\s*\$/);
+  });
+});
