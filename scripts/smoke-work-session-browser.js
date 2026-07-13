@@ -213,7 +213,7 @@ function createSessionCookie(sessionCookieService, userId) {
 }
 
 async function loginInBrowser(client, user, sessionCookie) {
-  await navigate(client, `${FRONTEND_URL}/admin-access`);
+  await navigate(client, `${FRONTEND_URL}/login`);
   await client.call('Network.setCookie', {
     name: sessionCookie.name,
     value: sessionCookie.value,
@@ -242,10 +242,10 @@ async function logoutInBrowser(client) {
       sessionStorage.removeItem('admin_access');
     })()`,
   );
-  await navigate(client, `${FRONTEND_URL}/admin-access`);
+  await navigate(client, `${FRONTEND_URL}/login`);
   await waitFor(
-    async () => String(await evaluate(client, 'location.pathname')).startsWith('/admin-access'),
-    'Logout did not return to admin access',
+    async () => String(await evaluate(client, 'location.pathname')).startsWith('/login'),
+    'Logout did not return to login',
   );
 }
 

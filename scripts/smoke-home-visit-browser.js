@@ -255,7 +255,7 @@ function createSessionCookie(sessionCookieService, userId) {
 }
 
 async function loginSession(client, user, sessionCookie) {
-  await navigate(client, `${FRONTEND_URL}/admin-access`, 'admin access');
+  await navigate(client, `${FRONTEND_URL}/login`, 'login');
   await client.call('Network.setCookie', {
     name: sessionCookie.name,
     value: sessionCookie.value,

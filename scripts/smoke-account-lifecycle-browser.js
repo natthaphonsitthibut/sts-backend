@@ -281,7 +281,7 @@ function createSessionCookie(sessionCookieService, userId) {
 }
 
 async function loginAdminSession(client, user, sessionCookie) {
-  await navigate(client, `${FRONTEND_URL}/admin-access`);
+  await navigate(client, `${FRONTEND_URL}/login`);
   await client.call('Network.setCookie', {
     name: sessionCookie.name,
     value: sessionCookie.value,
@@ -297,7 +297,7 @@ async function loginAdminSession(client, user, sessionCookie) {
 }
 
 async function loginWithForm(client, username, password, shouldSucceed) {
-  await navigate(client, `${FRONTEND_URL}/admin-access`);
+  await navigate(client, `${FRONTEND_URL}/login`);
   await waitFor(
     async () => Boolean(await evaluate(client, 'Boolean(document.querySelector("#username"))')),
     `Login form did not render for ${username}`,
@@ -314,7 +314,7 @@ async function loginWithForm(client, username, password, shouldSucceed) {
     await waitFor(
       async () =>
         String(await evaluate(client, 'localStorage.getItem("sts_user") || ""')).includes(username) &&
-        !String(await evaluate(client, 'location.pathname')).startsWith('/admin-access'),
+        !String(await evaluate(client, 'location.pathname')).startsWith('/login'),
       `Login did not succeed for ${username}`,
     );
     return;

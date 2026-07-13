@@ -186,7 +186,7 @@ function createSessionCookie(sessionCookieService, userId) {
 }
 
 async function loginInBrowser(client, user, sessionCookie) {
-  await navigate(client, `${FRONTEND_URL}/admin-access`);
+  await navigate(client, `${FRONTEND_URL}/login`);
   await client.call('Network.setCookie', {
     name: sessionCookie.name,
     value: sessionCookie.value,
@@ -201,11 +201,70 @@ async function loginInBrowser(client, user, sessionCookie) {
   );
 }
 
+async function assertLegacyRouteRedirects(client) {
+  await navigate(client, `${FRONTEND_URL}/dashboard?source=legacy#summary`);
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `location.pathname === '/student-risk-report'
+          && location.search === '?source=legacy'
+          && location.hash === '#summary'`,
+      ),
+    'Legacy dashboard route did not preserve its search/hash while redirecting',
+  );
+
+  const legacyTaskId = '00000000-0000-4000-8000-000000000000';
+  await navigate(
+    client,
+    `${FRONTEND_URL}/task-detail/${legacyTaskId}?source=legacy#detail`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `location.pathname === '/tasks/${legacyTaskId}'
+          && location.search === '?source=legacy'
+          && location.hash === '#detail'`,
+      ),
+    'Legacy task-detail route did not preserve its id/search/hash while redirecting',
+  );
+
+  await navigate(
+    client,
+    `${FRONTEND_URL}/field-followers-review/history?source=legacy`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `location.pathname === '/field-follower-applications/history'
+          && location.search === '?source=legacy'`,
+      ),
+    'Legacy field-follower review history route did not preserve its search',
+  );
+
+  await navigate(
+    client,
+    `${FRONTEND_URL}/admin-access?next=%2Fstudent-risk-report`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `location.pathname === '/login'
+          && location.search === '?next=%2Fstudent-risk-report'`,
+      ),
+    'Legacy admin access route did not preserve next while redirecting to login',
+  );
+}
+
 async function upsertActor(dataSource, passwordHash) {
   const permissions = [
     'attendance-dashboard',
     'dashboard',
     'field-monitor',
+    'home',
     'login-links',
     'manage-student-accounts',
     'manage-users-list',
@@ -391,7 +450,7 @@ async function assertFullStudentSurfaceNavigation(client, label) {
     async () => evaluate(client, `window.location.pathname.startsWith('/students/')`),
     `${label} student row/card did not navigate to the student detail page`,
   );
-  await navigate(client, `${FRONTEND_URL}/dashboard`);
+  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
     async () => (await bodyText(client)).includes('รายงานนักเรียน'),
     `${label} dashboard did not render again after row/card navigation`,
@@ -408,7 +467,7 @@ async function assertFullStudentSurfaceNavigation(client, label) {
 }
 
 async function assertCanonicalPageWidths(client) {
-  const routes = ['/dashboard', '/manage-users', '/manage-student-accounts'];
+  const routes = ['/student-risk-report', '/manage-users', '/manage-student-accounts'];
   const widths = [];
   for (const route of routes) {
     await navigate(client, `${FRONTEND_URL}${route}`);
@@ -432,7 +491,7 @@ async function assertCanonicalPageWidths(client) {
     `Authenticated page widths drifted: ${routes.map((route, index) => `${route}=${widths[index]}`).join(', ')}`,
   );
 
-  await navigate(client, `${FRONTEND_URL}/admin-access`);
+  await navigate(client, `${FRONTEND_URL}/login`);
   await waitFor(
     async () =>
       evaluate(client, `Boolean(document.querySelector('[data-page-container="guest"]'))`),
@@ -819,7 +878,7 @@ async function setMobileSort(client, value) {
 }
 
 async function assertRiskDashboard(client, expectedStudentName, expectedTotalCount, label) {
-  await navigate(client, `${FRONTEND_URL}/dashboard`);
+  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
     async () => (await bodyText(client)).includes('รายงานนักเรียน'),
     `${label} risk dashboard title did not render`,
@@ -875,6 +934,7 @@ async function main() {
         'attendance-dashboard',
         'dashboard',
         'field-monitor',
+        'home',
         'login-links',
         'manage-student-accounts',
         'manage-users-list',
@@ -898,6 +958,7 @@ async function main() {
       mobile: false,
     });
     await loginInBrowser(client, user, createSessionCookie(sessionCookieService, actorId));
+    await assertLegacyRouteRedirects(client);
     await assertCanonicalPageWidths(client);
     await assertUserStatusFilterApi(client);
     await assertStatusSummaryCardFilters(client);
@@ -948,7 +1009,7 @@ async function main() {
       `document.querySelector('button[aria-label="กรองเสี่ยงสูง"]')?.scrollIntoView({ block: 'start' })`,
     );
     await capture(client, '/tmp/sts-risk-dashboard-mobile-summary.png');
-    await navigate(client, `${FRONTEND_URL}/admin-access`);
+    await navigate(client, `${FRONTEND_URL}/login`);
     await waitFor(
       async () =>
         evaluate(

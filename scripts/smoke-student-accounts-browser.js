@@ -536,7 +536,7 @@ async function main() {
       sameSite: 'Lax',
     });
 
-    await navigate(client, `${FRONTEND_URL}/admin-access`);
+    await navigate(client, `${FRONTEND_URL}/login`);
     await evaluate(
       client,
       `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(adminSession.body))});

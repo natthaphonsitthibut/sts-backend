@@ -530,7 +530,7 @@ async function main() {
       mobile: false,
     });
 
-    await navigate(client, `${FRONTEND_URL}/admin-access`);
+    await navigate(client, `${FRONTEND_URL}/login`);
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('เข้าสู่ระบบ STS'),
       'Login page did not render',
