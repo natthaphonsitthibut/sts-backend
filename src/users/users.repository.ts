@@ -4,6 +4,7 @@ import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
+  AccountLifecycleStatus,
   DataScope,
   HydratableUserRow,
   QueryExecutor,
@@ -134,7 +135,7 @@ export interface UserListFilters {
   schoolId?: number;
   gradeLevelId?: number;
   room?: string;
-  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  accountStatus?: AccountLifecycleStatus;
   page?: number;
   limit?: number;
 }
@@ -222,7 +223,7 @@ export interface StudentAccountManagementFilters {
   subDistrict?: string;
   grade?: string;
   room?: number;
-  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  accountStatus?: AccountLifecycleStatus;
   onlyExpired?: boolean;
   page?: number;
   limit?: number;
@@ -258,12 +259,12 @@ interface CountRow extends Record<string, unknown> {
 }
 
 interface UserLifecycleStatusCountRow extends Record<string, unknown> {
-  status: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  status: AccountLifecycleStatus;
   count: number | string;
 }
 
 interface StudentAccountStatusCountRow extends Record<string, unknown> {
-  status: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  status: AccountLifecycleStatus;
   count: number | string;
 }
 
@@ -474,10 +475,7 @@ export class UsersRepository {
   async listUsersPaginated(filters: UserListFilters): Promise<{
     rows: HydratableUserRow[];
     totalCount: number;
-    lifecycleStatusCounts: Record<
-      'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED',
-      number
-    >;
+    lifecycleStatusCounts: Record<AccountLifecycleStatus, number>;
   }> {
     const params: unknown[] = [];
     const conditions: string[] = [];
@@ -1136,9 +1134,7 @@ export class UsersRepository {
 
   async countStudentAccountStatuses(
     filters: StudentAccountManagementFilters,
-  ): Promise<
-    Record<'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED', number>
-  > {
+  ): Promise<Record<AccountLifecycleStatus, number>> {
     const statusFilters = {
       ...filters,
       accountStatus: undefined,

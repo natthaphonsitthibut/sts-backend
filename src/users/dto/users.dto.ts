@@ -19,7 +19,8 @@ import {
   Min,
 } from 'class-validator';
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
-import type { DataScope } from '../users.types';
+import { ACCOUNT_LIFECYCLE_STATUSES } from '../users.types';
+import type { AccountLifecycleStatus, DataScope } from '../users.types';
 
 export const ACCOUNT_DEACTIVATION_REASON_CODES = [
   'STAFF_LEFT',
@@ -67,8 +68,8 @@ export class GetUsersQueryDto extends PaginatedSearchQueryDto {
   room?: string;
 
   @IsOptional()
-  @IsIn(['PENDING_FIRST_LOGIN', 'ACTIVE', 'TEMP_PASSWORD_EXPIRED', 'DISABLED'])
-  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  @IsIn(ACCOUNT_LIFECYCLE_STATUSES)
+  accountStatus?: AccountLifecycleStatus;
 }
 
 export class CreateUserDto {
@@ -369,8 +370,8 @@ export class StudentAccountListQueryDto extends StudentAccountBulkFilterDto {
   searchTerm?: string;
 
   @IsOptional()
-  @IsIn(['PENDING_FIRST_LOGIN', 'ACTIVE', 'TEMP_PASSWORD_EXPIRED', 'DISABLED'])
-  accountStatus?: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  @IsIn(ACCOUNT_LIFECYCLE_STATUSES)
+  accountStatus?: AccountLifecycleStatus;
 
   @IsOptional()
   @Transform(({ value }) => toBoolean(value))

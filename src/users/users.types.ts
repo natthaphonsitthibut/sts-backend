@@ -3,6 +3,21 @@ import type { RoleScopeMode, RoleScopePolicy } from '../auth/permissions.constan
 
 export type { ActorContext, DataScope };
 
+/**
+ * Derived account lifecycle shown in user lists — computed from
+ * `status` + `must_change_password` + `temporary_password_expires_at`
+ * (the CASE in `users.repository.ts`), not a persisted column. Single
+ * source for the DTO whitelist, filter types, and count records.
+ */
+export const ACCOUNT_LIFECYCLE_STATUSES = [
+  'PENDING_FIRST_LOGIN',
+  'ACTIVE',
+  'TEMP_PASSWORD_EXPIRED',
+  'DISABLED',
+] as const;
+
+export type AccountLifecycleStatus = (typeof ACCOUNT_LIFECYCLE_STATUSES)[number];
+
 export interface RoleDefinition {
   id: number;
   name: string;
