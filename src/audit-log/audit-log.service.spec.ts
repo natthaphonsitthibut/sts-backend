@@ -154,6 +154,52 @@ describe('AuditLogService', () => {
     );
   });
 
+  it('records scoped audit metadata with a raw TypeORM query runner', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return queries.length === 1
+          ? [
+              {
+                id: 10010003,
+                province: 'เชียงใหม่',
+                district: 'เมืองเชียงใหม่',
+                sub_district: 'ศรีภูมิ',
+              },
+            ]
+          : [];
+      }),
+    };
+    const service = new AuditLogService({} as never);
+
+    await expect(
+      service.recordAtomic(
+        {
+          actorUserId: 1,
+          actorLabel: 'admin',
+          action: 'MASTER_DATA_EDIT',
+          targetType: 'school_classrooms',
+          targetId: '21',
+          metadata: { schoolId: 10010003 },
+        },
+        queryRunner,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(queryRunner.query).toHaveBeenCalledTimes(2);
+    const insertParams = queries[1]?.params ?? [];
+    expect(JSON.parse(String(insertParams[5]))).toMatchObject({
+      schoolId: 10010003,
+      scope: {
+        school_ids: [10010003],
+        provinces: ['เชียงใหม่'],
+        districts: ['เมืองเชียงใหม่'],
+        sub_districts: ['ศรีภูมิ'],
+      },
+    });
+  });
+
   it('filters history by target type and id', async () => {
     const taskActor: AuthenticatedRequestUser = {
       ...actor,

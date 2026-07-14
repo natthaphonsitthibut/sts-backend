@@ -25,8 +25,29 @@ const GROUP_CASE_RISK = 'เกณฑ์เปิดเคสและระด�
 const GROUP_SUBJECT_RISK = 'เกณฑ์ความเสี่ยงจากเช็คชื่อรายวิชา';
 const GROUP_CASE_SLA = 'กำหนดเวลาดำเนินการเคส (SLA)';
 const GROUP_ABSENCE_MONITOR = 'รอบการตรวจขาดเรียนอัตโนมัติ';
+const GROUP_TEACHER_ACCESS = 'นโยบายลิงก์เข้าใช้งานครู';
 
 export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
+  {
+    key: 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY',
+    valueType: 'enum',
+    defaultValue: 'TERM_END',
+    group: GROUP_TEACHER_ACCESS,
+    enumOptions: [
+      { value: 'TERM_END', label: 'สิ้นสุดภาคเรียน' },
+      { value: 'ASSIGNMENT_END', label: 'สิ้นสุด assignment หรือภาคเรียน (วันใดถึงก่อน)' },
+    ],
+    description: 'นโยบายวันหมดอายุเริ่มต้นของลิงก์ครูเมื่อผู้ดูแลไม่ระบุวันหมดอายุเอง',
+  },
+  {
+    key: 'TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY',
+    valueType: 'enum',
+    defaultValue: 'NONE',
+    group: GROUP_TEACHER_ACCESS,
+    enumOptions: [{ value: 'NONE', label: 'ไม่ยืนยันตัวตนเพิ่ม' }],
+    description:
+      'นโยบายยืนยันตัวตนเพิ่มสำหรับลิงก์ครู (เปิดให้ใช้ NONE เท่านั้นจนกว่า OTP/ThaID production flow จะพร้อม)',
+  },
   {
     key: 'CASE_RISK_LOW_ABSENCE_DAYS',
     valueType: 'integer',

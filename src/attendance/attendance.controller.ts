@@ -52,7 +52,7 @@ export class AttendanceController {
 
   @Get('grade-levels')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard')
+  @RequireAnyPermission('attendance', 'attendance-dashboard', 'manage-school-structure')
   async getGradeLevels() {
     return await this.attendanceService.getGradeLevels();
   }
@@ -168,7 +168,12 @@ export class AttendanceController {
 
   @Get('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard', 'manage-attendance-calendar')
+  @RequireAnyPermission(
+    'attendance-dashboard',
+    'manage-attendance-calendar',
+    'manage-school-structure',
+    'manage-teacher-access',
+  )
   async listTerms(
     @Query() query: ListSchoolTermsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -178,7 +183,7 @@ export class AttendanceController {
 
   @Post('terms')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-attendance-calendar')
+  @RequireAnyPermission('manage-attendance-calendar', 'manage-school-structure')
   async upsertTerm(
     @Body() body: UpsertSchoolTermDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,

@@ -1,0 +1,1098 @@
+const { randomUUID } = require('crypto');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { NestFactory } = require('@nestjs/core');
+const { DataSource } = require('typeorm');
+const { AppModule } = require('../dist/app.module');
+const { PasswordService } = require('../dist/auth/password.service');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('Refusing to run teacher access browser smoke with NODE_ENV=production');
+}
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
+const BACKEND_URL = process.env.SMOKE_BACKEND_URL || 'http://127.0.0.1:3002';
+const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5175';
+const CHROME_PATH =
+  process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9263);
+const USERNAMES = {
+  admin: 'teacher_access_browser_admin',
+  teacher: 'teacher_access_browser_teacher',
+};
+const FIXTURE_PREFIX = 'TA-BROWSER-';
+const CALENDAR_REASON = 'Automated teacher access browser smoke';
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function errorMessage(error) {
+  if (error instanceof AggregateError) {
+    return error.errors.map((cause) => cause?.message || String(cause)).join(' | ');
+  }
+  return error?.message || String(error);
+}
+
+async function waitFor(check, message, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      if (await check()) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new Error(lastError ? `${message}: ${errorMessage(lastError)}` : message);
+}
+
+class CdpClient {
+  constructor(url) {
+    this.nextId = 1;
+    this.pending = new Map();
+    this.socket = new WebSocket(url);
+  }
+
+  async connect() {
+    await new Promise((resolve, reject) => {
+      this.socket.addEventListener('open', resolve, { once: true });
+      this.socket.addEventListener('error', reject, { once: true });
+    });
+    this.socket.addEventListener('message', (event) => {
+      const message = JSON.parse(event.data);
+      if (!message.id) return;
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result || {});
+    });
+  }
+
+  call(method, params = {}) {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.socket.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  close() {
+    this.socket.close();
+  }
+}
+
+async function evaluate(client, expression) {
+  const result = await client.call('Runtime.evaluate', {
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (result.exceptionDetails) {
+    throw new Error(
+      result.exceptionDetails.exception?.description ||
+        result.exceptionDetails.text ||
+        'Browser expression failed',
+    );
+  }
+  return result.result?.value;
+}
+
+async function navigate(client, url) {
+  await client.call('Page.navigate', { url });
+  await waitFor(
+    async () => (await evaluate(client, 'document.readyState')) === 'complete',
+    `Page did not load: ${url.replace(/#.*$/, '#[REDACTED]')}`,
+  );
+}
+
+async function clickButton(client, label, withinDialog = false) {
+  const expression = `(() => {
+    const root = ${withinDialog ? "document.querySelector('[role=dialog]')" : 'document'};
+    return [...(root?.querySelectorAll('button') || [])]
+      .find((button) => button.textContent.trim() === ${JSON.stringify(label)});
+  })()`;
+  await waitFor(
+    async () =>
+      Boolean(await evaluate(client, `Boolean(${expression} && !${expression}.disabled)`)),
+    `Enabled button “${label}” was not found`,
+  );
+  const point = await evaluate(
+    client,
+    `(() => {
+      const rect = ${expression}.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`,
+  );
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: point.x,
+    y: point.y,
+    button: 'left',
+    clickCount: 1,
+  });
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: point.x,
+    y: point.y,
+    button: 'left',
+    clickCount: 1,
+  });
+}
+
+async function setSelectByOptionText(client, selector, optionText) {
+  await waitFor(
+    async () => {
+      const options = await evaluate(
+        client,
+        `(() => {
+            const select = document.querySelector(${JSON.stringify(selector)});
+            return [...(select?.options || [])].map((option) => option.textContent);
+          })()`,
+      );
+      if (options.some((text) => text.includes(optionText))) return true;
+      throw new Error(`available options=${JSON.stringify(options)}`);
+    },
+    `Select ${selector} did not contain “${optionText}”`,
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const select = document.querySelector(${JSON.stringify(selector)});
+      const option = [...select.options].find((item) =>
+        item.textContent.includes(${JSON.stringify(optionText)}));
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`,
+  );
+}
+
+async function clickCheckboxLabel(client, labelText) {
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const label = [...document.querySelectorAll('label')]
+              .find((item) => item.textContent.includes(${JSON.stringify(labelText)}));
+            return label?.querySelector('input[type=checkbox]');
+          })()`,
+        ),
+      ),
+    `Checkbox “${labelText}” was not found`,
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const label = [...document.querySelectorAll('label')]
+        .find((item) => item.textContent.includes(${JSON.stringify(labelText)}));
+      const input = label.querySelector('input[type=checkbox]');
+      if (!input.checked) input.click();
+    })()`,
+  );
+}
+
+async function openChrome() {
+  assert(fs.existsSync(CHROME_PATH), 'Google Chrome executable was not found');
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sts-teacher-access-chrome-'));
+  const processRef = spawn(
+    CHROME_PATH,
+    [
+      '--headless=new',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--remote-allow-origins=*',
+      `--remote-debugging-port=${DEBUG_PORT}`,
+      `--user-data-dir=${userDataDir}`,
+      'about:blank',
+    ],
+    { stdio: 'ignore' },
+  );
+  await waitFor(async () => {
+    try {
+      return (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`)).ok;
+    } catch {
+      return false;
+    }
+  }, 'Chrome DevTools endpoint did not start');
+  const targets = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`).then((res) => res.json());
+  const target = targets.find((item) => item.type === 'page');
+  assert(target?.webSocketDebuggerUrl, 'Chrome page target was not available');
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  await client.connect();
+  return { client, processRef, userDataDir };
+}
+
+async function closeChrome(chrome) {
+  if (!chrome) return;
+  try {
+    chrome.client.close();
+  } catch {
+    // Best-effort browser cleanup.
+  }
+  if (!chrome.processRef.killed) {
+    chrome.processRef.kill('SIGTERM');
+    await Promise.race([
+      new Promise((resolve) => chrome.processRef.once('exit', resolve)),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ]);
+  }
+  fs.rmSync(chrome.userDataDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 100,
+  });
+}
+
+async function upsertUser(dataSource, passwordHash, input) {
+  const [row] = await dataSource.query(
+    `
+      INSERT INTO users (
+        username, password, "FirstName", "LastName", status, permissions, role,
+        data_scope, must_change_password, affiliation, data_origin_code, email, phone
+      )
+      VALUES (
+        $1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, FALSE,
+        'Automated teacher access browser smoke', 'AUTOMATED_TEST', NULL, NULL
+      )
+      ON CONFLICT (username) DO UPDATE
+      SET password = EXCLUDED.password,
+          "FirstName" = EXCLUDED."FirstName",
+          "LastName" = EXCLUDED."LastName",
+          status = 'ACTIVE',
+          permissions = EXCLUDED.permissions,
+          role = EXCLUDED.role,
+          data_scope = EXCLUDED.data_scope,
+          must_change_password = FALSE,
+          temporary_password_issued_at = NULL,
+          temporary_password_expires_at = NULL,
+          deactivated_at = NULL,
+          deactivated_by = NULL,
+          deactivation_reason_code = NULL,
+          deactivation_note = NULL,
+          affiliation = EXCLUDED.affiliation,
+          data_origin_code = 'AUTOMATED_TEST',
+          email = NULL,
+          phone = NULL
+      RETURNING id
+    `,
+    [
+      input.username,
+      passwordHash,
+      input.firstName,
+      input.lastName,
+      JSON.stringify(input.permissions),
+      input.role,
+      JSON.stringify(input.dataScope),
+    ],
+  );
+  return { id: Number(row.id), username: input.username };
+}
+
+async function login(password) {
+  const response = await fetch(`${BACKEND_URL}/api/users/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: USERNAMES.admin, password }),
+  });
+  assert(response.status === 201, `Browser fixture login returned ${response.status}`);
+  const user = await response.json();
+  const setCookie = response.headers.getSetCookie?.()[0] || response.headers.get('set-cookie');
+  assert(setCookie, 'Login did not return a session cookie');
+  const [cookiePair] = setCookie.split(';');
+  const separator = cookiePair.indexOf('=');
+  return {
+    user,
+    cookieHeader: cookiePair,
+    cookieName: cookiePair.slice(0, separator),
+    cookieValue: cookiePair.slice(separator + 1),
+  };
+}
+
+async function cleanup(dataSource) {
+  const users = await dataSource.query(
+    `SELECT id, username FROM users WHERE username = ANY($1::text[])`,
+    [Object.values(USERNAMES)],
+  );
+  if (users.length === 0) return;
+  const userIds = users.map((row) => Number(row.id));
+  const [admin] = users.filter((row) => row.username === USERNAMES.admin);
+  const [teacher] = users.filter((row) => row.username === USERNAMES.teacher);
+  const adminId = admin ? Number(admin.id) : null;
+  const teacherId = teacher ? Number(teacher.id) : null;
+
+  if (teacherId) {
+    await dataSource.query(
+      `
+        DELETE FROM student_observation_tags
+        WHERE observation_id IN (
+          SELECT id FROM student_observations WHERE author_user_id = $1
+        )
+      `,
+      [teacherId],
+    );
+    await dataSource.query(
+      `DELETE FROM student_observation_revisions WHERE changed_by_user_id = $1`,
+      [teacherId],
+    );
+    await dataSource.query(`DELETE FROM student_observations WHERE author_user_id = $1`, [
+      teacherId,
+    ]);
+  }
+  if (adminId) {
+    await dataSource.query(`DELETE FROM teacher_access_grants WHERE issued_by = $1`, [adminId]);
+  }
+  const students = await dataSource.query(
+    `SELECT student_uuid, person_uuid FROM student_term WHERE "PersonID_Onec" LIKE $1`,
+    [`${FIXTURE_PREFIX}%`],
+  );
+  const studentIds = students.map((row) => row.student_uuid);
+  const personIds = students.map((row) => row.person_uuid);
+  const sessions = teacherId
+    ? await dataSource.query(`SELECT id FROM attendance_sessions WHERE created_by = $1`, [teacherId])
+    : [];
+  const sessionIds = sessions.map((row) => row.id);
+  if (sessionIds.length > 0 || studentIds.length > 0) {
+    await dataSource.query(
+      `
+        DELETE FROM attendance
+        WHERE ($1::uuid[] <> '{}'::uuid[] AND session_id = ANY($1::uuid[]))
+           OR ($2::uuid[] <> '{}'::uuid[] AND student_uuid = ANY($2::uuid[]))
+      `,
+      [sessionIds, studentIds],
+    );
+  }
+  if (sessionIds.length > 0) {
+    await dataSource.query(`DELETE FROM attendance_sessions WHERE id = ANY($1::uuid[])`, [
+      sessionIds,
+    ]);
+  }
+  if (studentIds.length > 0) {
+    const [{ case_count: caseCount }] = await dataSource.query(
+      `SELECT COUNT(*)::int AS case_count FROM cases WHERE student_uuid = ANY($1::uuid[])`,
+      [studentIds],
+    );
+    assert(caseCount === 0, 'Browser smoke students have cases; refusing destructive cleanup');
+    await dataSource.query(`DELETE FROM student_term WHERE student_uuid = ANY($1::uuid[])`, [
+      studentIds,
+    ]);
+  }
+  if (personIds.length > 0) {
+    await dataSource.query(`DELETE FROM student_person WHERE person_uuid = ANY($1::uuid[])`, [
+      personIds,
+    ]);
+  }
+  if (adminId) {
+    await dataSource.query(
+      `DELETE FROM classroom_teacher_assignments WHERE created_by = $1`,
+      [adminId],
+    );
+    await dataSource.query(`DELETE FROM school_teacher_memberships WHERE created_by = $1`, [
+      adminId,
+    ]);
+    await dataSource.query(
+      `DELETE FROM school_classrooms WHERE created_by = $1 AND room_code LIKE $2`,
+      [adminId, `${FIXTURE_PREFIX}%`],
+    );
+    await dataSource.query(
+      `DELETE FROM school_calendar_days WHERE created_by = $1 AND reason = $2`,
+      [adminId, CALENDAR_REASON],
+    );
+  }
+  await dataSource.query(
+    `
+      UPDATE users
+      SET status = 'DISABLED',
+          deactivated_at = COALESCE(deactivated_at, NOW()),
+          deactivation_reason_code = COALESCE(deactivation_reason_code, 'OTHER'),
+          deactivation_note = COALESCE(
+            deactivation_note,
+            'Retained automated teacher access browser fixture'
+          )
+      WHERE id = ANY($1::int[])
+    `,
+    [userIds],
+  );
+}
+
+async function assertPrerequisites(dataSource) {
+  const [tables] = await dataSource.query(
+    `
+      SELECT
+        to_regclass('public.teacher_access_grants')::text AS grants,
+        to_regclass('public.school_teacher_memberships')::text AS memberships,
+        to_regclass('public.classroom_teacher_assignments')::text AS assignments
+    `,
+  );
+  assert(
+    Object.values(tables).every(Boolean),
+    'School structure and teacher access migrations must be applied first',
+  );
+  let backendResponse;
+  let frontendResponse;
+  try {
+    [backendResponse, frontendResponse] = await Promise.all([
+      fetch(`${BACKEND_URL}/api/teacher-access/context`),
+      fetch(`${FRONTEND_URL}/`),
+    ]);
+  } catch {
+    throw new Error(
+      `Start the smoke backend at ${BACKEND_URL} and frontend at ${FRONTEND_URL} before running`,
+    );
+  }
+  assert(backendResponse.status === 404, `Unexpected backend probe ${backendResponse.status}`);
+  assert(frontendResponse.ok, `Frontend probe returned ${frontendResponse.status}`);
+}
+
+async function createFixture(dataSource, actors) {
+  const [term] = await dataSource.query(
+    `
+      SELECT term.id, term.school_id, term.academic_year, term.semester,
+             term.starts_on::text, term.ends_on::text, school.name AS school_name
+      FROM school_terms term
+      JOIN schools school ON school.id = term.school_id
+      LEFT JOIN school_calendar_days calendar
+        ON calendar.school_term_id = term.id
+       AND calendar.calendar_date = CURRENT_DATE
+       AND calendar.deleted_at IS NULL
+      WHERE term.status = 'ACTIVE'
+        AND term.deleted_at IS NULL
+        AND school.school_status = 'ACTIVE'
+        AND CURRENT_DATE BETWEEN term.starts_on AND term.ends_on
+        AND (calendar.id IS NULL OR calendar.day_type = 'SCHOOL_DAY')
+      ORDER BY term.ends_on DESC, term.id
+      LIMIT 1
+    `,
+  );
+  assert(term, 'A current active term with an available school day is required');
+  const [grade] = await dataSource.query(`SELECT id FROM grade_levels ORDER BY id LIMIT 1`);
+  const [subject] = await dataSource.query(
+    `SELECT id, name_th FROM subjects WHERE is_active = TRUE ORDER BY id LIMIT 1`,
+  );
+  const [studentStatus] = await dataSource.query(
+    `
+      SELECT code FROM student_status
+      WHERE category = 'ACTIVE' AND is_enabled = TRUE AND deleted_at IS NULL
+      ORDER BY sort_order, code
+      LIMIT 1
+    `,
+  );
+  assert(grade && subject && studentStatus, 'Grade, subject, or active status fixture is missing');
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const roomNumber = 1_800_000_000 + (Date.now() % 100_000_000);
+  const roomName = 'ห้อง Teacher Access Browser';
+  const [classroom] = await dataSource.query(
+    `
+      INSERT INTO school_classrooms (
+        school_term_id, school_id, grade_level_id, legacy_room_number,
+        room_code, room_name, classroom_status, created_by, updated_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7, $7)
+      RETURNING id
+    `,
+    [
+      term.id,
+      term.school_id,
+      grade.id,
+      roomNumber,
+      `${FIXTURE_PREFIX}${suffix}`,
+      roomName,
+      actors.admin.id,
+    ],
+  );
+  const [membership] = await dataSource.query(
+    `
+      INSERT INTO school_teacher_memberships (
+        school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
+      )
+      VALUES ($1, $2, 'ACTIVE', CURRENT_DATE, $3, $3)
+      RETURNING id
+    `,
+    [term.school_id, actors.teacher.id, actors.admin.id],
+  );
+  const [homeroomAssignment] = await dataSource.query(
+    `
+      INSERT INTO classroom_teacher_assignments (
+        school_id, classroom_id, teacher_membership_id, subject_id,
+        assignment_kind, assignment_status, effective_on, created_by, updated_by
+      )
+      VALUES ($1, $2, $3, NULL, 'HOMEROOM', 'ACTIVE', CURRENT_DATE, $4, $4)
+      RETURNING id
+    `,
+    [term.school_id, classroom.id, membership.id, actors.admin.id],
+  );
+  const [subjectAssignment] = await dataSource.query(
+    `
+      INSERT INTO classroom_teacher_assignments (
+        school_id, classroom_id, teacher_membership_id, subject_id,
+        assignment_kind, assignment_status, effective_on, created_by, updated_by
+      )
+      VALUES ($1, $2, $3, $4, 'SUBJECT', 'ACTIVE', CURRENT_DATE, $5, $5)
+      RETURNING id
+    `,
+    [term.school_id, classroom.id, membership.id, subject.id, actors.admin.id],
+  );
+  const students = [];
+  for (let index = 1; index <= 2; index += 1) {
+    const personUuid = randomUUID();
+    const studentUuid = randomUUID();
+    await dataSource.query(
+      `
+        INSERT INTO student_person (person_uuid, identity_status, created_by, updated_by)
+        VALUES ($1, 'ACTIVE', $2, $2)
+      `,
+      [personUuid, actors.admin.id],
+    );
+    await dataSource.query(
+      `
+        INSERT INTO student_term (
+          student_uuid, person_uuid, "PersonID_Onec", "FirstName_Onec", "LastName_Onec",
+          "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
+          "StudentStatusID_Onec", student_status_code,
+          "AcademicYear_Onec", "Semester_Onec", school_term_id, classroom_id,
+          created_by, updated_by
+        )
+        VALUES (
+          $1, $2, $3, $4, 'Teacher Access Browser',
+          $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $13
+        )
+      `,
+      [
+        studentUuid,
+        personUuid,
+        `${FIXTURE_PREFIX}${suffix}-${index}`,
+        `Student ${index}`,
+        term.school_id,
+        grade.id,
+        roomNumber,
+        studentStatus.code,
+        term.academic_year,
+        term.semester,
+        term.id,
+        classroom.id,
+        actors.admin.id,
+      ],
+    );
+    students.push({ studentUuid, name: `Student ${index} Teacher Access Browser` });
+  }
+  const insertedCalendar = await dataSource.query(
+    `
+      INSERT INTO school_calendar_days (
+        school_term_id, calendar_date, day_type, reason, source, created_by, updated_by
+      )
+      VALUES ($1, CURRENT_DATE, 'SCHOOL_DAY', $2, 'MANUAL', $3, $3)
+      ON CONFLICT (school_term_id, calendar_date) DO NOTHING
+      RETURNING id
+    `,
+    [term.id, CALENDAR_REASON, actors.admin.id],
+  );
+  const [calendar] = await dataSource.query(
+    `
+      SELECT day_type FROM school_calendar_days
+      WHERE school_term_id = $1 AND calendar_date = CURRENT_DATE AND deleted_at IS NULL
+    `,
+    [term.id],
+  );
+  assert(calendar?.day_type === 'SCHOOL_DAY', 'Today is not a school day for fixture term');
+  return {
+    term,
+    roomName,
+    subjectName: subject.name_th,
+    membershipId: Number(membership.id),
+    homeroomAssignmentId: Number(homeroomAssignment.id),
+    subjectAssignmentId: Number(subjectAssignment.id),
+    students,
+    calendarCreated: insertedCalendar.length === 1,
+  };
+}
+
+async function assertTokenAbsentFromBrowser(client, token) {
+  const exposure = await evaluate(
+    client,
+    `(() => {
+      const token = ${JSON.stringify(token)};
+      const storageValues = [];
+      for (const storage of [localStorage, sessionStorage]) {
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          storageValues.push(key || '', key ? storage.getItem(key) || '' : '');
+        }
+      }
+      return {
+        hash: location.hash,
+        hrefHasToken: location.href.includes(token),
+        domHasToken: document.documentElement.outerHTML.includes(token),
+        bodyHasToken: document.body.innerText.includes(token),
+        storageHasToken: storageValues.some((value) => value.includes(token)),
+      };
+    })()`,
+  );
+  assert(exposure.hash === '', 'Guest URL fragment was not stripped');
+  assert(!exposure.hrefHasToken, 'Guest token remained in location.href');
+  assert(!exposure.domHasToken && !exposure.bodyHasToken, 'Guest token leaked into DOM/body');
+  assert(!exposure.storageHasToken, 'Guest token leaked into local/session storage');
+}
+
+async function copyOneTimeLink(client) {
+  const beforeCopy = await evaluate(
+    client,
+    `({
+      bodyHasFragment: document.body.innerText.includes('#token='),
+      domHasFragment: document.documentElement.outerHTML.includes('#token=')
+    })`,
+  );
+  assert(!beforeCopy.bodyHasFragment && !beforeCopy.domHasFragment, 'One-time token leaked into DOM');
+  await clickButton(client, 'คัดลอกลิงก์', true);
+  await waitFor(
+    async () => String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกแล้ว'),
+    'Native clipboard copy did not report success',
+  );
+  const link = await evaluate(client, 'navigator.clipboard.readText()');
+  const parsed = new URL(link);
+  const token = new URLSearchParams(parsed.hash.slice(1)).get('token');
+  assert(parsed.pathname === '/teacher-access', 'Clipboard link used an unexpected path');
+  assert(token && token.length >= 32, 'Clipboard link did not contain a token fragment');
+  assert(
+    !(await evaluate(
+      client,
+      `document.documentElement.outerHTML.includes(${JSON.stringify(token)})`,
+    )),
+    'Copied token appeared in admin DOM',
+  );
+  return { link, token };
+}
+
+async function main() {
+  const app = await NestFactory.createApplicationContext(AppModule, {
+    logger: false,
+    abortOnError: false,
+  });
+  const dataSource = app.get(DataSource);
+  const passwordService = app.get(PasswordService);
+  const password = `Teacher-Access-Browser-${Date.now()}-Password`;
+  let chrome;
+
+  try {
+    await assertPrerequisites(dataSource);
+    const [initialSchool] = await dataSource.query(
+      `SELECT id FROM schools WHERE school_status = 'ACTIVE' ORDER BY id LIMIT 1`,
+    );
+    assert(initialSchool, 'No active school exists');
+    const passwordHash = await passwordService.hash(password);
+    const actors = {
+      admin: await upsertUser(dataSource, passwordHash, {
+        username: USERNAMES.admin,
+        firstName: 'Teacher Access',
+        lastName: 'Browser Admin',
+        role: 'ADMIN',
+        permissions: ['manage-teacher-access'],
+        dataScope: { school_ids: [Number(initialSchool.id)] },
+      }),
+      teacher: await upsertUser(dataSource, passwordHash, {
+        username: USERNAMES.teacher,
+        firstName: 'Teacher Browser',
+        lastName: 'Smoke',
+        role: 'TEACHER',
+        permissions: ['attendance'],
+        dataScope: { school_ids: [Number(initialSchool.id)] },
+      }),
+    };
+    await cleanup(dataSource);
+    const fixture = await createFixture(dataSource, actors);
+    for (const actor of Object.values(actors)) {
+      await dataSource.query(
+        `
+          UPDATE users
+          SET status = 'ACTIVE', data_scope = $2::jsonb,
+              deactivated_at = NULL, deactivated_by = NULL,
+              deactivation_reason_code = NULL, deactivation_note = NULL
+          WHERE id = $1
+        `,
+        [actor.id, JSON.stringify({ school_ids: [Number(fixture.term.school_id)] })],
+      );
+    }
+    const session = await login(password);
+    assert(
+      session.user.permissions?.length === 1 &&
+        session.user.permissions[0] === 'manage-teacher-access',
+      'Admin fixture did not log in with manage-teacher-access-only permissions',
+    );
+    const scopedSchoolsProbe = await fetch(`${BACKEND_URL}/api/school-structure/schools`, {
+      headers: { cookie: session.cookieHeader },
+    });
+    assert(
+      scopedSchoolsProbe.status === 200,
+      `Backend runtime is stale or missing teacher-access read permissions: ` +
+        `GET /api/school-structure/schools returned ${scopedSchoolsProbe.status}`,
+    );
+    const teachersResponse = await fetch(
+      `${BACKEND_URL}/api/school-structure/teachers?schoolId=${fixture.term.school_id}`,
+      { headers: { cookie: session.cookieHeader } },
+    );
+    const teachersPayload = await teachersResponse.json();
+    assert(
+      teachersResponse.ok &&
+        teachersPayload.data?.some(
+          (teacher) => Number(teacher.teacherUserId) === actors.teacher.id,
+        ),
+      `Teacher fixture was not visible through the scoped API (${teachersResponse.status})`,
+    );
+
+    chrome = await openChrome();
+    const { client } = chrome;
+    await client.call('Page.enable');
+    await client.call('Runtime.enable');
+    await client.call('Network.enable');
+    await client.call('DOM.enable');
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1366,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await client.call('Page.addScriptToEvaluateOnNewDocument', {
+      source: `
+        (() => {
+          const backendUrl = ${JSON.stringify(BACKEND_URL)};
+          const rewrite = (url) =>
+            typeof url === 'string' ? url.replace('http://127.0.0.1:3000', backendUrl) : url;
+          const originalOpen = XMLHttpRequest.prototype.open;
+          XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+            return originalOpen.call(this, method, rewrite(url), ...rest);
+          };
+          const originalFetch = window.fetch;
+          window.fetch = (input, init) =>
+            originalFetch(typeof input === 'string' ? rewrite(input) : input, init);
+        })();
+      `,
+    });
+    await client.call('Browser.grantPermissions', {
+      origin: FRONTEND_URL,
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+    });
+    await client.call('Network.setCookie', {
+      name: session.cookieName,
+      value: session.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await navigate(client, `${FRONTEND_URL}/login`);
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(session.user))});
+       localStorage.setItem('admin_access', 'true');`,
+    );
+
+    await navigate(client, `${FRONTEND_URL}/teacher-access-grants`);
+    try {
+      await waitFor(
+        async () => {
+          const text = String(await evaluate(client, 'document.body.innerText'));
+          return text.includes('ลิงก์เข้าใช้งานครู') && text.includes('ออกลิงก์ใหม่');
+        },
+        'Teacher access admin page did not load',
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        client,
+        `({ pathname: location.pathname, text: document.body.innerText.slice(0, 1200) })`,
+      );
+      throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
+    const browserTeachersProbe = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(
+          ${JSON.stringify(`${BACKEND_URL}/api/school-structure/teachers?schoolId=${fixture.term.school_id}`)},
+          { credentials: 'include' },
+        );
+        return { status: response.status, payload: await response.json() };
+      })()`,
+    );
+    assert(
+      browserTeachersProbe.status === 200 &&
+        browserTeachersProbe.payload.data?.some(
+          (teacher) => Number(teacher.teacherUserId) === actors.teacher.id,
+        ),
+      `Browser could not load scoped teacher fixture: ${JSON.stringify(browserTeachersProbe)}`,
+    );
+    await clickButton(client, 'ออกลิงก์ใหม่');
+    await setSelectByOptionText(client, '#grant-teacher', 'Teacher Browser Smoke');
+    await clickCheckboxLabel(client, 'เช็คชื่อห้องประจำชั้น');
+    await clickCheckboxLabel(client, 'บันทึกข้อสังเกตครู');
+    await waitFor(
+      async () =>
+        Number(
+          await evaluate(
+            client,
+            `(() => {
+              const fieldset = [...document.querySelectorAll('fieldset')]
+                .find((item) => item.querySelector('legend')?.textContent.includes('งานสอนที่อนุญาต'));
+              return fieldset?.querySelectorAll('input[type=checkbox]').length || 0;
+            })()`,
+          ),
+        ) === 2,
+      'Combined homeroom/subject assignments did not load',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const fieldset = [...document.querySelectorAll('fieldset')]
+          .find((item) => item.querySelector('legend')?.textContent.includes('งานสอนที่อนุญาต'));
+        [...fieldset.querySelectorAll('input[type=checkbox]')].forEach((input) => {
+          if (!input.checked) input.click();
+        });
+      })()`,
+    );
+    await clickButton(client, 'ออกลิงก์', true);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
+      'One-time link dialog did not open after issue',
+    );
+    const original = await copyOneTimeLink(client);
+    const [originalGrant] = await dataSource.query(
+      `
+        SELECT id::text
+        FROM teacher_access_grants
+        WHERE issued_by = $1
+        ORDER BY issued_at DESC, id DESC
+        LIMIT 1
+      `,
+      [actors.admin.id],
+    );
+    assert(originalGrant?.id, 'Issued teacher access grant was not persisted');
+    await clickButton(client, 'ปิด', true);
+    await waitFor(
+      async () => !String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
+      'One-time link dialog did not clear after close',
+    );
+
+    await navigate(client, original.link);
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          text.includes(fixture.term.school_name) &&
+          text.includes('Teacher Browser Smoke') &&
+          text.includes(fixture.roomName) &&
+          text.includes(fixture.students[0].name) &&
+          text.includes(fixture.students[1].name)
+        );
+      },
+      'Guest page did not render server-derived identity, assignment, and roster',
+    );
+    await assertTokenAbsentFromBrowser(client, original.token);
+    const assignmentOptionCount = await evaluate(
+      client,
+      `document.querySelector('#teacher-assignment')?.options.length || 0`,
+    );
+    assert(assignmentOptionCount === 2, 'Guest page did not show both assignments');
+
+    await setSelectByOptionText(client, '#teacher-assignment', fixture.subjectName);
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return text.includes('ข้อสังเกตจากครู') && text.includes(fixture.students[0].name);
+      },
+      'Observation assignment did not render its roster boundary',
+    );
+    await clickButton(client, fixture.students[0].name);
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `document.querySelector('#observation-comment')`)),
+      'Observation write form did not load for the scoped student',
+    );
+    const observationComment = `${FIXTURE_PREFIX}teacher observation proof`;
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#observation-comment');
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(input, ${JSON.stringify(`${FIXTURE_PREFIX}teacher observation proof`)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await clickButton(client, 'บันทึกข้อสังเกต');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('บันทึกเรียบร้อย'),
+      'Teacher observation did not save through the UI',
+    );
+    const [savedObservation] = await dataSource.query(
+      `
+        SELECT
+          observation.author_kind,
+          observation.author_user_id,
+          observation.author_teacher_membership_id::text,
+          observation.source_teacher_access_grant_id::text,
+          observation.source_assignment_id::text,
+          observation.comment,
+          observation.revision_number
+        FROM student_observations observation
+        WHERE observation.student_uuid = $1
+          AND observation.comment = $2
+        ORDER BY observation.id DESC
+        LIMIT 1
+      `,
+      [fixture.students[0].studentUuid, observationComment],
+    );
+    assert(
+      savedObservation?.author_kind === 'TEACHER_ACCESS' &&
+        Number(savedObservation.author_user_id) === actors.teacher.id &&
+        savedObservation.author_teacher_membership_id === String(fixture.membershipId) &&
+        savedObservation.source_teacher_access_grant_id === originalGrant.id &&
+        savedObservation.source_assignment_id === String(fixture.subjectAssignmentId) &&
+        savedObservation.revision_number === 1,
+      `Teacher observation provenance was not preserved: ${JSON.stringify(savedObservation)}`,
+    );
+
+    await setSelectByOptionText(client, '#teacher-assignment', fixture.roomName);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('เช็คชื่อนักเรียน'),
+      'Homeroom assignment did not render attendance',
+    );
+    await clickButton(client, 'บันทึกการเช็คชื่อ 2 คน');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('บันทึกเรียบร้อย'),
+      'Full homeroom attendance did not save through the UI',
+    );
+    const [attendanceSession] = await dataSource.query(
+      `
+        SELECT status, submitted_by, recorded_count
+        FROM attendance_sessions
+        WHERE created_by = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [actors.teacher.id],
+    );
+    assert(attendanceSession?.status === 'SUBMITTED', 'UI attendance session was not submitted');
+    assert(
+      Number(attendanceSession.submitted_by) === actors.teacher.id &&
+        Number(attendanceSession.recorded_count) === 2,
+      'UI attendance attribution or roster count was incorrect',
+    );
+
+    await navigate(client, 'about:blank');
+    await navigate(client, original.link);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      'Reopening the reusable full link did not work',
+    );
+    await assertTokenAbsentFromBrowser(client, original.token);
+
+    await navigate(client, `${FRONTEND_URL}/teacher-access-grants`);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      'Admin grant card did not reload',
+    );
+    await clickButton(client, 'เปลี่ยนลิงก์');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ออกลิงก์ใหม่แทนลิงก์เดิม?'),
+      'Rotate confirmation did not open',
+    );
+    await clickButton(client, 'ออกลิงก์ใหม่', true);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
+      'Rotated one-time link dialog did not open',
+    );
+    const rotated = await copyOneTimeLink(client);
+    assert(rotated.token !== original.token, 'Rotate copied the original token');
+    await clickButton(client, 'ปิด', true);
+
+    await navigate(client, original.link);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ไม่สามารถเข้าใช้งานได้'),
+      'Old link was not denied after rotate',
+    );
+    await assertTokenAbsentFromBrowser(client, original.token);
+    await navigate(client, rotated.link);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      'Rotated link did not work',
+    );
+    await assertTokenAbsentFromBrowser(client, rotated.token);
+
+    await navigate(client, `${FRONTEND_URL}/teacher-access-grants`);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      'Admin grant card did not load before revoke',
+    );
+    await clickButton(client, 'เพิกถอน');
+    await waitFor(
+      async () => Boolean(await evaluate(client, `document.querySelector('#revoke-reason')`)),
+      'Revoke dialog did not open',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#revoke-reason');
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value',
+        ).set;
+        setter.call(input, 'Automated browser smoke revoke');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        !(await evaluate(
+          client,
+          `(() => {
+            const dialog = document.querySelector('[role=dialog]');
+            return [...dialog.querySelectorAll('button')]
+              .find((button) => button.textContent.trim() === 'เพิกถอนลิงก์')?.disabled;
+          })()`,
+        )),
+      'Revoke submit did not become enabled',
+    );
+    await clickButton(client, 'เพิกถอนลิงก์', true);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('เพิกถอนแล้ว'),
+      'Admin UI did not show revoked status',
+    );
+    await navigate(client, rotated.link);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ไม่สามารถเข้าใช้งานได้'),
+      'Rotated link was not denied after revoke',
+    );
+    await assertTokenAbsentFromBrowser(client, rotated.token);
+
+    console.log(
+      JSON.stringify({
+        status: 'teacher_access_browser_smoke_ok',
+        checked: [
+          'manage-teacher-access-only admin page',
+          'combined homeroom and subject grant issue',
+          'native one-time clipboard copy without token DOM exposure',
+          'server-derived guest identity, assignments, and roster',
+          'fragment stripping and no token local/session/body storage',
+          'P4 scoped observation write and provenance',
+          'full homeroom attendance submit and teacher attribution',
+          'full-link reopen',
+          'rotate denies old link and enables new link',
+          'revoke denies rotated link',
+        ],
+      }),
+    );
+  } finally {
+    await closeChrome(chrome);
+    await cleanup(dataSource);
+    await app.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(errorMessage(error));
+  process.exit(1);
+});

@@ -10,6 +10,7 @@ const ALL_THROTTLERS: ThrottleName[] = [
   'geocode',
   'followerApplication',
   'campaignLookup',
+  'teacherAccess',
 ];
 
 /**
@@ -39,3 +40,4 @@ export const ThrottleMockLogin = () => only('mockLogin');
 export const ThrottleGeocode = () => only('geocode');
 export const ThrottleFollowerApplication = () => only('followerApplication');
 export const ThrottleCampaignLookup = () => only('campaignLookup');
+export const ThrottleTeacherAccess = () => only('teacherAccess');

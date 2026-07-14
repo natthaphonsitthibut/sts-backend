@@ -47,7 +47,6 @@ describe('AttendanceController access', () => {
   it('allows attendance lookup/task reads to attendance or attendance-dashboard actors only', () => {
     const guard = new PermissionsGuard(new Reflector());
     const lookupMethods: Array<keyof AttendanceController> = [
-      'getGradeLevels',
       'getSchools',
       'getLocations',
       'getAttendanceTasks',
@@ -67,6 +66,15 @@ describe('AttendanceController access', () => {
         ForbiddenException,
       );
     }
+
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getGradeLevels'))).toEqual([
+      'attendance',
+      'attendance-dashboard',
+      'manage-school-structure',
+    ]);
+    expect(
+      guard.canActivate(contextWithPermissions('getGradeLevels', ['manage-school-structure'])),
+    ).toBe(true);
   });
 
   it('allows roster and history reads to attendance actors only', () => {
@@ -84,9 +92,8 @@ describe('AttendanceController access', () => {
 
   it('separates attendance calendar read and write permissions', () => {
     const guard = new PermissionsGuard(new Reflector());
-    const calendarReadMethods: Array<keyof AttendanceController> = ['listTerms', 'listCalendar'];
+    const calendarReadMethods: Array<keyof AttendanceController> = ['listCalendar'];
     const calendarWriteMethods: Array<keyof AttendanceController> = [
-      'upsertTerm',
       'generateCalendar',
       'updateCalendarDay',
     ];
@@ -106,6 +113,27 @@ describe('AttendanceController access', () => {
         ForbiddenException,
       );
     }
+
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTerms'))).toEqual([
+      'attendance-dashboard',
+      'manage-attendance-calendar',
+      'manage-school-structure',
+      'manage-teacher-access',
+    ]);
+    expect(
+      guard.canActivate(contextWithPermissions('listTerms', ['manage-school-structure'])),
+    ).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('listTerms', ['manage-teacher-access']))).toBe(
+      true,
+    );
+
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('upsertTerm'))).toEqual([
+      'manage-attendance-calendar',
+      'manage-school-structure',
+    ]);
+    expect(
+      guard.canActivate(contextWithPermissions('upsertTerm', ['manage-school-structure'])),
+    ).toBe(true);
 
     for (const method of calendarWriteMethods) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([

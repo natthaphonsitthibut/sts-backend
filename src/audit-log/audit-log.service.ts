@@ -24,7 +24,7 @@ interface AuditQueryExecutor {
   query<T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-  ): Promise<{ rows: T[]; rowCount?: number | null }>;
+  ): Promise<T[] | { rows: T[]; rowCount?: number | null }>;
 }
 
 export interface AuditLogRecordInput {
@@ -212,6 +212,68 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'room', label: 'ห้อง' },
     ],
   },
+  TEACHER_ACCESS_GRANT_ISSUE: {
+    domain: 'tasks',
+    label: 'ออกลิงก์เข้าใช้งานครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'schoolName', label: 'โรงเรียน' },
+      { key: 'expiresAt', label: 'หมดอายุ' },
+    ],
+  },
+  TEACHER_ACCESS_GRANT_REVOKE: {
+    domain: 'tasks',
+    label: 'ยกเลิกลิงก์เข้าใช้งานครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'reason', label: 'เหตุผล' },
+    ],
+  },
+  TEACHER_ACCESS_GRANT_ROTATE: {
+    domain: 'tasks',
+    label: 'หมุนลิงก์เข้าใช้งานครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'rotationCount', label: 'ครั้งที่' },
+    ],
+  },
+  TEACHER_ACCESS_GRANT_USE: {
+    domain: 'tasks',
+    label: 'ใช้ลิงก์เข้าใช้งานครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'operation', label: 'การทำงาน' },
+    ],
+  },
+  TEACHER_ACCESS_GRANT_DENIED: {
+    domain: 'tasks',
+    label: 'ปฏิเสธการใช้ลิงก์ครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'reason', label: 'เหตุผล' },
+    ],
+  },
+  STUDENT_OBSERVATION_CREATE: {
+    domain: 'students',
+    label: 'บันทึกข้อสังเกตนักเรียน',
+    detailKeys: [
+      { key: 'concernLevel', label: 'ระดับข้อสังเกต' },
+      { key: 'revision', label: 'รุ่นข้อมูล' },
+    ],
+  },
+  STUDENT_OBSERVATION_UPDATE: {
+    domain: 'students',
+    label: 'แก้ไขข้อสังเกตนักเรียน',
+    detailKeys: [
+      { key: 'concernLevel', label: 'ระดับข้อสังเกต' },
+      { key: 'revision', label: 'รุ่นข้อมูล' },
+    ],
+  },
+  STUDENT_OBSERVATION_VIEW: {
+    domain: 'students',
+    label: 'ดูข้อสังเกตนักเรียน',
+    detailKeys: [{ key: 'resultCount', label: 'จำนวนรายการ' }],
+  },
   DATA_IMPORT: {
     domain: 'imports',
     label: 'นำเข้าข้อมูล',
@@ -222,7 +284,6 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'rowsUpdated', label: 'อัปเดต' },
       { key: 'rowsQuarantined', label: 'รอตรวจสอบ' },
       { key: 'rowsSkipped', label: 'ข้าม' },
-      { key: 'manualSchools', label: 'โรงเรียนที่ระบุเพิ่ม' },
     ],
   },
   IMPORT_QUARANTINE_RESOLVED: {
@@ -334,16 +395,6 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     domain: 'cases',
     label: 'ปิดเคส',
     detailKeys: [{ key: 'resolutionOutcome', label: 'ผลลัพธ์' }],
-  },
-  CASE_FORWARD: {
-    domain: 'cases',
-    label: 'ส่งต่อเคส',
-    detailKeys: [],
-  },
-  CASE_REFERRAL_OUTCOME_UPDATE: {
-    domain: 'cases',
-    label: 'บันทึกผลการส่งต่อ',
-    detailKeys: [{ key: 'status', label: 'สถานะ' }],
   },
   CASE_AUTO_CANCEL: {
     domain: 'cases',
@@ -594,10 +645,12 @@ export class AuditLogService {
       .map(Number)
       .filter((value) => Number.isInteger(value) && value > 0);
 
-    const query = async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
-      executor
+    const query = async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) => {
+      const result = executor
         ? await executor.query<T>(sql, params)
         : await queryDataSource<T>(this.dataSource, sql, params);
+      return Array.isArray(result) ? { rows: result, rowCount: result.length } : result;
+    };
     const schools =
       schoolIds.length > 0
         ? (
