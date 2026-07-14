@@ -40,6 +40,7 @@ import { SubjectsModule } from './subjects/subjects.module';
 import { TimetableModule } from './timetable/timetable.module';
 import { RedisModule } from './redis/redis.module';
 import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
+import { HomeDashboardModule } from './home-dashboard/home-dashboard.module';
 
 @Module({
   imports: [
@@ -111,6 +112,7 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
     VisitWorkSessionsModule,
     SubjectsModule,
     TimetableModule,
+    HomeDashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],

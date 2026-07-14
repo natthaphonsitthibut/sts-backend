@@ -21,7 +21,7 @@ const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5174';
 const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9244);
-const USERNAME = 'home_overview_browser_smoke';
+const USERNAME_PREFIX = 'home_dashboard_browser_smoke';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -203,27 +203,26 @@ async function loginInBrowser(client, user, sessionCookie) {
 
 async function activeCasesFromDb(dataSource) {
   const [row] = await dataSource.query(
-    `SELECT count(*)::int AS count FROM cases WHERE status <> 'RESOLVED' AND deleted_at IS NULL`,
+    `SELECT count(*)::int AS count FROM cases WHERE status = 'IN_PROGRESS' AND deleted_at IS NULL`,
   );
   return Number(row?.count ?? 0);
 }
 
-async function upsertActor(dataSource, passwordHash) {
-  const permissions = ['home', 'dashboard'];
+async function upsertActor(dataSource, passwordHash, actor) {
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
-    USERNAME,
+    actor.username,
   ]);
   if (existing) {
     await dataSource.query(
       `
         UPDATE users
         SET password = $2,
-            "FirstName" = 'Home Overview',
+            "FirstName" = $4,
             "LastName" = 'Browser Smoke',
             status = 'ACTIVE',
             permissions = $3::jsonb,
-            role = 'ADMIN',
-            data_scope = '{"global":true}'::jsonb,
+            role = $5,
+            data_scope = $6::jsonb,
             must_change_password = FALSE,
             temporary_password_issued_at = NULL,
             temporary_password_expires_at = NULL,
@@ -236,7 +235,14 @@ async function upsertActor(dataSource, passwordHash) {
             phone = NULL
         WHERE id = $1
       `,
-      [existing.id, passwordHash, JSON.stringify(permissions)],
+      [
+        existing.id,
+        passwordHash,
+        JSON.stringify(actor.permissions),
+        actor.firstName,
+        actor.role,
+        JSON.stringify(actor.dataScope),
+      ],
     );
     return Number(existing.id);
   }
@@ -248,12 +254,19 @@ async function upsertActor(dataSource, passwordHash) {
         data_scope, must_change_password, data_origin_code, email, phone
       )
       VALUES (
-        $1, $2, 'Home Overview', 'Browser Smoke', 'ACTIVE', $3::jsonb, 'ADMIN',
-        '{"global":true}'::jsonb, FALSE, 'AUTOMATED_TEST', NULL, NULL
+        $1, $2, $4, 'Browser Smoke', 'ACTIVE', $3::jsonb, $5,
+        $6::jsonb, FALSE, 'AUTOMATED_TEST', NULL, NULL
       )
       RETURNING id
     `,
-    [USERNAME, passwordHash, JSON.stringify(permissions)],
+    [
+      actor.username,
+      passwordHash,
+      JSON.stringify(actor.permissions),
+      actor.firstName,
+      actor.role,
+      JSON.stringify(actor.dataScope),
+    ],
   );
   return Number(created.id);
 }
@@ -266,35 +279,57 @@ async function disableActor(dataSource) {
           deactivated_at = COALESCE(deactivated_at, NOW()),
           deactivation_reason_code = COALESCE(deactivation_reason_code, 'OTHER'),
           deactivation_note = COALESCE(deactivation_note, 'Retained automated home overview browser smoke fixture')
-      WHERE username = $1
+      WHERE username LIKE $1
         AND data_origin_code = 'AUTOMATED_TEST'
     `,
-    [USERNAME],
+    [`${USERNAME_PREFIX}%`],
   );
 }
 
-async function assertOverview(client, expectedActiveCases, label) {
+async function assertOverview(client, expectedActiveCases, label, expectations) {
   await navigate(client, FRONTEND_URL);
   await waitFor(
-    async () => (await bodyText(client)).includes('เคสกำลังติดตาม'),
-    `${label} overview card did not render`,
+    async () => {
+      const text = await bodyText(client);
+      return text.includes('ศูนย์สั่งการวันนี้') && text.includes('ต้องดำเนินการวันนี้');
+    },
+    `${label} home dashboard did not render`,
   );
   const text = await bodyText(client);
-  assert(text.includes('เด็กทั้งหมด'), `${label} total students card was missing`);
-  assert(text.includes('เด็กเสี่ยง'), `${label} at-risk students card was missing`);
-  assert(!text.includes('เด็กหลุด'), `${label} still rendered dropout copy`);
-  const activeCaseCardText = await evaluate(
+  assert(text.includes('ต้องดำเนินการวันนี้'), `${label} action queue was missing`);
+  assert(text.includes('นักเรียนในขอบเขต'), `${label} scoped student metric was missing`);
+  if (expectations.risk) {
+    assert(text.includes('ต้องเฝ้าระวัง'), `${label} risk metric was missing`);
+    assert(text.includes('การกระจายระดับความเสี่ยง'), `${label} risk chart was missing`);
+  } else {
+    assert(!text.includes('การกระจายระดับความเสี่ยง'), `${label} rendered risk chart without permission`);
+  }
+  if (expectations.cases) {
+    assert(text.includes('สถานะเคสช่วยเหลือ'), `${label} case pipeline chart was missing`);
+  } else {
+    assert(!text.includes('สถานะเคสช่วยเหลือ'), `${label} rendered case chart without permission`);
+  }
+  if (expectations.attendance) {
+    assert(text.includes('แนวโน้มการมาเรียน'), `${label} attendance trend was missing`);
+  } else {
+    assert(!text.includes('แนวโน้มการมาเรียน'), `${label} rendered attendance trend without permission`);
+  }
+  const hasExportNavigation = await evaluate(
     client,
-    `(() => {
-      const label = [...document.querySelectorAll('div')]
-        .find((element) => element.textContent.trim() === 'เคสกำลังติดตาม');
-      return label?.parentElement?.innerText || '';
-    })()`,
+    `Boolean(document.querySelector('a[href="/data-exports"]'))`,
   );
-  assert(
-    String(activeCaseCardText).includes(expectedActiveCases.toLocaleString()),
-    `${label} did not render expected active case count ${expectedActiveCases}\n${String(activeCaseCardText)}`,
-  );
+  if (expectations.exports) {
+    assert(hasExportNavigation, `${label} export navigation was missing`);
+  } else {
+    assert(!hasExportNavigation, `${label} rendered export navigation without permission`);
+  }
+  if (expectations.cases) {
+    const activeCaseCardText = await evaluate(client, `(() => document.body.innerText)()`);
+    assert(
+      String(activeCaseCardText).includes(expectedActiveCases.toLocaleString()),
+      `${label} did not render expected active case count ${expectedActiveCases}\n${String(activeCaseCardText)}`,
+    );
+  }
 }
 
 async function main() {
@@ -312,18 +347,49 @@ async function main() {
 
   try {
     await disableActor(dataSource);
-    const actorId = await upsertActor(dataSource, passwordHash);
+    const actors = [
+      {
+        label: 'admin',
+        username: `${USERNAME_PREFIX}_admin`,
+        firstName: 'Home Admin',
+        role: 'ADMIN',
+        permissions: ['home', 'dashboard', 'attendance-dashboard', 'review-cases', 'students'],
+        dataScope: { global: true },
+        expectations: { attendance: true, risk: true, cases: true, exports: true },
+      },
+      {
+        label: 'attendance-only',
+        username: `${USERNAME_PREFIX}_attendance`,
+        firstName: 'Home Attendance',
+        role: 'TEACHER',
+        permissions: ['home', 'attendance-dashboard'],
+        dataScope: { global: true },
+        expectations: { attendance: true, risk: false, cases: false, exports: false },
+      },
+      {
+        label: 'reviewer',
+        username: `${USERNAME_PREFIX}_reviewer`,
+        firstName: 'Home Reviewer',
+        role: 'ADMIN',
+        permissions: ['home', 'review-cases'],
+        dataScope: { global: true },
+        expectations: { attendance: false, risk: false, cases: true, exports: true },
+      },
+      {
+        label: 'dashboard',
+        username: `${USERNAME_PREFIX}_dashboard`,
+        firstName: 'Home Dashboard',
+        role: 'ADMIN',
+        permissions: ['home', 'dashboard'],
+        dataScope: { global: true },
+        expectations: { attendance: false, risk: true, cases: false, exports: true },
+      },
+    ];
+    const actorIds = new Map();
+    for (const actor of actors) {
+      actorIds.set(actor.label, await upsertActor(dataSource, passwordHash, actor));
+    }
     const expectedActiveCases = await activeCasesFromDb(dataSource);
-    const user = {
-      id: actorId,
-      username: USERNAME,
-      FirstName: 'Home Overview',
-      LastName: 'Browser Smoke',
-      roles: ['ADMIN'],
-      permissions: ['home', 'dashboard'],
-      data_scope: { global: true },
-      must_change_password: false,
-    };
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -337,16 +403,30 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: false,
     });
-    await loginInBrowser(client, user, createSessionCookie(sessionCookieService, actorId));
-    await assertOverview(client, expectedActiveCases, 'desktop');
+    const admin = actors[0];
+    await loginInBrowser(
+      client,
+      {
+        id: actorIds.get(admin.label),
+        username: admin.username,
+        FirstName: admin.firstName,
+        LastName: 'Browser Smoke',
+        roles: [admin.role],
+        permissions: admin.permissions,
+        data_scope: admin.dataScope,
+        must_change_password: false,
+      },
+      createSessionCookie(sessionCookieService, actorIds.get(admin.label)),
+    );
+    await assertOverview(client, expectedActiveCases, 'desktop', admin.expectations);
     const apiActiveCases = await evaluate(
       client,
       `(async () => {
-        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/stats/overview`)}, {
+        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/home-dashboard/summary`)}, {
           credentials: 'include'
         });
         const payload = await response.json();
-        return payload.data.activeCases;
+        return payload.data.metrics.find((metric) => metric.key === 'activeCases')?.value;
       })()`,
     );
     assert(
@@ -355,16 +435,48 @@ async function main() {
     );
     await capture(client, '/tmp/sts-home-overview-desktop.png');
 
+    for (const actor of actors.slice(1)) {
+      await loginInBrowser(
+        client,
+        {
+          id: actorIds.get(actor.label),
+          username: actor.username,
+          FirstName: actor.firstName,
+          LastName: 'Browser Smoke',
+          roles: [actor.role],
+          permissions: actor.permissions,
+          data_scope: actor.dataScope,
+          must_change_password: false,
+        },
+        createSessionCookie(sessionCookieService, actorIds.get(actor.label)),
+      );
+      await assertOverview(client, expectedActiveCases, actor.label, actor.expectations);
+    }
+
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390,
       height: 844,
       deviceScaleFactor: 1,
       mobile: true,
     });
-    await assertOverview(client, expectedActiveCases, 'mobile');
+    await loginInBrowser(
+      client,
+      {
+        id: actorIds.get(admin.label),
+        username: admin.username,
+        FirstName: admin.firstName,
+        LastName: 'Browser Smoke',
+        roles: [admin.role],
+        permissions: admin.permissions,
+        data_scope: admin.dataScope,
+        must_change_password: false,
+      },
+      createSessionCookie(sessionCookieService, actorIds.get(admin.label)),
+    );
+    await assertOverview(client, expectedActiveCases, 'mobile', admin.expectations);
     await capture(client, '/tmp/sts-home-overview-mobile.png');
 
-    console.log('home overview browser smoke passed (active cases card, desktop/mobile render)');
+    console.log('home dashboard browser smoke passed (role sections, no export card, desktop/mobile render)');
   } finally {
     await closeChrome(chrome);
     await disableActor(dataSource).catch(() => null);

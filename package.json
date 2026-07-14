@@ -54,6 +54,8 @@
     "smoke:notifications-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-notifications-browser.js",
     "smoke:settings-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-settings-browser.js",
     "smoke:home-overview-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-home-overview-browser.js",
+    "smoke:home-dashboard": "DB_NAME=sts_smoke node scripts/smoke-home-dashboard.js",
+    "smoke:home-dashboard-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-home-overview-browser.js",
     "smoke:risk-dashboard-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-risk-dashboard-browser.js",
     "smoke:profile-self-edit": "DB_NAME=sts_smoke node scripts/smoke-profile-self-edit.js",
     "smoke:profile-self-edit-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_BROWSER_BACKEND_URL=http://127.0.0.1:3001 SMOKE_CHROME_DEBUG_PORT=9232 node scripts/smoke-profile-self-edit-browser.js",
