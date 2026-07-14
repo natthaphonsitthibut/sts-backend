@@ -9,7 +9,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
+import {
+  AuthGuard,
+  CurrentUser,
+  PermissionsGuard,
+  RequireAnyPermission,
+  RequirePermission,
+} from '../auth';
 import type { AuthenticatedRequestUser } from '../auth';
 import {
   CreateTimetableSlotDto,
@@ -92,7 +98,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequireAnyPermission('manage-timetable', 'manage-school-structure')
   @Get('teachers')
   async teachers(
     @CurrentUser() actor: AuthenticatedRequestUser,
