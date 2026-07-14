@@ -12,6 +12,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { IMPORT_CATALOG_TARGETS } from '../import-catalog';
 import { IMPORT_QUARANTINE_REASONS, type ImportQuarantineReason } from '../imports.types';
 
 export class CheckSchoolsUploadDto {
@@ -22,7 +23,7 @@ export class CheckSchoolsUploadDto {
 
 export class BulkImportUploadDto {
   @IsString()
-  @IsNotEmpty()
+  @IsIn(IMPORT_CATALOG_TARGETS)
   target!: string;
 
   @IsString()
@@ -32,16 +33,73 @@ export class BulkImportUploadDto {
   @IsOptional()
   @IsString()
   schools?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
+
+  @ValidateIf((value: BulkImportUploadDto) => value.target !== 'school_teacher_membership')
+  @IsDefined()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolTermId?: number;
+
+  @ValidateIf(
+    (value: BulkImportUploadDto) =>
+      value.target === 'student_term' || value.target === 'classroom_teacher_assignment',
+  )
+  @IsDefined()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId?: number;
 }
 
 export class PreviewImportUploadDto {
   @IsString()
-  @IsNotEmpty()
+  @IsIn(IMPORT_CATALOG_TARGETS)
   target!: string;
 
   @IsString()
   @IsNotEmpty()
   mapping!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
+
+  @ValidateIf((value: PreviewImportUploadDto) => value.target !== 'school_teacher_membership')
+  @IsDefined()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolTermId?: number;
+
+  @ValidateIf(
+    (value: PreviewImportUploadDto) =>
+      value.target === 'student_term' || value.target === 'classroom_teacher_assignment',
+  )
+  @IsDefined()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId?: number;
+}
+
+export interface SchoolRosterImportContext {
+  schoolId?: number;
+  schoolTermId?: number;
+  classroomId?: number;
+}
+
+export class TeacherImportUploadDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
 }
 
 export class ListImportQuarantineDto {

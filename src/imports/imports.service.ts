@@ -9,7 +9,7 @@ import {
 import { Cron } from '@nestjs/schedule';
 import { createHash } from 'crypto';
 import * as xlsx from 'xlsx';
-import type { AuthenticatedRequestUser } from '../auth';
+import { hasPermission, type AuthenticatedRequestUser } from '../auth';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -17,12 +17,19 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
 import { ImportsRepository, type QuarantineLookupRow } from './imports.repository';
+import {
+  getImportCatalog,
+  getImportTargetDefinition,
+  isImportCatalogTarget,
+  type ImportCatalogTarget,
+} from './import-catalog';
 import type {
   ExportImportQuarantineDto,
   FixImportQuarantineDto,
   ListImportQuarantineDto,
   ResolveImportQuarantineDto,
   RetryImportQuarantineDto,
+  SchoolRosterImportContext,
 } from './dto/imports.dto';
 import {
   DERIVED_IMPORT_COLUMNS,
@@ -31,8 +38,8 @@ import {
   type ImportQuarantineReason,
   type ImportReferenceRow,
   type ImportTarget,
-  type ManualSchool,
   type QueryExecutor,
+  type SchoolRosterImportContextRow,
   type SheetRow,
 } from './imports.types';
 
@@ -57,37 +64,6 @@ const PREVIEW_CHANGE_FIELDS: ReadonlyArray<{ column: string; label: string }> = 
 
 const IMPORT_TARGET_LABELS: Record<ImportTarget, string> = {
   student_term: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
-};
-
-const STUDENT_TERM_HEADER_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  PersonID_Onec: [
-    'id',
-    'student id',
-    'studentid',
-    'national id',
-    'citizen id',
-    'เลขประจำตัว',
-    'เลขประจำตัวประชาชน',
-    'เลขบัตรประชาชน',
-    'เลขบัตร',
-    'รหัสนักเรียน',
-  ],
-  FullName_Onec: [
-    'full name',
-    'fullname',
-    'ชื่อ-นามสกุล',
-    'ชื่อนามสกุล',
-    'ชื่อสกุล',
-    'ชื่อและนามสกุล',
-  ],
-  FirstName_Onec: ['first name', 'firstname', 'ชื่อ'],
-  LastName_Onec: ['last name', 'lastname', 'นามสกุล', 'สกุล'],
-  AcademicYear_Onec: ['academic year', 'academicyear', 'ปีการศึกษา', 'ปี'],
-  Semester_Onec: ['semester', 'term', 'ภาคเรียน', 'เทอม'],
-  SchoolID_Onec: ['school id', 'schoolid', 'รหัสโรงเรียน', 'รหัสสถานศึกษา', 'โรงเรียน'],
-  GradeLevelID_Onec: ['grade id', 'grade', 'ชั้นเรียน', 'ชั้น'],
-  RoomID_Onec: ['room id', 'room', 'ห้องเรียน', 'ห้อง'],
-  StudentStatusID_Onec: ['student status', 'status', 'สถานะนักเรียน', 'สถานะ'],
 };
 
 const RETRYABLE_QUARANTINE_REASONS: ReadonlySet<string> = new Set([
@@ -194,6 +170,71 @@ export interface ImportPreviewResult {
   sampleRows: ImportPreviewRow[];
 }
 
+interface TeacherImportRow {
+  rowNumber: number;
+  username: string;
+  startedOn: string | null;
+}
+
+export interface TeacherImportPreviewResult {
+  target: 'school_teacher_membership';
+  rowsProcessed: number;
+  rowsReady: number;
+  rowsSkipped: number;
+  rowsToQuarantine: number;
+  sampleRows: Array<{
+    rowNumber: number;
+    username: string;
+    displayName: string;
+    action: 'insert' | 'skip' | 'quarantine';
+    issue: string | null;
+  }>;
+}
+
+interface CatalogImportContext extends SchoolRosterImportContext {
+  schoolId?: number;
+}
+
+interface StructureImportRow {
+  rowNumber: number;
+  values: Record<string, string>;
+}
+
+interface StructureRowEvaluation {
+  row: StructureImportRow;
+  action: 'insert' | 'skip' | 'quarantine';
+  reason: ImportQuarantineReason | null;
+  issue: string | null;
+  resolved?: {
+    teacherMembershipId?: string;
+    gradeLevelId?: number;
+    legacyRoomNumber?: number | null;
+    subjectId?: number | null;
+    assignmentKind?: 'HOMEROOM' | 'SUBJECT';
+  };
+}
+
+export interface CatalogStructureImportPreviewResult {
+  target: 'school_classroom' | 'classroom_teacher_assignment';
+  targetLabel: string;
+  canImport: boolean;
+  headers: string[];
+  mapping: Record<string, string>;
+  rowsProcessed: number;
+  rowsReady: number;
+  rowsSkipped: number;
+  rowsToInsert: number;
+  rowsToQuarantine: number;
+  missingRequiredColumns: string[];
+  unmappedHeaders: string[];
+  sampleRows: Array<{
+    rowNumber: number;
+    action: 'insert' | 'skip' | 'quarantine';
+    values: Record<string, string>;
+    issues: string[];
+  }>;
+}
+
 @Injectable()
 export class ImportsService {
   private readonly logger = new Logger(ImportsService.name);
@@ -203,6 +244,31 @@ export class ImportsService {
     private readonly auditLog: AuditLogService,
     private readonly notificationsService?: NotificationsService,
   ) {}
+
+  getCatalog(actor: AuthenticatedRequestUser) {
+    return getImportCatalog(actor);
+  }
+
+  private assertCatalogCapability(
+    target: ImportCatalogTarget,
+    actor: AuthenticatedRequestUser,
+  ): void {
+    const definition = getImportTargetDefinition(target);
+    if (!definition || !hasPermission(actor.roles, actor.permissions, definition.capability)) {
+      throw new ForbiddenException('ไม่มีสิทธิ์นำเข้าข้อมูลประเภทนี้');
+    }
+  }
+
+  private requirePositiveContextId(
+    context: CatalogImportContext | undefined,
+    key: keyof CatalogImportContext,
+  ): number {
+    const value = context?.[key];
+    if (!Number.isInteger(value) || Number(value) <= 0) {
+      throw new BadRequestException(`กรุณาระบุ ${String(key)} จากบริบทข้อมูลหลัก`);
+    }
+    return Number(value);
+  }
 
   private normalizeScalar(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') {
@@ -266,6 +332,7 @@ export class ImportsService {
   private gradeRoomIssue(
     row: Record<string, unknown>,
     knownGradeIds: ReadonlySet<number>,
+    knownClassroomKeys?: ReadonlySet<string>,
   ): ImportQuarantineReason | null {
     const gradeValue = this.normalizeScalar(row['GradeLevelID_Onec']);
     if (gradeValue) {
@@ -275,7 +342,151 @@ export class ImportsService {
 
     const roomValue = this.normalizeScalar(row['RoomID_Onec']);
     if (roomValue && !this.normalizePositiveInteger(roomValue)) return 'ROOM_NOT_FOUND';
+    if (knownClassroomKeys) {
+      const classroomKey = this.classroomReferenceKey(row);
+      if (!classroomKey || !knownClassroomKeys.has(classroomKey)) return 'ROOM_NOT_FOUND';
+    }
     return null;
+  }
+
+  private classroomReferenceKey(row: Record<string, unknown>): string | null {
+    const values = [
+      row['SchoolID_Onec'],
+      row['AcademicYear_Onec'],
+      row['Semester_Onec'],
+      row['GradeLevelID_Onec'],
+      row['RoomID_Onec'],
+    ].map((value) => Number(this.normalizePositiveInteger(value)));
+    return values.every((value) => Number.isInteger(value) && value > 0)
+      ? JSON.stringify(values)
+      : null;
+  }
+
+  private classroomReferences(rows: Record<string, unknown>[]) {
+    const unique = new Map<
+      string,
+      {
+        schoolId: number;
+        academicYear: number;
+        semester: number;
+        gradeLevelId: number;
+        roomNumber: number;
+      }
+    >();
+    for (const row of rows) {
+      const key = this.classroomReferenceKey(row);
+      if (!key) continue;
+      const [schoolId, academicYear, semester, gradeLevelId, roomNumber] = JSON.parse(
+        key,
+      ) as number[];
+      unique.set(key, { schoolId, academicYear, semester, gradeLevelId, roomNumber });
+    }
+    return [...unique.values()];
+  }
+
+  private async configuredClassroomKeys(
+    rows: Record<string, unknown>[],
+    executor?: QueryExecutor,
+  ): Promise<Set<string> | undefined> {
+    const references = this.classroomReferences(rows);
+    const finder = this.importsRepository.findExistingClassroomReferences?.bind(
+      this.importsRepository,
+    );
+    if (!finder) {
+      // Isolated legacy unit mocks predate the canonical lookup. Production
+      // always injects ImportsRepository and therefore always enforces it.
+      return undefined;
+    }
+    const existing = await finder(references, executor);
+    return new Set(
+      existing.map((reference) =>
+        JSON.stringify([
+          Number(reference.school_id),
+          Number(reference.academic_year),
+          Number(reference.semester),
+          Number(reference.grade_level_id),
+          Number(reference.room_number),
+        ]),
+      ),
+    );
+  }
+
+  private numericDbReferenceIds(rows: Record<string, unknown>[], column: string): number[] {
+    return [
+      ...new Set(
+        rows
+          .map((row) => Number(this.normalizePositiveInteger(row[column])))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    ];
+  }
+
+  private async resolveSchoolRosterImportContext(
+    input: SchoolRosterImportContext | undefined,
+    actor: AuthenticatedRequestUser | undefined,
+  ): Promise<SchoolRosterImportContextRow | null> {
+    const values = [input?.schoolId, input?.schoolTermId, input?.classroomId];
+    if (values.every((value) => value == null)) return null;
+    if (values.some((value) => value == null)) {
+      throw new BadRequestException('กรุณาเลือกโรงเรียน ภาคเรียน และห้องเรียนให้ครบ');
+    }
+
+    const context = await this.importsRepository.findSchoolRosterImportContext(
+      input!.schoolId!,
+      input!.schoolTermId!,
+      input!.classroomId!,
+    );
+    if (!context) {
+      throw new BadRequestException('โรงเรียน ภาคเรียน หรือห้องเรียนไม่สัมพันธ์กัน');
+    }
+    if (!context.legacy_room_number) {
+      throw new BadRequestException(
+        'ห้องนี้ยังไม่มีเลขห้องสำหรับ enrollment กรุณากำหนดรหัสห้องเป็นจำนวนเต็มบวก',
+      );
+    }
+
+    const mappedContext = {
+      SchoolID_Onec: context.school_id,
+      AcademicYear_Onec: context.academic_year,
+      Semester_Onec: context.semester,
+      GradeLevelID_Onec: context.grade_level_id,
+      RoomID_Onec: context.legacy_room_number,
+    };
+    this.assertActorImportScope(
+      actor,
+      [mappedContext],
+      {
+        SchoolID_Onec: 'SchoolID_Onec',
+        GradeLevelID_Onec: 'GradeLevelID_Onec',
+        RoomID_Onec: 'RoomID_Onec',
+      },
+      [
+        {
+          id: context.school_id,
+          province: context.province,
+          district: context.district,
+          sub_district: context.sub_district,
+        },
+      ],
+    );
+    return context;
+  }
+
+  private applySchoolRosterImportContext(
+    rows: Record<string, unknown>[],
+    context: SchoolRosterImportContextRow | null,
+  ): Record<string, unknown>[] {
+    if (!context) return rows;
+    return rows.map((row) => ({
+      ...row,
+      SchoolID_Onec: context.school_id,
+      AcademicYear_Onec: context.academic_year,
+      Semester_Onec: context.semester,
+      GradeLevelID_Onec: context.grade_level_id,
+      RoomID_Onec: context.legacy_room_number,
+      school_term_id: Number(context.school_term_id),
+      classroom_id: Number(context.classroom_id),
+    }));
   }
 
   /**
@@ -436,7 +647,11 @@ export class ImportsService {
     // cannot exhaust memory/CPU on the worker. sheet_to_json consumes the first
     // physical row as headers, so read MAX+2 physical rows (header + MAX+1 data)
     // to guarantee the `> MAX` check below fires instead of silently truncating.
-    const workbook = xlsx.read(file.buffer, { type: 'buffer', sheetRows: MAX_IMPORT_ROWS + 2 });
+    const workbook = xlsx.read(file.buffer, {
+      type: 'buffer',
+      raw: true,
+      sheetRows: MAX_IMPORT_ROWS + 2,
+    });
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) {
       return [];
@@ -473,6 +688,914 @@ export class ImportsService {
       .replace(/[\s_\-./()]+/g, '');
   }
 
+  private resolveCatalogMapping(
+    target: ImportCatalogTarget,
+    mapping: Record<string, string>,
+    data: SheetRow[],
+  ): Record<string, string> {
+    const definition = getImportTargetDefinition(target);
+    if (!definition) throw new BadRequestException('ไม่รองรับประเภทข้อมูลนำเข้า');
+    const allowedFields = new Set(definition.fields.map((catalogField) => catalogField.key));
+    const invalidFields = Object.keys(mapping).filter((key) => !allowedFields.has(key));
+    if (invalidFields.length > 0) {
+      throw new BadRequestException(`พบช่องข้อมูลที่ไม่อนุญาต: ${invalidFields.join(', ')}`);
+    }
+    if (Object.keys(mapping).length > 0) {
+      this.assertUniqueMappedHeaders(mapping);
+      return mapping;
+    }
+    const normalizedHeaders = new Map(
+      this.getWorksheetHeaders(data).map((header) => [this.normalizeHeader(header), header]),
+    );
+    const usedHeaders = new Set<string>();
+    const resolved: Record<string, string> = {};
+    for (const catalogField of definition.fields) {
+      const header = catalogField.aliases
+        .map((alias) => normalizedHeaders.get(this.normalizeHeader(alias)))
+        .find(
+          (candidate): candidate is string =>
+            typeof candidate === 'string' && !usedHeaders.has(candidate),
+        );
+      if (header) {
+        resolved[catalogField.key] = header;
+        usedHeaders.add(header);
+      }
+    }
+    return resolved;
+  }
+
+  private parseStructureImportRows(
+    data: SheetRow[],
+    mapping: Record<string, string>,
+  ): StructureImportRow[] {
+    return data.map((source, index) => ({
+      rowNumber: index + 2,
+      values: Object.fromEntries(
+        Object.entries(mapping).map(([field, header]) => [
+          field,
+          this.normalizeScalar(source[header]),
+        ]),
+      ),
+    }));
+  }
+
+  private catalogUnmappedHeaders(data: SheetRow[], mapping: Record<string, string>): string[] {
+    const mappedHeaders = new Set(Object.values(mapping));
+    return this.getWorksheetHeaders(data).filter((header) => !mappedHeaders.has(header));
+  }
+
+  private parseTeacherImportRows(
+    data: SheetRow[],
+    requestedMapping: Record<string, string> = {},
+  ): TeacherImportRow[] {
+    const mapping = this.resolveCatalogMapping('school_teacher_membership', requestedMapping, data);
+    const usernameHeader = mapping.username;
+    if (!usernameHeader) {
+      throw new BadRequestException('ไม่พบคอลัมน์ username หรือ ชื่อผู้ใช้');
+    }
+    const startedOnHeader = mapping.startedOn;
+    return data.map((row, index) => ({
+      rowNumber: index + 2,
+      username: this.normalizeScalar(row[usernameHeader]).toLowerCase(),
+      startedOn: startedOnHeader ? this.normalizeScalar(row[startedOnHeader]) || null : null,
+    }));
+  }
+
+  private isValidIsoDate(value: string | null): boolean {
+    if (!value) return true;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }
+
+  private async assertTeacherImportSchoolScope(
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+  ): Promise<void> {
+    const schoolDetails = await this.importsRepository.findSchoolScopeDetails([schoolId]);
+    if (schoolDetails.length !== 1) throw new NotFoundException('ไม่พบโรงเรียน');
+    this.assertActorImportScope(
+      actor,
+      [{ SchoolID_Onec: schoolId }],
+      { SchoolID_Onec: 'SchoolID_Onec' },
+      schoolDetails,
+    );
+  }
+
+  private teacherImportIssue(
+    row: TeacherImportRow,
+    duplicateUsernames: ReadonlySet<string>,
+    candidate?: {
+      is_eligible: boolean;
+      is_active_member: boolean;
+    },
+  ): { reason: ImportQuarantineReason | null; label: string | null; skip: boolean } {
+    if (!row.username) {
+      return { reason: 'BLANK_TEACHER_USERNAME', label: 'ไม่มีชื่อผู้ใช้ครู', skip: false };
+    }
+    if (!this.isValidIsoDate(row.startedOn)) {
+      return {
+        reason: 'INVALID_TEACHER_START_DATE',
+        label: 'วันที่เริ่มปฏิบัติงานไม่ถูกต้อง',
+        skip: false,
+      };
+    }
+    if (duplicateUsernames.has(row.username)) {
+      return { reason: 'DUPLICATE_TEACHER_ROW', label: 'บัญชีครูซ้ำในไฟล์', skip: false };
+    }
+    if (!candidate) {
+      return { reason: 'TEACHER_ACCOUNT_NOT_FOUND', label: 'ไม่พบบัญชีครูในระบบ', skip: false };
+    }
+    if (!candidate.is_eligible) {
+      return {
+        reason: 'INVALID_TEACHER_PERMISSION',
+        label: 'บัญชีไม่มีสิทธิ์ปฏิบัติงานครู',
+        skip: false,
+      };
+    }
+    if (candidate.is_active_member) return { reason: null, label: null, skip: true };
+    return { reason: null, label: null, skip: false };
+  }
+
+  async previewTeacherImport(
+    file: Express.Multer.File,
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+    requestedMapping: Record<string, string> = {},
+  ): Promise<TeacherImportPreviewResult> {
+    await this.assertTeacherImportSchoolScope(schoolId, actor);
+    const rows = this.parseTeacherImportRows(this.readWorksheetRows(file), requestedMapping);
+    if (rows.length === 0)
+      throw new BadRequestException('The uploaded file is empty or unreadable');
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      if (row.username) counts.set(row.username, (counts.get(row.username) ?? 0) + 1);
+    }
+    const duplicates = new Set(
+      [...counts].filter(([, count]) => count > 1).map(([username]) => username),
+    );
+    const candidates = await this.importsRepository.findTeacherImportCandidates(
+      [...counts.keys()],
+      schoolId,
+    );
+    const candidatesByUsername = new Map(
+      candidates.map((candidate) => [candidate.username.toLowerCase(), candidate]),
+    );
+    let rowsReady = 0;
+    let rowsSkipped = 0;
+    let rowsToQuarantine = 0;
+    const sampleRows = rows.slice(0, IMPORT_PREVIEW_SAMPLE_LIMIT).map((row) => {
+      const candidate = candidatesByUsername.get(row.username);
+      const issue = this.teacherImportIssue(row, duplicates, candidate);
+      if (issue.reason) rowsToQuarantine += 1;
+      else if (issue.skip) rowsSkipped += 1;
+      else rowsReady += 1;
+      return {
+        rowNumber: row.rowNumber,
+        username: row.username || '-',
+        displayName: candidate?.display_name ?? '-',
+        action: issue.reason
+          ? ('quarantine' as const)
+          : issue.skip
+            ? ('skip' as const)
+            : ('insert' as const),
+        issue: issue.label,
+      };
+    });
+    for (const row of rows.slice(IMPORT_PREVIEW_SAMPLE_LIMIT)) {
+      const issue = this.teacherImportIssue(
+        row,
+        duplicates,
+        candidatesByUsername.get(row.username),
+      );
+      if (issue.reason) rowsToQuarantine += 1;
+      else if (issue.skip) rowsSkipped += 1;
+      else rowsReady += 1;
+    }
+    return {
+      target: 'school_teacher_membership',
+      rowsProcessed: rows.length,
+      rowsReady,
+      rowsSkipped,
+      rowsToQuarantine,
+      sampleRows,
+    };
+  }
+
+  async processTeacherImport(
+    file: Express.Multer.File,
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+    auditMeta: { ip?: string | null } = {},
+    requestedMapping: Record<string, string> = {},
+  ) {
+    await this.assertTeacherImportSchoolScope(schoolId, actor);
+    const rows = this.parseTeacherImportRows(this.readWorksheetRows(file), requestedMapping);
+    if (rows.length === 0)
+      throw new BadRequestException('The uploaded file is empty or unreadable');
+    const actorUserId = resolveAuditActorId(actor);
+    const batchId = await this.importsRepository.createImportBatch({
+      target: 'school_teacher_membership',
+      sourceSha256: createHash('sha256').update(file.buffer).digest('hex'),
+      scopeSnapshot: { ...actor.data_scope, selectedSchoolId: schoolId },
+      totalRows: rows.length,
+      actorUserId,
+    });
+    try {
+      return await this.importsRepository.withTransaction(async (executor) => {
+        const counts = new Map<string, number>();
+        for (const row of rows) {
+          if (row.username) counts.set(row.username, (counts.get(row.username) ?? 0) + 1);
+        }
+        const duplicates = new Set(
+          [...counts].filter(([, count]) => count > 1).map(([username]) => username),
+        );
+        const candidates = await this.importsRepository.findTeacherImportCandidates(
+          [...counts.keys()],
+          schoolId,
+          executor,
+        );
+        const candidatesByUsername = new Map(
+          candidates.map((candidate) => [candidate.username.toLowerCase(), candidate]),
+        );
+        let inserted = 0;
+        let skipped = 0;
+        let quarantined = 0;
+        for (const row of rows) {
+          const candidate = candidatesByUsername.get(row.username);
+          const issue = this.teacherImportIssue(row, duplicates, candidate);
+          if (issue.reason) {
+            await this.importsRepository.quarantineImportRow(
+              {
+                batchId,
+                schoolId,
+                sourceRowNumber: row.rowNumber,
+                rowFingerprint: this.fingerprint({
+                  target: 'school_teacher_membership',
+                  schoolId,
+                  username: row.username,
+                  startedOn: row.startedOn,
+                }),
+                reasonCode: issue.reason,
+                mappedValues: { username: row.username, startedOn: row.startedOn },
+                actorUserId,
+              },
+              executor,
+            );
+            quarantined += 1;
+            continue;
+          }
+          if (issue.skip || !candidate) {
+            skipped += 1;
+            continue;
+          }
+          const membershipId = await this.importsRepository.insertTeacherImportMembership(
+            {
+              schoolId,
+              teacherUserId: candidate.user_id,
+              startedOn: row.startedOn,
+              actorUserId,
+            },
+            executor,
+          );
+          if (membershipId) inserted += 1;
+          else skipped += 1;
+        }
+        await this.importsRepository.completeImportBatch(
+          batchId,
+          { importedRows: inserted, quarantinedRows: quarantined },
+          executor,
+        );
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId,
+            actorLabel: this.actorLabel(actor),
+            action: 'DATA_IMPORT',
+            targetType: 'school_teacher_memberships',
+            targetId: batchId,
+            metadata: {
+              schoolId,
+              rowsProcessed: rows.length,
+              rowsInserted: inserted,
+              rowsSkipped: skipped,
+              rowsQuarantined: quarantined,
+            },
+            ip: auditMeta.ip ?? null,
+          },
+          executor,
+        );
+        return {
+          success: true,
+          batchId,
+          rowsProcessed: rows.length,
+          rowsInserted: inserted,
+          rowsSkipped: skipped,
+          rowsQuarantined: quarantined,
+        };
+      });
+    } catch (error) {
+      await this.importsRepository.failImportBatch(batchId);
+      throw error;
+    }
+  }
+
+  private async assertSchoolTermImportContext(
+    schoolId: number,
+    schoolTermId: number,
+    actor: AuthenticatedRequestUser,
+  ): Promise<void> {
+    await this.assertTeacherImportSchoolScope(schoolId, actor);
+    const context = await this.importsRepository.findSchoolTermImportContext(
+      schoolId,
+      schoolTermId,
+    );
+    if (!context) {
+      throw new NotFoundException('ไม่พบภาคเรียนในโรงเรียนที่เลือก');
+    }
+  }
+
+  private async assertClassroomImportContext(
+    schoolId: number,
+    schoolTermId: number,
+    classroomId: number,
+    actor: AuthenticatedRequestUser,
+  ): Promise<void> {
+    await this.assertTeacherImportSchoolScope(schoolId, actor);
+    const context = await this.importsRepository.findSchoolRosterImportContext(
+      schoolId,
+      schoolTermId,
+      classroomId,
+    );
+    if (!context) {
+      throw new NotFoundException('ไม่พบห้องเรียนในภาคเรียนและโรงเรียนที่เลือก');
+    }
+  }
+
+  private classroomCodeKey(gradeLevelId: number, roomCode: string): string {
+    return `${gradeLevelId}:${roomCode.trim().toLocaleLowerCase('th')}`;
+  }
+
+  private classroomLegacyKey(gradeLevelId: number, legacyRoomNumber: number): string {
+    return `${gradeLevelId}:${legacyRoomNumber}`;
+  }
+
+  private async evaluateClassroomRows(
+    rows: StructureImportRow[],
+    schoolId: number,
+    schoolTermId: number,
+    executor?: QueryExecutor,
+  ): Promise<StructureRowEvaluation[]> {
+    const gradeIds = [
+      ...new Set(
+        rows
+          .map((row) => Number(row.values.gradeLevelId))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    ];
+    const [grades, existing] = await Promise.all([
+      this.importsRepository.findGradeLabels(gradeIds, executor),
+      this.importsRepository.findClassroomImportReferences(schoolId, schoolTermId, executor),
+    ]);
+    const knownGrades = new Set(grades.map((grade) => Number(grade.id)));
+    const existingByCode = new Map(
+      existing.map((classroom) => [
+        this.classroomCodeKey(Number(classroom.grade_level_id), classroom.room_code),
+        classroom,
+      ]),
+    );
+    const existingByLegacy = new Map(
+      existing
+        .filter((classroom) => classroom.legacy_room_number !== null)
+        .map((classroom) => [
+          this.classroomLegacyKey(
+            Number(classroom.grade_level_id),
+            Number(classroom.legacy_room_number),
+          ),
+          classroom,
+        ]),
+    );
+    const codeCounts = new Map<string, number>();
+    const legacyCounts = new Map<string, number>();
+    for (const row of rows) {
+      const gradeLevelId = Number(row.values.gradeLevelId);
+      const roomCode = row.values.roomCode?.trim() ?? '';
+      const legacyRoomNumber = Number(row.values.legacyRoomNumber);
+      if (Number.isInteger(gradeLevelId) && gradeLevelId > 0 && roomCode) {
+        const key = this.classroomCodeKey(gradeLevelId, roomCode);
+        codeCounts.set(key, (codeCounts.get(key) ?? 0) + 1);
+      }
+      if (
+        Number.isInteger(gradeLevelId) &&
+        gradeLevelId > 0 &&
+        Number.isInteger(legacyRoomNumber) &&
+        legacyRoomNumber > 0
+      ) {
+        const key = this.classroomLegacyKey(gradeLevelId, legacyRoomNumber);
+        legacyCounts.set(key, (legacyCounts.get(key) ?? 0) + 1);
+      }
+    }
+
+    return rows.map((row) => {
+      const gradeLevelId = Number(row.values.gradeLevelId);
+      const roomCode = row.values.roomCode?.trim() ?? '';
+      const roomName = row.values.roomName?.trim() ?? '';
+      const legacyRaw = row.values.legacyRoomNumber?.trim() ?? '';
+      const legacyRoomNumber = legacyRaw ? Number(legacyRaw) : null;
+      if (
+        !Number.isInteger(gradeLevelId) ||
+        gradeLevelId <= 0 ||
+        !roomCode ||
+        roomCode.length > 32 ||
+        roomName.length > 120 ||
+        (legacyRoomNumber !== null &&
+          (!Number.isInteger(legacyRoomNumber) || legacyRoomNumber <= 0))
+      ) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'MISSING_IMPORT_FIELD',
+          issue: 'ข้อมูลระดับชั้น รหัสห้อง หรือเลขห้องไม่ครบ/ไม่ถูกต้อง',
+        };
+      }
+      if (!knownGrades.has(gradeLevelId)) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'GRADE_NOT_FOUND',
+          issue: 'ไม่พบระดับชั้นในข้อมูลหลัก',
+        };
+      }
+      const codeKey = this.classroomCodeKey(gradeLevelId, roomCode);
+      const legacyKey =
+        legacyRoomNumber === null ? null : this.classroomLegacyKey(gradeLevelId, legacyRoomNumber);
+      if (
+        (codeCounts.get(codeKey) ?? 0) > 1 ||
+        (legacyKey && (legacyCounts.get(legacyKey) ?? 0) > 1)
+      ) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'DUPLICATE_ROW_IN_FILE',
+          issue: 'พบห้องเรียนซ้ำในไฟล์',
+        };
+      }
+      const byCode = existingByCode.get(codeKey);
+      const byLegacy = legacyKey ? existingByLegacy.get(legacyKey) : undefined;
+      if (byCode && (!byLegacy || byLegacy.id === byCode.id)) {
+        const existingLegacy =
+          byCode.legacy_room_number === null ? null : Number(byCode.legacy_room_number);
+        if (existingLegacy === legacyRoomNumber) {
+          return { row, action: 'skip', reason: null, issue: null };
+        }
+      }
+      if (byCode || byLegacy) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'CLASSROOM_IDENTITY_CONFLICT',
+          issue: 'รหัสห้องหรือเลขห้องชนกับห้องเรียนเดิม',
+        };
+      }
+      return {
+        row,
+        action: 'insert',
+        reason: null,
+        issue: null,
+        resolved: { gradeLevelId, legacyRoomNumber },
+      };
+    });
+  }
+
+  private async evaluateAssignmentRows(
+    rows: StructureImportRow[],
+    schoolId: number,
+    classroomId: number,
+    executor?: QueryExecutor,
+  ): Promise<StructureRowEvaluation[]> {
+    const usernames = [
+      ...new Set(rows.map((row) => row.values.username?.trim().toLowerCase()).filter(Boolean)),
+    ];
+    const subjectIds = [
+      ...new Set(
+        rows
+          .map((row) => Number(row.values.subjectId))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    ];
+    const [memberships, knownSubjectIds, existing] = await Promise.all([
+      this.importsRepository.findAssignmentTeacherReferences(schoolId, usernames, executor),
+      this.importsRepository.findExistingSubjectIds(subjectIds, executor),
+      this.importsRepository.findClassroomAssignmentReferences(schoolId, classroomId, executor),
+    ]);
+    const membershipByUsername = new Map(
+      memberships.map((membership) => [
+        membership.username.toLowerCase(),
+        membership.membership_id,
+      ]),
+    );
+    const knownSubjects = new Set(knownSubjectIds);
+    const duplicateCounts = new Map<string, number>();
+    for (const row of rows) {
+      const username = row.values.username?.trim().toLowerCase() ?? '';
+      const kind = row.values.assignmentKind?.trim().toUpperCase() ?? '';
+      const subjectId = Number(row.values.subjectId);
+      const key = kind === 'HOMEROOM' ? 'HOMEROOM' : `${kind}:${username}:${subjectId}`;
+      duplicateCounts.set(key, (duplicateCounts.get(key) ?? 0) + 1);
+    }
+    return rows.map((row) => {
+      const username = row.values.username?.trim().toLowerCase() ?? '';
+      const assignmentKind = row.values.assignmentKind?.trim().toUpperCase() ?? '';
+      const subjectRaw = row.values.subjectId?.trim() ?? '';
+      const subjectId = subjectRaw ? Number(subjectRaw) : null;
+      const effectiveOn = row.values.effectiveOn?.trim() || null;
+      const effectiveUntil = row.values.effectiveUntil?.trim() || null;
+      if (!username) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'MISSING_IMPORT_FIELD',
+          issue: 'ไม่มีชื่อผู้ใช้ครู',
+        };
+      }
+      if (assignmentKind !== 'HOMEROOM' && assignmentKind !== 'SUBJECT') {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'INVALID_ASSIGNMENT_KIND',
+          issue: 'ประเภทการมอบหมายต้องเป็น HOMEROOM หรือ SUBJECT',
+        };
+      }
+      if (
+        (assignmentKind === 'HOMEROOM' && subjectId !== null) ||
+        (assignmentKind === 'SUBJECT' &&
+          (subjectId === null || !Number.isInteger(subjectId) || subjectId <= 0))
+      ) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'MISSING_IMPORT_FIELD',
+          issue: 'ครูประจำชั้นต้องไม่มีวิชา และครูผู้สอนต้องระบุรหัสวิชา',
+        };
+      }
+      if (
+        !this.isValidIsoDate(effectiveOn) ||
+        !this.isValidIsoDate(effectiveUntil) ||
+        (effectiveOn && effectiveUntil && effectiveUntil < effectiveOn)
+      ) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'INVALID_IMPORT_DATE',
+          issue: 'ช่วงวันที่การมอบหมายไม่ถูกต้อง',
+        };
+      }
+      const teacherMembershipId = membershipByUsername.get(username);
+      if (!teacherMembershipId) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'TEACHER_MEMBERSHIP_NOT_FOUND',
+          issue: 'ไม่พบครูในรายชื่อครูของโรงเรียน',
+        };
+      }
+      if (subjectId !== null && !knownSubjects.has(subjectId)) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'SUBJECT_NOT_FOUND',
+          issue: 'ไม่พบวิชาในข้อมูลหลัก',
+        };
+      }
+      const duplicateKey =
+        assignmentKind === 'HOMEROOM' ? 'HOMEROOM' : `${assignmentKind}:${username}:${subjectId}`;
+      if ((duplicateCounts.get(duplicateKey) ?? 0) > 1) {
+        return {
+          row,
+          action: 'quarantine',
+          reason: 'DUPLICATE_ROW_IN_FILE',
+          issue: 'พบการมอบหมายซ้ำในไฟล์',
+        };
+      }
+      const existingMatch = existing.find((assignment) =>
+        assignmentKind === 'HOMEROOM'
+          ? assignment.assignment_kind === 'HOMEROOM'
+          : assignment.assignment_kind === 'SUBJECT' &&
+            assignment.teacher_membership_id === teacherMembershipId &&
+            Number(assignment.subject_id) === subjectId,
+      );
+      if (existingMatch) {
+        if (
+          assignmentKind === 'HOMEROOM' &&
+          existingMatch.teacher_membership_id !== teacherMembershipId
+        ) {
+          return {
+            row,
+            action: 'quarantine',
+            reason: 'ASSIGNMENT_CONFLICT',
+            issue: 'ห้องเรียนมีครูประจำชั้นที่ใช้งานอยู่แล้ว',
+          };
+        }
+        return { row, action: 'skip', reason: null, issue: null };
+      }
+      return {
+        row,
+        action: 'insert',
+        reason: null,
+        issue: null,
+        resolved: {
+          teacherMembershipId,
+          subjectId,
+          assignmentKind,
+        },
+      };
+    });
+  }
+
+  private async previewStructureImport(
+    file: Express.Multer.File,
+    target: 'school_classroom' | 'classroom_teacher_assignment',
+    mappingStr: string,
+    actor: AuthenticatedRequestUser,
+    context: CatalogImportContext,
+  ): Promise<CatalogStructureImportPreviewResult> {
+    const schoolId = this.requirePositiveContextId(context, 'schoolId');
+    const schoolTermId = this.requirePositiveContextId(context, 'schoolTermId');
+    const classroomId =
+      target === 'classroom_teacher_assignment'
+        ? this.requirePositiveContextId(context, 'classroomId')
+        : undefined;
+    if (classroomId) {
+      await this.assertClassroomImportContext(schoolId, schoolTermId, classroomId, actor);
+    } else {
+      await this.assertSchoolTermImportContext(schoolId, schoolTermId, actor);
+    }
+    const data = this.readWorksheetRows(file);
+    if (data.length === 0)
+      throw new BadRequestException('The uploaded file is empty or unreadable');
+    const mapping = this.resolveCatalogMapping(target, this.parseMapping(mappingStr), data);
+    const definition = getImportTargetDefinition(target)!;
+    const missingRequiredColumns = definition.fields
+      .filter((catalogField) => catalogField.required && !mapping[catalogField.key])
+      .map((catalogField) => catalogField.key);
+    const rows = this.parseStructureImportRows(data, mapping);
+    const evaluations =
+      target === 'school_classroom'
+        ? await this.evaluateClassroomRows(rows, schoolId, schoolTermId)
+        : await this.evaluateAssignmentRows(rows, schoolId, classroomId!);
+    const rowsReady = evaluations.filter((row) => row.action === 'insert').length;
+    const rowsSkipped = evaluations.filter((row) => row.action === 'skip').length;
+    const rowsToQuarantine = evaluations.filter((row) => row.action === 'quarantine').length;
+    return {
+      target,
+      targetLabel: definition.label,
+      canImport: missingRequiredColumns.length === 0,
+      headers: this.getWorksheetHeaders(data),
+      mapping,
+      rowsProcessed: rows.length,
+      rowsReady,
+      rowsSkipped,
+      rowsToInsert: rowsReady,
+      rowsToQuarantine,
+      missingRequiredColumns,
+      unmappedHeaders: this.catalogUnmappedHeaders(data, mapping),
+      sampleRows: evaluations.slice(0, IMPORT_PREVIEW_SAMPLE_LIMIT).map((evaluation) => ({
+        rowNumber: evaluation.row.rowNumber,
+        action: evaluation.action,
+        values: evaluation.row.values,
+        issues: evaluation.issue ? [evaluation.issue] : [],
+      })),
+    };
+  }
+
+  private async processStructureImport(
+    file: Express.Multer.File,
+    target: 'school_classroom' | 'classroom_teacher_assignment',
+    mappingStr: string,
+    actor: AuthenticatedRequestUser,
+    auditMeta: { ip?: string | null },
+    context: CatalogImportContext,
+  ) {
+    const preview = await this.previewStructureImport(file, target, mappingStr, actor, context);
+    if (!preview.canImport) {
+      throw new BadRequestException(
+        `คอลัมน์บังคับไม่ครบ: ${preview.missingRequiredColumns.join(', ')}`,
+      );
+    }
+    const schoolId = this.requirePositiveContextId(context, 'schoolId');
+    const schoolTermId = this.requirePositiveContextId(context, 'schoolTermId');
+    const classroomId =
+      target === 'classroom_teacher_assignment'
+        ? this.requirePositiveContextId(context, 'classroomId')
+        : undefined;
+    const mapping = preview.mapping;
+    const rows = this.parseStructureImportRows(this.readWorksheetRows(file), mapping);
+    const actorUserId = resolveAuditActorId(actor);
+    const batchId = await this.importsRepository.createImportBatch({
+      target,
+      sourceSha256: createHash('sha256').update(file.buffer).digest('hex'),
+      scopeSnapshot: {
+        ...actor.data_scope,
+        selectedSchoolId: schoolId,
+        selectedSchoolTermId: schoolTermId,
+        ...(classroomId ? { selectedClassroomId: classroomId } : {}),
+      },
+      totalRows: rows.length,
+      actorUserId,
+    });
+    try {
+      return await this.importsRepository.withTransaction(async (executor) => {
+        const evaluations =
+          target === 'school_classroom'
+            ? await this.evaluateClassroomRows(rows, schoolId, schoolTermId, executor)
+            : await this.evaluateAssignmentRows(rows, schoolId, classroomId!, executor);
+        let inserted = 0;
+        let skipped = 0;
+        let quarantined = 0;
+        for (const evaluation of evaluations) {
+          if (evaluation.reason) {
+            await this.importsRepository.quarantineImportRow(
+              {
+                batchId,
+                schoolId,
+                sourceRowNumber: evaluation.row.rowNumber,
+                rowFingerprint: this.fingerprint({
+                  target,
+                  schoolId,
+                  schoolTermId,
+                  classroomId,
+                  values: evaluation.row.values,
+                }),
+                reasonCode: evaluation.reason,
+                mappedValues: {
+                  ...evaluation.row.values,
+                  schoolId,
+                  schoolTermId,
+                  ...(classroomId ? { classroomId } : {}),
+                },
+                actorUserId,
+              },
+              executor,
+            );
+            quarantined += 1;
+            continue;
+          }
+          if (evaluation.action === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          let insertedId: string | null;
+          if (target === 'school_classroom') {
+            insertedId = await this.importsRepository.insertClassroomImportRow(
+              {
+                schoolId,
+                schoolTermId,
+                gradeLevelId: evaluation.resolved!.gradeLevelId!,
+                roomCode: evaluation.row.values.roomCode.trim(),
+                roomName: evaluation.row.values.roomName?.trim() || null,
+                legacyRoomNumber: evaluation.resolved!.legacyRoomNumber ?? null,
+                actorUserId,
+              },
+              executor,
+            );
+          } else {
+            insertedId = await this.importsRepository.insertClassroomAssignmentImportRow(
+              {
+                schoolId,
+                classroomId: classroomId!,
+                teacherMembershipId: evaluation.resolved!.teacherMembershipId!,
+                subjectId: evaluation.resolved!.subjectId ?? null,
+                assignmentKind: evaluation.resolved!.assignmentKind!,
+                effectiveOn: evaluation.row.values.effectiveOn?.trim() || null,
+                effectiveUntil: evaluation.row.values.effectiveUntil?.trim() || null,
+                actorUserId,
+              },
+              executor,
+            );
+          }
+          if (insertedId) inserted += 1;
+          else skipped += 1;
+        }
+        await this.importsRepository.completeImportBatch(
+          batchId,
+          { importedRows: inserted, quarantinedRows: quarantined },
+          executor,
+        );
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId,
+            actorLabel: this.actorLabel(actor),
+            action: 'DATA_IMPORT',
+            targetType:
+              target === 'school_classroom' ? 'school_classrooms' : 'classroom_teacher_assignments',
+            targetId: batchId,
+            metadata: {
+              target,
+              schoolId,
+              schoolTermId,
+              ...(classroomId ? { classroomId } : {}),
+              rowsProcessed: rows.length,
+              rowsInserted: inserted,
+              rowsSkipped: skipped,
+              rowsQuarantined: quarantined,
+            },
+            ip: auditMeta.ip ?? null,
+          },
+          executor,
+        );
+        return {
+          success: true,
+          batchId,
+          target,
+          rowsProcessed: rows.length,
+          rowsInserted: inserted,
+          rowsUpdated: 0,
+          rowsSkipped: skipped,
+          rowsQuarantined: quarantined,
+        };
+      });
+    } catch (error) {
+      await this.importsRepository.failImportBatch(batchId);
+      throw error;
+    }
+  }
+
+  async previewCatalogImport(
+    file: Express.Multer.File,
+    target: string,
+    mappingStr: string,
+    actor: AuthenticatedRequestUser,
+    context: CatalogImportContext,
+  ) {
+    if (!isImportCatalogTarget(target))
+      throw new BadRequestException('ไม่รองรับประเภทข้อมูลนำเข้า');
+    this.assertCatalogCapability(target, actor);
+    if (target === 'student_term') {
+      this.requirePositiveContextId(context, 'schoolId');
+      this.requirePositiveContextId(context, 'schoolTermId');
+      this.requirePositiveContextId(context, 'classroomId');
+      return await this.previewImport(file, target, mappingStr, actor, context);
+    }
+    if (target === 'school_teacher_membership') {
+      const schoolId = this.requirePositiveContextId(context, 'schoolId');
+      const data = this.readWorksheetRows(file);
+      const mapping = this.resolveCatalogMapping(target, this.parseMapping(mappingStr), data);
+      const preview = await this.previewTeacherImport(file, schoolId, actor, mapping);
+      return {
+        ...preview,
+        targetLabel: getImportTargetDefinition(target)!.label,
+        canImport: Boolean(mapping.username),
+        headers: this.getWorksheetHeaders(data),
+        mapping,
+        rowsToInsert: preview.rowsReady,
+        missingRequiredColumns: mapping.username ? [] : ['username'],
+        unmappedHeaders: this.catalogUnmappedHeaders(data, mapping),
+        sampleRows: preview.sampleRows.map((row) => ({
+          ...row,
+          values: { username: row.username, displayName: row.displayName },
+          issues: row.issue ? [row.issue] : [],
+        })),
+      };
+    }
+    return await this.previewStructureImport(file, target, mappingStr, actor, context);
+  }
+
+  async processCatalogImport(
+    file: Express.Multer.File,
+    target: string,
+    mappingStr: string,
+    actor: AuthenticatedRequestUser,
+    auditMeta: { ip?: string | null },
+    context: CatalogImportContext,
+    legacySchools?: string,
+  ) {
+    if (!isImportCatalogTarget(target))
+      throw new BadRequestException('ไม่รองรับประเภทข้อมูลนำเข้า');
+    this.assertCatalogCapability(target, actor);
+    if (target === 'student_term') {
+      this.requirePositiveContextId(context, 'schoolId');
+      this.requirePositiveContextId(context, 'schoolTermId');
+      this.requirePositiveContextId(context, 'classroomId');
+      return await this.processImport(
+        file,
+        target,
+        mappingStr,
+        legacySchools,
+        actor,
+        auditMeta,
+        context,
+      );
+    }
+    if (target === 'school_teacher_membership') {
+      const schoolId = this.requirePositiveContextId(context, 'schoolId');
+      const data = this.readWorksheetRows(file);
+      const mapping = this.resolveCatalogMapping(target, this.parseMapping(mappingStr), data);
+      if (!mapping.username) throw new BadRequestException('คอลัมน์บังคับไม่ครบ: username');
+      const result = await this.processTeacherImport(file, schoolId, actor, auditMeta, mapping);
+      return { ...result, target, rowsUpdated: 0 };
+    }
+    return await this.processStructureImport(file, target, mappingStr, actor, auditMeta, context);
+  }
+
   private assertUniqueMappedHeaders(mapping: Record<string, string>): void {
     const fieldsByHeader = new Map<string, string[]>();
     for (const [field, header] of Object.entries(mapping)) {
@@ -503,43 +1626,6 @@ export class ImportsService {
       );
     } catch {
       throw new BadRequestException('Invalid JSON in mapping');
-    }
-  }
-
-  private parseManualSchools(schoolsStr?: string): ManualSchool[] {
-    if (!schoolsStr) {
-      return [];
-    }
-
-    try {
-      const parsed = JSON.parse(schoolsStr) as unknown;
-      if (!Array.isArray(parsed)) {
-        throw new Error('invalid');
-      }
-
-      return parsed.map((item) => {
-        if (!item || typeof item !== 'object') {
-          throw new Error('invalid');
-        }
-
-        const source = item as Record<string, unknown>;
-        const id = Number(source.id);
-        const name = typeof source.name === 'string' ? source.name.trim() : '';
-
-        if (!Number.isInteger(id) || name.length === 0) {
-          throw new Error('invalid');
-        }
-
-        return {
-          id,
-          name,
-          province: typeof source.province === 'string' ? source.province : undefined,
-          district: typeof source.district === 'string' ? source.district : undefined,
-          sub_district: typeof source.sub_district === 'string' ? source.sub_district : undefined,
-        };
-      });
-    } catch {
-      throw new BadRequestException('Invalid JSON in schools');
     }
   }
 
@@ -585,12 +1671,10 @@ export class ImportsService {
     );
     const usedHeaders = new Set<string>();
     const resolved: Record<string, string> = {};
+    const catalogFields = getImportTargetDefinition(target)?.fields ?? [];
 
     for (const column of candidates) {
-      const aliases =
-        target === 'student_term'
-          ? [column, ...(STUDENT_TERM_HEADER_ALIASES[column] ?? [])]
-          : [column];
+      const aliases = catalogFields.find((field) => field.key === column)?.aliases ?? [column];
       const header = aliases
         .map((alias) => normalizedHeaders.get(this.normalizeHeader(alias)))
         .find((value): value is string => typeof value === 'string' && !usedHeaders.has(value));
@@ -811,6 +1895,7 @@ export class ImportsService {
     target: string,
     mappingStr: string,
     actor: AuthenticatedRequestUser,
+    importContext?: SchoolRosterImportContext,
   ): Promise<ImportPreviewResult> {
     const validTarget = this.parseTarget(target);
     const parsedMapping = this.parseMapping(mappingStr);
@@ -823,13 +1908,29 @@ export class ImportsService {
     const mapping = this.resolveImportMapping(validTarget, parsedMapping, data);
     this.assertMappedColumnsAllowed(validTarget, mapping);
 
-    const requiredColumns = REQUIRED_IMPORT_COLUMNS[validTarget];
+    const context = await this.resolveSchoolRosterImportContext(importContext, actor);
+    const requiredColumns = context ? ['PersonID_Onec'] : REQUIRED_IMPORT_COLUMNS[validTarget];
     const recommendedColumns = RECOMMENDED_IMPORT_COLUMNS[validTarget];
     const missingRequiredColumns = requiredColumns.filter((column) => !mapping[column]);
-    const missingRecommendedColumns = recommendedColumns.filter((column) => !mapping[column]);
-    const dbRows = data.map((row) => this.buildImportDbRow(mapping, row));
-    const schoolIds = this.numericReferenceIds(data, mapping['SchoolID_Onec']);
-    if (validTarget === 'student_term') {
+    const missingRecommendedColumns = context
+      ? recommendedColumns.filter(
+          (column) =>
+            !mapping[column] &&
+            ![
+              'AcademicYear_Onec',
+              'Semester_Onec',
+              'SchoolID_Onec',
+              'GradeLevelID_Onec',
+              'RoomID_Onec',
+            ].includes(column),
+        )
+      : recommendedColumns.filter((column) => !mapping[column]);
+    const dbRows = this.applySchoolRosterImportContext(
+      data.map((row) => this.buildImportDbRow(mapping, row)),
+      context,
+    );
+    const schoolIds = this.numericDbReferenceIds(dbRows, 'SchoolID_Onec');
+    if (validTarget === 'student_term' && !context) {
       const schoolDetails = await this.importsRepository.findSchoolScopeDetails(schoolIds);
       this.assertActorImportScope(actor, data, mapping, schoolDetails);
     }
@@ -870,8 +1971,8 @@ export class ImportsService {
         ? []
         : await this.importsRepository.findExistingImportPersonIds(validTarget, uniquePersonIds),
     );
-    const gradeIds = this.numericReferenceIds(data, mapping['GradeLevelID_Onec']);
-    const statusCodes = this.numericReferenceIds(data, mapping['StudentStatusID_Onec']);
+    const gradeIds = this.numericDbReferenceIds(dbRows, 'GradeLevelID_Onec');
+    const statusCodes = this.numericDbReferenceIds(dbRows, 'StudentStatusID_Onec');
     const [schools, grades, statuses] =
       validTarget === 'student_term'
         ? await Promise.all([
@@ -887,6 +1988,8 @@ export class ImportsService {
         : [];
     const gradeLabels = new Map(grades.map((row) => [Number(row.id), row.label]));
     const knownGradeIds = new Set(gradeLabels.keys());
+    const knownClassroomKeys =
+      validTarget === 'student_term' ? await this.configuredClassroomKeys(dbRows) : undefined;
     const statusLabels = new Map(statuses.map((row) => [Number(row.id), row]));
     const mappedStatusCodes = this.mappedStudentStatusCodes(statuses);
     const seenKeys = new Set<string>();
@@ -979,12 +2082,12 @@ export class ImportsService {
           issues.push('สถานะนักเรียนยังไม่ได้จับคู่');
           action = 'quarantine';
         }
-        const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds);
+        const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds, knownClassroomKeys);
         if (gradeRoomIssue === 'GRADE_NOT_FOUND') {
           issues.push('ชั้นเรียนไม่ถูกต้องหรือไม่พบในข้อมูลหลัก');
           action = 'quarantine';
         } else if (gradeRoomIssue === 'ROOM_NOT_FOUND') {
-          issues.push('รหัสห้องต้องเป็นจำนวนเต็มบวก');
+          issues.push('รหัสห้องไม่ถูกต้องหรือไม่พบในข้อมูลหลัก');
           action = 'quarantine';
         }
 
@@ -1034,7 +2137,7 @@ export class ImportsService {
         rowsToQuarantine += 1;
         continue;
       }
-      const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds);
+      const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds, knownClassroomKeys);
       if (gradeRoomIssue) {
         rowsToQuarantine += 1;
         if (gradeRoomIssue === 'GRADE_NOT_FOUND') gradeIssueRows += 1;
@@ -1113,12 +2216,14 @@ export class ImportsService {
     schoolsStr?: string,
     actor?: AuthenticatedRequestUser,
     auditMeta: { ip?: string | null } = {},
+    importContext?: SchoolRosterImportContext,
   ) {
     const validTarget = this.parseTarget(target);
     const parsedMapping = this.parseMapping(mappingStr);
-    const manualSchools = this.parseManualSchools(schoolsStr);
-    if (validTarget !== 'student_term' && manualSchools.length > 0) {
-      throw new BadRequestException('ข้อมูลโรงเรียนเพิ่มเติมใช้ได้เฉพาะการนำเข้ารายภาคเรียน');
+    if (schoolsStr?.trim()) {
+      throw new BadRequestException(
+        'การนำเข้าไม่สามารถสร้างโรงเรียนใหม่ได้ กรุณาเพิ่มโรงเรียนผ่านขั้นตอน onboarding ก่อน',
+      );
     }
 
     this.logger.log(`Parsing import file for target: ${validTarget}`);
@@ -1130,28 +2235,26 @@ export class ImportsService {
 
     const mapping = this.resolveImportMapping(validTarget, parsedMapping, data);
     this.assertMappedColumnsAllowed(validTarget, mapping);
-    const missingRequiredColumns = REQUIRED_IMPORT_COLUMNS[validTarget].filter(
-      (column) => !mapping[column],
-    );
+    const context = await this.resolveSchoolRosterImportContext(importContext, actor);
+    const requiredColumns = context ? ['PersonID_Onec'] : REQUIRED_IMPORT_COLUMNS[validTarget];
+    const missingRequiredColumns = requiredColumns.filter((column) => !mapping[column]);
     if (missingRequiredColumns.length > 0) {
       throw new BadRequestException(`ไม่พบคอลัมน์บังคับ: ${missingRequiredColumns.join(', ')}`);
     }
 
+    const mappedRows = this.applySchoolRosterImportContext(
+      data.map((row) => this.buildImportDbRow(mapping, row)),
+      context,
+    );
     const knownSchoolIds = new Set<number>();
     let fileSchoolIds: number[] = [];
     const knownStudentStatusCodes = new Set<number>();
     const knownGradeIds = new Set<number>();
+    let knownClassroomKeys: ReadonlySet<string> | undefined;
     if (validTarget === 'student_term') {
-      fileSchoolIds = this.numericReferenceIds(data, mapping['SchoolID_Onec']);
+      fileSchoolIds = this.numericDbReferenceIds(mappedRows, 'SchoolID_Onec');
       const existingSchoolIds = await this.importsRepository.findExistingSchoolIds(fileSchoolIds);
-      const fileSchoolIdSet = new Set(fileSchoolIds);
-      const invalidManualSchool = manualSchools.find((school) => !fileSchoolIdSet.has(school.id));
-      if (invalidManualSchool) {
-        throw new BadRequestException(
-          `รหัสโรงเรียน ${invalidManualSchool.id} ไม่ได้อยู่ในไฟล์นำเข้า`,
-        );
-      }
-      for (const schoolId of [...existingSchoolIds, ...manualSchools.map((school) => school.id)]) {
+      for (const schoolId of existingSchoolIds) {
         knownSchoolIds.add(schoolId);
       }
       const unresolvedSchoolIds = fileSchoolIds.filter((schoolId) => !knownSchoolIds.has(schoolId));
@@ -1160,8 +2263,8 @@ export class ImportsService {
           `ไม่พบโรงเรียนในข้อมูลหลัก: ${unresolvedSchoolIds.join(', ')}`,
         );
       }
-      const statusCodes = this.numericReferenceIds(data, mapping['StudentStatusID_Onec']);
-      const gradeIds = this.numericReferenceIds(data, mapping['GradeLevelID_Onec']);
+      const statusCodes = this.numericDbReferenceIds(mappedRows, 'StudentStatusID_Onec');
+      const gradeIds = this.numericDbReferenceIds(mappedRows, 'GradeLevelID_Onec');
       const [statuses, grades] = await Promise.all([
         this.importsRepository.findStudentStatusLabels(statusCodes),
         this.importsRepository.findGradeLabels(gradeIds),
@@ -1170,28 +2273,36 @@ export class ImportsService {
         knownStudentStatusCodes.add(code);
       }
       for (const grade of grades) knownGradeIds.add(Number(grade.id));
-      const schoolDetails = await this.importsRepository.findSchoolScopeDetails(fileSchoolIds);
-      this.assertActorImportScope(actor, data, mapping, schoolDetails);
+      knownClassroomKeys = await this.configuredClassroomKeys(mappedRows);
+      if (!context) {
+        const schoolDetails = await this.importsRepository.findSchoolScopeDetails(fileSchoolIds);
+        this.assertActorImportScope(actor, data, mapping, schoolDetails);
+      }
     }
 
     this.logger.log(`Found ${data.length} rows. Mapping to ${validTarget}...`);
     const actorUserId = resolveAuditActorId(actor);
     const sourceSha256 = createHash('sha256').update(file.buffer).digest('hex');
-    const mappedRows = data.map((row) => this.buildImportDbRow(mapping, row));
     const batchId = await this.importsRepository.createImportBatch({
       target: validTarget,
       sourceSha256,
-      scopeSnapshot: actor?.data_scope ?? {},
+      scopeSnapshot: {
+        ...(actor?.data_scope ?? {}),
+        selectedSchoolIds: context ? [context.schoolId] : fileSchoolIds,
+        ...(context
+          ? {
+              selectedSchoolId: context.schoolId,
+              selectedSchoolTermId: context.schoolTermId,
+              selectedClassroomId: context.classroomId,
+            }
+          : {}),
+      },
       totalRows: data.length,
       actorUserId,
     });
 
     try {
       const result = await this.importsRepository.withTransaction(async (executor) => {
-        for (const school of manualSchools) {
-          await this.importsRepository.upsertManualSchool(school, executor);
-        }
-
         let inserted = 0;
         let updated = 0;
         let skipped = 0;
@@ -1221,6 +2332,32 @@ export class ImportsService {
           for (const [identifier, personUuids] of matchesByIdentifier) {
             if (personUuids.length > 1) conflictingPersonIds.add(identifier);
             if (personUuids.length === 1) resolvedPersonUuids.set(identifier, personUuids[0]);
+          }
+          const identifiersToCreate = new Map<string, string>();
+          for (const row of mappedRows) {
+            const normalized = this.normalizeNationalId(row['PersonID_Onec']);
+            if (
+              normalized &&
+              !conflictingPersonIds.has(normalized) &&
+              !resolvedPersonUuids.has(normalized) &&
+              !identifiersToCreate.has(normalized)
+            ) {
+              identifiersToCreate.set(
+                normalized,
+                this.stringifyIdentifierValue(row['PersonID_Onec']),
+              );
+            }
+          }
+          const createdMatches =
+            await this.importsRepository.bulkResolveOrCreatePersonsByNationalIds(
+              [...identifiersToCreate].map(([identifierNormalized, identifierValue]) => ({
+                identifierValue,
+                identifierNormalized,
+              })),
+              executor,
+            );
+          for (const match of createdMatches) {
+            resolvedPersonUuids.set(match.identifier_normalized, match.person_uuid);
           }
         }
 
@@ -1281,7 +2418,7 @@ export class ImportsService {
               await quarantine(dbRow, sourceRowNumber, 'UNMAPPED_STUDENT_STATUS');
               continue;
             }
-            const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds);
+            const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds, knownClassroomKeys);
             if (gradeRoomIssue) {
               await quarantine(dbRow, sourceRowNumber, gradeRoomIssue);
               continue;
@@ -1336,6 +2473,7 @@ export class ImportsService {
         );
         const result = {
           success: true,
+          batchId,
           rowsProcessed: data.length,
           rowsInserted: inserted,
           rowsUpdated: updated,
@@ -1348,15 +2486,17 @@ export class ImportsService {
             actorLabel: this.actorLabel(actor),
             action: 'DATA_IMPORT',
             targetType: 'import',
-            targetId: null,
+            targetId: batchId,
             metadata: {
+              batchId,
+              ...(fileSchoolIds.length === 1 ? { schoolId: fileSchoolIds[0] } : {}),
+              schoolIds: fileSchoolIds,
               target: this.getTargetLabel(validTarget),
               rowCount: result.rowsProcessed,
               rowsInserted: result.rowsInserted,
               rowsUpdated: result.rowsUpdated,
               rowsSkipped: result.rowsSkipped,
               rowsQuarantined: result.rowsQuarantined,
-              manualSchools: manualSchools.length,
             },
             ip: auditMeta.ip ?? null,
           },
@@ -1447,7 +2587,8 @@ export class ImportsService {
       ? await this.importsRepository.findGradeLabels([Number(gradeId)], executor)
       : [];
     const knownGradeIds = new Set(grades.map((grade) => Number(grade.id)));
-    const gradeRoomIssue = this.gradeRoomIssue(values, knownGradeIds);
+    const knownClassroomKeys = await this.configuredClassroomKeys([values], executor);
+    const gradeRoomIssue = this.gradeRoomIssue(values, knownGradeIds, knownClassroomKeys);
     if (gradeRoomIssue === 'GRADE_NOT_FOUND') {
       throw new BadRequestException('ยังไม่พบชั้นเรียนในข้อมูลหลัก');
     }
@@ -1597,7 +2738,10 @@ export class ImportsService {
       target: String(row.target),
       student: {
         personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
-        firstName: this.normalizeScalar(values['FirstName_Onec']) || '-',
+        firstName:
+          this.normalizeScalar(values['FirstName_Onec']) ||
+          this.normalizeScalar(values['username']) ||
+          '-',
         lastName: this.normalizeScalar(values['LastName_Onec']) || '-',
         academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || '-',
         semester: this.normalizeScalar(values['Semester_Onec']) || '-',

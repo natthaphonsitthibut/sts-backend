@@ -17,7 +17,13 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import type { Response } from 'express';
 import { extname } from 'path';
-import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
+import {
+  AuthGuard,
+  CurrentUser,
+  PermissionsGuard,
+  RequireAnyPermission,
+  RequirePermission,
+} from '../auth';
 import type { AuthenticatedRequestUser } from '../auth';
 import {
   BulkImportUploadDto,
@@ -28,6 +34,7 @@ import {
   PreviewImportUploadDto,
   ResolveImportQuarantineDto,
   RetryImportQuarantineDto,
+  TeacherImportUploadDto,
 } from './dto/imports.dto';
 import { ImportsService } from './imports.service';
 
@@ -56,12 +63,18 @@ const importMulterOptions = {
 };
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('import-data')
+@RequireAnyPermission('import-data', 'import-school-roster')
 @Controller('api/imports')
 export class ImportsController {
   constructor(private readonly importsService: ImportsService) {}
 
+  @Get('catalog')
+  getCatalog(@CurrentUser() actor: AuthenticatedRequestUser) {
+    return this.importsService.getCatalog(actor);
+  }
+
   @Post('check-schools')
+  @RequirePermission('import-data')
   @UseInterceptors(FileInterceptor('file', importMulterOptions))
   async checkSchools(
     @UploadedFile() file: Express.Multer.File,
@@ -79,13 +92,23 @@ export class ImportsController {
     @UploadedFile() file: Express.Multer.File,
     @Body() body: BulkImportUploadDto,
     @Req() req: Request,
-    @CurrentUser() actor?: AuthenticatedRequestUser,
+    @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
 
-    return this.importsService.processImport(file, body.target, body.mapping, body.schools, actor, {
-      ip: req.ip ?? null,
-    });
+    return this.importsService.processCatalogImport(
+      file,
+      body.target,
+      body.mapping,
+      actor,
+      { ip: req.ip ?? null },
+      {
+        schoolId: body.schoolId,
+        schoolTermId: body.schoolTermId,
+        classroomId: body.classroomId,
+      },
+      body.schools,
+    );
   }
 
   @Post('preview')
@@ -97,7 +120,38 @@ export class ImportsController {
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
 
-    return this.importsService.previewImport(file, body.target, body.mapping, actor);
+    return this.importsService.previewCatalogImport(file, body.target, body.mapping, actor, {
+      schoolId: body.schoolId,
+      schoolTermId: body.schoolTermId,
+      classroomId: body.classroomId,
+    });
+  }
+
+  @Post('teachers/preview')
+  @RequirePermission('import-school-roster')
+  @UseInterceptors(FileInterceptor('file', importMulterOptions))
+  previewTeacherImport(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: TeacherImportUploadDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    return this.importsService.previewTeacherImport(file, body.schoolId, actor);
+  }
+
+  @Post('teachers/bulk')
+  @RequirePermission('import-school-roster')
+  @UseInterceptors(FileInterceptor('file', importMulterOptions))
+  processTeacherImport(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: TeacherImportUploadDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    return this.importsService.processTeacherImport(file, body.schoolId, actor, {
+      ip: req.ip ?? null,
+    });
   }
 
   @Get('quarantine')

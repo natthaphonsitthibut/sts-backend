@@ -27,6 +27,15 @@ function makeCsvImportFile(csv: string): Express.Multer.File {
   } as Express.Multer.File;
 }
 
+function bulkPersonMatches(
+  identifiers: Array<{ identifierNormalized: string }>,
+): Array<{ identifier_normalized: string; person_uuid: string }> {
+  return identifiers.map((identifier) => ({
+    identifier_normalized: identifier.identifierNormalized,
+    person_uuid: `${identifier.identifierNormalized}-person`,
+  }));
+}
+
 function quarantineLookupMocks() {
   return {
     findQuarantineReasonLookups: jest.fn().mockResolvedValue([
@@ -73,10 +82,12 @@ describe('ImportsService', () => {
     };
     const auditLog = {
       record: jest.fn(),
+      recordAtomic: jest.fn(),
     };
 
     return {
       repository,
+      auditLog,
       service: new ImportsService(repository as never, auditLog as never),
     };
   }
@@ -199,7 +210,29 @@ describe('ImportsService', () => {
       roomIssueRows: 1,
     });
     expect(preview.sampleRows[0].issues).toContain('ชั้นเรียนไม่ถูกต้องหรือไม่พบในข้อมูลหลัก');
-    expect(preview.sampleRows[1].issues).toContain('รหัสห้องต้องเป็นจำนวนเต็มบวก');
+    expect(preview.sampleRows[1].issues).toContain('รหัสห้องไม่ถูกต้องหรือไม่พบในข้อมูลหลัก');
+  });
+
+  it('quarantines a well-formed room reference absent from canonical classrooms', async () => {
+    const { repository, service } = createService();
+    Object.assign(repository, {
+      findExistingClassroomReferences: jest.fn().mockResolvedValue([]),
+    });
+    const file = makeImportFile([
+      {
+        PersonID_Onec: '1111111111111',
+        SchoolID_Onec: 1001,
+        AcademicYear_Onec: 2569,
+        Semester_Onec: 1,
+        GradeLevelID_Onec: 101,
+        RoomID_Onec: 9,
+      },
+    ]);
+
+    const preview = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
+
+    expect(preview).toMatchObject({ rowsReady: 0, roomIssueRows: 1, rowsToQuarantine: 1 });
+    expect(preview.sampleRows[0].issues).toContain('รหัสห้องไม่ถูกต้องหรือไม่พบในข้อมูลหลัก');
   });
 
   it('enforces actor data scope before returning student-term preview matches', async () => {
@@ -227,6 +260,245 @@ describe('ImportsService', () => {
     ).rejects.toThrow('ไม่มีสิทธิ์นำเข้าข้อมูลโรงเรียน 1001');
     expect(repository.findExistingStudentTerms).not.toHaveBeenCalled();
     expect(repository.findConflictingNationalIds).not.toHaveBeenCalled();
+  });
+
+  it('injects the server-resolved school, term, and classroom into every preview row', async () => {
+    const { repository, service } = createService();
+    Object.assign(repository, {
+      findSchoolRosterImportContext: jest.fn().mockResolvedValue({
+        school_id: 1001,
+        school_term_id: '21',
+        classroom_id: '31',
+        academic_year: 2569,
+        semester: 1,
+        grade_level_id: 101,
+        legacy_room_number: 1,
+        province: 'เชียงใหม่',
+        district: 'เมืองเชียงใหม่',
+        sub_district: 'สุเทพ',
+      }),
+      findExistingClassroomReferences: jest.fn().mockResolvedValue([
+        {
+          school_id: 1001,
+          academic_year: 2569,
+          semester: 1,
+          grade_level_id: 101,
+          room_number: 1,
+        },
+      ]),
+    });
+    const file = makeImportFile([
+      {
+        PersonID_Onec: '1111111111111',
+        FirstName_Onec: 'นักเรียน',
+        StudentStatusID_Onec: 10,
+      },
+    ]);
+
+    const preview = await service.previewImport(
+      file,
+      'student_term',
+      '{}',
+      { id: 1, data_scope: { school_ids: [1001] } } as never,
+      { schoolId: 1001, schoolTermId: 21, classroomId: 31 },
+    );
+
+    expect(preview).toMatchObject({
+      canImport: true,
+      missingRequiredColumns: [],
+      rowsReady: 1,
+      sampleRows: [
+        {
+          schoolId: '1001',
+          academicYear: '2569',
+          semester: '1',
+          gradeLevelId: '101',
+          roomId: '1',
+        },
+      ],
+    });
+    expect(
+      (
+        repository as typeof repository & {
+          findSchoolRosterImportContext: jest.Mock;
+        }
+      ).findSchoolRosterImportContext,
+    ).toHaveBeenCalledWith(1001, 21, 31);
+  });
+
+  it('rejects a canonical import context outside the authenticated school scope', async () => {
+    const { repository, service } = createService();
+    Object.assign(repository, {
+      findSchoolRosterImportContext: jest.fn().mockResolvedValue({
+        school_id: 1001,
+        school_term_id: '21',
+        classroom_id: '31',
+        academic_year: 2569,
+        semester: 1,
+        grade_level_id: 101,
+        legacy_room_number: 1,
+        province: 'เชียงใหม่',
+        district: 'เมืองเชียงใหม่',
+        sub_district: 'สุเทพ',
+      }),
+    });
+    const file = makeImportFile([{ PersonID_Onec: '1111111111111' }]);
+
+    await expect(
+      service.previewImport(
+        file,
+        'student_term',
+        '{}',
+        { id: 1, data_scope: { school_ids: [2002] } } as never,
+        { schoolId: 1001, schoolTermId: 21, classroomId: 31 },
+      ),
+    ).rejects.toThrow('ไม่มีสิทธิ์นำเข้าข้อมูลโรงเรียน 1001');
+  });
+
+  it('previews teacher membership import with ready, existing, and quarantined rows', async () => {
+    const { repository, service } = createService();
+    repository.findSchoolScopeDetails.mockResolvedValue([
+      {
+        id: 1001,
+        province: 'เชียงใหม่',
+        district: 'เมืองเชียงใหม่',
+        sub_district: 'สุเทพ',
+      },
+    ]);
+    Object.assign(repository, {
+      findTeacherImportCandidates: jest.fn().mockResolvedValue([
+        {
+          user_id: 11,
+          username: 'teacher.ready',
+          display_name: 'ครูพร้อม',
+          is_eligible: true,
+          is_active_member: false,
+        },
+        {
+          user_id: 12,
+          username: 'teacher.existing',
+          display_name: 'ครูเดิม',
+          is_eligible: true,
+          is_active_member: true,
+        },
+        {
+          user_id: 13,
+          username: 'teacher.denied',
+          display_name: 'บัญชีไม่ใช่ครู',
+          is_eligible: false,
+          is_active_member: false,
+        },
+      ]),
+    });
+    const file = makeImportFile([
+      { ชื่อผู้ใช้: 'teacher.ready', วันที่เริ่มปฏิบัติงาน: '2026-07-01' },
+      { ชื่อผู้ใช้: 'teacher.existing' },
+      { ชื่อผู้ใช้: 'teacher.missing' },
+      { ชื่อผู้ใช้: 'teacher.denied' },
+    ]);
+
+    const preview = await service.previewTeacherImport(file, 1001, {
+      id: 1,
+      data_scope: { school_ids: [1001] },
+    } as never);
+
+    expect(preview).toMatchObject({
+      target: 'school_teacher_membership',
+      rowsProcessed: 4,
+      rowsReady: 1,
+      rowsSkipped: 1,
+      rowsToQuarantine: 2,
+    });
+    expect(preview.sampleRows.map((row) => row.action)).toEqual([
+      'insert',
+      'skip',
+      'quarantine',
+      'quarantine',
+    ]);
+  });
+
+  it('preserves an ISO teacher start date from CSV', async () => {
+    const { repository, service } = createService();
+    repository.findSchoolScopeDetails.mockResolvedValue([
+      {
+        id: 1001,
+        province: 'เชียงใหม่',
+        district: 'เมืองเชียงใหม่',
+        sub_district: 'สุเทพ',
+      },
+    ]);
+    Object.assign(repository, {
+      findTeacherImportCandidates: jest.fn().mockResolvedValue([
+        {
+          user_id: 11,
+          username: 'teacher.ready',
+          display_name: 'ครูพร้อม',
+          is_eligible: true,
+          is_active_member: false,
+        },
+      ]),
+    });
+
+    const preview = await service.previewTeacherImport(
+      makeCsvImportFile('username,startedOn\nteacher.ready,2026-07-01\n'),
+      1001,
+      { id: 1, data_scope: { school_ids: [1001] } } as never,
+    );
+
+    expect(preview).toMatchObject({ rowsReady: 1, rowsToQuarantine: 0 });
+  });
+
+  it('commits valid teacher memberships and quarantines invalid accounts in one batch', async () => {
+    const { repository, service, auditLog } = createService();
+    repository.findSchoolScopeDetails.mockResolvedValue([
+      {
+        id: 1001,
+        province: 'เชียงใหม่',
+        district: 'เมืองเชียงใหม่',
+        sub_district: 'สุเทพ',
+      },
+    ]);
+    const executor = { query: jest.fn() };
+    Object.assign(repository, {
+      createImportBatch: jest.fn().mockResolvedValue('batch-teachers'),
+      withTransaction: jest.fn(async (operation: (value: unknown) => Promise<unknown>) =>
+        operation(executor),
+      ),
+      findTeacherImportCandidates: jest.fn().mockResolvedValue([
+        {
+          user_id: 11,
+          username: 'teacher.ready',
+          display_name: 'ครูพร้อม',
+          is_eligible: true,
+          is_active_member: false,
+        },
+      ]),
+      insertTeacherImportMembership: jest.fn().mockResolvedValue('51'),
+      quarantineImportRow: jest.fn().mockResolvedValue(true),
+      completeImportBatch: jest.fn().mockResolvedValue(undefined),
+      failImportBatch: jest.fn().mockResolvedValue(undefined),
+    });
+    auditLog.recordAtomic = jest.fn().mockResolvedValue(undefined);
+    const file = makeImportFile([{ username: 'teacher.ready' }, { username: 'teacher.missing' }]);
+
+    await expect(
+      service.processTeacherImport(file, 1001, {
+        id: 1,
+        username: 'director',
+        data_scope: { school_ids: [1001] },
+      } as never),
+    ).resolves.toMatchObject({
+      batchId: 'batch-teachers',
+      rowsInserted: 1,
+      rowsQuarantined: 1,
+    });
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'DATA_IMPORT',
+        targetType: 'school_teacher_memberships',
+      }),
+      executor,
+    );
   });
 
   it('supports Thai custom column mapping before import preview', async () => {
@@ -608,8 +880,7 @@ describe('ImportsService', () => {
       withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
         callback({ query: jest.fn() }),
       ),
-      upsertManualSchool: jest.fn(),
-      resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn(bulkPersonMatches),
       insertImportRow: jest.fn().mockResolvedValue('inserted'),
       bulkUpsertStudentTerms: jest.fn().mockResolvedValue({ inserted: 1, updated: 0 }),
       findStudentStatusLabels: jest.fn().mockResolvedValue([]),
@@ -639,18 +910,16 @@ describe('ImportsService', () => {
     ).rejects.toThrow('ไม่พบโรงเรียนในข้อมูลหลัก: 2002');
     expect(repository.withTransaction).not.toHaveBeenCalled();
 
-    const result = await service.processImport(
-      file,
-      'student_term',
-      '{}',
-      JSON.stringify([{ id: 2002, name: 'Resolved test school' }]),
-      actor,
-    );
-    expect(result).toMatchObject({ rowsInserted: 1, rowsUpdated: 0, rowsSkipped: 0 });
-    expect(repository.upsertManualSchool).toHaveBeenCalledWith(
-      { id: 2002, name: 'Resolved test school' },
-      expect.anything(),
-    );
+    await expect(
+      service.processImport(
+        file,
+        'student_term',
+        '{}',
+        JSON.stringify([{ id: 2002, name: 'Resolved test school' }]),
+        actor,
+      ),
+    ).rejects.toThrow('การนำเข้าไม่สามารถสร้างโรงเรียนใหม่ได้');
+    expect(repository.withTransaction).not.toHaveBeenCalled();
   });
 
   it('enforces actor school scope on bulk import', async () => {
@@ -672,11 +941,10 @@ describe('ImportsService', () => {
       createImportBatch: jest.fn().mockResolvedValue('batch-id'),
       findPersonUuidMatchesByNationalIds: jest.fn().mockResolvedValue([]),
       findPersonUuidsByNationalId: jest.fn().mockResolvedValue([]),
-      resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn(bulkPersonMatches),
       insertImportRow: jest.fn().mockResolvedValue('inserted'),
       bulkUpsertStudentTerms: jest.fn().mockResolvedValue({ inserted: 1, updated: 0 }),
       completeImportBatch: jest.fn(),
-      upsertManualSchool: jest.fn(),
     };
     const service = new ImportsService(
       repository as never,
@@ -718,7 +986,7 @@ describe('ImportsService', () => {
       withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
         callback({ query: jest.fn() }),
       ),
-      resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn(bulkPersonMatches),
       bulkUpsertStudentTerms: jest.fn((rows: Record<string, unknown>[]) => {
         let inserted = 0;
         let updated = 0;
@@ -739,7 +1007,6 @@ describe('ImportsService', () => {
         return { inserted, updated };
       }),
       insertImportRow: jest.fn(),
-      upsertManualSchool: jest.fn(),
       findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
       findSchoolScopeDetails: jest
         .fn()
@@ -785,11 +1052,29 @@ describe('ImportsService', () => {
 
     expect(first).toMatchObject({ rowsInserted: 2, rowsUpdated: 0, rowsSkipped: 0 });
     expect(repeated).toMatchObject({ rowsInserted: 0, rowsUpdated: 2, rowsSkipped: 0 });
-    expect(repository.resolveOrCreatePersonByNationalId).toHaveBeenCalledTimes(2);
+    expect(repository.bulkResolveOrCreatePersonsByNationalIds).toHaveBeenCalledTimes(2);
     expect(repository.bulkUpsertStudentTerms).toHaveBeenCalledTimes(2);
     expect(repository.insertImportRow).not.toHaveBeenCalled();
     expect(repository.findPersonUuidMatchesByNationalIds).toHaveBeenCalledTimes(2);
     expect(auditLog.recordAtomic).toHaveBeenCalledTimes(2);
+    const batchInput = (repository.createImportBatch.mock.calls[0] as unknown[])[0] as {
+      scopeSnapshot: Record<string, unknown>;
+    };
+    expect(batchInput.scopeSnapshot).toMatchObject({ global: true, selectedSchoolIds: [1001] });
+    const auditEvent = (auditLog.recordAtomic.mock.calls[0] as unknown[])[0] as {
+      actorUserId: number;
+      targetId: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(auditEvent).toMatchObject({ actorUserId: 1, targetId: 'batch-id' });
+    expect(auditEvent.metadata).toMatchObject({
+      batchId: 'batch-id',
+      schoolId: 1001,
+      schoolIds: [1001],
+      rowsInserted: 2,
+      rowsUpdated: 0,
+      rowsQuarantined: 0,
+    });
     expect(notificationsService.notifyImportCompleted).toHaveBeenNthCalledWith(1, {
       batchId: 'batch-id',
       actorUserId: 1,
@@ -806,10 +1091,9 @@ describe('ImportsService', () => {
       withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
         callback({ query: jest.fn() }),
       ),
-      resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn(bulkPersonMatches),
       insertImportRow: jest.fn().mockResolvedValue('inserted'),
       bulkUpsertStudentTerms: jest.fn().mockResolvedValue({ inserted: 1, updated: 0 }),
-      upsertManualSchool: jest.fn(),
       findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
       findSchoolScopeDetails: jest
         .fn()
@@ -868,12 +1152,11 @@ describe('ImportsService', () => {
         callback({ query: jest.fn() }),
       ),
       findPersonUuidMatchesByNationalIds: jest.fn().mockResolvedValue([]),
-      resolveOrCreatePersonByNationalId: jest.fn().mockResolvedValue('person-uuid'),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn(bulkPersonMatches),
       insertImportRow: jest.fn().mockRejectedValue(new Error('database write failed')),
       bulkUpsertStudentTerms: jest.fn().mockRejectedValue(new Error('database write failed')),
       completeImportBatch: jest.fn(),
       failImportBatch: jest.fn(),
-      upsertManualSchool: jest.fn(),
     };
     const auditLog = { record: jest.fn(), recordAtomic: jest.fn() };
     const notificationsService = {
@@ -931,9 +1214,8 @@ describe('ImportsService', () => {
       findPersonUuidsByNationalId: jest.fn().mockResolvedValue(['person-a', 'person-b']),
       quarantineImportRow: jest.fn().mockResolvedValue(true),
       completeImportBatch: jest.fn(),
-      resolveOrCreatePersonByNationalId: jest.fn(),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn().mockResolvedValue([]),
       insertImportRow: jest.fn(),
-      upsertManualSchool: jest.fn(),
     };
     const service = new ImportsService(
       repository as never,
@@ -953,8 +1235,7 @@ describe('ImportsService', () => {
       data_scope: { global: true },
     } as never);
 
-    expect(result).toMatchObject({ rowsInserted: 0, rowsQuarantined: 1 });
-    expect(result).not.toHaveProperty('batchId');
+    expect(result).toMatchObject({ batchId: 'batch-id', rowsInserted: 0, rowsQuarantined: 1 });
     expect(repository.quarantineImportRow).toHaveBeenCalledWith(
       expect.objectContaining({ reasonCode: 'IDENTIFIER_CONFLICT' }),
       expect.anything(),
@@ -978,9 +1259,8 @@ describe('ImportsService', () => {
       findPersonUuidsByNationalId: jest.fn().mockResolvedValue([]),
       quarantineImportRow: jest.fn().mockResolvedValue(true),
       completeImportBatch: jest.fn(),
-      resolveOrCreatePersonByNationalId: jest.fn(),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn().mockResolvedValue([]),
       insertImportRow: jest.fn(),
-      upsertManualSchool: jest.fn(),
     };
     const service = new ImportsService(
       repository as never,

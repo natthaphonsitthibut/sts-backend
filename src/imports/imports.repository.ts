@@ -14,12 +14,14 @@ import type {
   ExistingStudentTermRow,
   ImportReferenceRow,
   ImportQuarantineReason,
+  ImportBatchTarget,
   ImportTarget,
   ImportWriteAction,
   ImportWriteSummary,
-  ManualSchool,
   QueryExecutor,
   QueryResultLike,
+  SchoolRosterImportContextRow,
+  TeacherImportCandidateRow,
 } from './imports.types';
 
 interface QuarantineFilters {
@@ -53,6 +55,26 @@ export interface QuarantineLookupRow extends Record<string, unknown> {
   code: string;
   label_th: string;
   badge_variant?: string;
+}
+
+export interface ClassroomImportReferenceRow extends Record<string, unknown> {
+  id: string;
+  grade_level_id: number;
+  room_code: string;
+  room_name: string | null;
+  legacy_room_number: number | null;
+}
+
+export interface AssignmentTeacherReferenceRow extends Record<string, unknown> {
+  membership_id: string;
+  username: string;
+}
+
+export interface ClassroomAssignmentReferenceRow extends Record<string, unknown> {
+  id: string;
+  teacher_membership_id: string;
+  subject_id: number | null;
+  assignment_kind: 'HOMEROOM' | 'SUBJECT';
 }
 
 @Injectable()
@@ -91,11 +113,338 @@ export class ImportsRepository {
 
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<ExistingSchoolIdRow>(
-      'SELECT id FROM schools WHERE id = ANY($1::int[])',
+      `SELECT id
+       FROM schools
+       WHERE id = ANY($1::int[])
+         AND school_status = 'ACTIVE'`,
       [schoolIds],
     );
 
     return result.rows.map((row) => Number(row.id));
+  }
+
+  async findSchoolRosterImportContext(
+    schoolId: number,
+    schoolTermId: number,
+    classroomId: number,
+  ): Promise<SchoolRosterImportContextRow | null> {
+    const result = await this.query<SchoolRosterImportContextRow>(
+      `
+        SELECT
+          school.id AS school_id,
+          term.id::text AS school_term_id,
+          classroom.id::text AS classroom_id,
+          term.academic_year,
+          term.semester,
+          classroom.grade_level_id,
+          classroom.legacy_room_number,
+          school.province,
+          school.district,
+          school.sub_district
+        FROM schools school
+        JOIN school_terms term
+          ON term.id = $2
+         AND term.school_id = school.id
+         AND term.deleted_at IS NULL
+        JOIN school_classrooms classroom
+          ON classroom.id = $3
+         AND classroom.school_term_id = term.id
+         AND classroom.school_id = school.id
+         AND classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+        WHERE school.id = $1
+          AND school.school_status = 'ACTIVE'
+        LIMIT 1
+      `,
+      [schoolId, schoolTermId, classroomId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findSchoolTermImportContext(
+    schoolId: number,
+    schoolTermId: number,
+  ): Promise<{ school_id: number; school_term_id: string } | null> {
+    const result = await this.query<{ school_id: number; school_term_id: string }>(
+      `SELECT school.id AS school_id, term.id::text AS school_term_id
+       FROM schools school
+       JOIN school_terms term
+         ON term.id = $2
+        AND term.school_id = school.id
+        AND term.deleted_at IS NULL
+       WHERE school.id = $1
+         AND school.school_status = 'ACTIVE'
+       LIMIT 1`,
+      [schoolId, schoolTermId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findClassroomImportReferences(
+    schoolId: number,
+    schoolTermId: number,
+    executor?: QueryExecutor,
+  ): Promise<ClassroomImportReferenceRow[]> {
+    const result = await this.getExecutor(executor).query<ClassroomImportReferenceRow>(
+      `SELECT id::text, grade_level_id, room_code, room_name, legacy_room_number
+       FROM school_classrooms
+       WHERE school_id = $1
+         AND school_term_id = $2
+         AND deleted_at IS NULL`,
+      [schoolId, schoolTermId],
+    );
+    return result.rows;
+  }
+
+  async insertClassroomImportRow(
+    input: {
+      schoolId: number;
+      schoolTermId: number;
+      gradeLevelId: number;
+      roomCode: string;
+      roomName: string | null;
+      legacyRoomNumber: number | null;
+      actorUserId: number | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<string | null> {
+    const result = await executor.query<{ id: string }>(
+      `INSERT INTO school_classrooms (
+         school_id, school_term_id, grade_level_id, room_code, room_name,
+         legacy_room_number, created_by, updated_by
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+       ON CONFLICT DO NOTHING
+       RETURNING id::text`,
+      [
+        input.schoolId,
+        input.schoolTermId,
+        input.gradeLevelId,
+        input.roomCode,
+        input.roomName,
+        input.legacyRoomNumber,
+        input.actorUserId,
+      ],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
+  async findAssignmentTeacherReferences(
+    schoolId: number,
+    usernames: string[],
+    executor?: QueryExecutor,
+  ): Promise<AssignmentTeacherReferenceRow[]> {
+    if (usernames.length === 0) return [];
+    const result = await this.getExecutor(executor).query<AssignmentTeacherReferenceRow>(
+      `SELECT membership.id::text AS membership_id, lower(teacher.username) AS username
+       FROM school_teacher_memberships membership
+       JOIN users teacher
+         ON teacher.id = membership.teacher_user_id
+        AND teacher.status = 'ACTIVE'
+       WHERE membership.school_id = $1
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+         AND lower(teacher.username) = ANY($2::text[])`,
+      [schoolId, usernames.map((username) => username.toLowerCase())],
+    );
+    return result.rows;
+  }
+
+  async findExistingSubjectIds(subjectIds: number[], executor?: QueryExecutor): Promise<number[]> {
+    if (subjectIds.length === 0) return [];
+    const result = await this.getExecutor(executor).query<{ id: number }>(
+      `SELECT id FROM subjects WHERE id = ANY($1::int[])`,
+      [subjectIds],
+    );
+    return result.rows.map((row) => Number(row.id));
+  }
+
+  async findClassroomAssignmentReferences(
+    schoolId: number,
+    classroomId: number,
+    executor?: QueryExecutor,
+  ): Promise<ClassroomAssignmentReferenceRow[]> {
+    const result = await this.getExecutor(executor).query<ClassroomAssignmentReferenceRow>(
+      `SELECT id::text, teacher_membership_id::text, subject_id, assignment_kind
+       FROM classroom_teacher_assignments
+       WHERE school_id = $1
+         AND classroom_id = $2
+         AND assignment_status = 'ACTIVE'
+         AND deleted_at IS NULL`,
+      [schoolId, classroomId],
+    );
+    return result.rows;
+  }
+
+  async insertClassroomAssignmentImportRow(
+    input: {
+      schoolId: number;
+      classroomId: number;
+      teacherMembershipId: string;
+      subjectId: number | null;
+      assignmentKind: 'HOMEROOM' | 'SUBJECT';
+      effectiveOn: string | null;
+      effectiveUntil: string | null;
+      actorUserId: number | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<string | null> {
+    const result = await executor.query<{ id: string }>(
+      `INSERT INTO classroom_teacher_assignments (
+         school_id, classroom_id, teacher_membership_id, subject_id,
+         assignment_kind, effective_on, effective_until, created_by, updated_by
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+       ON CONFLICT DO NOTHING
+       RETURNING id::text`,
+      [
+        input.schoolId,
+        input.classroomId,
+        input.teacherMembershipId,
+        input.subjectId,
+        input.assignmentKind,
+        input.effectiveOn,
+        input.effectiveUntil,
+        input.actorUserId,
+      ],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
+  async findTeacherImportCandidates(
+    usernames: string[],
+    schoolId: number,
+    executor?: QueryExecutor,
+  ): Promise<TeacherImportCandidateRow[]> {
+    if (usernames.length === 0) return [];
+    const result = await this.getExecutor(executor).query<TeacherImportCandidateRow>(
+      `
+        SELECT
+          teacher.id AS user_id,
+          teacher.username,
+          COALESCE(
+            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            teacher.username
+          ) AS display_name,
+          (
+            teacher.status = 'ACTIVE'
+            AND (
+              COALESCE(teacher.permissions, '[]'::jsonb) ? 'attendance'
+              OR COALESCE(role_definition.default_permissions, '[]'::jsonb) ? 'attendance'
+            )
+          ) AS is_eligible,
+          EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships membership
+            WHERE membership.school_id = $2
+              AND membership.teacher_user_id = teacher.id
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          ) AS is_active_member
+        FROM users teacher
+        LEFT JOIN roles role_definition ON role_definition.name = teacher.role
+        WHERE lower(teacher.username) = ANY($1::text[])
+      `,
+      [usernames.map((username) => username.toLowerCase()), schoolId],
+    );
+    return result.rows;
+  }
+
+  async insertTeacherImportMembership(
+    input: {
+      schoolId: number;
+      teacherUserId: number;
+      startedOn: string | null;
+      actorUserId: number | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<string | null> {
+    const result = await executor.query<{ id: string }>(
+      `
+        INSERT INTO school_teacher_memberships (
+          school_id, teacher_user_id, started_on, created_by, updated_by
+        )
+        VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), $4, $4)
+        ON CONFLICT (school_id, teacher_user_id)
+          WHERE membership_status = 'ACTIVE' AND deleted_at IS NULL
+        DO NOTHING
+        RETURNING id::text
+      `,
+      [input.schoolId, input.teacherUserId, input.startedOn, input.actorUserId],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
+  async findExistingClassroomReferences(
+    references: Array<{
+      schoolId: number;
+      academicYear: number;
+      semester: number;
+      gradeLevelId: number;
+      roomNumber: number;
+    }>,
+    executor?: QueryExecutor,
+  ): Promise<
+    Array<{
+      school_id: number;
+      academic_year: number;
+      semester: number;
+      grade_level_id: number;
+      room_number: number;
+    }>
+  > {
+    if (references.length === 0) return [];
+    const result = await this.getExecutor(executor).query<{
+      school_id: number;
+      academic_year: number;
+      semester: number;
+      grade_level_id: number;
+      room_number: number;
+    }>(
+      `
+        WITH requested AS (
+          SELECT *
+          FROM jsonb_to_recordset($1::jsonb) AS item(
+            school_id INTEGER,
+            academic_year INTEGER,
+            semester INTEGER,
+            grade_level_id INTEGER,
+            room_number INTEGER
+          )
+        )
+        SELECT DISTINCT
+          classroom.school_id,
+          term.academic_year,
+          term.semester,
+          classroom.grade_level_id,
+          classroom.legacy_room_number AS room_number
+        FROM requested
+        JOIN school_terms term
+          ON term.school_id = requested.school_id
+         AND term.academic_year = requested.academic_year
+         AND term.semester = requested.semester
+         AND term.deleted_at IS NULL
+        JOIN school_classrooms classroom
+          ON classroom.school_term_id = term.id
+         AND classroom.school_id = term.school_id
+         AND classroom.grade_level_id = requested.grade_level_id
+         AND classroom.legacy_room_number = requested.room_number
+         AND classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+      `,
+      [
+        JSON.stringify(
+          references.map((reference) => ({
+            school_id: reference.schoolId,
+            academic_year: reference.academicYear,
+            semester: reference.semester,
+            grade_level_id: reference.gradeLevelId,
+            room_number: reference.roomNumber,
+          })),
+        ),
+      ],
+    );
+    return result.rows;
   }
 
   async findExistingImportPersonIds(target: ImportTarget, personIds: string[]): Promise<string[]> {
@@ -291,28 +640,9 @@ export class ImportsRepository {
     return result.rows.length;
   }
 
-  async upsertManualSchool(school: ManualSchool, executor?: QueryExecutor): Promise<void> {
-    const queryExecutor = this.getExecutor(executor);
-
-    await queryExecutor.query(
-      `
-        INSERT INTO schools (id, name, province, district, sub_district)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (id) DO NOTHING
-      `,
-      [
-        school.id,
-        school.name,
-        school.province ?? null,
-        school.district ?? null,
-        school.sub_district ?? null,
-      ],
-    );
-  }
-
   async createImportBatch(
     input: {
-      target: ImportTarget;
+      target: ImportBatchTarget;
       sourceSha256: string;
       scopeSnapshot: unknown;
       totalRows: number;
@@ -392,6 +722,81 @@ export class ImportsRepository {
          AND identifier_normalized = ANY($1::text[])
        ORDER BY identifier_normalized, person_uuid`,
       [identifiersNormalized],
+    );
+    return result.rows;
+  }
+
+  async bulkResolveOrCreatePersonsByNationalIds(
+    identifiers: Array<{ identifierValue: string; identifierNormalized: string }>,
+    executor: QueryExecutor,
+  ): Promise<Array<{ identifier_normalized: string; person_uuid: string }>> {
+    const uniqueIdentifiers = new Map<string, string>();
+    for (const identifier of identifiers) {
+      if (!uniqueIdentifiers.has(identifier.identifierNormalized)) {
+        uniqueIdentifiers.set(identifier.identifierNormalized, identifier.identifierValue);
+      }
+    }
+    const normalizedValues = [...uniqueIdentifiers.keys()];
+    if (normalizedValues.length === 0) return [];
+
+    await executor.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended(identifier_normalized, 0))
+       FROM unnest($1::text[]) AS input(identifier_normalized)
+       ORDER BY identifier_normalized`,
+      [normalizedValues],
+    );
+
+    const result = await executor.query<{
+      identifier_normalized: string;
+      person_uuid: string;
+    }>(
+      `WITH input AS (
+         SELECT identifier_value, identifier_normalized, gen_random_uuid() AS person_uuid
+         FROM unnest($1::text[], $2::text[])
+           AS source(identifier_value, identifier_normalized)
+       ),
+       existing AS (
+         SELECT DISTINCT ON (identifier.identifier_normalized)
+           identifier.identifier_normalized,
+           identifier.person_uuid
+         FROM student_person_identifier identifier
+         JOIN input ON input.identifier_normalized = identifier.identifier_normalized
+         WHERE identifier.identifier_type = 'NATIONAL_ID'
+         ORDER BY identifier.identifier_normalized, identifier.is_primary DESC, identifier.id
+       ),
+       missing AS (
+         SELECT input.*
+         FROM input
+         LEFT JOIN existing USING (identifier_normalized)
+         WHERE existing.person_uuid IS NULL
+       ),
+       created_people AS (
+         INSERT INTO student_person (person_uuid, identity_status)
+         SELECT person_uuid, 'ACTIVE' FROM missing
+         RETURNING person_uuid
+       ),
+       created_identifiers AS (
+         INSERT INTO student_person_identifier (
+           person_uuid,
+           identifier_type,
+           identifier_value,
+           identifier_normalized,
+           source
+         )
+         SELECT
+           missing.person_uuid,
+           'NATIONAL_ID',
+           missing.identifier_value,
+           missing.identifier_normalized,
+           'ONEC_IMPORT'
+         FROM missing
+         JOIN created_people USING (person_uuid)
+         RETURNING identifier_normalized, person_uuid
+       )
+       SELECT identifier_normalized, person_uuid FROM existing
+       UNION ALL
+       SELECT identifier_normalized, person_uuid FROM created_identifiers`,
+      [[...uniqueIdentifiers.values()], normalizedValues],
     );
     return result.rows;
   }
@@ -599,6 +1004,7 @@ export class ImportsRepository {
       clauses.push(
         `(q.mapped_values->>'FirstName_Onec' ILIKE $${params.length}
           OR q.mapped_values->>'LastName_Onec' ILIKE $${params.length}
+          OR q.mapped_values->>'username' ILIKE $${params.length}
           OR s.name ILIKE $${params.length})`,
       );
     }

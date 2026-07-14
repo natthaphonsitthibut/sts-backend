@@ -2,12 +2,72 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
+  BulkImportUploadDto,
   ListImportQuarantineDto,
+  PreviewImportUploadDto,
   ResolveImportQuarantineDto,
   RetryImportQuarantineDto,
 } from './imports.dto';
 
 describe('import quarantine DTOs', () => {
+  it.each([BulkImportUploadDto, PreviewImportUploadDto])(
+    'requires canonical school, term, and classroom context for %p',
+    (Dto) => {
+      const missingContext = plainToInstance(Dto, {
+        target: 'student_term',
+        mapping: '{}',
+      });
+      const canonicalContext = plainToInstance(Dto, {
+        target: 'student_term',
+        mapping: '{}',
+        schoolId: 1001,
+        schoolTermId: 21,
+        classroomId: 31,
+      });
+
+      expect(validateSync(missingContext)).toHaveLength(3);
+      expect(validateSync(canonicalContext)).toHaveLength(0);
+    },
+  );
+
+  it.each([BulkImportUploadDto, PreviewImportUploadDto])(
+    'applies canonical context requirements per catalog target for %p',
+    (Dto) => {
+      const teacher = plainToInstance(Dto, {
+        target: 'school_teacher_membership',
+        mapping: '{}',
+        schoolId: 1001,
+      });
+      const classroom = plainToInstance(Dto, {
+        target: 'school_classroom',
+        mapping: '{}',
+        schoolId: 1001,
+        schoolTermId: 21,
+      });
+      const assignmentWithoutClassroom = plainToInstance(Dto, {
+        target: 'classroom_teacher_assignment',
+        mapping: '{}',
+        schoolId: 1001,
+        schoolTermId: 21,
+      });
+
+      expect(validateSync(teacher)).toHaveLength(0);
+      expect(validateSync(classroom)).toHaveLength(0);
+      expect(validateSync(assignmentWithoutClassroom)).toHaveLength(1);
+    },
+  );
+
+  it('rejects an import target that is absent from the catalog', () => {
+    const dto = plainToInstance(PreviewImportUploadDto, {
+      target: 'schools',
+      mapping: '{}',
+      schoolId: 1001,
+      schoolTermId: 21,
+    });
+
+    expect(validateSync(dto).some((error) => error.property === 'target')).toBe(true);
+  });
+
   it('rejects unsupported pagination values', () => {
     const dto = plainToInstance(ListImportQuarantineDto, { page: 0, limit: 100 });
 
