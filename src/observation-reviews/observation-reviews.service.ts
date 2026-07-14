@@ -1,0 +1,633 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import type { QueryRunner } from 'typeorm';
+import {
+  hasPermission,
+  isUnconfiguredDataScope,
+  resolveActorDataScope,
+  type AuthenticatedRequestUser,
+} from '../auth';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import {
+  buildPaginationMeta,
+  resolveLimit,
+  resolvePage,
+} from '../common/pagination/pagination.util';
+import { getBangkokDateString } from '../common/utils/date.util';
+import { TeacherAccessService } from '../teacher-access/teacher-access.service';
+import type { ActiveTeacherGrantContext } from '../teacher-access/teacher-access.types';
+import type {
+  CreateFollowUpRequestDto,
+  CreateRiskReviewDto,
+  HumanRiskReviewResponseDto,
+  ListFollowUpRequestsQueryDto,
+  ReviewFollowUpRequestDto,
+  StudentFollowUpRequestResponseDto,
+} from './dto/observation-reviews.dto';
+import { ObservationReviewsRepository } from './observation-reviews.repository';
+import type {
+  FollowUpRequestRow,
+  ObservationReviewAssignmentRow,
+  ObservationReviewEnrollmentRow,
+  ObservationSourceRef,
+  RiskReviewRow,
+  ValidatedObservationSourceRow,
+} from './observation-reviews.types';
+
+interface TeacherRequestActor {
+  userId: number;
+  username: string;
+  teacherMembershipId: number;
+  teacherGrantId: string | null;
+  assignmentId: number;
+}
+
+@Injectable()
+export class ObservationReviewsService {
+  constructor(
+    private readonly repository: ObservationReviewsRepository,
+    private readonly auditLog: AuditLogService,
+    private readonly teacherAccess: TeacherAccessService,
+  ) {}
+
+  private denyExecutiveRaw(actor: AuthenticatedRequestUser): void {
+    if (
+      actor.roles.includes('EXECUTIVE') &&
+      !actor.roles.some((role) => role === 'ADMIN' || role === 'DIRECTOR')
+    ) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะข้อมูลสรุปที่ไม่เปิดเผยข้อมูลดิบ');
+    }
+  }
+
+  private async requireManagerAccess(
+    actor: AuthenticatedRequestUser,
+    enrollment: ObservationReviewEnrollmentRow,
+    queryRunner?: QueryRunner,
+  ): Promise<void> {
+    this.denyExecutiveRaw(actor);
+    if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ทบทวนความเสี่ยงหรือคำขอติดตาม');
+    }
+    const scope = resolveActorDataScope(actor) ?? {};
+    if (
+      isUnconfiguredDataScope(scope) ||
+      scope.own_only === true ||
+      (scope.grade_levels?.length ?? 0) > 0 ||
+      (scope.room_ids?.length ?? 0) > 0
+    ) {
+      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้ทบทวนข้อมูลระดับโรงเรียน');
+    }
+    const allowed = await this.repository.isSchoolInScope(enrollment.school_id, scope, queryRunner);
+    if (!allowed) throw new NotFoundException('ไม่พบนักเรียนในขอบเขตของคุณ');
+  }
+
+  private normalizeSources(sources: ObservationSourceRef[]): ObservationSourceRef[] {
+    const seen = new Set<number>();
+    for (const source of sources) {
+      if (seen.has(source.observationId)) {
+        throw new BadRequestException('ห้ามระบุข้อสังเกตซ้ำในคำขอเดียวกัน');
+      }
+      seen.add(source.observationId);
+    }
+    return sources;
+  }
+
+  private async validateSources(
+    studentUuid: string,
+    sources: ObservationSourceRef[],
+    queryRunner: QueryRunner,
+  ): Promise<ValidatedObservationSourceRow[]> {
+    const normalized = this.normalizeSources(sources);
+    const rows = await this.repository.validateObservationSources(
+      studentUuid,
+      normalized,
+      queryRunner,
+    );
+    if (rows.length !== normalized.length) {
+      throw new BadRequestException('ข้อสังเกตหรือ revision บางรายการไม่ตรงกับนักเรียน');
+    }
+    return rows;
+  }
+
+  private teacherConcernSignal(
+    rows: ValidatedObservationSourceRow[],
+  ): 'NONE' | 'WATCH' | 'CONCERN' {
+    if (rows.some((row) => row.concern_level === 'CONCERN')) return 'CONCERN';
+    if (rows.some((row) => row.concern_level === 'WATCH')) return 'WATCH';
+    return 'NONE';
+  }
+
+  private parseSources(value: ObservationSourceRef[] | string): ObservationSourceRef[] {
+    if (Array.isArray(value)) return value;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return Array.isArray(parsed) ? (parsed as ObservationSourceRef[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private toRiskReview(row: RiskReviewRow): HumanRiskReviewResponseDto {
+    return {
+      id: row.id,
+      studentTermId: row.student_uuid,
+      schoolId: row.school_id,
+      calculatedAttendanceRisk: row.calculated_attendance_risk,
+      teacherConcernSignal: row.teacher_concern_signal,
+      humanRiskDecision: row.human_risk_decision,
+      decisionReason: row.decision_reason,
+      decidedBy: { userId: row.decided_by, username: row.decided_by_username },
+      decidedAt: new Date(row.decided_at).toISOString(),
+      revision: Number(row.revision_number),
+      sourceObservations: this.parseSources(row.sources),
+    };
+  }
+
+  private toFollowUp(row: FollowUpRequestRow): StudentFollowUpRequestResponseDto {
+    return {
+      id: row.id,
+      studentTermId: row.student_uuid,
+      schoolId: row.school_id,
+      requestType: row.follow_up_request_type,
+      status: row.status,
+      urgency: row.urgency,
+      reason: row.request_reason,
+      note: row.supplemental_note,
+      requestedBy: { userId: row.requested_by, username: row.requested_by_username },
+      assignmentId: Number(row.source_assignment_id),
+      review:
+        row.review_decision &&
+        row.reviewed_by &&
+        row.reviewed_by_username !== null &&
+        row.reviewed_at
+          ? {
+              decision: row.review_decision,
+              reason: row.review_reason,
+              reviewedBy: { userId: row.reviewed_by, username: row.reviewed_by_username },
+              reviewedAt: new Date(row.reviewed_at).toISOString(),
+            }
+          : null,
+      assignment:
+        row.assigned_task_id &&
+        row.assigned_by &&
+        row.assigned_by_username !== null &&
+        row.assigned_at
+          ? {
+              taskId: row.assigned_task_id,
+              assignedBy: { userId: row.assigned_by, username: row.assigned_by_username },
+              assignedAt: new Date(row.assigned_at).toISOString(),
+            }
+          : null,
+      revision: Number(row.revision_number),
+      sourceObservations: this.parseSources(row.sources),
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+
+  async createRiskReview(
+    studentUuid: string,
+    dto: CreateRiskReviewDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const enrollment = await this.repository.lockEnrollment(studentUuid, queryRunner);
+      if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
+      await this.requireManagerAccess(actor, enrollment, queryRunner);
+      const reason = dto.decisionReason.trim();
+      if (!reason) throw new BadRequestException('กรุณาระบุเหตุผลของผลทบทวน');
+      const latest = await this.repository.findLatestRiskReview(studentUuid, queryRunner);
+      const currentRevision = Number(latest?.revision_number ?? 0);
+      if (currentRevision !== dto.expectedRevision) {
+        throw new ConflictException('ผลทบทวนถูกเปลี่ยนแปลง กรุณาโหลดข้อมูลใหม่');
+      }
+      const sourceRows = await this.validateSources(
+        studentUuid,
+        dto.sourceObservations,
+        queryRunner,
+      );
+      const calculatedAttendanceRisk = await this.repository.findCalculatedAttendanceRisk(
+        studentUuid,
+        queryRunner,
+      );
+      const row = await this.repository.insertRiskReview(
+        {
+          studentUuid,
+          schoolId: enrollment.school_id,
+          calculatedAttendanceRisk,
+          teacherConcernSignal: this.teacherConcernSignal(sourceRows),
+          humanRiskDecision: dto.humanRiskDecision,
+          decisionReason: reason,
+          decidedBy: actor.id,
+          revision: currentRevision + 1,
+          sources: dto.sourceObservations,
+        },
+        queryRunner,
+      );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actor.id,
+          actorLabel: actor.username,
+          action: 'STUDENT_OBSERVATION_UPDATE',
+          targetType: 'student_observation_risk_reviews',
+          targetId: row.id,
+          metadata: {
+            schoolId: enrollment.school_id,
+            studentTermId: studentUuid,
+            revision: Number(row.revision_number),
+            humanRiskDecision: row.human_risk_decision,
+            sourceCount: dto.sourceObservations.length,
+            operation: 'HUMAN_RISK_DECISION_RECORDED',
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return { data: this.toRiskReview(row) };
+    });
+  }
+
+  async getLatestRiskReview(studentUuid: string, actor: AuthenticatedRequestUser) {
+    const enrollment = await this.repository.findEnrollment(studentUuid);
+    if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
+    await this.requireManagerAccess(actor, enrollment);
+    const row = await this.repository.findLatestRiskReview(studentUuid);
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'student_term',
+      targetId: studentUuid,
+      metadata: {
+        schoolId: enrollment.school_id,
+        hasDecision: row !== null,
+        operation: 'HUMAN_RISK_REVIEW_VIEW',
+      },
+      ip: null,
+    });
+    return { data: row ? this.toRiskReview(row) : null };
+  }
+
+  private async resolveLoggedTeacher(
+    actor: AuthenticatedRequestUser,
+    studentUuid: string,
+    assignmentId: number,
+    queryRunner: QueryRunner,
+  ): Promise<{ enrollment: ObservationReviewEnrollmentRow; requester: TeacherRequestActor }> {
+    this.denyExecutiveRaw(actor);
+    if (!hasPermission(actor.roles, actor.permissions, 'student-observations')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ส่งคำขอให้พิจารณาติดตาม');
+    }
+    const enrollment = await this.repository.lockEnrollment(studentUuid, queryRunner);
+    if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
+    const assignment = await this.repository.findActiveAssignment(
+      assignmentId,
+      studentUuid,
+      getBangkokDateString(),
+      queryRunner,
+    );
+    if (!assignment || assignment.teacher_user_id !== actor.id) {
+      throw new NotFoundException('ไม่พบนักเรียนใน assignment ที่ใช้งานได้');
+    }
+    this.assertAssignmentMatchesEnrollment(assignment, enrollment);
+    return {
+      enrollment,
+      requester: {
+        userId: actor.id,
+        username: actor.username,
+        teacherMembershipId: Number(assignment.teacher_membership_id),
+        teacherGrantId: null,
+        assignmentId: Number(assignment.assignment_id),
+      },
+    };
+  }
+
+  private assertAssignmentMatchesEnrollment(
+    assignment: ObservationReviewAssignmentRow,
+    enrollment: ObservationReviewEnrollmentRow,
+  ): void {
+    if (
+      assignment.school_id !== enrollment.school_id ||
+      String(assignment.school_term_id) !== enrollment.school_term_id ||
+      String(assignment.classroom_id) !== enrollment.classroom_id
+    ) {
+      throw new ForbiddenException('assignment ไม่ตรงกับ enrollment ที่ร้องขอ');
+    }
+  }
+
+  private assertGrantMatchesEnrollment(
+    grant: ActiveTeacherGrantContext,
+    enrollment: ObservationReviewEnrollmentRow,
+  ): void {
+    if (
+      grant.schoolId !== enrollment.school_id ||
+      String(grant.schoolTermId) !== enrollment.school_term_id ||
+      String(grant.classroomId) !== enrollment.classroom_id
+    ) {
+      throw new ForbiddenException('enrollment อยู่นอกขอบเขตของลิงก์');
+    }
+  }
+
+  private async createFollowUpInternal(
+    studentUuid: string,
+    dto: CreateFollowUpRequestDto,
+    enrollment: ObservationReviewEnrollmentRow,
+    requester: TeacherRequestActor,
+    queryRunner: QueryRunner,
+  ) {
+    const reason = dto.reason.trim();
+    if (!reason) throw new BadRequestException('กรุณาระบุเหตุผลของคำขอ');
+    await this.validateSources(studentUuid, dto.sourceObservations, queryRunner);
+    const pending = await this.repository.findPendingFollowUpForUpdate(studentUuid, queryRunner);
+    let requestId: string;
+    let created: boolean;
+    if (pending) {
+      requestId = pending.id;
+      created = false;
+      await this.repository.mergePendingFollowUp(requestId, dto.urgency, queryRunner);
+    } else {
+      requestId = await this.repository.createFollowUpRequest(
+        {
+          studentUuid,
+          schoolId: enrollment.school_id,
+          urgency: dto.urgency,
+          reason,
+          note: dto.note?.trim() || null,
+          requestedBy: requester.userId,
+          teacherMembershipId: requester.teacherMembershipId,
+          teacherGrantId: requester.teacherGrantId,
+          assignmentId: requester.assignmentId,
+        },
+        queryRunner,
+      );
+      created = true;
+    }
+    await this.repository.addFollowUpSources(
+      requestId,
+      dto.sourceObservations,
+      requester.userId,
+      requester.teacherGrantId,
+      queryRunner,
+    );
+    const row = await this.repository.findFollowUpById(studentUuid, requestId, queryRunner);
+    if (!row) throw new ConflictException('ไม่สามารถอ่านคำขอติดตามหลังบันทึกได้');
+    await this.auditLog.recordAtomic(
+      {
+        actorUserId: requester.userId,
+        actorLabel: requester.username,
+        action: 'STUDENT_OBSERVATION_UPDATE',
+        targetType: 'student_follow_up_requests',
+        targetId: row.id,
+        metadata: {
+          schoolId: enrollment.school_id,
+          studentTermId: studentUuid,
+          urgency: row.urgency,
+          sourceCount: dto.sourceObservations.length,
+          created,
+          operation: created
+            ? 'STUDENT_FOLLOW_UP_REQUEST_CREATE'
+            : 'STUDENT_FOLLOW_UP_SOURCE_ATTACH',
+        },
+        ip: null,
+      },
+      queryRunner,
+    );
+    return { data: this.toFollowUp(row), meta: { created } };
+  }
+
+  async createFollowUp(
+    studentUuid: string,
+    dto: CreateFollowUpRequestDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const access = await this.resolveLoggedTeacher(
+        actor,
+        studentUuid,
+        dto.assignmentId,
+        queryRunner,
+      );
+      return await this.createFollowUpInternal(
+        studentUuid,
+        dto,
+        access.enrollment,
+        access.requester,
+        queryRunner,
+      );
+    });
+  }
+
+  private async listFollowUpsInternal(
+    studentUuid: string,
+    query: ListFollowUpRequestsQueryDto,
+    queryRunner?: QueryRunner,
+  ) {
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const rows = await this.repository.listFollowUps(studentUuid, page, limit, queryRunner);
+    return {
+      data: rows.map((row) => this.toFollowUp(row)),
+      meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+    };
+  }
+
+  async listFollowUps(
+    studentUuid: string,
+    query: ListFollowUpRequestsQueryDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    this.denyExecutiveRaw(actor);
+    const enrollment = await this.repository.findEnrollment(studentUuid);
+    if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
+    if (hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
+      await this.requireManagerAccess(actor, enrollment);
+    } else {
+      if (!query.assignmentId) throw new BadRequestException('ครูต้องระบุ assignmentId');
+      return await this.repository.withTransaction(async (queryRunner) => {
+        await this.resolveLoggedTeacher(actor, studentUuid, query.assignmentId!, queryRunner);
+        const result = await this.listFollowUpsInternal(studentUuid, query, queryRunner);
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: actor.id,
+            actorLabel: actor.username,
+            action: 'STUDENT_OBSERVATION_VIEW',
+            targetType: 'student_term',
+            targetId: studentUuid,
+            metadata: {
+              schoolId: enrollment.school_id,
+              resultCount: result.data.length,
+              operation: 'STUDENT_FOLLOW_UP_REQUEST_VIEW',
+            },
+            ip: null,
+          },
+          queryRunner,
+        );
+        return result;
+      });
+    }
+    const result = await this.listFollowUpsInternal(studentUuid, query);
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'student_term',
+      targetId: studentUuid,
+      metadata: {
+        schoolId: enrollment.school_id,
+        resultCount: result.data.length,
+        operation: 'STUDENT_FOLLOW_UP_REQUEST_VIEW',
+      },
+      ip: null,
+    });
+    return result;
+  }
+
+  async reviewFollowUp(
+    studentUuid: string,
+    requestId: string,
+    dto: ReviewFollowUpRequestDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const enrollment = await this.repository.lockEnrollment(studentUuid, queryRunner);
+      if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
+      await this.requireManagerAccess(actor, enrollment, queryRunner);
+      const current = await this.repository.findFollowUpById(
+        studentUuid,
+        requestId,
+        queryRunner,
+        true,
+      );
+      if (!current) throw new NotFoundException('ไม่พบคำขอติดตาม');
+      if (current.status !== 'PENDING_REVIEW') {
+        throw new ConflictException('คำขอนี้ได้รับการทบทวนแล้ว');
+      }
+      if (Number(current.revision_number) !== dto.expectedRevision) {
+        throw new ConflictException('คำขอถูกเปลี่ยนแปลง กรุณาโหลดข้อมูลใหม่');
+      }
+      const reason = dto.reason.trim();
+      if (!reason) throw new BadRequestException('กรุณาระบุเหตุผลของผลทบทวน');
+      const updated = await this.repository.reviewFollowUp(
+        requestId,
+        dto.expectedRevision,
+        dto.decision,
+        reason,
+        actor.id,
+        queryRunner,
+      );
+      if (!updated) throw new ConflictException('คำขอถูกเปลี่ยนแปลง กรุณาโหลดข้อมูลใหม่');
+      const row = await this.repository.findFollowUpById(studentUuid, requestId, queryRunner);
+      if (!row) throw new ConflictException('ไม่สามารถอ่านผลทบทวนหลังบันทึกได้');
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actor.id,
+          actorLabel: actor.username,
+          action: 'STUDENT_OBSERVATION_UPDATE',
+          targetType: 'student_follow_up_requests',
+          targetId: row.id,
+          metadata: {
+            schoolId: enrollment.school_id,
+            studentTermId: studentUuid,
+            decision: dto.decision,
+            revision: Number(row.revision_number),
+            operation: 'STUDENT_FOLLOW_UP_REQUEST_REVIEW',
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return { data: this.toFollowUp(row) };
+    });
+  }
+
+  async createFollowUpWithTeacherAccess(
+    rawToken: string,
+    studentUuid: string,
+    dto: CreateFollowUpRequestDto,
+  ) {
+    return await this.teacherAccess.withActiveGrantContext(
+      rawToken,
+      {
+        capability: 'TEACHER_OBSERVATION',
+        assignmentId: dto.assignmentId,
+        studentUuid,
+        operation: 'CREATE_STUDENT_FOLLOW_UP_REQUEST',
+      },
+      async (grant, queryRunner) => {
+        const enrollment = await this.repository.lockEnrollment(studentUuid, queryRunner);
+        if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
+        this.assertGrantMatchesEnrollment(grant, enrollment);
+        const assignment = await this.repository.findActiveAssignment(
+          dto.assignmentId,
+          studentUuid,
+          getBangkokDateString(),
+          queryRunner,
+        );
+        if (
+          !assignment ||
+          Number(assignment.teacher_membership_id) !== Number(grant.teacherMembershipId)
+        ) {
+          throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        }
+        return await this.createFollowUpInternal(
+          studentUuid,
+          dto,
+          enrollment,
+          {
+            userId: grant.teacherUserId,
+            username: grant.teacherUsername,
+            teacherMembershipId: Number(grant.teacherMembershipId),
+            teacherGrantId: grant.grantId,
+            assignmentId: dto.assignmentId,
+          },
+          queryRunner,
+        );
+      },
+    );
+  }
+
+  async listFollowUpsWithTeacherAccess(
+    rawToken: string,
+    studentUuid: string,
+    assignmentId: number,
+    query: ListFollowUpRequestsQueryDto,
+  ) {
+    return await this.teacherAccess.withActiveGrantContext(
+      rawToken,
+      {
+        capability: 'TEACHER_OBSERVATION',
+        assignmentId,
+        studentUuid,
+        operation: 'VIEW_STUDENT_FOLLOW_UP_REQUESTS',
+      },
+      async (grant, queryRunner) => {
+        const enrollment = await this.repository.lockEnrollment(studentUuid, queryRunner);
+        if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
+        this.assertGrantMatchesEnrollment(grant, enrollment);
+        const result = await this.listFollowUpsInternal(studentUuid, query, queryRunner);
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: grant.teacherUserId,
+            actorLabel: grant.teacherUsername,
+            action: 'STUDENT_OBSERVATION_VIEW',
+            targetType: 'student_term',
+            targetId: studentUuid,
+            metadata: {
+              schoolId: enrollment.school_id,
+              resultCount: result.data.length,
+              operation: 'STUDENT_FOLLOW_UP_REQUEST_VIEW',
+            },
+            ip: null,
+          },
+          queryRunner,
+        );
+        return result;
+      },
+    );
+  }
+}
