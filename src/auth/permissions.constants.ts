@@ -41,8 +41,10 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
     label: 'จัดการเคสช่วยเหลือ',
     children: [
       { id: 'review-cases', label: 'ดูเคสช่วยเหลือ' },
+      { id: 'assign-follow-up-cases', label: 'มอบหมายผู้ติดตามเคสในโรงเรียน' },
+      { id: 'report-up-cases', label: 'รายงานเคสขึ้นส่วนกลาง' },
+      { id: 'executive-report', label: 'ดูรายงานภาพรวมระดับพื้นที่' },
       { id: 'close-case', label: 'ปิดเคส' },
-      { id: 'forward-case', label: 'ส่งต่อเคส' },
     ],
   },
   { id: 'student-self', label: 'ข้อมูลตัวเอง' },
@@ -70,6 +72,12 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
       { id: 'login-links', label: 'ลิงก์เข้าสู่ระบบ' },
     ],
   },
+  { id: 'manage-schools', label: 'จัดการข้อมูลโรงเรียน' },
+  { id: 'manage-school-structure', label: 'จัดการภาคเรียน ห้อง และครู' },
+  { id: 'manage-teacher-access', label: 'ออกและยกเลิกลิงก์เข้าใช้งานครู' },
+  { id: 'student-observations', label: 'บันทึกและดูข้อสังเกตนักเรียนที่รับผิดชอบ' },
+  { id: 'manage-student-observations', label: 'จัดการข้อสังเกตนักเรียนในโรงเรียน' },
+  { id: 'import-school-roster', label: 'นำเข้าครูและนักเรียนของโรงเรียน' },
   { id: 'settings', label: 'ตั้งค่าระบบ' },
   { id: 'audit-log', label: 'บันทึกการใช้งาน' },
   { id: 'field-monitor', label: 'ติดตามภาคสนาม' },
@@ -101,8 +109,10 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'students',
       'edit-students',
       'review-cases',
+      'assign-follow-up-cases',
+      'report-up-cases',
+      'executive-report',
       'close-case',
-      'forward-case',
       'create',
       'attendance',
       'attendance-dashboard',
@@ -112,6 +122,11 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'manage-student-accounts',
       'manage-role-groups',
       'login-links',
+      'manage-schools',
+      'manage-school-structure',
+      'manage-teacher-access',
+      'manage-student-observations',
+      'import-school-roster',
       'settings',
       'import-data',
       'export-data',
@@ -133,8 +148,9 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'students',
       'edit-students',
       'review-cases',
+      'assign-follow-up-cases',
+      'report-up-cases',
       'close-case',
-      'forward-case',
       'create',
       'attendance',
       'attendance-dashboard',
@@ -142,6 +158,11 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'manage-timetable',
       'manage-users-list',
       'login-links',
+      'manage-schools',
+      'manage-school-structure',
+      'manage-teacher-access',
+      'manage-student-observations',
+      'import-school-roster',
       'settings',
       'export-data',
       'audit-log',
@@ -156,7 +177,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     name: 'EXECUTIVE',
     label: 'ผู้บริหาร',
     rank: 3,
-    default_permissions: ['home', 'dashboard', 'students', 'review-cases', 'attendance-dashboard'],
+    default_permissions: ['home', 'executive-report'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -166,7 +187,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     name: 'TEACHER',
     label: 'คุณครู',
     rank: 2,
-    default_permissions: ['home', 'students', 'attendance'],
+    default_permissions: ['home', 'students', 'attendance', 'student-observations'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -334,12 +355,28 @@ export function getEffectivePermissions(
   return Array.from(new Set(customPermissions));
 }
 
+const AGGREGATE_ONLY_EXECUTIVE_PERMISSIONS = new Set(['home', 'executive-report', 'export-data']);
+
 export function hasPermission(
   roles: string[],
   customPermissions: string[],
   permission: string,
 ): boolean {
+  if (
+    isAggregateOnlyExecutive({ roles }) &&
+    !AGGREGATE_ONLY_EXECUTIVE_PERMISSIONS.has(permission)
+  ) {
+    return false;
+  }
   if (customPermissions.includes('*') || customPermissions.includes('ALL')) return true;
   const effectivePermissions = getEffectivePermissions(roles, customPermissions);
   return effectivePermissions.includes(permission);
+}
+
+/** P7 executives remain aggregate-only even if a raw permission is re-granted. */
+export function isAggregateOnlyExecutive(actor: { roles: string[] } | undefined): boolean {
+  return Boolean(
+    actor?.roles.includes('EXECUTIVE') &&
+    !actor.roles.some((role) => role === 'ADMIN' || role === 'DIRECTOR'),
+  );
 }

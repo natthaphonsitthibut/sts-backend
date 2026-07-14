@@ -1,13 +1,13 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { AuthGuard, PermissionsGuard } from '../auth';
-import { PERMISSIONS_KEY } from '../auth/permissions.decorator';
+import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY } from '../auth/permissions.decorator';
 import { StudentsController } from './students.controller';
 
 describe('StudentsController', () => {
   it('protects student write routes with the edit-students permission', () => {
     const classGuards = Reflect.getMetadata(GUARDS_METADATA, StudentsController) as unknown[];
 
-    expect(classGuards).toEqual([AuthGuard]);
+    expect(classGuards).toEqual([AuthGuard, PermissionsGuard]);
     for (const methodName of ['create', 'update', 'remove']) {
       const handler = Object.getOwnPropertyDescriptor(StudentsController.prototype, methodName)
         ?.value as () => unknown;
@@ -15,6 +15,23 @@ describe('StudentsController', () => {
 
       expect(methodGuards).toEqual([AuthGuard, PermissionsGuard]);
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['edit-students']);
+    }
+  });
+
+  it('requires staff student access for raw lists while preserving scoped student self detail', () => {
+    for (const methodName of ['findAll', 'getFilterOptions', 'findCasesByName']) {
+      const handler = Object.getOwnPropertyDescriptor(StudentsController.prototype, methodName)
+        ?.value as () => unknown;
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['students']);
+    }
+
+    for (const methodName of ['findOne', 'findAttendanceByStudentId']) {
+      const handler = Object.getOwnPropertyDescriptor(StudentsController.prototype, methodName)
+        ?.value as () => unknown;
+      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler)).toEqual([
+        'students',
+        'student-self',
+      ]);
     }
   });
 });

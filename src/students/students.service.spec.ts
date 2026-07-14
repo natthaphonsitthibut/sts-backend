@@ -3,6 +3,7 @@ import { StudentsService } from './students.service';
 import { StudentsRepository } from './students.repository';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import { piiConfig } from '../config/pii.config';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 describe('StudentsService', () => {
   let service: StudentsService;
@@ -15,6 +16,7 @@ describe('StudentsService', () => {
     insertPiiAccessEvent: jest.Mock;
     listActiveRevealGroups: jest.Mock;
     updateStudentByUuid: jest.Mock;
+    findPersonUuidByStudentUuid: jest.Mock;
   };
   let geocodeCache: { resolve: jest.Mock };
 
@@ -33,6 +35,7 @@ describe('StudentsService', () => {
             insertPiiAccessEvent: jest.fn(),
             listActiveRevealGroups: jest.fn(),
             updateStudentByUuid: jest.fn(),
+            findPersonUuidByStudentUuid: jest.fn(),
           },
         },
         {
@@ -83,6 +86,23 @@ describe('StudentsService', () => {
       }),
       undefined,
     );
+  });
+
+  it('denies raw student lists to an EXECUTIVE even when students is re-granted', async () => {
+    await expect(
+      service.findAll(
+        { page: 1, limit: 20 },
+        { provinces: ['เชียงใหม่'] },
+        {
+          id: 70,
+          username: 'executive.regranted',
+          roles: ['EXECUTIVE'],
+          permissions: ['students', 'executive-report'],
+          data_scope: { provinces: ['เชียงใหม่'] },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(studentsRepository.listStudents).not.toHaveBeenCalled();
   });
 
   it('passes all-enrollment list mode only when requested', async () => {
@@ -218,5 +238,44 @@ describe('StudentsService', () => {
     expect(result.resolved_home_lat).toBe(18.8);
     expect(result.resolved_home_lng).toBe(99.0);
     expect(result.is_approximate_home_location).toBe(true);
+  });
+
+  it('keeps student-self attendance limited to the actor own enrollment', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const actor = {
+      id: 50,
+      username: 'student.self',
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
+      data_scope: { own_only: true },
+      student_uuid: studentUuid,
+      person_uuid: '10000000-0000-4000-8000-000000000001',
+    };
+    studentsRepository.listAttendanceByStudentId.mockResolvedValue([]);
+
+    await expect(service.findAttendanceByStudentId(studentUuid, actor)).resolves.toEqual([]);
+    expect(studentsRepository.listAttendanceByStudentId).toHaveBeenCalledWith(
+      studentUuid,
+      undefined,
+    );
+  });
+
+  it('denies student-self detail for another canonical person', async () => {
+    const requestedUuid = '00000000-0000-4000-8000-000000000002';
+    const actor = {
+      id: 50,
+      username: 'student.self',
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
+      data_scope: { own_only: true },
+      student_uuid: '00000000-0000-4000-8000-000000000001',
+      person_uuid: '10000000-0000-4000-8000-000000000001',
+    };
+    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(
+      '10000000-0000-4000-8000-000000000002',
+    );
+
+    await expect(service.findOne(requestedUuid, actor)).rejects.toBeInstanceOf(NotFoundException);
+    expect(studentsRepository.findStudentById).not.toHaveBeenCalled();
   });
 });

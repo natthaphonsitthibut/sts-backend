@@ -36,7 +36,7 @@ function firstHeaderValue(value: string | string[] | undefined): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PermissionsGuard)
 @Controller('api/students')
 export class StudentsController {
   private readonly logger = new Logger(StudentsController.name);
@@ -86,6 +86,7 @@ export class StudentsController {
   }
 
   @Get()
+  @RequirePermission('students')
   findAll(@Query() query: GetStudentsQueryDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findAll(query, resolveActorDataScope(actor), actor);
   }
@@ -93,19 +94,22 @@ export class StudentsController {
   // Declared before the dynamic `:id` route so the static segment isn't
   // captured as a student id.
   @Get('filter-options')
+  @RequirePermission('students')
   getFilterOptions(
     @Query() query: GetStudentFilterOptionsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return this.studentsService.getFilterOptions(query, resolveActorDataScope(actor));
+    return this.studentsService.getFilterOptions(query, resolveActorDataScope(actor), actor);
   }
 
   @Get('cases/by-name/:name')
+  @RequirePermission('students')
   findCasesByName(@Param('name') name: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findCasesByName(name, actor);
   }
 
   @Get('attendance/:id')
+  @RequireAnyPermission('students', 'student-self')
   findAttendanceByStudentId(
     @Param('id') id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -114,6 +118,7 @@ export class StudentsController {
   }
 
   @Get(':id')
+  @RequireAnyPermission('students', 'student-self')
   findOne(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findOne(id, actor, resolveActorDataScope(actor));
   }
