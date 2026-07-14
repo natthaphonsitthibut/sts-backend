@@ -42,6 +42,13 @@ import { RedisModule } from './redis/redis.module';
 import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
 import { HomeDashboardModule } from './home-dashboard/home-dashboard.module';
 import { DataExportsModule } from './data-exports/data-exports.module';
+import { SchoolStructureModule } from './school-structure/school-structure.module';
+import { TeacherAccessModule } from './teacher-access/teacher-access.module';
+import { StudentObservationsModule } from './student-observations/student-observations.module';
+import { CaseReportUpsModule } from './case-report-ups/case-report-ups.module';
+import { ExecutiveReportingModule } from './executive-reporting/executive-reporting.module';
+import { StudentObservationSummaryModule } from './student-observation-summaries/student-observation-summary.module';
+import { ObservationReviewsModule } from './observation-reviews/observation-reviews.module';
 
 @Module({
   imports: [
@@ -88,6 +95,11 @@ import { DataExportsModule } from './data-exports/data-exports.module';
             ttl: config.campaignLookup.ttlMs,
             limit: config.campaignLookup.limit,
           },
+          {
+            name: 'teacherAccess',
+            ttl: config.teacherAccess.ttlMs,
+            limit: config.teacherAccess.limit,
+          },
         ],
       }),
     }),
@@ -115,6 +127,13 @@ import { DataExportsModule } from './data-exports/data-exports.module';
     TimetableModule,
     HomeDashboardModule,
     DataExportsModule,
+    SchoolStructureModule,
+    TeacherAccessModule,
+    StudentObservationsModule,
+    ObservationReviewsModule,
+    CaseReportUpsModule,
+    ExecutiveReportingModule.registerAsync(),
+    StudentObservationSummaryModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],

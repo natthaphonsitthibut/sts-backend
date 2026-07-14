@@ -1,5 +1,6 @@
 import { SYSTEM_ROLE_DEFINITIONS } from '../auth/permissions.constants';
 import { SYSTEM_SETTING_CATALOG } from '../settings/settings-catalog';
+import { CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL } from './customer-alignment-bootstrap-sql';
 
 interface SqlExecutor {
   query(sql: string, params?: unknown[]): Promise<unknown>;
@@ -483,7 +484,7 @@ export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
     completed_at TIMESTAMPTZ,
     ${AUDIT_COLUMNS_SQL},
     CONSTRAINT chk_student_import_batches_target
-      CHECK (target IN ('student_term', 'student_dropouts')),
+      CHECK (target IN ('student_term', 'student_exit_events', 'school_teacher_membership')),
     CONSTRAINT chk_student_import_batches_source_sha256
       CHECK (source_sha256 ~ '^[0-9a-f]{64}$'),
     CONSTRAINT chk_student_import_batches_status
@@ -553,7 +554,7 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
     ('OPEN', 'รอสร้างลิงก์', 'secondary', 'default', 10),
     ('PENDING_REVIEW', 'รอตรวจผล', 'default', 'info', 20),
     ('IN_PROGRESS', 'กำลังติดตาม', 'warning', 'warning', 30),
-    ('AWAITING_HELP', 'รอช่วยเหลือ', 'destructive', 'danger', 40),
+    ('REPORTED_UP', 'รายงานขึ้นส่วนกลางแล้ว', 'destructive', 'danger', 45),
     ('RESOLVED', 'ปิดเคสแล้ว', 'success', 'success', 50)
   ON CONFLICT (code) DO NOTHING;
   ALTER TABLE cases DROP CONSTRAINT IF EXISTS chk_cases_status;
@@ -734,25 +735,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('FAILED', 'ล้มเหลว', 'destructive', 40)
   ON CONFLICT (code) DO NOTHING;
 
-  CREATE TABLE IF NOT EXISTS case_referral_statuses (
-    code VARCHAR(16) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_case_referral_statuses_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_case_referral_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
-  );
-  ${auditUpdatedAtTriggerSql('case_referral_statuses')}
-  INSERT INTO case_referral_statuses (code, label_th, badge_variant, sort_order) VALUES
-    ('SENT', 'ส่งต่อแล้ว', 'default', 10),
-    ('ACKNOWLEDGED', 'รับทราบแล้ว', 'secondary', 20),
-    ('ACCEPTED', 'รับดำเนินการ', 'success', 30),
-    ('DECLINED', 'ปฏิเสธรับเรื่อง', 'destructive', 40),
-    ('RETURNED', 'ส่งกลับ', 'warning', 50)
-  ON CONFLICT (code) DO NOTHING;
-
   CREATE TABLE IF NOT EXISTS student_import_batch_statuses (
     code VARCHAR(16) PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,
@@ -832,7 +814,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   ALTER TABLE attendance_sessions DROP CONSTRAINT IF EXISTS chk_attendance_sessions_status;
   ALTER TABLE student_account_batch_job DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_status;
   ALTER TABLE student_account_batch_job_item DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_item_status;
-  ALTER TABLE case_referrals DROP CONSTRAINT IF EXISTS chk_case_referrals_status;
   ALTER TABLE student_import_batches DROP CONSTRAINT IF EXISTS chk_student_import_batches_status;
 
   DO $operational_status_fks$
@@ -872,10 +853,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_account_batch_item_status') THEN
       ALTER TABLE student_account_batch_job_item ADD CONSTRAINT fk_student_account_batch_item_status FOREIGN KEY (status)
         REFERENCES student_account_batch_item_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_case_referrals_status') THEN
-      ALTER TABLE case_referrals ADD CONSTRAINT fk_case_referrals_status FOREIGN KEY (status)
-        REFERENCES case_referral_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_import_batches_status') THEN
       ALTER TABLE student_import_batches ADD CONSTRAINT fk_student_import_batches_status FOREIGN KEY (status)
@@ -1031,8 +1008,29 @@ export const DATABASE_BASELINE_SQL = `
     name TEXT NOT NULL,
     province TEXT,
     district TEXT,
-    sub_district TEXT
+    sub_district TEXT,
+    school_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    CONSTRAINT chk_schools_status CHECK (school_status IN ('ACTIVE', 'INACTIVE'))
   );
+
+  ALTER TABLE schools
+    ADD COLUMN IF NOT EXISTS school_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE';
+
+  DO $$ BEGIN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conname = 'chk_schools_status'
+        AND conrelid = 'schools'::regclass
+    ) THEN
+      ALTER TABLE schools
+        ADD CONSTRAINT chk_schools_status
+        CHECK (school_status IN ('ACTIVE', 'INACTIVE'));
+    END IF;
+  END $$;
+
+  CREATE INDEX IF NOT EXISTS idx_schools_status_geo
+    ON schools (school_status, province, district, sub_district, id);
 
   CREATE TABLE IF NOT EXISTS grade_levels (
     id SERIAL PRIMARY KEY,
@@ -1046,7 +1044,7 @@ export const DATABASE_BASELINE_SQL = `
     student_first_name TEXT,
     student_last_name TEXT,
     student_id TEXT,
-    school_id INTEGER,
+    school_id INTEGER NOT NULL,
     student_school TEXT,
     student_address TEXT,
     address_line TEXT,
@@ -1162,34 +1160,40 @@ export const DATABASE_BASELINE_SQL = `
     "PostalCode_Onec" VARCHAR(5)
   );
 
-  CREATE TABLE IF NOT EXISTS student_dropouts (
-    "ProvinceNameThai_Onec" TEXT,
-    "DistrictNameThai_Onec" TEXT,
-    "SubDistrictNameThai_Onec" TEXT,
-    "PersonID_Onec" TEXT PRIMARY KEY,
-    "student_uuid" UUID NOT NULL DEFAULT gen_random_uuid()
-      CONSTRAINT uq_student_dropouts_student_uuid UNIQUE,
-    "Fullname_Onec" TEXT,
-    "Gender_Onec" TEXT,
-    "NationalityName_Onec" TEXT,
-    "BirthDate_Onec" TEXT,
-    "HouseNumber_Onec" TEXT,
-    "VillageNumber_Onec" TEXT,
-    "Street_Onec" TEXT,
-    "Soi_Onec" TEXT,
-    "Trok_Onec" TEXT,
-    "StatusCodeCause_Onec" TEXT,
-    "Remark_Onec" TEXT,
-    "SchoolName_Onec" TEXT,
-    "GradeLevelID_Onec" INTEGER,
-    "AcademicYearPresent_Onec" INTEGER,
-    "DropoutTransferID_Onec" INTEGER,
-    "ACADYEAR" INTEGER,
-    "RoomID_Onec" INTEGER,
-    "SchoolID_Onec" INTEGER,
-    "GenderID_Onec" INTEGER,
-    "GPAX_Onec" REAL
+  CREATE TABLE IF NOT EXISTS student_exit_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    person_uuid UUID NOT NULL REFERENCES student_person(person_uuid)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    school_id INTEGER NOT NULL REFERENCES schools(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    source_student_uuid UUID NOT NULL UNIQUE,
+    source_system VARCHAR(32) NOT NULL,
+    source_record_key_sha256 CHAR(64) NOT NULL,
+    exit_reason_source_code VARCHAR(64),
+    academic_year INTEGER,
+    last_enrolled_academic_year INTEGER,
+    last_grade_level_id INTEGER REFERENCES grade_levels(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    last_room_number INTEGER,
+    last_gpax REAL,
+    note TEXT,
+    effective_at DATE,
+    source_record_snapshot JSONB NOT NULL,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT uq_student_exit_events_source_record
+      UNIQUE (source_system, source_record_key_sha256),
+    CONSTRAINT chk_student_exit_events_source_system
+      CHECK (length(trim(source_system)) > 0),
+    CONSTRAINT chk_student_exit_events_source_record_key_sha256
+      CHECK (source_record_key_sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_student_exit_events_source_snapshot
+      CHECK (jsonb_typeof(source_record_snapshot) = 'object')
   );
+  ${auditUpdatedAtTriggerSql('student_exit_events')}
+  CREATE INDEX IF NOT EXISTS idx_student_exit_events_person_year
+    ON student_exit_events (person_uuid, academic_year DESC);
+  CREATE INDEX IF NOT EXISTS idx_student_exit_events_school_year
+    ON student_exit_events (school_id, academic_year DESC);
 
   CREATE TABLE IF NOT EXISTS attendance (
       "AttendanceID"        SERIAL PRIMARY KEY,
@@ -1303,40 +1307,33 @@ export const DATABASE_BASELINE_SQL = `
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
-  CREATE TABLE IF NOT EXISTS external_agencies (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    agency_type TEXT NOT NULL,
-    province TEXT,
-    district TEXT,
-    sub_district TEXT,
-    phone TEXT,
-    contact_person TEXT,
-    address TEXT,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_external_agencies_type
-      CHECK (agency_type IN ('HOSPITAL', 'POLICE', 'SOCIAL_WELFARE', 'NGO', 'EDUCATION', 'OTHER'))
-  );
-
-  CREATE TABLE IF NOT EXISTS case_referrals (
+  CREATE TABLE IF NOT EXISTS case_report_ups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
-    agency_id INTEGER REFERENCES external_agencies(id) ON DELETE SET NULL,
-    agency_name_snapshot TEXT NOT NULL,
-    agency_type_snapshot TEXT NOT NULL,
-    referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    referred_by_label TEXT,
-    referred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    referral_note TEXT,
-    status TEXT NOT NULL DEFAULT 'SENT',
-    outcome TEXT,
-    responded_at TIMESTAMPTZ,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_case_referrals_status
-      CHECK (status IN ('SENT', 'ACKNOWLEDGED', 'ACCEPTED', 'DECLINED', 'RETURNED')),
-    CONSTRAINT chk_case_referrals_agency_type
-      CHECK (agency_type_snapshot IN ('HOSPITAL', 'POLICE', 'SOCIAL_WELFARE', 'NGO', 'EDUCATION', 'OTHER'))
+    case_id INTEGER NOT NULL,
+    school_id INTEGER,
+    reported_by INTEGER,
+    reported_by_label VARCHAR(255),
+    report_reason VARCHAR(500),
+    report_summary VARCHAR(2000),
+    school_name_snapshot VARCHAR(255),
+    province_snapshot VARCHAR(255),
+    district_snapshot VARCHAR(255),
+    sub_district_snapshot VARCHAR(255),
+    reported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_case_report_ups_case UNIQUE (case_id),
+    CONSTRAINT fk_case_report_ups_case
+      FOREIGN KEY (case_id) REFERENCES cases(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_case_report_ups_school
+      FOREIGN KEY (school_id) REFERENCES schools(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_case_report_ups_reported_by
+      FOREIGN KEY (reported_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT chk_case_report_ups_reason
+      CHECK (report_reason IS NULL OR length(trim(report_reason)) > 0),
+    CONSTRAINT chk_case_report_ups_summary
+      CHECK (report_summary IS NULL OR length(trim(report_summary)) > 0)
   );
 
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "PersonID_Onec" TEXT;
@@ -1444,19 +1441,19 @@ export const DATABASE_BASELINE_SQL = `
           'ILLNESS',
           'WORKING',
           'UNREACHABLE',
-          'REFERRED_EXTERNAL',
           'OTHER'
         )
       );
     END IF;
   END $case_review_outcome$;
-  CREATE INDEX IF NOT EXISTS idx_external_agencies_scope ON external_agencies(province, district, sub_district);
-  CREATE INDEX IF NOT EXISTS idx_external_agencies_type_active ON external_agencies(agency_type, is_active);
-  CREATE INDEX IF NOT EXISTS idx_case_referrals_case ON case_referrals(case_id, referred_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_case_referrals_agency ON case_referrals(agency_id);
+  CREATE INDEX IF NOT EXISTS idx_case_report_ups_case_time
+    ON case_report_ups (case_id, reported_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_case_report_ups_school_time
+    ON case_report_ups (school_id, reported_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_case_report_ups_province_time
+    ON case_report_ups (province_snapshot, reported_at DESC);
   CREATE INDEX IF NOT EXISTS idx_cases_school_id ON cases(school_id);
   CREATE INDEX IF NOT EXISTS idx_cases_student_uuid ON cases(student_uuid);
-  CREATE INDEX IF NOT EXISTS idx_attendance_person_id ON attendance("PersonID_Onec");
   CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance("AttendanceDate");
   CREATE INDEX IF NOT EXISTS idx_attendance_student_uuid ON attendance(student_uuid);
   CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_scope
@@ -1493,24 +1490,6 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS updated_student_address TEXT;
   ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS updated_lat REAL;
   ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS updated_lng REAL;
-  ${auditUpdatedAtTriggerSql('external_agencies')}
-  ${auditUpdatedAtTriggerSql('case_referrals')}
-
-  INSERT INTO external_agencies
-    (name, agency_type, province, district, sub_district, phone, contact_person, address)
-  SELECT *
-  FROM (
-    VALUES
-      ('โรงพยาบาลส่งเสริมสุขภาพตำบลดุสิต', 'HOSPITAL', 'กรุงเทพมหานคร', 'ดุสิต', 'ดุสิต', '02-000-0001', 'เจ้าหน้าที่รับส่งต่อ', 'ดุสิต กรุงเทพมหานคร'),
-      ('สถานีตำรวจนครบาลดุสิต', 'POLICE', 'กรุงเทพมหานคร', 'ดุสิต', 'ดุสิต', '02-000-0002', 'งานป้องกันและปราบปราม', 'ดุสิต กรุงเทพมหานคร'),
-      ('สำนักงานพัฒนาสังคมและความมั่นคงของมนุษย์จังหวัดกรุงเทพมหานคร', 'SOCIAL_WELFARE', 'กรุงเทพมหานคร', NULL, NULL, '02-000-0003', 'ศูนย์ประสานงานเด็กและครอบครัว', 'กรุงเทพมหานคร')
-  ) AS seed(name, agency_type, province, district, sub_district, phone, contact_person, address)
-  WHERE NOT EXISTS (
-    SELECT 1 FROM external_agencies existing
-    WHERE existing.name = seed.name
-      AND existing.agency_type = seed.agency_type
-  );
-
   DO $$
   BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_term_school') THEN
@@ -1519,15 +1498,6 @@ export const DATABASE_BASELINE_SQL = `
 
           ALTER TABLE student_term
           ADD CONSTRAINT fk_student_term_school
-          FOREIGN KEY ("SchoolID_Onec") REFERENCES schools(id) ON DELETE SET NULL;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_dropouts_school') THEN
-          UPDATE student_dropouts SET "SchoolID_Onec" = NULL
-          WHERE "SchoolID_Onec" IS NOT NULL AND "SchoolID_Onec" NOT IN (SELECT id FROM schools);
-
-          ALTER TABLE student_dropouts
-          ADD CONSTRAINT fk_student_dropouts_school
           FOREIGN KEY ("SchoolID_Onec") REFERENCES schools(id) ON DELETE SET NULL;
       END IF;
 
@@ -1888,17 +1858,9 @@ export const DATABASE_BASELINE_SQL = `
     id SERIAL PRIMARY KEY,
     label TEXT NOT NULL UNIQUE
   );
-  CREATE TABLE IF NOT EXISTS dropout_reasons (
-    id SERIAL PRIMARY KEY,
-    label TEXT NOT NULL UNIQUE
-  );
   CREATE TABLE IF NOT EXISTS assistance_measures (
     id SERIAL PRIMARY KEY,
     label TEXT NOT NULL UNIQUE
-  );
-  CREATE TABLE IF NOT EXISTS related_agencies (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
   );
   CREATE TABLE IF NOT EXISTS educational_areas (
     id SERIAL PRIMARY KEY,
@@ -2073,6 +2035,8 @@ export const DATABASE_BASELINE_SQL = `
   ${DATA_EXPORT_TABLES_SQL}
 
   ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
+
+  ${CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL}
 
   ${CASE_WORKFLOW_STATUS_TABLE_SQL}
 
