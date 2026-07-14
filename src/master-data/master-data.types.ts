@@ -1,9 +1,6 @@
 export const MASTER_DATA_TABLES = [
   'risk_factors',
-  'dropout_reasons',
   'assistance_measures',
-  'related_agencies',
-  'schools',
   'educational_areas',
   'school_affiliations',
   'disability_types',
@@ -25,8 +22,6 @@ export const CODED_MASTER_DATA_TABLES = [
 export type CodedMasterDataTable = (typeof CODED_MASTER_DATA_TABLES)[number];
 
 const MASTER_DATA_NAME_TABLES = new Set<MasterDataTable>([
-  'related_agencies',
-  'schools',
   'educational_areas',
   'school_affiliations',
   'disability_types',
@@ -57,6 +52,25 @@ export interface MasterDataRow extends Record<string, unknown> {
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
   rows: T[];
+}
+
+export const SCHOOL_STATUSES = ['ACTIVE', 'INACTIVE'] as const;
+export type SchoolStatus = (typeof SCHOOL_STATUSES)[number];
+
+export interface SchoolMasterDataRow extends Record<string, unknown> {
+  id: number;
+  name: string;
+  province: string | null;
+  district: string | null;
+  sub_district: string | null;
+  school_status: SchoolStatus;
+}
+
+export interface SchoolMasterDataInput {
+  name: string;
+  province: string | null;
+  district: string | null;
+  subDistrict: string | null;
 }
 
 export function isMasterDataTable(value: string): value is MasterDataTable {
