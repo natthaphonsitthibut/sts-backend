@@ -19,7 +19,7 @@ export class RedisClientService implements OnModuleInit, OnApplicationShutdown {
     private readonly config: ConfigType<typeof queueConfig>,
   ) {
     if (config.requireRedis && !config.redisUrl) {
-      throw new Error('REDIS_URL or QUEUE_REDIS_URL is required for production shared stores');
+      throw new Error('REDIS_URL is required for production shared stores');
     }
   }
 

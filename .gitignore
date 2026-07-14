@@ -8,6 +8,7 @@ coverage/
 
 # Runtime uploads and local files
 uploads/
+.data-export-artifacts/
 data/samples/
 
 # Environment files

@@ -276,6 +276,121 @@ export const STUDENT_ACCOUNT_BATCH_TABLES_SQL = `
     ON student_account_batch_job_item (job_id, status);
 `;
 
+export const DATA_EXPORT_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS data_export_job (
+    id UUID PRIMARY KEY,
+    dataset_code VARCHAR(64) NOT NULL,
+    field_bundle_code VARCHAR(64) NOT NULL,
+    output_format VARCHAR(16) NOT NULL DEFAULT 'CSV',
+    sensitivity_class VARCHAR(32) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+    requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    scope_snapshot JSONB NOT NULL,
+    filter_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    purpose_code VARCHAR(64),
+    purpose_note TEXT,
+    estimated_row_count INTEGER,
+    exported_row_count INTEGER,
+    artifact_size_bytes BIGINT,
+    progress_percent SMALLINT NOT NULL DEFAULT 0,
+    artifact_storage_key TEXT UNIQUE,
+    artifact_sha256 CHAR(64),
+    failure_code VARCHAR(64),
+    failure_summary TEXT,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    canceled_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  DO $data_export_job_constraints$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_data_export_job_format') THEN
+      ALTER TABLE data_export_job
+        ADD CONSTRAINT chk_data_export_job_format CHECK (output_format IN ('CSV'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_data_export_job_sensitivity') THEN
+      ALTER TABLE data_export_job
+        ADD CONSTRAINT chk_data_export_job_sensitivity
+        CHECK (sensitivity_class IN ('LOW','AGGREGATE','OPERATIONAL','SENSITIVE_OPERATIONAL','SENSITIVE_PII','PRIVILEGED'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_data_export_job_status') THEN
+      ALTER TABLE data_export_job
+        ADD CONSTRAINT chk_data_export_job_status
+        CHECK (status IN ('PENDING','RUNNING','COMPLETED','FAILED','CANCELED','EXPIRED'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_data_export_job_progress') THEN
+      ALTER TABLE data_export_job
+        ADD CONSTRAINT chk_data_export_job_progress CHECK (progress_percent BETWEEN 0 AND 100);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_data_export_job_counts') THEN
+      ALTER TABLE data_export_job
+        ADD CONSTRAINT chk_data_export_job_counts
+        CHECK (
+          (estimated_row_count IS NULL OR estimated_row_count >= 0)
+          AND (exported_row_count IS NULL OR exported_row_count >= 0)
+          AND (artifact_size_bytes IS NULL OR artifact_size_bytes >= 0)
+        );
+    END IF;
+  END $data_export_job_constraints$;
+
+  CREATE INDEX IF NOT EXISTS idx_data_export_job_requested_by_created_at
+    ON data_export_job (requested_by, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_data_export_job_status_created_at
+    ON data_export_job (status, created_at);
+  CREATE INDEX IF NOT EXISTS idx_data_export_job_completed_expires_at
+    ON data_export_job (expires_at)
+    WHERE status = 'COMPLETED';
+
+  DROP TRIGGER IF EXISTS trg_data_export_job_set_updated_at ON data_export_job;
+  CREATE TRIGGER trg_data_export_job_set_updated_at
+    BEFORE UPDATE ON data_export_job
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+  CREATE TABLE IF NOT EXISTS data_export_job_event (
+    id BIGSERIAL PRIMARY KEY,
+    job_id UUID NOT NULL REFERENCES data_export_job(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    event_code VARCHAR(32) NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ip_address INET,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  DO $data_export_job_event_constraints$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_data_export_job_event_code') THEN
+      ALTER TABLE data_export_job_event
+        ADD CONSTRAINT chk_data_export_job_event_code
+        CHECK (event_code IN ('REQUESTED','STARTED','COMPLETED','FAILED','CANCELED','RETRIED','DOWNLOADED','EXPIRED'));
+    END IF;
+  END $data_export_job_event_constraints$;
+
+  CREATE INDEX IF NOT EXISTS idx_data_export_job_event_job_created_at
+    ON data_export_job_event (job_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_data_export_job_event_actor_created_at
+    ON data_export_job_event (actor_user_id, created_at DESC);
+
+  CREATE OR REPLACE FUNCTION prevent_data_export_job_event_mutation()
+  RETURNS trigger AS $prevent_data_export_job_event_mutation$
+  BEGIN
+    RAISE EXCEPTION 'data_export_job_event is immutable';
+  END;
+  $prevent_data_export_job_event_mutation$ LANGUAGE plpgsql;
+
+  DROP TRIGGER IF EXISTS trg_data_export_job_event_no_update ON data_export_job_event;
+  CREATE TRIGGER trg_data_export_job_event_no_update
+    BEFORE UPDATE ON data_export_job_event
+    FOR EACH ROW EXECUTE FUNCTION prevent_data_export_job_event_mutation();
+
+  DROP TRIGGER IF EXISTS trg_data_export_job_event_no_delete ON data_export_job_event;
+  CREATE TRIGGER trg_data_export_job_event_no_delete
+    BEFORE DELETE ON data_export_job_event
+    FOR EACH ROW EXECUTE FUNCTION prevent_data_export_job_event_mutation();
+`;
+
 /** Persistent, scope-addressable review queue for invalid student import rows. */
 export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS student_import_quarantine_statuses (
@@ -1954,6 +2069,8 @@ export const DATABASE_BASELINE_SQL = `
   ${STUDENT_CURRENT_ENROLLMENT_VIEW_SQL}
 
   ${STUDENT_ACCOUNT_BATCH_TABLES_SQL}
+
+  ${DATA_EXPORT_TABLES_SQL}
 
   ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
 

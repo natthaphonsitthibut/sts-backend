@@ -1,22 +1,24 @@
 import { registerAs } from '@nestjs/config';
 
-export type StudentAccountBatchQueueMode = 'inline' | 'bullmq';
-export type RiskProfileQueueMode = 'inline' | 'bullmq';
-
 export interface QueueRuntimeConfig {
   redisUrl?: string;
   requireRedis: boolean;
   studentAccountBatch: {
-    mode: StudentAccountBatchQueueMode;
     queueName: string;
     attempts: number;
     backoffMs: number;
   };
   riskProfile: {
-    mode: RiskProfileQueueMode;
     queueName: string;
     attempts: number;
     backoffMs: number;
+  };
+  dataExport: {
+    queueName: string;
+    attempts: number;
+    backoffMs: number;
+    artifactTtlHours: number;
+    storagePrefix: string;
   };
 }
 
@@ -30,38 +32,29 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function parseQueueMode(
-  value: string | undefined,
-  hasRedis: boolean,
-): StudentAccountBatchQueueMode | RiskProfileQueueMode {
-  const normalized = clean(value)?.toLowerCase();
-  if (normalized === 'bullmq' || normalized === 'redis') {
-    return 'bullmq';
-  }
-  if (normalized === 'inline' || normalized === 'in-process') {
-    return 'inline';
-  }
-  return hasRedis ? 'bullmq' : 'inline';
-}
-
 export function getQueueConfigFromEnv(): QueueRuntimeConfig {
-  const redisUrl = clean(process.env.REDIS_URL) ?? clean(process.env.QUEUE_REDIS_URL);
+  const redisUrl = clean(process.env.REDIS_URL);
   const nodeEnv = (process.env.NODE_ENV || 'development').trim().toLowerCase();
 
   return {
     redisUrl,
     requireRedis: nodeEnv === 'production',
     studentAccountBatch: {
-      mode: parseQueueMode(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_MODE, Boolean(redisUrl)),
       queueName: clean(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_NAME) ?? 'student-account-batch',
       attempts: parsePositiveInt(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_ATTEMPTS, 3),
       backoffMs: parsePositiveInt(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_BACKOFF_MS, 30_000),
     },
     riskProfile: {
-      mode: parseQueueMode(process.env.RISK_PROFILE_QUEUE_MODE, Boolean(redisUrl)),
       queueName: clean(process.env.RISK_PROFILE_QUEUE_NAME) ?? 'student-risk-profile',
       attempts: parsePositiveInt(process.env.RISK_PROFILE_QUEUE_ATTEMPTS, 3),
       backoffMs: parsePositiveInt(process.env.RISK_PROFILE_QUEUE_BACKOFF_MS, 30_000),
+    },
+    dataExport: {
+      queueName: clean(process.env.DATA_EXPORT_QUEUE_NAME) ?? 'data-export',
+      attempts: parsePositiveInt(process.env.DATA_EXPORT_QUEUE_ATTEMPTS, 3),
+      backoffMs: parsePositiveInt(process.env.DATA_EXPORT_QUEUE_BACKOFF_MS, 30_000),
+      artifactTtlHours: parsePositiveInt(process.env.DATA_EXPORT_ARTIFACT_TTL_HOURS, 24),
+      storagePrefix: clean(process.env.DATA_EXPORT_STORAGE_PREFIX) ?? 'data-exports/',
     },
   };
 }

@@ -6,16 +6,21 @@ function config(overrides: Partial<QueueRuntimeConfig> = {}): QueueRuntimeConfig
     redisUrl: undefined,
     requireRedis: false,
     studentAccountBatch: {
-      mode: 'inline',
       queueName: 'student-account-batch',
       attempts: 3,
       backoffMs: 30_000,
     },
     riskProfile: {
-      mode: 'inline',
       queueName: 'student-risk-profile',
       attempts: 3,
       backoffMs: 30_000,
+    },
+    dataExport: {
+      queueName: 'data-export',
+      attempts: 3,
+      backoffMs: 30_000,
+      artifactTtlHours: 24,
+      storagePrefix: 'data-exports/',
     },
     ...overrides,
   };
@@ -24,7 +29,7 @@ function config(overrides: Partial<QueueRuntimeConfig> = {}): QueueRuntimeConfig
 describe('RedisClientService', () => {
   it('fails startup config when production requires Redis without a URL', () => {
     expect(() => new RedisClientService(config({ requireRedis: true }))).toThrow(
-      'REDIS_URL or QUEUE_REDIS_URL is required for production shared stores',
+      'REDIS_URL is required for production shared stores',
     );
   });
 

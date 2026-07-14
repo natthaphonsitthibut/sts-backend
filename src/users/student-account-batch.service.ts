@@ -59,10 +59,10 @@ interface StudentAccountBatchQueuePayload {
 
 /**
  * Async large-batch student-account generation. The HTTP request only enqueues
- * a durable job and returns immediately. When Redis is configured, BullMQ owns
- * cross-process dispatch; local/test environments can still use the inline
- * fallback. Chunks commit as they go, so progress survives failures and the job
- * is resumable. Credentials are never stored — a printable sheet is produced on
+ * a durable job and returns immediately. BullMQ owns cross-process dispatch;
+ * when the queue is unavailable, enqueue fails closed rather than processing
+ * inline. Chunks commit as they go, so progress survives failures and the job is
+ * resumable. Credentials are never stored — a printable sheet is produced on
  * demand by rotating temporary passwords through the existing reissue path.
  */
 @Injectable()
@@ -87,9 +87,9 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
   async onModuleInit(): Promise<void> {
     const config = this.queueRuntimeConfig();
     if (config.requireRedis && !config.redisUrl) {
-      throw new Error('REDIS_URL or QUEUE_REDIS_URL is required for production queue processing');
+      throw new Error('REDIS_URL is required for production queue processing');
     }
-    if (config.studentAccountBatch.mode === 'bullmq') {
+    if (config.redisUrl) {
       await this.initializeBullQueue(config);
       return;
     }
@@ -306,16 +306,21 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
         redisUrl: undefined,
         requireRedis: false,
         studentAccountBatch: {
-          mode: 'inline',
           queueName: 'student-account-batch',
           attempts: 3,
           backoffMs: 30_000,
         },
         riskProfile: {
-          mode: 'inline',
           queueName: 'student-risk-profile',
           attempts: 3,
           backoffMs: 30_000,
+        },
+        dataExport: {
+          queueName: 'data-export',
+          attempts: 3,
+          backoffMs: 30_000,
+          artifactTtlHours: 24,
+          storagePrefix: 'data-exports/',
         },
       }
     );
@@ -323,7 +328,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
 
   private async initializeBullQueue(config: ConfigType<typeof queueConfig>): Promise<void> {
     if (!config.redisUrl) {
-      throw new Error('Redis URL is required when STUDENT_ACCOUNT_BATCH_QUEUE_MODE=bullmq');
+      throw new Error('Redis URL is required for student-account batch queue processing');
     }
     const connection = {
       url: config.redisUrl,
@@ -375,21 +380,14 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
   }
 
   private async dispatchJob(jobId: string): Promise<void> {
-    const config = this.queueRuntimeConfig();
-    if (config.studentAccountBatch.mode === 'bullmq') {
-      if (!this.queue) {
-        await this.batchRepository.setJobStatus(jobId, 'FAILED', {
-          errorSummary: 'Student-account batch queue is not ready',
-          finished: true,
-        });
-        throw new BadRequestException('ระบบคิวงานยังไม่พร้อม กรุณาลองใหม่อีกครั้ง');
-      }
-      await this.queue.add('process', { jobId }, { jobId });
-      return;
+    if (!this.queue) {
+      await this.batchRepository.setJobStatus(jobId, 'FAILED', {
+        errorSummary: 'Student-account batch queue is not ready',
+        finished: true,
+      });
+      throw new BadRequestException('ระบบคิวงานยังไม่พร้อม กรุณาลองใหม่อีกครั้ง');
     }
-    void this.runJob(jobId).catch((error) => {
-      this.logger.error(`Batch job ${jobId} crashed: ${this.errorMessage(error)}`);
-    });
+    await this.queue.add('process', { jobId }, { jobId });
   }
 
   private async runJob(jobId: string): Promise<void> {

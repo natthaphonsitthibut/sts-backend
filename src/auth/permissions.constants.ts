@@ -48,6 +48,7 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
   { id: 'student-self', label: 'ข้อมูลตัวเอง' },
   { id: 'create', label: 'สร้างลิงก์' },
   { id: 'import-data', label: 'นำเข้าข้อมูล' },
+  { id: 'export-data', label: 'ส่งออกข้อมูล' },
   {
     id: 'attendance-system',
     label: 'ระบบเช็คชื่อ',
@@ -113,6 +114,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'login-links',
       'settings',
       'import-data',
+      'export-data',
       'audit-log',
       'field-monitor',
     ],
@@ -141,6 +143,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'manage-users-list',
       'login-links',
       'settings',
+      'export-data',
       'audit-log',
       'field-monitor',
     ],

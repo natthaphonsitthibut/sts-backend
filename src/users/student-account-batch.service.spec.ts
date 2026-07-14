@@ -93,6 +93,9 @@ describe('StudentAccountBatchService', () => {
     >
   >;
   let service: StudentAccountBatchService;
+  let queue: {
+    add: jest.MockedFunction<(name: string, data: unknown, options: unknown) => Promise<void>>;
+  };
 
   beforeEach(() => {
     batchRepository = {
@@ -145,6 +148,10 @@ describe('StudentAccountBatchService', () => {
       auditLog as unknown as AuditLogService,
       notificationsService as unknown as NotificationsService,
     );
+    queue = {
+      add: jest.fn<Promise<void>, [string, unknown, unknown]>().mockResolvedValue(undefined),
+    };
+    (service as unknown as { queue: typeof queue }).queue = queue;
   });
 
   const flush = async () => {
@@ -166,10 +173,7 @@ describe('StudentAccountBatchService', () => {
   });
 
   it('enqueues a job, snapshots candidate count, and audits', async () => {
-    // Stop the fire-and-forget processing from doing work in this test.
-    batchRepository.claimJobForRun.mockResolvedValue(null);
     const result = await service.enqueue(actor, { schoolId: 10010002 });
-    await flush();
     expect(batchRepository.createJob).toHaveBeenCalledWith(
       expect.objectContaining({ createdBy: 5, totalCandidates: 1 }),
     );
@@ -184,9 +188,11 @@ describe('StudentAccountBatchService', () => {
     );
     expect(result.success).toBe(true);
     expect(result.data.id).toBe('job-1');
+    expect(queue.add).toHaveBeenCalledWith('process', { jobId: 'job-1' }, { jobId: 'job-1' });
+    expect(batchRepository.claimJobForRun).not.toHaveBeenCalled();
   });
 
-  it('dispatches queued jobs through BullMQ when Redis queue mode is enabled', async () => {
+  it('dispatches queued jobs through BullMQ', async () => {
     const bullService = new StudentAccountBatchService(
       batchRepository as unknown as StudentAccountBatchRepository,
       usersRepository as unknown as UsersRepository,
@@ -198,22 +204,45 @@ describe('StudentAccountBatchService', () => {
         redisUrl: 'redis://localhost:6379',
         requireRedis: false,
         studentAccountBatch: {
-          mode: 'bullmq',
           queueName: 'student-account-batch-test',
           attempts: 3,
           backoffMs: 30_000,
         },
+        riskProfile: {
+          queueName: 'student-risk-profile-test',
+          attempts: 3,
+          backoffMs: 30_000,
+        },
+        dataExport: {
+          queueName: 'data-export-test',
+          attempts: 3,
+          backoffMs: 30_000,
+          artifactTtlHours: 24,
+          storagePrefix: 'data-exports/',
+        },
       },
     );
-    const queue = { add: jest.fn().mockResolvedValue(undefined) };
-    (bullService as unknown as { queue: { add: jest.Mock<Promise<void>, unknown[]> } }).queue =
-      queue;
+    (bullService as unknown as { queue: typeof queue }).queue = queue;
 
     const result = await bullService.enqueue(actor, { schoolId: 10010002 });
 
     expect(queue.add).toHaveBeenCalledWith('process', { jobId: 'job-1' }, { jobId: 'job-1' });
     expect(batchRepository.claimJobForRun).not.toHaveBeenCalled();
     expect(result.success).toBe(true);
+  });
+
+  it('fails closed when the queue is not ready', async () => {
+    (service as unknown as { queue?: typeof queue }).queue = undefined;
+
+    await expect(service.enqueue(actor, { schoolId: 10010002 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(batchRepository.setJobStatus).toHaveBeenCalledWith('job-1', 'FAILED', {
+      errorSummary: 'Student-account batch queue is not ready',
+      finished: true,
+    });
+    expect(batchRepository.claimJobForRun).not.toHaveBeenCalled();
   });
 
   it('rejects enqueue when room is specified without grade', async () => {

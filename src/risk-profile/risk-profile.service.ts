@@ -43,9 +43,9 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
   async onModuleInit(): Promise<void> {
     const config = this.queueRuntimeConfig();
     if (config.requireRedis && !config.redisUrl) {
-      throw new Error('REDIS_URL or QUEUE_REDIS_URL is required for production queue processing');
+      throw new Error('REDIS_URL is required for production queue processing');
     }
-    if (config.riskProfile.mode === 'bullmq') {
+    if (config.redisUrl) {
       await this.initializeBullQueue(config);
     }
     void this.enqueueFull('startup-backfill').catch((error) => {
@@ -85,16 +85,21 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
         redisUrl: undefined,
         requireRedis: false,
         studentAccountBatch: {
-          mode: 'inline',
           queueName: 'student-account-batch',
           attempts: 3,
           backoffMs: 30_000,
         },
         riskProfile: {
-          mode: 'inline',
           queueName: 'student-risk-profile',
           attempts: 3,
           backoffMs: 30_000,
+        },
+        dataExport: {
+          queueName: 'data-export',
+          attempts: 3,
+          backoffMs: 30_000,
+          artifactTtlHours: 24,
+          storagePrefix: 'data-exports/',
         },
       }
     );
@@ -102,7 +107,7 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
 
   private async initializeBullQueue(config: ConfigType<typeof queueConfig>): Promise<void> {
     if (!config.redisUrl) {
-      throw new Error('Redis URL is required when RISK_PROFILE_QUEUE_MODE=bullmq');
+      throw new Error('Redis URL is required for risk profile queue processing');
     }
     const connection = {
       url: config.redisUrl,
@@ -150,17 +155,10 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private async dispatchJob(job: RiskProfileJob): Promise<void> {
-    const config = this.queueRuntimeConfig();
-    if (config.riskProfile.mode === 'bullmq') {
-      if (!this.queue) {
-        throw new Error('Risk profile queue is not ready');
-      }
-      await this.queue.add(job.kind, job, { jobId: `risk-profile:${job.kind}:${randomUUID()}` });
-      return;
+    if (!this.queue) {
+      throw new Error('Risk profile queue is not ready');
     }
-    void this.processJob(job).catch((error) => {
-      this.logger.error(`Risk profile ${job.kind} job crashed: ${this.errorMessage(error)}`);
-    });
+    await this.queue.add(job.kind, job, { jobId: `risk-profile:${job.kind}:${randomUUID()}` });
   }
 
   private async processJob(job: RiskProfileJob): Promise<void> {
