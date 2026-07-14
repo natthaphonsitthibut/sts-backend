@@ -20,14 +20,12 @@ import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
 export type AttendanceTaskStatus = 'P_PRESENT' | 'P_ABSENT' | 'P_LATE';
-export type CaseReferralOutcomeStatus = 'ACKNOWLEDGED' | 'ACCEPTED' | 'DECLINED' | 'RETURNED';
 export type CaseResolutionOutcome =
   | 'RETURNED_TO_SCHOOL'
   | 'TRANSFERRED_SCHOOL'
   | 'ILLNESS'
   | 'WORKING'
   | 'UNREACHABLE'
-  | 'REFERRED_EXTERNAL'
   | 'OTHER';
 
 // Fields are intentionally loose unions (string | number | null) because the
@@ -151,6 +149,11 @@ export class CreateTaskDto {
   @IsOptional()
   existing_case_id?: string | number | null;
 
+  /** Approved follow-up request consumed by this VISIT assignment. */
+  @IsOptional()
+  @IsUUID()
+  follow_up_request_id?: string | null;
+
   @IsOptional()
   source_field_follower_id?: string | number | null;
 
@@ -244,6 +247,7 @@ export class DelegateTaskDto {
 export class ReviewCaseDto {
   @IsString()
   @IsNotEmpty()
+  @IsIn(['ASSIST', 'CLOSE'])
   review_action?: string | null;
 
   @IsOptional()
@@ -251,22 +255,7 @@ export class ReviewCaseDto {
   review_note?: string | null;
 
   @IsOptional()
-  agency_id?: string | number | null;
-
-  @IsOptional()
-  @IsString()
-  referral_note?: string | null;
-
-  @IsOptional()
-  @IsIn([
-    'RETURNED_TO_SCHOOL',
-    'TRANSFERRED_SCHOOL',
-    'ILLNESS',
-    'WORKING',
-    'UNREACHABLE',
-    'REFERRED_EXTERNAL',
-    'OTHER',
-  ])
+  @IsIn(['RETURNED_TO_SCHOOL', 'TRANSFERRED_SCHOOL', 'ILLNESS', 'WORKING', 'UNREACHABLE', 'OTHER'])
   resolution_outcome?: CaseResolutionOutcome | null;
 
   @IsOptional()
@@ -274,16 +263,6 @@ export class ReviewCaseDto {
   // Legacy clients may still send this, but the service deliberately ignores it.
   // Reviewer attribution must come from the authenticated actor, not the body.
   reviewed_by?: string | null;
-}
-
-export class UpdateCaseReferralDto {
-  @IsString()
-  @IsIn(['ACKNOWLEDGED', 'ACCEPTED', 'DECLINED', 'RETURNED'])
-  status?: CaseReferralOutcomeStatus;
-
-  @IsOptional()
-  @IsString()
-  outcome?: string | null;
 }
 
 export class GetCasesQueryDto extends PaginationQueryDto {

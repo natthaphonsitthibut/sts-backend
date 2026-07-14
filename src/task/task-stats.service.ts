@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { isAggregateOnlyExecutive } from '../auth/permissions.constants';
 import { getBangkokDateString } from '../common/utils/date.util';
 import {
   buildPaginationMeta,
@@ -38,6 +39,9 @@ export class TaskStatsService {
 
   async getCases(actor?: ActorContext, filters: CaseListFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (isAggregateOnlyExecutive(currentActor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
+    }
     try {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);
@@ -63,6 +67,9 @@ export class TaskStatsService {
 
   async getStats(actor?: ActorContext) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (isAggregateOnlyExecutive(currentActor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
+    }
     try {
       const today = getBangkokDateString();
 
@@ -72,7 +79,7 @@ export class TaskStatsService {
         atRiskStudents: await this.taskRepository.countAtRiskStudents(currentActor),
         open: await this.taskRepository.countCases('OPEN', currentActor),
         inProgress: await this.taskRepository.countCases('IN_PROGRESS', currentActor),
-        awaitingHelp: await this.taskRepository.countCases('AWAITING_HELP', currentActor),
+        reportedUp: await this.taskRepository.countCases('REPORTED_UP', currentActor),
         resolved: await this.taskRepository.countCases('RESOLVED', currentActor),
         today: await this.taskRepository.countCasesCreatedOn(today, currentActor),
         pendingReview: await this.taskRepository.countCases('PENDING_REVIEW', currentActor),
@@ -89,6 +96,9 @@ export class TaskStatsService {
 
   async getOverviewStats(actor?: ActorContext) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (isAggregateOnlyExecutive(currentActor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
+    }
     try {
       return {
         success: true,
@@ -170,6 +180,9 @@ export class TaskStatsService {
 
   async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (isAggregateOnlyExecutive(currentActor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
+    }
     try {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);

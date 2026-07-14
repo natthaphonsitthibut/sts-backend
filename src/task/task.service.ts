@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { hashToken } from '../common/utils/helpers';
+import { isAggregateOnlyExecutive } from '../auth/permissions.constants';
 import type { CreateTaskDto, SaveTaskAttendanceDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
@@ -86,10 +87,16 @@ export class TaskService {
   }
 
   async getVisitLinks(actor?: ActorContext, filters: Partial<VisitLinkListFilters> = {}) {
+    if (isAggregateOnlyExecutive(actor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
+    }
     return await this.taskAccessService.getVisitLinks(actor, filters);
   }
 
   async findCaseForActor(caseId: number, actor?: ActorContext) {
+    if (isAggregateOnlyExecutive(actor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
+    }
     return await this.taskRepository.findCaseById(caseId, undefined, actor);
   }
 

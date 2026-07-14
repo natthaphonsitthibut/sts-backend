@@ -1,4 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
@@ -351,7 +358,10 @@ export class TaskLifecycleService {
 
     const expiresAt = new Date(Date.now() + expiresMs).toISOString();
     const opensAt = this.resolveOpensAt(data.opens_at, expiresAt);
-    const magicLink = `${baseUrl}/task/${token}`;
+    let responseToken = token;
+    let responseExpiresAt = expiresAt;
+    let responseTaskId: string = taskId;
+    let assignmentReused = false;
     const tokenEncrypted = this.tokenEncryption.encrypt(token);
     let auditCaseId: number | null = null;
     let auditTargetSchoolId: number | null = null;
@@ -362,6 +372,21 @@ export class TaskLifecycleService {
     const timetableSlotIds = this.normalizePositiveIntList(data.timetable_slot_ids);
     const sourceFieldFollowerId = this.normalizeNumber(data.source_field_follower_id);
     const campaignTargetId = this.normalizeNumber(data.campaign_target_id);
+    const followUpRequestId = clean(data.follow_up_request_id) || null;
+    const actorId = resolveAuditActorId(currentActor);
+
+    if (followUpRequestId && taskType !== 'VISIT') {
+      throw new BadRequestException('คำขอติดตามใช้สร้างได้เฉพาะงานเยี่ยมบ้าน');
+    }
+    if (
+      followUpRequestId &&
+      !this.taskPolicyService.hasPermission(currentActor, 'assign-follow-up-cases')
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์มอบหมายผู้ติดตามเคส');
+    }
+    if (followUpRequestId && actorId === null) {
+      throw new ForbiddenException('ไม่พบผู้ใช้งานที่มอบหมายเคส');
+    }
 
     if ((sourceFieldFollowerId !== null || campaignTargetId !== null) && taskType !== 'VISIT') {
       throw new BadRequestException(
@@ -382,6 +407,49 @@ export class TaskLifecycleService {
         let caseId: number | null = null;
         const inputTargetSchoolId = this.normalizeNumber(data.target_school_id);
         let resolvedTargetSchoolId = inputTargetSchoolId;
+
+        if (followUpRequestId) {
+          const followUp = await this.taskRepository.lockFollowUpTaskAssignment(
+            followUpRequestId,
+            executor,
+          );
+          if (!followUp) {
+            throw new NotFoundException('ไม่พบคำขอติดตาม');
+          }
+          if (followUp.status !== 'APPROVE_AND_ASSIGN') {
+            throw new ConflictException('คำขอติดตามยังไม่ได้รับอนุมัติให้มอบหมาย');
+          }
+          const followUpSchoolId = this.normalizeNumber(followUp.school_id);
+          const requestedStudentUuid = clean(data.student_id);
+          if (!requestedStudentUuid || requestedStudentUuid !== followUp.student_uuid) {
+            throw new BadRequestException('นักเรียนไม่ตรงกับคำขอติดตาม');
+          }
+          if (
+            inputTargetSchoolId !== null &&
+            followUpSchoolId !== null &&
+            inputTargetSchoolId !== followUpSchoolId
+          ) {
+            throw new BadRequestException('โรงเรียนไม่ตรงกับคำขอติดตาม');
+          }
+          if (followUpSchoolId === null) {
+            throw new ConflictException('คำขอติดตามไม่มีโรงเรียนที่ใช้งานได้');
+          }
+          await this.assertSchoolWithinActorScope(currentActor, followUpSchoolId, executor);
+          resolvedTargetSchoolId = followUpSchoolId;
+
+          if (followUp.assigned_task_id) {
+            if (!followUp.assigned_link_token_encrypted || !followUp.assigned_link_expires_at) {
+              throw new ConflictException('งานที่มอบหมายไว้ไม่มีลิงก์ที่ใช้งานได้');
+            }
+            responseToken = this.tokenEncryption.decrypt(followUp.assigned_link_token_encrypted);
+            responseExpiresAt = new Date(followUp.assigned_link_expires_at).toISOString();
+            responseTaskId = followUp.assigned_task_id;
+            auditCaseId = this.normalizeNumber(followUp.assigned_case_id);
+            auditTargetSchoolId = followUpSchoolId;
+            assignmentReused = true;
+            return;
+          }
+        }
 
         if (inputTargetSchoolId !== null) {
           await this.assertSchoolWithinActorScope(currentActor, inputTargetSchoolId, executor);
@@ -410,6 +478,9 @@ export class TaskLifecycleService {
               existingCaseSchoolId !== resolvedTargetSchoolId
             ) {
               throw new Error('target_school_id does not match case school');
+            }
+            if (followUpRequestId && clean(existingCase.student_uuid) !== clean(data.student_id)) {
+              throw new BadRequestException('เคสเดิมไม่ตรงกับนักเรียนในคำขอติดตาม');
             }
             resolvedTargetSchoolId = resolvedTargetSchoolId ?? existingCaseSchoolId;
             caseId = existingCaseId;
@@ -546,6 +617,34 @@ export class TaskLifecycleService {
           resolveAuditActorId(currentActor),
           executor,
         );
+        if (followUpRequestId) {
+          const assigned = await this.taskRepository.markFollowUpTaskAssigned(
+            followUpRequestId,
+            taskId,
+            actorId!,
+            executor,
+          );
+          if (!assigned) {
+            throw new ConflictException('คำขอติดตามถูกมอบหมายไปแล้ว กรุณาโหลดข้อมูลใหม่');
+          }
+          await this.auditLog.recordAtomic(
+            {
+              actorUserId: actorId,
+              actorLabel: currentActor.username,
+              action: 'STUDENT_OBSERVATION_UPDATE',
+              targetType: 'student_follow_up_requests',
+              targetId: followUpRequestId,
+              metadata: {
+                operation: 'STUDENT_FOLLOW_UP_REQUEST_ASSIGN',
+                taskId,
+                caseId,
+                schoolId: resolvedTargetSchoolId,
+              },
+              ip: null,
+            },
+            executor,
+          );
+        }
         if (campaignTargetId !== null && sourceFieldFollowerId !== null && caseId !== null) {
           const assigned = await this.taskRepository.assignFollowerCampaignTarget(
             {
@@ -565,23 +664,26 @@ export class TaskLifecycleService {
         }
       });
 
-      await this.auditLog.record({
-        action: 'TASK_CREATE',
-        actorUserId: resolveAuditActorId(currentActor),
-        actorLabel: currentActor.username,
-        targetType: 'task',
-        targetId: taskId,
-        metadata: {
-          taskType,
-          schoolId: auditTargetSchoolId,
-          grade: auditTargetGrade,
-          room: auditTargetRoom,
-          caseId: auditCaseId,
-          scope: taskType === 'LOGIN' ? loginDataScope : undefined,
-        },
-        ip: null,
-      });
-      if (riskProfileStudentUuid) {
+      if (!assignmentReused) {
+        await this.auditLog.record({
+          action: 'TASK_CREATE',
+          actorUserId: actorId,
+          actorLabel: currentActor.username,
+          targetType: 'task',
+          targetId: taskId,
+          metadata: {
+            taskType,
+            schoolId: auditTargetSchoolId,
+            grade: auditTargetGrade,
+            room: auditTargetRoom,
+            caseId: auditCaseId,
+            followUpRequestId,
+            scope: taskType === 'LOGIN' ? loginDataScope : undefined,
+          },
+          ip: null,
+        });
+      }
+      if (!assignmentReused && riskProfileStudentUuid) {
         await this.riskProfileService
           ?.enqueueStudents([riskProfileStudentUuid], 'case-task-create')
           .catch((error) => {
@@ -590,6 +692,7 @@ export class TaskLifecycleService {
           });
       }
 
+      const magicLink = `${baseUrl}/task/${responseToken}`;
       let qrDataUrl: string | null = null;
       try {
         qrDataUrl = await QRCode.toDataURL(magicLink, {
@@ -601,10 +704,12 @@ export class TaskLifecycleService {
       }
 
       return {
-        task_id: taskId,
+        task_id: responseTaskId,
         magic_link: magicLink,
         qr_code_data: qrDataUrl,
-        expires_at: expiresAt,
+        expires_at: responseExpiresAt,
+        follow_up_request_id: followUpRequestId,
+        reused: assignmentReused,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

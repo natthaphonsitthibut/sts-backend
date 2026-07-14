@@ -139,7 +139,7 @@ describe('TaskRepository', () => {
     expect(count).toBe(2);
     expect(queries).toHaveLength(1);
     expect(queries[0].params).toEqual([
-      ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'],
+      ['OPEN', 'IN_PROGRESS', 'REPORTED_UP', 'PENDING_REVIEW'],
       [101],
       [6],
       7,

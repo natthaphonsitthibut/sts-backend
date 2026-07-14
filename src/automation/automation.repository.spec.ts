@@ -84,7 +84,7 @@ describe('AutomationRepository', () => {
 
     expect(result).toEqual({ id: 20, risk_tier: 'LOW' });
     expect(queries[0].params).toEqual([
-      ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'],
+      ['OPEN', 'IN_PROGRESS', 'REPORTED_UP', 'PENDING_REVIEW'],
       'student-uuid-1',
       'สมชาย ใจดี',
       10010002,
@@ -123,7 +123,7 @@ describe('AutomationRepository', () => {
       'HIGH',
       '2026-07-10T00:00:00.000Z',
       'ขาดเรียนติดต่อกัน 7 วัน',
-      ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'],
+      ['OPEN', 'IN_PROGRESS', 'REPORTED_UP', 'PENDING_REVIEW'],
     ]);
   });
 

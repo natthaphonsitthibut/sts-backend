@@ -36,6 +36,7 @@ function createRepositoryMock(): jest.Mocked<
     getCasePipeline: jest.fn().mockResolvedValue({
       OPEN: 1,
       IN_PROGRESS: 2,
+      REPORTED_UP: 0,
       AWAITING_HELP: 0,
       PENDING_REVIEW: 3,
       RESOLVED: 4,

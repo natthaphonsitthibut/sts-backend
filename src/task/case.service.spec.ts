@@ -30,11 +30,6 @@ describe('CaseService', () => {
       | 'findCaseById'
       | 'withTransaction'
       | 'insertCaseReview'
-      | 'findEligibleReferralAgency'
-      | 'insertCaseReferral'
-      | 'listCaseReferrals'
-      | 'findCaseReferralById'
-      | 'updateCaseReferralOutcome'
       | 'updateCaseStatus'
       | 'findCaseReviewById'
       | 'claimCaseSlaWarnings'
@@ -51,33 +46,6 @@ describe('CaseService', () => {
         await callback(undefined);
       }),
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
-      findEligibleReferralAgency: jest.fn().mockResolvedValue({
-        id: 20,
-        name: 'โรงพยาบาลทดสอบ',
-        agency_type: 'HOSPITAL',
-      }),
-      insertCaseReferral: jest.fn().mockResolvedValue(undefined),
-      listCaseReferrals: jest.fn().mockResolvedValue([
-        {
-          id: 'referral-id',
-          case_id: 10,
-          agency_id: 20,
-          agency_name_snapshot: 'โรงพยาบาลทดสอบ',
-          agency_type_snapshot: 'HOSPITAL',
-          status: 'ACCEPTED',
-        },
-      ]),
-      findCaseReferralById: jest.fn().mockResolvedValue({
-        id: 'referral-id',
-        case_id: 10,
-        status: 'SENT',
-      }),
-      updateCaseReferralOutcome: jest.fn().mockResolvedValue({
-        id: 'referral-id',
-        case_id: 10,
-        status: 'ACCEPTED',
-        outcome: 'รับดำเนินการแล้ว',
-      }),
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
@@ -148,6 +116,18 @@ describe('CaseService', () => {
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
+  it('denies case mutation to an EXECUTIVE even when raw permissions are re-granted', async () => {
+    await expect(
+      service.reviewCase(
+        10,
+        { review_action: 'ASSIST', review_note: 'ไม่ควรทำได้' },
+        buildActor(['review-cases'], { roles: ['EXECUTIVE'] }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(taskRepository.findCaseById).not.toHaveBeenCalled();
+  });
+
   it('rejects CLOSE without base review-cases permission before mutating', async () => {
     await expect(
       service.reviewCase(
@@ -161,88 +141,17 @@ describe('CaseService', () => {
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
-  it('allows FORWARD only with forward-case permission', async () => {
-    const result = await service.reviewCase(
-      10,
-      { review_action: 'FORWARD', review_note: 'ส่งต่อหน่วยงาน', agency_id: 20 },
-      buildActor(['review-cases', 'forward-case']),
-    );
-
-    expect(result.case_status).toBe('AWAITING_HELP');
-    expect(taskRepository.insertCaseReferral).toHaveBeenCalledWith(
-      expect.objectContaining({
-        caseId: 10,
-        agencyId: 20,
-        agencyName: 'โรงพยาบาลทดสอบ',
-        agencyType: 'HOSPITAL',
-        referralNote: 'ส่งต่อหน่วยงาน',
-      }),
-      undefined,
-    );
-    expect(auditLog.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'CASE_FORWARD',
-        targetType: 'case',
-        targetId: '10',
-      }),
-    );
-  });
-
-  it('rejects FORWARD without an agency before mutating', async () => {
+  it('rejects the retired FORWARD action before mutating', async () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'FORWARD', review_note: 'ส่งต่อหน่วยงาน' },
-        buildActor(['review-cases', 'forward-case']),
-      ),
-    ).rejects.toThrow('agency_id is required for FORWARD');
-
-    expect(taskRepository.withTransaction).not.toHaveBeenCalled();
-    expect(taskRepository.insertCaseReferral).not.toHaveBeenCalled();
-  });
-
-  it('updates referral outcome with forward-case permission', async () => {
-    const result = await service.updateCaseReferralOutcome(
-      10,
-      'referral-id',
-      { status: 'ACCEPTED', outcome: 'รับดำเนินการแล้ว' },
-      buildActor(['review-cases', 'forward-case']),
-    );
-
-    expect(result.data?.status).toBe('ACCEPTED');
-    expect(taskRepository.findCaseReferralById).toHaveBeenCalledWith(
-      'referral-id',
-      expect.objectContaining({ id: 1 }),
-    );
-    expect(taskRepository.updateCaseReferralOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({
-        referralId: 'referral-id',
-        status: 'ACCEPTED',
-        outcome: 'รับดำเนินการแล้ว',
-        updatedBy: 1,
-      }),
-    );
-    expect(auditLog.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'CASE_REFERRAL_OUTCOME_UPDATE',
-        targetType: 'case_referral',
-        targetId: 'referral-id',
-      }),
-    );
-  });
-
-  it('rejects referral outcome update without forward-case before lookup', async () => {
-    await expect(
-      service.updateCaseReferralOutcome(
-        10,
-        'referral-id',
-        { status: 'ACCEPTED', outcome: 'รับดำเนินการแล้ว' },
+        { review_action: 'FORWARD', review_note: 'legacy request' },
         buildActor(['review-cases']),
       ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toThrow('review_action must be one of: ASSIST, CLOSE');
 
-    expect(taskRepository.findCaseReferralById).not.toHaveBeenCalled();
-    expect(taskRepository.updateCaseReferralOutcome).not.toHaveBeenCalled();
+    expect(taskRepository.findCaseById).not.toHaveBeenCalled();
+    expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
   it('notifies claimed case SLA warnings and breaches once', async () => {

@@ -1,8 +1,28 @@
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
+import { ForbiddenException } from '@nestjs/common';
 
 describe('TaskStatsService', () => {
+  it('denies raw case lists to an EXECUTIVE even when review-cases is re-granted', async () => {
+    const actor = {
+      id: 70,
+      username: 'executive.regranted',
+      roles: ['EXECUTIVE'],
+      permissions: ['review-cases', 'executive-report'],
+      data_scope: { provinces: ['เชียงใหม่'] },
+    };
+    const taskRepository = { listCasesWithActiveLinks: jest.fn() };
+    const taskPolicyService = { ensureActor: jest.fn().mockReturnValue(actor) };
+    const service = new TaskStatsService(
+      taskRepository as unknown as TaskRepository,
+      taskPolicyService as unknown as TaskPolicyService,
+    );
+
+    await expect(service.getCases(actor)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(taskRepository.listCasesWithActiveLinks).not.toHaveBeenCalled();
+  });
+
   it('returns the scoped at-risk student count in case stats', async () => {
     const actor = {
       id: 7,

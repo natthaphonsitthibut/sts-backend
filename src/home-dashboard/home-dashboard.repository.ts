@@ -44,7 +44,7 @@ interface RiskSummaryRow extends Record<string, unknown> {
 interface CasePipelineRow extends Record<string, unknown> {
   OPEN: number | string;
   IN_PROGRESS: number | string;
-  AWAITING_HELP: number | string;
+  REPORTED_UP: number | string;
   PENDING_REVIEW: number | string;
   RESOLVED: number | string;
 }
@@ -315,7 +315,7 @@ export class HomeDashboardRepository {
         SELECT
           COUNT(*) FILTER (WHERE c.status = 'OPEN')::int AS "OPEN",
           COUNT(*) FILTER (WHERE c.status = 'IN_PROGRESS')::int AS "IN_PROGRESS",
-          COUNT(*) FILTER (WHERE c.status = 'AWAITING_HELP')::int AS "AWAITING_HELP",
+          COUNT(*) FILTER (WHERE c.status = 'REPORTED_UP')::int AS "REPORTED_UP",
           COUNT(*) FILTER (WHERE c.status = 'PENDING_REVIEW')::int AS "PENDING_REVIEW",
           COUNT(*) FILTER (WHERE c.status = 'RESOLVED')::int AS "RESOLVED"
         FROM cases c
@@ -328,7 +328,7 @@ export class HomeDashboardRepository {
     return {
       OPEN: toNumber(row.OPEN),
       IN_PROGRESS: toNumber(row.IN_PROGRESS),
-      AWAITING_HELP: toNumber(row.AWAITING_HELP),
+      REPORTED_UP: toNumber(row.REPORTED_UP),
       PENDING_REVIEW: toNumber(row.PENDING_REVIEW),
       RESOLVED: toNumber(row.RESOLVED),
     };

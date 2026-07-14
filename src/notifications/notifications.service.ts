@@ -14,7 +14,7 @@ const CASE_STATUS_LABELS: Record<string, string> = {
   OPEN: 'เปิดเคส',
   IN_PROGRESS: 'กำลังติดตาม',
   PENDING_REVIEW: 'รอพิจารณา',
-  AWAITING_HELP: 'ส่งต่อหน่วยงาน',
+  REPORTED_UP: 'รายงานขึ้นส่วนกลางแล้ว',
   RESOLVED: 'ปิดเคสแล้ว',
 };
 const NOTIFICATION_RETENTION_DAYS = 90;

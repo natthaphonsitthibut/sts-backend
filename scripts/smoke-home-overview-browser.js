@@ -288,13 +288,19 @@ async function disableActor(dataSource) {
 
 async function assertOverview(client, expectedActiveCases, label, expectations) {
   await navigate(client, FRONTEND_URL);
-  await waitFor(
-    async () => {
-      const text = await bodyText(client);
-      return text.includes('ศูนย์สั่งการวันนี้') && text.includes('ต้องดำเนินการวันนี้');
-    },
-    `${label} home dashboard did not render`,
-  );
+  try {
+    await waitFor(
+      async () => {
+        const text = await bodyText(client);
+        return text.includes('ศูนย์สั่งการวันนี้') && text.includes('ต้องดำเนินการวันนี้');
+      },
+      `${label} home dashboard did not render`,
+    );
+  } catch (error) {
+    const currentUrl = await evaluate(client, 'location.href');
+    const currentBody = (await bodyText(client)).slice(0, 1_000);
+    throw new Error(`${errorMessage(error)}; url=${currentUrl}; body=${currentBody}`);
+  }
   const text = await bodyText(client);
   assert(text.includes('ต้องดำเนินการวันนี้'), `${label} action queue was missing`);
   assert(text.includes('นักเรียนในขอบเขต'), `${label} scoped student metric was missing`);

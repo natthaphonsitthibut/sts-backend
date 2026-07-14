@@ -144,6 +144,19 @@ interface CreateTaskLinkInput {
   loginDataScope: DataScope | Record<string, unknown>;
 }
 
+export interface FollowUpTaskAssignmentRow extends QueryResultRow {
+  id: string;
+  student_uuid: string;
+  school_id: number | string;
+  status: string;
+  assigned_task_id: string | null;
+  assigned_by: number | string | null;
+  assigned_at: Date | string | null;
+  assigned_case_id: number | string | null;
+  assigned_link_token_encrypted: string | null;
+  assigned_link_expires_at: Date | string | null;
+}
+
 interface TaskLinkTimetableSlotRow extends QueryResultRow {
   id: number | string;
   school_id: number | string;
@@ -217,25 +230,6 @@ interface CaseReviewInput {
   reviewNote: string | null;
   resolutionOutcome: string | null;
   reviewedBy: string;
-}
-
-interface CaseReferralInput {
-  referralId: string;
-  caseId: number;
-  agencyId: number;
-  agencyName: string;
-  agencyType: string;
-  referredBy: number | null;
-  referredByLabel: string | null;
-  referralNote: string | null;
-  createdBy: number | null;
-}
-
-interface CaseReferralOutcomeInput {
-  referralId: string;
-  status: string;
-  outcome: string | null;
-  updatedBy: number | null;
 }
 
 interface CountRow extends QueryResultRow {
@@ -675,7 +669,7 @@ export class TaskRepository {
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.getExecutor(executor).query(
       `
-      SELECT id, school_id
+      SELECT id, school_id, student_uuid::text
       FROM cases c
       WHERE c.id = $1 AND c.deleted_at IS NULL${scopeSql}
       LIMIT 1
@@ -845,6 +839,63 @@ export class TaskRepository {
         data.sourceFieldFollowerId,
       ],
     );
+  }
+
+  async lockFollowUpTaskAssignment(
+    requestId: string,
+    executor: QueryExecutor,
+  ): Promise<FollowUpTaskAssignmentRow | null> {
+    const result = await executor.query<FollowUpTaskAssignmentRow>(
+      `SELECT request.id,
+              request.student_uuid::text,
+              request.school_id,
+              request.status,
+              request.assigned_task_id::text,
+              request.assigned_by,
+              request.assigned_at,
+              task.case_id AS assigned_case_id,
+              root_link.token_encrypted AS assigned_link_token_encrypted,
+              root_link.expires_at AS assigned_link_expires_at
+       FROM student_follow_up_requests request
+       LEFT JOIN tasks task
+         ON task.id = request.assigned_task_id
+        AND task.deleted_at IS NULL
+       LEFT JOIN LATERAL (
+         SELECT link.token_encrypted, link.expires_at
+         FROM task_links link
+         WHERE link.task_id = request.assigned_task_id
+           AND link.parent_link_id IS NULL
+           AND link.deleted_at IS NULL
+         ORDER BY link.created_at ASC, link.id ASC
+         LIMIT 1
+       ) root_link ON TRUE
+       WHERE request.id = $1
+       LIMIT 1
+       FOR UPDATE OF request`,
+      [requestId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async markFollowUpTaskAssigned(
+    requestId: string,
+    taskId: string,
+    actorId: number,
+    executor: QueryExecutor,
+  ): Promise<boolean> {
+    const result = await executor.query(
+      `UPDATE student_follow_up_requests
+       SET assigned_task_id = $2,
+           assigned_by = $3,
+           assigned_at = now(),
+           revision_number = revision_number + 1
+       WHERE id = $1
+         AND status = 'APPROVE_AND_ASSIGN'
+         AND assigned_task_id IS NULL
+       RETURNING id`,
+      [requestId, taskId, actorId],
+    );
+    return (result.rowCount ?? result.rows.length) === 1;
   }
 
   async assignFollowerCampaignTarget(
@@ -2404,7 +2455,7 @@ export class TaskRepository {
   }
 
   async countAtRiskStudents(actor?: ActorContext): Promise<number> {
-    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'AWAITING_HELP', 'PENDING_REVIEW'];
+    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'REPORTED_UP', 'PENDING_REVIEW'];
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
@@ -2489,38 +2540,6 @@ export class TaskRepository {
     const result = await this.query<CountRow>(
       `SELECT count(*) FROM student_term s
        LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id ${whereSql}`,
-      params,
-    );
-    return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
-  }
-
-  async countStudentDropouts(actor?: ActorContext): Promise<number> {
-    const params: unknown[] = [];
-    const conditions: string[] = [];
-    if (actor?.data_scope) {
-      const scopeResult = buildDataScopeQuery(
-        actor.data_scope,
-        {
-          school_id: `"SchoolID_Onec"`,
-          grade: `"GradeLevelID_Onec"`,
-          room: `"RoomID_Onec"::text`,
-          province: `"ProvinceNameThai_Onec"`,
-          district: `"DistrictNameThai_Onec"`,
-          sub_district: `"SubDistrictNameThai_Onec"`,
-        },
-        params.length + 1,
-      );
-      if (scopeResult.sql) {
-        conditions.push(`(${scopeResult.sql})`);
-        params.push(...scopeResult.params);
-      }
-    }
-    if (actor?.data_scope?.own_only === true && conditions.length === 0) {
-      return 0;
-    }
-    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const result = await this.query<CountRow>(
-      `SELECT count(*) FROM student_dropouts ${whereSql}`,
       params,
     );
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
@@ -2788,196 +2807,30 @@ export class TaskRepository {
     );
   }
 
-  async findEligibleReferralAgency(
-    agencyId: number,
-    caseId: number,
-    executor?: QueryExecutor,
-  ): Promise<QueryResultRow | null> {
-    const result = await this.getExecutor(executor).query(
-      `
-      SELECT
-        a.id,
-        a.name,
-        a.agency_type,
-        a.province,
-        a.district,
-        a.sub_district,
-        a.phone,
-        a.contact_person,
-        a.address
-      FROM external_agencies a
-      JOIN cases c ON c.id = $2 AND c.deleted_at IS NULL
-      LEFT JOIN schools s ON s.id = c.school_id
-      WHERE a.id = $1
-        AND a.is_active = TRUE
-        AND a.deleted_at IS NULL
-        AND (a.province IS NULL OR a.province = s.province)
-        AND (a.district IS NULL OR a.district = s.district)
-        AND (a.sub_district IS NULL OR a.sub_district = s.sub_district)
-      LIMIT 1
-    `,
-      [agencyId, caseId],
-    );
-
-    return result.rows[0] || null;
-  }
-
-  async listReferralAgenciesForCase(caseId: number): Promise<QueryResultRow[]> {
+  async listCaseReportUps(caseId: number): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
-        a.id,
-        a.name,
-        a.agency_type,
-        a.province,
-        a.district,
-        a.sub_district,
-        a.phone,
-        a.contact_person,
-        a.address
-      FROM external_agencies a
-      JOIN cases c ON c.id = $1 AND c.deleted_at IS NULL
-      LEFT JOIN schools s ON s.id = c.school_id
-      WHERE a.is_active = TRUE
-        AND a.deleted_at IS NULL
-        AND (a.province IS NULL OR a.province = s.province)
-        AND (a.district IS NULL OR a.district = s.district)
-        AND (a.sub_district IS NULL OR a.sub_district = s.sub_district)
-      ORDER BY a.agency_type ASC, a.name ASC
+        report_up.id,
+        report_up.case_id,
+        report_up.school_id,
+        report_up.reported_by,
+        report_up.reported_by_label,
+        report_up.report_reason,
+        report_up.report_summary,
+        report_up.school_name_snapshot,
+        report_up.province_snapshot,
+        report_up.district_snapshot,
+        report_up.sub_district_snapshot,
+        report_up.reported_at
+      FROM case_report_ups report_up
+      WHERE report_up.case_id = $1
+      ORDER BY report_up.reported_at DESC
     `,
       [caseId],
     );
 
     return result.rows;
-  }
-
-  async insertCaseReferral(data: CaseReferralInput, executor?: QueryExecutor): Promise<void> {
-    await this.getExecutor(executor).query(
-      `
-      INSERT INTO case_referrals (
-        id,
-        case_id,
-        agency_id,
-        agency_name_snapshot,
-        agency_type_snapshot,
-        referred_by,
-        referred_by_label,
-        referral_note,
-        created_by,
-        updated_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-    `,
-      [
-        data.referralId,
-        data.caseId,
-        data.agencyId,
-        data.agencyName,
-        data.agencyType,
-        data.referredBy,
-        data.referredByLabel,
-        data.referralNote,
-        data.createdBy,
-      ],
-    );
-  }
-
-  async listCaseReferrals(caseId: number): Promise<QueryResultRow[]> {
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        r.id,
-        r.case_id,
-        r.agency_id,
-        r.agency_name_snapshot,
-        r.agency_type_snapshot,
-        r.referred_by,
-        r.referred_by_label,
-        r.referred_at,
-        r.referral_note,
-        r.status,
-        r.outcome,
-        r.responded_at,
-        a.phone,
-        a.contact_person,
-        a.address
-      FROM case_referrals r
-      LEFT JOIN external_agencies a ON a.id = r.agency_id
-      WHERE r.case_id = $1
-        AND r.deleted_at IS NULL
-      ORDER BY r.referred_at DESC
-    `,
-      [caseId],
-    );
-
-    return result.rows;
-  }
-
-  async findCaseReferralById(
-    referralId: string,
-    actor?: ActorContext,
-  ): Promise<QueryResultRow | null> {
-    const scope = this.buildCaseScopeQuery(actor, 2, 'c');
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        r.id,
-        r.case_id,
-        r.agency_id,
-        r.agency_name_snapshot,
-        r.agency_type_snapshot,
-        r.referred_by,
-        r.referred_by_label,
-        r.referred_at,
-        r.referral_note,
-        r.status,
-        r.outcome,
-        r.responded_at
-      FROM case_referrals r
-      JOIN cases c ON c.id = r.case_id AND c.deleted_at IS NULL
-      WHERE r.id = $1
-        AND r.deleted_at IS NULL
-        ${scope.sql ? `AND ${scope.sql}` : ''}
-      LIMIT 1
-    `,
-      [referralId, ...scope.params],
-    );
-
-    return result.rows[0] || null;
-  }
-
-  async updateCaseReferralOutcome(
-    data: CaseReferralOutcomeInput,
-    executor?: QueryExecutor,
-  ): Promise<QueryResultRow | null> {
-    const result = await this.getExecutor(executor).query(
-      `
-      UPDATE case_referrals
-      SET
-        status = $2,
-        outcome = $3,
-        responded_at = now(),
-        updated_by = $4
-      WHERE id = $1
-        AND deleted_at IS NULL
-      RETURNING
-        id,
-        case_id,
-        agency_id,
-        agency_name_snapshot,
-        agency_type_snapshot,
-        referred_by,
-        referred_by_label,
-        referred_at,
-        referral_note,
-        status,
-        outcome,
-        responded_at
-    `,
-      [data.referralId, data.status, data.outcome, data.updatedBy],
-    );
-
-    return result.rows[0] || null;
   }
 
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {

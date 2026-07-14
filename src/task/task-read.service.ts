@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { isAggregateOnlyExecutive } from '../auth/permissions.constants';
 import { TaskAccessService } from './task-access.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
@@ -69,6 +70,9 @@ export class TaskReadService {
 
   async getTaskChain(actor: ActorContext | undefined, taskId: string) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (isAggregateOnlyExecutive(currentActor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
+    }
     try {
       const task = await this.taskRepository.findTaskChainTask(taskId, currentActor);
       if (!task) {
@@ -87,9 +91,9 @@ export class TaskReadService {
         typeof task.case_id === 'number'
           ? await this.taskRepository.listCaseReviews(task.case_id)
           : [];
-      const referrals =
+      const reportUps =
         typeof task.case_id === 'number'
-          ? await this.taskRepository.listCaseReferrals(task.case_id)
+          ? await this.taskRepository.listCaseReportUps(task.case_id)
           : [];
 
       return {
@@ -114,7 +118,7 @@ export class TaskReadService {
         result_summary: task.result_summary,
         chain,
         reviews,
-        referrals,
+        reportUps,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

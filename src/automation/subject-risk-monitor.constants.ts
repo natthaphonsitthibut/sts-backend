@@ -40,6 +40,6 @@ export const ATTENDANCE_RISK_CASE_REASON_PREFIXES = [
 export const ACTIVE_CASE_STATUSES = [
   'OPEN',
   'IN_PROGRESS',
-  'AWAITING_HELP',
+  'REPORTED_UP',
   'PENDING_REVIEW',
 ] as const;
