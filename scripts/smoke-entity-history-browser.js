@@ -375,7 +375,32 @@ async function main() {
   let adminId;
 
   try {
+    const studentHistoryOnly = process.env.SMOKE_STUDENT_HISTORY_ONLY === '1';
     adminId = await upsertAdmin(dataSource, await passwordService.hash(password));
+    if (studentHistoryOnly) {
+      const [existingStudentHistoryFixture] = await dataSource.query(
+        `SELECT id FROM audit_log
+         WHERE actor_user_id = $1
+           AND target_type = 'student'
+           AND target_id LIKE 'automated-student-history-%'
+         LIMIT 1`,
+        [adminId],
+      );
+      if (!existingStudentHistoryFixture) {
+        await auditLog.record({
+          action: 'STUDENT_UPDATE',
+          actorUserId: adminId,
+          actorLabel: ADMIN_USERNAME,
+          targetType: 'student',
+          targetId: 'automated-student-history-browser',
+          metadata: {
+            fieldCount: 1,
+            fields: ['automated_history_check'],
+            dataOriginCode: 'AUTOMATED_TEST',
+          },
+        });
+      }
+    }
     const linkFixtureIds = await recordLinkHistoryFixtures(auditLog, adminId, suffix);
     const [attendanceLink] = await dataSource.query(
       `SELECT tl.id
@@ -397,7 +422,7 @@ async function main() {
       metadata: { taskType: 'ATTENDANCE', scope: { global: true } },
     });
     const session = await login(password);
-    const completedJob = await createCompletedStudentAccountJob(session);
+    const completedJob = studentHistoryOnly ? null : await createCompletedStudentAccountJob(session);
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -418,6 +443,16 @@ async function main() {
       `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(session.user))});
        localStorage.setItem('admin_access', 'true');`,
     );
+
+    if (studentHistoryOnly) {
+      await navigate(client, `${FRONTEND_URL}/students/history`);
+      await waitForHistoryPanel(client, 'ประวัติข้อมูลนักเรียน');
+      assertNoSecretLeak(await bodyText(client), 'Student history');
+      console.log('student history browser smoke passed');
+      return;
+    }
+
+    assert(completedJob?.id, 'Student-account batch fixture did not return a job id');
 
     // --- Users history: shared audit panel renders, filters, and never leaks ---
     await navigate(client, `${FRONTEND_URL}/manage-users/history`);

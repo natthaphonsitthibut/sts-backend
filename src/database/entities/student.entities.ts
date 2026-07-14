@@ -79,38 +79,54 @@ export class StudentTermEntity {
   postalCodeOnec!: string | null;
 }
 
-@Entity({ name: 'student_dropouts' })
-export class StudentDropoutEntity {
-  @PrimaryColumn({ name: 'PersonID_Onec', type: 'text' })
-  personIdOnec!: string;
+@Entity({ name: 'student_exit_events' })
+@Index('idx_student_exit_events_person_year', ['personUuid', 'academicYear'])
+@Index('idx_student_exit_events_school_year', ['schoolId', 'academicYear'])
+export class StudentExitEventEntity {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
 
-  // B1.1 surrogate — see StudentTermEntity.studentUuid.
-  @Column({ name: 'student_uuid', type: 'uuid', unique: true, default: () => 'gen_random_uuid()' })
-  studentUuid!: string;
+  @Column({ name: 'person_uuid', type: 'uuid' })
+  personUuid!: string;
 
-  @Column({ name: 'ProvinceNameThai_Onec', type: 'text', nullable: true })
-  provinceNameThaiOnec!: string | null;
+  @Column({ name: 'school_id', type: 'integer' })
+  schoolId!: number;
 
-  @Column({ name: 'DistrictNameThai_Onec', type: 'text', nullable: true })
-  districtNameThaiOnec!: string | null;
+  @Column({ name: 'source_student_uuid', type: 'uuid', unique: true })
+  sourceStudentUuid!: string;
 
-  @Column({ name: 'SubDistrictNameThai_Onec', type: 'text', nullable: true })
-  subDistrictNameThaiOnec!: string | null;
+  @Column({ name: 'source_system', type: 'varchar', length: 32 })
+  sourceSystem!: string;
 
-  @Column({ name: 'Fullname_Onec', type: 'text', nullable: true })
-  fullnameOnec!: string | null;
+  @Column({ name: 'source_record_key_sha256', type: 'char', length: 64 })
+  sourceRecordKeySha256!: string;
 
-  @Column({ name: 'SchoolName_Onec', type: 'text', nullable: true })
-  schoolNameOnec!: string | null;
+  @Column({ name: 'exit_reason_source_code', type: 'varchar', length: 64, nullable: true })
+  exitReasonSourceCode!: string | null;
 
-  @Column({ name: 'GradeLevelID_Onec', type: 'integer', nullable: true })
-  gradeLevelIdOnec!: number | null;
+  @Column({ name: 'academic_year', type: 'integer', nullable: true })
+  academicYear!: number | null;
 
-  @Column({ name: 'RoomID_Onec', type: 'integer', nullable: true })
-  roomIdOnec!: number | null;
+  @Column({ name: 'last_enrolled_academic_year', type: 'integer', nullable: true })
+  lastEnrolledAcademicYear!: number | null;
 
-  @Column({ name: 'SchoolID_Onec', type: 'integer', nullable: true })
-  schoolIdOnec!: number | null;
+  @Column({ name: 'last_grade_level_id', type: 'integer', nullable: true })
+  lastGradeLevelId!: number | null;
+
+  @Column({ name: 'last_room_number', type: 'integer', nullable: true })
+  lastRoomNumber!: number | null;
+
+  @Column({ name: 'last_gpax', type: 'real', nullable: true })
+  lastGpax!: number | null;
+
+  @Column({ name: 'note', type: 'text', nullable: true })
+  note!: string | null;
+
+  @Column({ name: 'effective_at', type: 'date', nullable: true })
+  effectiveAt!: string | null;
+
+  @Column({ name: 'source_record_snapshot', type: 'jsonb' })
+  sourceRecordSnapshot!: Record<string, unknown>;
 }
 
 @Entity({ name: 'attendance' })
