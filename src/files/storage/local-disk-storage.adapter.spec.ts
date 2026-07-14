@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { Readable } from 'stream';
 import { LocalDiskStorageAdapter } from './local-disk-storage.adapter';
 
 describe('LocalDiskStorageAdapter', () => {
@@ -23,6 +24,13 @@ describe('LocalDiskStorageAdapter', () => {
 
     const written = await readFile(join(dir, 'a1b2.jpg'));
     expect(written.equals(buffer)).toBe(true);
+  });
+
+  it('streams bytes to disk without requiring a whole-file buffer', async () => {
+    await adapter.saveStream(Readable.from(['first', '-', 'second']), 'data-exports/job.csv');
+
+    const written = await readFile(join(dir, 'data-exports/job.csv'));
+    expect(written.toString()).toBe('first-second');
   });
 
   it('creates the uploads directory on first save if missing', async () => {
@@ -50,5 +58,14 @@ describe('LocalDiskStorageAdapter', () => {
   it('returns null (does not escape the uploads dir) for a path-traversal filename', async () => {
     const result = await adapter.resolve('../outside.png');
     expect(result).toBeNull();
+  });
+
+  it('deletes a stored object idempotently', async () => {
+    await adapter.save(Buffer.from('temporary'), 'data-exports/job.csv');
+
+    await adapter.delete('data-exports/job.csv');
+    await adapter.delete('data-exports/job.csv');
+
+    await expect(adapter.open('data-exports/job.csv')).resolves.toBeNull();
   });
 });

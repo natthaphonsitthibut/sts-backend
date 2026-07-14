@@ -7,6 +7,17 @@ export type DataExportSensitivityClass =
   | 'PRIVILEGED';
 
 export type DataExportDeliveryMode = 'ASYNC_JOB' | 'EXISTING_WORKFLOW';
+export type DataExportPurposePolicy = 'OPTIONAL' | 'REQUIRED_CODE_AND_NOTE' | 'EXISTING_WORKFLOW';
+export type DataExportFilterControl = 'TEXT' | 'INTEGER' | 'DATE' | 'SELECT';
+
+export interface DataExportFilterDefinition {
+  key: string;
+  label: string;
+  control: DataExportFilterControl;
+  placeholder?: string;
+  dependsOn?: string;
+  options?: Array<{ value: string; label: string }>;
+}
 
 export interface DataExportCatalogItem {
   code: string;
@@ -20,7 +31,9 @@ export interface DataExportCatalogItem {
     description: string;
   }>;
   supportedFilters: string[];
+  filterDefinitions: DataExportFilterDefinition[];
   requiredPermissions: string[];
+  purposePolicy: DataExportPurposePolicy;
   deliveryMode: DataExportDeliveryMode;
   workflowPath?: string;
   status: 'AVAILABLE' | 'PLANNED';

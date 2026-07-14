@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
+import { Readable } from 'stream';
 import { storageConfig } from '../../config/storage.config';
 import type { FileServeResult, FileStorageAdapter } from './file-storage.types';
 
@@ -16,6 +17,7 @@ interface SignedUrlResponse {
 // FilesController's auth/permission guard.
 @Injectable()
 export class SupabaseStorageAdapter implements FileStorageAdapter {
+  readonly kind = 'private-object' as const;
   private readonly logger = new Logger(SupabaseStorageAdapter.name);
 
   constructor(
@@ -31,6 +33,20 @@ export class SupabaseStorageAdapter implements FileStorageAdapter {
       // typing just doesn't include it, hence the cast.
       body: buffer as unknown as BodyInit,
     });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Supabase Storage upload failed (${response.status}): ${detail}`);
+    }
+  }
+
+  async saveStream(source: Readable, filename: string): Promise<void> {
+    const request: RequestInit & { duplex: 'half' } = {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/octet-stream', 'x-upsert': 'true' }),
+      body: source as unknown as BodyInit,
+      duplex: 'half',
+    };
+    const response = await fetch(this.objectUrl(filename), request);
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       throw new Error(`Supabase Storage upload failed (${response.status}): ${detail}`);
@@ -58,6 +74,29 @@ export class SupabaseStorageAdapter implements FileStorageAdapter {
     }
     const url = raw.startsWith('http') ? raw : `${this.storageBaseUrl()}${raw}`;
     return { kind: 'redirect', url };
+  }
+
+  async open(filename: string): Promise<Readable | null> {
+    const response = await fetch(this.objectUrl(filename), {
+      method: 'GET',
+      headers: this.authHeaders({}),
+    });
+    if (response.status === 404) return null;
+    if (!response.ok || !response.body) {
+      throw new Error(`Supabase Storage download failed (${response.status})`);
+    }
+    return Readable.from(response.body);
+  }
+
+  async delete(filename: string): Promise<void> {
+    const response = await fetch(this.objectUrl(filename), {
+      method: 'DELETE',
+      headers: this.authHeaders({}),
+    });
+    if (response.status === 404) return;
+    if (!response.ok) {
+      throw new Error(`Supabase Storage delete failed (${response.status})`);
+    }
   }
 
   private storageBaseUrl(): string {

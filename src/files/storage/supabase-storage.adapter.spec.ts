@@ -1,4 +1,5 @@
 import { SupabaseStorageAdapter } from './supabase-storage.adapter';
+import { Readable } from 'stream';
 
 function config(overrides: Partial<{ supabaseUrl: string; supabaseServiceRoleKey: string }> = {}) {
   return {
@@ -57,6 +58,20 @@ describe('SupabaseStorageAdapter', () => {
     });
   });
 
+  describe('saveStream', () => {
+    it('POSTs a Node stream with the required half-duplex fetch option', async () => {
+      fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse(200, {}));
+      const adapter = new SupabaseStorageAdapter(config());
+      const source = Readable.from(['csv']);
+
+      await adapter.saveStream(source, 'data-exports/job.csv');
+
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit & { duplex?: string }];
+      expect(init.body).toBe(source);
+      expect(init.duplex).toBe('half');
+    });
+  });
+
   describe('resolve', () => {
     it('signs the object and prefixes a relative signedURL with the storage base URL', async () => {
       fetchSpy = jest
@@ -109,6 +124,33 @@ describe('SupabaseStorageAdapter', () => {
       const adapter = new SupabaseStorageAdapter(config());
 
       await expect(adapter.resolve('abc123.jpg')).rejects.toThrow(/sign failed/i);
+    });
+  });
+
+  describe('delete', () => {
+    it('deletes a private object using server credentials', async () => {
+      fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse(200, {}));
+      const adapter = new SupabaseStorageAdapter(config());
+
+      await adapter.delete('data-exports/job.csv');
+
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        'https://project-ref.supabase.co/storage/v1/object/uploads/data-exports/job.csv',
+      );
+      expect(init.method).toBe('DELETE');
+      expect(init.headers).toEqual(
+        expect.objectContaining({ Authorization: 'Bearer service-role-secret' }),
+      );
+    });
+
+    it('treats an already-missing object as deleted', async () => {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(jsonResponse(404, { error: 'not found' }));
+      const adapter = new SupabaseStorageAdapter(config());
+
+      await expect(adapter.delete('missing.csv')).resolves.toBeUndefined();
     });
   });
 });

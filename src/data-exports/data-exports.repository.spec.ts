@@ -49,4 +49,26 @@ describe('DataExportsRepository lifecycle guards', () => {
     expect(queries[0].sql).toContain("SET status = 'PENDING'");
     expect(queries[0].sql).toContain("status = 'FAILED'");
   });
+
+  it('expires completed jobs and records the immutable event atomically', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+
+    await repository.expireCompletedJobs(new Date('2026-07-15T00:00:00Z'));
+
+    expect(queries[0].sql).toContain("SET status = 'EXPIRED'");
+    expect(queries[0].sql).toContain('event_code, metadata');
+    expect(queries[0].sql).toContain("'EXPIRED'");
+  });
+
+  it('clears an artifact key only after the job is expired', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+
+    await repository.clearExpiredArtifact(
+      '00000000-0000-0000-0000-000000000001',
+      'data-exports/job.csv',
+    );
+
+    expect(queries[0].sql).toContain('artifact_storage_key = NULL');
+    expect(queries[0].sql).toContain("status = 'EXPIRED'");
+  });
 });

@@ -22,6 +22,9 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9251);
 const USERNAME = 'data_export_browser_smoke_admin';
+const CONTEXT_SCHOOL_ID = 2_140_000_001;
+const CONTEXT_GRADE = 'ป.1';
+const CONTEXT_ROOM = '91';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -202,6 +205,10 @@ async function upsertActor(dataSource, passwordHash) {
     'review-cases',
     'import-data',
     'export-data',
+    'manage-school-structure',
+    'manage-student-observations',
+    'report-up-cases',
+    'executive-report',
   ];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
@@ -300,7 +307,19 @@ async function main() {
         FirstName: 'Data Export',
         LastName: 'Browser Smoke',
         roles: ['ADMIN'],
-        permissions: ['home', 'dashboard', 'students', 'attendance-dashboard', 'review-cases', 'import-data', 'export-data'],
+        permissions: [
+          'home',
+          'dashboard',
+          'students',
+          'attendance-dashboard',
+          'review-cases',
+          'import-data',
+          'export-data',
+          'manage-school-structure',
+          'manage-student-observations',
+          'report-up-cases',
+          'executive-report',
+        ],
         data_scope: { global: true },
         must_change_password: false,
       },
@@ -351,6 +370,70 @@ async function main() {
     );
     assert(catalogStatus.status === 200, `Catalog API returned ${catalogStatus.status}`);
     assert(catalogStatus.count >= 1, 'Catalog API returned no export items');
+
+    const contextStartedAt = new Date();
+    const contextUrl = new URL(`${FRONTEND_URL}/data-exports`);
+    contextUrl.searchParams.set('dataset', 'student_roster_basic');
+    contextUrl.searchParams.set('schoolId', String(CONTEXT_SCHOOL_ID));
+    contextUrl.searchParams.set('grade', CONTEXT_GRADE);
+    contextUrl.searchParams.set('room', CONTEXT_ROOM);
+    await navigate(client, contextUrl.toString());
+    await waitFor(async () => {
+      const values = await evaluate(
+        client,
+        `({
+          text: document.body.innerText,
+          schoolId: document.querySelector('#export-student_roster_basic-schoolId')?.value,
+          grade: document.querySelector('#export-student_roster_basic-grade')?.value,
+          room: document.querySelector('#export-student_roster_basic-room')?.value
+        })`,
+      );
+      return (
+        values.text.includes('นำตัวกรองจากหน้าต้นทางมาแล้ว') &&
+        values.schoolId === String(CONTEXT_SCHOOL_ID) &&
+        values.grade === CONTEXT_GRADE &&
+        values.room === CONTEXT_ROOM
+      );
+    }, 'Typed source context did not populate the export form');
+
+    const clicked = await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#export-student_roster_basic-schoolId');
+        const card = input?.closest('[data-export-dataset-code="student_roster_basic"]');
+        const button = [...(card?.querySelectorAll('button') || [])]
+          .find((candidate) => candidate.textContent?.includes('สร้างงานส่งออก'));
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`,
+    );
+    assert(clicked === true, 'Could not submit the source-context export card');
+
+    let submittedJob;
+    await waitFor(async () => {
+      const [row] = await dataSource.query(
+        `
+          SELECT id, status, filter_snapshot, exported_row_count
+          FROM data_export_job
+          WHERE requested_by = $1
+            AND created_at >= $2::timestamptz
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        [userId, contextStartedAt.toISOString()],
+      );
+      if (!row) return false;
+      if (row.status === 'FAILED') throw new Error('Source-context export job failed');
+      submittedJob = row;
+      return row.status === 'COMPLETED';
+    }, 'Source-context export job did not complete');
+    assert(
+      Number(submittedJob.filter_snapshot.schoolId) === CONTEXT_SCHOOL_ID &&
+        submittedJob.filter_snapshot.grade === CONTEXT_GRADE &&
+        submittedJob.filter_snapshot.room === CONTEXT_ROOM,
+      'Submitted export job did not preserve typed source-context filters',
+    );
 
     console.log('smoke:data-export-browser ok');
   } finally {

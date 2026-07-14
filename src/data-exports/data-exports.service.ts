@@ -10,20 +10,23 @@ import {
   type OnApplicationShutdown,
   type OnModuleInit,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import type { ConfigType } from '@nestjs/config';
-import { createReadStream } from 'fs';
-import { mkdir, stat, unlink, writeFile } from 'fs/promises';
 import { createHash, randomUUID } from 'crypto';
-import path from 'path';
 import { Queue, Worker } from 'bullmq';
+import { Readable } from 'stream';
 import { DataSource } from 'typeorm';
 import { hasPermission, type AuthenticatedRequestUser } from '../auth';
-import { isUnconfiguredDataScope, normalizeDataScope } from '../auth/auth.types';
+import { isUnconfiguredDataScope, normalizeDataScope, type DataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
+import { appConfig } from '../config/app.config';
 import { queueConfig } from '../config/queue.config';
+import { executiveReportingConfig } from '../config/executive-reporting.config';
 import { queryDataSource } from '../database/sql-query';
+import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
+import { resolveExecutiveReportingPolicy } from '../executive-reporting/executive-reporting.policy';
 import { DATA_EXPORT_CATALOG } from './data-export.registry';
-import { DataExportsRepository } from './data-exports.repository';
+import { DataExportsRepository, type DataExportActorRow } from './data-exports.repository';
 import type { CreateDataExportJobDto, DataExportJobListQueryDto } from './dto/data-export.dto';
 import type {
   DataExportCatalogItem,
@@ -32,6 +35,8 @@ import type {
 } from './data-export.types';
 
 const ROW_CAP = 100_000;
+const QUERY_CHUNK_SIZE = 1_000;
+const EXPORT_EXPIRY_CRON = '0 */15 * * * *';
 
 interface QueuePayload {
   jobId: string;
@@ -39,7 +44,16 @@ interface QueuePayload {
 
 interface ExportRowsResult {
   headers: string[];
+  nextCursor: ExportCursor | null;
   rows: Array<Record<string, unknown>>;
+}
+
+type ExportCursor = Record<string, string | number>;
+
+interface ExportStreamMetrics {
+  byteCount: number;
+  rowCount: number;
+  sha256: ReturnType<typeof createHash>;
 }
 
 @Injectable()
@@ -54,9 +68,23 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     @Optional()
     @Inject(queueConfig.KEY)
     private readonly runtimeQueueConfig?: ConfigType<typeof queueConfig>,
+    @Optional()
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage?: FileStorageAdapter,
+    @Optional()
+    @Inject(appConfig.KEY)
+    private readonly runtimeAppConfig?: ConfigType<typeof appConfig>,
+    @Optional()
+    @Inject(executiveReportingConfig.KEY)
+    private readonly runtimeExecutiveReportingConfig?: ConfigType<typeof executiveReportingConfig>,
   ) {}
 
   async onModuleInit(): Promise<void> {
+    if (this.runtimeAppConfig?.isProduction && this.storage?.kind !== 'private-object') {
+      throw new Error(
+        'Production data exports require private object storage; local artifact storage is disabled',
+      );
+    }
     const config = this.queueRuntimeConfig();
     if (config.requireRedis && !config.redisUrl) {
       throw new Error('REDIS_URL is required for production data export queue processing');
@@ -76,7 +104,15 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
   }
 
   getCatalog(actor: AuthenticatedRequestUser) {
-    const items = DATA_EXPORT_CATALOG.filter((item) => this.canAccessCatalogItem(actor, item));
+    const items = DATA_EXPORT_CATALOG.filter((item) => this.canAccessCatalogItem(actor, item)).map(
+      (item) => ({
+        ...item,
+        supportedFilters:
+          item.deliveryMode === 'ASYNC_JOB'
+            ? item.filterDefinitions.map((definition) => definition.key)
+            : item.supportedFilters,
+      }),
+    );
 
     return {
       success: true as const,
@@ -91,6 +127,10 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       throw new BadRequestException('ชุดข้อมูลส่งออกไม่ถูกต้อง');
     }
     const filters = this.normalizeFilters(item, dto.filters ?? {});
+    if (!this.currentScopeCoversFilters(actor.data_scope, filters)) {
+      throw new ForbiddenException('ตัวกรองอยู่นอกขอบเขตข้อมูลปัจจุบัน');
+    }
+    this.assertPurposePolicy(item, dto.purposeCode, dto.purposeNote);
     const job = await this.repository.createJob({
       id: randomUUID(),
       datasetCode: item.code,
@@ -161,13 +201,15 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     if (job.expires_at && new Date(job.expires_at).getTime() < Date.now()) {
       throw new BadRequestException('ไฟล์ส่งออกหมดอายุแล้ว กรุณาสร้างงานใหม่');
     }
-    const filePath = this.resolveArtifactPath(job.artifact_storage_key);
-    await stat(filePath);
+    const stream = await this.requireStorage().open(job.artifact_storage_key);
+    if (!stream) {
+      throw new NotFoundException('ไม่พบไฟล์ส่งออก กรุณาสร้างงานใหม่');
+    }
     await this.repository.addEvent(job.id, actor.id, 'DOWNLOADED', {
       datasetCode: job.dataset_code,
       rowCount: Number(job.exported_row_count ?? 0),
     });
-    return new StreamableFile(createReadStream(filePath), {
+    return new StreamableFile(stream, {
       type: 'text/csv; charset=utf-8',
       disposition: `attachment; filename="${job.dataset_code}-${job.id}.csv"`,
     });
@@ -296,61 +338,81 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     await this.repository.addEvent(jobId, claimed.requested_by, 'STARTED', {
       datasetCode: claimed.dataset_code,
     });
+    let artifactStorageKey: string | null = null;
     try {
-      const item = DATA_EXPORT_CATALOG.find((candidate) => candidate.code === claimed.dataset_code);
-      if (!item || item.deliveryMode !== 'ASYNC_JOB') {
-        throw new Error('Unsupported data export dataset');
-      }
-      const result = await this.loadRows(item, claimed);
-      if (result.rows.length > ROW_CAP) {
-        throw new Error('ROW_CAP_EXCEEDED');
-      }
-      const csv = this.toCsv(result.headers, result.rows);
-      const artifactStorageKey = `${this.queueRuntimeConfig().dataExport.storagePrefix}${claimed.id}.csv`;
-      const artifactPath = this.resolveArtifactPath(artifactStorageKey);
-      await mkdir(path.dirname(artifactPath), { recursive: true });
-      await writeFile(artifactPath, csv, 'utf8');
-      const digest = createHash('sha256').update(csv).digest('hex');
-      const size = Buffer.byteLength(csv, 'utf8');
+      const currentActor = await this.loadCurrentRequester(claimed.requested_by);
+      const item = this.requireCurrentJobAccess(claimed, currentActor);
+      const metrics: ExportStreamMetrics = {
+        byteCount: 0,
+        rowCount: 0,
+        sha256: createHash('sha256'),
+      };
+      artifactStorageKey = this.artifactStorageKey(claimed.id);
+      await this.requireStorage().saveStream(
+        Readable.from(this.streamCsv(item, claimed, metrics)),
+        artifactStorageKey,
+      );
+      const digest = metrics.sha256.digest('hex');
       const expiresAt = new Date(
         Date.now() + this.queueRuntimeConfig().dataExport.artifactTtlHours * 60 * 60 * 1000,
       );
       const completed = await this.repository.completeJob(claimed.id, {
-        rowCount: result.rows.length,
-        artifactSizeBytes: size,
+        rowCount: metrics.rowCount,
+        artifactSizeBytes: metrics.byteCount,
         artifactStorageKey,
         artifactSha256: digest,
         expiresAt,
       });
       if (!completed) {
-        await unlink(artifactPath).catch(() => undefined);
+        await this.requireStorage()
+          .delete(artifactStorageKey)
+          .catch(() => undefined);
         return;
       }
       await this.repository.addEvent(jobId, claimed.requested_by, 'COMPLETED', {
         datasetCode: claimed.dataset_code,
-        rowCount: result.rows.length,
-        byteCount: size,
+        rowCount: metrics.rowCount,
+        byteCount: metrics.byteCount,
       });
     } catch (error) {
-      const code =
-        this.errorMessage(error) === 'ROW_CAP_EXCEEDED' ? 'ROW_CAP_EXCEEDED' : 'EXPORT_FAILED';
+      if (artifactStorageKey) {
+        await this.requireStorage()
+          .delete(artifactStorageKey)
+          .catch(() => undefined);
+      }
+      if (this.errorMessage(error) === 'EXPORT_JOB_STOPPED') {
+        return;
+      }
+      const accessRevoked =
+        error instanceof ForbiddenException || error instanceof BadRequestException;
+      const code = accessRevoked
+        ? 'EXPORT_ACCESS_REVOKED'
+        : this.errorMessage(error) === 'ROW_CAP_EXCEEDED'
+          ? 'ROW_CAP_EXCEEDED'
+          : 'EXPORT_FAILED';
       await this.repository.failJob(
         jobId,
         code,
-        code === 'ROW_CAP_EXCEEDED'
-          ? 'จำนวนแถวเกินขีดจำกัด กรุณาลดช่วงเวลาหรือเพิ่มตัวกรอง'
-          : 'สร้างไฟล์ส่งออกไม่สำเร็จ กรุณาลองใหม่ภายหลัง',
+        code === 'EXPORT_ACCESS_REVOKED'
+          ? 'สิทธิ์ ขอบเขตข้อมูล หรือวัตถุประสงค์ของผู้ขอไม่อนุญาตให้ประมวลผลงานนี้แล้ว'
+          : code === 'ROW_CAP_EXCEEDED'
+            ? 'จำนวนแถวเกินขีดจำกัด กรุณาลดช่วงเวลาหรือเพิ่มตัวกรอง'
+            : 'สร้างไฟล์ส่งออกไม่สำเร็จ กรุณาลองใหม่ภายหลัง',
       );
       await this.repository.addEvent(jobId, claimed.requested_by, 'FAILED', {
         datasetCode: claimed.dataset_code,
         failureCode: code,
       });
+      if (accessRevoked) return;
       throw error;
     }
   }
 
   private canAccessCatalogItem(actor: AuthenticatedRequestUser, item: DataExportCatalogItem) {
-    if (actor.data_scope?.own_only === true) {
+    if (actor.roles?.includes('EXECUTIVE') && item.code !== 'executive_aggregate') {
+      return false;
+    }
+    if (actor.data_scope?.own_only === true || isUnconfiguredDataScope(actor.data_scope)) {
       return false;
     }
     return item.requiredPermissions.every((permission) =>
@@ -374,6 +436,135 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     return item;
   }
 
+  private normalizePermissionList(value: unknown): string[] {
+    return Array.isArray(value)
+      ? Array.from(
+          new Set(
+            value.filter(
+              (permission): permission is string =>
+                typeof permission === 'string' && permission.trim().length > 0,
+            ),
+          ),
+        )
+      : [];
+  }
+
+  private async loadCurrentRequester(userId: number): Promise<AuthenticatedRequestUser | null> {
+    const row = await this.repository.findActiveRequester(userId);
+    if (!row) return null;
+    return this.actorFromRow(row);
+  }
+
+  private actorFromRow(row: DataExportActorRow): AuthenticatedRequestUser {
+    const storedPermissions = this.normalizePermissionList(row.permissions);
+    const roleDefaults = this.normalizePermissionList(row.role_default_permissions);
+    return {
+      id: Number(row.id),
+      username: row.username,
+      roles: row.role ? [row.role] : [],
+      permissions: storedPermissions.length > 0 ? storedPermissions : roleDefaults,
+      data_scope: normalizeDataScope(row.data_scope) ?? {},
+    };
+  }
+
+  private requireCurrentJobAccess(
+    job: DataExportJobRow,
+    actor: AuthenticatedRequestUser | null,
+  ): DataExportCatalogItem {
+    if (!actor) {
+      throw new ForbiddenException('ผู้ขอส่งออกไม่อยู่ในสถานะใช้งานแล้ว');
+    }
+    const item = DATA_EXPORT_CATALOG.find((candidate) => candidate.code === job.dataset_code);
+    if (!item || item.deliveryMode !== 'ASYNC_JOB') {
+      throw new BadRequestException('ชุดข้อมูลส่งออกไม่รองรับแล้ว');
+    }
+    if (!this.canAccessCatalogItem(actor, item)) {
+      throw new ForbiddenException('สิทธิ์ส่งออกชุดข้อมูลถูกเพิกถอนแล้ว');
+    }
+    if (!this.scopeCoversSnapshot(actor.data_scope, job.scope_snapshot)) {
+      throw new ForbiddenException('ขอบเขตข้อมูลปัจจุบันไม่ครอบคลุมขอบเขตเดิมของงาน');
+    }
+    const filters = this.normalizeFilters(item, job.filter_snapshot);
+    if (!this.currentScopeCoversFilters(actor.data_scope, filters)) {
+      throw new ForbiddenException('ตัวกรองเดิมอยู่นอกขอบเขตข้อมูลปัจจุบัน');
+    }
+    this.assertPurposePolicy(item, job.purpose_code, job.purpose_note);
+    return item;
+  }
+
+  private scopeCoversSnapshot(currentScope: unknown, snapshotScope: unknown): boolean {
+    const current = normalizeDataScope(currentScope);
+    const snapshot = normalizeDataScope(snapshotScope);
+    if (!current || current.own_only === true || isUnconfiguredDataScope(current)) return false;
+    if (!snapshot || snapshot.own_only === true || isUnconfiguredDataScope(snapshot)) return false;
+    if (current.global === true) return true;
+    if (snapshot.global === true) return false;
+
+    const keys: Array<keyof Omit<DataScope, 'global' | 'own_only'>> = [
+      'provinces',
+      'districts',
+      'sub_districts',
+      'school_ids',
+      'grade_levels',
+      'room_ids',
+    ];
+    for (const key of keys) {
+      const currentValues = new Set((current[key] ?? []).map(String));
+      const snapshotValues = (snapshot[key] ?? []).map(String);
+      if (currentValues.size === 0) continue;
+      if (
+        snapshotValues.length === 0 ||
+        !snapshotValues.every((value) => currentValues.has(value))
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private currentScopeCoversFilters(
+    currentScope: unknown,
+    filters: Record<string, unknown>,
+  ): boolean {
+    const current = normalizeDataScope(currentScope);
+    if (!current || current.own_only === true || isUnconfiguredDataScope(current)) return false;
+    if (current.global === true) return true;
+    const constraints: Array<[string, keyof DataScope]> = [
+      ['province', 'provinces'],
+      ['district', 'districts'],
+      ['subDistrict', 'sub_districts'],
+      ['schoolId', 'school_ids'],
+      ['room', 'room_ids'],
+    ];
+    return constraints.every(([filterKey, scopeKey]) => {
+      const filterValue = filters[filterKey];
+      const scopeValues = (current[scopeKey] as Array<string | number> | undefined) ?? [];
+      if (
+        filterValue !== undefined &&
+        typeof filterValue !== 'string' &&
+        typeof filterValue !== 'number'
+      ) {
+        return false;
+      }
+      return (
+        filterValue === undefined ||
+        scopeValues.length === 0 ||
+        scopeValues.map(String).includes(String(filterValue))
+      );
+    });
+  }
+
+  private assertPurposePolicy(
+    item: DataExportCatalogItem,
+    purposeCode: string | null | undefined,
+    purposeNote: string | null | undefined,
+  ): void {
+    if (item.purposePolicy !== 'REQUIRED_CODE_AND_NOTE') return;
+    if (!purposeCode?.trim() || !purposeNote?.trim()) {
+      throw new BadRequestException('ชุดข้อมูลนี้ต้องระบุรหัสวัตถุประสงค์และรายละเอียดการใช้งาน');
+    }
+  }
+
   private async requireVisibleJob(
     actor: AuthenticatedRequestUser,
     jobId: string,
@@ -385,30 +576,24 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     if (job.requested_by !== actor.id) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูงานส่งออกนี้');
     }
-    const item = DATA_EXPORT_CATALOG.find((candidate) => candidate.code === job.dataset_code);
-    if (!item || !this.canAccessCatalogItem(actor, item)) {
-      throw new ForbiddenException('ไม่มีสิทธิ์ดูงานส่งออกนี้');
-    }
+    this.requireCurrentJobAccess(job, actor);
     return job;
   }
 
   private normalizeFilters(item: DataExportCatalogItem, filters: Record<string, unknown>) {
-    const allowed = new Set(
-      item.supportedFilters.flatMap((filter) =>
-        filter === 'dateRange' ? ['dateFrom', 'dateTo'] : [filter],
-      ),
-    );
+    const allowed = new Set(item.filterDefinitions.map((filter) => filter.key));
     const normalized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(filters)) {
-      if (!allowed.has(key)) {
+      const definition = item.filterDefinitions.find((filter) => filter.key === key);
+      if (!allowed.has(key) || !definition) {
         throw new BadRequestException(`ตัวกรองไม่รองรับ: ${key}`);
       }
       if (value === undefined || value === null || value === '') {
         continue;
       }
-      if (key === 'schoolId') {
-        if (!Number.isInteger(value) || Number(value) <= 0) {
-          throw new BadRequestException('schoolId ต้องเป็นจำนวนเต็มบวก');
+      if (definition.control === 'INTEGER') {
+        if (!Number.isSafeInteger(value) || Number(value) <= 0 || Number(value) > 2_147_483_647) {
+          throw new BadRequestException(`${key} ต้องเป็นจำนวนเต็มบวก`);
         }
       } else if (key === 'dateFrom' || key === 'dateTo') {
         if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -418,7 +603,13 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== value) {
           throw new BadRequestException(`${key} ต้องเป็นวันที่ที่มีอยู่จริง`);
         }
-      } else if (typeof value !== 'string' || value.trim().length === 0 || value.length > 100) {
+      } else if (
+        typeof value !== 'string' ||
+        value.trim().length === 0 ||
+        value.length > 100 ||
+        (definition.control === 'SELECT' &&
+          !definition.options?.some((option) => option.value === value.trim()))
+      ) {
         throw new BadRequestException(`ค่าตัวกรอง ${key} ไม่ถูกต้อง`);
       }
       normalized[key] = typeof value === 'string' ? value.trim() : value;
@@ -566,29 +757,101 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     return { sql: conditions.join(' AND '), params };
   }
 
+  private buildSchoolAreaScopeWhere(
+    actorScope: unknown,
+    filters: Record<string, unknown>,
+    schoolAlias = 'school',
+    startIndex = 1,
+  ) {
+    const normalizedScope = normalizeDataScope(actorScope);
+    if (
+      !normalizedScope ||
+      normalizedScope.own_only === true ||
+      isUnconfiguredDataScope(normalizedScope)
+    ) {
+      return { sql: '1=0', params: [] as unknown[] };
+    }
+    const areaScope = { ...normalizedScope };
+    delete areaScope.grade_levels;
+    delete areaScope.room_ids;
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    const scope = buildDataScopeQuery(
+      areaScope,
+      {
+        school_id: `${schoolAlias}.id`,
+        province: `${schoolAlias}.province`,
+        district: `${schoolAlias}.district`,
+        sub_district: `${schoolAlias}.sub_district`,
+      },
+      startIndex,
+    );
+    if (scope.sql) {
+      conditions.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
+    let index = startIndex + params.length;
+    for (const [key, column] of [
+      ['province', `${schoolAlias}.province`],
+      ['district', `${schoolAlias}.district`],
+      ['subDistrict', `${schoolAlias}.sub_district`],
+      ['schoolId', `${schoolAlias}.id`],
+    ] as const) {
+      if (filters[key]) {
+        conditions.push(`${column} = $${index++}`);
+        params.push(filters[key]);
+      }
+    }
+    return { sql: conditions.join(' AND '), params };
+  }
+
   private async loadRows(
     item: DataExportCatalogItem,
     job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
   ): Promise<ExportRowsResult> {
     switch (item.code) {
       case 'student_roster_basic':
-        return await this.loadStudentRoster(job);
+        return await this.loadStudentRoster(job, limit, cursor);
       case 'student_risk':
-        return await this.loadStudentRisk(job);
+        return await this.loadStudentRisk(job, limit, cursor);
       case 'attendance_summary':
-        return await this.loadAttendanceSummary(job);
+        return await this.loadAttendanceSummary(job, limit, cursor);
       case 'case_summary':
-        return await this.loadCaseSummary(job);
+        return await this.loadCaseSummary(job, limit, cursor);
       case 'case_operational':
-        return await this.loadCaseOperational(job);
+        return await this.loadCaseOperational(job, limit, cursor);
+      case 'school_teacher_roster':
+        return await this.loadSchoolTeacherRoster(job, limit, cursor);
+      case 'school_classroom_structure':
+        return await this.loadSchoolClassroomStructure(job, limit, cursor);
+      case 'classroom_assignments':
+        return await this.loadClassroomAssignments(job, limit, cursor);
+      case 'observation_aggregate':
+        return await this.loadObservationAggregate(job, limit, cursor);
+      case 'case_report_up_aggregate':
+        return await this.loadCaseReportUpAggregate(job, limit, cursor);
+      case 'executive_aggregate':
+        return await this.loadExecutiveAggregate(job, limit, cursor);
       default:
         throw new Error('Unsupported data export dataset');
     }
   }
 
-  private async loadStudentRoster(job: DataExportJobRow): Promise<ExportRowsResult> {
+  private async loadStudentRoster(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
     const scope = this.buildStudentScopeWhere(job.scope_snapshot, job.filter_snapshot);
-    const whereSql = scope.sql ? `WHERE ${scope.sql}` : '';
+    const params = [...scope.params];
+    const conditions = [scope.sql];
+    if (cursor?.studentUuid) {
+      conditions.push(`s.student_uuid > $${params.push(cursor.studentUuid)}::uuid`);
+    }
+    params.push(limit);
+    const whereSql = conditions.filter(Boolean).join(' AND ');
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,
       `
@@ -603,11 +866,11 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         LEFT JOIN student_status status ON status.code = s.student_status_code
-        ${whereSql}
-        ORDER BY sc.name NULLS LAST, gl.id NULLS LAST, s."RoomID_Onec" NULLS LAST, s."FirstName_Onec"
-        LIMIT ${ROW_CAP + 1}
+        WHERE ${whereSql || 'TRUE'}
+        ORDER BY s.student_uuid
+        LIMIT $${params.length}
       `,
-      scope.params,
+      params,
     );
     return {
       headers: [
@@ -620,10 +883,15 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'student_status',
       ],
       rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, { studentUuid: 'student_uuid' }),
     };
   }
 
-  private async loadStudentRisk(job: DataExportJobRow): Promise<ExportRowsResult> {
+  private async loadStudentRisk(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
     const scope = this.buildStudentScopeWhere(job.scope_snapshot, job.filter_snapshot);
     const conditions = [scope.sql];
     const params = [...scope.params];
@@ -631,6 +899,10 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       params.push(job.filter_snapshot.riskTier);
       conditions.push(`profile.risk_tier = $${params.length}`);
     }
+    if (cursor?.studentUuid) {
+      conditions.push(`s.student_uuid > $${params.push(cursor.studentUuid)}::uuid`);
+    }
+    params.push(limit);
     const whereSql = conditions.filter(Boolean).join(' AND ') || 'TRUE';
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,
@@ -649,8 +921,8 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
         WHERE ${whereSql}
-        ORDER BY profile.risk_severity DESC NULLS LAST, profile.risk_score DESC NULLS LAST, s.student_uuid
-        LIMIT ${ROW_CAP + 1}
+        ORDER BY s.student_uuid
+        LIMIT $${params.length}
       `,
       params,
     );
@@ -671,10 +943,15 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'profile_calculated_at',
       ],
       rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, { studentUuid: 'student_uuid' }),
     };
   }
 
-  private async loadAttendanceSummary(job: DataExportJobRow): Promise<ExportRowsResult> {
+  private async loadAttendanceSummary(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
     const scope = this.buildStudentScopeWhere(job.scope_snapshot, job.filter_snapshot);
     const params = [...scope.params];
     const conditions = [
@@ -683,6 +960,10 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       `a."AttendanceDate" <= COALESCE($${params.length + 2}::date, CURRENT_DATE)`,
     ];
     params.push(job.filter_snapshot.dateFrom ?? null, job.filter_snapshot.dateTo ?? null);
+    if (cursor?.attendanceDate) {
+      conditions.push(`a."AttendanceDate" > $${params.push(cursor.attendanceDate)}::date`);
+    }
+    params.push(limit);
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,
       `
@@ -702,19 +983,36 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         WHERE ${conditions.filter(Boolean).join(' AND ')}
         GROUP BY a."AttendanceDate"
         ORDER BY a."AttendanceDate"
-        LIMIT ${ROW_CAP + 1}
+        LIMIT $${params.length}
       `,
       params,
     );
     return {
       headers: ['attendance_date', 'total_records', 'present_count', 'absent_count', 'late_count'],
       rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, { attendanceDate: 'attendance_date' }),
     };
   }
 
-  private async loadCaseSummary(job: DataExportJobRow): Promise<ExportRowsResult> {
+  private async loadCaseSummary(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
     const scope = this.buildCaseScopeWhere(job.scope_snapshot, job.filter_snapshot);
-    const whereSql = ['c.deleted_at IS NULL', scope.sql].filter(Boolean).join(' AND ');
+    const conditions = ['c.deleted_at IS NULL', scope.sql];
+    const params = [...scope.params];
+    if (job.filter_snapshot.dateFrom) {
+      conditions.push(`c.created_at::date >= $${params.push(job.filter_snapshot.dateFrom)}::date`);
+    }
+    if (job.filter_snapshot.dateTo) {
+      conditions.push(`c.created_at::date <= $${params.push(job.filter_snapshot.dateTo)}::date`);
+    }
+    if (cursor?.status) {
+      conditions.push(`c.status > $${params.push(cursor.status)}`);
+    }
+    params.push(limit);
+    const whereSql = conditions.filter(Boolean).join(' AND ');
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,
       `
@@ -724,37 +1022,58 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         WHERE ${whereSql}
         GROUP BY c.status
         ORDER BY c.status
-        LIMIT ${ROW_CAP + 1}
+        LIMIT $${params.length}
       `,
-      scope.params,
+      params,
     );
-    return { headers: ['status', 'case_count'], rows: result.rows };
+    return {
+      headers: ['status', 'case_count'],
+      rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, { status: 'status' }),
+    };
   }
 
-  private async loadCaseOperational(job: DataExportJobRow): Promise<ExportRowsResult> {
+  private async loadCaseOperational(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
     const scope = this.buildCaseScopeWhere(job.scope_snapshot, job.filter_snapshot);
-    const whereSql = ['c.deleted_at IS NULL', scope.sql].filter(Boolean).join(' AND ');
+    const conditions = ['c.deleted_at IS NULL', scope.sql];
+    const params = [...scope.params];
+    if (job.filter_snapshot.dateFrom) {
+      conditions.push(`c.created_at::date >= $${params.push(job.filter_snapshot.dateFrom)}::date`);
+    }
+    if (job.filter_snapshot.dateTo) {
+      conditions.push(`c.created_at::date <= $${params.push(job.filter_snapshot.dateTo)}::date`);
+    }
+    if (cursor?.caseId) {
+      conditions.push(`c.id > $${params.push(cursor.caseId)}::integer`);
+    }
+    params.push(limit);
+    const whereSql = conditions.filter(Boolean).join(' AND ');
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,
       `
         SELECT c.id AS case_id, c.student_uuid::text, c.student_first_name, c.student_last_name,
                sc.name AS school_name, c.status, c.reason_flagged, c.created_at, c.sla_due_at,
-               latest_referral.status AS latest_referral_status,
-               latest_referral.outcome AS latest_referral_outcome
+               latest_report_up.report_reason AS latest_report_up_reason,
+               latest_report_up.report_summary AS latest_report_up_summary,
+               latest_report_up.reported_at AS latest_reported_up_at
         FROM cases c
         LEFT JOIN schools sc ON sc.id = c.school_id
         LEFT JOIN LATERAL (
-          SELECT referral.status, referral.outcome
-          FROM case_referrals referral
-          WHERE referral.case_id = c.id AND referral.deleted_at IS NULL
-          ORDER BY referral.referred_at DESC
+          SELECT report_up.report_reason, report_up.report_summary, report_up.reported_at
+          FROM case_report_ups report_up
+          WHERE report_up.case_id = c.id
+          ORDER BY report_up.reported_at DESC
           LIMIT 1
-        ) latest_referral ON TRUE
+        ) latest_report_up ON TRUE
         WHERE ${whereSql}
-        ORDER BY c.created_at DESC, c.id DESC
-        LIMIT ${ROW_CAP + 1}
+        ORDER BY c.id
+        LIMIT $${params.length}
       `,
-      scope.params,
+      params,
     );
     return {
       headers: [
@@ -767,19 +1086,694 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'reason_flagged',
         'created_at',
         'sla_due_at',
-        'latest_referral_status',
-        'latest_referral_outcome',
+        'latest_report_up_reason',
+        'latest_report_up_summary',
+        'latest_reported_up_at',
       ],
       rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, { caseId: 'case_id' }),
     };
   }
 
-  private toCsv(headers: string[], rows: Array<Record<string, unknown>>) {
-    const lines = [headers.join(',')];
-    for (const row of rows) {
-      lines.push(headers.map((header) => this.csvCell(row[header])).join(','));
+  private async loadSchoolTeacherRoster(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
+    const scope = this.buildSchoolAreaScopeWhere(job.scope_snapshot, job.filter_snapshot);
+    const normalizedScope = normalizeDataScope(job.scope_snapshot);
+    const conditions = ['membership.deleted_at IS NULL', scope.sql];
+    const params = [...scope.params];
+    if (job.filter_snapshot.structureStatus) {
+      conditions.push(
+        `membership.membership_status = $${params.push(job.filter_snapshot.structureStatus)}`,
+      );
     }
-    return `\uFEFF${lines.join('\n')}\n`;
+    const gradeLevels = normalizedScope?.grade_levels ?? [];
+    const roomIds = normalizedScope?.room_ids ?? [];
+    if (gradeLevels.length > 0 || roomIds.length > 0) {
+      const assignmentScope = [
+        'scoped_assignment.teacher_membership_id = membership.id',
+        'scoped_assignment.deleted_at IS NULL',
+        'scoped_classroom.deleted_at IS NULL',
+      ];
+      if (gradeLevels.length > 0) {
+        assignmentScope.push(`scoped_classroom.grade_level_id = ANY($${params.length + 1}::int[])`);
+        params.push(gradeLevels);
+      }
+      if (roomIds.length > 0) {
+        assignmentScope.push(
+          `COALESCE(scoped_classroom.legacy_room_number::text, scoped_classroom.room_code)
+            = ANY($${params.length + 1}::text[])`,
+        );
+        params.push(roomIds.map(String));
+      }
+      conditions.push(`EXISTS (
+        SELECT 1
+        FROM classroom_teacher_assignments scoped_assignment
+        JOIN school_classrooms scoped_classroom
+          ON scoped_classroom.id = scoped_assignment.classroom_id
+        WHERE ${assignmentScope.join(' AND ')}
+      )`);
+    }
+    if (cursor?.membershipId) {
+      conditions.push(`membership.id > $${params.push(cursor.membershipId)}::bigint`);
+    }
+    params.push(limit);
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `
+        SELECT membership.id::text AS cursor_membership_id,
+               school.name AS school_name,
+               COALESCE(
+                 NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+                 'ไม่ระบุชื่อ'
+               ) AS teacher_name,
+               membership.membership_status,
+               membership.started_on::text,
+               membership.ended_on::text
+        FROM school_teacher_memberships membership
+        JOIN schools school ON school.id = membership.school_id
+        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        WHERE ${conditions.filter(Boolean).join(' AND ')}
+        ORDER BY membership.id
+        LIMIT $${params.length}
+      `,
+      params,
+    );
+    return {
+      headers: ['school_name', 'teacher_name', 'membership_status', 'started_on', 'ended_on'],
+      rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, {
+        membershipId: 'cursor_membership_id',
+      }),
+    };
+  }
+
+  private async loadSchoolClassroomStructure(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
+    const scope = this.buildSchoolAreaScopeWhere(job.scope_snapshot, job.filter_snapshot);
+    const normalizedScope = normalizeDataScope(job.scope_snapshot);
+    const conditions = ['classroom.deleted_at IS NULL', 'term.deleted_at IS NULL', scope.sql];
+    const params = [...scope.params];
+    const gradeLevels = normalizedScope?.grade_levels ?? [];
+    const roomIds = normalizedScope?.room_ids ?? [];
+    if (gradeLevels.length > 0) {
+      conditions.push(`classroom.grade_level_id = ANY($${params.push(gradeLevels)}::int[])`);
+    }
+    if (roomIds.length > 0) {
+      conditions.push(
+        `COALESCE(classroom.legacy_room_number::text, classroom.room_code)
+          = ANY($${params.push(roomIds.map(String))}::text[])`,
+      );
+    }
+    for (const [key, sql] of [
+      ['academicYear', 'term.academic_year'],
+      ['semester', 'term.semester'],
+      ['grade', 'grade.label'],
+      ['room', 'classroom.room_code'],
+      ['structureStatus', 'classroom.classroom_status'],
+    ] as const) {
+      if (job.filter_snapshot[key]) {
+        conditions.push(`${sql} = $${params.push(job.filter_snapshot[key])}`);
+      }
+    }
+    if (cursor?.classroomId) {
+      conditions.push(`classroom.id > $${params.push(cursor.classroomId)}::bigint`);
+    }
+    params.push(limit);
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `
+        SELECT classroom.id::text AS cursor_classroom_id,
+               school.name AS school_name,
+               term.academic_year,
+               term.semester,
+               grade.label AS grade,
+               classroom.room_code,
+               classroom.room_name,
+               classroom.classroom_status,
+               (
+                 SELECT COUNT(*)::int
+                 FROM student_term enrollment
+                 WHERE enrollment.classroom_id = classroom.id
+                   AND enrollment.deleted_at IS NULL
+               ) AS student_count
+        FROM school_classrooms classroom
+        JOIN schools school ON school.id = classroom.school_id
+        JOIN school_terms term ON term.id = classroom.school_term_id
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        WHERE ${conditions.filter(Boolean).join(' AND ')}
+        ORDER BY classroom.id
+        LIMIT $${params.length}
+      `,
+      params,
+    );
+    return {
+      headers: [
+        'school_name',
+        'academic_year',
+        'semester',
+        'grade',
+        'room_code',
+        'room_name',
+        'classroom_status',
+        'student_count',
+      ],
+      rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, { classroomId: 'cursor_classroom_id' }),
+    };
+  }
+
+  private async loadClassroomAssignments(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
+    const scope = this.buildSchoolAreaScopeWhere(job.scope_snapshot, job.filter_snapshot);
+    const normalizedScope = normalizeDataScope(job.scope_snapshot);
+    const conditions = [
+      'assignment.deleted_at IS NULL',
+      'classroom.deleted_at IS NULL',
+      'membership.deleted_at IS NULL',
+      'term.deleted_at IS NULL',
+      scope.sql,
+    ];
+    const params = [...scope.params];
+    const gradeLevels = normalizedScope?.grade_levels ?? [];
+    const roomIds = normalizedScope?.room_ids ?? [];
+    if (gradeLevels.length > 0) {
+      conditions.push(`classroom.grade_level_id = ANY($${params.push(gradeLevels)}::int[])`);
+    }
+    if (roomIds.length > 0) {
+      conditions.push(
+        `COALESCE(classroom.legacy_room_number::text, classroom.room_code)
+          = ANY($${params.push(roomIds.map(String))}::text[])`,
+      );
+    }
+    for (const [key, sql] of [
+      ['academicYear', 'term.academic_year'],
+      ['semester', 'term.semester'],
+      ['grade', 'grade.label'],
+      ['room', 'classroom.room_code'],
+      ['assignmentKind', 'assignment.assignment_kind'],
+      ['structureStatus', 'assignment.assignment_status'],
+    ] as const) {
+      if (job.filter_snapshot[key]) {
+        conditions.push(`${sql} = $${params.push(job.filter_snapshot[key])}`);
+      }
+    }
+    if (cursor?.assignmentId) {
+      conditions.push(`assignment.id > $${params.push(cursor.assignmentId)}::bigint`);
+    }
+    params.push(limit);
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `
+        SELECT assignment.id::text AS cursor_assignment_id,
+               school.name AS school_name,
+               term.academic_year,
+               term.semester,
+               grade.label AS grade,
+               classroom.room_code,
+               classroom.room_name,
+               COALESCE(
+                 NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+                 'ไม่ระบุชื่อ'
+               ) AS teacher_name,
+               subject.code AS subject_code,
+               subject.name_th AS subject_name,
+               assignment.assignment_kind,
+               assignment.assignment_status,
+               assignment.effective_on::text,
+               assignment.effective_until::text
+        FROM classroom_teacher_assignments assignment
+        JOIN school_classrooms classroom ON classroom.id = assignment.classroom_id
+        JOIN schools school ON school.id = assignment.school_id
+        JOIN school_terms term ON term.id = classroom.school_term_id
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        JOIN school_teacher_memberships membership
+          ON membership.id = assignment.teacher_membership_id
+        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        LEFT JOIN subjects subject ON subject.id = assignment.subject_id
+        WHERE ${conditions.filter(Boolean).join(' AND ')}
+        ORDER BY assignment.id
+        LIMIT $${params.length}
+      `,
+      params,
+    );
+    return {
+      headers: [
+        'school_name',
+        'academic_year',
+        'semester',
+        'grade',
+        'room_code',
+        'room_name',
+        'teacher_name',
+        'subject_code',
+        'subject_name',
+        'assignment_kind',
+        'assignment_status',
+        'effective_on',
+        'effective_until',
+      ],
+      rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, { assignmentId: 'cursor_assignment_id' }),
+    };
+  }
+
+  private async loadObservationAggregate(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
+    const scope = this.buildStudentScopeWhere(job.scope_snapshot, job.filter_snapshot);
+    const conditions = ['observation.deleted_at IS NULL', scope.sql];
+    const params = [...scope.params];
+    if (job.filter_snapshot.concernLevel) {
+      conditions.push(
+        `observation.concern_level = $${params.push(job.filter_snapshot.concernLevel)}`,
+      );
+    }
+    if (job.filter_snapshot.dateFrom) {
+      conditions.push(
+        `observation.observed_at::date >= $${params.push(job.filter_snapshot.dateFrom)}::date`,
+      );
+    }
+    if (job.filter_snapshot.dateTo) {
+      conditions.push(
+        `observation.observed_at::date <= $${params.push(job.filter_snapshot.dateTo)}::date`,
+      );
+    }
+    if (cursor?.observationDate && cursor.schoolId && cursor.dimensionCode && cursor.concernLevel) {
+      params.push(
+        cursor.observationDate,
+        cursor.schoolId,
+        cursor.dimensionCode,
+        cursor.concernLevel,
+      );
+      conditions.push(`(
+        observation.observed_at::date,
+        observation.school_id,
+        dimension.code,
+        observation.concern_level
+      ) > ($${params.length - 3}::date, $${params.length - 2}::integer, $${
+        params.length - 1
+      }::text, $${params.length}::text)`);
+    }
+    params.push(limit);
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `
+        SELECT observation.observed_at::date::text AS observation_date,
+               observation.school_id AS cursor_school_id,
+               school.name AS school_name,
+               dimension.code AS dimension_code,
+               dimension.label_th AS dimension_label,
+               observation.concern_level,
+               COUNT(*)::int AS observation_count,
+               COUNT(DISTINCT observation.student_uuid)::int AS student_count
+        FROM student_observations observation
+        JOIN student_term s ON s.student_uuid = observation.student_uuid
+                           AND s."SchoolID_Onec" = observation.school_id
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
+        JOIN schools school ON school.id = observation.school_id
+        JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+        JOIN observation_dimensions dimension
+          ON dimension.id = observation.observation_dimension_id
+        WHERE ${conditions.filter(Boolean).join(' AND ')}
+        GROUP BY observation.observed_at::date, observation.school_id, school.name,
+                 dimension.code, dimension.label_th, observation.concern_level
+        ORDER BY observation.observed_at::date, observation.school_id,
+                 dimension.code, observation.concern_level
+        LIMIT $${params.length}
+      `,
+      params,
+    );
+    return {
+      headers: [
+        'observation_date',
+        'school_name',
+        'dimension_code',
+        'dimension_label',
+        'concern_level',
+        'observation_count',
+        'student_count',
+      ],
+      rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, {
+        observationDate: 'observation_date',
+        schoolId: 'cursor_school_id',
+        dimensionCode: 'dimension_code',
+        concernLevel: 'concern_level',
+      }),
+    };
+  }
+
+  private async loadCaseReportUpAggregate(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
+    const scope = this.buildCaseScopeWhere(job.scope_snapshot, job.filter_snapshot);
+    const conditions = ['c.deleted_at IS NULL', scope.sql];
+    const params = [...scope.params];
+    if (job.filter_snapshot.dateFrom) {
+      conditions.push(
+        `report_up.reported_at::date >= $${params.push(job.filter_snapshot.dateFrom)}::date`,
+      );
+    }
+    if (job.filter_snapshot.dateTo) {
+      conditions.push(
+        `report_up.reported_at::date <= $${params.push(job.filter_snapshot.dateTo)}::date`,
+      );
+    }
+    if (cursor?.reportDate && cursor.schoolId && cursor.status) {
+      params.push(cursor.reportDate, cursor.schoolId, cursor.status);
+      conditions.push(`(report_up.reported_at::date, c.school_id, c.status)
+        > ($${params.length - 2}::date, $${params.length - 1}::integer, $${params.length}::text)`);
+    }
+    params.push(limit);
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `
+        SELECT report_up.reported_at::date::text AS report_date,
+               c.school_id AS cursor_school_id,
+               sc.name AS school_name,
+               sc.province,
+               sc.district,
+               c.status,
+               COUNT(*)::int AS case_count
+        FROM case_report_ups report_up
+        JOIN cases c ON c.id = report_up.case_id
+        JOIN schools sc ON sc.id = c.school_id
+        WHERE ${conditions.filter(Boolean).join(' AND ')}
+        GROUP BY report_up.reported_at::date, c.school_id, sc.name,
+                 sc.province, sc.district, c.status
+        ORDER BY report_up.reported_at::date, c.school_id, c.status
+        LIMIT $${params.length}
+      `,
+      params,
+    );
+    return {
+      headers: ['report_date', 'school_name', 'province', 'district', 'status', 'case_count'],
+      rows: result.rows,
+      nextCursor: this.cursorFromLastRow(result.rows, {
+        reportDate: 'report_date',
+        schoolId: 'cursor_school_id',
+        status: 'status',
+      }),
+    };
+  }
+
+  private async loadExecutiveAggregate(
+    job: DataExportJobRow,
+    limit: number,
+    cursor: ExportCursor | null,
+  ): Promise<ExportRowsResult> {
+    const normalizedScope = normalizeDataScope(job.scope_snapshot);
+    if (
+      !normalizedScope ||
+      (normalizedScope.grade_levels?.length ?? 0) > 0 ||
+      (normalizedScope.room_ids?.length ?? 0) > 0
+    ) {
+      throw new ForbiddenException('Executive aggregate export requires an area scope');
+    }
+    const scope = this.buildSchoolAreaScopeWhere(job.scope_snapshot, job.filter_snapshot);
+    const params = [...scope.params];
+    const dateFromIndex = job.filter_snapshot.dateFrom
+      ? params.push(job.filter_snapshot.dateFrom)
+      : null;
+    const dateToIndex = job.filter_snapshot.dateTo ? params.push(job.filter_snapshot.dateTo) : null;
+    const periodConditions = (column: string): string => {
+      const conditions: string[] = [];
+      if (dateFromIndex) conditions.push(`${column}::date >= $${dateFromIndex}::date`);
+      if (dateToIndex) conditions.push(`${column}::date <= $${dateToIndex}::date`);
+      return conditions.length > 0 ? conditions.join(' AND ') : 'TRUE';
+    };
+    const observationPeriod = periodConditions('observation.observed_at');
+    const caseCreatedPeriod = periodConditions('case_record.created_at');
+    const caseResolvedPeriod = periodConditions('case_record.updated_at');
+    let cursorSql = '';
+    if (typeof cursor?.province === 'string' && typeof cursor.district === 'string') {
+      params.push(cursor.province, cursor.district);
+      cursorSql = `WHERE (province, district) > ($${params.length - 1}::text, $${
+        params.length
+      }::text)`;
+    }
+    params.push(limit);
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `
+        WITH scoped_schools AS (
+          SELECT school.id, school.province, school.district
+          FROM schools school
+          WHERE ${scope.sql || 'TRUE'}
+        ),
+        active_students AS (
+          SELECT student.student_uuid, student."SchoolID_Onec" AS school_id, profile.risk_tier
+          FROM student_term student
+          JOIN student_current_enrollment_resolution current_enrollment
+            ON current_enrollment.person_uuid = student.person_uuid
+           AND current_enrollment.selected_student_uuid = student.student_uuid
+           AND current_enrollment.resolution_state = 'ACTIVE'
+          JOIN scoped_schools school ON school.id = student."SchoolID_Onec"
+          LEFT JOIN student_risk_profiles profile ON profile.student_uuid = student.student_uuid
+          WHERE student.deleted_at IS NULL
+        ),
+        enrollment_metrics AS (
+          SELECT school_id,
+                 COUNT(*)::int AS active_student_count,
+                 COUNT(*) FILTER (WHERE risk_tier = 'HIGH')::int AS risk_high_count,
+                 COUNT(*) FILTER (WHERE risk_tier = 'MEDIUM')::int AS risk_medium_count,
+                 COUNT(*) FILTER (WHERE risk_tier = 'LOW')::int AS risk_low_count,
+                 COUNT(*) FILTER (WHERE risk_tier = 'WATCH')::int AS risk_watch_count,
+                 COUNT(*) FILTER (WHERE risk_tier = 'NORMAL')::int AS risk_normal_count,
+                 COUNT(*) FILTER (WHERE risk_tier IS NULL)::int AS risk_missing_profile_count
+          FROM active_students
+          GROUP BY school_id
+        ),
+        latest_observation AS (
+          SELECT DISTINCT ON (observation.student_uuid)
+                 observation.student_uuid, observation.school_id, observation.concern_level
+          FROM student_observations observation
+          JOIN active_students student ON student.student_uuid = observation.student_uuid
+          WHERE observation.deleted_at IS NULL
+            AND ${observationPeriod}
+          ORDER BY observation.student_uuid, observation.observed_at DESC, observation.id DESC
+        ),
+        observation_metrics AS (
+          SELECT school_id,
+                 COUNT(*) FILTER (WHERE concern_level = 'CONCERN')::int
+                   AS human_concern_student_count
+          FROM latest_observation
+          GROUP BY school_id
+        ),
+        case_metrics AS (
+          SELECT case_record.school_id,
+                 COUNT(*) FILTER (WHERE ${caseCreatedPeriod})::int AS case_created_count,
+                 COUNT(*) FILTER (WHERE case_record.status <> 'RESOLVED')::int
+                   AS unresolved_case_count,
+                 COUNT(*) FILTER (
+                   WHERE case_record.status = 'RESOLVED' AND ${caseResolvedPeriod}
+                 )::int AS resolved_case_count,
+                 COUNT(*) FILTER (WHERE case_record.status = 'REPORTED_UP')::int
+                   AS reported_up_case_count
+          FROM cases case_record
+          JOIN scoped_schools school ON school.id = case_record.school_id
+          WHERE case_record.deleted_at IS NULL
+          GROUP BY case_record.school_id
+        ),
+        school_metrics AS (
+          SELECT school.province,
+                 school.district,
+                 COALESCE(enrollment.active_student_count, 0)::int AS active_student_count,
+                 COALESCE(enrollment.risk_high_count, 0)::int AS risk_high_count,
+                 COALESCE(enrollment.risk_medium_count, 0)::int AS risk_medium_count,
+                 COALESCE(enrollment.risk_low_count, 0)::int AS risk_low_count,
+                 COALESCE(enrollment.risk_watch_count, 0)::int AS risk_watch_count,
+                 COALESCE(enrollment.risk_normal_count, 0)::int AS risk_normal_count,
+                 COALESCE(enrollment.risk_missing_profile_count, 0)::int
+                   AS risk_missing_profile_count,
+                 COALESCE(observation.human_concern_student_count, 0)::int
+                   AS human_concern_student_count,
+                 COALESCE(case_data.case_created_count, 0)::int AS case_created_count,
+                 COALESCE(case_data.unresolved_case_count, 0)::int AS unresolved_case_count,
+                 COALESCE(case_data.resolved_case_count, 0)::int AS resolved_case_count,
+                 COALESCE(case_data.reported_up_case_count, 0)::int AS reported_up_case_count
+          FROM scoped_schools school
+          LEFT JOIN enrollment_metrics enrollment ON enrollment.school_id = school.id
+          LEFT JOIN observation_metrics observation ON observation.school_id = school.id
+          LEFT JOIN case_metrics case_data ON case_data.school_id = school.id
+        ),
+        area_metrics AS (
+          SELECT COALESCE(province, '') AS province,
+                 COALESCE(district, '') AS district,
+                 SUM(active_student_count)::int AS active_student_count,
+                 SUM(risk_high_count)::int AS risk_high_count,
+                 SUM(risk_medium_count)::int AS risk_medium_count,
+                 SUM(risk_low_count)::int AS risk_low_count,
+                 SUM(risk_watch_count)::int AS risk_watch_count,
+                 SUM(risk_normal_count)::int AS risk_normal_count,
+                 SUM(risk_missing_profile_count)::int AS risk_missing_profile_count,
+                 SUM(human_concern_student_count)::int AS human_concern_student_count,
+                 SUM(case_created_count)::int AS case_created_count,
+                 SUM(unresolved_case_count)::int AS unresolved_case_count,
+                 SUM(resolved_case_count)::int AS resolved_case_count,
+                 SUM(reported_up_case_count)::int AS reported_up_case_count
+          FROM school_metrics
+          GROUP BY COALESCE(province, ''), COALESCE(district, '')
+        )
+        SELECT *
+        FROM area_metrics
+        ${cursorSql}
+        ORDER BY province, district
+        LIMIT $${params.length}
+      `,
+      params,
+    );
+    const rows = result.rows.map((row) => this.suppressExecutiveAggregateRow(row));
+    return {
+      headers: [
+        'province',
+        'district',
+        'active_student_count',
+        'active_student_count_suppressed',
+        'risk_high_count',
+        'risk_high_count_suppressed',
+        'risk_medium_count',
+        'risk_medium_count_suppressed',
+        'risk_low_count',
+        'risk_low_count_suppressed',
+        'risk_watch_count',
+        'risk_watch_count_suppressed',
+        'risk_normal_count',
+        'risk_normal_count_suppressed',
+        'risk_missing_profile_count',
+        'risk_missing_profile_count_suppressed',
+        'human_concern_student_count',
+        'human_concern_student_count_suppressed',
+        'case_created_count',
+        'case_created_count_suppressed',
+        'unresolved_case_count',
+        'unresolved_case_count_suppressed',
+        'resolved_case_count',
+        'resolved_case_count_suppressed',
+        'reported_up_case_count',
+        'reported_up_case_count_suppressed',
+      ],
+      rows,
+      nextCursor: this.cursorFromLastRow(rows, {
+        province: 'province',
+        district: 'district',
+      }),
+    };
+  }
+
+  private suppressExecutiveAggregateRow(row: Record<string, unknown>): Record<string, unknown> {
+    const result = { ...row };
+    const minimumCellSize = this.executiveMinimumCellSize();
+    for (const key of [
+      'active_student_count',
+      'risk_high_count',
+      'risk_medium_count',
+      'risk_low_count',
+      'risk_watch_count',
+      'risk_normal_count',
+      'risk_missing_profile_count',
+      'human_concern_student_count',
+      'case_created_count',
+      'unresolved_case_count',
+      'resolved_case_count',
+      'reported_up_case_count',
+    ]) {
+      const value = Math.max(0, Math.trunc(Number(row[key]) || 0));
+      const suppressed = value > 0 && value < minimumCellSize;
+      result[key] = suppressed ? null : value;
+      result[`${key}_suppressed`] = suppressed;
+    }
+    return result;
+  }
+
+  private executiveMinimumCellSize(): number {
+    return resolveExecutiveReportingPolicy(
+      this.runtimeExecutiveReportingConfig ?? {
+        environment: this.runtimeAppConfig?.isProduction ? 'production' : 'test',
+        minimumCellSize: null,
+      },
+    ).minimumCellSize;
+  }
+
+  private async *streamCsv(
+    item: DataExportCatalogItem,
+    job: DataExportJobRow,
+    metrics: ExportStreamMetrics,
+  ): AsyncGenerator<Buffer> {
+    let cursor: ExportCursor | null = null;
+    let wroteHeader = false;
+    while (true) {
+      const remaining = ROW_CAP - metrics.rowCount;
+      const limit = Math.min(QUERY_CHUNK_SIZE, remaining + 1);
+      const result = await this.loadRows(item, job, limit, cursor);
+      if (!wroteHeader) {
+        wroteHeader = true;
+        yield this.trackCsvChunk(`\uFEFF${result.headers.join(',')}\n`, metrics);
+      }
+      if (metrics.rowCount + result.rows.length > ROW_CAP) {
+        throw new Error('ROW_CAP_EXCEEDED');
+      }
+      if (result.rows.length === 0) {
+        break;
+      }
+      const lines = result.rows.map((row) =>
+        result.headers.map((header) => this.csvCell(row[header])).join(','),
+      );
+      yield this.trackCsvChunk(`${lines.join('\n')}\n`, metrics);
+      metrics.rowCount += result.rows.length;
+      cursor = result.nextCursor;
+      const currentJob = await this.repository.findJobById(job.id);
+      if (!currentJob || currentJob.status !== 'RUNNING') {
+        throw new Error('EXPORT_JOB_STOPPED');
+      }
+      if (result.rows.length < limit) {
+        break;
+      }
+      if (!cursor) {
+        throw new Error('EXPORT_CURSOR_MISSING');
+      }
+    }
+  }
+
+  private cursorFromLastRow(
+    rows: Array<Record<string, unknown>>,
+    fields: Record<string, string>,
+  ): ExportCursor | null {
+    const last = rows.at(-1);
+    if (!last) return null;
+    const cursor: ExportCursor = {};
+    for (const [cursorKey, rowKey] of Object.entries(fields)) {
+      const value = last[rowKey];
+      if (typeof value !== 'string' && typeof value !== 'number') {
+        throw new Error('EXPORT_CURSOR_INVALID');
+      }
+      cursor[cursorKey] = value;
+    }
+    return cursor;
+  }
+
+  private trackCsvChunk(csv: string, metrics: ExportStreamMetrics): Buffer {
+    const chunk = Buffer.from(csv, 'utf8');
+    metrics.sha256.update(chunk);
+    metrics.byteCount += chunk.byteLength;
+    return chunk;
   }
 
   private csvCell(value: unknown) {
@@ -802,18 +1796,60 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     } else {
       text = '';
     }
-    if (/^[=+\-@]/.test(text)) {
+    if (/^[=+\-@\t\r]/.test(text)) {
       text = `'${text}`;
     }
     return `"${text.replace(/"/g, '""')}"`;
   }
 
-  private resolveArtifactPath(storageKey: string) {
-    const normalized = storageKey.replace(/^\/+/, '');
-    if (normalized.includes('..')) {
-      throw new BadRequestException('artifact path ไม่ถูกต้อง');
+  private artifactStorageKey(jobId: string): string {
+    const prefix = this.queueRuntimeConfig().dataExport.storagePrefix.replace(/^\/+|\/+$/g, '');
+    if (prefix.includes('..') || (prefix.length > 0 && !/^[A-Za-z0-9/_-]+$/.test(prefix))) {
+      throw new Error('Invalid data export storage prefix');
     }
-    return path.join(process.cwd(), '.data-export-artifacts', normalized);
+    return prefix ? `${prefix}/${jobId}.csv` : `${jobId}.csv`;
+  }
+
+  private requireStorage(): FileStorageAdapter {
+    if (!this.storage) {
+      throw new Error('Data export artifact storage is not configured');
+    }
+    return this.storage;
+  }
+
+  async cleanupExpiredArtifacts(now = new Date()): Promise<{ expired: number; deleted: number }> {
+    const expired = await this.repository.expireCompletedJobs(now);
+    const artifacts = await this.repository.listExpiredArtifacts();
+    let deleted = 0;
+    for (const job of artifacts) {
+      if (!job.artifact_storage_key) continue;
+      try {
+        await this.requireStorage().delete(job.artifact_storage_key);
+        if (await this.repository.clearExpiredArtifact(job.id, job.artifact_storage_key)) {
+          deleted += 1;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Data export artifact cleanup failed for job ${job.id}: ${this.errorMessage(error)}`,
+        );
+      }
+    }
+    if (expired.length > 0 || deleted > 0) {
+      this.logger.log(`Expired ${expired.length} export job(s); deleted ${deleted} artifact(s).`);
+    }
+    return { expired: expired.length, deleted };
+  }
+
+  @Cron(EXPORT_EXPIRY_CRON, {
+    name: 'data_export_artifact_expiry',
+    timeZone: 'Asia/Bangkok',
+  })
+  async runExpiryCleanup(): Promise<void> {
+    try {
+      await this.cleanupExpiredArtifacts();
+    } catch (error) {
+      this.logger.warn(`Data export expiry cleanup failed: ${this.errorMessage(error)}`);
+    }
   }
 
   private toJobResponse(row: DataExportJobRow): DataExportJobResponse {

@@ -1,15 +1,30 @@
 import { DataExportsService } from './data-exports.service';
 import { DataExportsRepository } from './data-exports.repository';
+import { DATA_EXPORT_CATALOG } from './data-export.registry';
 import type { DataExportJobRow } from './data-export.types';
 import type { DataSource } from 'typeorm';
+import { Readable } from 'stream';
+import { createHash } from 'crypto';
+import type { FileStorageAdapter } from '../files/storage/file-storage.types';
 
 describe('DataExportsService', () => {
   let repository: jest.Mocked<
     Pick<
       DataExportsRepository,
-      'createJob' | 'addEvent' | 'failJob' | 'findJobById' | 'prepareRetry'
+      | 'createJob'
+      | 'addEvent'
+      | 'failJob'
+      | 'findJobById'
+      | 'prepareRetry'
+      | 'claimJob'
+      | 'completeJob'
+      | 'findActiveRequester'
+      | 'expireCompletedJobs'
+      | 'listExpiredArtifacts'
+      | 'clearExpiredArtifact'
     >
   >;
+  let storage: jest.Mocked<FileStorageAdapter>;
   let service: DataExportsService;
   let job: DataExportJobRow;
 
@@ -47,10 +62,38 @@ describe('DataExportsService', () => {
       failJob: jest.fn().mockResolvedValue(undefined),
       findJobById: jest.fn().mockResolvedValue(job),
       prepareRetry: jest.fn().mockResolvedValue(job),
+      claimJob: jest.fn().mockResolvedValue(job),
+      completeJob: jest.fn().mockResolvedValue({ ...job, status: 'COMPLETED' }),
+      findActiveRequester: jest.fn().mockResolvedValue({
+        id: 1,
+        username: 'exporter',
+        role: 'ADMIN',
+        permissions: ['export-data', 'students'],
+        data_scope: { global: true },
+        role_default_permissions: [],
+      }),
+      expireCompletedJobs: jest.fn().mockResolvedValue([]),
+      listExpiredArtifacts: jest.fn().mockResolvedValue([]),
+      clearExpiredArtifact: jest.fn().mockResolvedValue(true),
+    };
+    storage = {
+      kind: 'private-object',
+      save: jest.fn().mockResolvedValue(undefined),
+      saveStream: jest.fn().mockImplementation(async (source: Readable) => {
+        for await (const chunk of source) {
+          // Consume the stream just like the real storage adapters.
+          void chunk;
+        }
+      }),
+      resolve: jest.fn(),
+      open: jest.fn().mockResolvedValue(Readable.from('csv')),
+      delete: jest.fn().mockResolvedValue(undefined),
     };
     service = new DataExportsService(
       {} as unknown as DataSource,
       repository as unknown as DataExportsRepository,
+      undefined,
+      storage,
     );
   });
 
@@ -72,6 +115,12 @@ describe('DataExportsService', () => {
     expect(
       result.data.every((item) => !item.workflowPath || item.workflowPath.startsWith('/')),
     ).toBe(true);
+    expect(result.data.find((item) => item.code === 'student_risk')?.filterDefinitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'schoolId', control: 'INTEGER' }),
+        expect.objectContaining({ key: 'riskTier', control: 'SELECT' }),
+      ]),
+    );
   });
 
   it('does not expose datasets when the actor lacks the domain permission', () => {
@@ -84,6 +133,126 @@ describe('DataExportsService', () => {
     });
 
     expect(result.data).toEqual([]);
+  });
+
+  it('keeps executive actors aggregate-only even when raw permissions are regranted', () => {
+    const result = service.getCatalog({
+      id: 1,
+      username: 'executive',
+      roles: ['EXECUTIVE'],
+      permissions: [
+        '*',
+        'export-data',
+        'executive-report',
+        'students',
+        'dashboard',
+        'review-cases',
+      ],
+      data_scope: { global: true },
+    });
+
+    expect(result.data.map((item) => item.code)).toEqual(['executive_aggregate']);
+  });
+
+  it('denies executive actors from creating raw jobs despite explicit raw permissions', async () => {
+    await expect(
+      service.createJob(
+        {
+          id: 1,
+          username: 'executive',
+          roles: ['EXECUTIVE'],
+          permissions: ['export-data', 'executive-report', 'students'],
+          data_scope: { global: true },
+        },
+        {
+          datasetCode: 'student_roster_basic',
+          fieldBundleCode: 'basic',
+          filters: {},
+        },
+      ),
+    ).rejects.toThrow('ไม่มีสิทธิ์ส่งออกชุดข้อมูลนี้');
+
+    expect(repository.createJob).not.toHaveBeenCalled();
+  });
+
+  it('allows executive actors to create the executive aggregate with required policy fields', async () => {
+    const dispatchJob = jest.fn().mockResolvedValue(undefined);
+    (
+      service as unknown as {
+        dispatchJob(jobId: string): Promise<void>;
+      }
+    ).dispatchJob = dispatchJob;
+    repository.createJob.mockResolvedValueOnce({
+      ...job,
+      dataset_code: 'executive_aggregate',
+      field_bundle_code: 'area-minimum-cell',
+      sensitivity_class: 'PRIVILEGED',
+      purpose_code: 'EXECUTIVE_REVIEW',
+      purpose_note: 'Approved aggregate review',
+    });
+
+    const result = await service.createJob(
+      {
+        id: 1,
+        username: 'executive',
+        roles: ['EXECUTIVE'],
+        permissions: ['export-data', 'executive-report'],
+        data_scope: { global: true },
+      },
+      {
+        datasetCode: 'executive_aggregate',
+        fieldBundleCode: 'area-minimum-cell',
+        filters: {},
+        purposeCode: 'EXECUTIVE_REVIEW',
+        purposeNote: 'Approved aggregate review',
+      },
+    );
+
+    expect(result.data.datasetCode).toBe('executive_aggregate');
+    expect(repository.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        datasetCode: 'executive_aggregate',
+        sensitivityClass: 'PRIVILEGED',
+        purposeCode: 'EXECUTIVE_REVIEW',
+      }),
+    );
+    expect(dispatchJob).toHaveBeenCalledWith('job-1');
+  });
+
+  it('publishes minimized school, observation, report-up, and executive products by permission', () => {
+    const result = service.getCatalog({
+      id: 1,
+      username: 'exporter',
+      roles: ['ADMIN'],
+      permissions: [
+        'export-data',
+        'manage-school-structure',
+        'manage-student-observations',
+        'report-up-cases',
+        'executive-report',
+      ],
+      data_scope: { global: true },
+    });
+
+    expect(result.data.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        'school_teacher_roster',
+        'school_classroom_structure',
+        'classroom_assignments',
+        'observation_aggregate',
+        'case_report_up_aggregate',
+        'executive_aggregate',
+      ]),
+    );
+    expect(
+      result.data.find((item) => item.code === 'executive_aggregate')?.requiredPermissions,
+    ).toEqual(['export-data', 'executive-report']);
+    for (const item of result.data.filter((candidate) => candidate.deliveryMode === 'ASYNC_JOB')) {
+      expect(item.supportedFilters).toEqual(
+        item.filterDefinitions.map((definition) => definition.key),
+      );
+      expect(new Set(item.supportedFilters).size).toBe(item.supportedFilters.length);
+    }
   });
 
   it('does not expose generic exports to own-only actors even with permissions', () => {
@@ -181,6 +350,348 @@ describe('DataExportsService', () => {
     ).rejects.toThrow('dateFrom ต้องเป็นวันที่ที่มีอยู่จริง');
 
     expect(repository.createJob).not.toHaveBeenCalled();
+  });
+
+  it('rejects integer filters outside the PostgreSQL integer range', async () => {
+    await expect(
+      service.createJob(
+        {
+          id: 1,
+          username: 'exporter',
+          roles: ['ADMIN'],
+          permissions: ['export-data', 'students'],
+          data_scope: { global: true },
+        },
+        {
+          datasetCode: 'student_roster_basic',
+          fieldBundleCode: 'basic',
+          filters: { schoolId: 2_147_483_648 },
+        },
+      ),
+    ).rejects.toThrow('schoolId ต้องเป็นจำนวนเต็มบวก');
+
+    expect(repository.createJob).not.toHaveBeenCalled();
+  });
+
+  it('requires a purpose code and note for sensitive operational datasets', async () => {
+    await expect(
+      service.createJob(
+        {
+          id: 1,
+          username: 'exporter',
+          roles: ['ADMIN'],
+          permissions: ['export-data', 'dashboard'],
+          data_scope: { global: true },
+        },
+        { datasetCode: 'student_risk', fieldBundleCode: 'risk-summary' },
+      ),
+    ).rejects.toThrow('ต้องระบุรหัสวัตถุประสงค์');
+
+    expect(repository.createJob).not.toHaveBeenCalled();
+  });
+
+  it('rejects a create filter outside the current school scope', async () => {
+    await expect(
+      service.createJob(
+        {
+          id: 1,
+          username: 'exporter',
+          roles: ['DIRECTOR'],
+          permissions: ['export-data', 'students'],
+          data_scope: { school_ids: [1001] },
+        },
+        {
+          datasetCode: 'student_roster_basic',
+          fieldBundleCode: 'basic',
+          filters: { schoolId: 2002 },
+        },
+      ),
+    ).rejects.toThrow('ตัวกรองอยู่นอกขอบเขตข้อมูล');
+  });
+
+  it('fails processing closed when current export permission was revoked', async () => {
+    repository.findActiveRequester.mockResolvedValueOnce({
+      id: 1,
+      username: 'exporter',
+      role: 'ADMIN',
+      permissions: ['students'],
+      data_scope: { global: true },
+      role_default_permissions: [],
+    });
+
+    await (service as unknown as { processJob(jobId: string): Promise<void> }).processJob('job-1');
+
+    expect(repository.failJob).toHaveBeenCalledWith(
+      'job-1',
+      'EXPORT_ACCESS_REVOKED',
+      expect.stringContaining('สิทธิ์'),
+    );
+    expect(storage.saveStream).not.toHaveBeenCalled();
+  });
+
+  it('streams bounded CSV chunks and records checksum metrics after upload', async () => {
+    const firstBatch = Array.from({ length: 1_000 }, (_, index) => ({
+      student_uuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
+      first_name: index === 0 ? '=formula' : 'Student',
+      last_name: String(index + 1),
+      school_name: 'School',
+      grade: '1',
+      room: '1',
+      student_status: 'ศึกษาอยู่',
+    }));
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ records: firstBatch, affected: firstBatch.length })
+      .mockResolvedValueOnce({
+        records: [{ ...firstBatch[0], student_uuid: '00000000-0000-0000-0000-000000001001' }],
+        affected: 1,
+      });
+    const dataSource = {
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        query,
+        release: jest.fn().mockResolvedValue(undefined),
+      }),
+    } as unknown as DataSource;
+    const chunks: Buffer[] = [];
+    storage.saveStream.mockImplementationOnce(async (source) => {
+      for await (const chunk of source) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+      }
+    });
+    repository.claimJob.mockResolvedValueOnce({ ...job, status: 'RUNNING' });
+    repository.findJobById.mockResolvedValue({ ...job, status: 'RUNNING' });
+    service = new DataExportsService(
+      dataSource,
+      repository as unknown as DataExportsRepository,
+      undefined,
+      storage,
+    );
+
+    await (service as unknown as { processJob(jobId: string): Promise<void> }).processJob('job-1');
+
+    const csv = Buffer.concat(chunks);
+    expect(csv.toString()).toContain("'=formula");
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenNthCalledWith(1, expect.any(String), [1_000], true);
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('s.student_uuid > $1::uuid'),
+      ['00000000-0000-0000-0000-000000001000', 1_000],
+      true,
+    );
+    const dataLines = csv.toString().trim().split('\n').slice(1);
+    expect(dataLines).toHaveLength(1_001);
+    expect(new Set(dataLines.map((line) => line.split(',')[0])).size).toBe(1_001);
+    expect(repository.completeJob).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        rowCount: 1_001,
+        artifactSizeBytes: csv.byteLength,
+        artifactSha256: createHash('sha256').update(csv).digest('hex'),
+      }),
+    );
+  });
+
+  it.each(['=formula', '+formula', '-formula', '@formula', '\t=formula', '\r=formula'])(
+    'neutralizes spreadsheet formula prefixes in CSV cells: %p',
+    (value) => {
+      const csvCell = (service as unknown as { csvCell(cellValue: unknown): string }).csvCell(
+        value,
+      );
+
+      expect(csvCell).toBe(`"'${value.replace(/"/g, '""')}"`);
+    },
+  );
+
+  it('fails instead of truncating when a streamed export exceeds the row cap', async () => {
+    const fullBatch = Array.from({ length: 1_000 }, () => ({ student_uuid: 'student' }));
+    let batchNumber = 0;
+    const loadRows = jest.fn(() => {
+      batchNumber += 1;
+      return Promise.resolve({
+        headers: ['student_uuid'],
+        rows: batchNumber <= 100 ? fullBatch : [{ student_uuid: 'over-cap' }],
+        nextCursor: { studentUuid: String(batchNumber * 1_000) },
+      });
+    });
+    (
+      service as unknown as {
+        loadRows: typeof loadRows;
+      }
+    ).loadRows = loadRows;
+    repository.claimJob.mockResolvedValueOnce({ ...job, status: 'RUNNING' });
+    repository.findJobById.mockResolvedValue({ ...job, status: 'RUNNING' });
+
+    await expect(
+      (service as unknown as { processJob(jobId: string): Promise<void> }).processJob('job-1'),
+    ).rejects.toThrow('ROW_CAP_EXCEEDED');
+
+    expect(repository.failJob).toHaveBeenCalledWith(
+      'job-1',
+      'ROW_CAP_EXCEEDED',
+      expect.stringContaining('จำนวนแถวเกิน'),
+    );
+    expect(repository.completeJob).not.toHaveBeenCalled();
+    expect(storage.delete).toHaveBeenCalledWith('data-exports/job-1.csv');
+  });
+
+  it.each([
+    [
+      'student_roster_basic',
+      { studentUuid: '00000000-0000-0000-0000-000000000001' },
+      's.student_uuid >',
+    ],
+    ['student_risk', { studentUuid: '00000000-0000-0000-0000-000000000001' }, 's.student_uuid >'],
+    ['attendance_summary', { attendanceDate: '2026-07-01' }, 'a."AttendanceDate" >'],
+    ['case_summary', { status: 'OPEN' }, 'c.status >'],
+    ['case_operational', { caseId: 10 }, 'c.id >'],
+    ['school_teacher_roster', { membershipId: '10' }, 'membership.id >'],
+    ['school_classroom_structure', { classroomId: '10' }, 'classroom.id >'],
+    ['classroom_assignments', { assignmentId: '10' }, 'assignment.id >'],
+    [
+      'observation_aggregate',
+      {
+        observationDate: '2026-07-01',
+        schoolId: 1,
+        dimensionCode: 'LEARNING',
+        concernLevel: 'WATCH',
+      },
+      'observation.observed_at::date',
+    ],
+    [
+      'case_report_up_aggregate',
+      { reportDate: '2026-07-01', schoolId: 1, status: 'REPORTED_UP' },
+      'report_up.reported_at::date',
+    ],
+    ['executive_aggregate', { province: 'A', district: 'B' }, '(province, district) >'],
+  ])('uses a stable keyset query for %s', async (datasetCode, cursor, keysetSql) => {
+    const query = jest.fn().mockResolvedValue({ records: [], affected: 0 });
+    const dataSource = {
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        query,
+        release: jest.fn().mockResolvedValue(undefined),
+      }),
+    } as unknown as DataSource;
+    const keysetService = new DataExportsService(
+      dataSource,
+      repository as unknown as DataExportsRepository,
+      undefined,
+      storage,
+      undefined,
+      { environment: 'test', minimumCellSize: 5 } as never,
+    );
+    const item = DATA_EXPORT_CATALOG.find((candidate) => candidate.code === datasetCode)!;
+
+    await (
+      keysetService as unknown as {
+        loadRows(
+          catalogItem: typeof item,
+          exportJob: DataExportJobRow,
+          limit: number,
+          nextCursor: Record<string, string | number>,
+        ): Promise<unknown>;
+      }
+    ).loadRows(item, { ...job, dataset_code: datasetCode }, 10, cursor);
+
+    expect(query).toHaveBeenCalledWith(expect.stringContaining(keysetSql), expect.any(Array), true);
+    expect(query).not.toHaveBeenCalledWith(
+      expect.stringContaining('OFFSET'),
+      expect.any(Array),
+      true,
+    );
+  });
+
+  it('applies the executive minimum-cell policy without exporting identifiers', () => {
+    const policyService = new DataExportsService(
+      {} as DataSource,
+      repository as unknown as DataExportsRepository,
+      undefined,
+      storage,
+      undefined,
+      { environment: 'test', minimumCellSize: 5 } as never,
+    );
+    const mapped = (
+      policyService as unknown as {
+        suppressExecutiveAggregateRow(row: Record<string, unknown>): Record<string, unknown>;
+      }
+    ).suppressExecutiveAggregateRow({
+      province: 'A',
+      district: 'B',
+      active_student_count: 4,
+      risk_high_count: 5,
+      case_created_count: 0,
+    });
+
+    expect(mapped).toEqual(
+      expect.objectContaining({
+        active_student_count: null,
+        active_student_count_suppressed: true,
+        risk_high_count: 5,
+        risk_high_count_suppressed: false,
+        case_created_count: 0,
+        case_created_count_suppressed: false,
+      }),
+    );
+    expect(Object.keys(mapped).some((key) => /(?:student|teacher).*?(?:id|name)/i.test(key))).toBe(
+      false,
+    );
+  });
+
+  it('denies download when current scope no longer covers the job snapshot', async () => {
+    repository.findJobById.mockResolvedValueOnce({
+      ...job,
+      status: 'COMPLETED',
+      scope_snapshot: { school_ids: [1001, 2002] },
+      artifact_storage_key: 'data-exports/job-1.csv',
+      expires_at: new Date('2099-01-01T00:00:00Z'),
+    });
+
+    await expect(
+      service.downloadJob(
+        {
+          id: 1,
+          username: 'exporter',
+          roles: ['DIRECTOR'],
+          permissions: ['export-data', 'students'],
+          data_scope: { school_ids: [1001] },
+        },
+        'job-1',
+      ),
+    ).rejects.toThrow('ขอบเขตข้อมูลปัจจุบันไม่ครอบคลุม');
+    expect(storage.open).not.toHaveBeenCalled();
+  });
+
+  it('expires jobs, deletes private artifacts, and clears their storage keys', async () => {
+    repository.expireCompletedJobs.mockResolvedValueOnce([{ ...job, status: 'EXPIRED' }]);
+    repository.listExpiredArtifacts.mockResolvedValueOnce([
+      {
+        ...job,
+        status: 'EXPIRED',
+        artifact_storage_key: 'data-exports/job-1.csv',
+      },
+    ]);
+
+    await expect(
+      service.cleanupExpiredArtifacts(new Date('2026-07-15T00:00:00Z')),
+    ).resolves.toEqual({ expired: 1, deleted: 1 });
+    expect(storage.delete).toHaveBeenCalledWith('data-exports/job-1.csv');
+    expect(repository.clearExpiredArtifact).toHaveBeenCalledWith('job-1', 'data-exports/job-1.csv');
+  });
+
+  it('fails fast when production would use local artifact storage', async () => {
+    const productionService = new DataExportsService(
+      {} as unknown as DataSource,
+      repository as unknown as DataExportsRepository,
+      undefined,
+      { ...storage, kind: 'local' },
+      { isProduction: true } as never,
+    );
+
+    await expect(productionService.onModuleInit()).rejects.toThrow(
+      'Production data exports require private object storage',
+    );
   });
 
   it('prepares and retries an existing failed queue job', async () => {

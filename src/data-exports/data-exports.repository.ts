@@ -27,6 +27,15 @@ interface CompleteJobInput {
   expiresAt: Date;
 }
 
+export interface DataExportActorRow extends Record<string, unknown> {
+  id: number;
+  username: string;
+  role: string | null;
+  permissions: unknown;
+  data_scope: Record<string, unknown> | null;
+  role_default_permissions: unknown;
+}
+
 @Injectable()
 export class DataExportsRepository {
   constructor(private readonly dataSource: DataSource) {}
@@ -109,6 +118,22 @@ export class DataExportsRepository {
     const result = await this.query<DataExportJobRow>(
       `SELECT * FROM data_export_job WHERE id = $1 LIMIT 1`,
       [jobId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findActiveRequester(userId: number): Promise<DataExportActorRow | null> {
+    const result = await this.query<DataExportActorRow>(
+      `
+        SELECT u.id, u.username, u.role, u.permissions, u.data_scope,
+               role.default_permissions AS role_default_permissions
+        FROM users u
+        LEFT JOIN roles role ON role.name = u.role
+        WHERE u.id = $1
+          AND u.status = 'ACTIVE'
+        LIMIT 1
+      `,
+      [userId],
     );
     return result.rows[0] ?? null;
   }
@@ -207,5 +232,59 @@ export class DataExportsRepository {
       [jobId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async expireCompletedJobs(now: Date): Promise<DataExportJobRow[]> {
+    const result = await this.query<DataExportJobRow>(
+      `
+        WITH expired AS (
+          UPDATE data_export_job
+          SET status = 'EXPIRED', progress_percent = 100, updated_at = now()
+          WHERE status = 'COMPLETED'
+            AND expires_at <= $1::timestamptz
+          RETURNING *
+        ), recorded AS (
+          INSERT INTO data_export_job_event (job_id, actor_user_id, event_code, metadata)
+          SELECT id, NULL, 'EXPIRED', jsonb_build_object('expiredAt', $1::timestamptz)
+          FROM expired
+          RETURNING job_id
+        )
+        SELECT expired.*
+        FROM expired
+        JOIN recorded ON recorded.job_id = expired.id
+      `,
+      [now.toISOString()],
+    );
+    return result.rows;
+  }
+
+  async listExpiredArtifacts(limit = 100): Promise<DataExportJobRow[]> {
+    const result = await this.query<DataExportJobRow>(
+      `
+        SELECT *
+        FROM data_export_job
+        WHERE status = 'EXPIRED'
+          AND artifact_storage_key IS NOT NULL
+        ORDER BY expires_at ASC NULLS FIRST, id
+        LIMIT $1
+      `,
+      [limit],
+    );
+    return result.rows;
+  }
+
+  async clearExpiredArtifact(jobId: string, storageKey: string): Promise<boolean> {
+    const result = await this.query<DataExportJobRow>(
+      `
+        UPDATE data_export_job
+        SET artifact_storage_key = NULL, updated_at = now()
+        WHERE id = $1
+          AND status = 'EXPIRED'
+          AND artifact_storage_key = $2
+        RETURNING id
+      `,
+      [jobId, storageKey],
+    );
+    return result.rows.length > 0;
   }
 }

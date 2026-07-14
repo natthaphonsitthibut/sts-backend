@@ -5,8 +5,12 @@ import type { FileStorageAdapter } from '../../files/storage/file-storage.types'
 
 function fakeStorage(): jest.Mocked<FileStorageAdapter> {
   return {
+    kind: 'local',
     save: jest.fn().mockResolvedValue(undefined),
+    saveStream: jest.fn().mockResolvedValue(undefined),
     resolve: jest.fn(),
+    open: jest.fn(),
+    delete: jest.fn().mockResolvedValue(undefined),
   };
 }
 
