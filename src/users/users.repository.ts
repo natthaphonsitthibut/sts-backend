@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { PII_FIELD_GROUP_CODES } from '../students/pii-fields.config';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
@@ -708,6 +709,62 @@ export class UsersRepository {
         ) AS found
       `,
       [actorUserId, subjectRef, withinSeconds],
+    );
+    return result.rows[0]?.found === true;
+  }
+
+  async insertUserNationalIdAccessEvent(input: {
+    actorUserId: number;
+    actorRoles: string[];
+    subjectRef: string;
+    subjectRefKeyVersion: number;
+    reasonCode: string;
+    reasonNote: string | null;
+    requestId: string | null;
+    ip: string | null;
+    userAgent: string | null;
+  }): Promise<void> {
+    await this.query(
+      `
+        INSERT INTO pii_access_events (
+          actor_user_id, actor_roles, actor_kind, subject_student_ref,
+          subject_type, subject_ref, subject_ref_key_version, field_group,
+          reason_code, reason_note, request_id, ip, user_agent
+        )
+        VALUES ($1, $2::jsonb, 'STAFF', $3, 'USER', $3, $4, $5, $6, $7, $8, $9, $10)
+      `,
+      [
+        input.actorUserId,
+        JSON.stringify(input.actorRoles),
+        input.subjectRef,
+        input.subjectRefKeyVersion,
+        PII_FIELD_GROUP_CODES.NATIONAL_ID,
+        input.reasonCode,
+        input.reasonNote,
+        input.requestId,
+        input.ip,
+        input.userAgent,
+      ],
+    );
+  }
+
+  async hasActiveUserNationalIdReveal(
+    actorUserId: number,
+    subjectRef: string,
+    withinSeconds: number,
+  ): Promise<boolean> {
+    const result = await this.query<{ found: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1 FROM pii_access_events
+          WHERE actor_user_id = $1
+            AND subject_type = 'USER'
+            AND subject_ref = $2
+            AND field_group = $3
+            AND created_at > now() - make_interval(secs => $4)
+        ) AS found
+      `,
+      [actorUserId, subjectRef, PII_FIELD_GROUP_CODES.NATIONAL_ID, withinSeconds],
     );
     return result.rows[0]?.found === true;
   }

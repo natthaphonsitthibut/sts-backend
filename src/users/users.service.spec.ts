@@ -80,6 +80,10 @@ describe('UsersService student accounts', () => {
       | 'listUserOperationalReferences'
       | 'deleteUser'
       | 'updateOwnProfile'
+      | 'hasActiveUserAddressReveal'
+      | 'insertUserAddressAccessEvent'
+      | 'hasActiveUserNationalIdReveal'
+      | 'insertUserNationalIdAccessEvent'
     >
   >;
   let usersPolicyService: jest.Mocked<
@@ -128,6 +132,8 @@ describe('UsersService student accounts', () => {
       updateOwnProfile: jest.fn().mockResolvedValue(undefined),
       hasActiveUserAddressReveal: jest.fn().mockResolvedValue(false),
       insertUserAddressAccessEvent: jest.fn().mockResolvedValue(undefined),
+      hasActiveUserNationalIdReveal: jest.fn().mockResolvedValue(false),
+      insertUserNationalIdAccessEvent: jest.fn().mockResolvedValue(undefined),
     };
     usersPolicyService = {
       ensureActor: jest.fn().mockImplementation((value: ActorContext | undefined) => {
@@ -227,7 +233,7 @@ describe('UsersService student accounts', () => {
       }),
     );
     expect(usersRepository.findSchoolNamesByIds).toHaveBeenCalledWith([10010002]);
-    expect(detail).not.toHaveProperty('PersonID_Onec');
+    expect(detail).toHaveProperty('PersonID_Onec', '•••••••••••••');
     expect(detail).toHaveProperty('line_id', 'teacher.line');
     expect(detail).not.toHaveProperty('address_line');
     expect(detail).not.toHaveProperty('address_latitude');
@@ -256,6 +262,42 @@ describe('UsersService student accounts', () => {
     expect(usersRepository.insertUserAddressAccessEvent).toHaveBeenCalledWith(
       expect.objectContaining({ actorUserId: actor.id, reasonCode: 'VERIFY_DATA' }),
     );
+  });
+
+  it('reveals a managed user national id only after an audited reason', async () => {
+    usersRepository.findOwnProfileById.mockResolvedValueOnce({
+      id: 77,
+      PersonID_Onec: '1234567890123',
+    });
+    usersRepository.hasActiveUserNationalIdReveal.mockResolvedValueOnce(false);
+
+    const result = await service.revealUserNationalId(
+      77,
+      { ...actor, permissions: ['manage-users-list'] },
+      { reason_code: 'VERIFY_DATA' },
+      { ip: null, userAgent: null, requestId: 'request-1' },
+    );
+
+    expect(result).toEqual({ PersonID_Onec: '1234567890123' });
+    expect(usersRepository.insertUserNationalIdAccessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: actor.id, reasonCode: 'VERIFY_DATA' }),
+    );
+  });
+
+  it('denies national-id reveal outside the actor management scope', async () => {
+    usersPolicyService.canManageUser.mockReturnValueOnce(false);
+
+    await expect(
+      service.revealUserNationalId(
+        77,
+        { ...actor, permissions: ['manage-users-list'] },
+        { reason_code: 'VERIFY_DATA' },
+        { ip: null, userAgent: null, requestId: 'request-1' },
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(usersRepository.findOwnProfileById).not.toHaveBeenCalled();
+    expect(usersRepository.insertUserNationalIdAccessEvent).not.toHaveBeenCalled();
   });
 
   it('updates only the authenticated user profile fields', async () => {

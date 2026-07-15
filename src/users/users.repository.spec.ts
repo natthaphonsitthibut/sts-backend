@@ -86,3 +86,42 @@ describe('UsersRepository user list queries', () => {
     expect(calls[1].sql).not.toMatch(/END\s*\)\s*=\s*\$/);
   });
 });
+
+describe('UsersRepository PII reveal queries', () => {
+  function createRepository() {
+    const query = jest.fn().mockResolvedValue({ records: [{ found: false }], affected: 1 });
+    const repository = new UsersRepository({
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query,
+      }),
+    } as never);
+
+    return { query, repository };
+  }
+
+  it('binds the address reveal TTL to the third SQL parameter', async () => {
+    const { query, repository } = createRepository();
+
+    await repository.hasActiveUserAddressReveal(7, 'subject-ref', 300);
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('make_interval(secs => $3)'),
+      [7, 'subject-ref', 300],
+      true,
+    );
+  });
+
+  it('binds the national-id reveal field group and TTL separately', async () => {
+    const { query, repository } = createRepository();
+
+    await repository.hasActiveUserNationalIdReveal(7, 'subject-ref', 300);
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('make_interval(secs => $4)'),
+      [7, 'subject-ref', 'NATIONAL_ID', 300],
+      true,
+    );
+  });
+});

@@ -15,6 +15,7 @@ import { piiConfig } from '../config/pii.config';
 import {
   PII_REASON_CODES,
   PII_REASON_REQUIRES_NOTE,
+  maskPiiValue,
   type PiiReasonCode,
 } from '../students/pii-fields.config';
 import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
@@ -168,6 +169,53 @@ export class UsersService {
     };
   }
 
+  async revealUserNationalId(
+    id: number,
+    actor: ActorContext | undefined,
+    data: UserAddressRevealDto,
+    meta: { ip: string | null; userAgent: string | null; requestId: string | null },
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    await this.getUserById(id, currentActor);
+    const profile = await this.usersRepository.findOwnProfileById(id);
+    if (!profile) throw new NotFoundException('ไม่พบผู้ใช้งาน');
+
+    const reasonCode = data.reason_code as PiiReasonCode;
+    const reasonNote = data.reason_note?.trim() || null;
+    if (!PII_REASON_CODES.includes(reasonCode) || reasonCode === 'SELF_ACCESS') {
+      throw new BadRequestException('กรุณาระบุเหตุผลที่ถูกต้อง');
+    }
+    if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !reasonNote) {
+      throw new BadRequestException('กรุณาระบุรายละเอียดเหตุผล');
+    }
+    if (reasonNote && /\d(?:[\s-]*\d){9,}/u.test(reasonNote)) {
+      throw new BadRequestException('รายละเอียดเหตุผลต้องไม่มีเลขเอกสารหรือข้อมูลระบุตัวบุคคล');
+    }
+
+    const subjectRef = buildSubjectStudentRef(
+      `user-${id}`,
+      this.piiRuntimeConfig.hashPepper,
+      this.piiRuntimeConfig.hashKeyVersion,
+    );
+    const active = await this.usersRepository.hasActiveUserNationalIdReveal(
+      currentActor.id,
+      subjectRef,
+      this.piiRuntimeConfig.revealTtlSeconds,
+    );
+    if (!active) {
+      await this.usersRepository.insertUserNationalIdAccessEvent({
+        actorUserId: currentActor.id,
+        actorRoles: currentActor.roles ?? [],
+        subjectRef,
+        subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+        reasonCode,
+        reasonNote,
+        ...meta,
+      });
+    }
+    return { PersonID_Onec: profile.PersonID_Onec ?? null };
+  }
+
   async getAllUsers(actor?: ActorContext, filters: Partial<UserListFilters> = {}) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     const roleMap = await this.usersPolicyService.getRoleMap();
@@ -257,6 +305,7 @@ export class UsersService {
       FirstName: user.FirstName ?? null,
       LastName: user.LastName ?? null,
       fullname: user.fullname ?? null,
+      PersonID_Onec: user.PersonID_Onec ? maskPiiValue(user.PersonID_Onec) : null,
       phone: user.phone ?? null,
       email: user.email ?? null,
       affiliation: user.affiliation ?? null,

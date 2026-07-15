@@ -486,6 +486,22 @@ export class UsersController {
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-users-list')
+  @Post(':id/national-id-reveal')
+  async revealUserNationalId(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: UserAddressRevealDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.revealUserNationalId(id, actor, data, {
+      ip: requestIp(req),
+      userAgent: firstHeaderValue(req.headers['user-agent']),
+      requestId: firstHeaderValue(req.headers['x-request-id']),
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
   @Post(':id/address-reveal')
   async revealUserAddress(
     @Param('id', ParseIntPipe) id: number,

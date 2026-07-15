@@ -16,6 +16,13 @@ export const PII_FIELD_GROUPS = {
 
 export type PiiFieldGroup = keyof typeof PII_FIELD_GROUPS;
 
+/** Persisted audit field-group codes, shared by student and managed-user PII flows. */
+export const PII_FIELD_GROUP_CODES: Record<PiiFieldGroup, PiiFieldGroup> = {
+  NATIONAL_ID: 'NATIONAL_ID',
+  PASSPORT: 'PASSPORT',
+  ADDRESS: 'ADDRESS',
+};
+
 /** Groups masked by default in the student-detail response (Phase 1). */
 export const PHASE1_MASKED_GROUPS: PiiFieldGroup[] = ['NATIONAL_ID', 'PASSPORT'];
 
