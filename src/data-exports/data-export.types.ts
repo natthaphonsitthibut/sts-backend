@@ -9,11 +9,13 @@ export type DataExportSensitivityClass =
 export type DataExportDeliveryMode = 'ASYNC_JOB' | 'EXISTING_WORKFLOW';
 export type DataExportPurposePolicy = 'OPTIONAL' | 'REQUIRED_CODE_AND_NOTE' | 'EXISTING_WORKFLOW';
 export type DataExportFilterControl = 'TEXT' | 'INTEGER' | 'DATE' | 'SELECT';
+export type DataExportFilterValueType = 'STRING' | 'INTEGER';
 
 export interface DataExportFilterDefinition {
   key: string;
   label: string;
   control: DataExportFilterControl;
+  valueType?: DataExportFilterValueType;
   placeholder?: string;
   dependsOn?: string;
   options?: Array<{ value: string; label: string }>;

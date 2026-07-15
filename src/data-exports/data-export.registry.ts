@@ -16,7 +16,12 @@ const DATA_EXPORT_FILTERS = {
     placeholder: 'ชื่อตำบลหรือแขวง',
     dependsOn: 'district',
   },
-  schoolId: { key: 'schoolId', label: 'รหัสโรงเรียน', control: 'INTEGER' },
+  schoolId: {
+    key: 'schoolId',
+    label: 'รหัสโรงเรียน',
+    control: 'INTEGER',
+    valueType: 'INTEGER',
+  },
   academicYear: { key: 'academicYear', label: 'ปีการศึกษา', control: 'INTEGER' },
   semester: {
     key: 'semester',

@@ -27,6 +27,8 @@ describe('DataExportsService', () => {
   let storage: jest.Mocked<FileStorageAdapter>;
   let service: DataExportsService;
   let job: DataExportJobRow;
+  let attendanceService: { getSchools: jest.Mock };
+  let statusCatalogService: { getCatalog: jest.Mock };
 
   beforeEach(() => {
     job = {
@@ -89,16 +91,29 @@ describe('DataExportsService', () => {
       open: jest.fn().mockResolvedValue(Readable.from('csv')),
       delete: jest.fn().mockResolvedValue(undefined),
     };
+    attendanceService = {
+      getSchools: jest.fn().mockResolvedValue({ data: [{ id: 1001, name: 'โรงเรียนทดสอบ' }] }),
+    };
+    statusCatalogService = {
+      getCatalog: jest.fn().mockResolvedValue([
+        { code: 'IN_PROGRESS', label: 'กำลังติดตาม' },
+        { code: 'RESOLVED', label: 'ปิดเคสแล้ว' },
+      ]),
+    };
     service = new DataExportsService(
       {} as unknown as DataSource,
       repository as unknown as DataExportsRepository,
+      attendanceService as never,
+      statusCatalogService as never,
       undefined,
       storage,
+      undefined,
+      undefined,
     );
   });
 
-  it('returns only datasets matching export capability and domain permission', () => {
-    const result = service.getCatalog({
+  it('returns only datasets matching export capability and domain permission', async () => {
+    const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
       roles: ['ADMIN'],
@@ -117,14 +132,51 @@ describe('DataExportsService', () => {
     ).toBe(true);
     expect(result.data.find((item) => item.code === 'student_risk')?.filterDefinitions).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: 'schoolId', control: 'INTEGER' }),
+        expect.objectContaining({
+          key: 'schoolId',
+          control: 'SELECT',
+          options: [{ value: '1001', label: 'โรงเรียนทดสอบ' }],
+        }),
         expect.objectContaining({ key: 'riskTier', control: 'SELECT' }),
       ]),
     );
+    expect(attendanceService.getSchools).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      100_000,
+      { global: true },
+    );
+    expect(statusCatalogService.getCatalog).not.toHaveBeenCalled();
   });
 
-  it('does not expose datasets when the actor lacks the domain permission', () => {
-    const result = service.getCatalog({
+  it('returns case status options from the workflow status catalog', async () => {
+    const result = await service.getCatalog({
+      id: 1,
+      username: 'reviewer',
+      roles: ['ADMIN'],
+      permissions: ['export-data', 'review-cases'],
+      data_scope: { global: true },
+    });
+
+    expect(
+      result.data.find((item) => item.code === 'case_summary')?.filterDefinitions,
+    ).toContainEqual(
+      expect.objectContaining({
+        key: 'status',
+        control: 'SELECT',
+        options: [
+          { value: 'IN_PROGRESS', label: 'กำลังติดตาม' },
+          { value: 'RESOLVED', label: 'ปิดเคสแล้ว' },
+        ],
+      }),
+    );
+    expect(statusCatalogService.getCatalog).toHaveBeenCalledWith('CASE_WORKFLOW');
+  });
+
+  it('does not expose datasets when the actor lacks the domain permission', async () => {
+    const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
       roles: ['TEACHER'],
@@ -133,10 +185,12 @@ describe('DataExportsService', () => {
     });
 
     expect(result.data).toEqual([]);
+    expect(attendanceService.getSchools).not.toHaveBeenCalled();
+    expect(statusCatalogService.getCatalog).not.toHaveBeenCalled();
   });
 
-  it('keeps executive actors aggregate-only even when raw permissions are regranted', () => {
-    const result = service.getCatalog({
+  it('keeps executive actors aggregate-only even when raw permissions are regranted', async () => {
+    const result = await service.getCatalog({
       id: 1,
       username: 'executive',
       roles: ['EXECUTIVE'],
@@ -219,8 +273,8 @@ describe('DataExportsService', () => {
     expect(dispatchJob).toHaveBeenCalledWith('job-1');
   });
 
-  it('publishes minimized school, observation, report-up, and executive products by permission', () => {
-    const result = service.getCatalog({
+  it('publishes minimized school, observation, report-up, and executive products by permission', async () => {
+    const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
       roles: ['ADMIN'],
@@ -255,8 +309,8 @@ describe('DataExportsService', () => {
     }
   });
 
-  it('does not expose generic exports to own-only actors even with permissions', () => {
-    const result = service.getCatalog({
+  it('does not expose generic exports to own-only actors even with permissions', async () => {
+    const result = await service.getCatalog({
       id: 1,
       username: 'student',
       roles: ['STUDENT'],
@@ -267,8 +321,8 @@ describe('DataExportsService', () => {
     expect(result.data).toEqual([]);
   });
 
-  it('does not expose internal storage or query details', () => {
-    const result = service.getCatalog({
+  it('does not expose internal storage or query details', async () => {
+    const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
       roles: ['ADMIN'],
@@ -464,6 +518,8 @@ describe('DataExportsService', () => {
     service = new DataExportsService(
       dataSource,
       repository as unknown as DataExportsRepository,
+      attendanceService as never,
+      statusCatalogService as never,
       undefined,
       storage,
     );
@@ -577,6 +633,8 @@ describe('DataExportsService', () => {
     const keysetService = new DataExportsService(
       dataSource,
       repository as unknown as DataExportsRepository,
+      attendanceService as never,
+      statusCatalogService as never,
       undefined,
       storage,
       undefined,
@@ -607,6 +665,8 @@ describe('DataExportsService', () => {
     const policyService = new DataExportsService(
       {} as DataSource,
       repository as unknown as DataExportsRepository,
+      attendanceService as never,
+      statusCatalogService as never,
       undefined,
       storage,
       undefined,
@@ -684,6 +744,8 @@ describe('DataExportsService', () => {
     const productionService = new DataExportsService(
       {} as unknown as DataSource,
       repository as unknown as DataExportsRepository,
+      attendanceService as never,
+      statusCatalogService as never,
       undefined,
       { ...storage, kind: 'local' },
       { isProduction: true } as never,

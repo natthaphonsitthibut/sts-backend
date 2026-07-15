@@ -15,6 +15,12 @@ const TEACHER_ACCESS_ACTOR = {
   permissions: ['manage-teacher-access'],
 };
 
+const IMPORT_ACTOR = {
+  ...SCHOOL_ACTOR,
+  roles: [],
+  permissions: ['import-data'],
+};
+
 const CLASSROOM = {
   id: '11',
   school_term_id: '21',
@@ -99,6 +105,15 @@ describe('SchoolStructureService', () => {
     });
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
     expect(repository.listClassrooms).toHaveBeenCalledWith(1001, 21);
+  });
+
+  it('allows import actors to read classrooms within their server-side school scope', async () => {
+    const { service, repository } = setup();
+
+    await expect(service.listClassrooms(1001, 21, IMPORT_ACTOR)).resolves.toMatchObject({
+      data: [{ id: '11', schoolId: 1001 }],
+    });
+    expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
   });
 
   it('denies missing permission, empty scope, narrow class scope, and cross-school probing', async () => {

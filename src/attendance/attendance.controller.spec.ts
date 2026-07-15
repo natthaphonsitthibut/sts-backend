@@ -44,16 +44,11 @@ describe('AttendanceController access', () => {
     }
   });
 
-  it('allows attendance lookup/task reads to attendance or attendance-dashboard actors only', () => {
+  it('allows attendance lookup/task reads to the required actors only', () => {
     const guard = new PermissionsGuard(new Reflector());
-    const lookupMethods: Array<keyof AttendanceController> = [
-      'getSchools',
-      'getLocations',
-      'getAttendanceTasks',
-      'getRooms',
-    ];
+    const attendanceLookupMethods: Array<keyof AttendanceController> = ['getAttendanceTasks'];
 
-    for (const method of lookupMethods) {
+    for (const method of attendanceLookupMethods) {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'attendance',
         'attendance-dashboard',
@@ -67,14 +62,46 @@ describe('AttendanceController access', () => {
       );
     }
 
+    for (const method of ['getSchools', 'getLocations'] as const) {
+      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
+        'attendance',
+        'attendance-dashboard',
+        'manage-school-structure',
+        'manage-teacher-access',
+        'import-data',
+        'import-school-roster',
+        'export-data',
+      ]);
+      expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
+      expect(guard.canActivate(contextWithPermissions(method, ['manage-teacher-access']))).toBe(
+        true,
+      );
+      expect(guard.canActivate(contextWithPermissions(method, ['import-school-roster']))).toBe(
+        true,
+      );
+      expect(guard.canActivate(contextWithPermissions(method, ['export-data']))).toBe(true);
+      expect(() => guard.canActivate(contextWithPermissions(method, ['home']))).toThrow(
+        ForbiddenException,
+      );
+    }
+
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getGradeLevels'))).toEqual([
       'attendance',
       'attendance-dashboard',
       'manage-school-structure',
+      'export-data',
     ]);
     expect(
       guard.canActivate(contextWithPermissions('getGradeLevels', ['manage-school-structure'])),
     ).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('getGradeLevels', ['export-data']))).toBe(true);
+
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getRooms'))).toEqual([
+      'attendance',
+      'attendance-dashboard',
+      'export-data',
+    ]);
+    expect(guard.canActivate(contextWithPermissions('getRooms', ['export-data']))).toBe(true);
   });
 
   it('allows roster and history reads to attendance actors only', () => {
@@ -119,6 +146,8 @@ describe('AttendanceController access', () => {
       'manage-attendance-calendar',
       'manage-school-structure',
       'manage-teacher-access',
+      'import-data',
+      'import-school-roster',
     ]);
     expect(
       guard.canActivate(contextWithPermissions('listTerms', ['manage-school-structure'])),
@@ -126,6 +155,7 @@ describe('AttendanceController access', () => {
     expect(guard.canActivate(contextWithPermissions('listTerms', ['manage-teacher-access']))).toBe(
       true,
     );
+    expect(guard.canActivate(contextWithPermissions('listTerms', ['import-data']))).toBe(true);
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('upsertTerm'))).toEqual([
       'manage-attendance-calendar',

@@ -638,15 +638,42 @@ export class AttendanceRepository {
     };
   }
 
-  async listRooms(gradeLabel: string, schoolId?: number): Promise<RoomRow[]> {
+  async listRooms(
+    gradeLabel: string,
+    schoolId?: number,
+    userScope?: DataScope,
+  ): Promise<RoomRow[]> {
+    if (userScope && (userScope.own_only === true || isUnconfiguredDataScope(userScope))) {
+      return [];
+    }
     let query = `
       SELECT DISTINCT s."RoomID_Onec"::text as room
       FROM student_term s
       ${CURRENT_ENROLLMENT_JOIN}
       JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
+      LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       WHERE gl.label = $1
     `;
     const params: unknown[] = [gradeLabel];
+
+    if (userScope) {
+      const scopeResult = buildDataScopeQuery(
+        userScope,
+        {
+          school_id: `s."SchoolID_Onec"`,
+          grade: `s."GradeLevelID_Onec"`,
+          room: `s."RoomID_Onec"::text`,
+          province: 'sc.province',
+          district: 'sc.district',
+          sub_district: 'sc.sub_district',
+        },
+        params.length + 1,
+      );
+      if (scopeResult.sql) {
+        query += ` AND (${scopeResult.sql})`;
+        pushScopeParams(params, scopeResult.params);
+      }
+    }
 
     if (typeof schoolId === 'number') {
       params.push(schoolId);

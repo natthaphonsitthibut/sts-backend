@@ -52,14 +52,27 @@ export class AttendanceController {
 
   @Get('grade-levels')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard', 'manage-school-structure')
+  @RequireAnyPermission(
+    'attendance',
+    'attendance-dashboard',
+    'manage-school-structure',
+    'export-data',
+  )
   async getGradeLevels() {
     return await this.attendanceService.getGradeLevels();
   }
 
   @Get('schools')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard')
+  @RequireAnyPermission(
+    'attendance',
+    'attendance-dashboard',
+    'manage-school-structure',
+    'manage-teacher-access',
+    'import-data',
+    'import-school-roster',
+    'export-data',
+  )
   async getSchools(
     @Query() query: GetSchoolsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -76,7 +89,15 @@ export class AttendanceController {
 
   @Get('locations')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard')
+  @RequireAnyPermission(
+    'attendance',
+    'attendance-dashboard',
+    'manage-school-structure',
+    'manage-teacher-access',
+    'import-data',
+    'import-school-roster',
+    'export-data',
+  )
   async getLocations() {
     return await this.attendanceService.getLocations();
   }
@@ -161,9 +182,16 @@ export class AttendanceController {
 
   @Get('rooms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard')
-  async getRooms(@Query() query: GetRoomsQueryDto) {
-    return await this.attendanceService.getRooms(query.grade, query.schoolId);
+  @RequireAnyPermission('attendance', 'attendance-dashboard', 'export-data')
+  async getRooms(
+    @Query() query: GetRoomsQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.attendanceService.getRooms(
+      query.grade,
+      query.schoolId,
+      resolveActorDataScope(actor),
+    );
   }
 
   @Get('terms')
@@ -173,6 +201,8 @@ export class AttendanceController {
     'manage-attendance-calendar',
     'manage-school-structure',
     'manage-teacher-access',
+    'import-data',
+    'import-school-roster',
   )
   async listTerms(
     @Query() query: ListSchoolTermsQueryDto,

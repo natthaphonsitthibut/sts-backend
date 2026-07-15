@@ -22,9 +22,11 @@ import { buildDataScopeQuery } from '../common/utils/authorization';
 import { appConfig } from '../config/app.config';
 import { queueConfig } from '../config/queue.config';
 import { executiveReportingConfig } from '../config/executive-reporting.config';
-import { queryDataSource } from '../database/sql-query';
+import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
 import { resolveExecutiveReportingPolicy } from '../executive-reporting/executive-reporting.policy';
+import { AttendanceService } from '../attendance/attendance.service';
+import { StatusCatalogService } from '../status-catalog/status-catalog.service';
 import { DATA_EXPORT_CATALOG } from './data-export.registry';
 import { DataExportsRepository, type DataExportActorRow } from './data-exports.repository';
 import type { CreateDataExportJobDto, DataExportJobListQueryDto } from './dto/data-export.dto';
@@ -65,6 +67,8 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
   constructor(
     private readonly dataSource: DataSource,
     private readonly repository: DataExportsRepository,
+    private readonly attendanceService: AttendanceService,
+    private readonly statusCatalogService: StatusCatalogService,
     @Optional()
     @Inject(queueConfig.KEY)
     private readonly runtimeQueueConfig?: ConfigType<typeof queueConfig>,
@@ -103,16 +107,60 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  getCatalog(actor: AuthenticatedRequestUser) {
-    const items = DATA_EXPORT_CATALOG.filter((item) => this.canAccessCatalogItem(actor, item)).map(
-      (item) => ({
-        ...item,
-        supportedFilters:
-          item.deliveryMode === 'ASYNC_JOB'
-            ? item.filterDefinitions.map((definition) => definition.key)
-            : item.supportedFilters,
-      }),
+  async getCatalog(actor: AuthenticatedRequestUser) {
+    const accessibleItems = DATA_EXPORT_CATALOG.filter((item) =>
+      this.canAccessCatalogItem(actor, item),
     );
+    const needsSchoolOptions = accessibleItems.some((item) =>
+      item.filterDefinitions.some((definition) => definition.key === 'schoolId'),
+    );
+    const needsCaseStatuses = accessibleItems.some((item) =>
+      item.filterDefinitions.some((definition) => definition.key === 'status'),
+    );
+    const [schools, caseStatuses] = await Promise.all([
+      needsSchoolOptions
+        ? this.attendanceService.getSchools(
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            ROW_CAP,
+            actor.data_scope,
+          )
+        : Promise.resolve({ success: true as const, data: [] }),
+      needsCaseStatuses
+        ? this.statusCatalogService.getCatalog('CASE_WORKFLOW')
+        : Promise.resolve([]),
+    ]);
+    const items = accessibleItems.map((item) => ({
+      ...item,
+      filterDefinitions: item.filterDefinitions.map((definition) =>
+        definition.key === 'schoolId'
+          ? {
+              ...definition,
+              label: 'โรงเรียน',
+              control: 'SELECT' as const,
+              options: schools.data.map((school) => ({
+                value: String(school.id),
+                label: school.name ?? `โรงเรียน ${school.id}`,
+              })),
+            }
+          : definition.key === 'status'
+            ? {
+                ...definition,
+                control: 'SELECT' as const,
+                options: caseStatuses.map((status) => ({
+                  value: status.code,
+                  label: status.label,
+                })),
+              }
+            : definition,
+      ),
+      supportedFilters:
+        item.deliveryMode === 'ASYNC_JOB'
+          ? item.filterDefinitions.map((definition) => definition.key)
+          : item.supportedFilters,
+    }));
 
     return {
       success: true as const,
@@ -347,10 +395,17 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         rowCount: 0,
         sha256: createHash('sha256'),
       };
-      artifactStorageKey = this.artifactStorageKey(claimed.id);
-      await this.requireStorage().saveStream(
-        Readable.from(this.streamCsv(item, claimed, metrics)),
-        artifactStorageKey,
+      const storageKey = this.artifactStorageKey(claimed.id);
+      artifactStorageKey = storageKey;
+      await withDataSourceTransaction(
+        this.dataSource,
+        async () => {
+          await this.requireStorage().saveStream(
+            Readable.from(this.streamCsv(item, claimed, metrics)),
+            storageKey,
+          );
+        },
+        'REPEATABLE READ',
       );
       const digest = metrics.sha256.digest('hex');
       const expiresAt = new Date(

@@ -39,16 +39,42 @@ describe('SchoolStructureController access', () => {
         }),
       }) as never;
 
-    for (const method of ['listSchools', 'listTeachers'] as const) {
+    for (const method of ['listSchools', 'listClassrooms'] as const) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([]);
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'manage-school-structure',
         'manage-teacher-access',
+        'import-data',
+        'import-school-roster',
       ]);
       expect(guard.canActivate(context(method))).toBe(true);
     }
 
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTeachers'))).toEqual([
+      'manage-school-structure',
+      'manage-teacher-access',
+    ]);
+    expect(guard.canActivate(context('listTeachers'))).toBe(true);
+
     expect(() => guard.canActivate(context('createTeacherMembership'))).toThrow();
     expect(() => guard.canActivate(context('updateTeacherMembership'))).toThrow();
+  });
+
+  it('allows import actors to read scoped schools and classrooms but not write them', () => {
+    const guard = new PermissionsGuard(new Reflector());
+    const context = (method: keyof SchoolStructureController) =>
+      ({
+        getHandler: () => handler(method),
+        getClass: () => SchoolStructureController,
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: { id: 1, username: 'importer', roles: [], permissions: ['import-data'] },
+          }),
+        }),
+      }) as never;
+
+    expect(guard.canActivate(context('listSchools'))).toBe(true);
+    expect(guard.canActivate(context('listClassrooms'))).toBe(true);
+    expect(() => guard.canActivate(context('createClassroom'))).toThrow();
   });
 });

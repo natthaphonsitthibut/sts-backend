@@ -22,9 +22,6 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9251);
 const USERNAME = 'data_export_browser_smoke_admin';
-const CONTEXT_SCHOOL_ID = 2_140_000_001;
-const CONTEXT_GRADE = 'ป.1';
-const CONTEXT_ROOM = '91';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -166,6 +163,14 @@ async function bodyText(client) {
   return String(await evaluate(client, 'document.body.innerText'));
 }
 
+async function capture(client, outputPath) {
+  const result = await client.call('Page.captureScreenshot', {
+    format: 'png',
+    captureBeyondViewport: true,
+  });
+  fs.writeFileSync(outputPath, Buffer.from(result.data, 'base64'));
+}
+
 function createSessionCookie(sessionCookieService, userId) {
   let captured = null;
   sessionCookieService.setSession(
@@ -178,6 +183,38 @@ function createSessionCookie(sessionCookieService, userId) {
   );
   assert(captured, 'Session cookie was not created');
   return captured;
+}
+
+async function loadClassroomContext(sessionCookie) {
+  const headers = {
+    Cookie: `${sessionCookie.name}=${sessionCookie.value}`,
+  };
+  const readData = async (path) => {
+    const response = await fetch(`${BACKEND_URL}/api${path}`, { headers });
+    assert(response.ok, `Lookup API failed: ${path} (${response.status})`);
+    const payload = await response.json();
+    return payload?.data ?? payload;
+  };
+
+  const [schools, grades] = await Promise.all([
+    readData('/attendance/schools?limit=50'),
+    readData('/attendance/grade-levels'),
+  ]);
+  for (const school of schools) {
+    for (const grade of grades) {
+      const rooms = await readData(
+        `/attendance/rooms?schoolId=${encodeURIComponent(school.id)}&grade=${encodeURIComponent(grade.label)}`,
+      );
+      if (rooms.length > 0) {
+        return {
+          schoolId: String(school.id),
+          grade: grade.label,
+          room: rooms[0],
+        };
+      }
+    }
+  }
+  throw new Error('Smoke fixture has no selectable school, grade, and room combination');
 }
 
 async function loginInBrowser(client, user, sessionCookie) {
@@ -299,6 +336,8 @@ async function main() {
       mobile: false,
     });
 
+    const sessionCookie = createSessionCookie(sessionCookieService, userId);
+    const classroomContext = await loadClassroomContext(sessionCookie);
     await loginInBrowser(
       client,
       {
@@ -323,7 +362,31 @@ async function main() {
         data_scope: { global: true },
         must_change_password: false,
       },
-      createSessionCookie(sessionCookieService, userId),
+      sessionCookie,
+    );
+
+    await navigate(client, `${FRONTEND_URL}/cases`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Array.from(document.querySelectorAll('button')).some((button) => button.textContent.includes('ส่งออกตามตัวกรองนี้'))`,
+          ),
+        ),
+      'Cases export action did not render',
+    );
+    await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('button'))
+        .find((button) => button.textContent.includes('ส่งออกตามตัวกรองนี้'))?.click()`,
+    );
+    await waitFor(
+      async () => {
+        const url = new URL(await evaluate(client, 'window.location.href'));
+        return url.pathname === '/data-exports' && url.searchParams.get('dataset') === 'case_summary';
+      },
+      'Cases export action did not preserve its export context',
     );
 
     await navigate(client, `${FRONTEND_URL}/data-exports`);
@@ -358,6 +421,20 @@ async function main() {
     assert(text.includes('รายชื่อนักเรียนพื้นฐาน'), 'Student roster export card was missing');
     assert(text.includes('สร้างงานส่งออก'), 'Queued export action was missing');
 
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true,
+    });
+    await capture(client, '/tmp/sts-data-export-mobile.png');
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1366,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+
     const catalogStatus = await evaluate(
       client,
       `(async () => {
@@ -374,27 +451,41 @@ async function main() {
     const contextStartedAt = new Date();
     const contextUrl = new URL(`${FRONTEND_URL}/data-exports`);
     contextUrl.searchParams.set('dataset', 'student_roster_basic');
-    contextUrl.searchParams.set('schoolId', String(CONTEXT_SCHOOL_ID));
-    contextUrl.searchParams.set('grade', CONTEXT_GRADE);
-    contextUrl.searchParams.set('room', CONTEXT_ROOM);
+    contextUrl.searchParams.set('schoolId', classroomContext.schoolId);
+    contextUrl.searchParams.set('grade', classroomContext.grade);
+    contextUrl.searchParams.set('room', classroomContext.room);
     await navigate(client, contextUrl.toString());
-    await waitFor(async () => {
+    try {
+      await waitFor(async () => {
+        const values = await evaluate(
+          client,
+          `({
+            text: document.body.innerText,
+            schoolId: document.querySelector('#export-student_roster_basic-schoolId')?.value,
+            grade: document.querySelector('#export-student_roster_basic-grade')?.value,
+            room: document.querySelector('#export-student_roster_basic-room')?.value
+          })`,
+        );
+        return (
+          values.text.includes('นำตัวกรองจากหน้าต้นทางมาแล้ว') &&
+          // Combobox renders the selected label, not its persisted option value.
+          // The completed job assertion below remains the source of truth for IDs.
+          Boolean(values.schoolId) &&
+          values.grade === classroomContext.grade &&
+          values.room === `ห้อง ${classroomContext.room}`
+        );
+      }, 'Typed source context did not populate the export form');
+    } catch (error) {
       const values = await evaluate(
         client,
         `({
-          text: document.body.innerText,
           schoolId: document.querySelector('#export-student_roster_basic-schoolId')?.value,
           grade: document.querySelector('#export-student_roster_basic-grade')?.value,
           room: document.querySelector('#export-student_roster_basic-room')?.value
         })`,
       );
-      return (
-        values.text.includes('นำตัวกรองจากหน้าต้นทางมาแล้ว') &&
-        values.schoolId === String(CONTEXT_SCHOOL_ID) &&
-        values.grade === CONTEXT_GRADE &&
-        values.room === CONTEXT_ROOM
-      );
-    }, 'Typed source context did not populate the export form');
+      throw new Error(`${errorMessage(error)}; values=${JSON.stringify(values)}`);
+    }
 
     const clicked = await evaluate(
       client,
@@ -429,9 +520,9 @@ async function main() {
       return row.status === 'COMPLETED';
     }, 'Source-context export job did not complete');
     assert(
-      Number(submittedJob.filter_snapshot.schoolId) === CONTEXT_SCHOOL_ID &&
-        submittedJob.filter_snapshot.grade === CONTEXT_GRADE &&
-        submittedJob.filter_snapshot.room === CONTEXT_ROOM,
+      String(submittedJob.filter_snapshot.schoolId) === classroomContext.schoolId &&
+        submittedJob.filter_snapshot.grade === classroomContext.grade &&
+        submittedJob.filter_snapshot.room === classroomContext.room,
       'Submitted export job did not preserve typed source-context filters',
     );
 

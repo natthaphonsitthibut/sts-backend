@@ -37,12 +37,24 @@ export class SchoolStructureController {
 
   @Get('schools')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure', 'manage-teacher-access')
+  @RequireAnyPermission(
+    'manage-school-structure',
+    'manage-teacher-access',
+    'import-data',
+    'import-school-roster',
+  )
   listSchools(@CurrentUser() actor: AuthenticatedRequestUser) {
     return this.service.listSchools(actor);
   }
 
   @Get('classrooms')
+  @RequirePermission()
+  @RequireAnyPermission(
+    'manage-school-structure',
+    'manage-teacher-access',
+    'import-data',
+    'import-school-roster',
+  )
   listClassrooms(
     @Query() query: ListSchoolClassroomsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,

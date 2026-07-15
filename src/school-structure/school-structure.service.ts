@@ -40,16 +40,18 @@ export class SchoolStructureService {
     private readonly auditLog: AuditLogService,
   ) {}
 
-  private resolveScope(actor: AuthenticatedRequestUser, allowTeacherAccessRead = false): DataScope {
+  private resolveScope(actor: AuthenticatedRequestUser, allowRelatedRead = false): DataScope {
     const canManageStructure = hasPermission(
       actor.roles,
       actor.permissions,
       'manage-school-structure',
     );
-    const canReadForTeacherAccess =
-      allowTeacherAccessRead &&
-      hasPermission(actor.roles, actor.permissions, 'manage-teacher-access');
-    if (!canManageStructure && !canReadForTeacherAccess) {
+    const canUseRelatedRead =
+      allowRelatedRead &&
+      ['manage-teacher-access', 'import-data', 'import-school-roster'].some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      );
+    if (!canManageStructure && !canUseRelatedRead) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการโครงสร้างโรงเรียน');
     }
     const scope = normalizeDataScope(actor.data_scope) ?? {};
@@ -70,11 +72,11 @@ export class SchoolStructureService {
   private async assertSchoolAccess(
     schoolId: number,
     actor: AuthenticatedRequestUser,
-    allowTeacherAccessRead = false,
+    allowRelatedRead = false,
   ): Promise<void> {
     const allowed = await this.repository.isSchoolInScope(
       schoolId,
-      this.resolveScope(actor, allowTeacherAccessRead),
+      this.resolveScope(actor, allowRelatedRead),
     );
     if (!allowed) throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
   }
@@ -145,7 +147,7 @@ export class SchoolStructureService {
     termId: number | undefined,
     actor: AuthenticatedRequestUser,
   ) {
-    await this.assertSchoolAccess(schoolId, actor);
+    await this.assertSchoolAccess(schoolId, actor, true);
     const rows = await this.repository.listClassrooms(schoolId, termId);
     return { data: rows.map((row) => this.toClassroom(row)) };
   }

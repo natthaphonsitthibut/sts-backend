@@ -50,14 +50,18 @@ export class AttendanceLookupService {
     };
   }
 
-  async getRooms(gradeLabel: string, schoolId?: string) {
+  async getRooms(gradeLabel: string, schoolId?: string, userScope?: DataScope) {
     const normalizedGrade = gradeLabel.trim();
     if (!normalizedGrade) {
       throw new BadRequestException('Grade is required');
     }
 
     const normalizedSchoolId = this.parseOptionalInteger(schoolId, 'schoolId');
-    const rows = await this.attendanceRepository.listRooms(normalizedGrade, normalizedSchoolId);
+    const rows = await this.attendanceRepository.listRooms(
+      normalizedGrade,
+      normalizedSchoolId,
+      userScope,
+    );
 
     return {
       success: true,

@@ -91,7 +91,7 @@ export class AttendanceService {
     return await this.attendanceReadService.getAttendanceTasksPaginated(userScope, filters);
   }
 
-  async getRooms(gradeLabel: string, schoolId?: string) {
-    return await this.attendanceLookupService.getRooms(gradeLabel, schoolId);
+  async getRooms(gradeLabel: string, schoolId?: string, userScope?: DataScope) {
+    return await this.attendanceLookupService.getRooms(gradeLabel, schoolId, userScope);
   }
 }

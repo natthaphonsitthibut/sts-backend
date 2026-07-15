@@ -93,10 +93,12 @@ describe('AttendanceRepository', () => {
   it('filters attendance room options through current enrollment policy', async () => {
     const { queries, repository } = createRepository();
 
-    await repository.listRooms('ม.1', 10010002);
+    await repository.listRooms('ม.1', 10010002, { school_ids: [10010002] });
 
     expect(queries).toHaveLength(1);
     expectCurrentEnrollmentPolicy(queries[0].sql);
+    expect(queries[0].sql).toContain('s."SchoolID_Onec" = ANY');
+    expect(queries[0].params).toEqual(['ม.1', [10010002], 10010002]);
   });
 
   it('validates writable roster ids through current enrollment policy', async () => {
