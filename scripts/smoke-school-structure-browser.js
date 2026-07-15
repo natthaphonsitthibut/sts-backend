@@ -230,6 +230,56 @@ async function browserCsvRequest(client, requestPath, fields, csv) {
   );
 }
 
+async function chooseCombobox(client, ariaLabel, optionLabel) {
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const input = document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)});
+            return input && !input.disabled;
+          })()`,
+        ),
+      ),
+    `Combobox was not enabled: ${ariaLabel}`,
+  );
+  const opened = await evaluate(
+    client,
+    `document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})?.click() === undefined`,
+  );
+  assert(opened, `Could not open combobox: ${ariaLabel}`);
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `Array.from(document.querySelectorAll('button')).some((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)})`,
+        ),
+      ),
+    `Combobox option was not available: ${optionLabel}`,
+  );
+  const selected = await evaluate(
+    client,
+    `(() => {
+      const option = Array.from(document.querySelectorAll('button'))
+        .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)});
+      if (!option) return false;
+      option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      return true;
+    })()`,
+  );
+  assert(selected, `Could not choose combobox option: ${optionLabel}`);
+  await waitFor(
+    async () =>
+      (await evaluate(
+        client,
+        `document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})?.value`,
+      )) === optionLabel,
+    `Combobox selection did not settle: ${optionLabel}`,
+  );
+}
+
 async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) {
   const [identifier] = studentIdentifier
     ? await dataSource.query(
@@ -303,6 +353,10 @@ async function main() {
   let actor;
   let schoolA;
   const studentIdentifier = `98${String(Date.now()).slice(-11)}`;
+  const directImportCsvPath = path.join(
+    os.tmpdir(),
+    `sts-direct-import-${studentIdentifier}.csv`,
+  );
   try {
     const schools = await dataSource.query(
       `SELECT id, name FROM schools WHERE school_status='ACTIVE' ORDER BY id LIMIT 2`,
@@ -325,7 +379,7 @@ async function main() {
       firstName: 'School Structure',
       lastName: 'Browser Smoke',
       role: 'DIRECTOR',
-      permissions: ['home', 'manage-school-structure', 'import-school-roster'],
+      permissions: ['home', 'manage-school-structure', 'import-data', 'import-school-roster'],
       dataScope: { school_ids: [schoolA.id] },
     });
     await upsertUser(dataSource, hash, {
@@ -460,6 +514,7 @@ async function main() {
     assert(assignment.status === 201, 'Homeroom assignment failed');
 
     const studentCsv = `PersonID_Onec,FirstName_Onec,LastName_Onec,StudentStatusID_Onec\n${studentIdentifier},นักเรียน,ทดสอบโครงสร้าง,${status.code}\n`;
+    fs.writeFileSync(directImportCsvPath, studentCsv);
     const importFields = {
       target: 'student_term',
       mapping: '{}',
@@ -467,13 +522,26 @@ async function main() {
       schoolTermId: Number(term.id),
       classroomId: Number(classroom.id),
     };
+    const outOfScopePreview = await browserCsvRequest(
+      chrome.client,
+      '/api/imports/preview',
+      { ...importFields, schoolId: schoolB.id },
+      studentCsv,
+    );
+    assert(
+      outOfScopePreview.status >= 400 && outOfScopePreview.status < 500,
+      `Out-of-scope import context was not rejected: ${outOfScopePreview.status}`,
+    );
     const studentPreview = await browserCsvRequest(
       chrome.client,
       '/api/imports/preview',
       importFields,
       studentCsv,
     );
-    assert(studentPreview.status === 201 && studentPreview.payload.rowsReady === 1, 'Student preview failed');
+    assert(
+      studentPreview.status === 201 && studentPreview.payload.rowsReady === 1,
+      `Student preview failed: ${studentPreview.status} ${JSON.stringify(studentPreview.payload)}`,
+    );
     const studentImport = await browserCsvRequest(
       chrome.client,
       '/api/imports/bulk',
@@ -497,6 +565,74 @@ async function main() {
       .join(' ');
     assert(importedStudentName, 'Roster API returned the imported student without a display name');
 
+    // Direct-menu import must expose the same school → term → classroom
+    // context cascade as the school-structure entry point.
+    await navigate(chrome.client, `${FRONTEND_URL}/import-data?smoke=${Date.now()}`);
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('เลือกปลายทางสำหรับข้อมูลนำเข้า'),
+      'Direct import page did not render its context picker',
+    );
+    await chooseCombobox(chrome.client, 'ค้นหาโรงเรียน', schoolA.name);
+    await chooseCombobox(chrome.client, 'เลือกภาคเรียน', `ปี ${ACADEMIC_YEAR} / ภาค 1`);
+    await chooseCombobox(chrome.client, 'เลือกชั้น', classroom.gradeLabel);
+    await chooseCombobox(chrome.client, 'เลือกห้องเรียน', String(ROOM_NUMBER));
+    const directImportContext = await evaluate(
+      chrome.client,
+      `({
+        school: document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value,
+        term: document.querySelector('[aria-label="เลือกภาคเรียน"]')?.value,
+        grade: document.querySelector('[aria-label="เลือกชั้น"]')?.value,
+        classroom: document.querySelector('[aria-label="เลือกห้องเรียน"]')?.value
+      })`,
+    );
+    assert(
+      directImportContext.school === schoolA.name &&
+        directImportContext.term === `ปี ${ACADEMIC_YEAR} / ภาค 1` &&
+        directImportContext.grade === classroom.gradeLabel &&
+        directImportContext.classroom === String(ROOM_NUMBER),
+      `Direct import context did not settle: ${JSON.stringify(directImportContext)}`,
+    );
+    const fileInput = await chrome.client.call('Runtime.evaluate', {
+      expression: 'document.querySelector(\'input[type="file"]\')',
+      returnByValue: false,
+    });
+    assert(fileInput.result?.objectId, 'Direct import file input was not found');
+    await chrome.client.call('DOM.setFileInputFiles', {
+      objectId: fileInput.result.objectId,
+      files: [directImportCsvPath],
+    });
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes(path.basename(directImportCsvPath)),
+      'Direct import did not render the selected file',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .find((button) => button.textContent.trim() === 'ตรวจสอบไฟล์')?.click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ผลตรวจสอบไฟล์'),
+      'Direct import preview did not render',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .filter((button) => button.textContent.trim() === 'นำเข้าข้อมูล').at(-1)?.click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ยืนยันการนำเข้าข้อมูล'),
+      'Direct import confirmation did not open',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .filter((button) => button.textContent.trim() === 'นำเข้าข้อมูล').at(-1)?.click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('นำเข้าข้อมูลสำเร็จ'),
+      'Direct import did not complete',
+    );
+
     await navigate(chrome.client, `${FRONTEND_URL}/school-structure?smoke=${Date.now()}`);
     await waitFor(
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
@@ -504,7 +640,7 @@ async function main() {
     );
     await evaluate(
       chrome.client,
-      `Array.from(document.querySelectorAll('button')).find((button) => button.textContent.includes('Roster'))?.click()`,
+      `Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'รายชื่อนักเรียน')?.click()`,
     );
     await waitFor(
       async () =>
@@ -524,6 +660,7 @@ async function main() {
       [[DIRECTOR_USERNAME, TEACHER_USERNAME]],
     );
     await closeChrome(chrome);
+    fs.rmSync(directImportCsvPath, { force: true });
     await app.close();
   }
 }

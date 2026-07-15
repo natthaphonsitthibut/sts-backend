@@ -23,6 +23,7 @@ const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9263);
 const USERNAMES = {
   admin: 'teacher_access_browser_admin',
   teacher: 'teacher_access_browser_teacher',
+  manager: 'teacher_access_browser_manager',
 };
 const FIXTURE_PREFIX = 'TA-BROWSER-';
 const CALENDAR_REASON = 'Automated teacher access browser smoke';
@@ -123,6 +124,20 @@ async function clickButton(client, label, withinDialog = false) {
       Boolean(await evaluate(client, `Boolean(${expression} && !${expression}.disabled)`)),
     `Enabled button “${label}” was not found`,
   );
+  await evaluate(client, `${expression}.scrollIntoView({ block: 'center', inline: 'center' })`);
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const rect = ${expression}.getBoundingClientRect();
+            return rect.top >= 0 && rect.bottom <= window.innerHeight;
+          })()`,
+        ),
+      ),
+    `Button “${label}” did not scroll into view`,
+  );
   const point = await evaluate(
     client,
     `(() => {
@@ -147,20 +162,75 @@ async function clickButton(client, label, withinDialog = false) {
 }
 
 async function setSelectByOptionText(client, selector, optionText) {
-  await waitFor(
-    async () => {
-      const options = await evaluate(
-        client,
-        `(() => {
-            const select = document.querySelector(${JSON.stringify(selector)});
-            return [...(select?.options || [])].map((option) => option.textContent);
-          })()`,
-      );
-      if (options.some((text) => text.includes(optionText))) return true;
-      throw new Error(`available options=${JSON.stringify(options)}`);
-    },
-    `Select ${selector} did not contain “${optionText}”`,
+  const controlKind = await evaluate(
+    client,
+    `document.querySelector(${JSON.stringify(selector)})?.tagName || null`,
   );
+  if (controlKind === 'INPUT') {
+    await evaluate(client, `document.querySelector(${JSON.stringify(selector)}).click()`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean([...document.querySelector(${JSON.stringify(selector)}).parentElement
+              .querySelectorAll('ul button')]
+              .find((option) => option.textContent.includes(${JSON.stringify(optionText)})))`,
+          ),
+        ),
+      `Combobox ${selector} did not contain “${optionText}”`,
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector(${JSON.stringify(selector)});
+        const option = [...input.parentElement.querySelectorAll('ul button')]
+          .find((item) => item.textContent.includes(${JSON.stringify(optionText)}));
+        option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      })()`,
+    );
+    return;
+  }
+  if (controlKind === 'BUTTON') {
+    await evaluate(client, `document.querySelector(${JSON.stringify(selector)}).click()`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean([...document.querySelectorAll('[role="listbox"] [role="option"]')]
+              .find((option) => option.textContent.includes(${JSON.stringify(optionText)})))`,
+          ),
+        ),
+      `Select ${selector} did not contain “${optionText}”`,
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const option = [...document.querySelectorAll('[role="listbox"] [role="option"]')]
+          .find((item) => item.textContent.includes(${JSON.stringify(optionText)}));
+        option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      })()`,
+    );
+    return;
+  }
+  await waitFor(async () => {
+    const details = await evaluate(
+      client,
+      `(() => {
+            const select = document.querySelector(${JSON.stringify(selector)});
+            return {
+              options: [...(select?.options || [])].map((option) => option.textContent),
+              html: select?.outerHTML || null,
+              xhr: window.__stsSmokeXhr || [],
+            };
+          })()`,
+    );
+    if (details.options.some((text) => text.includes(optionText))) return true;
+    throw new Error(
+      `available options=${JSON.stringify(details.options)} html=${JSON.stringify(details.html)} xhr=${JSON.stringify(details.xhr)}`,
+    );
+  }, `Select ${selector} did not contain “${optionText}”`);
   await evaluate(
     client,
     `(() => {
@@ -182,7 +252,7 @@ async function clickCheckboxLabel(client, labelText) {
           `(() => {
             const label = [...document.querySelectorAll('label')]
               .find((item) => item.textContent.includes(${JSON.stringify(labelText)}));
-            return label?.querySelector('input[type=checkbox]');
+            return Boolean(label?.querySelector('input[type=checkbox]'));
           })()`,
         ),
       ),
@@ -298,11 +368,11 @@ async function upsertUser(dataSource, passwordHash, input) {
   return { id: Number(row.id), username: input.username };
 }
 
-async function login(password) {
+async function login(password, username = USERNAMES.admin) {
   const response = await fetch(`${BACKEND_URL}/api/users/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: USERNAMES.admin, password }),
+    body: JSON.stringify({ username, password }),
   });
   assert(response.status === 201, `Browser fixture login returned ${response.status}`);
   const user = await response.json();
@@ -333,6 +403,18 @@ async function cleanup(dataSource) {
   if (teacherId) {
     await dataSource.query(
       `
+        DELETE FROM student_follow_up_request_sources
+        WHERE observation_id IN (
+          SELECT id FROM student_observations WHERE author_user_id = $1
+        )
+      `,
+      [teacherId],
+    );
+    await dataSource.query(`DELETE FROM student_follow_up_requests WHERE requested_by = $1`, [
+      teacherId,
+    ]);
+    await dataSource.query(
+      `
         DELETE FROM student_observation_tags
         WHERE observation_id IN (
           SELECT id FROM student_observations WHERE author_user_id = $1
@@ -357,8 +439,46 @@ async function cleanup(dataSource) {
   );
   const studentIds = students.map((row) => row.student_uuid);
   const personIds = students.map((row) => row.person_uuid);
+  if (studentIds.length > 0) {
+    const smokeCases = await dataSource.query(
+      `SELECT id FROM cases WHERE student_uuid = ANY($1::uuid[]) AND reason_flagged LIKE $2`,
+      [studentIds, `${FIXTURE_PREFIX}%`],
+    );
+    const caseIds = smokeCases.map((row) => row.id);
+    if (caseIds.length > 0) {
+      const smokeLinks = await dataSource.query(
+        `SELECT link.id
+         FROM task_links link
+         JOIN tasks task ON task.id = link.task_id
+         WHERE task.case_id = ANY($1::int[])`,
+        [caseIds],
+      );
+      const linkIds = smokeLinks.map((row) => row.id);
+      if (linkIds.length > 0) {
+        await dataSource.query(
+          `DELETE FROM visit_work_sessions WHERE task_link_id = ANY($1::uuid[])`,
+          [linkIds],
+        );
+        await dataSource.query(
+          `DELETE FROM task_submissions WHERE task_link_id = ANY($1::uuid[])`,
+          [linkIds],
+        );
+      }
+      await dataSource.query(
+        `DELETE FROM task_links
+         WHERE task_id IN (SELECT id FROM tasks WHERE case_id = ANY($1::int[]))`,
+        [caseIds],
+      );
+      await dataSource.query(`DELETE FROM tasks WHERE case_id = ANY($1::int[])`, [caseIds]);
+      await dataSource.query(`DELETE FROM case_report_ups WHERE case_id = ANY($1::int[])`, [caseIds]);
+      await dataSource.query(`DELETE FROM case_reviews WHERE case_id = ANY($1::int[])`, [caseIds]);
+      await dataSource.query(`DELETE FROM cases WHERE id = ANY($1::int[])`, [caseIds]);
+    }
+  }
   const sessions = teacherId
-    ? await dataSource.query(`SELECT id FROM attendance_sessions WHERE created_by = $1`, [teacherId])
+    ? await dataSource.query(`SELECT id FROM attendance_sessions WHERE created_by = $1`, [
+        teacherId,
+      ])
     : [];
   const sessionIds = sessions.map((row) => row.id);
   if (sessionIds.length > 0 || studentIds.length > 0) {
@@ -392,10 +512,9 @@ async function cleanup(dataSource) {
     ]);
   }
   if (adminId) {
-    await dataSource.query(
-      `DELETE FROM classroom_teacher_assignments WHERE created_by = $1`,
-      [adminId],
-    );
+    await dataSource.query(`DELETE FROM classroom_teacher_assignments WHERE created_by = $1`, [
+      adminId,
+    ]);
     await dataSource.query(`DELETE FROM school_teacher_memberships WHERE created_by = $1`, [
       adminId,
     ]);
@@ -462,12 +581,13 @@ async function createFixture(dataSource, actors) {
       JOIN schools school ON school.id = term.school_id
       LEFT JOIN school_calendar_days calendar
         ON calendar.school_term_id = term.id
-       AND calendar.calendar_date = CURRENT_DATE
+       AND calendar.calendar_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok')::date
        AND calendar.deleted_at IS NULL
       WHERE term.status = 'ACTIVE'
         AND term.deleted_at IS NULL
         AND school.school_status = 'ACTIVE'
-        AND CURRENT_DATE BETWEEN term.starts_on AND term.ends_on
+        AND (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok')::date
+            BETWEEN term.starts_on AND term.ends_on
         AND (calendar.id IS NULL OR calendar.day_type = 'SCHOOL_DAY')
       ORDER BY term.ends_on DESC, term.id
       LIMIT 1
@@ -514,7 +634,7 @@ async function createFixture(dataSource, actors) {
       INSERT INTO school_teacher_memberships (
         school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
       )
-      VALUES ($1, $2, 'ACTIVE', CURRENT_DATE, $3, $3)
+      VALUES ($1, $2, 'ACTIVE', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok')::date, $3, $3)
       RETURNING id
     `,
     [term.school_id, actors.teacher.id, actors.admin.id],
@@ -525,7 +645,8 @@ async function createFixture(dataSource, actors) {
         school_id, classroom_id, teacher_membership_id, subject_id,
         assignment_kind, assignment_status, effective_on, created_by, updated_by
       )
-      VALUES ($1, $2, $3, NULL, 'HOMEROOM', 'ACTIVE', CURRENT_DATE, $4, $4)
+      VALUES ($1, $2, $3, NULL, 'HOMEROOM', 'ACTIVE',
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok')::date, $4, $4)
       RETURNING id
     `,
     [term.school_id, classroom.id, membership.id, actors.admin.id],
@@ -536,7 +657,8 @@ async function createFixture(dataSource, actors) {
         school_id, classroom_id, teacher_membership_id, subject_id,
         assignment_kind, assignment_status, effective_on, created_by, updated_by
       )
-      VALUES ($1, $2, $3, $4, 'SUBJECT', 'ACTIVE', CURRENT_DATE, $5, $5)
+      VALUES ($1, $2, $3, $4, 'SUBJECT', 'ACTIVE',
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok')::date, $5, $5)
       RETURNING id
     `,
     [term.school_id, classroom.id, membership.id, subject.id, actors.admin.id],
@@ -589,7 +711,8 @@ async function createFixture(dataSource, actors) {
       INSERT INTO school_calendar_days (
         school_term_id, calendar_date, day_type, reason, source, created_by, updated_by
       )
-      VALUES ($1, CURRENT_DATE, 'SCHOOL_DAY', $2, 'MANUAL', $3, $3)
+      VALUES ($1, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok')::date,
+        'SCHOOL_DAY', $2, 'MANUAL', $3, $3)
       ON CONFLICT (school_term_id, calendar_date) DO NOTHING
       RETURNING id
     `,
@@ -598,7 +721,9 @@ async function createFixture(dataSource, actors) {
   const [calendar] = await dataSource.query(
     `
       SELECT day_type FROM school_calendar_days
-      WHERE school_term_id = $1 AND calendar_date = CURRENT_DATE AND deleted_at IS NULL
+      WHERE school_term_id = $1
+        AND calendar_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok')::date
+        AND deleted_at IS NULL
     `,
     [term.id],
   );
@@ -650,7 +775,10 @@ async function copyOneTimeLink(client) {
       domHasFragment: document.documentElement.outerHTML.includes('#token=')
     })`,
   );
-  assert(!beforeCopy.bodyHasFragment && !beforeCopy.domHasFragment, 'One-time token leaked into DOM');
+  assert(
+    !beforeCopy.bodyHasFragment && !beforeCopy.domHasFragment,
+    'One-time token leaked into DOM',
+  );
   await clickButton(client, 'คัดลอกลิงก์', true);
   await waitFor(
     async () => String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกแล้ว'),
@@ -668,7 +796,10 @@ async function copyOneTimeLink(client) {
     )),
     'Copied token appeared in admin DOM',
   );
-  return { link, token };
+  return {
+    link: `${FRONTEND_URL}${parsed.pathname}${parsed.search}${parsed.hash}`,
+    token,
+  };
 }
 
 async function main() {
@@ -703,6 +834,21 @@ async function main() {
         lastName: 'Smoke',
         role: 'TEACHER',
         permissions: ['attendance'],
+        dataScope: { school_ids: [Number(initialSchool.id)] },
+      }),
+      manager: await upsertUser(dataSource, passwordHash, {
+        username: USERNAMES.manager,
+        firstName: 'Teacher Access',
+        lastName: 'Browser Manager',
+        role: 'DIRECTOR',
+        permissions: [
+          'students',
+          'manage-student-observations',
+          'create',
+          'assign-follow-up-cases',
+          'review-cases',
+          'report-up-cases',
+        ],
         dataScope: { school_ids: [Number(initialSchool.id)] },
       }),
     };
@@ -763,15 +909,52 @@ async function main() {
       source: `
         (() => {
           const backendUrl = ${JSON.stringify(BACKEND_URL)};
-          const rewrite = (url) =>
-            typeof url === 'string' ? url.replace('http://127.0.0.1:3000', backendUrl) : url;
+          const rewrite = (url) => {
+            if (typeof url !== 'string') return url;
+            try {
+              const parsed = new URL(url, window.location.origin);
+              if (
+                parsed.port === '3000' &&
+                (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')
+              ) {
+                return backendUrl + parsed.pathname + parsed.search + parsed.hash;
+              }
+            } catch {
+              // Keep malformed URLs unchanged so the browser reports its native error.
+            }
+            return url;
+          };
           const originalOpen = XMLHttpRequest.prototype.open;
           XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-            return originalOpen.call(this, method, rewrite(url), ...rest);
+            this.__stsSmokeUrl = rewrite(url);
+            return originalOpen.call(this, method, this.__stsSmokeUrl, ...rest);
+          };
+          const originalSend = XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.send = function(...args) {
+            this.addEventListener('loadend', () => {
+              if (
+                !this.__stsSmokeUrl?.includes('/school-structure/') &&
+                !this.__stsSmokeUrl?.includes('/teacher-access/')
+              ) return;
+              window.__stsSmokeXhr = window.__stsSmokeXhr || [];
+              window.__stsSmokeXhr.push({
+                url: this.__stsSmokeUrl,
+                status: this.status,
+                body: this.responseText.slice(0, 500),
+              });
+            });
+            return originalSend.apply(this, args);
           };
           const originalFetch = window.fetch;
           window.fetch = (input, init) =>
-            originalFetch(typeof input === 'string' ? rewrite(input) : input, init);
+            originalFetch(
+              typeof input === 'string'
+                ? rewrite(input)
+                : input instanceof Request
+                  ? new Request(rewrite(input.url), input)
+                  : input,
+              init,
+            );
         })();
       `,
     });
@@ -795,17 +978,22 @@ async function main() {
 
     await navigate(client, `${FRONTEND_URL}/teacher-access-grants`);
     try {
-      await waitFor(
-        async () => {
-          const text = String(await evaluate(client, 'document.body.innerText'));
-          return text.includes('ลิงก์เข้าใช้งานครู') && text.includes('ออกลิงก์ใหม่');
-        },
-        'Teacher access admin page did not load',
-      );
+      await waitFor(async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          text.includes('ลิงก์เข้าใช้งาน') &&
+          text.includes('ครูตามห้องเรียน') &&
+          text.includes('ออกลิงก์ใหม่')
+        );
+      }, 'Teacher access admin page did not load');
     } catch (error) {
       const diagnostic = await evaluate(
         client,
-        `({ pathname: location.pathname, text: document.body.innerText.slice(0, 1200) })`,
+        `({
+          pathname: location.pathname,
+          text: document.body.innerText.slice(0, 1200),
+          xhr: window.__stsSmokeXhr || []
+        })`,
       );
       throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
     }
@@ -825,6 +1013,14 @@ async function main() {
           (teacher) => Number(teacher.teacherUserId) === actors.teacher.id,
         ),
       `Browser could not load scoped teacher fixture: ${JSON.stringify(browserTeachersProbe)}`,
+    );
+    assert(
+      browserTeachersProbe.payload.data?.some(
+        (teacher) =>
+          Number(teacher.teacherUserId) === actors.teacher.id &&
+          teacher.membershipStatus === 'ACTIVE',
+      ),
+      `Browser scoped teacher fixture was not active: ${JSON.stringify(browserTeachersProbe)}`,
     );
     await clickButton(client, 'ออกลิงก์ใหม่');
     await setSelectByOptionText(client, '#grant-teacher', 'Teacher Browser Smoke');
@@ -856,7 +1052,8 @@ async function main() {
     );
     await clickButton(client, 'ออกลิงก์', true);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
       'One-time link dialog did not open after issue',
     );
     const original = await copyOneTimeLink(client);
@@ -871,15 +1068,40 @@ async function main() {
       [actors.admin.id],
     );
     assert(originalGrant?.id, 'Issued teacher access grant was not persisted');
+    const [originalGrantScope] = await dataSource.query(
+      `
+        SELECT
+          access_grant.revoked_at,
+          COUNT(scope.assignment_id)::int AS assignment_count
+        FROM teacher_access_grants access_grant
+        LEFT JOIN teacher_access_grant_assignments scope ON scope.grant_id = access_grant.id
+        WHERE access_grant.id = $1::uuid
+        GROUP BY access_grant.id
+      `,
+      [originalGrant.id],
+    );
+    assert(
+      originalGrantScope?.revoked_at === null && Number(originalGrantScope.assignment_count) === 2,
+      `Issued teacher access grant scope was incomplete: ${JSON.stringify(originalGrantScope)}`,
+    );
     await clickButton(client, 'ปิด', true);
     await waitFor(
-      async () => !String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
+      async () =>
+        !String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
       'One-time link dialog did not clear after close',
     );
 
+    const originalContext = await fetch(`${BACKEND_URL}/api/teacher-access/context`, {
+      headers: { 'x-teacher-access-token': original.token },
+    });
+    assert(
+      originalContext.ok,
+      `Issued teacher access token did not resolve before guest navigation (${originalContext.status})`,
+    );
+
     await navigate(client, original.link);
-    await waitFor(
-      async () => {
+    try {
+      await waitFor(async () => {
         const text = String(await evaluate(client, 'document.body.innerText'));
         return (
           text.includes(fixture.term.school_name) &&
@@ -888,28 +1110,34 @@ async function main() {
           text.includes(fixture.students[0].name) &&
           text.includes(fixture.students[1].name)
         );
-      },
-      'Guest page did not render server-derived identity, assignment, and roster',
-    );
+      }, 'Guest page did not render server-derived identity, assignment, and roster');
+    } catch (error) {
+      const diagnostic = await evaluate(
+        client,
+        `({
+          pathname: location.pathname,
+          text: document.body.innerText.slice(0, 1600),
+          xhr: window.__stsSmokeXhr || []
+        })`,
+      );
+      throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
     await assertTokenAbsentFromBrowser(client, original.token);
     const assignmentOptionCount = await evaluate(
       client,
-      `document.querySelector('#teacher-assignment')?.options.length || 0`,
+      `document.querySelector('#teacher-assignment')?.parentElement?.querySelector('select')?.options.length || 0`,
     );
     assert(assignmentOptionCount === 2, 'Guest page did not show both assignments');
 
     await setSelectByOptionText(client, '#teacher-assignment', fixture.subjectName);
-    await waitFor(
-      async () => {
-        const text = String(await evaluate(client, 'document.body.innerText'));
-        return text.includes('ข้อสังเกตจากครู') && text.includes(fixture.students[0].name);
-      },
-      'Observation assignment did not render its roster boundary',
-    );
+    await waitFor(async () => {
+      const text = String(await evaluate(client, 'document.body.innerText'));
+      return text.includes('ข้อสังเกตจากครู') && text.includes(fixture.students[0].name);
+    }, 'Observation assignment did not render its roster boundary');
     await clickButton(client, fixture.students[0].name);
     await waitFor(
       async () =>
-        Boolean(await evaluate(client, `document.querySelector('#observation-comment')`)),
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#observation-comment'))`)),
       'Observation write form did not load for the scoped student',
     );
     const observationComment = `${FIXTURE_PREFIX}teacher observation proof`;
@@ -920,13 +1148,26 @@ async function main() {
         const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
         setter.call(input, ${JSON.stringify(`${FIXTURE_PREFIX}teacher observation proof`)});
         input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
       })()`,
     );
-    await clickButton(client, 'บันทึกข้อสังเกต');
-    await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('บันทึกเรียบร้อย'),
-      'Teacher observation did not save through the UI',
+    await evaluate(
+      client,
+      `document.querySelector('#observation-comment')?.closest('form')?.requestSubmit()`,
     );
+    try {
+      await waitFor(
+        async () =>
+          String(await evaluate(client, 'document.body.innerText')).includes('บันทึกเรียบร้อย'),
+        'Teacher observation did not save through the UI',
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        client,
+        `({ text: document.body.innerText.slice(-1200), xhr: window.__stsSmokeXhr || [] })`,
+      );
+      throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
     const [savedObservation] = await dataSource.query(
       `
         SELECT
@@ -955,16 +1196,273 @@ async function main() {
       `Teacher observation provenance was not preserved: ${JSON.stringify(savedObservation)}`,
     );
 
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#follow-up-source'))`)),
+      'Teacher follow-up form did not render after saving an observation',
+    );
+    await setSelectByOptionText(client, '#follow-up-source', 'revision 1');
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#follow-up-reason');
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(input, ${JSON.stringify(`${FIXTURE_PREFIX}follow-up request proof`)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('#follow-up-reason')?.closest('form')?.requestSubmit()`,
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ส่งคำขอแล้ว'),
+      'Teacher follow-up request did not save through the UI',
+    );
+
+    const managerSession = await login(password, USERNAMES.manager);
+    assert(
+      managerSession.user.username === USERNAMES.manager,
+      'Manager fixture login returned the wrong user',
+    );
+    await client.call('Network.setCookie', {
+      name: managerSession.cookieName,
+      value: managerSession.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await navigate(client, `${FRONTEND_URL}/login`);
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(managerSession.user))});
+       localStorage.setItem('admin_access', 'true');`,
+    );
+    await navigate(client, `${FRONTEND_URL}/students/${fixture.students[0].studentUuid}`);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('คำขอติดตามจากครู'),
+      'Manager student detail did not render the follow-up review panel',
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('textarea[id^="follow-up-reason-"]'))`,
+          ),
+        ),
+      'Manager follow-up review form did not render',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('textarea[id^="follow-up-reason-"]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(input, ${JSON.stringify('Automated browser smoke approved follow-up')});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('textarea[id^="follow-up-reason-"]')?.closest('form')?.requestSubmit()`,
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('สร้างงานเยี่ยมบ้าน'),
+      'Approved follow-up did not become assignable in the manager UI',
+    );
+    await evaluate(
+      client,
+      `([...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'สร้างงานเยี่ยมบ้าน'))?.click()`,
+    );
+    try {
+      await waitFor(
+        async () =>
+          Boolean(await evaluate(client, `Boolean(document.querySelector('#assigned_to_name'))`)),
+        'Approved follow-up did not open the visit assignment form',
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        client,
+        `({ pathname: location.pathname, text: document.body.innerText.slice(0, 1600) })`,
+      );
+      throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
+    await evaluate(
+      client,
+      `(() => {
+        for (const [selector, value] of Object.entries({
+          '#assigned_to_name': 'Teacher Access Browser Visitor',
+          '#assigned_to_email': 'teacher-access-browser-visitor@example.invalid',
+        })) {
+          const input = document.querySelector(selector);
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          setter.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()`,
+    );
+    await clickButton(client, 'สร้างลิงก์');
+    try {
+      await waitFor(
+        async () =>
+          String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์สำเร็จ'),
+        'Approved follow-up visit assignment did not create a link through the UI',
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        client,
+        `({
+          pathname: location.pathname,
+          text: document.body.innerText.slice(0, 2400),
+          values: Object.fromEntries(
+            [...document.querySelectorAll('input, textarea')]
+              .filter((input) => input.id)
+              .map((input) => [input.id, input.value])
+          ),
+          buttons: [...document.querySelectorAll('button')].map((button) => ({
+            text: button.textContent.trim(),
+            disabled: button.disabled,
+            type: button.type
+          }))
+        })`,
+      );
+      throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
+    const visitLink = await evaluate(
+      client,
+      `([...document.querySelectorAll('a')].find((link) => link.textContent.includes('เปิดลิงก์'))?.href) || null`,
+    );
+    assert(typeof visitLink === 'string', 'Visit assignment UI did not expose a guest link');
+    const [assignedVisit] = await dataSource.query(
+      `
+        SELECT task.id::text AS task_id, task.case_id, link.id::text AS link_id
+        FROM tasks task
+        JOIN task_links link ON link.task_id = task.id
+        WHERE link.assigned_to_email = $1
+        ORDER BY link.created_at DESC
+        LIMIT 1
+      `,
+      ['teacher-access-browser-visitor@example.invalid'],
+    );
+    assert(
+      assignedVisit?.task_id && assignedVisit?.case_id,
+      'Approved follow-up visit task/link was not persisted',
+    );
+    await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1::uuid`, [
+      assignedVisit.link_id,
+    ]);
+    const visitToken = new URL(visitLink).pathname.split('/').filter(Boolean).at(-1);
+    assert(visitToken, 'Visit guest link did not contain a token');
+    await navigate(client, `${FRONTEND_URL}/task/${visitToken}/report`);
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#cause-category'))`)),
+      'Visit report form did not render for the assigned guest link',
+    );
+    await setSelectByOptionText(client, '#cause-category', 'อื่นๆ');
+    await evaluate(
+      client,
+      `(() => {
+        for (const [selector, value] of Object.entries({
+          '#cause-detail': 'Automated browser smoke visit result',
+          '#recommendation': 'Automated browser smoke recommendation',
+          '#visit-lat': '13.7563',
+          '#visit-lng': '100.5018',
+        })) {
+          const input = document.querySelector(selector);
+          const prototype = input instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
+          setter.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      })()`,
+    );
+    await clickButton(client, 'บันทึกและส่งรายงาน');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('บันทึกสำเร็จ'),
+      'Visit result did not save through the guest report UI',
+    );
+
+    await navigate(client, `${FRONTEND_URL}/login`);
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(managerSession.user))});
+       localStorage.setItem('admin_access', 'true');`,
+    );
+    await navigate(client, `${FRONTEND_URL}/cases`);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          fixture.students[0].name,
+        ),
+      'Submitted visit case did not appear in the manager case queue',
+    );
+    await clickButton(client, 'ดำเนินการ');
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#case-action'))`)),
+      'Case workflow dialog did not open after visit submission',
+    );
+    await setSelectByOptionText(client, '#case-action', 'รายงานขึ้นส่วนกลาง');
+    await evaluate(
+      client,
+      `(() => {
+        for (const [selector, value] of Object.entries({
+          '#case-note': 'Automated browser smoke report-up reason',
+          '#case-report-summary': 'Automated browser smoke report-up summary',
+        })) {
+          const input = document.querySelector(selector);
+          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      })()`,
+    );
+    await clickButton(client, 'บันทึก', true);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'รายงานขึ้นส่วนกลางแล้ว',
+        ),
+      'Unresolved submitted visit case did not report up through the manager UI',
+    );
+
+    await navigate(client, original.link);
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#teacher-assignment'))`)),
+      'Teacher guest page did not reload after manager review',
+    );
     await setSelectByOptionText(client, '#teacher-assignment', fixture.roomName);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('เช็คชื่อนักเรียน'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('เช็คชื่อนักเรียน'),
       'Homeroom assignment did not render attendance',
     );
     await clickButton(client, 'บันทึกการเช็คชื่อ 2 คน');
-    await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('บันทึกเรียบร้อย'),
-      'Full homeroom attendance did not save through the UI',
-    );
+    try {
+      await waitFor(
+        async () =>
+          String(await evaluate(client, 'document.body.innerText')).includes('บันทึกเรียบร้อย'),
+        'Full homeroom attendance did not save through the UI',
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        client,
+        `({
+          pathname: location.pathname,
+          text: document.body.innerText.slice(0, 2200),
+          xhr: window.__stsSmokeXhr || []
+        })`,
+      );
+      throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
     const [attendanceSession] = await dataSource.query(
       `
         SELECT status, submitted_by, recorded_count
@@ -985,24 +1483,43 @@ async function main() {
     await navigate(client, 'about:blank');
     await navigate(client, original.link);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
       'Reopening the reusable full link did not work',
     );
     await assertTokenAbsentFromBrowser(client, original.token);
 
+    await client.call('Network.setCookie', {
+      name: session.cookieName,
+      value: session.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await navigate(client, `${FRONTEND_URL}/login`);
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(session.user))});
+       localStorage.setItem('admin_access', 'true');`,
+    );
     await navigate(client, `${FRONTEND_URL}/teacher-access-grants`);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
       'Admin grant card did not reload',
     );
     await clickButton(client, 'เปลี่ยนลิงก์');
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ออกลิงก์ใหม่แทนลิงก์เดิม?'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'ออกลิงก์ใหม่แทนลิงก์เดิม?',
+        ),
       'Rotate confirmation did not open',
     );
     await clickButton(client, 'ออกลิงก์ใหม่', true);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
       'Rotated one-time link dialog did not open',
     );
     const rotated = await copyOneTimeLink(client);
@@ -1011,25 +1528,32 @@ async function main() {
 
     await navigate(client, original.link);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ไม่สามารถเข้าใช้งานได้'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'ไม่สามารถเข้าใช้งานได้',
+        ),
       'Old link was not denied after rotate',
     );
     await assertTokenAbsentFromBrowser(client, original.token);
+    await navigate(client, 'about:blank');
     await navigate(client, rotated.link);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
       'Rotated link did not work',
     );
     await assertTokenAbsentFromBrowser(client, rotated.token);
 
     await navigate(client, `${FRONTEND_URL}/teacher-access-grants`);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('Teacher Browser Smoke'),
       'Admin grant card did not load before revoke',
     );
     await clickButton(client, 'เพิกถอน');
     await waitFor(
-      async () => Boolean(await evaluate(client, `document.querySelector('#revoke-reason')`)),
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#revoke-reason'))`)),
       'Revoke dialog did not open',
     );
     await evaluate(
@@ -1063,7 +1587,10 @@ async function main() {
     );
     await navigate(client, rotated.link);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ไม่สามารถเข้าใช้งานได้'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'ไม่สามารถเข้าใช้งานได้',
+        ),
       'Rotated link was not denied after revoke',
     );
     await assertTokenAbsentFromBrowser(client, rotated.token);
@@ -1078,6 +1605,8 @@ async function main() {
           'server-derived guest identity, assignments, and roster',
           'fragment stripping and no token local/session/body storage',
           'P4 scoped observation write and provenance',
+          'P4 teacher follow-up request and manager approval',
+          'P6 approved visit assignment, guest report, and unresolved report-up',
           'full homeroom attendance submit and teacher attribution',
           'full-link reopen',
           'rotate denies old link and enables new link',
