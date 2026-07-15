@@ -6,6 +6,7 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
+const { VALID_PERMISSION_IDS } = require('../dist/auth/permissions.constants');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run role/scope browser smoke with NODE_ENV=production');
@@ -42,13 +43,7 @@ const TEACHER_SCOPE = {
 };
 // TEACHER default permissions -> Thai catalog labels shown in the review dialog.
 const TEACHER_PERMISSION_LABELS = ['หน้าหลัก', 'รายชื่อนักเรียน', 'เช็คชื่อ'];
-const ALL_PERMISSIONS = [
-  'home', 'dashboard', 'students', 'edit-students', 'review-cases', 'close-case',
-  'forward-case', 'student-self', 'create', 'import-data', 'attendance-dashboard',
-  'attendance', 'manage-users-list', 'manage-users-hard-delete',
-  'manage-student-accounts', 'manage-role-groups', 'login-links', 'settings',
-  'audit-log',
-];
+const ALL_PERMISSIONS = [...VALID_PERMISSION_IDS];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -298,6 +293,20 @@ async function clickSaveButton(client) {
   assert(clicked, 'Save button was not found');
 }
 
+async function clickButton(client, label) {
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((candidate) => candidate.textContent.trim() === ${JSON.stringify(label)});
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`,
+  );
+  assert(clicked, `Button "${label}" was not found`);
+}
+
 // The base Dialog renders as an overlay `<div class="fixed inset-0 z-50 …">`
 // with no role="dialog"; locate it from its <h2> title instead.
 const DIALOG_ROOT = `(() => {
@@ -457,6 +466,89 @@ async function main() {
       `Teacher scope was widened after save: ${JSON.stringify(persisted)}`,
     );
 
+    // --- Test A2: hidden invalid profile data must never swallow permission save ---
+    // Recreate the production condition that triggered the owner report: an
+    // older account has an empty national id and retired permission ids.
+    await dataSource.query(
+      `UPDATE users
+       SET "PersonID_Onec" = '',
+           permissions = $2::jsonb
+       WHERE id = $1`,
+      [teacherId, JSON.stringify(['home', 'forward-case', 'attendance-operations'])],
+    );
+    await navigate(client, `${FRONTEND_URL}/manage-users/${teacherId}/edit/permissions`);
+    await waitForEditForm(client, 'คุณครู');
+    await clickSaveButton(client);
+    await waitFor(async () => {
+      const text = await bodyText(client);
+      return text.includes('ยังบันทึกไม่ได้') && text.includes('อยู่ในแท็บข้อมูล');
+    }, 'Hidden validation error was not surfaced after save');
+    assert(
+      !(await reviewDialogText(client)),
+      'Review dialog opened even though hidden profile data was invalid',
+    );
+
+    await clickButton(client, 'ไปแก้ในแท็บข้อมูล');
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')).endsWith('/edit'),
+      'Invalid-field action did not navigate to the information tab',
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'document.activeElement?.getAttribute("name")')) ===
+        'PersonID_Onec',
+      'Invalid national-id field was not focused',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('[name="PersonID_Onec"]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '1000000000002');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await clickButton(client, 'สิทธิ์');
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')).endsWith('/edit/permissions'),
+      'Permission tab did not reopen after fixing hidden data',
+    );
+    await clickSaveButton(client);
+    await waitForReviewDialog(client, true);
+    const cleanupReview = await reviewDialogText(client);
+    assert(
+      cleanupReview.includes('forward-case') && cleanupReview.includes('attendance-operations'),
+      'Review dialog did not disclose retired permissions that will be removed',
+    );
+    await clickDialogButton(client, 'ยืนยันบันทึก');
+    await waitFor(
+      async () => {
+        const [saved] = await dataSource.query(
+          `SELECT "PersonID_Onec", permissions FROM users WHERE id = $1`,
+          [teacherId],
+        );
+        return (
+          saved?.PersonID_Onec === '1000000000002' &&
+          !saved?.permissions?.includes('forward-case') &&
+          !saved?.permissions?.includes('attendance-operations')
+        );
+      },
+      'Corrected permission save was not persisted',
+    );
+    const [cleanedTeacher] = await dataSource.query(
+      `SELECT "PersonID_Onec", permissions FROM users WHERE id = $1`,
+      [teacherId],
+    );
+    assert(
+      cleanedTeacher?.PersonID_Onec === '1000000000002',
+      'Corrected hidden profile field was not persisted',
+    );
+    assert(
+      !cleanedTeacher?.permissions?.includes('forward-case') &&
+        !cleanedTeacher?.permissions?.includes('attendance-operations'),
+      `Retired permissions were not removed: ${JSON.stringify(cleanedTeacher?.permissions)}`,
+    );
+
     // --- Test B: edit a nationwide DIRECTOR -> amber nationwide highlight ---
     await navigate(client, `${FRONTEND_URL}/manage-users/${nationalId}/edit/permissions`);
     await waitForEditForm(client, 'ผู้อำนวยการ');
@@ -483,7 +575,7 @@ async function main() {
     await capture(client, '/tmp/sts-role-scope-edit-mobile.png');
 
     console.log(
-      'role/scope browser smoke passed (Thai permission catalog, real scope names, preserve-scope save, nationwide highlight, desktop/mobile)',
+      'role/scope browser smoke passed (Thai permission catalog, hidden validation feedback, retired permission cleanup, real scope names, preserve-scope save, nationwide highlight, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);
