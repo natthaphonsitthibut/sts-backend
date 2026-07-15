@@ -146,7 +146,7 @@ export class HomeDashboardService {
     const metrics: HomeDashboardMetric[] = [
       {
         key: 'totalStudents',
-        label: 'นักเรียนในขอบเขต',
+        label: 'ทั้งหมด',
         value: totalStudents,
         targetPath: '/students',
         targetQuery: baseQuery,
@@ -156,21 +156,21 @@ export class HomeDashboardService {
     if (sections.includes('riskDistribution')) {
       metrics.push({
         key: 'watchStudents',
-        label: 'ความเสี่ยงสูง',
+        label: 'เสี่ยงสูง',
         value: watchStudents,
         targetPath: '/student-risk-report',
         targetQuery: { ...baseQuery, riskTier: 'HIGH' },
-        tone: watchStudents > 0 ? 'warning' : 'success',
+        tone: watchStudents > 0 ? 'danger' : 'success',
       });
     }
     if (sections.includes('casePipeline')) {
       metrics.push({
         key: 'activeCases',
-        label: 'เคสกำลังดำเนินการ',
+        label: 'กำลังติดตาม',
         value: activeCases,
         targetPath: '/cases',
         targetQuery: { ...baseQuery, status: 'IN_PROGRESS' },
-        tone: activeCases > 0 ? 'info' : 'success',
+        tone: activeCases > 0 ? 'warning' : 'success',
       });
       metrics.push({
         key: 'pendingReview',
@@ -178,7 +178,7 @@ export class HomeDashboardService {
         value: casePipeline?.PENDING_REVIEW ?? 0,
         targetPath: '/cases',
         targetQuery: { ...baseQuery, status: 'PENDING_REVIEW' },
-        tone: (casePipeline?.PENDING_REVIEW ?? 0) > 0 ? 'warning' : 'success',
+        tone: (casePipeline?.PENDING_REVIEW ?? 0) > 0 ? 'info' : 'success',
       });
     }
 

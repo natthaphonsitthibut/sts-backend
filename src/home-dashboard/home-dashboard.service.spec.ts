@@ -98,9 +98,30 @@ describe('HomeDashboardService', () => {
     );
     expect(result.data.metrics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: 'totalStudents', value: 120 }),
-        expect.objectContaining({ key: 'watchStudents', value: 5 }),
-        expect.objectContaining({ key: 'pendingReview', value: 3 }),
+        expect.objectContaining({
+          key: 'totalStudents',
+          label: 'ทั้งหมด',
+          tone: 'default',
+          value: 120,
+        }),
+        expect.objectContaining({
+          key: 'watchStudents',
+          label: 'เสี่ยงสูง',
+          tone: 'danger',
+          value: 5,
+        }),
+        expect.objectContaining({
+          key: 'activeCases',
+          label: 'กำลังติดตาม',
+          tone: 'warning',
+          value: 8,
+        }),
+        expect.objectContaining({
+          key: 'pendingReview',
+          label: 'รอตรวจผล',
+          tone: 'info',
+          value: 3,
+        }),
       ]),
     );
     expect(result.data.attentionItems).toHaveLength(1);

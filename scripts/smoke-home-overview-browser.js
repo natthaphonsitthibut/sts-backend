@@ -292,7 +292,7 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     await waitFor(
       async () => {
         const text = await bodyText(client);
-        return text.includes('ศูนย์สั่งการวันนี้') && text.includes('ต้องดำเนินการวันนี้');
+        return text.includes('หน้าหลัก') && text.includes('ต้องดำเนินการวันนี้');
       },
       `${label} home dashboard did not render`,
     );
@@ -303,9 +303,9 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   }
   const text = await bodyText(client);
   assert(text.includes('ต้องดำเนินการวันนี้'), `${label} action queue was missing`);
-  assert(text.includes('นักเรียนในขอบเขต'), `${label} scoped student metric was missing`);
+  assert(text.includes('ทั้งหมด'), `${label} student summary metric was missing`);
   if (expectations.risk) {
-    assert(text.includes('ต้องเฝ้าระวัง'), `${label} risk metric was missing`);
+    assert(text.includes('เสี่ยงสูง'), `${label} risk metric was missing`);
     assert(text.includes('การกระจายระดับความเสี่ยง'), `${label} risk chart was missing`);
   } else {
     assert(!text.includes('การกระจายระดับความเสี่ยง'), `${label} rendered risk chart without permission`);
@@ -334,6 +334,32 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     assert(
       String(activeCaseCardText).includes(expectedActiveCases.toLocaleString()),
       `${label} did not render expected active case count ${expectedActiveCases}\n${String(activeCaseCardText)}`,
+    );
+    const caseMetricLinks = await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('a[href]'))
+        .filter((link) => link.textContent?.includes('กำลังติดตาม') || link.textContent?.includes('รอตรวจผล'))
+        .map((link) => ({ text: link.textContent?.trim(), href: link.getAttribute('href') }))`,
+    );
+    assert(
+      caseMetricLinks.some((link) => link.text.includes('กำลังติดตาม') && link.href.includes('status=IN_PROGRESS')),
+      `${label} in-progress case metric did not retain its filter context`,
+    );
+    assert(
+      caseMetricLinks.some((link) => link.text.includes('รอตรวจผล') && link.href.includes('status=PENDING_REVIEW')),
+      `${label} pending-review case metric did not retain its filter context`,
+    );
+  }
+  if (expectations.risk) {
+    const riskMetricLink = await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('a[href]'))
+        .find((link) => link.textContent?.includes('เสี่ยงสูง'))
+        ?.getAttribute('href')`,
+    );
+    assert(
+      String(riskMetricLink).includes('riskTier=HIGH'),
+      `${label} high-risk metric did not retain its filter context`,
     );
   }
 }
@@ -440,6 +466,12 @@ async function main() {
       `API activeCases ${apiActiveCases} did not match DB ${expectedActiveCases}`,
     );
     await capture(client, '/tmp/sts-home-overview-desktop.png');
+    await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('h2')).find((heading) => heading.textContent.includes('แนวโน้มการมาเรียน'))?.scrollIntoView({ block: 'start' })`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await capture(client, '/tmp/sts-home-overview-trends-desktop.png');
 
     for (const actor of actors.slice(1)) {
       await loginInBrowser(
@@ -481,6 +513,12 @@ async function main() {
     );
     await assertOverview(client, expectedActiveCases, 'mobile', admin.expectations);
     await capture(client, '/tmp/sts-home-overview-mobile.png');
+    await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('h2')).find((heading) => heading.textContent.includes('แนวโน้มการมาเรียน'))?.scrollIntoView({ block: 'start' })`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await capture(client, '/tmp/sts-home-overview-trends-mobile.png');
 
     console.log('home dashboard browser smoke passed (role sections, no export card, desktop/mobile render)');
   } finally {
