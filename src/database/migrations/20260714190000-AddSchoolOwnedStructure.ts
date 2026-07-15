@@ -247,8 +247,7 @@ export class AddSchoolOwnedStructure20260714190000 implements MigrationInterface
           slot.grade_level_id,
           slot.room_no
         FROM timetable_slots slot
-        WHERE slot.deleted_at IS NULL
-          AND slot.room_no > 0
+        WHERE slot.room_no > 0
       )
       INSERT INTO school_classrooms (
         school_term_id,
@@ -323,8 +322,7 @@ export class AddSchoolOwnedStructure20260714190000 implements MigrationInterface
       UPDATE timetable_slots slot
       SET classroom_id = classroom.id
       FROM school_classrooms classroom
-      WHERE slot.deleted_at IS NULL
-        AND classroom.deleted_at IS NULL
+      WHERE classroom.deleted_at IS NULL
         AND classroom.school_term_id = slot.school_term_id
         AND classroom.school_id = slot.school_id
         AND classroom.grade_level_id = slot.grade_level_id
