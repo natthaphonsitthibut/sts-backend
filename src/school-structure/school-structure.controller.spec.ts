@@ -55,6 +55,11 @@ describe('SchoolStructureController access', () => {
       'manage-teacher-access',
     ]);
     expect(guard.canActivate(context('listTeachers'))).toBe(true);
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTeacherOptions'))).toEqual([
+      'manage-school-structure',
+      'manage-teacher-access',
+    ]);
+    expect(guard.canActivate(context('listTeacherOptions'))).toBe(true);
 
     expect(() => guard.canActivate(context('createTeacherMembership'))).toThrow();
     expect(() => guard.canActivate(context('updateTeacherMembership'))).toThrow();

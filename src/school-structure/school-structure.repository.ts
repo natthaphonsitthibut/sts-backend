@@ -6,7 +6,10 @@ import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import type {
   ClassroomRosterRow,
   ClassroomTeacherAssignmentRow,
+  SchoolClassroomOptionRow,
   SchoolClassroomRow,
+  SchoolClassroomSummaryRow,
+  SchoolTeacherCandidateRow,
   SchoolTeacherMembershipRow,
   ScopedSchoolRow,
   StructureStatus,
@@ -97,9 +100,82 @@ export class SchoolStructureRepository {
     return result.rows[0]?.school_id ?? null;
   }
 
-  async listClassrooms(schoolId: number, termId?: number): Promise<SchoolClassroomRow[]> {
-    const params: unknown[] = [schoolId];
-    const termClause = termId ? `AND classroom.school_term_id = $${params.push(termId)}` : '';
+  async listClassrooms(input: {
+    schoolId: number;
+    termId?: number;
+    gradeLevelId?: number;
+    classroomId?: number;
+    sortBy: 'room' | 'grade' | 'students';
+    sortDirection: 'asc' | 'desc';
+    page: number;
+    limit: number;
+  }): Promise<{
+    rows: SchoolClassroomRow[];
+    totalCount: number;
+    teacherCount: number;
+    studentCount: number;
+  }> {
+    const params: unknown[] = [input.schoolId];
+    const conditions = ['classroom.school_id = $1', 'classroom.deleted_at IS NULL'];
+    if (input.termId) {
+      params.push(input.termId);
+      conditions.push(`classroom.school_term_id = $${params.length}`);
+    }
+    if (input.gradeLevelId) {
+      params.push(input.gradeLevelId);
+      conditions.push(`classroom.grade_level_id = $${params.length}`);
+    }
+    if (input.classroomId) {
+      params.push(input.classroomId);
+      conditions.push(`classroom.id = $${params.length}`);
+    }
+    const orderBy =
+      input.sortBy === 'room'
+        ? 'classroom.room_code'
+        : input.sortBy === 'students'
+          ? 'student_count'
+          : 'classroom.grade_level_id';
+    const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const offset = (input.page - 1) * input.limit;
+    const summaryResult = await queryDataSource<SchoolClassroomSummaryRow>(
+      this.dataSource,
+      `
+        WITH filtered_classrooms AS (
+          SELECT classroom.id, classroom.school_id
+          FROM school_classrooms classroom
+          WHERE ${conditions.join(' AND ')}
+        )
+        SELECT
+          (SELECT COUNT(*)::int FROM filtered_classrooms) AS classroom_count,
+          (
+            SELECT COUNT(DISTINCT membership.teacher_user_id)::int
+            FROM filtered_classrooms classroom
+            JOIN classroom_teacher_assignments assignment
+              ON assignment.classroom_id = classroom.id
+             AND assignment.school_id = classroom.school_id
+             AND assignment.assignment_status = 'ACTIVE'
+             AND assignment.deleted_at IS NULL
+            JOIN school_teacher_memberships membership
+              ON membership.id = assignment.teacher_membership_id
+             AND membership.school_id = assignment.school_id
+             AND membership.membership_status = 'ACTIVE'
+             AND membership.deleted_at IS NULL
+            JOIN users teacher
+              ON teacher.id = membership.teacher_user_id
+             AND teacher.role = 'TEACHER'
+             AND teacher.status = 'ACTIVE'
+          ) AS teacher_count,
+          (
+            SELECT COUNT(DISTINCT enrollment.student_uuid)::int
+            FROM filtered_classrooms classroom
+            JOIN student_term enrollment
+              ON enrollment.classroom_id = classroom.id
+             AND enrollment.deleted_at IS NULL
+          ) AS student_count
+      `,
+      params,
+    );
+    const listParams = [...params, input.limit, offset];
     const result = await queryDataSource<SchoolClassroomRow>(
       this.dataSource,
       `
@@ -121,12 +197,46 @@ export class SchoolStructureRepository {
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
         LEFT JOIN student_term enrollment
           ON enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
-        WHERE classroom.school_id = $1
-          AND classroom.deleted_at IS NULL
-          ${termClause}
+        WHERE ${conditions.join(' AND ')}
         GROUP BY classroom.id, term.academic_year, term.semester, grade.label
-        ORDER BY term.academic_year DESC, term.semester DESC,
-                 classroom.grade_level_id, classroom.room_code
+        ORDER BY ${orderBy} ${direction}, classroom.room_code ${direction}, classroom.id ${direction}
+        LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
+      `,
+      listParams,
+    );
+    const summary = summaryResult.rows[0];
+    return {
+      rows: result.rows,
+      totalCount: Number(summary?.classroom_count ?? 0),
+      teacherCount: Number(summary?.teacher_count ?? 0),
+      studentCount: Number(summary?.student_count ?? 0),
+    };
+  }
+
+  async listClassroomOptions(
+    schoolId: number,
+    termId?: number,
+    gradeLevelId?: number,
+  ): Promise<SchoolClassroomOptionRow[]> {
+    const params: unknown[] = [schoolId];
+    const conditions = ['school_id = $1', `classroom_status = 'ACTIVE'`, 'deleted_at IS NULL'];
+    if (termId) {
+      params.push(termId);
+      conditions.push(`school_term_id = $${params.length}`);
+    }
+    if (gradeLevelId) {
+      params.push(gradeLevelId);
+      conditions.push(`grade_level_id = $${params.length}`);
+    }
+    const result = await queryDataSource<SchoolClassroomOptionRow>(
+      this.dataSource,
+      `
+        SELECT classroom.id::text, classroom.grade_level_id, grade.label AS grade_label,
+               classroom.room_code, classroom.room_name
+        FROM school_classrooms classroom
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        WHERE ${conditions.map((condition) => `classroom.${condition}`).join(' AND ')}
+        ORDER BY classroom.grade_level_id, classroom.room_code, classroom.id
       `,
       params,
     );
@@ -219,7 +329,201 @@ export class SchoolStructureRepository {
     return (await this.findClassroomById(classroomId, queryRunner))!;
   }
 
-  async listTeachers(schoolId: number): Promise<SchoolTeacherMembershipRow[]> {
+  async listTeachers(input: {
+    schoolId: number;
+    termId?: number;
+    gradeLevelId?: number;
+    classroomId?: number;
+    assignedToFilteredClassrooms?: boolean;
+    sortBy: 'name' | 'status';
+    sortDirection: 'asc' | 'desc';
+    page: number;
+    limit: number;
+  }): Promise<{ rows: SchoolTeacherMembershipRow[]; totalCount: number; activeCount: number }> {
+    if (!input.assignedToFilteredClassrooms) {
+      const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+      const orderBy = input.sortBy === 'status' ? 'membership.membership_status' : 'display_name';
+      const offset = (input.page - 1) * input.limit;
+      const countResult = await queryDataSource<{ total_count: number; active_count: number }>(
+        this.dataSource,
+        `
+          SELECT
+            COUNT(*)::int AS total_count,
+            COUNT(*) FILTER (WHERE membership_status = 'ACTIVE')::int AS active_count
+          FROM school_teacher_memberships
+          WHERE school_id = $1 AND deleted_at IS NULL
+        `,
+        [input.schoolId],
+      );
+      const result = await queryDataSource<SchoolTeacherMembershipRow>(
+        this.dataSource,
+        `
+          SELECT
+            membership.id::text,
+            membership.school_id,
+            membership.teacher_user_id,
+            teacher.username,
+            COALESCE(
+              NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+              teacher.username
+            ) AS display_name,
+            membership.membership_status,
+            membership.started_on::text,
+            membership.ended_on::text
+          FROM school_teacher_memberships membership
+          JOIN users teacher ON teacher.id = membership.teacher_user_id
+          WHERE membership.school_id = $1 AND membership.deleted_at IS NULL
+          ORDER BY ${orderBy} ${direction}, membership.id ${direction}
+          LIMIT $2 OFFSET $3
+        `,
+        [input.schoolId, input.limit, offset],
+      );
+      return {
+        rows: result.rows,
+        totalCount: countResult.rows[0]?.total_count ?? 0,
+        activeCount: countResult.rows[0]?.active_count ?? 0,
+      };
+    }
+    const params: unknown[] = [input.schoolId];
+    const classroomConditions = ['classroom.school_id = $1', 'classroom.deleted_at IS NULL'];
+    if (input.termId) {
+      params.push(input.termId);
+      classroomConditions.push(`classroom.school_term_id = $${params.length}`);
+    }
+    if (input.gradeLevelId) {
+      params.push(input.gradeLevelId);
+      classroomConditions.push(`classroom.grade_level_id = $${params.length}`);
+    }
+    if (input.classroomId) {
+      params.push(input.classroomId);
+      classroomConditions.push(`classroom.id = $${params.length}`);
+    }
+    const filteredMembershipsSql = `
+      SELECT DISTINCT ON (membership.teacher_user_id) membership.id
+      FROM school_teacher_memberships membership
+      JOIN users teacher
+        ON teacher.id = membership.teacher_user_id
+       AND teacher.role = 'TEACHER'
+       AND teacher.status = 'ACTIVE'
+      JOIN classroom_teacher_assignments assignment
+        ON assignment.teacher_membership_id = membership.id
+       AND assignment.school_id = membership.school_id
+       AND assignment.assignment_status = 'ACTIVE'
+       AND assignment.deleted_at IS NULL
+      JOIN school_classrooms classroom
+        ON classroom.id = assignment.classroom_id
+       AND classroom.school_id = assignment.school_id
+      WHERE membership.school_id = $1
+        AND membership.membership_status = 'ACTIVE'
+        AND membership.deleted_at IS NULL
+        AND ${classroomConditions.join(' AND ')}
+      ORDER BY membership.teacher_user_id, membership.id
+    `;
+    const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const orderBy = input.sortBy === 'status' ? 'membership.membership_status' : 'display_name';
+    const offset = (input.page - 1) * input.limit;
+    const countResult = await queryDataSource<{ total_count: number; active_count: number }>(
+      this.dataSource,
+      `
+        WITH filtered_memberships AS (${filteredMembershipsSql})
+        SELECT COUNT(*)::int AS total_count, COUNT(*)::int AS active_count
+        FROM filtered_memberships
+      `,
+      params,
+    );
+    const result = await queryDataSource<SchoolTeacherMembershipRow>(
+      this.dataSource,
+      `
+        WITH filtered_memberships AS (${filteredMembershipsSql})
+        SELECT
+          membership.id::text,
+          membership.school_id,
+          membership.teacher_user_id,
+          teacher.username,
+          COALESCE(
+            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            teacher.username
+          ) AS display_name,
+          membership.membership_status,
+          membership.started_on::text,
+          membership.ended_on::text
+        FROM filtered_memberships filtered
+        JOIN school_teacher_memberships membership ON membership.id = filtered.id
+        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        ORDER BY ${orderBy} ${direction}, membership.id ${direction}
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `,
+      [...params, input.limit, offset],
+    );
+    return {
+      rows: result.rows,
+      totalCount: countResult.rows[0]?.total_count ?? 0,
+      activeCount: countResult.rows[0]?.active_count ?? 0,
+    };
+  }
+
+  async listTeacherCandidates(
+    schoolId: number,
+    searchTerm?: string,
+  ): Promise<SchoolTeacherCandidateRow[]> {
+    const params: unknown[] = [schoolId];
+    const search = searchTerm?.trim();
+    const searchClause = search
+      ? `AND (
+          COALESCE(teacher."FirstName", '') ILIKE $${params.push(`%${search}%`)}
+          OR COALESCE(teacher."LastName", '') ILIKE $${params.length}
+          OR teacher.username ILIKE $${params.length}
+        )`
+      : '';
+    const result = await queryDataSource<SchoolTeacherCandidateRow>(
+      this.dataSource,
+      `
+        SELECT
+          teacher.id,
+          COALESCE(
+            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            teacher.username
+          ) AS display_name
+        FROM users teacher
+        WHERE teacher.status = 'ACTIVE'
+          AND teacher.role = 'TEACHER'
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(
+              COALESCE(teacher.data_scope -> 'school_ids', '[]'::jsonb)
+            ) AS scope_school(id)
+            WHERE scope_school.id = $1::text
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships membership
+            WHERE membership.school_id = $1::int
+              AND membership.teacher_user_id = teacher.id
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          )
+          ${searchClause}
+        ORDER BY display_name, teacher.id
+        LIMIT 100
+      `,
+      params,
+    );
+    return result.rows;
+  }
+
+  async listTeacherOptions(
+    schoolId: number,
+    searchTerm?: string,
+  ): Promise<SchoolTeacherMembershipRow[]> {
+    const params: unknown[] = [schoolId];
+    const search = searchTerm?.trim();
+    const searchClause = search
+      ? `AND (
+          COALESCE(teacher."FirstName", '') ILIKE $${params.push(`%${search}%`)}
+          OR COALESCE(teacher."LastName", '') ILIKE $${params.length}
+          OR teacher.username ILIKE $${params.length}
+        )`
+      : '';
     const result = await queryDataSource<SchoolTeacherMembershipRow>(
       this.dataSource,
       `
@@ -237,10 +541,16 @@ export class SchoolStructureRepository {
           membership.ended_on::text
         FROM school_teacher_memberships membership
         JOIN users teacher ON teacher.id = membership.teacher_user_id
-        WHERE membership.school_id = $1 AND membership.deleted_at IS NULL
-        ORDER BY membership.membership_status, display_name, membership.id
+        WHERE membership.school_id = $1
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+          AND teacher.status = 'ACTIVE'
+          AND teacher.role = 'TEACHER'
+          ${searchClause}
+        ORDER BY display_name, membership.id
+        LIMIT 100
       `,
-      [schoolId],
+      params,
     );
     return result.rows;
   }
@@ -275,21 +585,28 @@ export class SchoolStructureRepository {
     return result.rows[0] ?? null;
   }
 
-  async isTeacherEligible(teacherUserId: number, queryRunner: QueryRunner): Promise<boolean> {
+  async isTeacherEligible(
+    teacherUserId: number,
+    schoolId: number,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
     const result = await createSqlQueryExecutor(queryRunner).query(
       `
         SELECT 1
         FROM users teacher
-        LEFT JOIN roles role_definition ON role_definition.name = teacher.role
         WHERE teacher.id = $1
           AND teacher.status = 'ACTIVE'
-          AND (
-            COALESCE(teacher.permissions, '[]'::jsonb) ? 'attendance'
-            OR COALESCE(role_definition.default_permissions, '[]'::jsonb) ? 'attendance'
+          AND teacher.role = 'TEACHER'
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(
+              COALESCE(teacher.data_scope -> 'school_ids', '[]'::jsonb)
+            ) AS scope_school(id)
+            WHERE scope_school.id = $2::text
           )
         LIMIT 1
       `,
-      [teacherUserId],
+      [teacherUserId, schoolId],
     );
     return result.rows.length > 0;
   }
@@ -448,7 +765,48 @@ export class SchoolStructureRepository {
     return assignments.rows[0];
   }
 
-  async listRoster(classroomId: number): Promise<ClassroomRosterRow[]> {
+  async listRoster(input: {
+    schoolId?: number;
+    termId?: number;
+    gradeLevelId?: number;
+    classroomId?: number;
+    sortBy: 'name' | 'status';
+    sortDirection: 'asc' | 'desc';
+    page: number;
+    limit: number;
+  }): Promise<{ rows: ClassroomRosterRow[]; totalCount: number }> {
+    const params: unknown[] = [];
+    const conditions = ['enrollment.deleted_at IS NULL', 'classroom.deleted_at IS NULL'];
+    if (input.schoolId) {
+      params.push(input.schoolId);
+      conditions.push(`classroom.school_id = $${params.length}`);
+    }
+    if (input.termId) {
+      params.push(input.termId);
+      conditions.push(`classroom.school_term_id = $${params.length}`);
+    }
+    if (input.gradeLevelId) {
+      params.push(input.gradeLevelId);
+      conditions.push(`classroom.grade_level_id = $${params.length}`);
+    }
+    if (input.classroomId) {
+      params.push(input.classroomId);
+      conditions.push(`classroom.id = $${params.length}`);
+    }
+    const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const orderBy =
+      input.sortBy === 'status' ? `COALESCE(status.label_th, '')` : `enrollment."FirstName_Onec"`;
+    const offset = (input.page - 1) * input.limit;
+    const countResult = await queryDataSource<{ total_count: number }>(
+      this.dataSource,
+      `
+        SELECT COUNT(DISTINCT enrollment.student_uuid)::int AS total_count
+        FROM student_term enrollment
+        JOIN school_classrooms classroom ON classroom.id = enrollment.classroom_id
+        WHERE ${conditions.join(' AND ')}
+      `,
+      params,
+    );
     const result = await queryDataSource<ClassroomRosterRow>(
       this.dataSource,
       `
@@ -457,14 +815,21 @@ export class SchoolStructureRepository {
           enrollment."FirstName_Onec" AS first_name,
           enrollment."LastName_Onec" AS last_name,
           enrollment.student_status_code,
-          status.label_th AS student_status_label
+          status.label_th AS student_status_label,
+          status.badge_variant AS student_status_badge_variant,
+          classroom.id::text AS classroom_id,
+          grade.label AS grade_label,
+          classroom.room_code
         FROM student_term enrollment
+        JOIN school_classrooms classroom ON classroom.id = enrollment.classroom_id
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
-        WHERE enrollment.classroom_id = $1 AND enrollment.deleted_at IS NULL
-        ORDER BY enrollment."FirstName_Onec", enrollment."LastName_Onec", enrollment.student_uuid
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY ${orderBy} ${direction}, enrollment."LastName_Onec" ${direction}, enrollment.student_uuid ${direction}
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
       `,
-      [classroomId],
+      [...params, input.limit, offset],
     );
-    return result.rows;
+    return { rows: result.rows, totalCount: countResult.rows[0]?.total_count ?? 0 };
   }
 }

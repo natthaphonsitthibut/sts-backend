@@ -21,8 +21,11 @@ import {
   CreateClassroomTeacherAssignmentDto,
   CreateSchoolClassroomDto,
   CreateSchoolTeacherMembershipDto,
+  ListClassroomAssignmentsDto,
   ListClassroomRosterDto,
+  ListSchoolClassroomOptionsDto,
   ListSchoolClassroomsDto,
+  ListSchoolTeacherCandidatesDto,
   ListSchoolTeachersDto,
   UpdateSchoolClassroomDto,
   UpdateSchoolTeacherMembershipDto,
@@ -59,7 +62,22 @@ export class SchoolStructureController {
     @Query() query: ListSchoolClassroomsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
-    return this.service.listClassrooms(query.schoolId, query.termId, actor);
+    return this.service.listClassrooms(query, actor);
+  }
+
+  @Get('classrooms/options')
+  @RequirePermission()
+  @RequireAnyPermission(
+    'manage-school-structure',
+    'manage-teacher-access',
+    'import-data',
+    'import-school-roster',
+  )
+  listClassroomOptions(
+    @Query() query: ListSchoolClassroomOptionsDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listClassroomOptions(query, actor);
   }
 
   @Post('classrooms')
@@ -86,7 +104,25 @@ export class SchoolStructureController {
     @Query() query: ListSchoolTeachersDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
-    return this.service.listTeachers(query.schoolId, actor);
+    return this.service.listTeachers(query, actor);
+  }
+
+  @Get('teachers/options')
+  @RequirePermission()
+  @RequireAnyPermission('manage-school-structure', 'manage-teacher-access')
+  listTeacherOptions(
+    @Query() query: ListSchoolTeacherCandidatesDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listTeacherOptions(query, actor);
+  }
+
+  @Get('teacher-candidates')
+  listTeacherCandidates(
+    @Query() query: ListSchoolTeacherCandidatesDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listTeacherCandidates(query, actor);
   }
 
   @Post('teachers')
@@ -108,7 +144,7 @@ export class SchoolStructureController {
 
   @Get('assignments')
   listAssignments(
-    @Query() query: ListClassroomRosterDto,
+    @Query() query: ListClassroomAssignmentsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listAssignments(query.classroomId, actor);
@@ -127,6 +163,6 @@ export class SchoolStructureController {
     @Query() query: ListClassroomRosterDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
-    return this.service.listRoster(query.classroomId, actor);
+    return this.service.listRoster(query, actor);
   }
 }

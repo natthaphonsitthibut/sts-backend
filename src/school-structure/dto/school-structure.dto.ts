@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   IsIn,
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -10,12 +11,13 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const trimText = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
-export class ListSchoolClassroomsDto {
+export class ListSchoolClassroomsDto extends PaginationQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -26,6 +28,45 @@ export class ListSchoolClassroomsDto {
   @IsInt()
   @Min(1)
   termId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId?: number;
+
+  @IsOptional()
+  @IsIn(['room', 'grade', 'students'])
+  sortBy?: 'room' | 'grade' | 'students';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
+}
+
+export class ListSchoolClassroomOptionsDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  termId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
 }
 
 export class CreateSchoolClassroomDto {
@@ -69,11 +110,55 @@ export class UpdateSchoolClassroomDto {
   classroomStatus?: 'ACTIVE' | 'INACTIVE';
 }
 
-export class ListSchoolTeachersDto {
+export class ListSchoolTeachersDto extends PaginationQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
   schoolId!: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  termId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId?: number;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => value === true || value === 'true')
+  @IsBoolean()
+  assignedToFilteredClassrooms?: boolean;
+
+  @IsOptional()
+  @IsIn(['name', 'status'])
+  sortBy?: 'name' | 'status';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
+}
+
+export class ListSchoolTeacherCandidatesDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  searchTerm?: string;
 }
 
 export class CreateSchoolTeacherMembershipDto {
@@ -134,9 +219,43 @@ export class CreateClassroomTeacherAssignmentDto {
   effectiveUntil?: string;
 }
 
-export class ListClassroomRosterDto {
+export class ListClassroomAssignmentsDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
   classroomId!: number;
+}
+
+export class ListClassroomRosterDto extends PaginationQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  termId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId?: number;
+
+  @IsOptional()
+  @IsIn(['name', 'status'])
+  sortBy?: 'name' | 'status';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
 }

@@ -49,19 +49,27 @@ describe('SchoolStructureService', () => {
         },
       ]),
       isSchoolInScope: jest.fn().mockResolvedValue(true),
-      listClassrooms: jest.fn().mockResolvedValue([CLASSROOM]),
+      listClassrooms: jest.fn().mockResolvedValue({
+        rows: [CLASSROOM],
+        totalCount: 1,
+        teacherCount: 1,
+        studentCount: 20,
+      }),
+      listClassroomOptions: jest.fn().mockResolvedValue([]),
       findTermSchoolId: jest.fn().mockResolvedValue(1001),
       createClassroom: jest.fn().mockResolvedValue(CLASSROOM),
       findClassroomById: jest.fn().mockResolvedValue(CLASSROOM),
       updateClassroom: jest.fn().mockResolvedValue(CLASSROOM),
-      listTeachers: jest.fn().mockResolvedValue([]),
+      listTeachers: jest.fn().mockResolvedValue({ rows: [], totalCount: 0, activeCount: 0 }),
+      listTeacherCandidates: jest.fn().mockResolvedValue([]),
+      listTeacherOptions: jest.fn().mockResolvedValue([]),
       isTeacherEligible: jest.fn().mockResolvedValue(true),
       createTeacherMembership: jest.fn(),
       findMembershipById: jest.fn(),
       updateTeacherMembership: jest.fn(),
       listAssignments: jest.fn().mockResolvedValue([]),
       createAssignment: jest.fn(),
-      listRoster: jest.fn().mockResolvedValue([]),
+      listRoster: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
       withTransaction: jest.fn(async (operation: (runner: unknown) => Promise<unknown>) =>
         operation({ query: jest.fn() }),
       ),
@@ -89,7 +97,12 @@ describe('SchoolStructureService', () => {
     await expect(service.listSchools(TEACHER_ACCESS_ACTOR)).resolves.toMatchObject({
       data: [{ id: 1001 }],
     });
-    await expect(service.listTeachers(1001, TEACHER_ACCESS_ACTOR)).resolves.toEqual({ data: [] });
+    await expect(
+      service.listTeachers({ schoolId: 1001 }, TEACHER_ACCESS_ACTOR),
+    ).resolves.toMatchObject({ data: [], meta: { totalCount: 0 } });
+    await expect(
+      service.listTeacherOptions({ schoolId: 1001 }, TEACHER_ACCESS_ACTOR),
+    ).resolves.toEqual({ data: [] });
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
 
     await expect(
@@ -100,38 +113,122 @@ describe('SchoolStructureService', () => {
   it('lists only after server-side school scope validation', async () => {
     const { service, repository } = setup();
 
-    await expect(service.listClassrooms(1001, 21, SCHOOL_ACTOR)).resolves.toMatchObject({
+    await expect(
+      service.listClassrooms({ schoolId: 1001, termId: 21 }, SCHOOL_ACTOR),
+    ).resolves.toMatchObject({
       data: [{ id: '11', schoolId: 1001, studentCount: 20 }],
+      meta: { totalCount: 1 },
+      summary: { classroomCount: 1, teacherCount: 1, studentCount: 20 },
     });
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
-    expect(repository.listClassrooms).toHaveBeenCalledWith(1001, 21);
+    expect(repository.listClassrooms).toHaveBeenCalledWith(
+      expect.objectContaining({ schoolId: 1001, termId: 21, page: 1, limit: 20 }),
+    );
   });
 
   it('allows import actors to read classrooms within their server-side school scope', async () => {
     const { service, repository } = setup();
 
-    await expect(service.listClassrooms(1001, 21, IMPORT_ACTOR)).resolves.toMatchObject({
+    await expect(
+      service.listClassrooms({ schoolId: 1001, termId: 21 }, IMPORT_ACTOR),
+    ).resolves.toMatchObject({
       data: [{ id: '11', schoolId: 1001 }],
     });
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
   });
 
+  it('uses the selected school context for filtered teacher and roster tables', async () => {
+    const { service, repository } = setup();
+
+    await service.listTeachers(
+      {
+        schoolId: 1001,
+        termId: 21,
+        gradeLevelId: 423,
+        classroomId: 11,
+        assignedToFilteredClassrooms: true,
+      },
+      SCHOOL_ACTOR,
+    );
+    await service.listRoster(
+      { schoolId: 1001, termId: 21, gradeLevelId: 423, classroomId: 11 },
+      SCHOOL_ACTOR,
+    );
+
+    expect(repository.listTeachers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schoolId: 1001,
+        termId: 21,
+        gradeLevelId: 423,
+        classroomId: 11,
+        assignedToFilteredClassrooms: true,
+      }),
+    );
+    expect(repository.listRoster).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schoolId: 1001,
+        termId: 21,
+        gradeLevelId: 423,
+        classroomId: 11,
+      }),
+    );
+  });
+
+  it('returns the configured badge style with each student status', async () => {
+    const { service, repository } = setup();
+    repository.listRoster.mockResolvedValueOnce({
+      rows: [
+        {
+          student_uuid: '00000000-0000-4000-8000-000000000001',
+          first_name: 'กานต์',
+          last_name: 'ศึกษา',
+          student_status_code: 1,
+          student_status_label: 'กำลังศึกษา',
+          student_status_badge_variant: 'success',
+          classroom_id: '11',
+          grade_label: 'ม.6',
+          room_code: '1',
+        },
+      ],
+      totalCount: 1,
+    });
+
+    await expect(
+      service.listRoster({ schoolId: 1001, classroomId: 11 }, SCHOOL_ACTOR),
+    ).resolves.toMatchObject({
+      data: [
+        {
+          studentStatusLabel: 'กำลังศึกษา',
+          studentStatusBadgeVariant: 'success',
+        },
+      ],
+    });
+  });
+
+  it('rejects a roster query without a school or classroom context', async () => {
+    const { service } = setup();
+    await expect(service.listRoster({}, SCHOOL_ACTOR)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('denies missing permission, empty scope, narrow class scope, and cross-school probing', async () => {
     const { service, repository } = setup();
     await expect(
-      service.listClassrooms(1001, undefined, { ...SCHOOL_ACTOR, permissions: [] }),
+      service.listClassrooms({ schoolId: 1001 }, { ...SCHOOL_ACTOR, permissions: [] }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
-      service.listClassrooms(1001, undefined, { ...SCHOOL_ACTOR, data_scope: {} }),
+      service.listClassrooms({ schoolId: 1001 }, { ...SCHOOL_ACTOR, data_scope: {} }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
-      service.listClassrooms(1001, undefined, {
-        ...SCHOOL_ACTOR,
-        data_scope: { school_ids: [1001], room_ids: [1] },
-      }),
+      service.listClassrooms(
+        { schoolId: 1001 },
+        {
+          ...SCHOOL_ACTOR,
+          data_scope: { school_ids: [1001], room_ids: [1] },
+        },
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
     repository.isSchoolInScope.mockResolvedValue(false);
-    await expect(service.listClassrooms(2002, undefined, SCHOOL_ACTOR)).rejects.toBeInstanceOf(
+    await expect(service.listClassrooms({ schoolId: 2002 }, SCHOOL_ACTOR)).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
@@ -177,7 +274,7 @@ describe('SchoolStructureService', () => {
       ended_on: null,
     });
 
-    await expect(service.listTeachers(2002, SCHOOL_ACTOR)).rejects.toBeInstanceOf(
+    await expect(service.listTeachers({ schoolId: 2002 }, SCHOOL_ACTOR)).rejects.toBeInstanceOf(
       NotFoundException,
     );
     await expect(
@@ -201,7 +298,9 @@ describe('SchoolStructureService', () => {
         SCHOOL_ACTOR,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
-    await expect(service.listRoster(99, SCHOOL_ACTOR)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.listRoster({ classroomId: 99 }, SCHOOL_ACTOR)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     await expect(
       service.updateTeacherMembership(
         31,

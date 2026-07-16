@@ -15,10 +15,20 @@ import {
 import { hasPermission } from '../auth/permissions.constants';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import {
+  buildPaginationMeta,
+  resolveLimit,
+  resolvePage,
+} from '../common/pagination/pagination.util';
 import type {
   CreateClassroomTeacherAssignmentDto,
   CreateSchoolClassroomDto,
   CreateSchoolTeacherMembershipDto,
+  ListClassroomRosterDto,
+  ListSchoolClassroomOptionsDto,
+  ListSchoolClassroomsDto,
+  ListSchoolTeacherCandidatesDto,
+  ListSchoolTeachersDto,
   UpdateSchoolClassroomDto,
   UpdateSchoolTeacherMembershipDto,
 } from './dto/school-structure.dto';
@@ -142,14 +152,50 @@ export class SchoolStructureService {
     };
   }
 
-  async listClassrooms(
-    schoolId: number,
-    termId: number | undefined,
+  async listClassrooms(query: ListSchoolClassroomsDto, actor: AuthenticatedRequestUser) {
+    await this.assertSchoolAccess(query.schoolId, actor, true);
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const { rows, totalCount, teacherCount, studentCount } = await this.repository.listClassrooms({
+      schoolId: query.schoolId,
+      termId: query.termId,
+      gradeLevelId: query.gradeLevelId,
+      classroomId: query.classroomId,
+      sortBy: query.sortBy ?? 'grade',
+      sortDirection: query.sortDirection ?? 'asc',
+      page,
+      limit,
+    });
+    return {
+      data: rows.map((row) => this.toClassroom(row)),
+      meta: buildPaginationMeta(page, limit, totalCount),
+      summary: {
+        classroomCount: totalCount,
+        teacherCount,
+        studentCount,
+      },
+    };
+  }
+
+  async listClassroomOptions(
+    query: ListSchoolClassroomOptionsDto,
     actor: AuthenticatedRequestUser,
   ) {
-    await this.assertSchoolAccess(schoolId, actor, true);
-    const rows = await this.repository.listClassrooms(schoolId, termId);
-    return { data: rows.map((row) => this.toClassroom(row)) };
+    await this.assertSchoolAccess(query.schoolId, actor, true);
+    const rows = await this.repository.listClassroomOptions(
+      query.schoolId,
+      query.termId,
+      query.gradeLevelId,
+    );
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        gradeLevelId: row.grade_level_id,
+        gradeLabel: row.grade_label,
+        roomCode: row.room_code,
+        roomName: row.room_name,
+      })),
+    };
   }
 
   async createClassroom(dto: CreateSchoolClassroomDto, actor: AuthenticatedRequestUser) {
@@ -237,9 +283,42 @@ export class SchoolStructureService {
     return { data: this.toClassroom(row) };
   }
 
-  async listTeachers(schoolId: number, actor: AuthenticatedRequestUser) {
-    await this.assertSchoolAccess(schoolId, actor, true);
-    const rows = await this.repository.listTeachers(schoolId);
+  async listTeachers(query: ListSchoolTeachersDto, actor: AuthenticatedRequestUser) {
+    await this.assertSchoolAccess(query.schoolId, actor, true);
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const { rows, totalCount, activeCount } = await this.repository.listTeachers({
+      schoolId: query.schoolId,
+      termId: query.termId,
+      gradeLevelId: query.gradeLevelId,
+      classroomId: query.classroomId,
+      assignedToFilteredClassrooms: query.assignedToFilteredClassrooms,
+      sortBy: query.sortBy ?? 'name',
+      sortDirection: query.sortDirection ?? 'asc',
+      page,
+      limit,
+    });
+    return {
+      data: rows.map((row) => this.toTeacher(row)),
+      meta: buildPaginationMeta(page, limit, totalCount),
+      summary: { activeCount },
+    };
+  }
+
+  async listTeacherCandidates(
+    query: ListSchoolTeacherCandidatesDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    await this.assertSchoolAccess(query.schoolId, actor);
+    const rows = await this.repository.listTeacherCandidates(query.schoolId, query.searchTerm);
+    return {
+      data: rows.map((row) => ({ id: row.id, displayName: row.display_name })),
+    };
+  }
+
+  async listTeacherOptions(query: ListSchoolTeacherCandidatesDto, actor: AuthenticatedRequestUser) {
+    await this.assertSchoolAccess(query.schoolId, actor, true);
+    const rows = await this.repository.listTeacherOptions(query.schoolId, query.searchTerm);
     return { data: rows.map((row) => this.toTeacher(row)) };
   }
 
@@ -251,7 +330,9 @@ export class SchoolStructureService {
     const actorId = resolveAuditActorId(actor);
     try {
       const row = await this.repository.withTransaction(async (queryRunner) => {
-        if (!(await this.repository.isTeacherEligible(dto.teacherUserId, queryRunner))) {
+        if (
+          !(await this.repository.isTeacherEligible(dto.teacherUserId, dto.schoolId, queryRunner))
+        ) {
           throw new BadRequestException('ผู้ใช้นี้ไม่ใช่บัญชีที่มีสิทธิ์ปฏิบัติงานครู');
         }
         const created = await this.repository.createTeacherMembership(
@@ -407,11 +488,29 @@ export class SchoolStructureService {
     }
   }
 
-  async listRoster(classroomId: number, actor: AuthenticatedRequestUser) {
-    const classroom = await this.repository.findClassroomById(classroomId);
-    if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
-    await this.assertSchoolAccess(classroom.school_id, actor);
-    const rows = await this.repository.listRoster(classroomId);
+  async listRoster(query: ListClassroomRosterDto, actor: AuthenticatedRequestUser) {
+    if (!query.schoolId && !query.classroomId) {
+      throw new BadRequestException('กรุณาเลือกโรงเรียนหรือห้องเรียน');
+    }
+    if (query.schoolId) {
+      await this.assertSchoolAccess(query.schoolId, actor);
+    } else {
+      const classroom = await this.repository.findClassroomById(query.classroomId!);
+      if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+      await this.assertSchoolAccess(classroom.school_id, actor);
+    }
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const { rows, totalCount } = await this.repository.listRoster({
+      schoolId: query.schoolId,
+      termId: query.termId,
+      gradeLevelId: query.gradeLevelId,
+      classroomId: query.classroomId,
+      sortBy: query.sortBy ?? 'name',
+      sortDirection: query.sortDirection ?? 'asc',
+      page,
+      limit,
+    });
     return {
       data: rows.map((row) => ({
         studentUuid: row.student_uuid,
@@ -419,7 +518,12 @@ export class SchoolStructureService {
         lastName: row.last_name,
         studentStatusCode: row.student_status_code,
         studentStatusLabel: row.student_status_label,
+        studentStatusBadgeVariant: row.student_status_badge_variant,
+        classroomId: row.classroom_id,
+        gradeLabel: row.grade_label,
+        roomCode: row.room_code,
       })),
+      meta: buildPaginationMeta(page, limit, totalCount),
     };
   }
 }

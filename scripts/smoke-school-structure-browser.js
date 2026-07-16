@@ -230,7 +230,7 @@ async function browserCsvRequest(client, requestPath, fields, csv) {
   );
 }
 
-async function chooseCombobox(client, ariaLabel, optionLabel) {
+async function chooseCombobox(client, ariaLabel, optionLabel, searchTerm = '') {
   await waitFor(
     async () =>
       Boolean(
@@ -249,6 +249,21 @@ async function chooseCombobox(client, ariaLabel, optionLabel) {
     `document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})?.click() === undefined`,
   );
   assert(opened, `Could not open combobox: ${ariaLabel}`);
+  if (searchTerm) {
+    await evaluate(
+      client,
+      `document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})?.focus()`,
+    );
+    await client.call('Input.insertText', { text: searchTerm });
+    await waitFor(
+      async () =>
+        (await evaluate(
+          client,
+          `document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})?.value`,
+        )) === searchTerm,
+      `Combobox search did not settle: ${ariaLabel}`,
+    );
+  }
   await waitFor(
     async () =>
       Boolean(
@@ -277,6 +292,31 @@ async function chooseCombobox(client, ariaLabel, optionLabel) {
         `document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})?.value`,
       )) === optionLabel,
     `Combobox selection did not settle: ${optionLabel}`,
+  );
+}
+
+async function changeNativeSelect(client, ariaLabel, value) {
+  const changed = await evaluate(
+    client,
+    `(() => {
+      const select = document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)});
+      if (!select || select.disabled) return false;
+      select.value = ${JSON.stringify(String(value))};
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return select.value === ${JSON.stringify(String(value))};
+    })()`,
+  );
+  assert(changed, `Could not select ${value} from ${ariaLabel}`);
+}
+
+async function readSummaryMetric(client, label) {
+  return evaluate(
+    client,
+    `(() => {
+      const labelNode = Array.from(document.querySelectorAll('div'))
+        .find((node) => node.children.length === 0 && node.textContent.trim() === ${JSON.stringify(label)});
+      return labelNode?.parentElement?.children[1]?.textContent?.trim() ?? null;
+    })()`,
   );
 }
 
@@ -365,7 +405,7 @@ async function main() {
     [schoolA] = schools;
     const schoolB = schools[1];
     const grade = (
-      await dataSource.query(`SELECT id FROM grade_levels ORDER BY id LIMIT 1`)
+      await dataSource.query(`SELECT id, label FROM grade_levels ORDER BY id LIMIT 1`)
     )[0];
     const status = (
       await dataSource.query(
@@ -431,9 +471,36 @@ async function main() {
       );
       throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
     }
-    const initialText = await evaluate(chrome.client, 'document.body.innerText');
-    assert(initialText.includes(schoolA.name), 'Scoped school A was not visible');
-    assert(!initialText.includes(schoolB.name), 'School B leaked into scoped browser page');
+    try {
+      await waitFor(
+        async () =>
+          (await evaluate(
+            chrome.client,
+            `document.querySelector('[aria-label="เลือกโรงเรียน"]')?.value`,
+          )) === schoolA.name,
+        'Scoped school did not finish loading',
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        chrome.client,
+        `({ url: location.href, text: document.body.innerText.slice(0, 1200) })`,
+      );
+      throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="เลือกโรงเรียน"]')?.click()`,
+    );
+    const visibleSchoolOptions = await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button')).map((button) => button.textContent.trim())`,
+    );
+    assert(visibleSchoolOptions.includes(schoolA.name), 'Scoped school A was not visible');
+    assert(!visibleSchoolOptions.includes(schoolB.name), 'School B leaked into scoped browser page');
+    await evaluate(
+      chrome.client,
+      `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+    );
 
     const crossSchool = await browserRequest(
       chrome.client,
@@ -494,13 +561,41 @@ async function main() {
       teacherImport.status === 201 && teacherImport.payload.rowsInserted === 1,
       `Teacher import failed: ${teacherImport.status} ${JSON.stringify(teacherImport.payload)}`,
     );
-    const teachers = await browserRequest(
+    const teachersPageOne = await browserRequest(
       chrome.client,
       'GET',
-      `/api/school-structure/teachers?schoolId=${schoolA.id}`,
+      `/api/school-structure/teachers?schoolId=${schoolA.id}&page=1&limit=10&sortBy=name&sortDirection=asc`,
     );
-    const membership = teachers.payload.data.find((item) => item.username === TEACHER_USERNAME);
+    assert(
+      teachersPageOne.status === 200 &&
+        teachersPageOne.payload.data?.length === 10 &&
+        teachersPageOne.payload.meta?.totalCount > 10 &&
+        teachersPageOne.payload.meta?.totalPages > 1 &&
+        teachersPageOne.payload.summary?.activeCount === teachersPageOne.payload.meta?.totalCount,
+      `Teacher pagination metadata was incorrect: ${JSON.stringify(teachersPageOne.payload)}`,
+    );
+    const teachersPageTwo = await browserRequest(
+      chrome.client,
+      'GET',
+      `/api/school-structure/teachers?schoolId=${schoolA.id}&page=2&limit=10&sortBy=name&sortDirection=asc`,
+    );
+    assert(
+      teachersPageTwo.status === 200 && teachersPageTwo.payload.data?.length > 0,
+      `Teacher pagination second page was empty: ${JSON.stringify(teachersPageTwo.payload)}`,
+    );
+    const teacherOptions = await browserRequest(
+      chrome.client,
+      'GET',
+      `/api/school-structure/teachers/options?schoolId=${schoolA.id}&searchTerm=${encodeURIComponent(TEACHER_USERNAME)}`,
+    );
+    const membership = teacherOptions.payload.data?.find(
+      (item) => item.username === TEACHER_USERNAME,
+    );
     assert(membership, 'Imported teacher membership was not listed');
+    assert(
+      teacherOptions.payload.data?.some((item) => item.id === membership.id),
+      'Active teacher membership was not available to assignment dropdowns',
+    );
     const assignment = await browserRequest(
       chrome.client,
       'POST',
@@ -553,10 +648,12 @@ async function main() {
     const rosterResponse = await browserRequest(
       chrome.client,
       'GET',
-      `/api/school-structure/roster?classroomId=${classroom.id}`,
+      `/api/school-structure/roster?classroomId=${classroom.id}&page=1&limit=10&sortBy=name&sortDirection=asc`,
     );
     assert(
-      rosterResponse.status === 200 && rosterResponse.payload.data?.length === 1,
+      rosterResponse.status === 200 &&
+        rosterResponse.payload.data?.length === 1 &&
+        rosterResponse.payload.meta?.totalCount === 1,
       `Roster API did not return the imported student: ${rosterResponse.status} ${JSON.stringify(rosterResponse.payload)}`,
     );
     const importedStudent = rosterResponse.payload.data[0];
@@ -564,6 +661,55 @@ async function main() {
       .filter(Boolean)
       .join(' ');
     assert(importedStudentName, 'Roster API returned the imported student without a display name');
+
+    const classroomSummaryCases = [
+      {
+        label: 'all grades and classrooms',
+        filters: `schoolId=${schoolA.id}&termId=${term.id}`,
+      },
+      {
+        label: 'one grade and all classrooms',
+        filters: `schoolId=${schoolA.id}&termId=${term.id}&gradeLevelId=${grade.id}`,
+      },
+      {
+        label: 'one classroom',
+        filters: `schoolId=${schoolA.id}&termId=${term.id}&gradeLevelId=${grade.id}&classroomId=${classroom.id}`,
+      },
+    ];
+    for (const summaryCase of classroomSummaryCases) {
+      const response = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/classrooms?${summaryCase.filters}&page=1&limit=10&sortBy=grade&sortDirection=asc`,
+      );
+      assert(
+        response.status === 200 &&
+          response.payload.summary?.classroomCount === 1 &&
+          response.payload.summary?.teacherCount === 1 &&
+          response.payload.summary?.studentCount === 1,
+        `Filtered summary was incorrect for ${summaryCase.label}: ${JSON.stringify(response.payload)}`,
+      );
+      const filteredTeachers = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/teachers?${summaryCase.filters}&assignedToFilteredClassrooms=true&page=1&limit=10&sortBy=name&sortDirection=asc`,
+      );
+      const filteredRoster = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/roster?${summaryCase.filters}&page=1&limit=10&sortBy=name&sortDirection=asc`,
+      );
+      assert(
+        filteredTeachers.status === 200 &&
+          filteredTeachers.payload.meta?.totalCount === response.payload.summary.teacherCount,
+        `Teacher table total did not match the card for ${summaryCase.label}`,
+      );
+      assert(
+        filteredRoster.status === 200 &&
+          filteredRoster.payload.meta?.totalCount === response.payload.summary.studentCount,
+        `Roster table total did not match the card for ${summaryCase.label}`,
+      );
+    }
 
     // Direct-menu import must expose the same school → term → classroom
     // context cascade as the school-structure entry point.
@@ -575,7 +721,7 @@ async function main() {
     await chooseCombobox(chrome.client, 'ค้นหาโรงเรียน', schoolA.name);
     await chooseCombobox(chrome.client, 'เลือกภาคเรียน', `ปี ${ACADEMIC_YEAR} / ภาค 1`);
     await chooseCombobox(chrome.client, 'เลือกชั้น', classroom.gradeLabel);
-    await chooseCombobox(chrome.client, 'เลือกห้องเรียน', String(ROOM_NUMBER));
+    await chooseCombobox(chrome.client, 'เลือกห้องเรียน', `ห้อง ${ROOM_NUMBER}`);
     const directImportContext = await evaluate(
       chrome.client,
       `({
@@ -589,7 +735,7 @@ async function main() {
       directImportContext.school === schoolA.name &&
         directImportContext.term === `ปี ${ACADEMIC_YEAR} / ภาค 1` &&
         directImportContext.grade === classroom.gradeLabel &&
-        directImportContext.classroom === String(ROOM_NUMBER),
+        directImportContext.classroom === `ห้อง ${ROOM_NUMBER}`,
       `Direct import context did not settle: ${JSON.stringify(directImportContext)}`,
     );
     const fileInput = await chrome.client.call('Runtime.evaluate', {
@@ -638,14 +784,100 @@ async function main() {
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
       'Created classroom was not visible in the browser',
     );
-    await evaluate(
+    await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', term.id);
+    await waitFor(
+      async () =>
+        (await readSummaryMetric(chrome.client, 'ห้องในภาคเรียน')) === '1' &&
+        (await readSummaryMetric(chrome.client, 'ครูในภาคเรียน')) === '1' &&
+        (await readSummaryMetric(chrome.client, 'นักเรียนในภาคเรียน')) === '1',
+      'All-grade/all-classroom summary did not match the selected term',
+    );
+    await chooseCombobox(chrome.client, 'กรองตามระดับชั้น', grade.label, grade.label);
+    await waitFor(
+      async () =>
+        (await readSummaryMetric(chrome.client, 'ห้องในระดับชั้น')) === '1' &&
+        (await readSummaryMetric(chrome.client, 'ครูในระดับชั้น')) === '1' &&
+        (await readSummaryMetric(chrome.client, 'นักเรียนในระดับชั้น')) === '1',
+      'All-classroom summary did not match the selected grade',
+    );
+    await chooseCombobox(
       chrome.client,
-      `Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'รายชื่อนักเรียน')?.click()`,
+      'กรองตามห้องเรียน',
+      `ห้อง ${ROOM_NUMBER}`,
+      `ห้อง ${ROOM_NUMBER}`,
     );
     await waitFor(
       async () =>
+        (await readSummaryMetric(chrome.client, 'ห้องที่เลือก')) === '1' &&
+        (await readSummaryMetric(chrome.client, 'ครูในห้อง')) === '1' &&
+        (await readSummaryMetric(chrome.client, 'นักเรียนในห้อง')) === '1',
+      'Selected-classroom summary did not match the room filter',
+    );
+    assert(
+      (await evaluate(
+        chrome.client,
+        `document.querySelector('[aria-label="เปิดแท็บห้องเรียน"]')?.getAttribute('aria-pressed')`,
+      )) === 'true',
+      'Classroom summary card did not reflect the active tab',
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="เปิดแท็บครู"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `document.querySelector('[aria-label="เปิดแท็บครู"]')?.getAttribute('aria-pressed')`,
+        )) === 'true' &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('จาก 1 ครู'),
+      'Teacher summary card did not open the matching tab and table',
+    );
+    const hasManualTeacherLinkButton = await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .some((button) => button.textContent.trim() === 'เชื่อมบัญชีครู')`,
+    );
+    assert(!hasManualTeacherLinkButton, 'Manual teacher-account linking button was still visible');
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="เปิดแท็บนักเรียน"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `document.querySelector('[aria-label="เปิดแท็บนักเรียน"]')?.getAttribute('aria-pressed')`,
+        )) === 'true' &&
         (await evaluate(chrome.client, 'document.body.innerText')).includes(importedStudentName),
-      'Imported student was not visible in classroom roster',
+      'Student summary card did not open the matching tab and roster',
+    );
+    const rosterUi = await evaluate(
+      chrome.client,
+      `({
+        hasPagination: document.body.innerText.includes('จาก 1 นักเรียน'),
+        sortableHeaders: Array.from(document.querySelectorAll('th button'))
+          .map((button) => button.textContent.trim())
+      })`,
+    );
+    assert(rosterUi.hasPagination, 'Roster pagination controls were not visible');
+    assert(
+      rosterUi.sortableHeaders.includes('ชื่อนักเรียน') &&
+        rosterUi.sortableHeaders.includes('สถานะ'),
+      `Roster sortable columns were not rendered: ${JSON.stringify(rosterUi.sortableHeaders)}`,
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="เปิดแท็บห้องเรียน"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `document.querySelector('[aria-label="เปิดแท็บห้องเรียน"]')?.getAttribute('aria-pressed')`,
+        )) === 'true' &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
+      'Classroom summary card did not reopen the matching tab and table',
     );
     console.log('school structure browser smoke passed');
   } finally {

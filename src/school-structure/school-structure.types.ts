@@ -24,6 +24,20 @@ export interface SchoolClassroomRow extends Record<string, unknown> {
   student_count: number | string;
 }
 
+export interface SchoolClassroomSummaryRow extends Record<string, unknown> {
+  classroom_count: number | string;
+  teacher_count: number | string;
+  student_count: number | string;
+}
+
+export interface SchoolClassroomOptionRow extends Record<string, unknown> {
+  id: string;
+  grade_level_id: number;
+  grade_label: string;
+  room_code: string;
+  room_name: string | null;
+}
+
 export interface SchoolTeacherMembershipRow extends Record<string, unknown> {
   id: string;
   school_id: number;
@@ -33,6 +47,11 @@ export interface SchoolTeacherMembershipRow extends Record<string, unknown> {
   membership_status: StructureStatus;
   started_on: string;
   ended_on: string | null;
+}
+
+export interface SchoolTeacherCandidateRow extends Record<string, unknown> {
+  id: number;
+  display_name: string;
 }
 
 export interface ClassroomTeacherAssignmentRow extends Record<string, unknown> {
@@ -57,4 +76,14 @@ export interface ClassroomRosterRow extends Record<string, unknown> {
   last_name: string | null;
   student_status_code: number | null;
   student_status_label: string | null;
+  student_status_badge_variant:
+    | 'default'
+    | 'secondary'
+    | 'destructive'
+    | 'success'
+    | 'warning'
+    | null;
+  classroom_id: string;
+  grade_label: string;
+  room_code: string;
 }
