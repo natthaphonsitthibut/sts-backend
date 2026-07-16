@@ -152,6 +152,15 @@ async function auditStructure(dataSource) {
       (SELECT COUNT(*)::int FROM kindergarten_rosters WHERE student_count < $2) AS kindergarten_classrooms_below_minimum,
       (SELECT COALESCE(MIN(student_count), 0)::int FROM kindergarten_rosters) AS minimum_kindergarten_students,
       (SELECT COUNT(*)::int FROM users WHERE data_origin_code = 'DEMO' AND role = 'TEACHER') AS synthetic_teacher_accounts,
+      (SELECT COUNT(*)::int FROM users
+        WHERE data_origin_code = 'DEMO'
+          AND role = 'TEACHER'
+          AND (
+            must_change_password = TRUE
+            OR temporary_password_issued_at IS NOT NULL
+            OR temporary_password_expires_at IS NOT NULL
+          )
+      ) AS synthetic_teacher_password_state_issues,
       (SELECT COUNT(*)::int FROM users WHERE username LIKE 'demo_teacher_%') AS fixture_style_teacher_usernames,
       (SELECT COUNT(*)::int FROM student_person_identifier WHERE source = $3 AND deleted_at IS NULL) AS synthetic_students
   `, [KINDERGARTEN_LABELS, STUDENTS_PER_KINDERGARTEN_CLASSROOM, SEED_SOURCE]);
@@ -163,6 +172,7 @@ async function auditStructure(dataSource) {
   assert(audit.schools_without_k3 > 0, 'The demo set must include schools without อ.3');
   assert(audit.classrooms_without_valid_homeroom === 0, 'Some active classrooms have no valid homeroom teacher');
   assert(audit.kindergarten_classrooms_below_minimum === 0, 'Some kindergarten classrooms have too few students');
+  assert(audit.synthetic_teacher_password_state_issues === 0, 'Some demo teachers have an invalid temporary-password state');
   assert(audit.fixture_style_teacher_usernames === 0, 'Fixture-style teacher usernames remain');
   return audit;
 }
@@ -405,7 +415,7 @@ async function seedStructure(dataSource, passwordService) {
       )
       SELECT plan.username, $1, plan.first_name, plan.last_name, 'TEACHER', $2::jsonb,
         jsonb_build_object('school_ids', jsonb_build_array(plan.school_id)),
-        plan.school_name, 'ACTIVE', TRUE, 'DEMO'
+        plan.school_name, 'ACTIVE', FALSE, 'DEMO'
       FROM demo_teacher_plan_20260716 plan
       ON CONFLICT (username) DO UPDATE
       SET "FirstName" = EXCLUDED."FirstName",
@@ -415,7 +425,9 @@ async function seedStructure(dataSource, passwordService) {
           data_scope = EXCLUDED.data_scope,
           affiliation = EXCLUDED.affiliation,
           status = 'ACTIVE',
-          must_change_password = TRUE,
+          must_change_password = FALSE,
+          temporary_password_issued_at = NULL,
+          temporary_password_expires_at = NULL,
           deactivated_at = NULL,
           deactivated_by = NULL,
           deactivation_reason_code = NULL,
