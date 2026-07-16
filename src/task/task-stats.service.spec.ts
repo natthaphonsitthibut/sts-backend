@@ -9,7 +9,7 @@ describe('TaskStatsService', () => {
       id: 70,
       username: 'executive.regranted',
       roles: ['EXECUTIVE'],
-      permissions: ['review-cases', 'executive-report'],
+      permissions: ['review-cases'],
       data_scope: { provinces: ['เชียงใหม่'] },
     };
     const taskRepository = { listCasesWithActiveLinks: jest.fn() };

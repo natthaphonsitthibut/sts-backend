@@ -3,7 +3,6 @@ const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { TaskService } = require('../dist/task/task.service');
 const { DelegationService } = require('../dist/task/delegation.service');
-const { VisitWorkSessionsService } = require('../dist/visit-work-sessions/visit-work-sessions.service');
 const { RiskProfileService } = require('../dist/risk-profile/risk-profile.service');
 
 if (process.env.NODE_ENV === 'production') {
@@ -170,23 +169,6 @@ async function cleanup(dataSource, taskIds, createdSlotId) {
       `,
       [taskIds],
     );
-    await dataSource.query(
-      `
-        DELETE FROM visit_position_pings
-        WHERE session_id IN (
-          SELECT id FROM visit_work_sessions
-          WHERE task_link_id IN (SELECT id FROM task_links WHERE task_id = ANY($1::uuid[]))
-        )
-      `,
-      [taskIds],
-    );
-    await dataSource.query(
-      `
-        DELETE FROM visit_work_sessions
-        WHERE task_link_id IN (SELECT id FROM task_links WHERE task_id = ANY($1::uuid[]))
-      `,
-      [taskIds],
-    );
     await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::uuid[])`, [taskIds]);
     await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [taskIds]);
     if (caseIds.length > 0) {
@@ -218,7 +200,6 @@ async function main() {
   const dataSource = app.get(DataSource);
   const taskService = app.get(TaskService);
   const delegationService = app.get(DelegationService);
-  const workSessions = app.get(VisitWorkSessionsService);
   const riskProfiles = app.get(RiskProfileService);
   const taskIds = [];
   let createdSlotId = null;
@@ -299,29 +280,6 @@ async function main() {
     );
     assert(submission, 'Visit submission did not join back to task link');
 
-    const work = await taskService.createTask(
-      actor,
-      {
-        task_type: 'VISIT',
-        assigned_to_name: `${MARKER} Work Session`,
-        student_id: student.student_uuid,
-        student_first_name: student.first_name,
-        student_last_name: student.last_name,
-        target_school_id: student.school_id,
-        target_grade: student.grade_label,
-        target_room: String(student.room_id),
-        reason_flagged: MARKER,
-      },
-      BASE_URL,
-    );
-    taskIds.push(work.task_id || work.id);
-    const workToken = tokenOf(work);
-    const started = await workSessions.startSession(workToken, true);
-    assert(started?.session?.id, 'Work session did not start');
-    await workSessions.recordPosition(workToken, 18.796143, 98.979263);
-    const ended = await workSessions.endSession(workToken, { reason: 'MANUAL' });
-    assert(ended?.session?.ended_at, 'Work session did not end');
-
     const login = await taskService.createTask(
       actor,
       {
@@ -389,7 +347,7 @@ async function main() {
     );
 
     console.log(
-      'schema id uuid smoke passed (visit/login/attendance links, delegation parent_link_id, submission join, work session, timetable slot link, risk dashboard)',
+      'schema id uuid smoke passed (visit/login/attendance links, delegation parent_link_id, submission join, timetable slot link, risk dashboard)',
     );
   } finally {
     await cleanup(dataSource, taskIds, createdSlotId);

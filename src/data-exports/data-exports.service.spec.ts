@@ -108,7 +108,6 @@ describe('DataExportsService', () => {
       undefined,
       storage,
       undefined,
-      undefined,
     );
   });
 
@@ -189,23 +188,16 @@ describe('DataExportsService', () => {
     expect(statusCatalogService.getCatalog).not.toHaveBeenCalled();
   });
 
-  it('keeps executive actors aggregate-only even when raw permissions are regranted', async () => {
+  it('keeps executive actors restricted even when raw permissions are regranted', async () => {
     const result = await service.getCatalog({
       id: 1,
       username: 'executive',
       roles: ['EXECUTIVE'],
-      permissions: [
-        '*',
-        'export-data',
-        'executive-report',
-        'students',
-        'dashboard',
-        'review-cases',
-      ],
+      permissions: ['*', 'export-data', 'students', 'dashboard', 'review-cases'],
       data_scope: { global: true },
     });
 
-    expect(result.data.map((item) => item.code)).toEqual(['executive_aggregate']);
+    expect(result.data).toEqual([]);
   });
 
   it('denies executive actors from creating raw jobs despite explicit raw permissions', async () => {
@@ -215,7 +207,7 @@ describe('DataExportsService', () => {
           id: 1,
           username: 'executive',
           roles: ['EXECUTIVE'],
-          permissions: ['export-data', 'executive-report', 'students'],
+          permissions: ['export-data', 'students'],
           data_scope: { global: true },
         },
         {
@@ -229,51 +221,7 @@ describe('DataExportsService', () => {
     expect(repository.createJob).not.toHaveBeenCalled();
   });
 
-  it('allows executive actors to create the executive aggregate with required policy fields', async () => {
-    const dispatchJob = jest.fn().mockResolvedValue(undefined);
-    (
-      service as unknown as {
-        dispatchJob(jobId: string): Promise<void>;
-      }
-    ).dispatchJob = dispatchJob;
-    repository.createJob.mockResolvedValueOnce({
-      ...job,
-      dataset_code: 'executive_aggregate',
-      field_bundle_code: 'area-minimum-cell',
-      sensitivity_class: 'PRIVILEGED',
-      purpose_code: 'EXECUTIVE_REVIEW',
-      purpose_note: 'Approved aggregate review',
-    });
-
-    const result = await service.createJob(
-      {
-        id: 1,
-        username: 'executive',
-        roles: ['EXECUTIVE'],
-        permissions: ['export-data', 'executive-report'],
-        data_scope: { global: true },
-      },
-      {
-        datasetCode: 'executive_aggregate',
-        fieldBundleCode: 'area-minimum-cell',
-        filters: {},
-        purposeCode: 'EXECUTIVE_REVIEW',
-        purposeNote: 'Approved aggregate review',
-      },
-    );
-
-    expect(result.data.datasetCode).toBe('executive_aggregate');
-    expect(repository.createJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        datasetCode: 'executive_aggregate',
-        sensitivityClass: 'PRIVILEGED',
-        purposeCode: 'EXECUTIVE_REVIEW',
-      }),
-    );
-    expect(dispatchJob).toHaveBeenCalledWith('job-1');
-  });
-
-  it('publishes minimized school, observation, report-up, and executive products by permission', async () => {
+  it('publishes minimized school, observation, and report-up products by permission', async () => {
     const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
@@ -283,7 +231,6 @@ describe('DataExportsService', () => {
         'manage-school-structure',
         'manage-student-observations',
         'report-up-cases',
-        'executive-report',
       ],
       data_scope: { global: true },
     });
@@ -295,12 +242,8 @@ describe('DataExportsService', () => {
         'classroom_assignments',
         'observation_aggregate',
         'case_report_up_aggregate',
-        'executive_aggregate',
       ]),
     );
-    expect(
-      result.data.find((item) => item.code === 'executive_aggregate')?.requiredPermissions,
-    ).toEqual(['export-data', 'executive-report']);
     for (const item of result.data.filter((candidate) => candidate.deliveryMode === 'ASYNC_JOB')) {
       expect(item.supportedFilters).toEqual(
         item.filterDefinitions.map((definition) => definition.key),
@@ -620,7 +563,6 @@ describe('DataExportsService', () => {
       { reportDate: '2026-07-01', schoolId: 1, status: 'REPORTED_UP' },
       'report_up.reported_at::date',
     ],
-    ['executive_aggregate', { province: 'A', district: 'B' }, '(province, district) >'],
   ])('uses a stable keyset query for %s', async (datasetCode, cursor, keysetSql) => {
     const query = jest.fn().mockResolvedValue({ records: [], affected: 0 });
     const dataSource = {
@@ -638,7 +580,6 @@ describe('DataExportsService', () => {
       undefined,
       storage,
       undefined,
-      { environment: 'test', minimumCellSize: 5 } as never,
     );
     const item = DATA_EXPORT_CATALOG.find((candidate) => candidate.code === datasetCode)!;
 
@@ -658,44 +599,6 @@ describe('DataExportsService', () => {
       expect.stringContaining('OFFSET'),
       expect.any(Array),
       true,
-    );
-  });
-
-  it('applies the executive minimum-cell policy without exporting identifiers', () => {
-    const policyService = new DataExportsService(
-      {} as DataSource,
-      repository as unknown as DataExportsRepository,
-      attendanceService as never,
-      statusCatalogService as never,
-      undefined,
-      storage,
-      undefined,
-      { environment: 'test', minimumCellSize: 5 } as never,
-    );
-    const mapped = (
-      policyService as unknown as {
-        suppressExecutiveAggregateRow(row: Record<string, unknown>): Record<string, unknown>;
-      }
-    ).suppressExecutiveAggregateRow({
-      province: 'A',
-      district: 'B',
-      active_student_count: 4,
-      risk_high_count: 5,
-      case_created_count: 0,
-    });
-
-    expect(mapped).toEqual(
-      expect.objectContaining({
-        active_student_count: null,
-        active_student_count_suppressed: true,
-        risk_high_count: 5,
-        risk_high_count_suppressed: false,
-        case_created_count: 0,
-        case_created_count_suppressed: false,
-      }),
-    );
-    expect(Object.keys(mapped).some((key) => /(?:student|teacher).*?(?:id|name)/i.test(key))).toBe(
-      false,
     );
   });
 

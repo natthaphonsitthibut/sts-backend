@@ -342,7 +342,6 @@ async function main() {
       'manage-school-structure',
       'manage-student-observations',
       'report-up-cases',
-      'executive-report',
     ]);
     const deniedId = await upsertActor(dataSource, 'data_export_smoke_denied', ['students']);
 
@@ -354,7 +353,6 @@ async function main() {
     assert(codes.includes('student_roster_basic'), 'student basic roster must be listed');
     assert(codes.includes('student_pii'), 'student PII adapter must be listed');
     assert(codes.includes('import_quarantine'), 'import quarantine adapter must be listed');
-    assert(codes.includes('executive_aggregate'), 'executive aggregate must be listed');
     assert(
       allowed.body.data.every((item) => item.formats.includes('CSV')),
       'phase-one catalog must be CSV-only',
@@ -440,26 +438,6 @@ async function main() {
       'duplicate worker replay created or changed the artifact',
     );
     assert(Number(artifactAfterReplay.completion_count) === 1, 'job must have one COMPLETED event');
-
-    const executive = await runExportJob(baseUrl, exporterCookie, {
-      datasetCode: 'executive_aggregate',
-      fieldBundleCode: 'area-minimum-cell',
-      filters: { province: FIXTURE_PROVINCE, district: FIXTURE_DISTRICT },
-      purposeCode: 'AUTOMATED_RUNTIME_PROOF',
-      purposeNote: 'พิสูจน์ minimum-cell suppression ใน smoke database',
-    });
-    const executiveRows = parseCsv(executive.csv);
-    assert(executiveRows.length === 1, 'executive aggregate must contain one fixture area');
-    assert(executiveRows[0].active_student_count === '', 'small executive cell must be blank');
-    assert(
-      executiveRows[0].active_student_count_suppressed === 'true',
-      'small executive cell must be marked suppressed',
-    );
-    assert(!executive.csv.includes('Export Student'), 'executive aggregate leaked student names');
-    assert(
-      !executive.csv.includes(fixture.personUuids[0]),
-      'executive aggregate leaked person ids',
-    );
 
     console.log('smoke:data-export ok');
   } finally {

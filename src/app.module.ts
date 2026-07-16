@@ -35,7 +35,6 @@ import { GeoModule } from './geo/geo.module';
 import { StatusCatalogModule } from './status-catalog/status-catalog.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FieldFollowersModule } from './field-followers/field-followers.module';
-import { VisitWorkSessionsModule } from './visit-work-sessions/visit-work-sessions.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { TimetableModule } from './timetable/timetable.module';
 import { RedisModule } from './redis/redis.module';
@@ -46,7 +45,6 @@ import { SchoolStructureModule } from './school-structure/school-structure.modul
 import { TeacherAccessModule } from './teacher-access/teacher-access.module';
 import { StudentObservationsModule } from './student-observations/student-observations.module';
 import { CaseReportUpsModule } from './case-report-ups/case-report-ups.module';
-import { ExecutiveReportingModule } from './executive-reporting/executive-reporting.module';
 import { StudentObservationSummaryModule } from './student-observation-summaries/student-observation-summary.module';
 import { ObservationReviewsModule } from './observation-reviews/observation-reviews.module';
 
@@ -122,7 +120,6 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     StatusCatalogModule,
     NotificationsModule,
     FieldFollowersModule,
-    VisitWorkSessionsModule,
     SubjectsModule,
     TimetableModule,
     HomeDashboardModule,
@@ -132,7 +129,6 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     StudentObservationsModule,
     ObservationReviewsModule,
     CaseReportUpsModule,
-    ExecutiveReportingModule.registerAsync(),
     StudentObservationSummaryModule,
   ],
   controllers: [AppController],

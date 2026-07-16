@@ -507,21 +507,6 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'เพิ่มเคสในแคมเปญรับสมัคร อสม.',
     detailKeys: [{ key: 'caseCount', label: 'จำนวนเคส' }],
   },
-  WORK_SESSION_START: {
-    domain: 'field_followers',
-    label: 'เริ่มช่วงปฏิบัติงานภาคสนาม',
-    detailKeys: [{ key: 'taskLinkId', label: 'ลิงก์งาน' }],
-  },
-  WORK_SESSION_END: {
-    domain: 'field_followers',
-    label: 'จบช่วงปฏิบัติงานภาคสนาม',
-    detailKeys: [{ key: 'endReason', label: 'เหตุผลที่จบ' }],
-  },
-  WORK_SESSION_VIEW: {
-    domain: 'field_followers',
-    label: 'ดูช่วงปฏิบัติงานภาคสนาม',
-    detailKeys: [{ key: 'activeCount', label: 'จำนวนที่กำลังทำงานอยู่' }],
-  },
   SUBJECT_CREATE: {
     domain: 'timetable',
     label: 'เพิ่มรายวิชา',

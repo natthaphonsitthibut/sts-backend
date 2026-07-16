@@ -1,5 +1,5 @@
 -- Pre-production cleanup pass (2026-07-08) — fixes test/junk artifacts found
--- while seeding timetable/field-follower/work-session demo data, so nothing
+-- while seeding timetable and field-follower demo data, so nothing
 -- embarrassing surfaces in a client-facing demo. Idempotent: every statement
 -- is guarded by a WHERE clause that only matches the specific contaminated
 -- value, so re-running this after the fix is already applied is a no-op.

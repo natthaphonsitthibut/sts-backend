@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { hasPermission } from '../auth';
-import { isAggregateOnlyExecutive } from '../auth/permissions.constants';
+import { isRestrictedExecutive } from '../auth/permissions.constants';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
   buildPaginationMeta,
@@ -53,7 +53,7 @@ export class CaseReportUpsService {
   }
 
   private assertCanRead(actor: AuthenticatedRequestUser): void {
-    if (isAggregateOnlyExecutive(actor)) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
     }
     if (!this.has(actor, 'report-up-cases')) {
@@ -62,7 +62,7 @@ export class CaseReportUpsService {
   }
 
   async reportUp(caseId: number, input: CreateCaseReportUpDto, actor: AuthenticatedRequestUser) {
-    if (isAggregateOnlyExecutive(actor)) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารไม่มีสิทธิ์รายงานเคสรายบุคคล');
     }
     if (!this.has(actor, 'review-cases') || !this.has(actor, 'report-up-cases')) {

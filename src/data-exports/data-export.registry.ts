@@ -283,7 +283,7 @@ export const DATA_EXPORT_CATALOG: DataExportCatalogItem[] = [
       {
         code: 'teacher-membership-minimum',
         label: 'สมาชิกครูขั้นต่ำ',
-        description: 'ชื่อที่แสดง โรงเรียน สถานะ และช่วงปฏิบัติงาน โดยไม่มี username/contact',
+        description: 'ชื่อที่แสดง โรงเรียน และสถานะ โดยไม่มี username/contact',
       },
     ],
     supportedFilters: ['province', 'district', 'subDistrict', 'schoolId', 'status'],
@@ -445,27 +445,6 @@ export const DATA_EXPORT_CATALOG: DataExportCatalogItem[] = [
     ),
     requiredPermissions: ['export-data', 'report-up-cases'],
     purposePolicy: 'OPTIONAL',
-    deliveryMode: 'ASYNC_JOB',
-    status: 'AVAILABLE',
-  },
-  {
-    code: 'executive_aggregate',
-    label: 'สรุปภาพรวมผู้บริหาร',
-    description:
-      'ตัวชี้วัดระดับพื้นที่แบบ minimum-cell suppression ไม่มีชื่อ รหัสบุคคล หรือข้อความดิบ',
-    sensitivityClass: 'PRIVILEGED',
-    formats: ['CSV'],
-    fieldBundles: [
-      {
-        code: 'area-minimum-cell',
-        label: 'ตัวชี้วัดพื้นที่แบบปกปิดค่าขนาดเล็ก',
-        description: 'จำนวนนักเรียน ความเสี่ยง ข้อสังเกต และเคสตามจังหวัด/อำเภอ',
-      },
-    ],
-    supportedFilters: ['province', 'district', 'dateRange'],
-    filterDefinitions: filterDefinitions('province', 'district', 'dateFrom', 'dateTo'),
-    requiredPermissions: ['export-data', 'executive-report'],
-    purposePolicy: 'REQUIRED_CODE_AND_NOTE',
     deliveryMode: 'ASYNC_JOB',
     status: 'AVAILABLE',
   },

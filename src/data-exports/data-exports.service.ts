@@ -16,15 +16,13 @@ import { createHash, randomUUID } from 'crypto';
 import { Queue, Worker } from 'bullmq';
 import { Readable } from 'stream';
 import { DataSource } from 'typeorm';
-import { hasPermission, type AuthenticatedRequestUser } from '../auth';
+import { hasPermission, isRestrictedExecutive, type AuthenticatedRequestUser } from '../auth';
 import { isUnconfiguredDataScope, normalizeDataScope, type DataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { appConfig } from '../config/app.config';
 import { queueConfig } from '../config/queue.config';
-import { executiveReportingConfig } from '../config/executive-reporting.config';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
-import { resolveExecutiveReportingPolicy } from '../executive-reporting/executive-reporting.policy';
 import { AttendanceService } from '../attendance/attendance.service';
 import { StatusCatalogService } from '../status-catalog/status-catalog.service';
 import { DATA_EXPORT_CATALOG } from './data-export.registry';
@@ -78,9 +76,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     @Optional()
     @Inject(appConfig.KEY)
     private readonly runtimeAppConfig?: ConfigType<typeof appConfig>,
-    @Optional()
-    @Inject(executiveReportingConfig.KEY)
-    private readonly runtimeExecutiveReportingConfig?: ConfigType<typeof executiveReportingConfig>,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -464,7 +459,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private canAccessCatalogItem(actor: AuthenticatedRequestUser, item: DataExportCatalogItem) {
-    if (actor.roles?.includes('EXECUTIVE') && item.code !== 'executive_aggregate') {
+    if (isRestrictedExecutive(actor)) {
       return false;
     }
     if (actor.data_scope?.own_only === true || isUnconfiguredDataScope(actor.data_scope)) {
@@ -887,8 +882,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         return await this.loadObservationAggregate(job, limit, cursor);
       case 'case_report_up_aggregate':
         return await this.loadCaseReportUpAggregate(job, limit, cursor);
-      case 'executive_aggregate':
-        return await this.loadExecutiveAggregate(job, limit, cursor);
       default:
         throw new Error('Unsupported data export dataset');
     }
@@ -1547,224 +1540,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         status: 'status',
       }),
     };
-  }
-
-  private async loadExecutiveAggregate(
-    job: DataExportJobRow,
-    limit: number,
-    cursor: ExportCursor | null,
-  ): Promise<ExportRowsResult> {
-    const normalizedScope = normalizeDataScope(job.scope_snapshot);
-    if (
-      !normalizedScope ||
-      (normalizedScope.grade_levels?.length ?? 0) > 0 ||
-      (normalizedScope.room_ids?.length ?? 0) > 0
-    ) {
-      throw new ForbiddenException('Executive aggregate export requires an area scope');
-    }
-    const scope = this.buildSchoolAreaScopeWhere(job.scope_snapshot, job.filter_snapshot);
-    const params = [...scope.params];
-    const dateFromIndex = job.filter_snapshot.dateFrom
-      ? params.push(job.filter_snapshot.dateFrom)
-      : null;
-    const dateToIndex = job.filter_snapshot.dateTo ? params.push(job.filter_snapshot.dateTo) : null;
-    const periodConditions = (column: string): string => {
-      const conditions: string[] = [];
-      if (dateFromIndex) conditions.push(`${column}::date >= $${dateFromIndex}::date`);
-      if (dateToIndex) conditions.push(`${column}::date <= $${dateToIndex}::date`);
-      return conditions.length > 0 ? conditions.join(' AND ') : 'TRUE';
-    };
-    const observationPeriod = periodConditions('observation.observed_at');
-    const caseCreatedPeriod = periodConditions('case_record.created_at');
-    const caseResolvedPeriod = periodConditions('case_record.updated_at');
-    let cursorSql = '';
-    if (typeof cursor?.province === 'string' && typeof cursor.district === 'string') {
-      params.push(cursor.province, cursor.district);
-      cursorSql = `WHERE (province, district) > ($${params.length - 1}::text, $${
-        params.length
-      }::text)`;
-    }
-    params.push(limit);
-    const result = await queryDataSource<Record<string, unknown>>(
-      this.dataSource,
-      `
-        WITH scoped_schools AS (
-          SELECT school.id, school.province, school.district
-          FROM schools school
-          WHERE ${scope.sql || 'TRUE'}
-        ),
-        active_students AS (
-          SELECT student.student_uuid, student."SchoolID_Onec" AS school_id, profile.risk_tier
-          FROM student_term student
-          JOIN student_current_enrollment_resolution current_enrollment
-            ON current_enrollment.person_uuid = student.person_uuid
-           AND current_enrollment.selected_student_uuid = student.student_uuid
-           AND current_enrollment.resolution_state = 'ACTIVE'
-          JOIN scoped_schools school ON school.id = student."SchoolID_Onec"
-          LEFT JOIN student_risk_profiles profile ON profile.student_uuid = student.student_uuid
-          WHERE student.deleted_at IS NULL
-        ),
-        enrollment_metrics AS (
-          SELECT school_id,
-                 COUNT(*)::int AS active_student_count,
-                 COUNT(*) FILTER (WHERE risk_tier = 'HIGH')::int AS risk_high_count,
-                 COUNT(*) FILTER (WHERE risk_tier = 'MEDIUM')::int AS risk_medium_count,
-                 COUNT(*) FILTER (WHERE risk_tier = 'LOW')::int AS risk_low_count,
-                 COUNT(*) FILTER (WHERE risk_tier = 'WATCH')::int AS risk_watch_count,
-                 COUNT(*) FILTER (WHERE risk_tier = 'NORMAL')::int AS risk_normal_count,
-                 COUNT(*) FILTER (WHERE risk_tier IS NULL)::int AS risk_missing_profile_count
-          FROM active_students
-          GROUP BY school_id
-        ),
-        latest_observation AS (
-          SELECT DISTINCT ON (observation.student_uuid)
-                 observation.student_uuid, observation.school_id, observation.concern_level
-          FROM student_observations observation
-          JOIN active_students student ON student.student_uuid = observation.student_uuid
-          WHERE observation.deleted_at IS NULL
-            AND ${observationPeriod}
-          ORDER BY observation.student_uuid, observation.observed_at DESC, observation.id DESC
-        ),
-        observation_metrics AS (
-          SELECT school_id,
-                 COUNT(*) FILTER (WHERE concern_level = 'CONCERN')::int
-                   AS human_concern_student_count
-          FROM latest_observation
-          GROUP BY school_id
-        ),
-        case_metrics AS (
-          SELECT case_record.school_id,
-                 COUNT(*) FILTER (WHERE ${caseCreatedPeriod})::int AS case_created_count,
-                 COUNT(*) FILTER (WHERE case_record.status <> 'RESOLVED')::int
-                   AS unresolved_case_count,
-                 COUNT(*) FILTER (
-                   WHERE case_record.status = 'RESOLVED' AND ${caseResolvedPeriod}
-                 )::int AS resolved_case_count,
-                 COUNT(*) FILTER (WHERE case_record.status = 'REPORTED_UP')::int
-                   AS reported_up_case_count
-          FROM cases case_record
-          JOIN scoped_schools school ON school.id = case_record.school_id
-          WHERE case_record.deleted_at IS NULL
-          GROUP BY case_record.school_id
-        ),
-        school_metrics AS (
-          SELECT school.province,
-                 school.district,
-                 COALESCE(enrollment.active_student_count, 0)::int AS active_student_count,
-                 COALESCE(enrollment.risk_high_count, 0)::int AS risk_high_count,
-                 COALESCE(enrollment.risk_medium_count, 0)::int AS risk_medium_count,
-                 COALESCE(enrollment.risk_low_count, 0)::int AS risk_low_count,
-                 COALESCE(enrollment.risk_watch_count, 0)::int AS risk_watch_count,
-                 COALESCE(enrollment.risk_normal_count, 0)::int AS risk_normal_count,
-                 COALESCE(enrollment.risk_missing_profile_count, 0)::int
-                   AS risk_missing_profile_count,
-                 COALESCE(observation.human_concern_student_count, 0)::int
-                   AS human_concern_student_count,
-                 COALESCE(case_data.case_created_count, 0)::int AS case_created_count,
-                 COALESCE(case_data.unresolved_case_count, 0)::int AS unresolved_case_count,
-                 COALESCE(case_data.resolved_case_count, 0)::int AS resolved_case_count,
-                 COALESCE(case_data.reported_up_case_count, 0)::int AS reported_up_case_count
-          FROM scoped_schools school
-          LEFT JOIN enrollment_metrics enrollment ON enrollment.school_id = school.id
-          LEFT JOIN observation_metrics observation ON observation.school_id = school.id
-          LEFT JOIN case_metrics case_data ON case_data.school_id = school.id
-        ),
-        area_metrics AS (
-          SELECT COALESCE(province, '') AS province,
-                 COALESCE(district, '') AS district,
-                 SUM(active_student_count)::int AS active_student_count,
-                 SUM(risk_high_count)::int AS risk_high_count,
-                 SUM(risk_medium_count)::int AS risk_medium_count,
-                 SUM(risk_low_count)::int AS risk_low_count,
-                 SUM(risk_watch_count)::int AS risk_watch_count,
-                 SUM(risk_normal_count)::int AS risk_normal_count,
-                 SUM(risk_missing_profile_count)::int AS risk_missing_profile_count,
-                 SUM(human_concern_student_count)::int AS human_concern_student_count,
-                 SUM(case_created_count)::int AS case_created_count,
-                 SUM(unresolved_case_count)::int AS unresolved_case_count,
-                 SUM(resolved_case_count)::int AS resolved_case_count,
-                 SUM(reported_up_case_count)::int AS reported_up_case_count
-          FROM school_metrics
-          GROUP BY COALESCE(province, ''), COALESCE(district, '')
-        )
-        SELECT *
-        FROM area_metrics
-        ${cursorSql}
-        ORDER BY province, district
-        LIMIT $${params.length}
-      `,
-      params,
-    );
-    const rows = result.rows.map((row) => this.suppressExecutiveAggregateRow(row));
-    return {
-      headers: [
-        'province',
-        'district',
-        'active_student_count',
-        'active_student_count_suppressed',
-        'risk_high_count',
-        'risk_high_count_suppressed',
-        'risk_medium_count',
-        'risk_medium_count_suppressed',
-        'risk_low_count',
-        'risk_low_count_suppressed',
-        'risk_watch_count',
-        'risk_watch_count_suppressed',
-        'risk_normal_count',
-        'risk_normal_count_suppressed',
-        'risk_missing_profile_count',
-        'risk_missing_profile_count_suppressed',
-        'human_concern_student_count',
-        'human_concern_student_count_suppressed',
-        'case_created_count',
-        'case_created_count_suppressed',
-        'unresolved_case_count',
-        'unresolved_case_count_suppressed',
-        'resolved_case_count',
-        'resolved_case_count_suppressed',
-        'reported_up_case_count',
-        'reported_up_case_count_suppressed',
-      ],
-      rows,
-      nextCursor: this.cursorFromLastRow(rows, {
-        province: 'province',
-        district: 'district',
-      }),
-    };
-  }
-
-  private suppressExecutiveAggregateRow(row: Record<string, unknown>): Record<string, unknown> {
-    const result = { ...row };
-    const minimumCellSize = this.executiveMinimumCellSize();
-    for (const key of [
-      'active_student_count',
-      'risk_high_count',
-      'risk_medium_count',
-      'risk_low_count',
-      'risk_watch_count',
-      'risk_normal_count',
-      'risk_missing_profile_count',
-      'human_concern_student_count',
-      'case_created_count',
-      'unresolved_case_count',
-      'resolved_case_count',
-      'reported_up_case_count',
-    ]) {
-      const value = Math.max(0, Math.trunc(Number(row[key]) || 0));
-      const suppressed = value > 0 && value < minimumCellSize;
-      result[key] = suppressed ? null : value;
-      result[`${key}_suppressed`] = suppressed;
-    }
-    return result;
-  }
-
-  private executiveMinimumCellSize(): number {
-    return resolveExecutiveReportingPolicy(
-      this.runtimeExecutiveReportingConfig ?? {
-        environment: this.runtimeAppConfig?.isProduction ? 'production' : 'test',
-        minimumCellSize: null,
-      },
-    ).minimumCellSize;
   }
 
   private async *streamCsv(

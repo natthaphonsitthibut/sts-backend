@@ -97,7 +97,7 @@ describe('StudentsService', () => {
           id: 70,
           username: 'executive.regranted',
           roles: ['EXECUTIVE'],
-          permissions: ['students', 'executive-report'],
+          permissions: ['students'],
           data_scope: { provinces: ['เชียงใหม่'] },
         },
       ),

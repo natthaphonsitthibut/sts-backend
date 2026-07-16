@@ -245,7 +245,6 @@ async function upsertActor(dataSource, passwordHash) {
     'manage-school-structure',
     'manage-student-observations',
     'report-up-cases',
-    'executive-report',
   ];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
@@ -357,7 +356,6 @@ async function main() {
           'manage-school-structure',
           'manage-student-observations',
           'report-up-cases',
-          'executive-report',
         ],
         data_scope: { global: true },
         must_change_password: false,

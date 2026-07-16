@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { isAggregateOnlyExecutive } from '../auth/permissions.constants';
+import { isRestrictedExecutive } from '../auth/permissions.constants';
 import { getBangkokDateString } from '../common/utils/date.util';
 import {
   buildPaginationMeta,
@@ -39,7 +39,7 @@ export class TaskStatsService {
 
   async getCases(actor?: ActorContext, filters: CaseListFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isAggregateOnlyExecutive(currentActor)) {
+    if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
     }
     try {
@@ -67,7 +67,7 @@ export class TaskStatsService {
 
   async getStats(actor?: ActorContext) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isAggregateOnlyExecutive(currentActor)) {
+    if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
     }
     try {
@@ -96,7 +96,7 @@ export class TaskStatsService {
 
   async getOverviewStats(actor?: ActorContext) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isAggregateOnlyExecutive(currentActor)) {
+    if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
     }
     try {
@@ -180,7 +180,7 @@ export class TaskStatsService {
 
   async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isAggregateOnlyExecutive(currentActor)) {
+    if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
     }
     try {

@@ -7,7 +7,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { isAggregateOnlyExecutive } from '../auth/permissions.constants';
+import { isRestrictedExecutive } from '../auth/permissions.constants';
 import type { ConfigType } from '@nestjs/config';
 import { isUUID } from 'class-validator';
 import { CreateStudentDto } from './dto/create-student.dto';
@@ -234,7 +234,7 @@ export class StudentsService {
     userScope?: DataScope,
     actor?: AuthenticatedRequestUser,
   ) {
-    if (isAggregateOnlyExecutive(actor)) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     const filters = normalizeStudentListFilters(queryParams);
@@ -275,7 +275,7 @@ export class StudentsService {
     userScope?: DataScope,
     actor?: AuthenticatedRequestUser,
   ) {
-    if (isAggregateOnlyExecutive(actor)) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
@@ -312,7 +312,7 @@ export class StudentsService {
   }
 
   async findOne(id: string, actor?: AuthenticatedRequestUser, userScope?: DataScope) {
-    if (isAggregateOnlyExecutive(actor)) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
@@ -477,7 +477,7 @@ export class StudentsService {
   }
 
   async findCasesByName(name: string, actor?: AuthenticatedRequestUser) {
-    if (isAggregateOnlyExecutive(actor)) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
@@ -498,7 +498,7 @@ export class StudentsService {
     actor?: AuthenticatedRequestUser,
     userScope?: DataScope,
   ) {
-    if (isAggregateOnlyExecutive(actor)) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {

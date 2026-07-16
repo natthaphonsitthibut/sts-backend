@@ -159,7 +159,7 @@ describe('CaseReportUpsService', () => {
       service.reportUp(
         10,
         { reason: 'ทดสอบ', summary: 'ทดสอบขอบเขต' },
-        actor(['review-cases', 'report-up-cases', 'executive-report'], {
+        actor(['review-cases', 'report-up-cases'], {
           global: true,
           provinces: ['กรุงเทพมหานคร'],
         }),
@@ -211,10 +211,7 @@ describe('CaseReportUpsService', () => {
 
   it('denies raw report-up rows to executive-only actors', async () => {
     await expect(
-      service.list(
-        { page: 1, limit: 20 },
-        actor(['executive-report'], { provinces: ['กรุงเทพมหานคร'] }),
-      ),
+      service.list({ page: 1, limit: 20 }, actor([], { provinces: ['กรุงเทพมหานคร'] })),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(repository.listReportUps).not.toHaveBeenCalled();

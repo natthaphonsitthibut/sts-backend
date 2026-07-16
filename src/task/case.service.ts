@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger } from '@ne
 import { Cron } from '@nestjs/schedule';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
-import { isAggregateOnlyExecutive } from '../auth/permissions.constants';
+import { isRestrictedExecutive } from '../auth/permissions.constants';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -143,7 +143,7 @@ export class CaseService {
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isAggregateOnlyExecutive(currentActor)) {
+    if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารไม่มีสิทธิ์ดำเนินการกับเคสรายบุคคล');
     }
     const reviewAction = this.normalizeAction(body.review_action);
@@ -229,7 +229,7 @@ export class CaseService {
 
   async getTasksByCase(caseId: number, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isAggregateOnlyExecutive(currentActor)) {
+    if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
     }
     try {
@@ -251,7 +251,7 @@ export class CaseService {
 
   async getCaseReviews(caseId: number, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isAggregateOnlyExecutive(currentActor)) {
+    if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
     }
     try {

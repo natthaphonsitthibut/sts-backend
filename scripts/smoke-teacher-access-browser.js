@@ -456,10 +456,6 @@ async function cleanup(dataSource) {
       const linkIds = smokeLinks.map((row) => row.id);
       if (linkIds.length > 0) {
         await dataSource.query(
-          `DELETE FROM visit_work_sessions WHERE task_link_id = ANY($1::uuid[])`,
-          [linkIds],
-        );
-        await dataSource.query(
           `DELETE FROM task_submissions WHERE task_link_id = ANY($1::uuid[])`,
           [linkIds],
         );

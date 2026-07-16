@@ -43,7 +43,6 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
       { id: 'review-cases', label: 'ดูเคสช่วยเหลือ' },
       { id: 'assign-follow-up-cases', label: 'มอบหมายผู้ติดตามเคสในโรงเรียน' },
       { id: 'report-up-cases', label: 'รายงานเคสขึ้นส่วนกลาง' },
-      { id: 'executive-report', label: 'ดูรายงานภาพรวมระดับพื้นที่' },
       { id: 'close-case', label: 'ปิดเคส' },
     ],
   },
@@ -111,7 +110,6 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'review-cases',
       'assign-follow-up-cases',
       'report-up-cases',
-      'executive-report',
       'close-case',
       'create',
       'attendance',
@@ -177,7 +175,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     name: 'EXECUTIVE',
     label: 'ผู้บริหาร',
     rank: 3,
-    default_permissions: ['home', 'executive-report'],
+    default_permissions: ['home'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -355,17 +353,14 @@ export function getEffectivePermissions(
   return Array.from(new Set(customPermissions));
 }
 
-const AGGREGATE_ONLY_EXECUTIVE_PERMISSIONS = new Set(['home', 'executive-report', 'export-data']);
+const EXECUTIVE_ALLOWED_PERMISSIONS = new Set(['home']);
 
 export function hasPermission(
   roles: string[],
   customPermissions: string[],
   permission: string,
 ): boolean {
-  if (
-    isAggregateOnlyExecutive({ roles }) &&
-    !AGGREGATE_ONLY_EXECUTIVE_PERMISSIONS.has(permission)
-  ) {
+  if (isRestrictedExecutive({ roles }) && !EXECUTIVE_ALLOWED_PERMISSIONS.has(permission)) {
     return false;
   }
   if (customPermissions.includes('*') || customPermissions.includes('ALL')) return true;
@@ -373,8 +368,8 @@ export function hasPermission(
   return effectivePermissions.includes(permission);
 }
 
-/** P7 executives remain aggregate-only even if a raw permission is re-granted. */
-export function isAggregateOnlyExecutive(actor: { roles: string[] } | undefined): boolean {
+/** Executive-only actors stay restricted even if a raw-data permission is re-granted. */
+export function isRestrictedExecutive(actor: { roles: string[] } | undefined): boolean {
   return Boolean(
     actor?.roles.includes('EXECUTIVE') &&
     !actor.roles.some((role) => role === 'ADMIN' || role === 'DIRECTOR'),
