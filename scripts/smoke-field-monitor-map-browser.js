@@ -275,6 +275,9 @@ async function pickFixtureStudent(dataSource) {
       ON e.person_uuid = s.person_uuid
      AND e.selected_student_uuid = s.student_uuid
      AND e.resolution_state = 'ACTIVE'
+    JOIN student_risk_profiles r
+      ON r.student_uuid = s.student_uuid
+     AND r.risk_tier <> 'NORMAL'
     WHERE s."SchoolID_Onec" IS NOT NULL
     ORDER BY s.student_uuid
     LIMIT 1
@@ -453,6 +456,31 @@ async function main() {
         ),
       'Field-monitor map did not render its empty state',
     );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return text.includes('ข้อมูลล่าสุด') &&
+          !text.includes('ยังไม่มีเวลาอัปเดต') &&
+          text.includes('ล้างตัวกรอง');
+      },
+      'Field-monitor map did not show the successful update time and clear-filter action',
+    );
+    await fillInput(client, 'input[placeholder="พิมพ์ชื่อนักเรียนเพื่อค้นหา"]', 'ไม่พบชื่อนี้');
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ล้างตัวกรอง')`,
+      'Clear-filter button was not found on the field-monitor map',
+    );
+    await waitFor(
+      async () =>
+        String(
+          await evaluate(
+            client,
+            `document.querySelector('input[placeholder="พิมพ์ชื่อนักเรียนเพื่อค้นหา"]')?.value`,
+          ),
+        ) === '',
+      'Clearing field-monitor filters did not reset the student search',
+    );
 
     // 3. Pick the fixture student from the in-page picker.
     const [firstName] = fixtureStudent.full_name.split(' ');
@@ -504,7 +532,7 @@ async function main() {
     // 6. Remove the child — pin and URL clear back to empty state.
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'เอาออก')`,
+      `document.querySelector(${JSON.stringify(`[aria-label="เอา ${fixtureStudent.full_name} ออก"]`)})`,
       'Remove-selection button was not found',
     );
     await waitFor(
@@ -550,7 +578,7 @@ async function main() {
     );
 
     console.log(
-      'field-monitor map browser smoke passed (permission gate, empty state, in-page picker, pin render, audit, remove, list deep-link)',
+      'field-monitor map browser smoke passed (permission gate, update time, clear filters, picker, pin, audit, remove, list deep-link)',
     );
   } finally {
     await closeChrome(chrome);
