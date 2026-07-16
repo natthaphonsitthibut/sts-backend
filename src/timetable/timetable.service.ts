@@ -200,6 +200,16 @@ export class TimetableService {
 
     try {
       return await this.repository.withTransaction(async (queryRunner) => {
+        if (
+          dto.teacherUserId != null &&
+          !(await this.repository.isActiveTeacherForSchool(
+            dto.teacherUserId,
+            dto.schoolId,
+            queryRunner,
+          ))
+        ) {
+          throw new BadRequestException('ผู้สอนไม่ใช่ครูที่ใช้งานของโรงเรียนนี้');
+        }
         const created = await this.repository.create(
           {
             schoolTermId: dto.schoolTermId,
@@ -253,6 +263,16 @@ export class TimetableService {
     const actorId = resolveAuditActorId(actor);
 
     return await this.repository.withTransaction(async (queryRunner) => {
+      if (
+        dto.teacherUserId != null &&
+        !(await this.repository.isActiveTeacherForSchool(
+          dto.teacherUserId,
+          existing.school_id,
+          queryRunner,
+        ))
+      ) {
+        throw new BadRequestException('ผู้สอนไม่ใช่ครูที่ใช้งานของโรงเรียนนี้');
+      }
       await this.repository.update(
         id,
         {

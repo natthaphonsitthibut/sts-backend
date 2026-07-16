@@ -328,21 +328,24 @@ export class ImportsRepository {
           ) AS display_name,
           (
             teacher.status = 'ACTIVE'
-            AND (
-              COALESCE(teacher.permissions, '[]'::jsonb) ? 'attendance'
-              OR COALESCE(role_definition.default_permissions, '[]'::jsonb) ? 'attendance'
+            AND teacher.role = 'TEACHER'
+            AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(
+                COALESCE(teacher.data_scope -> 'school_ids', '[]'::jsonb)
+              ) AS scope_school(id)
+              WHERE scope_school.id = $2::text
             )
           ) AS is_eligible,
           EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
-            WHERE membership.school_id = $2
+            WHERE membership.school_id = $2::int
               AND membership.teacher_user_id = teacher.id
               AND membership.membership_status = 'ACTIVE'
               AND membership.deleted_at IS NULL
           ) AS is_active_member
         FROM users teacher
-        LEFT JOIN roles role_definition ON role_definition.name = teacher.role
         WHERE lower(teacher.username) = ANY($1::text[])
       `,
       [usernames.map((username) => username.toLowerCase()), schoolId],

@@ -14,6 +14,7 @@ describe('TimetableService', () => {
       | 'listForTeacher'
       | 'listDistinctSubjectsForRoom'
       | 'listTeacherCandidatesForSchool'
+      | 'isActiveTeacherForSchool'
       | 'resolveStudentRoom'
       | 'findById'
       | 'create'
@@ -83,6 +84,7 @@ describe('TimetableService', () => {
       listTeacherCandidatesForSchool: jest
         .fn()
         .mockResolvedValue([{ id: 8, display_name: 'ครูสมชาย ใจดี' }]),
+      isActiveTeacherForSchool: jest.fn().mockResolvedValue(true),
       resolveStudentRoom: jest
         .fn()
         .mockResolvedValue({ school_id: 10010002, grade_level_id: 423, room_no: 1 }),
@@ -169,6 +171,35 @@ describe('TimetableService', () => {
           subjectId: 5,
         }),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects a teacher who is not an active member of the selected school', async () => {
+      repository.isActiveTeacherForSchool.mockResolvedValue(false);
+
+      await expect(
+        service.create(globalActor, {
+          schoolTermId: 1,
+          schoolId: 10010002,
+          gradeLevelId: 423,
+          roomNo: 1,
+          dayOfWeek: 1,
+          period: 1,
+          subjectId: 5,
+          teacherUserId: 99,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    it('rejects a teacher who is not an active member of the slot school', async () => {
+      repository.isActiveTeacherForSchool.mockResolvedValue(false);
+
+      await expect(service.update(globalActor, '1', { teacherUserId: 99 })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(repository.update).not.toHaveBeenCalled();
     });
   });
 

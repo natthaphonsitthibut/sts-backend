@@ -769,11 +769,14 @@ export class UsersRepository {
     return result.rows[0]?.found === true;
   }
 
-  async findSchoolNamesByIds(ids: number[]): Promise<Array<{ id: number; name: string | null }>> {
+  async findSchoolNamesByIds(
+    ids: number[],
+    executor?: QueryExecutor,
+  ): Promise<Array<{ id: number; name: string | null }>> {
     if (ids.length === 0) {
       return [];
     }
-    const result = await this.query<{ id: number; name: string | null }>(
+    const result = await this.getExecutor(executor).query<{ id: number; name: string | null }>(
       `
         SELECT id, name
         FROM schools
@@ -858,6 +861,58 @@ export class UsersRepository {
     );
 
     return result.rows[0].id;
+  }
+
+  async reconcileTeacherMemberships(
+    input: {
+      teacherUserId: number;
+      schoolIds: number[];
+      actorUserId: number | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<{ activatedSchoolIds: number[]; endedSchoolIds: number[] }> {
+    const result = await executor.query<{
+      activated_school_ids: number[] | null;
+      ended_school_ids: number[] | null;
+    }>(
+      `
+        WITH ended AS (
+          UPDATE school_teacher_memberships
+          SET membership_status = 'INACTIVE',
+              ended_on = COALESCE(ended_on, CURRENT_DATE),
+              updated_by = $3
+          WHERE teacher_user_id = $1
+            AND membership_status = 'ACTIVE'
+            AND deleted_at IS NULL
+            AND NOT (school_id = ANY($2::int[]))
+          RETURNING school_id
+        ), activated AS (
+          INSERT INTO school_teacher_memberships (
+            school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
+          )
+          SELECT school_id, $1, 'ACTIVE', CURRENT_DATE, $3, $3
+          FROM unnest($2::int[]) AS requested(school_id)
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships membership
+            WHERE membership.school_id = requested.school_id
+              AND membership.teacher_user_id = $1
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          )
+          ON CONFLICT DO NOTHING
+          RETURNING school_id
+        )
+        SELECT
+          (SELECT array_agg(school_id ORDER BY school_id) FROM activated) AS activated_school_ids,
+          (SELECT array_agg(school_id ORDER BY school_id) FROM ended) AS ended_school_ids
+      `,
+      [input.teacherUserId, input.schoolIds, input.actorUserId],
+    );
+    return {
+      activatedSchoolIds: result.rows[0]?.activated_school_ids ?? [],
+      endedSchoolIds: result.rows[0]?.ended_school_ids ?? [],
+    };
   }
 
   private buildStudentAccountCandidateQuery(filters: StudentAccountCandidateFilters): {

@@ -66,6 +66,8 @@ describe('UsersService student accounts', () => {
       | 'withTransaction'
       | 'usernameExists'
       | 'createUser'
+      | 'updateUser'
+      | 'reconcileTeacherMemberships'
       | 'findUserById'
       | 'findOwnProfileById'
       | 'findCurrentStudentUuidByUserId'
@@ -89,7 +91,14 @@ describe('UsersService student accounts', () => {
   let usersPolicyService: jest.Mocked<
     Pick<
       UsersPolicyService,
-      'ensureActor' | 'getRoleMap' | 'hydrateUserPermissions' | 'canManageUser'
+      | 'ensureActor'
+      | 'getRoleMap'
+      | 'hydrateUserPermissions'
+      | 'canManageUser'
+      | 'assertAssignablePayload'
+      | 'normalizePermissionList'
+      | 'normalizeRole'
+      | 'getPrimaryRole'
     >
   >;
   let passwordService: jest.Mocked<Pick<PasswordService, 'generateTempPassword' | 'hash'>>;
@@ -109,6 +118,10 @@ describe('UsersService student accounts', () => {
       ),
       usernameExists: jest.fn().mockResolvedValue(false),
       createUser: jest.fn().mockResolvedValue(77),
+      updateUser: jest.fn().mockResolvedValue(undefined),
+      reconcileTeacherMemberships: jest
+        .fn()
+        .mockResolvedValue({ activatedSchoolIds: [], endedSchoolIds: [] }),
       findUserById: jest.fn().mockResolvedValue({ id: 77 }),
       findOwnProfileById: jest.fn().mockResolvedValue({ id: 77 }),
       findCurrentStudentUuidByUserId: jest.fn().mockResolvedValue(null),
@@ -164,6 +177,22 @@ describe('UsersService student accounts', () => {
         data_scope: { school_ids: [10010002], own_only: true },
       }),
       canManageUser: jest.fn().mockReturnValue(true),
+      assertAssignablePayload: jest.fn().mockResolvedValue(undefined),
+      normalizePermissionList: jest
+        .fn()
+        .mockImplementation((permissions?: string[]) => permissions ?? []),
+      normalizeRole: jest
+        .fn()
+        .mockImplementation(
+          (value: { role?: string; roles?: string[] }) =>
+            value.role || value.roles?.[0] || 'STUDENT',
+        ),
+      getPrimaryRole: jest
+        .fn()
+        .mockImplementation(
+          (value: { role?: string; roles?: string[] }) =>
+            value.role || value.roles?.[0] || 'STUDENT',
+        ),
     };
     passwordService = {
       generateTempPassword: jest.fn().mockReturnValue('TEMP123456789'),
@@ -189,6 +218,237 @@ describe('UsersService student accounts', () => {
     await expect(
       service.previewStudentAccounts({ ...actor, permissions: ['manage-users-list'] }, {}),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('creates the teacher account and school membership in one transaction', async () => {
+    usersRepository.reconcileTeacherMemberships.mockResolvedValueOnce({
+      activatedSchoolIds: [10010002],
+      endedSchoolIds: [],
+    });
+
+    await expect(
+      service.createUser(actor, {
+        username: 'teacher.one',
+        FirstName: 'ครู',
+        LastName: 'หนึ่ง',
+        PersonID_Onec: '1234567890123',
+        role: 'TEACHER',
+        roles: ['TEACHER'],
+        permissions: ['attendance'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002] },
+      }),
+    ).resolves.toMatchObject({ success: true, userId: 77 });
+
+    expect(usersRepository.reconcileTeacherMemberships).toHaveBeenCalledWith(
+      {
+        teacherUserId: 77,
+        schoolIds: [10010002],
+        actorUserId: actor.id,
+      },
+      executor,
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'MASTER_DATA_EDIT',
+        targetType: 'school_teacher_memberships',
+      }),
+      executor,
+    );
+    expect(usersRepository.createUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mustChangePassword: true,
+      }),
+      executor,
+    );
+    expect(usersRepository.createUser.mock.calls[0][0].temporaryPasswordIssuedAt).toBeInstanceOf(
+      Date,
+    );
+    expect(usersRepository.createUser.mock.calls[0][0].temporaryPasswordExpiresAt).toBeInstanceOf(
+      Date,
+    );
+  });
+
+  it('creates an immediately active account when the administrator supplies a password', async () => {
+    const result = await service.createUser(actor, {
+      username: 'teacher.with-password',
+      password: 'PERMANENT_PASSWORD_PLACEHOLDER',
+      FirstName: 'ครู',
+      LastName: 'พร้อมใช้งาน',
+      PersonID_Onec: '1234567890123',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['attendance'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    });
+
+    expect(result).toEqual({
+      success: true,
+      userId: 77,
+      tempPassword: undefined,
+      must_change_password: false,
+    });
+    expect(passwordService.generateTempPassword).not.toHaveBeenCalled();
+    expect(passwordService.hash).toHaveBeenCalledWith('PERMANENT_PASSWORD_PLACEHOLDER');
+    expect(usersRepository.createUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        passwordHash: 'hashed-temp-password',
+        mustChangePassword: false,
+        temporaryPasswordIssuedAt: null,
+        temporaryPasswordExpiresAt: null,
+      }),
+      executor,
+    );
+  });
+
+  it('rejects a duplicate username with a user-facing conflict message', async () => {
+    usersRepository.usernameExists.mockResolvedValueOnce(true);
+
+    await expect(
+      service.createUser(actor, {
+        username: 'teacher.one',
+        FirstName: 'ครู',
+        LastName: 'ชื่อซ้ำ',
+        PersonID_Onec: '1234567890123',
+        role: 'TEACHER',
+        roles: ['TEACHER'],
+        permissions: ['attendance'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002] },
+      }),
+    ).rejects.toThrow('ชื่อผู้ใช้งานนี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น');
+
+    expect(passwordService.hash).not.toHaveBeenCalled();
+    expect(usersRepository.createUser).not.toHaveBeenCalled();
+  });
+
+  it('maps a concurrent duplicate username insert to a conflict response', async () => {
+    usersRepository.createUser.mockRejectedValueOnce(
+      Object.assign(new Error('duplicate key'), {
+        code: '23505',
+        constraint: 'users_username_key',
+      }),
+    );
+
+    await expect(
+      service.createUser(actor, {
+        username: 'teacher.race',
+        FirstName: 'ครู',
+        LastName: 'ชื่อชนกัน',
+        PersonID_Onec: '1234567890123',
+        role: 'TEACHER',
+        roles: ['TEACHER'],
+        permissions: ['attendance'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002] },
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('does not mislabel another unique constraint as a duplicate username', async () => {
+    const databaseError = Object.assign(new Error('duplicate key'), {
+      code: '23505',
+      constraint: 'uq_school_teacher_memberships_active',
+    });
+    usersRepository.createUser.mockRejectedValueOnce(databaseError);
+
+    await expect(
+      service.createUser(actor, {
+        username: 'teacher.other-conflict',
+        FirstName: 'ครู',
+        LastName: 'ข้อมูลชนกัน',
+        PersonID_Onec: '1234567890123',
+        role: 'TEACHER',
+        roles: ['TEACHER'],
+        permissions: ['attendance'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002] },
+      }),
+    ).rejects.toBe(databaseError);
+  });
+
+  it('rejects a teacher account without an explicit school affiliation', async () => {
+    await expect(
+      service.createUser(actor, {
+        username: 'teacher.no-school',
+        FirstName: 'ครู',
+        LastName: 'ไม่มีโรงเรียน',
+        PersonID_Onec: '1234567890123',
+        role: 'TEACHER',
+        roles: ['TEACHER'],
+        permissions: ['attendance'],
+        status: 'ACTIVE',
+        data_scope: { provinces: ['เชียงใหม่'] },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(usersRepository.withTransaction).not.toHaveBeenCalled();
+  });
+
+  it('keeps the teacher role and reconciles memberships when only the school scope changes', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher.one',
+      FirstName: 'ครู',
+      LastName: 'หนึ่ง',
+      PersonID_Onec: '1234567890123',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['attendance'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    } as never);
+    usersRepository.findSchoolNamesByIds.mockResolvedValueOnce([
+      { id: 10010003, name: 'โรงเรียนใหม่' },
+    ]);
+
+    await expect(
+      service.updateUser(actor, 77, { data_scope: { school_ids: [10010003] } }),
+    ).resolves.toEqual({ success: true });
+
+    expect(usersRepository.updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 77, role: 'TEACHER', dataScope: { school_ids: [10010003] } }),
+      executor,
+    );
+    expect(usersRepository.reconcileTeacherMemberships).toHaveBeenCalledWith(
+      { teacherUserId: 77, schoolIds: [10010003], actorUserId: actor.id },
+      executor,
+    );
+  });
+
+  it('ends teacher memberships when the account changes to a non-teacher role', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher.one',
+      FirstName: 'ครู',
+      LastName: 'หนึ่ง',
+      PersonID_Onec: '1234567890123',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['attendance'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    } as never);
+    usersRepository.reconcileTeacherMemberships.mockResolvedValueOnce({
+      activatedSchoolIds: [],
+      endedSchoolIds: [10010002],
+    });
+
+    await expect(
+      service.updateUser(actor, 77, { role: 'ADMIN', data_scope: { global: true } }),
+    ).resolves.toEqual({ success: true });
+
+    expect(usersRepository.reconcileTeacherMemberships).toHaveBeenCalledWith(
+      { teacherUserId: 77, schoolIds: [], actorUserId: actor.id },
+      executor,
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'school_teacher_memberships',
+      }),
+      executor,
+    );
   });
 
   it('returns minimized user detail without identity or address fields', async () => {

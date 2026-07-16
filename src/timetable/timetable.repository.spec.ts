@@ -55,14 +55,22 @@ describe('TimetableRepository', () => {
     expect(queries[0].params).toEqual([42]);
   });
 
-  it('listTeacherCandidatesForSchool returns only active non-student scoped users', async () => {
+  it('listTeacherCandidatesForSchool returns only active teacher memberships', async () => {
     const { repository, queries } = buildRepository([]);
     await repository.listTeacherCandidatesForSchool(10010002, 'สมชาย');
     expect(queries[0].sql).toContain(`u.status = 'ACTIVE'`);
-    expect(queries[0].sql).toContain(`COALESCE(u.role, '') <> 'STUDENT'`);
-    expect(queries[0].sql).toContain(`u.data_scope ->> 'global' = 'true'`);
-    expect(queries[0].sql).toContain(`jsonb_array_elements_text`);
+    expect(queries[0].sql).toContain(`u.role = 'TEACHER'`);
+    expect(queries[0].sql).toContain(`membership.membership_status = 'ACTIVE'`);
+    expect(queries[0].sql).toContain(`membership.school_id = $1`);
     expect(queries[0].sql).toContain('LIMIT 100');
     expect(queries[0].params).toEqual([10010002, '%สมชาย%']);
+  });
+
+  it('isActiveTeacherForSchool checks role, account, membership, and school together', async () => {
+    const { repository, queries } = buildRepository();
+    await expect(repository.isActiveTeacherForSchool(41, 10010002)).resolves.toBe(true);
+    expect(queries[0].sql).toContain(`teacher.role = 'TEACHER'`);
+    expect(queries[0].sql).toContain(`membership.school_id = $2`);
+    expect(queries[0].params).toEqual([41, 10010002]);
   });
 });

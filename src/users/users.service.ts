@@ -70,6 +70,7 @@ const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
 export const TEMP_PASSWORD_TTL_DAYS = 7;
 export const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const HARD_DELETE_PERMISSION = 'manage-users-hard-delete';
+const USERNAME_ALREADY_USED_MESSAGE = 'ชื่อผู้ใช้งานนี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น';
 
 function cleanNullableText(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -106,6 +107,58 @@ export class UsersService {
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
     private readonly notificationsService?: NotificationsService,
   ) {}
+
+  private resolveTeacherSchoolIds(role: string, scope: DataScope): number[] {
+    if (role !== 'TEACHER') {
+      return [];
+    }
+    const schoolIds = normalizeNumericScopeValues(scope.school_ids);
+    if (schoolIds.length === 0) {
+      throw new BadRequestException('กรุณาเลือกโรงเรียนสังกัดสำหรับบัญชีครู');
+    }
+    return schoolIds;
+  }
+
+  private async reconcileTeacherMemberships(
+    userId: number,
+    schoolIds: number[],
+    actor: ActorContext,
+    executor: QueryExecutor,
+  ): Promise<void> {
+    if (schoolIds.length > 0) {
+      const schools = await this.usersRepository.findSchoolNamesByIds(schoolIds, executor);
+      if (schools.length !== schoolIds.length) {
+        throw new BadRequestException('โรงเรียนสังกัดของบัญชีครูไม่ถูกต้อง');
+      }
+    }
+    const result = await this.usersRepository.reconcileTeacherMemberships(
+      {
+        teacherUserId: userId,
+        schoolIds,
+        actorUserId: resolveAuditActorId(actor),
+      },
+      executor,
+    );
+    if (result.activatedSchoolIds.length === 0 && result.endedSchoolIds.length === 0) {
+      return;
+    }
+    await this.auditLog.recordAtomic(
+      {
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: actor.username,
+        action: 'MASTER_DATA_EDIT',
+        targetType: 'school_teacher_memberships',
+        targetId: String(userId),
+        metadata: {
+          op: 'sync-from-user',
+          activatedSchoolIds: result.activatedSchoolIds,
+          endedSchoolIds: result.endedSchoolIds,
+        },
+        ip: null,
+      },
+      executor,
+    );
+  }
 
   async revealUserAddress(
     id: number,
@@ -459,26 +512,31 @@ export class UsersService {
         { allowEqualRole: false },
         roleMap,
       );
+      const primaryRole = this.usersPolicyService.normalizeRole(data);
+      const teacherSchoolIds = this.resolveTeacherSchoolIds(primaryRole, persistedScope);
 
-      const password = data.password || this.passwordService.generateTempPassword();
+      const usesTemporaryPassword = data.password == null;
+      const password = data.password ?? this.passwordService.generateTempPassword();
       if ((data.address_latitude == null) !== (data.address_longitude == null)) {
         throw new BadRequestException('กรุณาระบุ latitude และ longitude ให้ครบทั้งคู่');
       }
-      const generatedTempPassword = data.password ? undefined : password;
+      const generatedTempPassword = usesTemporaryPassword ? password : undefined;
 
-      // New accounts start in "awaiting first login" with a temporary password:
-      // they must change it within the window before it expires (login is then
-      // blocked until an admin reissues). Same lifecycle/TTL as bulk-generate.
-      const temporaryPasswordIssuedAt = new Date();
-      const temporaryPasswordExpiresAt = new Date(
-        temporaryPasswordIssuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
-      );
+      // Only system-generated passwords start the temporary-password lifecycle.
+      // An explicit administrator-provided password is usable immediately.
+      const temporaryPasswordIssuedAt = usesTemporaryPassword ? new Date() : null;
+      const temporaryPasswordExpiresAt = temporaryPasswordIssuedAt
+        ? new Date(
+            temporaryPasswordIssuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
+          )
+        : null;
 
       const userId = await this.usersRepository.withTransaction(async (executor) => {
+        if (await this.usersRepository.usernameExists(data.username, executor)) {
+          throw new ConflictException(USERNAME_ALREADY_USED_MESSAGE);
+        }
         const passwordHash = await this.passwordService.hash(password);
-        const primaryRole = this.usersPolicyService.normalizeRole(data);
-
-        return await this.usersRepository.createUser(
+        const createdUserId = await this.usersRepository.createUser(
           {
             username: data.username,
             passwordHash,
@@ -505,22 +563,35 @@ export class UsersService {
             permissions: data.permissions || [],
             role: primaryRole,
             dataScope: persistedScope,
-            mustChangePassword: true,
+            mustChangePassword: usesTemporaryPassword,
             temporaryPasswordIssuedAt,
             temporaryPasswordExpiresAt,
             createdBy: resolveAuditActorId(currentActor),
           },
           executor,
         );
+        await this.reconcileTeacherMemberships(
+          createdUserId,
+          teacherSchoolIds,
+          currentActor,
+          executor,
+        );
+        return createdUserId;
       });
 
       return {
         success: true,
         userId,
         tempPassword: generatedTempPassword || undefined,
-        must_change_password: true,
+        must_change_password: usesTemporaryPassword,
       };
     } catch (err) {
+      if (err instanceof ConflictException) {
+        throw err;
+      }
+      if (this.isUsernameUniqueViolation(err)) {
+        throw new ConflictException(USERNAME_ALREADY_USED_MESSAGE);
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`createUser error: ${message}`);
       throw err;
@@ -550,8 +621,18 @@ export class UsersService {
       }
 
       const isSelf = currentActor.id === id;
-      const existingRole = this.usersPolicyService.getPrimaryRole(existingUser);
-      const requestedRole = this.usersPolicyService.normalizeRole(data);
+      const existingRole =
+        this.usersPolicyService.getPrimaryRole(existingUser) ??
+        this.usersPolicyService.normalizeRole({
+          role: existingUser.role ?? undefined,
+          roles: existingUser.roles ?? undefined,
+        });
+      const roleWasProvided =
+        (typeof data.role === 'string' && data.role.trim().length > 0) ||
+        (Array.isArray(data.roles) && data.roles.some((role) => role.trim().length > 0));
+      const requestedRole = roleWasProvided
+        ? this.usersPolicyService.normalizeRole(data)
+        : existingRole;
 
       if (isSelf && requestedRole !== existingRole) {
         throw new ForbiddenException('ไม่สามารถเปลี่ยนตำแหน่งของบัญชีตัวเองได้');
@@ -559,13 +640,23 @@ export class UsersService {
 
       await this.usersPolicyService.assertAssignablePayload(
         currentActor,
-        data,
+        { ...data, role: requestedRole, roles: undefined },
         { allowEqualRole: isSelf },
         roleMap,
       );
 
+      const primaryRole = requestedRole;
+      const persistedScope = finalizePersistedDataScope(data.data_scope ?? existingUser.data_scope);
+      const teacherSchoolIds = this.resolveTeacherSchoolIds(primaryRole, persistedScope);
+
       await this.usersRepository.withTransaction(async (executor) => {
-        const primaryRole = this.usersPolicyService.normalizeRole(data);
+        if (
+          data.username !== undefined &&
+          data.username !== existingUser.username &&
+          (await this.usersRepository.usernameExists(data.username, executor))
+        ) {
+          throw new ConflictException(USERNAME_ALREADY_USED_MESSAGE);
+        }
         const passwordHash = data.password
           ? await this.passwordService.hash(data.password)
           : undefined;
@@ -639,15 +730,22 @@ export class UsersService {
               data.permissions ??
               this.usersPolicyService.normalizePermissionList(existingUser.permissions),
             role: primaryRole,
-            dataScope: finalizePersistedDataScope(data.data_scope ?? existingUser.data_scope),
+            dataScope: persistedScope,
             updatedBy: resolveAuditActorId(currentActor),
           },
           executor,
         );
+        await this.reconcileTeacherMemberships(id, teacherSchoolIds, currentActor, executor);
       });
 
       return { success: true };
     } catch (err) {
+      if (err instanceof ConflictException) {
+        throw err;
+      }
+      if (this.isUsernameUniqueViolation(err)) {
+        throw new ConflictException(USERNAME_ALREADY_USED_MESSAGE);
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`updateUser error: ${message}`);
       throw err;
@@ -1510,5 +1608,25 @@ export class UsersService {
       'code' in error &&
       (error as { code?: unknown }).code === '23505'
     );
+  }
+
+  private isUsernameUniqueViolation(error: unknown): boolean {
+    if (!this.isUniqueViolation(error) || typeof error !== 'object' || error === null) {
+      return false;
+    }
+    const directConstraint = 'constraint' in error ? error.constraint : undefined;
+    const driverError =
+      'driverError' in error && typeof error.driverError === 'object' && error.driverError !== null
+        ? error.driverError
+        : undefined;
+    const driverConstraint =
+      driverError && 'constraint' in driverError ? driverError.constraint : undefined;
+    const constraint =
+      typeof directConstraint === 'string'
+        ? directConstraint
+        : typeof driverConstraint === 'string'
+          ? driverConstraint
+          : '';
+    return constraint.toLowerCase().includes('username');
   }
 }

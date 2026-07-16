@@ -216,6 +216,16 @@ async function main() {
     });
     const targetUserId = created.payload?.userId;
     assert(Number.isInteger(targetUserId), 'Create user did not return a userId');
+    const [createdMembership] = await dataSource.query(
+      `SELECT school_id, membership_status
+       FROM school_teacher_memberships
+       WHERE teacher_user_id=$1 AND school_id=$2 AND deleted_at IS NULL`,
+      [targetUserId, SCHOOL_ID],
+    );
+    assert(
+      createdMembership?.membership_status === 'ACTIVE',
+      'Creating an in-scope teacher did not create an active school membership',
+    );
 
     await request(baseUrl, 'PUT', `/api/users/${targetUserId}`, 200, {
       headers: { cookie: schoolCookie },
@@ -250,6 +260,7 @@ async function main() {
           'school admin cannot create global scope',
           'school admin cannot create outside school scope',
           'school admin can create in-scope teacher',
+          'teacher creation synchronizes active school membership',
           'school admin can update in-scope teacher',
           'generic update cannot change lifecycle status',
           'school admin cannot widen target scope',
@@ -257,6 +268,11 @@ async function main() {
       }),
     );
   } finally {
+    await dataSource.query(
+      `DELETE FROM school_teacher_memberships
+       WHERE teacher_user_id=(SELECT id FROM users WHERE username=$1)`,
+      [targetUsername],
+    );
     await disableSmokeUsers(dataSource, targetUsername);
     await app.close();
   }

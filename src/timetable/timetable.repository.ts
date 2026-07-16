@@ -165,26 +165,9 @@ export class TimetableRepository {
     const params: unknown[] = [schoolId];
     const conditions = [
       `u.status = 'ACTIVE'`,
-      `COALESCE(u.role, '') <> 'STUDENT'`,
-      `(
-        u.data_scope ->> 'global' = 'true'
-        OR EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'school_ids', '[]'::jsonb)) AS scope_school(id)
-          WHERE scope_school.id = sc.id::text
-        )
-        OR EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'provinces', '[]'::jsonb)) AS scope_province(name)
-          WHERE scope_province.name = sc.province
-        )
-        OR EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'districts', '[]'::jsonb)) AS scope_district(name)
-          WHERE scope_district.name = sc.district
-        )
-        OR EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(COALESCE(u.data_scope -> 'sub_districts', '[]'::jsonb)) AS scope_sub_district(name)
-          WHERE scope_sub_district.name = sc.sub_district
-        )
-      )`,
+      `u.role = 'TEACHER'`,
+      `membership.membership_status = 'ACTIVE'`,
+      `membership.deleted_at IS NULL`,
     ];
     const trimmedSearch = searchTerm?.trim();
     if (trimmedSearch) {
@@ -204,15 +187,39 @@ export class TimetableRepository {
         SELECT
           u.id,
           COALESCE(NULLIF(TRIM(COALESCE(u."FirstName", '') || ' ' || COALESCE(u."LastName", '')), ''), u.username) AS display_name
-        FROM users u
-        JOIN schools sc ON sc.id = $1
+        FROM school_teacher_memberships membership
+        JOIN users u ON u.id = membership.teacher_user_id
         WHERE ${conditions.join(' AND ')}
+          AND membership.school_id = $1
         ORDER BY display_name ASC, u.id ASC
         LIMIT 100
       `,
       params,
     );
     return result.rows;
+  }
+
+  async isActiveTeacherForSchool(
+    teacherUserId: number,
+    schoolId: number,
+    queryRunner?: QueryRunner,
+  ): Promise<boolean> {
+    const sql = `
+      SELECT 1
+      FROM school_teacher_memberships membership
+      JOIN users teacher ON teacher.id = membership.teacher_user_id
+      WHERE membership.teacher_user_id = $1
+        AND membership.school_id = $2
+        AND membership.membership_status = 'ACTIVE'
+        AND membership.deleted_at IS NULL
+        AND teacher.status = 'ACTIVE'
+        AND teacher.role = 'TEACHER'
+      LIMIT 1
+    `;
+    const result = queryRunner
+      ? await createSqlQueryExecutor(queryRunner).query(sql, [teacherUserId, schoolId])
+      : await queryDataSource(this.dataSource, sql, [teacherUserId, schoolId]);
+    return result.rows.length > 0;
   }
 
   async resolveStudentRoom(
