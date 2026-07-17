@@ -874,6 +874,7 @@ export class StudentObservationsService {
     const rows = await this.repository.listTaskLinkObservations(
       query.studentTermId,
       context.linkId,
+      context.selectedTimetableSlotId,
       page,
       limit,
     );
