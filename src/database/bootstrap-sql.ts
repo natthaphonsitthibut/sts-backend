@@ -571,6 +571,31 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
   END $case_workflow_status_fk$;
 `;
 
+export const STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS student_follow_up_request_statuses (
+    code VARCHAR(24) PRIMARY KEY,
+    label_th VARCHAR(100) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_terminal BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_follow_up_statuses_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_student_follow_up_statuses_badge
+      CHECK (badge_variant IN ('default','secondary','destructive','success','warning')),
+    CONSTRAINT chk_student_follow_up_statuses_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('student_follow_up_request_statuses')}
+  INSERT INTO student_follow_up_request_statuses (
+    code, label_th, badge_variant, sort_order, is_terminal, is_active
+  ) VALUES
+    ('PENDING_REVIEW', 'รอพิจารณา', 'warning', 10, FALSE, TRUE),
+    ('APPROVED', 'เปิดเคสแล้ว', 'success', 20, TRUE, TRUE),
+    ('REJECTED', 'ไม่อนุมัติ', 'secondary', 30, TRUE, TRUE),
+    ('NEED_MORE_INFO', 'ขอข้อมูลเพิ่ม (เดิม)', 'secondary', 90, TRUE, FALSE)
+  ON CONFLICT (code) DO NOTHING;
+`;
+
 export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS user_account_statuses (
     code VARCHAR(16) PRIMARY KEY,
@@ -2035,6 +2060,8 @@ export const DATABASE_BASELINE_SQL = `
   ${DATA_EXPORT_TABLES_SQL}
 
   ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
+
+  ${STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL}
 
   ${CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL}
 

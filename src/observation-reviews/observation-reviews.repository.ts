@@ -12,6 +12,7 @@ import type {
   ObservationReviewEnrollmentRow,
   ObservationSourceRef,
   RiskReviewRow,
+  TeacherObservationReportRow,
   ValidatedObservationSourceRow,
 } from './observation-reviews.types';
 
@@ -209,7 +210,7 @@ export class ObservationReviewsRepository {
 
   async findCalculatedAttendanceRisk(
     studentUuid: string,
-    queryRunner: QueryRunner,
+    queryRunner?: QueryRunner,
   ): Promise<string> {
     const result = await this.executor(queryRunner).query<{ risk_tier: string }>(
       `SELECT COALESCE(profile.risk_tier, 'UNKNOWN') AS risk_tier
@@ -293,19 +294,21 @@ export class ObservationReviewsRepository {
       ],
     );
     const id = inserted.rows[0].id;
-    await this.executor(queryRunner).query(
-      `INSERT INTO student_observation_risk_review_sources (
-         risk_review_id, observation_id, observation_revision
-       )
-       SELECT $1, source.observation_id, source.observation_revision
-       FROM unnest($2::bigint[], $3::integer[])
-         AS source(observation_id, observation_revision)`,
-      [
-        id,
-        input.sources.map((source) => source.observationId),
-        input.sources.map((source) => source.revision),
-      ],
-    );
+    if (input.sources.length > 0) {
+      await this.executor(queryRunner).query(
+        `INSERT INTO student_observation_risk_review_sources (
+           risk_review_id, observation_id, observation_revision
+         )
+         SELECT $1, source.observation_id, source.observation_revision
+         FROM unnest($2::bigint[], $3::integer[])
+           AS source(observation_id, observation_revision)`,
+        [
+          id,
+          input.sources.map((source) => source.observationId),
+          input.sources.map((source) => source.revision),
+        ],
+      );
+    }
     return (await this.findLatestRiskReview(input.studentUuid, queryRunner))!;
   }
 
@@ -315,6 +318,8 @@ export class ObservationReviewsRepository {
                    request.school_id,
                    request.follow_up_request_type,
                    request.status,
+                   request_status.label_th AS status_label_th,
+                   request_status.badge_variant AS status_badge_variant,
                    request.urgency,
                    request.request_reason,
                    request.supplemental_note,
@@ -331,6 +336,39 @@ export class ObservationReviewsRepository {
                    request.assigned_by,
                    assignee.username AS assigned_by_username,
                    request.assigned_at,
+                   request.opened_case_id,
+                   opened_case.status AS opened_case_status,
+                   enrollment."FirstName_Onec" AS student_first_name,
+                   enrollment."LastName_Onec" AS student_last_name,
+                   trim(concat_ws(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec"))
+                     AS student_name,
+                   school.name AS student_school,
+                   NULLIF(trim(concat_ws(' ',
+                     enrollment.address_house_no,
+                     enrollment."VillageNumber_Onec",
+                     enrollment."Street_Onec",
+                     enrollment."Soi_Onec",
+                     enrollment."Trok_Onec"
+                   )), '') AS address_line,
+                   enrollment."ProvinceNameThai_Onec" AS address_province,
+                   enrollment."DistrictNameThai_Onec" AS address_district,
+                   enrollment."SubDistrictNameThai_Onec" AS address_sub_district,
+                   enrollment."PostalCode_Onec" AS postal_code,
+                   NULLIF(trim(concat_ws(' ',
+                     enrollment.address_house_no,
+                     enrollment."VillageNumber_Onec",
+                     enrollment."Street_Onec",
+                     enrollment."Soi_Onec",
+                     enrollment."Trok_Onec",
+                     enrollment."SubDistrictNameThai_Onec",
+                     enrollment."DistrictNameThai_Onec",
+                     enrollment."ProvinceNameThai_Onec",
+                     enrollment."PostalCode_Onec"
+                   )), '') AS student_address,
+                   enrollment.address_latitude AS student_lat,
+                   enrollment.address_longitude AS student_lng,
+                   grade.label AS grade_label,
+                   enrollment."RoomID_Onec" AS room_no,
                    request.revision_number,
                    request.created_at,
                    request.updated_at,
@@ -345,6 +383,16 @@ export class ObservationReviewsRepository {
                    ), '[]'::jsonb) AS sources
             FROM student_follow_up_requests request
             JOIN users requester ON requester.id = request.requested_by
+            JOIN student_follow_up_request_statuses request_status
+              ON request_status.code = request.status
+            JOIN student_term enrollment
+              ON enrollment.student_uuid = request.student_uuid
+             AND enrollment.deleted_at IS NULL
+            JOIN schools school ON school.id = request.school_id
+            LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
+            LEFT JOIN cases opened_case
+              ON opened_case.id = request.opened_case_id
+             AND opened_case.deleted_at IS NULL
             LEFT JOIN users reviewer ON reviewer.id = request.reviewed_by
             LEFT JOIN users assignee ON assignee.id = request.assigned_by`;
   }
@@ -480,6 +528,7 @@ export class ObservationReviewsRepository {
     decision: FollowUpReviewDecision,
     reason: string,
     reviewerId: number,
+    openedCaseId: number | null,
     queryRunner: QueryRunner,
   ): Promise<boolean> {
     const result = await this.executor(queryRunner).query(
@@ -489,13 +538,195 @@ export class ObservationReviewsRepository {
            review_reason = $4,
            reviewed_by = $5,
            reviewed_at = now(),
+           opened_case_id = $6,
            revision_number = revision_number + 1
        WHERE id = $1
          AND revision_number = $2
          AND status = 'PENDING_REVIEW'
        RETURNING id`,
-      [requestId, expectedRevision, decision, reason, reviewerId],
+      [requestId, expectedRevision, decision, reason, reviewerId, openedCaseId],
     );
     return (result.rowCount ?? result.rows.length) === 1;
+  }
+
+  async listTeacherObservationReports(
+    scope: DataScope,
+    filters: {
+      status?: string;
+      concernLevel?: string;
+      urgency?: string;
+      schoolId?: number;
+      gradeLevelId?: number;
+      roomId?: string;
+      searchTerm?: string;
+      page: number;
+      limit: number;
+    },
+  ): Promise<TeacherObservationReportRow[]> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    const push = (value: unknown): number => {
+      params.push(value);
+      return params.length;
+    };
+
+    if (filters.status) {
+      conditions.push(`report.follow_up_status = $${push(filters.status)}`);
+    }
+    if (filters.concernLevel) {
+      conditions.push(`report.concern_level = $${push(filters.concernLevel)}`);
+    }
+    if (filters.urgency) {
+      conditions.push(`report.urgency = $${push(filters.urgency)}`);
+    }
+    if (filters.schoolId) {
+      conditions.push(`report.school_id = $${push(filters.schoolId)}`);
+    }
+    if (filters.gradeLevelId) {
+      conditions.push(`report.grade_level_id = $${push(filters.gradeLevelId)}`);
+    }
+    if (filters.roomId) {
+      conditions.push(`report.classroom_id = $${push(filters.roomId)}::uuid`);
+    }
+    if (filters.searchTerm) {
+      const searchIndex = push(`%${filters.searchTerm}%`);
+      conditions.push(
+        `(report.student_name ILIKE $${searchIndex} OR report.report_id ILIKE $${searchIndex})`,
+      );
+    }
+    const scoped = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'report.school_id',
+        province: 'report.province',
+        district: 'report.district',
+        sub_district: 'report.sub_district',
+        grade: 'report.grade_level_id',
+        room: 'report.classroom_id',
+      },
+      params.length + 1,
+    );
+    if (scoped.sql) conditions.push(`(${scoped.sql})`);
+    params.push(...scoped.params);
+    const limitIndex = push(filters.limit);
+    const offsetIndex = push((filters.page - 1) * filters.limit);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const result = await queryDataSource<TeacherObservationReportRow>(
+      this.dataSource,
+      `WITH requested_reports AS (
+         SELECT DISTINCT ON (request.id)
+           'FOLLOW_UP_REQUEST'::text AS report_kind,
+           request.id::text AS report_id,
+           observation.id::text AS observation_id,
+           observation.revision_number AS observation_revision,
+           request.student_uuid::text,
+           trim(concat_ws(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec"))
+             AS student_name,
+           request.school_id,
+           school.name AS school_name,
+           school.province,
+           school.district,
+           school.sub_district,
+           enrollment."GradeLevelID_Onec" AS grade_level_id,
+           grade.label AS grade_label,
+           enrollment.classroom_id::text,
+           enrollment."RoomID_Onec" AS room_no,
+           COALESCE(
+             observation.observer_display_name,
+             NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
+             author.username
+           ) AS author_display_name,
+           dimension.label_th AS dimension_label,
+           observation.concern_level,
+           observation.comment,
+           observation.observed_at,
+           request.id::text AS follow_up_request_id,
+           request.status AS follow_up_status,
+           request.urgency,
+           request.opened_case_id,
+           opened_case.status AS opened_case_status
+         FROM student_follow_up_requests request
+         JOIN student_follow_up_request_sources source
+           ON source.follow_up_request_id = request.id
+         JOIN student_observations observation
+           ON observation.id = source.observation_id
+          AND observation.deleted_at IS NULL
+         JOIN users author ON author.id = observation.author_user_id
+         JOIN observation_dimensions dimension
+           ON dimension.id = observation.observation_dimension_id
+         JOIN student_term enrollment
+           ON enrollment.student_uuid = request.student_uuid
+          AND enrollment.deleted_at IS NULL
+         JOIN schools school ON school.id = request.school_id
+         LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
+         LEFT JOIN cases opened_case
+           ON opened_case.id = request.opened_case_id
+          AND opened_case.deleted_at IS NULL
+         ORDER BY request.id, observation.observed_at DESC, observation.id DESC
+       ), unrequested_observations AS (
+         SELECT
+           'OBSERVATION'::text AS report_kind,
+           observation.id::text AS report_id,
+           observation.id::text AS observation_id,
+           observation.revision_number AS observation_revision,
+           observation.student_uuid::text,
+           trim(concat_ws(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec"))
+             AS student_name,
+           observation.school_id,
+           school.name AS school_name,
+           school.province,
+           school.district,
+           school.sub_district,
+           enrollment."GradeLevelID_Onec" AS grade_level_id,
+           grade.label AS grade_label,
+           enrollment.classroom_id::text,
+           enrollment."RoomID_Onec" AS room_no,
+           COALESCE(
+             observation.observer_display_name,
+             NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
+             author.username
+           ) AS author_display_name,
+           dimension.label_th AS dimension_label,
+           observation.concern_level,
+           observation.comment,
+           observation.observed_at,
+           NULL::text AS follow_up_request_id,
+           NULL::text AS follow_up_status,
+           NULL::text AS urgency,
+           NULL::integer AS opened_case_id,
+           NULL::text AS opened_case_status
+         FROM student_observations observation
+         JOIN users author ON author.id = observation.author_user_id
+         JOIN observation_dimensions dimension
+           ON dimension.id = observation.observation_dimension_id
+         JOIN student_term enrollment
+           ON enrollment.student_uuid = observation.student_uuid
+          AND enrollment.deleted_at IS NULL
+         JOIN schools school ON school.id = observation.school_id
+         LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
+         WHERE observation.deleted_at IS NULL
+           AND observation.concern_level IN ('WATCH', 'CONCERN')
+           AND NOT EXISTS (
+             SELECT 1 FROM student_follow_up_request_sources source
+             WHERE source.observation_id = observation.id
+           )
+       ), reports AS (
+         SELECT * FROM requested_reports
+         UNION ALL
+         SELECT * FROM unrequested_observations
+       )
+       SELECT report.*, COUNT(*) OVER()::int AS total_count
+       FROM reports report
+       ${where}
+       ORDER BY
+         CASE WHEN report.follow_up_status = 'PENDING_REVIEW' THEN 0 ELSE 1 END,
+         CASE report.concern_level WHEN 'CONCERN' THEN 0 WHEN 'WATCH' THEN 1 ELSE 2 END,
+         report.observed_at DESC,
+         report.report_id DESC
+       LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      params,
+    );
+    return result.rows;
   }
 }

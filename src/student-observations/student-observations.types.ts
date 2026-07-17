@@ -1,5 +1,5 @@
 export type ObservationConcernLevel = 'NOTE' | 'WATCH' | 'CONCERN';
-export type ObservationAuthorKind = 'USER' | 'TEACHER_ACCESS';
+export type ObservationAuthorKind = 'USER' | 'TEACHER_ACCESS' | 'TASK_LINK';
 
 export interface ObservationDimensionRow extends Record<string, unknown> {
   id: string;
@@ -64,6 +64,8 @@ export interface StudentObservationRow extends Record<string, unknown> {
   author_teacher_membership_id: string | null;
   source_teacher_access_grant_id: string | null;
   source_assignment_id: string | null;
+  source_task_link_id: string | null;
+  source_timetable_slot_id: string | null;
   subject_id: number | null;
   subject_code: string | null;
   subject_name: string | null;
@@ -107,7 +109,10 @@ export interface ObservationWriteInput {
   authorUserId: number;
   authorTeacherMembershipId: number | null;
   sourceTeacherAccessGrantId: string | null;
-  sourceAssignmentId: number;
+  sourceAssignmentId: number | null;
+  sourceTaskLinkId: string | null;
+  sourceTimetableSlotId: number | null;
+  observerDisplayName: string | null;
   dimensionId: number;
   concernLevel: ObservationConcernLevel;
   comment: string | null;

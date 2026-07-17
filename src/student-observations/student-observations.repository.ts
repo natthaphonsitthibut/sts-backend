@@ -206,6 +206,45 @@ export class StudentObservationsRepository {
       : null;
   }
 
+  async findActorAssignmentForTimetableSlot(
+    actorUserId: number,
+    studentUuid: string,
+    timetableSlotId: number,
+    onDate: string,
+    queryRunner?: QueryRunner,
+  ): Promise<ObservationAssignmentRow | null> {
+    const result = await this.executor(queryRunner).query<{ assignment_id: number }>(
+      `SELECT assignment.id AS assignment_id
+       FROM timetable_slots slot
+       JOIN student_term enrollment
+         ON enrollment.classroom_id = slot.classroom_id
+        AND enrollment.student_uuid = $2
+        AND enrollment.deleted_at IS NULL
+       JOIN classroom_teacher_assignments assignment
+         ON assignment.classroom_id = slot.classroom_id
+        AND assignment.school_id = slot.school_id
+        AND assignment.subject_id = slot.subject_id
+        AND assignment.assignment_status = 'ACTIVE'
+        AND assignment.deleted_at IS NULL
+       JOIN school_teacher_memberships membership
+         ON membership.id = assignment.teacher_membership_id
+        AND membership.teacher_user_id = $1
+        AND membership.membership_status = 'ACTIVE'
+        AND membership.deleted_at IS NULL
+       WHERE slot.id = $3
+         AND slot.deleted_at IS NULL
+         AND slot.teacher_user_id = $1
+         AND ($4::date >= COALESCE(assignment.effective_on, $4::date))
+         AND ($4::date <= COALESCE(assignment.effective_until, $4::date))
+       LIMIT 1`,
+      [actorUserId, studentUuid, timetableSlotId, onDate],
+    );
+    const assignmentId = result.rows[0]?.assignment_id;
+    return assignmentId
+      ? await this.findActiveAssignment(assignmentId, studentUuid, onDate, queryRunner)
+      : null;
+  }
+
   async resolveCatalog(
     dimensionCode: string,
     tagCodes: string[],
@@ -265,15 +304,22 @@ export class StudentObservationsRepository {
         observation.id::text,
         observation.student_uuid::text,
         observation.school_id,
-        observation.author_kind,
+        CASE WHEN observation.source_task_link_id IS NOT NULL
+          THEN 'TASK_LINK' ELSE observation.author_kind END AS author_kind,
         observation.author_user_id,
-        author.username AS author_username,
-        COALESCE(NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''), author.username)
+        COALESCE(observation.observer_display_name, author.username) AS author_username,
+        COALESCE(
+          observation.observer_display_name,
+          NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
+          author.username
+        )
           AS author_display_name,
         observation.author_teacher_membership_id::text,
         observation.source_teacher_access_grant_id::text,
         observation.source_assignment_id::text,
-        assignment.subject_id,
+        observation.source_task_link_id::text,
+        observation.source_timetable_slot_id::text,
+        COALESCE(assignment.subject_id, timetable_slot.subject_id) AS subject_id,
         subject.code AS subject_code,
         subject.name_th AS subject_name,
         observation.observation_dimension_id::text,
@@ -292,7 +338,10 @@ export class StudentObservationsRepository {
       JOIN observation_dimensions dimension ON dimension.id = observation.observation_dimension_id
       LEFT JOIN classroom_teacher_assignments assignment
         ON assignment.id = observation.source_assignment_id
-      LEFT JOIN subjects subject ON subject.id = assignment.subject_id
+      LEFT JOIN timetable_slots timetable_slot
+        ON timetable_slot.id = observation.source_timetable_slot_id
+      LEFT JOIN subjects subject
+        ON subject.id = COALESCE(assignment.subject_id, timetable_slot.subject_id)
       LEFT JOIN LATERAL (
         SELECT jsonb_agg(
           jsonb_build_object('id', tag.id::text, 'code', tag.code, 'labelTh', tag.label_th)
@@ -315,8 +364,9 @@ export class StudentObservationsRepository {
         INSERT INTO student_observations (
           student_uuid, school_id, author_kind, author_user_id,
           author_teacher_membership_id, source_teacher_access_grant_id, source_assignment_id,
+          source_task_link_id, source_timetable_slot_id, observer_display_name,
           observation_dimension_id, concern_level, comment, comment_required, observed_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING id::text
       `,
       [
@@ -327,6 +377,9 @@ export class StudentObservationsRepository {
         input.authorTeacherMembershipId,
         input.sourceTeacherAccessGrantId,
         input.sourceAssignmentId,
+        input.sourceTaskLinkId,
+        input.sourceTimetableSlotId,
+        input.observerDisplayName,
         input.dimensionId,
         input.concernLevel,
         input.comment,
@@ -382,6 +435,25 @@ export class StudentObservationsRepository {
         filters.limit,
         (filters.page - 1) * filters.limit,
       ],
+    );
+    return result.rows;
+  }
+
+  async listTaskLinkObservations(
+    studentUuid: string,
+    taskLinkId: string,
+    page: number,
+    limit: number,
+    queryRunner?: QueryRunner,
+  ): Promise<StudentObservationRow[]> {
+    const result = await this.executor(queryRunner).query<StudentObservationRow>(
+      `SELECT selected.*, COUNT(*) OVER()::int AS total_count
+       FROM (${this.observationSelectSql()}) selected
+       WHERE selected.student_uuid = $1
+         AND selected.source_task_link_id = $2
+       ORDER BY selected.observed_at DESC, selected.id DESC
+       LIMIT $3 OFFSET $4`,
+      [studentUuid, taskLinkId, limit, (page - 1) * limit],
     );
     return result.rows;
   }

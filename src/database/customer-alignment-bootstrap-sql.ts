@@ -616,6 +616,9 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     author_teacher_membership_id BIGINT,
     source_teacher_access_grant_id UUID,
     source_assignment_id BIGINT,
+    source_task_link_id UUID,
+    source_timetable_slot_id BIGINT,
+    observer_display_name VARCHAR(200),
     observation_dimension_id BIGINT NOT NULL,
     concern_level VARCHAR(16) NOT NULL DEFAULT 'NOTE',
     comment TEXT,
@@ -645,6 +648,12 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT fk_student_observations_assignment
       FOREIGN KEY (source_assignment_id) REFERENCES classroom_teacher_assignments(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_student_observations_task_link
+      FOREIGN KEY (source_task_link_id) REFERENCES task_links(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_student_observations_timetable_slot
+      FOREIGN KEY (source_timetable_slot_id) REFERENCES timetable_slots(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT fk_student_observations_dimension
       FOREIGN KEY (observation_dimension_id) REFERENCES observation_dimensions(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -658,6 +667,27 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
           AND source_teacher_access_grant_id IS NOT NULL
           AND author_teacher_membership_id IS NOT NULL
           AND source_assignment_id IS NOT NULL
+        )
+      ),
+    CONSTRAINT chk_student_observations_observer_display_name
+      CHECK (
+        observer_display_name IS NULL
+        OR length(trim(observer_display_name)) BETWEEN 1 AND 200
+      ),
+    CONSTRAINT chk_student_observations_task_link_context
+      CHECK (
+        (
+          source_task_link_id IS NULL
+          AND source_timetable_slot_id IS NULL
+          AND observer_display_name IS NULL
+        )
+        OR (
+          author_kind = 'USER'
+          AND source_task_link_id IS NOT NULL
+          AND source_teacher_access_grant_id IS NULL
+          AND author_teacher_membership_id IS NULL
+          AND source_assignment_id IS NULL
+          AND observer_display_name IS NOT NULL
         )
       ),
     CONSTRAINT chk_student_observations_concern_level
@@ -679,6 +709,9 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_student_observations_assignment
     ON student_observations (source_assignment_id, observed_at DESC)
     WHERE source_assignment_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_student_observations_task_link
+    ON student_observations (source_task_link_id, observed_at DESC)
+    WHERE source_task_link_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS student_observation_tags (
     observation_id BIGINT NOT NULL,
@@ -838,6 +871,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     assigned_task_id UUID,
     assigned_by INTEGER,
     assigned_at TIMESTAMPTZ,
+    opened_case_id INTEGER,
     revision_number INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -870,10 +904,14 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT fk_follow_up_requests_assigned_by
       FOREIGN KEY (assigned_by) REFERENCES users(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_follow_up_requests_opened_case
+      FOREIGN KEY (opened_case_id) REFERENCES cases(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_follow_up_requests_status
+      FOREIGN KEY (status) REFERENCES student_follow_up_request_statuses(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT chk_follow_up_requests_type
       CHECK (follow_up_request_type IN ('HOME_VISIT_CONSIDERATION')),
-    CONSTRAINT chk_follow_up_requests_status
-      CHECK (status IN ('PENDING_REVIEW', 'APPROVE_AND_ASSIGN', 'NEED_MORE_INFO', 'REJECT')),
     CONSTRAINT chk_follow_up_requests_urgency CHECK (urgency IN ('NORMAL', 'URGENT')),
     CONSTRAINT chk_follow_up_requests_reason
       CHECK (length(trim(request_reason)) BETWEEN 1 AND 1000),
@@ -893,7 +931,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
       CHECK (
         (assigned_task_id IS NULL AND assigned_by IS NULL AND assigned_at IS NULL)
         OR
-        (status = 'APPROVE_AND_ASSIGN'
+        (status = 'APPROVED'
           AND assigned_task_id IS NOT NULL
           AND assigned_by IS NOT NULL
           AND assigned_at IS NOT NULL)
@@ -910,6 +948,9 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_up_requests_assigned_task
     ON student_follow_up_requests (assigned_task_id)
     WHERE assigned_task_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_up_requests_opened_case
+    ON student_follow_up_requests (opened_case_id)
+    WHERE opened_case_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS student_follow_up_request_sources (
     follow_up_request_id UUID NOT NULL,

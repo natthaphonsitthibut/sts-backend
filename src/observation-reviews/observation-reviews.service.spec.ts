@@ -41,6 +41,8 @@ const FOLLOW_UP_ROW: FollowUpRequestRow = {
   school_id: 101,
   follow_up_request_type: 'HOME_VISIT_CONSIDERATION',
   status: 'PENDING_REVIEW',
+  status_label_th: 'รอพิจารณา',
+  status_badge_variant: 'warning',
   urgency: 'URGENT',
   request_reason: 'ขอให้โรงเรียนพิจารณาติดตาม',
   supplemental_note: null,
@@ -57,6 +59,22 @@ const FOLLOW_UP_ROW: FollowUpRequestRow = {
   assigned_by: null,
   assigned_by_username: null,
   assigned_at: null,
+  opened_case_id: null,
+  opened_case_status: null,
+  student_first_name: 'เด็ก',
+  student_last_name: 'ทดสอบ',
+  student_name: 'เด็ก ทดสอบ',
+  student_school: 'โรงเรียนทดสอบ',
+  student_address: null,
+  address_line: null,
+  address_province: null,
+  address_district: null,
+  address_sub_district: null,
+  postal_code: null,
+  student_lat: null,
+  student_lng: null,
+  grade_label: 'ป.1',
+  room_no: 1,
   revision_number: 2,
   created_at: '2026-07-15T01:00:00.000Z',
   updated_at: '2026-07-15T02:00:00.000Z',
@@ -96,18 +114,25 @@ describe('ObservationReviewsService', () => {
       findFollowUpById: jest.fn().mockResolvedValue(FOLLOW_UP_ROW),
       listFollowUps: jest.fn().mockResolvedValue([FOLLOW_UP_ROW]),
       reviewFollowUp: jest.fn().mockResolvedValue(true),
+      listTeacherObservationReports: jest.fn().mockResolvedValue([]),
     };
-    const auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
+    const auditLog = {
+      record: jest.fn().mockResolvedValue(undefined),
+      recordAtomic: jest.fn().mockResolvedValue(undefined),
+    };
     const teacherAccess = { withActiveGrantContext: jest.fn() };
+    const taskRepository = { createCase: jest.fn().mockResolvedValue(123) };
     return {
       service: new ObservationReviewsService(
         repository as never,
         auditLog as never,
         teacherAccess as never,
+        taskRepository as never,
       ),
       repository,
       auditLog,
       teacherAccess,
+      taskRepository,
     };
   }
 
@@ -143,6 +168,50 @@ describe('ObservationReviewsService', () => {
       expect.objectContaining({ action: 'STUDENT_OBSERVATION_UPDATE' }),
       expect.anything(),
     );
+  });
+
+  it('records an attendance-only review when no teacher observation exists', async () => {
+    const { service, repository } = buildService();
+    repository.validateObservationSources.mockResolvedValue([]);
+    repository.insertRiskReview.mockResolvedValue({
+      ...RISK_ROW,
+      teacher_concern_signal: 'NONE',
+      sources: [],
+    });
+
+    const result = await service.createRiskReview(
+      STUDENT_UUID,
+      {
+        expectedRevision: 0,
+        humanRiskDecision: 'WATCH',
+        decisionReason: 'ติดตามจากข้อมูลการมาเรียนก่อน',
+        sourceObservations: [],
+      },
+      MANAGER,
+    );
+
+    expect(repository.insertRiskReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calculatedAttendanceRisk: 'HIGH',
+        teacherConcernSignal: 'NONE',
+        sources: [],
+      }),
+      expect.anything(),
+    );
+    expect(result.data.teacherConcernSignal).toBe('NONE');
+    expect(result.data.sourceObservations).toEqual([]);
+  });
+
+  it('returns current attendance risk before the first human review', async () => {
+    const { service, repository } = buildService();
+
+    const result = await service.getLatestRiskReview(STUDENT_UUID, MANAGER);
+
+    expect(result).toEqual({
+      data: null,
+      meta: { currentCalculatedAttendanceRisk: 'HIGH' },
+    });
+    expect(repository.findCalculatedAttendanceRisk).toHaveBeenCalledWith(STUDENT_UUID);
   });
 
   it('rejects a stale human decision revision', async () => {
@@ -270,16 +339,20 @@ describe('ObservationReviewsService', () => {
     );
   });
 
-  it('records review intent without creating a case, visit, or risk mutation', async () => {
-    const { service, repository } = buildService();
+  it('opens a case immediately when the reviewer approves', async () => {
+    const { service, repository, taskRepository } = buildService();
     repository.findFollowUpById.mockResolvedValueOnce(FOLLOW_UP_ROW).mockResolvedValueOnce({
       ...FOLLOW_UP_ROW,
-      status: 'APPROVE_AND_ASSIGN',
-      review_decision: 'APPROVE_AND_ASSIGN',
-      review_reason: 'อนุมัติให้ส่งต่อขั้นตอนมอบหมาย',
+      status: 'APPROVED',
+      status_label_th: 'อนุมัติแล้ว',
+      status_badge_variant: 'success',
+      review_decision: 'APPROVED',
+      review_reason: 'อนุมัติให้เปิดเคส',
       reviewed_by: 5,
       reviewed_by_username: 'director',
       reviewed_at: '2026-07-15T03:00:00.000Z',
+      opened_case_id: 123,
+      opened_case_status: 'OPEN',
       revision_number: 3,
     });
 
@@ -288,17 +361,26 @@ describe('ObservationReviewsService', () => {
       REQUEST_ID,
       {
         expectedRevision: 2,
-        decision: 'APPROVE_AND_ASSIGN',
-        reason: 'อนุมัติให้ส่งต่อขั้นตอนมอบหมาย',
+        decision: 'APPROVED',
+        reason: 'อนุมัติให้เปิดเคส',
       },
       MANAGER,
     );
 
-    expect(repository.reviewFollowUp).toHaveBeenCalledTimes(1);
-    expect(result.data.status).toBe('APPROVE_AND_ASSIGN');
-    expect(Object.keys(repository)).not.toEqual(
-      expect.arrayContaining(['createCase', 'createVisit', 'updateRiskProfile']),
+    expect(taskRepository.createCase).toHaveBeenCalledTimes(1);
+    expect(repository.reviewFollowUp).toHaveBeenCalledWith(
+      REQUEST_ID,
+      2,
+      'APPROVED',
+      'อนุมัติให้เปิดเคส',
+      5,
+      123,
+      expect.anything(),
     );
+    expect(result.data).toMatchObject({
+      status: 'APPROVED',
+      openedCase: { caseId: 123, status: 'OPEN' },
+    });
   });
 
   it('denies executive access to raw per-student review data', async () => {
@@ -312,5 +394,19 @@ describe('ObservationReviewsService', () => {
         data_scope: { global: true },
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('lists the teacher report queue with server-enforced actor scope', async () => {
+    const { service, repository } = buildService();
+    await expect(
+      service.listTeacherObservationReports({ page: 1, limit: 20 }, MANAGER),
+    ).resolves.toEqual({
+      data: [],
+      meta: { page: 1, limit: 20, totalCount: 0, totalPages: 0 },
+    });
+    expect(repository.listTeacherObservationReports).toHaveBeenCalledWith(
+      { school_ids: [101] },
+      expect.objectContaining({ page: 1, limit: 20 }),
+    );
   });
 });

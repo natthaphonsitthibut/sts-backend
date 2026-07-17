@@ -153,6 +153,7 @@ export interface FollowUpTaskAssignmentRow extends QueryResultRow {
   assigned_by: number | string | null;
   assigned_at: Date | string | null;
   assigned_case_id: number | string | null;
+  opened_case_id: number | string | null;
   assigned_link_token_encrypted: string | null;
   assigned_link_expires_at: Date | string | null;
 }
@@ -853,6 +854,7 @@ export class TaskRepository {
               request.assigned_task_id::text,
               request.assigned_by,
               request.assigned_at,
+              request.opened_case_id,
               task.case_id AS assigned_case_id,
               root_link.token_encrypted AS assigned_link_token_encrypted,
               root_link.expires_at AS assigned_link_expires_at
@@ -890,7 +892,7 @@ export class TaskRepository {
            assigned_at = now(),
            revision_number = revision_number + 1
        WHERE id = $1
-         AND status = 'APPROVE_AND_ASSIGN'
+         AND status = 'APPROVED'
          AND assigned_task_id IS NULL
        RETURNING id`,
       [requestId, taskId, actorId],

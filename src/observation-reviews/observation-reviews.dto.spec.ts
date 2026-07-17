@@ -19,16 +19,14 @@ describe('Observation review DTO contracts', () => {
     expect(dto.decisionReason).toBe('ต้องติดตามข้อมูลเพิ่ม');
   });
 
-  it('rejects empty sources and unsupported risk decisions', async () => {
+  it('allows empty review sources but rejects unsupported risk decisions', async () => {
     const dto = plainToInstance(CreateRiskReviewDto, {
       expectedRevision: 0,
       humanRiskDecision: 'AUTO_OPEN_CASE',
       decisionReason: 'reason',
       sourceObservations: [],
     });
-    expect((await validate(dto)).map((error) => error.property)).toEqual(
-      expect.arrayContaining(['humanRiskDecision', 'sourceObservations']),
-    );
+    expect((await validate(dto)).map((error) => error.property)).toEqual(['humanRiskDecision']);
   });
 
   it('allows only NORMAL/URGENT request urgency and explicit review transitions', async () => {

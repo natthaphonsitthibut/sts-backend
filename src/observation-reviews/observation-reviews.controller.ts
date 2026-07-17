@@ -26,6 +26,7 @@ import {
   CreatePublicFollowUpRequestDto,
   CreateRiskReviewDto,
   ListFollowUpRequestsQueryDto,
+  ListTeacherObservationReportsQueryDto,
   PublicFollowUpRequestsQueryDto,
   ReviewFollowUpRequestDto,
 } from './dto/observation-reviews.dto';
@@ -52,6 +53,21 @@ export class StudentRiskReviewController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.getLatestRiskReview(studentTermId, actor);
+  }
+}
+
+@UseGuards(AuthGuard, PermissionsGuard)
+@RequirePermission('manage-student-observations')
+@Controller('api/student-risk-report/teacher-reports')
+export class TeacherObservationReportsController {
+  constructor(private readonly service: ObservationReviewsService) {}
+
+  @Get()
+  list(
+    @Query() query: ListTeacherObservationReportsQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listTeacherObservationReports(query, actor);
   }
 }
 

@@ -19,6 +19,8 @@ import {
   resolvePage,
 } from '../common/pagination/pagination.util';
 import { getBangkokDateString } from '../common/utils/date.util';
+import { createSqlQueryExecutor } from '../database/sql-query';
+import { TaskRepository } from '../task/task.repository';
 import { TeacherAccessService } from '../teacher-access/teacher-access.service';
 import type { ActiveTeacherGrantContext } from '../teacher-access/teacher-access.types';
 import type {
@@ -26,8 +28,10 @@ import type {
   CreateRiskReviewDto,
   HumanRiskReviewResponseDto,
   ListFollowUpRequestsQueryDto,
+  ListTeacherObservationReportsQueryDto,
   ReviewFollowUpRequestDto,
   StudentFollowUpRequestResponseDto,
+  TeacherObservationReportResponseDto,
 } from './dto/observation-reviews.dto';
 import { ObservationReviewsRepository } from './observation-reviews.repository';
 import type {
@@ -36,6 +40,7 @@ import type {
   ObservationReviewEnrollmentRow,
   ObservationSourceRef,
   RiskReviewRow,
+  TeacherObservationReportRow,
   ValidatedObservationSourceRow,
 } from './observation-reviews.types';
 
@@ -53,6 +58,7 @@ export class ObservationReviewsService {
     private readonly repository: ObservationReviewsRepository,
     private readonly auditLog: AuditLogService,
     private readonly teacherAccess: TeacherAccessService,
+    private readonly taskRepository: TaskRepository,
   ) {}
 
   private denyExecutiveRaw(actor: AuthenticatedRequestUser): void {
@@ -155,6 +161,10 @@ export class ObservationReviewsService {
       schoolId: row.school_id,
       requestType: row.follow_up_request_type,
       status: row.status,
+      statusPresentation: {
+        labelTh: row.status_label_th,
+        badgeVariant: row.status_badge_variant,
+      },
       urgency: row.urgency,
       reason: row.request_reason,
       note: row.supplemental_note,
@@ -183,10 +193,81 @@ export class ObservationReviewsService {
               assignedAt: new Date(row.assigned_at).toISOString(),
             }
           : null,
+      openedCase:
+        row.opened_case_id && row.opened_case_status
+          ? { caseId: Number(row.opened_case_id), status: row.opened_case_status }
+          : null,
       revision: Number(row.revision_number),
       sourceObservations: this.parseSources(row.sources),
       createdAt: new Date(row.created_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+
+  private toTeacherObservationReport(
+    row: TeacherObservationReportRow,
+  ): TeacherObservationReportResponseDto {
+    return {
+      reportKind: row.report_kind,
+      reportId: row.report_id,
+      observationId: row.observation_id,
+      observationRevision: Number(row.observation_revision),
+      studentTermId: row.student_uuid,
+      studentName: row.student_name,
+      schoolId: Number(row.school_id),
+      schoolName: row.school_name,
+      gradeLevelId: row.grade_level_id === null ? null : Number(row.grade_level_id),
+      gradeLabel: row.grade_label,
+      classroomId: row.classroom_id,
+      roomNo: row.room_no === null ? null : Number(row.room_no),
+      authorDisplayName: row.author_display_name,
+      dimensionLabel: row.dimension_label,
+      concernLevel: row.concern_level,
+      comment: row.comment,
+      observedAt: new Date(row.observed_at).toISOString(),
+      followUpRequestId: row.follow_up_request_id,
+      followUpStatus: row.follow_up_status === 'NEED_MORE_INFO' ? null : row.follow_up_status,
+      urgency: row.urgency,
+      openedCaseId: row.opened_case_id === null ? null : Number(row.opened_case_id),
+      openedCaseStatus: row.opened_case_status,
+    };
+  }
+
+  async listTeacherObservationReports(
+    query: ListTeacherObservationReportsQueryDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    this.denyExecutiveRaw(actor);
+    if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ดูรายงานข้อสังเกตจากครู');
+    }
+    const scope = resolveActorDataScope(actor) ?? {};
+    if (isUnconfiguredDataScope(scope) || scope.own_only === true) {
+      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้ดูคิวรายงานระดับโรงเรียน');
+    }
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const rows = await this.repository.listTeacherObservationReports(scope, {
+      ...query,
+      page,
+      limit,
+    });
+    const data = rows.map((row) => this.toTeacherObservationReport(row));
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'student_observation_reports',
+      targetId: 'teacher-reports',
+      metadata: {
+        resultCount: data.length,
+        operation: 'TEACHER_OBSERVATION_REPORT_QUEUE_VIEW',
+      },
+      ip: null,
+    });
+    return {
+      data,
+      meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
     };
   }
 
@@ -206,11 +287,9 @@ export class ObservationReviewsService {
       if (currentRevision !== dto.expectedRevision) {
         throw new ConflictException('ผลทบทวนถูกเปลี่ยนแปลง กรุณาโหลดข้อมูลใหม่');
       }
-      const sourceRows = await this.validateSources(
-        studentUuid,
-        dto.sourceObservations,
-        queryRunner,
-      );
+      const sourceRows = dto.sourceObservations.length
+        ? await this.validateSources(studentUuid, dto.sourceObservations, queryRunner)
+        : [];
       const calculatedAttendanceRisk = await this.repository.findCalculatedAttendanceRisk(
         studentUuid,
         queryRunner,
@@ -256,7 +335,10 @@ export class ObservationReviewsService {
     const enrollment = await this.repository.findEnrollment(studentUuid);
     if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
     await this.requireManagerAccess(actor, enrollment);
-    const row = await this.repository.findLatestRiskReview(studentUuid);
+    const [row, currentCalculatedAttendanceRisk] = await Promise.all([
+      this.repository.findLatestRiskReview(studentUuid),
+      this.repository.findCalculatedAttendanceRisk(studentUuid),
+    ]);
     await this.auditLog.record({
       actorUserId: actor.id,
       actorLabel: actor.username,
@@ -270,7 +352,10 @@ export class ObservationReviewsService {
       },
       ip: null,
     });
-    return { data: row ? this.toRiskReview(row) : null };
+    return {
+      data: row ? this.toRiskReview(row) : null,
+      meta: { currentCalculatedAttendanceRisk },
+    };
   }
 
   private async resolveLoggedTeacher(
@@ -512,12 +597,41 @@ export class ObservationReviewsService {
       }
       const reason = dto.reason.trim();
       if (!reason) throw new BadRequestException('กรุณาระบุเหตุผลของผลทบทวน');
+      const studentName = current.student_name.trim();
+      if (dto.decision === 'APPROVED' && !studentName) {
+        throw new ConflictException('ข้อมูลนักเรียนไม่มีชื่อสำหรับเปิดเคส');
+      }
+      const openedCaseId =
+        dto.decision === 'APPROVED'
+          ? await this.taskRepository.createCase(
+              {
+                studentName,
+                studentFirstName: current.student_first_name,
+                studentLastName: current.student_last_name,
+                studentSchool: current.student_school,
+                studentAddress: current.student_address,
+                addressLine: current.address_line,
+                addressProvince: current.address_province,
+                addressDistrict: current.address_district,
+                addressSubDistrict: current.address_sub_district,
+                postalCode: current.postal_code,
+                studentLat: current.student_lat,
+                studentLng: current.student_lng,
+                reasonFlagged: current.request_reason,
+                studentUuid,
+                schoolId: enrollment.school_id,
+                createdBy: actor.id,
+              },
+              createSqlQueryExecutor(queryRunner),
+            )
+          : null;
       const updated = await this.repository.reviewFollowUp(
         requestId,
         dto.expectedRevision,
         dto.decision,
         reason,
         actor.id,
+        openedCaseId,
         queryRunner,
       );
       if (!updated) throw new ConflictException('คำขอถูกเปลี่ยนแปลง กรุณาโหลดข้อมูลใหม่');
@@ -534,6 +648,7 @@ export class ObservationReviewsService {
             schoolId: enrollment.school_id,
             studentTermId: studentUuid,
             decision: dto.decision,
+            openedCaseId,
             revision: Number(row.revision_number),
             operation: 'STUDENT_FOLLOW_UP_REQUEST_REVIEW',
           },

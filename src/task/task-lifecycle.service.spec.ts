@@ -31,6 +31,7 @@ describe('TaskLifecycleService', () => {
       | 'withTransaction'
       | 'findSchoolById'
       | 'findStudentTermMetadata'
+      | 'findCaseById'
       | 'createCase'
       | 'updateCaseStatus'
       | 'createTask'
@@ -56,6 +57,11 @@ describe('TaskLifecycleService', () => {
         sub_district: 'ดุสิต',
       }),
       findStudentTermMetadata: jest.fn().mockResolvedValue(null),
+      findCaseById: jest.fn().mockResolvedValue({
+        id: 123,
+        school_id: 10010002,
+        student_uuid: studentUuid,
+      }),
       createCase: jest.fn().mockResolvedValue(123),
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       createTask: jest.fn().mockResolvedValue(undefined),
@@ -281,7 +287,8 @@ describe('TaskLifecycleService', () => {
       id: followUpRequestId,
       student_uuid: studentUuid,
       school_id: 10010002,
-      status: 'APPROVE_AND_ASSIGN',
+      status: 'APPROVED',
+      opened_case_id: 123,
       assigned_task_id: null,
       assigned_by: null,
       assigned_at: null,
@@ -334,7 +341,8 @@ describe('TaskLifecycleService', () => {
       id: followUpRequestId,
       student_uuid: studentUuid,
       school_id: 10010002,
-      status: 'APPROVE_AND_ASSIGN',
+      status: 'APPROVED',
+      opened_case_id: 123,
       assigned_task_id: assignedTaskId,
       assigned_by: 7,
       assigned_at: '2026-07-15T04:00:00.000Z',

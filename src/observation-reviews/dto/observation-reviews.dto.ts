@@ -55,7 +55,6 @@ export class CreateRiskReviewDto {
   decisionReason!: string;
 
   @IsArray()
-  @ArrayMinSize(1)
   @ArrayMaxSize(20)
   @ValidateNested({ each: true })
   @Type(() => ObservationSourceRefDto)
@@ -116,6 +115,42 @@ export class ListFollowUpRequestsQueryDto extends PaginationQueryDto {
   assignmentId?: number;
 }
 
+export class ListTeacherObservationReportsQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsIn(['PENDING_REVIEW', 'APPROVED', 'REJECTED'])
+  status?: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+
+  @IsOptional()
+  @IsIn(['NOTE', 'WATCH', 'CONCERN'])
+  concernLevel?: 'NOTE' | 'WATCH' | 'CONCERN';
+
+  @IsOptional()
+  @IsIn(FOLLOW_UP_URGENCIES)
+  urgency?: FollowUpUrgency;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @IsUUID()
+  roomId?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(120)
+  searchTerm?: string;
+}
+
 export class PublicFollowUpRequestsQueryDto extends PaginationQueryDto {
   @IsUUID()
   studentTermId!: string;
@@ -168,12 +203,21 @@ export class FollowUpAssignmentResponseDto {
   assignedAt!: string;
 }
 
+export class FollowUpCaseResponseDto {
+  caseId!: number;
+  status!: string;
+}
+
 export class StudentFollowUpRequestResponseDto {
   id!: string;
   studentTermId!: string;
   schoolId!: number;
   requestType!: 'HOME_VISIT_CONSIDERATION';
-  status!: 'PENDING_REVIEW' | FollowUpReviewDecision;
+  status!: 'PENDING_REVIEW' | FollowUpReviewDecision | 'NEED_MORE_INFO';
+  statusPresentation!: {
+    labelTh: string;
+    badgeVariant: string;
+  };
   urgency!: FollowUpUrgency;
   reason!: string;
   note!: string | null;
@@ -181,8 +225,34 @@ export class StudentFollowUpRequestResponseDto {
   assignmentId!: number;
   review!: FollowUpReviewOutcomeResponseDto | null;
   assignment!: FollowUpAssignmentResponseDto | null;
+  openedCase!: FollowUpCaseResponseDto | null;
   revision!: number;
   sourceObservations!: ObservationSourceResponseDto[];
   createdAt!: string;
   updatedAt!: string;
+}
+
+export class TeacherObservationReportResponseDto {
+  reportKind!: 'FOLLOW_UP_REQUEST' | 'OBSERVATION';
+  reportId!: string;
+  observationId!: string;
+  observationRevision!: number;
+  studentTermId!: string;
+  studentName!: string;
+  schoolId!: number;
+  schoolName!: string;
+  gradeLevelId!: number | null;
+  gradeLabel!: string | null;
+  classroomId!: string | null;
+  roomNo!: number | null;
+  authorDisplayName!: string;
+  dimensionLabel!: string;
+  concernLevel!: 'NOTE' | 'WATCH' | 'CONCERN';
+  comment!: string | null;
+  observedAt!: string;
+  followUpRequestId!: string | null;
+  followUpStatus!: 'PENDING_REVIEW' | FollowUpReviewDecision | null;
+  urgency!: FollowUpUrgency | null;
+  openedCaseId!: number | null;
+  openedCaseStatus!: string | null;
 }

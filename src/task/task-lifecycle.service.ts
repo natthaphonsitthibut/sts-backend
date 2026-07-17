@@ -405,6 +405,7 @@ export class TaskLifecycleService {
     try {
       await this.taskRepository.withTransaction(async (executor) => {
         let caseId: number | null = null;
+        let approvedFollowUpCaseId: number | null = null;
         const inputTargetSchoolId = this.normalizeNumber(data.target_school_id);
         let resolvedTargetSchoolId = inputTargetSchoolId;
 
@@ -416,7 +417,7 @@ export class TaskLifecycleService {
           if (!followUp) {
             throw new NotFoundException('ไม่พบคำขอติดตาม');
           }
-          if (followUp.status !== 'APPROVE_AND_ASSIGN') {
+          if (followUp.status !== 'APPROVED') {
             throw new ConflictException('คำขอติดตามยังไม่ได้รับอนุมัติให้มอบหมาย');
           }
           const followUpSchoolId = this.normalizeNumber(followUp.school_id);
@@ -436,6 +437,10 @@ export class TaskLifecycleService {
           }
           await this.assertSchoolWithinActorScope(currentActor, followUpSchoolId, executor);
           resolvedTargetSchoolId = followUpSchoolId;
+          approvedFollowUpCaseId = this.normalizeNumber(followUp.opened_case_id);
+          if (approvedFollowUpCaseId === null) {
+            throw new ConflictException('คำขอติดตามที่อนุมัติแล้วยังไม่มีเคส');
+          }
 
           if (followUp.assigned_task_id) {
             if (!followUp.assigned_link_token_encrypted || !followUp.assigned_link_expires_at) {
@@ -458,7 +463,15 @@ export class TaskLifecycleService {
         }
 
         if (taskType === 'VISIT') {
-          const existingCaseId = this.normalizeNumber(data.existing_case_id);
+          const requestedCaseId = this.normalizeNumber(data.existing_case_id);
+          if (
+            requestedCaseId !== null &&
+            approvedFollowUpCaseId !== null &&
+            requestedCaseId !== approvedFollowUpCaseId
+          ) {
+            throw new BadRequestException('เคสไม่ตรงกับคำขอติดตาม');
+          }
+          const existingCaseId = requestedCaseId ?? approvedFollowUpCaseId;
 
           if (existingCaseId) {
             const existingCase = await this.taskRepository.findCaseById(

@@ -37,9 +37,10 @@ describe('ObservationReviewsRepository', () => {
     await repository.reviewFollowUp(
       '22222222-2222-4222-8222-222222222222',
       2,
-      'APPROVE_AND_ASSIGN',
+      'APPROVED',
       'approved',
       5,
+      123,
       queryRunner as never,
     );
 

@@ -58,6 +58,7 @@ import { RiskProfileModule } from '../risk-profile/risk-profile.module';
     CaseService,
     TaskPolicyService,
     TaskAccessService,
+    TaskRepository,
   ],
 })
 export class TaskModule {}

@@ -23,12 +23,7 @@ function trimOptionalText({ value }: { value: unknown }): unknown {
   return typeof value === 'string' ? value.trim() : value;
 }
 
-export class CreateStudentObservationDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  assignmentId!: number;
-
+export class StudentObservationPayloadDto {
   @Matches(OBSERVATION_CODE_PATTERN)
   dimensionCode!: string;
 
@@ -50,6 +45,20 @@ export class CreateStudentObservationDto {
   @IsOptional()
   @IsISO8601({ strict: true })
   observedAt?: string;
+}
+
+export class CreateStudentObservationDto extends StudentObservationPayloadDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetableSlotId?: number;
 }
 
 export class UpdateStudentObservationDto {
@@ -111,10 +120,37 @@ export class PublicStudentObservationQueryDto extends ListStudentObservationsQue
   studentTermId!: string;
 }
 
-export class CreatePublicStudentObservationDto extends CreateStudentObservationDto {
+export class CreatePublicStudentObservationDto extends StudentObservationPayloadDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId!: number;
+
   /** Canonical UUID of one student_term enrollment snapshot. */
   @IsUUID()
   studentTermId!: string;
+}
+
+export class CreateTaskLinkStudentObservationDto extends StudentObservationPayloadDto {
+  @IsUUID()
+  studentTermId!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetableSlotId?: number;
+}
+
+export class TaskLinkStudentObservationQueryDto extends PaginationQueryDto {
+  @IsUUID()
+  studentTermId!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetableSlotId?: number;
 }
 
 export class UpdatePublicStudentObservationDto extends UpdateStudentObservationDto {
