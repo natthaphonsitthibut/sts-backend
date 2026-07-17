@@ -88,7 +88,7 @@ function studentName(index) {
   };
 }
 
-async function auditStructure(dataSource) {
+async function auditStructure(dataSource, expectedTeacherPasswordHash = null) {
   const [audit] = await dataSource.query(`
     WITH active_schools AS (
       SELECT id FROM schools WHERE school_status = 'ACTIVE'
@@ -161,9 +161,20 @@ async function auditStructure(dataSource) {
             OR temporary_password_expires_at IS NOT NULL
           )
       ) AS synthetic_teacher_password_state_issues,
+      CASE WHEN $4::text IS NULL THEN NULL ELSE (
+        SELECT COUNT(*)::int FROM users
+        WHERE data_origin_code = 'DEMO'
+          AND role = 'TEACHER'
+          AND password IS DISTINCT FROM $4::text
+      ) END AS synthetic_teacher_password_hash_mismatches,
       (SELECT COUNT(*)::int FROM users WHERE username LIKE 'demo_teacher_%') AS fixture_style_teacher_usernames,
       (SELECT COUNT(*)::int FROM student_person_identifier WHERE source = $3 AND deleted_at IS NULL) AS synthetic_students
-  `, [KINDERGARTEN_LABELS, STUDENTS_PER_KINDERGARTEN_CLASSROOM, SEED_SOURCE]);
+  `, [
+    KINDERGARTEN_LABELS,
+    STUDENTS_PER_KINDERGARTEN_CLASSROOM,
+    SEED_SOURCE,
+    expectedTeacherPasswordHash,
+  ]);
 
   assert(audit.active_schools > 0, 'No active schools are available');
   assert(audit.kindergarten_grade_levels === 3, 'Kindergarten grade catalog is incomplete');
@@ -173,11 +184,14 @@ async function auditStructure(dataSource) {
   assert(audit.classrooms_without_valid_homeroom === 0, 'Some active classrooms have no valid homeroom teacher');
   assert(audit.kindergarten_classrooms_below_minimum === 0, 'Some kindergarten classrooms have too few students');
   assert(audit.synthetic_teacher_password_state_issues === 0, 'Some demo teachers have an invalid temporary-password state');
+  if (expectedTeacherPasswordHash) {
+    assert(audit.synthetic_teacher_password_hash_mismatches === 0, 'Some demo teachers retained an older password hash');
+  }
   assert(audit.fixture_style_teacher_usernames === 0, 'Fixture-style teacher usernames remain');
   return audit;
 }
 
-async function seedStructure(dataSource, passwordService) {
+async function seedStructure(dataSource, unusablePasswordHash) {
   const [actor] = await dataSource.query(`
     SELECT id
     FROM users
@@ -187,7 +201,6 @@ async function seedStructure(dataSource, passwordService) {
     LIMIT 1
   `);
   assert(actor?.id, 'No active administrator is available for seed attribution');
-  const unusablePasswordHash = await passwordService.hash(randomBytes(32).toString('hex'));
 
   return dataSource.transaction(async (manager) => {
     const [termTemplate] = await manager.query(`
@@ -395,6 +408,7 @@ async function seedStructure(dataSource, passwordService) {
     await manager.query(`
       UPDATE users teacher
       SET username = plan.username,
+          password = $1,
           "FirstName" = plan.first_name,
           "LastName" = plan.last_name,
           data_origin_code = 'DEMO'
@@ -405,7 +419,7 @@ async function seedStructure(dataSource, passwordService) {
           SELECT 1 FROM users target
           WHERE target.username = plan.username AND target.id <> teacher.id
         )
-    `);
+    `, [unusablePasswordHash]);
 
     await manager.query(`
       INSERT INTO users (
@@ -418,7 +432,8 @@ async function seedStructure(dataSource, passwordService) {
         plan.school_name, 'ACTIVE', FALSE, 'DEMO'
       FROM demo_teacher_plan_20260716 plan
       ON CONFLICT (username) DO UPDATE
-      SET "FirstName" = EXCLUDED."FirstName",
+      SET password = EXCLUDED.password,
+          "FirstName" = EXCLUDED."FirstName",
           "LastName" = EXCLUDED."LastName",
           role = 'TEACHER',
           permissions = EXCLUDED.permissions,
@@ -661,10 +676,12 @@ async function main() {
   await dataSource.initialize();
   try {
     let seedResult = null;
+    let expectedTeacherPasswordHash = null;
     if (!AUDIT_ONLY) {
-      seedResult = await seedStructure(dataSource, new PasswordService());
+      expectedTeacherPasswordHash = await new PasswordService().hash(randomBytes(32).toString('hex'));
+      seedResult = await seedStructure(dataSource, expectedTeacherPasswordHash);
     }
-    const audit = await auditStructure(dataSource);
+    const audit = await auditStructure(dataSource, expectedTeacherPasswordHash);
     console.log(JSON.stringify({ mode: AUDIT_ONLY ? 'audit' : 'seed', seed: seedResult, audit }, null, 2));
   } finally {
     await dataSource.destroy();

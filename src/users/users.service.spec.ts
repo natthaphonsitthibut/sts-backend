@@ -417,6 +417,43 @@ describe('UsersService student accounts', () => {
     );
   });
 
+  it('authorizes a partial teacher update against the existing school scope', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'teacher.one',
+      FirstName: 'ครู',
+      LastName: 'หนึ่ง',
+      PersonID_Onec: '1234567890123',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['attendance'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    } as never);
+
+    await expect(service.updateUser(actor, 77, { FirstName: 'ครูแก้ไข' })).resolves.toEqual({
+      success: true,
+    });
+
+    expect(usersPolicyService.assertAssignablePayload).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({
+        role: 'TEACHER',
+        data_scope: { school_ids: [10010002] },
+      }),
+      { allowEqualRole: false },
+      expect.any(Map),
+    );
+    expect(usersRepository.updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 77,
+        firstName: 'ครูแก้ไข',
+        dataScope: { school_ids: [10010002] },
+      }),
+      executor,
+    );
+  });
+
   it('ends teacher memberships when the account changes to a non-teacher role', async () => {
     usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
       id: 77,

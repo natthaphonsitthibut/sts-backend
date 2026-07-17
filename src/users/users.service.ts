@@ -633,6 +633,7 @@ export class UsersService {
       const requestedRole = roleWasProvided
         ? this.usersPolicyService.normalizeRole(data)
         : existingRole;
+      const persistedScope = finalizePersistedDataScope(data.data_scope ?? existingUser.data_scope);
 
       if (isSelf && requestedRole !== existingRole) {
         throw new ForbiddenException('ไม่สามารถเปลี่ยนตำแหน่งของบัญชีตัวเองได้');
@@ -640,13 +641,12 @@ export class UsersService {
 
       await this.usersPolicyService.assertAssignablePayload(
         currentActor,
-        { ...data, role: requestedRole, roles: undefined },
+        { ...data, role: requestedRole, roles: undefined, data_scope: persistedScope },
         { allowEqualRole: isSelf },
         roleMap,
       );
 
       const primaryRole = requestedRole;
-      const persistedScope = finalizePersistedDataScope(data.data_scope ?? existingUser.data_scope);
       const teacherSchoolIds = this.resolveTeacherSchoolIds(primaryRole, persistedScope);
 
       await this.usersRepository.withTransaction(async (executor) => {
