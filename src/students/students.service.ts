@@ -347,9 +347,27 @@ export class StudentsService {
           ? await this.geocodeCache.resolve(id, address)
           : null;
 
+      // Contact channels and guardians are person-level. Both are plain contact
+      // data — scope-gated by this endpoint, not masked.
+      const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
+      const [personContact, guardians] = personUuid
+        ? await Promise.all([
+            this.studentsRepository.findStudentPersonContact(personUuid),
+            this.studentsRepository.listGuardiansByPersonUuid(personUuid),
+          ])
+        : [null, []];
+
       return maskStudentDetail(
         {
           ...student,
+          contact: personContact
+            ? {
+                phone: personContact.phone,
+                email: personContact.email,
+                line_id: personContact.line_id,
+              }
+            : null,
+          guardians,
           address,
           resolved_home_lat: hasConfirmedLocation
             ? student.resolved_home_lat
@@ -518,17 +536,59 @@ export class StudentsService {
     userScope?: DataScope,
   ) {
     await this.assertOwnStudentAccess(id, actor);
+
+    const { contact, guardians, ...termFields } = updateStudentDto;
+    // The validation pipe materializes every declared DTO key (as undefined),
+    // so "provided" must mean value !== undefined, not key-present.
+    const hasTermEdit = Object.values(termFields).some((value) => value !== undefined);
+
+    // Student self-service covers contact channels only — enrollment identity
+    // (name/address) stays staff-editable to keep the record authoritative.
+    if (isOwnOnlyStudentActor(actor) && hasTermEdit) {
+      throw new ForbiddenException('นักเรียนแก้ไขได้เฉพาะข้อมูลติดต่อและผู้ปกครอง');
+    }
+
     const existing = await this.studentsRepository.findStudentById(id, userScope);
     if (!existing) {
       throw new NotFoundException(`Student with ID ${id} not found`);
     }
-    await this.studentsRepository.updateStudentByUuid(id, {
-      ...updateStudentDto,
-      VillageNumber_Onec: cleanPrefixedAddressText('หมู่', updateStudentDto.VillageNumber_Onec),
-      Street_Onec: cleanPrefixedAddressText('ถนน', updateStudentDto.Street_Onec),
-      Soi_Onec: cleanPrefixedAddressText('ซอย', updateStudentDto.Soi_Onec),
-      Trok_Onec: cleanPrefixedAddressText('ตรอก', updateStudentDto.Trok_Onec),
-    });
+
+    if (guardians !== undefined) {
+      if (guardians.filter((guardian) => guardian.is_primary).length > 1) {
+        throw new BadRequestException('เลือกผู้ติดต่อหลักได้เพียงคนเดียว');
+      }
+      for (const guardian of guardians) {
+        if (guardian.relation === 'GUARDIAN' && !guardian.relation_note?.trim()) {
+          throw new BadRequestException('ผู้ปกครองที่ไม่ใช่บิดามารดาต้องระบุความสัมพันธ์');
+        }
+      }
+    }
+
+    if (contact !== undefined || guardians !== undefined) {
+      const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
+      if (!personUuid) {
+        throw new BadRequestException(
+          'นักเรียนคนนี้ยังไม่ได้เชื่อมข้อมูลตัวตน จึงบันทึกข้อมูลติดต่อไม่ได้',
+        );
+      }
+      await this.studentsRepository.updateStudentPersonContacts(
+        personUuid,
+        contact,
+        guardians,
+        resolveAuditActorId(actor),
+      );
+    }
+
+    if (hasTermEdit) {
+      await this.studentsRepository.updateStudentByUuid(id, {
+        ...termFields,
+        VillageNumber_Onec: cleanPrefixedAddressText('หมู่', termFields.VillageNumber_Onec),
+        Street_Onec: cleanPrefixedAddressText('ถนน', termFields.Street_Onec),
+        Soi_Onec: cleanPrefixedAddressText('ซอย', termFields.Soi_Onec),
+        Trok_Onec: cleanPrefixedAddressText('ตรอก', termFields.Trok_Onec),
+      });
+    }
+
     return await this.findOne(id, actor, userScope);
   }
 

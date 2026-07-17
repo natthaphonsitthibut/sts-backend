@@ -142,8 +142,10 @@ export class StudentsController {
     });
   }
 
+  // Students may PATCH their own record too, but the service restricts an
+  // own-only student actor to contact/guardian fields (never name/address).
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('edit-students')
+  @RequireAnyPermission('edit-students', 'student-self')
   @Patch(':id')
   async update(
     @Param('id') id: string,

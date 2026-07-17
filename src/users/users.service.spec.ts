@@ -70,6 +70,7 @@ describe('UsersService student accounts', () => {
       | 'reconcileTeacherMemberships'
       | 'findUserById'
       | 'findOwnProfileById'
+      | 'findStudentPersonContactByUserId'
       | 'findCurrentStudentUuidByUserId'
       | 'findSchoolNamesByIds'
       | 'listStudentAccountsPaginated'
@@ -82,6 +83,7 @@ describe('UsersService student accounts', () => {
       | 'listUserOperationalReferences'
       | 'deleteUser'
       | 'updateOwnProfile'
+      | 'upsertStudentPersonContact'
       | 'hasActiveUserAddressReveal'
       | 'insertUserAddressAccessEvent'
       | 'hasActiveUserNationalIdReveal'
@@ -124,6 +126,13 @@ describe('UsersService student accounts', () => {
         .mockResolvedValue({ activatedSchoolIds: [], endedSchoolIds: [] }),
       findUserById: jest.fn().mockResolvedValue({ id: 77 }),
       findOwnProfileById: jest.fn().mockResolvedValue({ id: 77 }),
+      findStudentPersonContactByUserId: jest.fn().mockResolvedValue({
+        person_uuid: candidate.person_uuid,
+        has_canonical_contact: true,
+        phone: null,
+        email: null,
+        line_id: null,
+      }),
       findCurrentStudentUuidByUserId: jest.fn().mockResolvedValue(null),
       findSchoolNamesByIds: jest.fn().mockResolvedValue([{ id: 10010002, name: 'โรงเรียนทดสอบ' }]),
       listStudentAccountsPaginated: jest
@@ -143,6 +152,7 @@ describe('UsersService student accounts', () => {
       listUserOperationalReferences: jest.fn().mockResolvedValue([]),
       deleteUser: jest.fn().mockResolvedValue(1),
       updateOwnProfile: jest.fn().mockResolvedValue(undefined),
+      upsertStudentPersonContact: jest.fn().mockResolvedValue(undefined),
       hasActiveUserAddressReveal: jest.fn().mockResolvedValue(false),
       insertUserAddressAccessEvent: jest.fn().mockResolvedValue(undefined),
       hasActiveUserNationalIdReveal: jest.fn().mockResolvedValue(false),
@@ -684,6 +694,122 @@ describe('UsersService student accounts', () => {
         addressLongitude: 100.9847,
         updatedBy: 77,
       }),
+      executor,
+    );
+  });
+
+  it('writes a student self-profile contact to the canonical person row', async () => {
+    const selfActor = { ...actor, id: 77, roles: ['STUDENT'], permissions: ['student-self'] };
+    usersRepository.findOwnProfileById.mockResolvedValue({ id: 77 } as never);
+    usersRepository.findStudentPersonContactByUserId.mockResolvedValue({
+      person_uuid: candidate.person_uuid,
+      has_canonical_contact: true,
+      phone: '0811111111',
+      email: null,
+      line_id: null,
+    });
+    usersPolicyService.hydrateUserPermissions.mockReturnValue({
+      id: 77,
+      username: 'student-one',
+      FirstName: 'สมชาย',
+      LastName: 'ใจดี',
+      phone: null,
+      email: null,
+      affiliation: 'โรงเรียนทดสอบ',
+      line_id: null,
+      address_latitude: null,
+      address_longitude: null,
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
+      status: 'ACTIVE',
+      data_scope: { own_only: true },
+    });
+
+    await service.updateOwnProfile(selfActor, { phone: '0822222222', line_id: 'student.line' });
+
+    expect(usersRepository.upsertStudentPersonContact).toHaveBeenCalledWith(
+      {
+        personUuid: candidate.person_uuid,
+        phone: '0822222222',
+        email: null,
+        lineId: 'student.line',
+        updatedBy: 77,
+      },
+      executor,
+    );
+  });
+
+  it('does not restore cleared canonical contact from legacy user columns', async () => {
+    const selfActor = { ...actor, id: 77, roles: ['STUDENT'], permissions: ['student-self'] };
+    usersRepository.findOwnProfileById.mockResolvedValue({ id: 77 } as never);
+    usersRepository.findStudentPersonContactByUserId.mockResolvedValue({
+      person_uuid: candidate.person_uuid,
+      has_canonical_contact: true,
+      phone: null,
+      email: null,
+      line_id: null,
+    });
+    usersPolicyService.hydrateUserPermissions.mockReturnValue({
+      id: 77,
+      username: 'student-one',
+      FirstName: 'สมชาย',
+      LastName: 'ใจดี',
+      phone: '0999999999',
+      email: 'legacy@example.test',
+      affiliation: null,
+      line_id: 'legacy.line',
+      address_latitude: null,
+      address_longitude: null,
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
+      status: 'ACTIVE',
+      data_scope: { own_only: true },
+    });
+
+    await service.updateOwnProfile(selfActor, { affiliation: 'โรงเรียนทดสอบ' });
+
+    expect(usersRepository.upsertStudentPersonContact).toHaveBeenCalledWith(
+      expect.objectContaining({ phone: null, email: null, lineId: null }),
+      executor,
+    );
+  });
+
+  it('preserves legacy contact when a linked student has no canonical row yet', async () => {
+    const selfActor = { ...actor, id: 77, roles: ['STUDENT'], permissions: ['student-self'] };
+    usersRepository.findOwnProfileById.mockResolvedValue({ id: 77 } as never);
+    usersRepository.findStudentPersonContactByUserId.mockResolvedValue({
+      person_uuid: candidate.person_uuid,
+      has_canonical_contact: false,
+      phone: null,
+      email: null,
+      line_id: null,
+    });
+    usersPolicyService.hydrateUserPermissions.mockReturnValue({
+      id: 77,
+      username: 'student-one',
+      FirstName: 'สมชาย',
+      LastName: 'ใจดี',
+      phone: '0999999999',
+      email: 'legacy@example.test',
+      affiliation: null,
+      line_id: 'legacy.line',
+      address_latitude: null,
+      address_longitude: null,
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
+      status: 'ACTIVE',
+      data_scope: { own_only: true },
+    });
+
+    await service.updateOwnProfile(selfActor, { affiliation: 'โรงเรียนทดสอบ' });
+
+    expect(usersRepository.upsertStudentPersonContact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phone: '0999999999',
+        email: 'legacy@example.test',
+        lineId: 'legacy.line',
+      }),
+      executor,
     );
   });
 

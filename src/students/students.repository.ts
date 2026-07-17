@@ -8,12 +8,18 @@ import type {
   StudentCaseRow,
   StudentDetailRow,
   StudentFilterOptions,
+  StudentGuardianRow,
   StudentListFilters,
   StudentListResult,
   StudentListRow,
   StudentsQueryResult,
+  StudentPersonContactRow,
 } from './students.types';
-import type { UpdateStudentDto } from './dto/update-student.dto';
+import type {
+  StudentContactDto,
+  StudentGuardianInputDto,
+  UpdateStudentDto,
+} from './dto/update-student.dto';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -389,8 +395,11 @@ export class StudentsRepository {
     return result.rows[0]?.person_uuid ?? null;
   }
 
-  async updateStudentByUuid(studentUuid: string, data: UpdateStudentDto): Promise<void> {
-    const columnByField: Record<keyof UpdateStudentDto, string> = {
+  async updateStudentByUuid(
+    studentUuid: string,
+    data: Omit<UpdateStudentDto, 'contact' | 'guardians'>,
+  ): Promise<void> {
+    const columnByField: Record<keyof Omit<UpdateStudentDto, 'contact' | 'guardians'>, string> = {
       FirstName_Onec: '"FirstName_Onec"',
       MiddleName_Onec: '"MiddleName_Onec"',
       LastName_Onec: '"LastName_Onec"',
@@ -406,7 +415,14 @@ export class StudentsRepository {
       address_latitude: '"address_latitude"',
       address_longitude: '"address_longitude"',
     };
-    const entries = Object.entries(data) as Array<[keyof UpdateStudentDto, unknown]>;
+    // Skip undefined values: a PATCH that omits a field must never NULL it
+    // (the DTO materializes every declared key, and the address-prefix
+    // overrides in the service re-add keys the caller never sent).
+    const entries = (
+      Object.entries(data) as Array<
+        [keyof Omit<UpdateStudentDto, 'contact' | 'guardians'>, unknown]
+      >
+    ).filter(([, value]) => value !== undefined);
     if (entries.length === 0) {
       return;
     }
@@ -419,6 +435,136 @@ export class StudentsRepository {
       `UPDATE student_term SET ${assignments.join(', ')} WHERE student_uuid = $1`,
       values,
     );
+  }
+
+  /** Canonical contact channels of the student person, independent of accounts. */
+  async findStudentPersonContact(personUuid: string): Promise<StudentPersonContactRow | null> {
+    const result = await this.query<StudentPersonContactRow>(
+      `
+        SELECT phone, email, line_id
+        FROM student_person_contact
+        WHERE person_uuid = $1
+      `,
+      [personUuid],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Live guardians of a person, primary first, then บิดา → มารดา → ผปค. */
+  async listGuardiansByPersonUuid(personUuid: string): Promise<StudentGuardianRow[]> {
+    const result = await this.query<StudentGuardianRow>(
+      `
+        SELECT id::text, relation, relation_note, full_name, phone, email, line_id, is_primary
+        FROM student_guardian
+        WHERE person_uuid = $1 AND deleted_at IS NULL
+        ORDER BY is_primary DESC,
+          CASE relation WHEN 'FATHER' THEN 0 WHEN 'MOTHER' THEN 1 ELSE 2 END,
+          id
+      `,
+      [personUuid],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Replace the person's guardian list in one transaction. Existing live rows
+   * are soft-deleted (history stays queryable) and the submitted set is
+   * inserted fresh — the form always sends the whole list.
+   */
+  async updateStudentPersonContacts(
+    personUuid: string,
+    contact: StudentContactDto | undefined,
+    guardians: StudentGuardianInputDto[] | undefined,
+    actorUserId: number | null,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      if (contact !== undefined) {
+        const hasPhone = contact.phone !== undefined;
+        const hasEmail = contact.email !== undefined;
+        const hasLineId = contact.line_id !== undefined;
+        await manager.query(
+          `
+            INSERT INTO student_person_contact (
+              person_uuid, phone, email, line_id, created_by, updated_by
+            )
+            VALUES ($1, $2, $3, $4, $8, $8)
+            ON CONFLICT (person_uuid) DO UPDATE
+            SET phone = CASE WHEN $5 THEN EXCLUDED.phone ELSE student_person_contact.phone END,
+                email = CASE WHEN $6 THEN EXCLUDED.email ELSE student_person_contact.email END,
+                line_id = CASE WHEN $7 THEN EXCLUDED.line_id ELSE student_person_contact.line_id END,
+                updated_by = $8,
+                deleted_at = NULL,
+                deleted_by = NULL
+          `,
+          [
+            personUuid,
+            contact.phone ?? null,
+            contact.email ?? null,
+            contact.line_id ?? null,
+            hasPhone,
+            hasEmail,
+            hasLineId,
+            actorUserId,
+          ],
+        );
+
+        // Expand/contract compatibility: keep a linked student account mirror
+        // current while all downstream consumers move to person-level contact.
+        await manager.query(
+          `
+            UPDATE users
+            SET phone = CASE WHEN $5 THEN $2 ELSE phone END,
+                email = CASE WHEN $6 THEN $3 ELSE email END,
+                line_id = CASE WHEN $7 THEN $4 ELSE line_id END,
+                updated_by = $8
+            WHERE person_uuid = $1 AND role = 'STUDENT' AND status = 'ACTIVE'
+          `,
+          [
+            personUuid,
+            contact.phone ?? null,
+            contact.email ?? null,
+            contact.line_id ?? null,
+            hasPhone,
+            hasEmail,
+            hasLineId,
+            actorUserId,
+          ],
+        );
+      }
+
+      if (guardians !== undefined) {
+        await manager.query(
+          `
+            UPDATE student_guardian
+            SET deleted_at = now(), deleted_by = $2
+            WHERE person_uuid = $1 AND deleted_at IS NULL
+          `,
+          [personUuid, actorUserId],
+        );
+        for (const guardian of guardians) {
+          await manager.query(
+            `
+              INSERT INTO student_guardian (
+                person_uuid, relation, relation_note, full_name,
+                phone, email, line_id, is_primary, created_by, updated_by
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+            `,
+            [
+              personUuid,
+              guardian.relation,
+              guardian.relation === 'GUARDIAN' ? (guardian.relation_note ?? null) : null,
+              guardian.full_name.trim(),
+              guardian.phone ?? null,
+              guardian.email ?? null,
+              guardian.line_id ?? null,
+              guardian.is_primary ?? false,
+              actorUserId,
+            ],
+          );
+        }
+      }
+    });
   }
 
   /** Append one immutable PII-reveal record to the access log. */

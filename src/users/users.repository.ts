@@ -98,6 +98,14 @@ interface UpdateOwnProfileRecordInput {
   updatedBy: number | null;
 }
 
+interface StudentOwnProfileContactRow extends Record<string, unknown> {
+  person_uuid: string;
+  has_canonical_contact: boolean;
+  phone: string | null;
+  email: string | null;
+  line_id: string | null;
+}
+
 interface DeactivateUserInput {
   id: number;
   actorId: number | null;
@@ -656,6 +664,56 @@ export class UsersRepository {
     );
 
     return result.rows[0] || null;
+  }
+
+  async findStudentPersonContactByUserId(
+    id: number,
+    executor?: QueryExecutor,
+  ): Promise<StudentOwnProfileContactRow | null> {
+    const result = await this.getExecutor(executor).query<StudentOwnProfileContactRow>(
+      `
+        SELECT u.person_uuid,
+               (contact.person_uuid IS NOT NULL) AS has_canonical_contact,
+               contact.phone,
+               contact.email,
+               contact.line_id
+        FROM users u
+        LEFT JOIN student_person_contact contact ON contact.person_uuid = u.person_uuid
+        WHERE u.id = $1
+          AND u.role = 'STUDENT'
+          AND u.person_uuid IS NOT NULL
+      `,
+      [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async upsertStudentPersonContact(
+    data: {
+      personUuid: string;
+      phone: string | null;
+      email: string | null;
+      lineId: string | null;
+      updatedBy: number | null;
+    },
+    executor?: QueryExecutor,
+  ): Promise<void> {
+    await this.getExecutor(executor).query(
+      `
+        INSERT INTO student_person_contact (
+          person_uuid, phone, email, line_id, created_by, updated_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $5)
+        ON CONFLICT (person_uuid) DO UPDATE
+        SET phone = EXCLUDED.phone,
+            email = EXCLUDED.email,
+            line_id = EXCLUDED.line_id,
+            updated_by = EXCLUDED.updated_by,
+            deleted_at = NULL,
+            deleted_by = NULL
+      `,
+      [data.personUuid, data.phone, data.email, data.lineId, data.updatedBy],
+    );
   }
 
   async insertUserAddressAccessEvent(input: {

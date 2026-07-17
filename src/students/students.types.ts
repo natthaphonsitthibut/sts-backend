@@ -62,6 +62,25 @@ export interface StudentDetailRow extends Record<string, unknown> {
   student_status_badge_variant?: string | null;
 }
 
+/** Live guardian contact row (student_guardian), wire-ready. */
+export interface StudentGuardianRow extends Record<string, unknown> {
+  id: string;
+  relation: 'FATHER' | 'MOTHER' | 'GUARDIAN';
+  relation_note: string | null;
+  full_name: string;
+  phone: string | null;
+  email: string | null;
+  line_id: string | null;
+  is_primary: boolean;
+}
+
+/** Canonical person-level contact channels; independent of login accounts. */
+export interface StudentPersonContactRow extends Record<string, unknown> {
+  phone: string | null;
+  email: string | null;
+  line_id: string | null;
+}
+
 export interface StudentCaseRow extends Record<string, unknown> {
   id: string | number;
   created_at: string;

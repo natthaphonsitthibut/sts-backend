@@ -79,6 +79,55 @@ export class StudentTermEntity {
   postalCodeOnec!: string | null;
 }
 
+// Canonical student contact, person-level and independent of login accounts.
+@Entity({ name: 'student_person_contact' })
+export class StudentPersonContactEntity {
+  @PrimaryColumn({ name: 'person_uuid', type: 'uuid' })
+  personUuid!: string;
+
+  @Column({ name: 'phone', type: 'varchar', length: 20, nullable: true })
+  phone!: string | null;
+
+  @Column({ name: 'email', type: 'varchar', length: 254, nullable: true })
+  email!: string | null;
+
+  @Column({ name: 'line_id', type: 'varchar', length: 64, nullable: true })
+  lineId!: string | null;
+}
+
+// Guardian contact channels, person-level (spans terms). Name + relation +
+// channels only — no national id by design (data minimization).
+@Entity({ name: 'student_guardian' })
+@Index('idx_student_guardian_person', ['personUuid'])
+export class StudentGuardianEntity {
+  @PrimaryGeneratedColumn({ name: 'id', type: 'bigint' })
+  id!: string;
+
+  @Column({ name: 'person_uuid', type: 'uuid' })
+  personUuid!: string;
+
+  @Column({ name: 'relation', type: 'varchar', length: 16 })
+  relation!: 'FATHER' | 'MOTHER' | 'GUARDIAN';
+
+  @Column({ name: 'relation_note', type: 'varchar', length: 100, nullable: true })
+  relationNote!: string | null;
+
+  @Column({ name: 'full_name', type: 'varchar', length: 200 })
+  fullName!: string;
+
+  @Column({ name: 'phone', type: 'varchar', length: 20, nullable: true })
+  phone!: string | null;
+
+  @Column({ name: 'email', type: 'varchar', length: 254, nullable: true })
+  email!: string | null;
+
+  @Column({ name: 'line_id', type: 'varchar', length: 64, nullable: true })
+  lineId!: string | null;
+
+  @Column({ name: 'is_primary', type: 'boolean', default: false })
+  isPrimary!: boolean;
+}
+
 @Entity({ name: 'student_exit_events' })
 @Index('idx_student_exit_events_person_year', ['personUuid', 'academicYear'])
 @Index('idx_student_exit_events_school_year', ['schoolId', 'academicYear'])

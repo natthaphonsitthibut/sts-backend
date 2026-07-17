@@ -393,14 +393,23 @@ export class UsersService {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
     }
     const user = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
-    const studentUuid = user.roles?.includes('STUDENT')
-      ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
-      : null;
+    const isStudent = user.roles?.includes('STUDENT') ?? false;
+    const [studentUuid, studentContact] = isStudent
+      ? await Promise.all([
+          this.usersRepository.findCurrentStudentUuidByUserId(user.id),
+          this.usersRepository.findStudentPersonContactByUserId(user.id),
+        ])
+      : [null, null];
     const schoolLabels = await this.usersRepository.findSchoolNamesByIds(
       normalizeNumericScopeValues(user.data_scope?.school_ids),
     );
     return {
       ...user,
+      phone: studentContact?.has_canonical_contact ? studentContact.phone : (user.phone ?? null),
+      email: studentContact?.has_canonical_contact ? studentContact.email : (user.email ?? null),
+      line_id: studentContact?.has_canonical_contact
+        ? studentContact.line_id
+        : (user.line_id ?? null),
       student_uuid: studentUuid,
       data_scope_labels: {
         schools: schoolLabels,
@@ -418,6 +427,13 @@ export class UsersService {
     }
 
     const existingUser = this.usersPolicyService.hydrateUserPermissions(existingRow, roleMap);
+    const isStudent = existingUser.roles?.includes('STUDENT') ?? false;
+    const studentContact = isStudent
+      ? await this.usersRepository.findStudentPersonContactByUserId(currentActor.id)
+      : null;
+    if (isStudent && !studentContact) {
+      throw new BadRequestException('บัญชีนักเรียนยังไม่ได้เชื่อมกับข้อมูลบุคคล');
+    }
     const firstName =
       data.FirstName !== undefined ? cleanNullableText(data.FirstName) : existingUser.FirstName;
     const lastName =
@@ -438,22 +454,35 @@ export class UsersService {
       throw new BadRequestException('กรุณาระบุ latitude และ longitude ให้ครบทั้งคู่');
     }
 
-    await this.usersRepository.updateOwnProfile({
+    const phone =
+      data.phone !== undefined
+        ? cleanNullableText(data.phone)
+        : studentContact?.has_canonical_contact
+          ? studentContact.phone
+          : (existingUser.phone ?? null);
+    const email =
+      data.email !== undefined
+        ? cleanNullableText(data.email)
+        : studentContact?.has_canonical_contact
+          ? studentContact.email
+          : (existingUser.email ?? null);
+    const lineId =
+      data.line_id !== undefined
+        ? cleanNullableText(data.line_id)
+        : studentContact?.has_canonical_contact
+          ? studentContact.line_id
+          : (existingUser.line_id ?? null);
+    const profileUpdate = {
       id: currentActor.id,
       firstName,
       lastName,
-      phone:
-        data.phone !== undefined ? cleanNullableText(data.phone) : (existingUser.phone ?? null),
-      email:
-        data.email !== undefined ? cleanNullableText(data.email) : (existingUser.email ?? null),
+      phone,
+      email,
       affiliation:
         data.affiliation !== undefined
           ? cleanNullableText(data.affiliation)
           : (existingUser.affiliation ?? null),
-      lineId:
-        data.line_id !== undefined
-          ? cleanNullableText(data.line_id)
-          : (existingUser.line_id ?? null),
+      lineId,
       addressLine:
         data.address_line !== undefined
           ? cleanNullableText(data.address_line)
@@ -493,6 +522,22 @@ export class UsersService {
       addressLatitude,
       addressLongitude,
       updatedBy: resolveAuditActorId(currentActor),
+    };
+
+    await this.usersRepository.withTransaction(async (executor) => {
+      await this.usersRepository.updateOwnProfile(profileUpdate, executor);
+      if (studentContact) {
+        await this.usersRepository.upsertStudentPersonContact(
+          {
+            personUuid: studentContact.person_uuid,
+            phone,
+            email,
+            lineId,
+            updatedBy: resolveAuditActorId(currentActor),
+          },
+          executor,
+        );
+      }
     });
 
     return await this.getOwnProfile(currentActor);

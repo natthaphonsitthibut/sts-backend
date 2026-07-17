@@ -19,6 +19,8 @@ import {
 import {
   AttendanceEntity,
   StudentExitEventEntity,
+  StudentGuardianEntity,
+  StudentPersonContactEntity,
   StudentRiskProfileEntity,
   StudentTermEntity,
 } from './student.entities';
@@ -50,6 +52,8 @@ export const DATABASE_ENTITIES = [
   StudentTermEntity,
   StudentRiskProfileEntity,
   StudentExitEventEntity,
+  StudentGuardianEntity,
+  StudentPersonContactEntity,
   AttendanceEntity,
   SchoolTermEntity,
   SchoolCalendarDayEntity,
@@ -88,6 +92,8 @@ export {
   SchoolCalendarDayEntity,
   SchoolTermEntity,
   StudentExitEventEntity,
+  StudentGuardianEntity,
+  StudentPersonContactEntity,
   StudentRiskProfileEntity,
   StudentStatusEntity,
   StudentTermEntity,

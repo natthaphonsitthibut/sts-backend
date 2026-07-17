@@ -3,7 +3,7 @@ import { StudentsService } from './students.service';
 import { StudentsRepository } from './students.repository';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import { piiConfig } from '../config/pii.config';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 describe('StudentsService', () => {
   let service: StudentsService;
@@ -17,6 +17,9 @@ describe('StudentsService', () => {
     listActiveRevealGroups: jest.Mock;
     updateStudentByUuid: jest.Mock;
     findPersonUuidByStudentUuid: jest.Mock;
+    findStudentPersonContact: jest.Mock;
+    listGuardiansByPersonUuid: jest.Mock;
+    updateStudentPersonContacts: jest.Mock;
   };
   let geocodeCache: { resolve: jest.Mock };
 
@@ -36,6 +39,9 @@ describe('StudentsService', () => {
             listActiveRevealGroups: jest.fn(),
             updateStudentByUuid: jest.fn(),
             findPersonUuidByStudentUuid: jest.fn(),
+            findStudentPersonContact: jest.fn().mockResolvedValue(null),
+            listGuardiansByPersonUuid: jest.fn().mockResolvedValue([]),
+            updateStudentPersonContacts: jest.fn(),
           },
         },
         {
@@ -257,6 +263,109 @@ describe('StudentsService', () => {
     expect(studentsRepository.listAttendanceByStudentId).toHaveBeenCalledWith(
       studentUuid,
       undefined,
+    );
+  });
+
+  it('lets a student self-edit contact and guardians but never enrollment fields', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const personUuid = '10000000-0000-4000-8000-000000000001';
+    const actor = {
+      id: 50,
+      username: 'student.self',
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
+      data_scope: { own_only: true },
+      student_uuid: studentUuid,
+      person_uuid: personUuid,
+    };
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: studentUuid,
+      PersonID_Onec: 'masked',
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(personUuid);
+    studentsRepository.findStudentPersonContact.mockResolvedValue(null);
+
+    await expect(
+      service.update(studentUuid, { FirstName_Onec: 'ใหม่' }, actor),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(studentsRepository.updateStudentByUuid).not.toHaveBeenCalled();
+
+    await service.update(
+      studentUuid,
+      {
+        contact: { phone: '0812345678' },
+        guardians: [
+          { relation: 'MOTHER', full_name: 'สมหญิง ใจดี', phone: '0898765432', is_primary: true },
+        ],
+      },
+      actor,
+    );
+
+    expect(studentsRepository.updateStudentPersonContacts).toHaveBeenCalledWith(
+      personUuid,
+      { phone: '0812345678' },
+      [{ relation: 'MOTHER', full_name: 'สมหญิง ใจดี', phone: '0898765432', is_primary: true }],
+      50,
+    );
+    expect(studentsRepository.updateStudentByUuid).not.toHaveBeenCalled();
+  });
+
+  it('rejects a GUARDIAN row without relation_note and duplicate primary contacts', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const staff = { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['edit-students'] };
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: studentUuid,
+      PersonID_Onec: 'masked',
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(
+      '10000000-0000-4000-8000-000000000001',
+    );
+
+    await expect(
+      service.update(
+        studentUuid,
+        { guardians: [{ relation: 'GUARDIAN', full_name: 'สมศรี มีสุข' }] },
+        staff,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    await expect(
+      service.update(
+        studentUuid,
+        {
+          guardians: [
+            { relation: 'FATHER', full_name: 'สมชาย ใจดี', is_primary: true },
+            { relation: 'MOTHER', full_name: 'สมหญิง ใจดี', is_primary: true },
+          ],
+        },
+        staff,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(studentsRepository.updateStudentPersonContacts).not.toHaveBeenCalled();
+  });
+
+  it('lets staff add student contact when no login account is linked', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: studentUuid,
+      PersonID_Onec: 'masked',
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(
+      '10000000-0000-4000-8000-000000000001',
+    );
+    await service.update(
+      studentUuid,
+      { contact: { phone: '0812345678' } },
+      { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['edit-students'] },
+    );
+    expect(studentsRepository.updateStudentPersonContacts).toHaveBeenCalledWith(
+      '10000000-0000-4000-8000-000000000001',
+      { phone: '0812345678' },
+      undefined,
+      5,
     );
   });
 
