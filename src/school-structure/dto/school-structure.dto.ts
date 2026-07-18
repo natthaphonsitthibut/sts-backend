@@ -100,6 +100,25 @@ export class CreateSchoolClassroomDto {
 
 export class UpdateSchoolClassroomDto {
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(32)
+  roomCode?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  legacyRoomNumber?: number;
+
+  @IsOptional()
   @Transform(trimText)
   @IsString()
   @MaxLength(120)

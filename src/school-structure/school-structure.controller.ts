@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -95,6 +96,14 @@ export class SchoolStructureController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.updateClassroom(classroomId, body, actor);
+  }
+
+  @Delete('classrooms/:classroomId')
+  deleteClassroom(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.deleteClassroom(classroomId, actor);
   }
 
   @Get('teachers')

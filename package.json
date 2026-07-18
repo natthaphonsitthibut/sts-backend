@@ -28,6 +28,7 @@
     "smoke:attendance-operations-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-attendance-operations-browser.js",
     "smoke:student-contact": "DB_NAME=sts_smoke node scripts/smoke-student-contact.js",
     "smoke:student-contact-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9254 node scripts/smoke-student-contact-browser.js",
+    "smoke:classroom-management": "DB_NAME=sts_smoke node scripts/smoke-classroom-management.js",
     "smoke:teacher-observation-workflow-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9254 node scripts/smoke-teacher-observation-workflow-browser.js",
     "smoke:account-lifecycle": "DB_NAME=sts_smoke node scripts/smoke-account-lifecycle.js",
     "smoke:account-lifecycle-browser": "DB_NAME=sts_smoke node scripts/smoke-account-lifecycle-browser.js",

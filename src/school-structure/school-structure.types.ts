@@ -21,6 +21,7 @@ export interface SchoolClassroomRow extends Record<string, unknown> {
   room_code: string;
   room_name: string | null;
   classroom_status: StructureStatus;
+  homeroom_teacher_name?: string | null;
   student_count: number | string;
 }
 

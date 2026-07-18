@@ -191,14 +191,36 @@ export class SchoolStructureRepository {
           classroom.room_code,
           classroom.room_name,
           classroom.classroom_status,
+          homeroom.homeroom_teacher_name,
           COUNT(enrollment.student_uuid)::int AS student_count
         FROM school_classrooms classroom
         JOIN school_terms term ON term.id = classroom.school_term_id
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
         LEFT JOIN student_term enrollment
           ON enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(
+                   NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+                   teacher.username
+                 ) AS homeroom_teacher_name
+          FROM classroom_teacher_assignments assignment
+          JOIN school_teacher_memberships membership
+            ON membership.id = assignment.teacher_membership_id
+           AND membership.school_id = assignment.school_id
+           AND membership.membership_status = 'ACTIVE'
+           AND membership.deleted_at IS NULL
+          JOIN users teacher ON teacher.id = membership.teacher_user_id
+          WHERE assignment.classroom_id = classroom.id
+            AND assignment.school_id = classroom.school_id
+            AND assignment.assignment_kind = 'HOMEROOM'
+            AND assignment.assignment_status = 'ACTIVE'
+            AND assignment.deleted_at IS NULL
+          ORDER BY assignment.id DESC
+          LIMIT 1
+        ) homeroom ON TRUE
         WHERE ${conditions.join(' AND ')}
-        GROUP BY classroom.id, term.academic_year, term.semester, grade.label
+        GROUP BY classroom.id, term.academic_year, term.semester, grade.label,
+                 homeroom.homeroom_teacher_name
         ORDER BY ${orderBy} ${direction}, classroom.room_code ${direction}, classroom.id ${direction}
         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
       `,
@@ -311,22 +333,88 @@ export class SchoolStructureRepository {
 
   async updateClassroom(
     classroomId: number,
-    roomName: string | null | undefined,
-    classroomStatus: StructureStatus | undefined,
+    changes: {
+      gradeLevelId?: number;
+      roomCode?: string;
+      legacyRoomNumber?: number;
+      roomName?: string | null;
+      classroomStatus?: StructureStatus;
+    },
     actorId: number | null,
     queryRunner: QueryRunner,
   ): Promise<SchoolClassroomRow> {
     await queryRunner.query(
       `
         UPDATE school_classrooms
-        SET room_name = CASE WHEN $2 THEN $3 ELSE room_name END,
-            classroom_status = COALESCE($4, classroom_status),
-            updated_by = $5
+        SET grade_level_id = COALESCE($2, grade_level_id),
+            room_code = COALESCE($3, room_code),
+            legacy_room_number = COALESCE($4, legacy_room_number),
+            room_name = CASE WHEN $5 THEN $6 ELSE room_name END,
+            classroom_status = COALESCE($7, classroom_status),
+            updated_by = $8
         WHERE id = $1 AND deleted_at IS NULL
       `,
-      [classroomId, roomName !== undefined, roomName ?? null, classroomStatus ?? null, actorId],
+      [
+        classroomId,
+        changes.gradeLevelId ?? null,
+        changes.roomCode ?? null,
+        changes.legacyRoomNumber ?? null,
+        changes.roomName !== undefined,
+        changes.roomName ?? null,
+        changes.classroomStatus ?? null,
+        actorId,
+      ],
     );
     return (await this.findClassroomById(classroomId, queryRunner))!;
+  }
+
+  /** Live usage counts that gate destructive classroom changes. */
+  async getClassroomUsage(
+    classroomId: number,
+    queryRunner?: QueryRunner,
+  ): Promise<{ studentCount: number; assignmentCount: number }> {
+    const sql = `
+        SELECT
+          (
+            SELECT COUNT(*)::int FROM student_term enrollment
+            WHERE enrollment.classroom_id = $1 AND enrollment.deleted_at IS NULL
+          ) AS student_count,
+          (
+            SELECT COUNT(*)::int FROM classroom_teacher_assignments assignment
+            WHERE assignment.classroom_id = $1
+              AND assignment.assignment_status = 'ACTIVE'
+              AND assignment.deleted_at IS NULL
+          ) AS assignment_count
+      `;
+    const result = queryRunner
+      ? await createSqlQueryExecutor(queryRunner).query<{
+          student_count: number;
+          assignment_count: number;
+        }>(sql, [classroomId])
+      : await queryDataSource<{ student_count: number; assignment_count: number }>(
+          this.dataSource,
+          sql,
+          [classroomId],
+        );
+    return {
+      studentCount: Number(result.rows[0]?.student_count ?? 0),
+      assignmentCount: Number(result.rows[0]?.assignment_count ?? 0),
+    };
+  }
+
+  async softDeleteClassroom(
+    classroomId: number,
+    actorId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await queryRunner.query(
+      `
+        UPDATE school_classrooms
+        SET deleted_at = now(), deleted_by = $2
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
+      [classroomId, actorId],
+    );
   }
 
   async listTeachers(input: {

@@ -104,6 +104,7 @@ export class SchoolStructureService {
       roomCode: row.room_code,
       roomName: row.room_name,
       classroomStatus: row.classroom_status,
+      homeroomTeacherName: row.homeroom_teacher_name ?? null,
       studentCount: Number(row.student_count),
     };
   }
@@ -255,17 +256,76 @@ export class SchoolStructureService {
   ) {
     if (Object.keys(dto).length === 0) throw new BadRequestException('ไม่มีข้อมูลที่ต้องแก้ไข');
     const actorId = resolveAuditActorId(actor);
-    const row = await this.repository.withTransaction(async (queryRunner) => {
+    try {
+      const row = await this.repository.withTransaction(async (queryRunner) => {
+        const existing = await this.repository.findClassroomById(classroomId, queryRunner);
+        if (!existing) throw new NotFoundException('ไม่พบห้องเรียน');
+        await this.assertSchoolAccess(existing.school_id, actor);
+        if (dto.gradeLevelId !== undefined && dto.gradeLevelId !== existing.grade_level_id) {
+          const usage = await this.repository.getClassroomUsage(classroomId, queryRunner);
+          if (usage.studentCount > 0) {
+            throw new ConflictException(
+              'ห้องนี้มีนักเรียนอยู่แล้ว จึงเปลี่ยนระดับชั้นไม่ได้ — ย้ายนักเรียนออกก่อน',
+            );
+          }
+        }
+        const updated = await this.repository.updateClassroom(
+          classroomId,
+          {
+            gradeLevelId: dto.gradeLevelId,
+            roomCode: dto.roomCode,
+            legacyRoomNumber: dto.legacyRoomNumber,
+            roomName: dto.roomName === undefined ? undefined : dto.roomName.trim() || null,
+            classroomStatus: dto.classroomStatus,
+          },
+          actorId,
+          queryRunner,
+        );
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: actorId,
+            actorLabel: actor.username,
+            action: 'MASTER_DATA_EDIT',
+            targetType: 'school_classrooms',
+            targetId: String(classroomId),
+            metadata: {
+              op: 'update',
+              schoolId: existing.school_id,
+              changedFields: Object.keys(dto),
+            },
+            ip: null,
+          },
+          queryRunner,
+        );
+        return updated;
+      });
+      return { data: this.toClassroom(row) };
+    } catch (error) {
+      if (databaseErrorCode(error) === '23505') {
+        throw new ConflictException('รหัสห้องนี้มีอยู่แล้วในภาคเรียนและระดับชั้นเดียวกัน');
+      }
+      if (databaseErrorCode(error) === '23503') {
+        throw new BadRequestException('ระดับชั้นไม่ถูกต้อง');
+      }
+      throw error;
+    }
+  }
+
+  /** Remove a mis-created classroom — only while nothing references it yet. */
+  async deleteClassroom(classroomId: number, actor: AuthenticatedRequestUser) {
+    const actorId = resolveAuditActorId(actor);
+    await this.repository.withTransaction(async (queryRunner) => {
       const existing = await this.repository.findClassroomById(classroomId, queryRunner);
       if (!existing) throw new NotFoundException('ไม่พบห้องเรียน');
       await this.assertSchoolAccess(existing.school_id, actor);
-      const updated = await this.repository.updateClassroom(
-        classroomId,
-        dto.roomName === undefined ? undefined : dto.roomName.trim() || null,
-        dto.classroomStatus,
-        actorId,
-        queryRunner,
-      );
+      const usage = await this.repository.getClassroomUsage(classroomId, queryRunner);
+      if (usage.studentCount > 0) {
+        throw new ConflictException('ห้องนี้มีนักเรียนอยู่ จึงลบไม่ได้ — ย้ายนักเรียนออกก่อน');
+      }
+      if (usage.assignmentCount > 0) {
+        throw new ConflictException('ห้องนี้มีครูผูกอยู่ จึงลบไม่ได้ — ยกเลิกการมอบหมายครูก่อน');
+      }
+      await this.repository.softDeleteClassroom(classroomId, actorId, queryRunner);
       await this.auditLog.recordAtomic(
         {
           actorUserId: actorId,
@@ -273,14 +333,13 @@ export class SchoolStructureService {
           action: 'MASTER_DATA_EDIT',
           targetType: 'school_classrooms',
           targetId: String(classroomId),
-          metadata: { op: 'update', schoolId: existing.school_id, changedFields: Object.keys(dto) },
+          metadata: { op: 'delete', schoolId: existing.school_id },
           ip: null,
         },
         queryRunner,
       );
-      return updated;
     });
-    return { data: this.toClassroom(row) };
+    return { data: { deleted: true } };
   }
 
   async listTeachers(query: ListSchoolTeachersDto, actor: AuthenticatedRequestUser) {

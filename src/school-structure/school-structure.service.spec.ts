@@ -60,6 +60,8 @@ describe('SchoolStructureService', () => {
       createClassroom: jest.fn().mockResolvedValue(CLASSROOM),
       findClassroomById: jest.fn().mockResolvedValue(CLASSROOM),
       updateClassroom: jest.fn().mockResolvedValue(CLASSROOM),
+      getClassroomUsage: jest.fn().mockResolvedValue({ studentCount: 0, assignmentCount: 0 }),
+      softDeleteClassroom: jest.fn().mockResolvedValue(undefined),
       listTeachers: jest.fn().mockResolvedValue({ rows: [], totalCount: 0, activeCount: 0 }),
       listTeacherCandidates: jest.fn().mockResolvedValue([]),
       listTeacherOptions: jest.fn().mockResolvedValue([]),
@@ -308,6 +310,56 @@ describe('SchoolStructureService', () => {
         SCHOOL_ACTOR,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('blocks a grade change while students are enrolled but allows other edits', async () => {
+    const { service, repository } = setup();
+    repository.getClassroomUsage.mockResolvedValue({ studentCount: 5, assignmentCount: 1 });
+
+    await expect(
+      service.updateClassroom(11, { gradeLevelId: 500 }, SCHOOL_ACTOR as never),
+    ).rejects.toMatchObject({ status: 409 });
+
+    await expect(
+      service.updateClassroom(11, { roomCode: '2', legacyRoomNumber: 2 }, SCHOOL_ACTOR as never),
+    ).resolves.toMatchObject({ data: { id: '11' } });
+    expect(repository.updateClassroom).toHaveBeenCalledWith(
+      11,
+      expect.objectContaining({ roomCode: '2', legacyRoomNumber: 2 }),
+      SCHOOL_ACTOR.id,
+      expect.anything(),
+    );
+  });
+
+  it('deletes only an unused classroom and records atomic audit', async () => {
+    const { service, repository, auditLog } = setup();
+    repository.getClassroomUsage.mockResolvedValueOnce({ studentCount: 3, assignmentCount: 0 });
+    await expect(service.deleteClassroom(11, SCHOOL_ACTOR as never)).rejects.toMatchObject({
+      status: 409,
+    });
+
+    repository.getClassroomUsage.mockResolvedValueOnce({ studentCount: 0, assignmentCount: 2 });
+    await expect(service.deleteClassroom(11, SCHOOL_ACTOR as never)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(repository.softDeleteClassroom).not.toHaveBeenCalled();
+
+    repository.getClassroomUsage.mockResolvedValueOnce({ studentCount: 0, assignmentCount: 0 });
+    await expect(service.deleteClassroom(11, SCHOOL_ACTOR as never)).resolves.toEqual({
+      data: { deleted: true },
+    });
+    expect(repository.softDeleteClassroom).toHaveBeenCalledWith(
+      11,
+      SCHOOL_ACTOR.id,
+      expect.anything(),
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'school_classrooms',
+        metadata: { op: 'delete', schoolId: 1001 },
+      }),
+      expect.anything(),
+    );
   });
 
   it('rejects an assignment with an invalid effective date range', async () => {
