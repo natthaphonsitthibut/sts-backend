@@ -87,6 +87,66 @@ describe('UsersRepository user list queries', () => {
   });
 });
 
+describe('UsersRepository updateUser', () => {
+  const baseInput = {
+    id: 77,
+    username: 'teacher.k',
+    firstName: 'ครู',
+    lastName: 'ทดสอบ',
+    personIdOnec: '1234567890123',
+    phone: null,
+    email: null,
+    affiliation: null,
+    lineId: null,
+    addressLine: null,
+    addressVillageNo: null,
+    addressStreet: null,
+    addressSoi: null,
+    addressTrok: null,
+    addressSubDistrict: null,
+    addressDistrict: null,
+    addressProvince: null,
+    addressPostalCode: null,
+    addressLatitude: null,
+    addressLongitude: null,
+    status: 'ACTIVE',
+    permissions: [],
+    role: 'TEACHER',
+    dataScope: {},
+    updatedBy: 1,
+  };
+
+  function makeExecutor(queries: string[]) {
+    return {
+      query: jest.fn((sql: string) => {
+        queries.push(sql);
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      }),
+    };
+  }
+
+  it('ends the temporary-password lifecycle when an explicit password is set', async () => {
+    const queries: string[] = [];
+    const repository = new UsersRepository({} as never);
+
+    await repository.updateUser({ ...baseInput, passwordHash: 'hash' }, makeExecutor(queries));
+
+    expect(queries[0]).toContain('must_change_password = FALSE');
+    expect(queries[0]).toContain('temporary_password_issued_at = NULL');
+    expect(queries[0]).toContain('temporary_password_expires_at = NULL');
+  });
+
+  it('leaves the password lifecycle untouched when no password is provided', async () => {
+    const queries: string[] = [];
+    const repository = new UsersRepository({} as never);
+
+    await repository.updateUser(baseInput, makeExecutor(queries));
+
+    expect(queries[0]).not.toContain('password');
+    expect(queries[0]).not.toContain('must_change_password');
+  });
+});
+
 describe('UsersRepository PII reveal queries', () => {
   function createRepository() {
     const query = jest.fn().mockResolvedValue({ records: [{ found: false }], affected: 1 });

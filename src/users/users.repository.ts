@@ -1487,7 +1487,15 @@ export class UsersRepository {
     let idParamIndex = params.length + 1;
 
     if (data.passwordHash) {
-      setClauses.push(`password = $${idParamIndex}`);
+      // An explicitly-set password is a real password, not a temporary one —
+      // leave the temporary-password lifecycle (mirrors createUser, where only
+      // system-generated passwords set must_change_password).
+      setClauses.push(
+        `password = $${idParamIndex}`,
+        `must_change_password = FALSE`,
+        `temporary_password_issued_at = NULL`,
+        `temporary_password_expires_at = NULL`,
+      );
       params.push(data.passwordHash);
       idParamIndex += 1;
     }
