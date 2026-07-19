@@ -97,40 +97,16 @@ export const VALID_PERMISSION_IDS = PERMISSION_CATALOG.map((item) => item.id);
 
 export const GRANT_EXEMPT_PERMISSION_IDS = ['student-self'];
 
+const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter(
+  (permissionId) => permissionId !== 'student-self',
+);
+
 export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'ADMIN',
     label: 'ผู้ดูแลระบบ',
     rank: 5,
-    default_permissions: [
-      'home',
-      'dashboard',
-      'students',
-      'edit-students',
-      'review-cases',
-      'assign-follow-up-cases',
-      'report-up-cases',
-      'close-case',
-      'create',
-      'attendance',
-      'attendance-dashboard',
-      'manage-attendance-calendar',
-      'manage-timetable',
-      'manage-users-list',
-      'manage-student-accounts',
-      'manage-role-groups',
-      'login-links',
-      'manage-schools',
-      'manage-school-structure',
-      'manage-teacher-access',
-      'manage-student-observations',
-      'import-school-roster',
-      'settings',
-      'import-data',
-      'export-data',
-      'audit-log',
-      'field-monitor',
-    ],
+    default_permissions: ADMIN_DEFAULT_PERMISSIONS,
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
