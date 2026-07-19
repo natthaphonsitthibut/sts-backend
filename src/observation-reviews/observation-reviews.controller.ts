@@ -4,6 +4,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -26,6 +27,7 @@ import {
   CreatePublicFollowUpRequestDto,
   CreateRiskReviewDto,
   ListFollowUpRequestsQueryDto,
+  ListHomeVisitRequestsQueryDto,
   ListTeacherObservationReportsQueryDto,
   PublicFollowUpRequestsQueryDto,
   ReviewFollowUpRequestDto,
@@ -68,6 +70,37 @@ export class TeacherObservationReportsController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listTeacherObservationReports(query, actor);
+  }
+
+  @Get(':observationId')
+  detail(
+    @Param('observationId', ParseIntPipe) observationId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.getTeacherObservationReport(String(observationId), actor);
+  }
+}
+
+@UseGuards(AuthGuard, PermissionsGuard)
+@RequirePermission('manage-student-observations')
+@Controller('api/student-risk-report/home-visit-requests')
+export class HomeVisitRequestReportsController {
+  constructor(private readonly service: ObservationReviewsService) {}
+
+  @Get()
+  list(
+    @Query() query: ListHomeVisitRequestsQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listHomeVisitRequests(query, actor);
+  }
+
+  @Get(':requestId')
+  detail(
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.getHomeVisitRequest(requestId, actor);
   }
 }
 

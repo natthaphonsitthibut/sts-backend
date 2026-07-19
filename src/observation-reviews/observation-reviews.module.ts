@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TeacherAccessModule } from '../teacher-access/teacher-access.module';
 import { TaskModule } from '../task/task.module';
 import {
+  HomeVisitRequestReportsController,
   PublicStudentFollowUpRequestsController,
   StudentFollowUpRequestsController,
   StudentRiskReviewController,
@@ -17,6 +18,7 @@ import { ObservationReviewsService } from './observation-reviews.service';
     StudentFollowUpRequestsController,
     PublicStudentFollowUpRequestsController,
     TeacherObservationReportsController,
+    HomeVisitRequestReportsController,
   ],
   providers: [ObservationReviewsRepository, ObservationReviewsService],
   exports: [ObservationReviewsService],

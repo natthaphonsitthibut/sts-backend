@@ -107,6 +107,14 @@ describe('ObservationReviewsService', () => {
         school_term_id: 55,
         classroom_id: 77,
       }),
+      findActiveAssignmentForTeacher: jest.fn().mockResolvedValue({
+        assignment_id: 31,
+        teacher_membership_id: 12,
+        teacher_user_id: 8,
+        school_id: 101,
+        school_term_id: 55,
+        classroom_id: 77,
+      }),
       findPendingFollowUpForUpdate: jest.fn().mockResolvedValue(null),
       createFollowUpRequest: jest.fn().mockResolvedValue(REQUEST_ID),
       mergePendingFollowUp: jest.fn().mockResolvedValue(undefined),
@@ -115,6 +123,7 @@ describe('ObservationReviewsService', () => {
       listFollowUps: jest.fn().mockResolvedValue([FOLLOW_UP_ROW]),
       reviewFollowUp: jest.fn().mockResolvedValue(true),
       listTeacherObservationReports: jest.fn().mockResolvedValue([]),
+      listHomeVisitRequests: jest.fn().mockResolvedValue([]),
     };
     const auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
@@ -263,6 +272,40 @@ describe('ObservationReviewsService', () => {
     expect(result.meta).toEqual({ created: false });
   });
 
+  it('allows a teacher to request a home visit without an observation', async () => {
+    const { service, repository } = buildService();
+    const result = await service.createFollowUp(
+      STUDENT_UUID,
+      {
+        urgency: 'NORMAL',
+        reason: 'ได้รับข้อมูลจากผู้ปกครองและควรลงพื้นที่',
+        sourceObservations: [],
+      },
+      {
+        id: 8,
+        username: 'teacher',
+        roles: ['TEACHER'],
+        permissions: ['student-observations'],
+      },
+    );
+
+    expect(repository.findActiveAssignmentForTeacher).toHaveBeenCalledWith(
+      8,
+      STUDENT_UUID,
+      expect.any(String),
+      expect.anything(),
+    );
+    expect(repository.validateObservationSources).not.toHaveBeenCalled();
+    expect(repository.addFollowUpSources).toHaveBeenCalledWith(
+      REQUEST_ID,
+      [],
+      8,
+      null,
+      expect.anything(),
+    );
+    expect(result.meta).toEqual({ created: true });
+  });
+
   it('requires the logged teacher to own an active assignment', async () => {
     const { service, repository } = buildService();
     repository.findActiveAssignment.mockResolvedValue({
@@ -399,14 +442,50 @@ describe('ObservationReviewsService', () => {
   it('lists the teacher report queue with server-enforced actor scope', async () => {
     const { service, repository } = buildService();
     await expect(
-      service.listTeacherObservationReports({ page: 1, limit: 20 }, MANAGER),
+      service.listTeacherObservationReports(
+        { page: 1, limit: 20, sortBy: 'studentName', sortDirection: 'asc' },
+        MANAGER,
+      ),
     ).resolves.toEqual({
       data: [],
       meta: { page: 1, limit: 20, totalCount: 0, totalPages: 0 },
     });
     expect(repository.listTeacherObservationReports).toHaveBeenCalledWith(
       { school_ids: [101] },
-      expect.objectContaining({ page: 1, limit: 20 }),
+      expect.objectContaining({
+        page: 1,
+        limit: 20,
+        sortBy: 'studentName',
+        sortDirection: 'asc',
+      }),
+    );
+  });
+
+  it('lists and protects the home-visit request queue with the same actor scope', async () => {
+    const { service, repository } = buildService();
+    repository.listHomeVisitRequests.mockResolvedValueOnce([FOLLOW_UP_ROW]);
+
+    const result = await service.listHomeVisitRequests(
+      { page: 1, limit: 20, sortBy: 'urgency', sortDirection: 'desc' },
+      MANAGER,
+    );
+    expect(repository.listHomeVisitRequests).toHaveBeenCalledWith(
+      { school_ids: [101] },
+      expect.objectContaining({
+        page: 1,
+        limit: 20,
+        sortBy: 'urgency',
+        sortDirection: 'desc',
+      }),
+    );
+    expect(result.data[0]).toMatchObject({
+      id: REQUEST_ID,
+      student: { displayName: 'เด็ก ทดสอบ', schoolName: 'โรงเรียนทดสอบ' },
+    });
+
+    repository.listHomeVisitRequests.mockResolvedValueOnce([]);
+    await expect(service.getHomeVisitRequest(REQUEST_ID, MANAGER)).rejects.toBeInstanceOf(
+      NotFoundException,
     );
   });
 });

@@ -3,9 +3,11 @@ import { AuthGuard, PermissionsGuard } from '../auth';
 import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY } from '../auth/permissions.decorator';
 import { IS_PUBLIC_KEY } from '../auth/public.decorator';
 import {
+  HomeVisitRequestReportsController,
   PublicStudentFollowUpRequestsController,
   StudentFollowUpRequestsController,
   StudentRiskReviewController,
+  TeacherObservationReportsController,
 } from './observation-reviews.controller';
 
 function handler<T>(controller: new (...args: never[]) => T, method: keyof T): () => unknown {
@@ -42,4 +44,17 @@ describe('Observation review controller security metadata', () => {
       'list',
     ]);
   });
+
+  it.each([TeacherObservationReportsController, HomeVisitRequestReportsController])(
+    'keeps manager report routes behind auth and manage permission',
+    (controller) => {
+      expect(Reflect.getMetadata(GUARDS_METADATA, controller)).toEqual([
+        AuthGuard,
+        PermissionsGuard,
+      ]);
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, controller)).toEqual([
+        'manage-student-observations',
+      ]);
+    },
+  );
 });

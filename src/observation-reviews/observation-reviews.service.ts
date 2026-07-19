@@ -11,6 +11,7 @@ import {
   isUnconfiguredDataScope,
   resolveActorDataScope,
   type AuthenticatedRequestUser,
+  type DataScope,
 } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import {
@@ -25,9 +26,12 @@ import { TeacherAccessService } from '../teacher-access/teacher-access.service';
 import type { ActiveTeacherGrantContext } from '../teacher-access/teacher-access.types';
 import type {
   CreateFollowUpRequestDto,
+  CreatePublicFollowUpRequestDto,
   CreateRiskReviewDto,
+  HomeVisitRequestReportResponseDto,
   HumanRiskReviewResponseDto,
   ListFollowUpRequestsQueryDto,
+  ListHomeVisitRequestsQueryDto,
   ListTeacherObservationReportsQueryDto,
   ReviewFollowUpRequestDto,
   StudentFollowUpRequestResponseDto,
@@ -70,6 +74,18 @@ export class ObservationReviewsService {
     }
   }
 
+  private managerQueueScope(actor: AuthenticatedRequestUser): DataScope {
+    this.denyExecutiveRaw(actor);
+    if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ดูข้อมูลข้อสังเกตและคำขอเยี่ยมบ้าน');
+    }
+    const scope = resolveActorDataScope(actor) ?? {};
+    if (isUnconfiguredDataScope(scope) || scope.own_only === true) {
+      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้ดูข้อมูลระดับโรงเรียน');
+    }
+    return scope;
+  }
+
   private async requireManagerAccess(
     actor: AuthenticatedRequestUser,
     enrollment: ObservationReviewEnrollmentRow,
@@ -77,7 +93,7 @@ export class ObservationReviewsService {
   ): Promise<void> {
     this.denyExecutiveRaw(actor);
     if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
-      throw new ForbiddenException('ไม่มีสิทธิ์ทบทวนความเสี่ยงหรือคำขอติดตาม');
+      throw new ForbiddenException('ไม่มีสิทธิ์ทบทวนความเสี่ยงหรือคำขอเยี่ยมบ้าน');
     }
     const scope = resolveActorDataScope(actor) ?? {};
     if (
@@ -204,6 +220,19 @@ export class ObservationReviewsService {
     };
   }
 
+  private toHomeVisitRequestReport(row: FollowUpRequestRow): HomeVisitRequestReportResponseDto {
+    return {
+      ...this.toFollowUp(row),
+      student: {
+        studentTermId: row.student_uuid,
+        displayName: row.student_name,
+        schoolName: row.student_school ?? '-',
+        gradeLabel: row.grade_label,
+        roomNo: row.room_no === null ? null : Number(row.room_no),
+      },
+    };
+  }
+
   private toTeacherObservationReport(
     row: TeacherObservationReportRow,
   ): TeacherObservationReportResponseDto {
@@ -237,14 +266,7 @@ export class ObservationReviewsService {
     query: ListTeacherObservationReportsQueryDto,
     actor: AuthenticatedRequestUser,
   ) {
-    this.denyExecutiveRaw(actor);
-    if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
-      throw new ForbiddenException('ไม่มีสิทธิ์ดูรายงานข้อสังเกตจากครู');
-    }
-    const scope = resolveActorDataScope(actor) ?? {};
-    if (isUnconfiguredDataScope(scope) || scope.own_only === true) {
-      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้ดูคิวรายงานระดับโรงเรียน');
-    }
+    const scope = this.managerQueueScope(actor);
     const page = resolvePage(query.page);
     const limit = resolveLimit(query.limit);
     const rows = await this.repository.listTeacherObservationReports(scope, {
@@ -269,6 +291,72 @@ export class ObservationReviewsService {
       data,
       meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
     };
+  }
+
+  async getTeacherObservationReport(observationId: string, actor: AuthenticatedRequestUser) {
+    const scope = this.managerQueueScope(actor);
+    const rows = await this.repository.listTeacherObservationReports(scope, {
+      observationId,
+      page: 1,
+      limit: 1,
+    });
+    const row = rows[0];
+    if (!row) throw new NotFoundException('ไม่พบรายละเอียดข้อสังเกต');
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'student_observations',
+      targetId: observationId,
+      metadata: { operation: 'TEACHER_OBSERVATION_REPORT_DETAIL_VIEW' },
+      ip: null,
+    });
+    return { data: this.toTeacherObservationReport(row) };
+  }
+
+  async listHomeVisitRequests(
+    query: ListHomeVisitRequestsQueryDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    const scope = this.managerQueueScope(actor);
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const rows = await this.repository.listHomeVisitRequests(scope, { ...query, page, limit });
+    const data = rows.map((row) => this.toHomeVisitRequestReport(row));
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'student_follow_up_requests',
+      targetId: 'home-visit-requests',
+      metadata: { resultCount: data.length, operation: 'HOME_VISIT_REQUEST_QUEUE_VIEW' },
+      ip: null,
+    });
+    return {
+      data,
+      meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+    };
+  }
+
+  async getHomeVisitRequest(requestId: string, actor: AuthenticatedRequestUser) {
+    const scope = this.managerQueueScope(actor);
+    const rows = await this.repository.listHomeVisitRequests(scope, {
+      requestId,
+      page: 1,
+      limit: 1,
+    });
+    const row = rows[0];
+    if (!row) throw new NotFoundException('ไม่พบรายละเอียดคำขอเยี่ยมบ้าน');
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'student_follow_up_requests',
+      targetId: requestId,
+      metadata: { operation: 'HOME_VISIT_REQUEST_DETAIL_VIEW' },
+      ip: null,
+    });
+    return { data: this.toHomeVisitRequestReport(row) };
   }
 
   async createRiskReview(
@@ -361,7 +449,7 @@ export class ObservationReviewsService {
   private async resolveLoggedTeacher(
     actor: AuthenticatedRequestUser,
     studentUuid: string,
-    assignmentId: number,
+    assignmentId: number | undefined,
     queryRunner: QueryRunner,
   ): Promise<{ enrollment: ObservationReviewEnrollmentRow; requester: TeacherRequestActor }> {
     this.denyExecutiveRaw(actor);
@@ -370,12 +458,19 @@ export class ObservationReviewsService {
     }
     const enrollment = await this.repository.lockEnrollment(studentUuid, queryRunner);
     if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
-    const assignment = await this.repository.findActiveAssignment(
-      assignmentId,
-      studentUuid,
-      getBangkokDateString(),
-      queryRunner,
-    );
+    const assignment = assignmentId
+      ? await this.repository.findActiveAssignment(
+          assignmentId,
+          studentUuid,
+          getBangkokDateString(),
+          queryRunner,
+        )
+      : await this.repository.findActiveAssignmentForTeacher(
+          actor.id,
+          studentUuid,
+          getBangkokDateString(),
+          queryRunner,
+        );
     if (!assignment || assignment.teacher_user_id !== actor.id) {
       throw new NotFoundException('ไม่พบนักเรียนใน assignment ที่ใช้งานได้');
     }
@@ -427,7 +522,10 @@ export class ObservationReviewsService {
   ) {
     const reason = dto.reason.trim();
     if (!reason) throw new BadRequestException('กรุณาระบุเหตุผลของคำขอ');
-    await this.validateSources(studentUuid, dto.sourceObservations, queryRunner);
+    const sources = dto.sourceObservations ?? [];
+    if (sources.length > 0) {
+      await this.validateSources(studentUuid, sources, queryRunner);
+    }
     const pending = await this.repository.findPendingFollowUpForUpdate(studentUuid, queryRunner);
     let requestId: string;
     let created: boolean;
@@ -454,13 +552,13 @@ export class ObservationReviewsService {
     }
     await this.repository.addFollowUpSources(
       requestId,
-      dto.sourceObservations,
+      sources,
       requester.userId,
       requester.teacherGrantId,
       queryRunner,
     );
     const row = await this.repository.findFollowUpById(studentUuid, requestId, queryRunner);
-    if (!row) throw new ConflictException('ไม่สามารถอ่านคำขอติดตามหลังบันทึกได้');
+    if (!row) throw new ConflictException('ไม่สามารถอ่านคำขอเยี่ยมบ้านหลังบันทึกได้');
     await this.auditLog.recordAtomic(
       {
         actorUserId: requester.userId,
@@ -472,7 +570,7 @@ export class ObservationReviewsService {
           schoolId: enrollment.school_id,
           studentTermId: studentUuid,
           urgency: row.urgency,
-          sourceCount: dto.sourceObservations.length,
+          sourceCount: sources.length,
           created,
           operation: created
             ? 'STUDENT_FOLLOW_UP_REQUEST_CREATE'
@@ -534,7 +632,7 @@ export class ObservationReviewsService {
     } else {
       if (!query.assignmentId) throw new BadRequestException('ครูต้องระบุ assignmentId');
       return await this.repository.withTransaction(async (queryRunner) => {
-        await this.resolveLoggedTeacher(actor, studentUuid, query.assignmentId!, queryRunner);
+        await this.resolveLoggedTeacher(actor, studentUuid, query.assignmentId, queryRunner);
         const result = await this.listFollowUpsInternal(studentUuid, query, queryRunner);
         await this.auditLog.recordAtomic(
           {
@@ -588,7 +686,7 @@ export class ObservationReviewsService {
         queryRunner,
         true,
       );
-      if (!current) throw new NotFoundException('ไม่พบคำขอติดตาม');
+      if (!current) throw new NotFoundException('ไม่พบคำขอเยี่ยมบ้าน');
       if (current.status !== 'PENDING_REVIEW') {
         throw new ConflictException('คำขอนี้ได้รับการทบทวนแล้ว');
       }
@@ -663,7 +761,7 @@ export class ObservationReviewsService {
   async createFollowUpWithTeacherAccess(
     rawToken: string,
     studentUuid: string,
-    dto: CreateFollowUpRequestDto,
+    dto: CreatePublicFollowUpRequestDto,
   ) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,

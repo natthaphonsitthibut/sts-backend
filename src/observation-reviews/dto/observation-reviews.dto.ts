@@ -1,7 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
-  ArrayMinSize,
   IsArray,
   IsIn,
   IsInt,
@@ -61,12 +60,7 @@ export class CreateRiskReviewDto {
   sourceObservations!: ObservationSourceRefDto[];
 }
 
-export class CreateFollowUpRequestDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  assignmentId!: number;
-
+export class CreateFollowUpRequestBaseDto {
   @IsIn(FOLLOW_UP_URGENCIES)
   urgency!: FollowUpUrgency;
 
@@ -83,12 +77,20 @@ export class CreateFollowUpRequestDto {
   @MaxLength(2000)
   note?: string;
 
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @ArrayMaxSize(20)
   @ValidateNested({ each: true })
   @Type(() => ObservationSourceRefDto)
-  sourceObservations!: ObservationSourceRefDto[];
+  sourceObservations: ObservationSourceRefDto[] = [];
+}
+
+export class CreateFollowUpRequestDto extends CreateFollowUpRequestBaseDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId?: number;
 }
 
 export class ReviewFollowUpRequestDto {
@@ -117,12 +119,44 @@ export class ListFollowUpRequestsQueryDto extends PaginationQueryDto {
 
 export class ListTeacherObservationReportsQueryDto extends PaginationQueryDto {
   @IsOptional()
-  @IsIn(['PENDING_REVIEW', 'APPROVED', 'REJECTED'])
-  status?: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
-
-  @IsOptional()
   @IsIn(['NOTE', 'WATCH', 'CONCERN'])
   concernLevel?: 'NOTE' | 'WATCH' | 'CONCERN';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @IsUUID()
+  roomId?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(120)
+  searchTerm?: string;
+
+  @IsOptional()
+  @IsIn(['studentName', 'dimension', 'concernLevel', 'comment', 'author'])
+  sortBy?: 'studentName' | 'dimension' | 'concernLevel' | 'comment' | 'author';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
+}
+
+export class ListHomeVisitRequestsQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsIn(['PENDING_REVIEW', 'APPROVED', 'REJECTED'])
+  status?: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 
   @IsOptional()
   @IsIn(FOLLOW_UP_URGENCIES)
@@ -149,6 +183,14 @@ export class ListTeacherObservationReportsQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(120)
   searchTerm?: string;
+
+  @IsOptional()
+  @IsIn(['studentName', 'reason', 'urgency', 'requester', 'status', 'caseStatus'])
+  sortBy?: 'studentName' | 'reason' | 'urgency' | 'requester' | 'status' | 'caseStatus';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
 }
 
 export class PublicFollowUpRequestsQueryDto extends PaginationQueryDto {
@@ -161,7 +203,12 @@ export class PublicFollowUpRequestsQueryDto extends PaginationQueryDto {
   assignmentId!: number;
 }
 
-export class CreatePublicFollowUpRequestDto extends CreateFollowUpRequestDto {
+export class CreatePublicFollowUpRequestDto extends CreateFollowUpRequestBaseDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId!: number;
+
   @IsUUID()
   studentTermId!: string;
 }
@@ -255,4 +302,14 @@ export class TeacherObservationReportResponseDto {
   urgency!: FollowUpUrgency | null;
   openedCaseId!: number | null;
   openedCaseStatus!: string | null;
+}
+
+export class HomeVisitRequestReportResponseDto extends StudentFollowUpRequestResponseDto {
+  student!: {
+    studentTermId: string;
+    displayName: string;
+    schoolName: string;
+    gradeLabel: string | null;
+    roomNo: number | null;
+  };
 }

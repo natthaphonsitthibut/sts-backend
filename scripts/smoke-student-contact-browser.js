@@ -347,7 +347,13 @@ async function main() {
       passwordHash: await passwordService.hash(adminPassword),
       firstName: 'Contact',
       lastName: 'Browser Admin',
-      permissions: ['students', 'edit-students', 'manage-student-observations', 'dashboard'],
+      permissions: [
+        'students',
+        'edit-students',
+        'student-observations',
+        'manage-student-observations',
+        'dashboard',
+      ],
       role: 'ADMIN',
       dataScope: { global: true },
     });
@@ -542,9 +548,57 @@ async function main() {
       `document.querySelector('button[aria-label="Close dialog"]')`,
       'Observation dialog close button was not found',
     );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ขอเยี่ยมบ้าน')`,
+      'Profile home-visit request button was not found',
+    );
+    await waitFor(
+      async () =>
+        Number(
+          await evaluate(
+            client,
+            `document.querySelector('#managed-follow-up-source')?.parentElement?.querySelector('select')?.options.length || 0`,
+          ),
+        ) > 1,
+      'Managed observation without an assignment was not available as home-visit evidence',
+    );
+    await click(
+      client,
+      `document.querySelector('#managed-follow-up-source')`,
+      'Managed home-visit evidence selector was not found',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const option = [...document.querySelectorAll('[role="option"]')]
+          .find((item) => !item.textContent.includes('ไม่แนบข้อสังเกต'));
+        if (!option) throw new Error('Managed observation evidence option was not found');
+        option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        String(
+          await evaluate(
+            client,
+            `document.querySelector('#managed-follow-up-source-detail')?.textContent || ''`,
+          ),
+        ).includes('เหม่อและตามบทเรียนไม่ทันในช่วงท้ายคาบ'),
+      'Selected home-visit evidence did not show the teacher comment',
+    );
+    await click(
+      client,
+      `document.querySelector('button[aria-label="Close dialog"]')`,
+      'Home-visit request dialog close button was not found',
+    );
     await waitFor(
       async () => Boolean(await evaluate(client, `Boolean(document.querySelector('#human-risk-reason'))`)),
       'Risk-review form did not appear after a teacher signal was recorded',
+    );
+    assert(
+      String(await evaluate(client, 'document.body.innerText')).includes('เหม่อและตามบทเรียนไม่ทันในช่วงท้ายคาบ'),
+      'Risk review did not show the teacher comment before the decision form',
     );
     await fillInput(client, '#human-risk-reason', 'ประเมินจากข้อสังเกตที่ครูบันทึก');
     await click(
@@ -576,13 +630,110 @@ async function main() {
     await waitFor(
       async () => {
         const text = String(await evaluate(client, 'document.body.innerText'));
-        return text.includes('รายงานจากครู') && text.includes('พิมพ์ชนก อินทรกำแหง');
+        return text.includes('ข้อสังเกตจากครู') && text.includes('พิมพ์ชนก อินทรกำแหง');
       },
       'Teacher observation queue did not render the WATCH observation',
     );
     const reportText = String(await evaluate(client, 'document.body.innerText'));
     assert(reportText.includes('เหม่อและตามบทเรียนไม่ทันในช่วงท้ายคาบ'), 'Observation comment missing from report queue');
+    const reportTableLayout = await evaluate(
+      client,
+      `(() => {
+        const table = document.querySelector('table');
+        const shell = table?.closest('.rounded-lg.border');
+        const outer = shell?.parentElement;
+        return {
+          hasNestedCard: Boolean(outer?.className.includes('p-4') && outer?.className.includes('bg-white')),
+          sortButtonCount: document.querySelectorAll('thead button').length,
+        };
+      })()`,
+    );
+    assert(!reportTableLayout.hasNestedCard, 'Teacher observation table is still wrapped in a nested card');
+    assert(reportTableLayout.sortButtonCount >= 5, 'Teacher observation columns do not expose sort controls');
+    await click(
+      client,
+      `[...document.querySelectorAll('thead button')].find((button) => button.textContent.includes('นักเรียน'))`,
+      'Teacher observation student sort button was not found',
+    );
+    await waitFor(
+      async () =>
+        String(
+          await evaluate(
+            client,
+            `document.querySelector('th[aria-sort="ascending"]')?.textContent || ''`,
+          ),
+        ).includes('นักเรียน'),
+      'Teacher observation student sort did not become active',
+    );
     await capture(client, '/tmp/sts-teacher-observation-reports.png');
+    await click(
+      client,
+      `[...document.querySelectorAll('a')].find((link) => link.textContent.includes('ดูรายละเอียด'))`,
+      'Teacher observation detail link was not found',
+    );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return text.includes('รายละเอียดข้อสังเกต') && text.includes('เหม่อและตามบทเรียนไม่ทันในช่วงท้ายคาบ');
+      },
+      'Teacher observation detail did not render the full comment',
+    );
+    const detailUrl = String(await evaluate(client, 'location.href'));
+    await navigate(client, detailUrl);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ความเห็นจากครู'),
+      'Teacher observation detail did not survive refresh',
+    );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          text.includes('ทบทวนสัญญาณความเสี่ยง') &&
+          text.includes('คำขอเยี่ยมบ้านจากครู') &&
+          text.includes('สรุปข้อสังเกต')
+        );
+      },
+      'Teacher observation detail did not expose the student follow-up workspace',
+    );
+    await navigate(client, `${FRONTEND_URL}/student-risk-report/home-visit-requests`);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('คำขอเยี่ยมบ้าน'),
+      'Home-visit request queue route did not render',
+    );
+    await navigate(client, `${FRONTEND_URL}/students/${studentUuid}`);
+    await waitFor(
+      async () => Boolean(await evaluate(client, `Boolean(document.querySelector('[aria-label="ทบทวนข้อสังเกตนักเรียน"]'))`)),
+      'Student review panel did not render after returning from report routes',
+    );
+    const profileActionPresentation = await evaluate(
+      client,
+      `(() => {
+        const labels = ['บันทึกข้อสังเกต', 'ขอเยี่ยมบ้าน', 'แก้ไขข้อมูลนักเรียน', 'ย้อนกลับ'];
+        const buttons = labels.map((label) =>
+          [...document.querySelectorAll('button')].find((button) => button.textContent.trim() === label),
+        );
+        const visibleButtons = buttons.filter(Boolean);
+        return {
+          heights: visibleButtons.map((button) => button.getBoundingClientRect().height),
+          hasHomeVisitAction: Boolean(buttons[1]),
+          primaryBackgrounds: buttons.slice(0, 2).map((button) =>
+            button ? getComputedStyle(button).backgroundColor : '',
+          ),
+        };
+      })()`,
+    );
+    assert(
+      profileActionPresentation.heights.every(
+        (height) => height > 0 && Math.abs(height - profileActionPresentation.heights[0]) < 0.5,
+      ),
+      'Student detail action buttons do not share the same height',
+    );
+    assert(
+      !profileActionPresentation.hasHomeVisitAction ||
+        profileActionPresentation.primaryBackgrounds[0] ===
+          profileActionPresentation.primaryBackgrounds[1],
+      'Home-visit request action does not use the primary blue treatment',
+    );
     await evaluate(
       client,
       `document.querySelector('[aria-label="ทบทวนข้อสังเกตนักเรียน"]')?.scrollIntoView({ block: 'start' })`,
@@ -603,8 +754,15 @@ async function main() {
           'risk review hides internal snapshot/revision wording',
           'empty risk signals hide the review form',
           'profile records a CONCERN observation',
+          'managed observations without assignments remain selectable as home-visit evidence',
+          'selected home-visit evidence shows the teacher comment and attribution',
           'risk review appears after evidence and cites the observation',
-          'teacher report tab lists the scoped observation queue',
+          'risk review shows the full teacher comment before decision',
+          'teacher observation queue and refresh-safe detail route render',
+          'teacher observation detail exposes risk review, home visit and summary actions',
+          'report tables use the shared non-nested shell and server sort controls',
+          'home-visit request queue is a separate route',
+          'student detail actions share one height and home-visit request is primary',
         ],
       }),
     );
