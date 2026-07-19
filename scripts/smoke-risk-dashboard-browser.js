@@ -586,6 +586,49 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   assert(duplicate.status === 200, `duplicate manual case request returned ${duplicate.status}`);
   assert(duplicate.payload?.created === false, 'duplicate manual case request created another case');
   assert(Number(duplicate.payload?.data?.id) === caseId, 'duplicate request returned another case');
+
+  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => {
+          const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
+            .find((candidate) => candidate.offsetParent !== null
+              && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+          return Boolean(row?.querySelector('button[aria-label^="ดูเคสที่กำลังติดตาม"]'));
+        })()`,
+      ),
+    'risk dashboard did not expose the active case list action',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
+        .find((candidate) => candidate.offsetParent !== null
+          && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+      row?.querySelector('button[aria-label^="ดูเคสที่กำลังติดตาม"]')?.click();
+    })()`,
+  );
+  await waitFor(
+    async () => {
+      const text = await evaluate(
+        client,
+        `document.querySelector('[role="dialog"]')?.innerText ?? ''`,
+      );
+      return text.includes('เคสที่กำลังติดตาม') && text.includes(reason);
+    },
+    'active case list dialog did not render the student case',
+  );
+  await evaluate(
+    client,
+    `Array.from(document.querySelectorAll('[role="dialog"] button'))
+      .find((button) => button.innerText.trim() === 'ดูรายละเอียด')?.click()`,
+  );
+  await waitFor(
+    async () => evaluate(client, `window.location.pathname === ${JSON.stringify(`/cases/${caseId}`)}`),
+    'active case list did not navigate to the selected case detail',
+  );
   await capture(client, '/tmp/sts-manual-case-detail.png');
 }
 
