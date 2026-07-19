@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { PII_FIELD_GROUP_CODES } from '../students/pii-fields.config';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
+import { escapeLikePattern } from '../common/utils/helpers';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
   AccountLifecycleStatus,
@@ -1054,9 +1055,9 @@ export class UsersRepository {
       conditions.push(`s.student_uuid = ANY($${params.length}::uuid[])`);
     }
     if (filters.searchTerm) {
-      params.push(`%${filters.searchTerm}%`);
+      params.push(`%${escapeLikePattern(filters.searchTerm)}%`);
       conditions.push(
-        `CONCAT_WS(' ', s."FirstName_Onec", s."MiddleName_Onec", s."LastName_Onec") ILIKE $${params.length}`,
+        `CONCAT_WS(' ', s."FirstName_Onec", s."MiddleName_Onec", s."LastName_Onec") ILIKE $${params.length} ESCAPE '\\'`,
       );
     }
 

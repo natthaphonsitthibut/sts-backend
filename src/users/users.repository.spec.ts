@@ -51,6 +51,22 @@ describe('UsersRepository student account queries', () => {
     expect(calls[0].params).toContain('%สมชาย%');
   });
 
+  it('escapes LIKE wildcards in the name search term', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const repository = new UsersRepository({} as never);
+    const executor = {
+      query: jest.fn((sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+    };
+
+    await repository.listStudentAccountCandidates({ searchTerm: '100%_a\\b' }, executor);
+
+    expect(calls[0].sql).toContain("ESCAPE '\\'");
+    expect(calls[0].params).toContain('%100\\%\\_a\\\\b%');
+  });
+
   it('filters managed student accounts through current enrollment policy', async () => {
     const queries: string[] = [];
     const repository = new UsersRepository({
