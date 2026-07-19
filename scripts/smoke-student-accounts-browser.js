@@ -25,6 +25,10 @@ const ADMIN_USERNAME = 'student_accounts_browser_admin';
 const PERSON_UUID = '10000000-0000-4000-8000-000000000101';
 const STUDENT_UUID = '10000000-0000-4000-8000-000000000102';
 const STUDENT_PERSON_ID = 'SMOKE-STUDENT-ACCT-BROWSER-001';
+const CREATE_PERSON_UUID = '10000000-0000-4000-8000-000000000103';
+const CREATE_STUDENT_UUID = '10000000-0000-4000-8000-000000000104';
+const CREATE_STUDENT_PERSON_ID = 'SMOKE-STUDENT-ACCT-BROWSER-CREATE-001';
+const CREATE_STUDENT_NAME = 'Smoke Create Student Browser';
 const PAGE_SELECTION_USERNAME_PREFIX = 'student_accounts_browser_page_';
 const PAGE_SELECTION_COUNT = 22;
 const SCHOOL_ID = 10010002;
@@ -35,6 +39,7 @@ const GRADE_LABEL = 'ม.6';
 // A room with no other roster rows so the pilot fixture is the ONLY generate
 // candidate — keeps the smoke deterministic and never touches real students.
 const ROOM_ID = 99;
+const CREATE_ROOM_ID = ROOM_ID;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -293,6 +298,46 @@ async function upsertStudentFixture(dataSource) {
   );
 }
 
+async function upsertCreateCandidateFixture(dataSource) {
+  await dataSource.query(
+    `INSERT INTO student_person (person_uuid, identity_status)
+     VALUES ($1::uuid, 'ACTIVE')
+     ON CONFLICT (person_uuid) DO UPDATE
+     SET identity_status = 'ACTIVE', merged_into = NULL, deleted_at = NULL, deleted_by = NULL`,
+    [CREATE_PERSON_UUID],
+  );
+  await dataSource.query(
+    `INSERT INTO student_term (
+       student_uuid, person_uuid, "PersonID_Onec", "FirstName_Onec", "LastName_Onec",
+       "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec", "StudentStatusID_Onec",
+       "AcademicYear_Onec", "Semester_Onec", deleted_at, deleted_by
+     )
+     VALUES ($1::uuid, $2::uuid, $3, 'Smoke Create', 'Student Browser', $4, $5, $6, 10,
+             2569, 1, NULL, NULL)
+     ON CONFLICT (student_uuid) DO UPDATE
+     SET person_uuid = EXCLUDED.person_uuid,
+         "PersonID_Onec" = EXCLUDED."PersonID_Onec",
+         "FirstName_Onec" = EXCLUDED."FirstName_Onec",
+         "LastName_Onec" = EXCLUDED."LastName_Onec",
+         "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
+         "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
+         "RoomID_Onec" = EXCLUDED."RoomID_Onec",
+         "StudentStatusID_Onec" = 10,
+         "AcademicYear_Onec" = EXCLUDED."AcademicYear_Onec",
+         "Semester_Onec" = EXCLUDED."Semester_Onec",
+         deleted_at = NULL,
+         deleted_by = NULL`,
+    [
+      CREATE_STUDENT_UUID,
+      CREATE_PERSON_UUID,
+      CREATE_STUDENT_PERSON_ID,
+      SCHOOL_ID,
+      GRADE_LEVEL_ID,
+      CREATE_ROOM_ID,
+    ],
+  );
+}
+
 async function upsertPageSelectionFixtures(dataSource, passwordHash) {
   for (let index = 1; index <= PAGE_SELECTION_COUNT; index += 1) {
     const suffix = String(index).padStart(3, '0');
@@ -388,11 +433,20 @@ async function cleanupSmoke(dataSource) {
      SET status = 'DISABLED',
          deactivated_at = COALESCE(deactivated_at, NOW()),
          deactivation_reason_code = COALESCE(deactivation_reason_code, 'OTHER'),
-         deactivation_note = COALESCE(deactivation_note, 'Retained automated student account browser smoke fixture')
+         deactivation_note = COALESCE(deactivation_note, 'Retained automated student account browser smoke fixture'),
+         person_uuid = CASE
+           WHEN person_uuid = $4::uuid THEN NULL
+           ELSE person_uuid
+         END
      WHERE username = $1
-        OR username LIKE $3
-        OR (role = 'STUDENT' AND person_uuid = $2::uuid)`,
-    [ADMIN_USERNAME, PERSON_UUID, `${PAGE_SELECTION_USERNAME_PREFIX}%`],
+        OR username LIKE $2
+        OR (role = 'STUDENT' AND person_uuid = ANY($3::uuid[]))`,
+    [
+      ADMIN_USERNAME,
+      `${PAGE_SELECTION_USERNAME_PREFIX}%`,
+      [PERSON_UUID, CREATE_PERSON_UUID],
+      CREATE_PERSON_UUID,
+    ],
   );
 }
 
@@ -405,7 +459,7 @@ async function findStudentAccount(dataSource) {
 }
 
 async function upsertAdmin(dataSource, passwordHash) {
-  const permissions = ['manage-student-accounts', 'manage-users-list'];
+  const permissions = ['manage-student-accounts', 'manage-users-list', 'students'];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [ADMIN_USERNAME]);
   if (existing) {
     await dataSource.query(
@@ -446,10 +500,40 @@ async function clickConfirmButton(client, label) {
   assert(clicked, `Confirm button "${label}" was not found`);
 }
 
+async function clickButtonContaining(client, label) {
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((node) => node.textContent.includes(${JSON.stringify(label)}));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`,
+  );
+  assert(clicked, `Button containing "${label}" was not found`);
+}
+
+async function clickDialogButton(client, label) {
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      const button = dialog
+        ? [...dialog.querySelectorAll('button')]
+            .find((node) => node.textContent.trim() === ${JSON.stringify(label)})
+        : null;
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`,
+  );
+  assert(clicked, `Dialog button "${label}" was not found`);
+}
+
 // The reissued credential renders inline in a CredentialTable inside the
-// "ออกรหัสใหม่แล้ว" panel: username in a plain mono cell, temp password in a
-// bold mono cell. Scope to that panel so the management row's own @username
-// (also mono) is never mistaken for the password.
+// "ออกรหัสใหม่แล้ว" panel. Read the temp-password column by table structure
+// instead of coupling the smoke to presentation classes such as font-mono.
 async function readReissuedPassword(client) {
   return String(
     await evaluate(
@@ -461,10 +545,10 @@ async function readReissuedPassword(client) {
         let panel = title;
         for (let i = 0; i < 10 && panel.parentElement; i += 1) {
           panel = panel.parentElement;
-          if (panel.querySelector('.font-mono.font-bold')) break;
+          if (panel.querySelector('tbody tr')) break;
         }
-        const cell = [...panel.querySelectorAll('.font-mono.font-bold')]
-          .find((node) => node.textContent.trim().length > 0);
+        const cells = panel.querySelector('tbody tr')?.querySelectorAll('td') || [];
+        const cell = cells[4];
         return cell ? cell.textContent.trim().replace(/^@/, '') : '';
       })()`,
     ),
@@ -481,6 +565,7 @@ async function main() {
 
   try {
     await upsertStudentFixture(dataSource);
+    await upsertCreateCandidateFixture(dataSource);
     await cleanupSmoke(dataSource);
     const adminPasswordHash = await passwordService.hash(adminPassword);
     await upsertAdmin(dataSource, adminPasswordHash);
@@ -489,6 +574,15 @@ async function main() {
     const adminSession = await apiLogin(ADMIN_USERNAME, adminPassword);
     assert(adminSession.status === 201, `Admin login returned ${adminSession.status}`);
     const cookie = adminSession.setCookie.split(';')[0];
+    const createCandidateDetailResponse = await fetch(
+      `${BACKEND_URL}/api/students/${CREATE_STUDENT_UUID}`,
+      { headers: { cookie } },
+    );
+    const createCandidateDetailBody = await createCandidateDetailResponse.text();
+    assert(
+      createCandidateDetailResponse.status === 200,
+      `Create-candidate detail API returned ${createCandidateDetailResponse.status}: ${createCandidateDetailBody.slice(0, 500)}`,
+    );
 
     // Ensure exactly one ACTIVE pilot student account: reactivate the existing
     // one (cleanup disabled it) or generate a fresh one when none exists.
@@ -542,6 +636,111 @@ async function main() {
       `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(adminSession.body))});
        localStorage.setItem('admin_access', 'true');`,
     );
+
+    // --- Student detail deep-link pre-fills one candidate, then becomes transient ---
+    await navigate(client, `${FRONTEND_URL}/students/${CREATE_STUDENT_UUID}`);
+    try {
+      await waitFor(
+        async () => {
+          const text = await bodyText(client);
+          return (
+            text.includes('ไปหน้าสร้างบัญชี') ||
+            text.includes('ไม่พบข้อมูลนักเรียน') ||
+            text.includes('โหลดข้อมูลนักเรียนไม่สำเร็จ')
+          );
+        },
+        'Create-candidate student detail did not settle',
+      );
+    } catch (error) {
+      throw new Error(`${errorMessage(error)}: ${(await bodyText(client)).slice(0, 500)}`);
+    }
+    const createCandidateDetailText = await bodyText(client);
+    assert(
+      createCandidateDetailText.includes(CREATE_STUDENT_NAME) &&
+        createCandidateDetailText.includes('ไปหน้าสร้างบัญชี'),
+      `Create-candidate student detail did not render: ${createCandidateDetailText.slice(0, 500)}`,
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const link = [...document.querySelectorAll('button')]
+          .find((node) => node.textContent.includes('ไปหน้าสร้างบัญชี'));
+        if (!link) throw new Error('Create-account deep link was not found');
+        link.click();
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) ===
+          '/manage-student-accounts/generate' &&
+        (await evaluate(
+          client,
+          `document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน..."]')?.value || ''`,
+        )) === CREATE_STUDENT_NAME &&
+        (await bodyText(client)).includes('สร้างบัญชีที่เลือก (1)'),
+      'Student deep link did not auto-filter, preview and select the candidate',
+    );
+    const consumedSearch = String(await evaluate(client, 'location.search'));
+    assert(!consumedSearch.includes('studentId='), 'Consumed deep link retained studentId');
+    assert(
+      consumedSearch.includes(`schoolId=${SCHOOL_ID}`) &&
+        consumedSearch.includes(`room=${CREATE_ROOM_ID}`),
+      'Consumed deep link did not retain non-sensitive school filters',
+    );
+    await capture(client, '/tmp/sts-student-accounts-deep-link-selection.png');
+
+    await client.call('Page.reload');
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'document.readyState')) === 'complete' &&
+        (await bodyText(client)).includes('เลือกขอบเขตแล้วดูตัวอย่าง'),
+      'Refresh did not clear the transient preview and selection',
+    );
+    assert(
+      (await evaluate(
+        client,
+        `document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน..."]')?.value || ''`,
+      )) === '',
+      'Refresh retained the student-name search value',
+    );
+    assert(
+      !(await bodyText(client)).includes('สร้างบัญชีที่เลือก (1)'),
+      'Refresh retained the selected candidate',
+    );
+    await clickButtonContaining(client, 'ดูตัวอย่าง');
+    await waitFor(
+      async () => (await bodyText(client)).includes(CREATE_STUDENT_NAME),
+      'Filtered candidate preview did not reload on demand',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const checkbox = document.querySelector(
+          'input[type="checkbox"][aria-label=${JSON.stringify(`เลือก ${CREATE_STUDENT_NAME}`)}]',
+        );
+        if (!checkbox) throw new Error('Create-candidate checkbox was not found');
+        checkbox.click();
+      })()`,
+    );
+    await waitFor(
+      async () => (await bodyText(client)).includes('สร้างบัญชีที่เลือก (1)'),
+      'Selecting the create candidate did not update the action count',
+    );
+    await clickButtonContaining(client, 'สร้างบัญชีที่เลือก (1)');
+    await waitFor(
+      async () => (await bodyText(client)).includes('สร้างบัญชีนักเรียนที่เลือก'),
+      'Selected-account confirmation dialog did not open',
+    );
+    await clickDialogButton(client, 'สร้างบัญชี');
+    try {
+      await waitFor(
+        async () => (await bodyText(client)).includes('สร้างแล้ว 1 บัญชี'),
+        'Selected candidate account was not created',
+      );
+    } catch (error) {
+      throw new Error(`${errorMessage(error)}: ${(await bodyText(client)).slice(0, 800)}`);
+    }
+    await capture(client, '/tmp/sts-student-accounts-create-selected.png');
 
     // --- Management list renders the pilot student, with status + pagination ---
     await navigate(client, `${FRONTEND_URL}/manage-student-accounts`);
@@ -650,7 +849,7 @@ async function main() {
     await capture(client, '/tmp/sts-student-accounts-manage-mobile.png');
 
     console.log(
-      'student accounts browser smoke passed (management render, cross-page selection, staff excludes students, UI reissue reveals rotated credential, student re-login forces change, desktop/mobile)',
+      'student accounts browser smoke passed (detail deep-link, transient preview, selected generation, management render, cross-page selection, staff excludes students, UI reissue, forced password change, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);

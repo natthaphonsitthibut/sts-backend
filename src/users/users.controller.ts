@@ -42,6 +42,7 @@ import {
   GenerateStudentAccountsDto,
   GetUsersQueryDto,
   LoginDto,
+  PreviewStudentAccountsDto,
   StudentAccountBatchCredentialQueryDto,
   StudentAccountBatchListQueryDto,
   StudentAccountBulkFilterDto,
@@ -292,7 +293,7 @@ export class UsersController {
   @RequirePermission('manage-student-accounts')
   @Post('student-accounts/preview')
   async previewStudentAccounts(
-    @Body() data: StudentAccountBulkFilterDto,
+    @Body() data: PreviewStudentAccountsDto,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
     return await this.usersService.previewStudentAccounts(actor, data);
@@ -334,7 +335,7 @@ export class UsersController {
   @RequirePermission('manage-student-accounts')
   @Post('student-accounts/batch-jobs')
   async enqueueStudentAccountBatch(
-    @Body() data: GenerateStudentAccountsDto,
+    @Body() data: StudentAccountBulkFilterDto,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
     return await this.studentAccountBatchService.enqueue(actor, data);

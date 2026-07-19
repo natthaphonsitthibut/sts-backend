@@ -23,6 +23,34 @@ describe('UsersRepository student account queries', () => {
     expectCurrentEnrollmentPolicy(queries[0]);
   });
 
+  it('combines actor scope with selected-student and name filters', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const repository = new UsersRepository({} as never);
+    const executor = {
+      query: jest.fn((sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+    };
+    const studentId = '00000000-0000-4000-8000-000000000001';
+
+    await repository.listStudentAccountCandidates(
+      {
+        actorScope: { school_ids: [10010002] },
+        studentIds: [studentId],
+        searchTerm: 'สมชาย',
+      },
+      executor,
+    );
+
+    expect(calls[0].sql).toContain('s."SchoolID_Onec"');
+    expect(calls[0].sql).toContain('s.student_uuid = ANY(');
+    expect(calls[0].sql).toContain('CONCAT_WS(\' \', s."FirstName_Onec"');
+    expect(calls[0].params).toContainEqual([10010002]);
+    expect(calls[0].params).toContainEqual([studentId]);
+    expect(calls[0].params).toContain('%สมชาย%');
+  });
+
   it('filters managed student accounts through current enrollment policy', async () => {
     const queries: string[] = [];
     const repository = new UsersRepository({

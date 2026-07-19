@@ -876,6 +876,27 @@ describe('UsersService student accounts', () => {
     );
   });
 
+  it('deduplicates selected students and preserves actor scope for account previews', async () => {
+    await service.previewStudentAccounts(actor, {
+      studentIds: [candidate.student_uuid, candidate.student_uuid],
+      searchTerm: '  สมชาย  ',
+      limit: 1,
+    });
+
+    const expectedFilters = {
+      actorScope: actor.data_scope,
+      studentIds: [candidate.student_uuid],
+      searchTerm: 'สมชาย',
+      limit: 1,
+    };
+    expect(usersRepository.countStudentAccountCandidates).toHaveBeenCalledWith(
+      expect.objectContaining(expectedFilters),
+    );
+    expect(usersRepository.listStudentAccountCandidates).toHaveBeenCalledWith(
+      expect.objectContaining(expectedFilters),
+    );
+  });
+
   it('previews scoped candidates without exposing canonical person identifiers', async () => {
     const result = await service.previewStudentAccounts(actor, { schoolId: 10010002 });
 

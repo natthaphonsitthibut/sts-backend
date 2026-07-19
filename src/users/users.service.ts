@@ -37,7 +37,8 @@ import type {
   CreateUserDto,
   DeactivateStudentAccountDto,
   GenerateStudentAccountsDto,
-  StudentAccountBulkFilterDto,
+  PreviewStudentAccountsDto,
+  StudentAccountSelectionFilterDto,
   StudentAccountListQueryDto,
   UpdateOwnProfileDto,
   UpdateUserDto,
@@ -1328,7 +1329,7 @@ export class UsersService {
 
   async previewStudentAccounts(
     actor: ActorContext | undefined,
-    filters: StudentAccountBulkFilterDto,
+    filters: PreviewStudentAccountsDto,
   ) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     this.assertCanManageStudentAccounts(currentActor);
@@ -1490,13 +1491,17 @@ export class UsersService {
   }
 
   private normalizeStudentAccountFilters(
-    filters: StudentAccountBulkFilterDto,
+    filters: StudentAccountSelectionFilterDto,
     actorScope: DataScope | undefined,
   ) {
     if (actorScope?.own_only) {
       throw new ForbiddenException('บัญชีส่วนตัวไม่สามารถสร้างบัญชีนักเรียนได้');
     }
-    const limit = Math.min(Math.max(filters.limit ?? 50, 1), STUDENT_ACCOUNT_BATCH_LIMIT);
+    const studentIds = filters.studentIds?.length
+      ? Array.from(new Set(filters.studentIds))
+      : undefined;
+    const requestedLimit = Math.max(filters.limit ?? 50, studentIds?.length ?? 0);
+    const limit = Math.min(Math.max(requestedLimit, 1), STUDENT_ACCOUNT_BATCH_LIMIT);
     const page = Math.max(filters.page ?? 1, 1);
     const cleanString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -1512,6 +1517,8 @@ export class UsersService {
       subDistrict: cleanString(filters.subDistrict),
       grade,
       room: filters.room,
+      searchTerm: cleanString(filters.searchTerm),
+      studentIds,
       onlyWithoutAccount: filters.onlyWithoutAccount !== false,
       page,
       limit,

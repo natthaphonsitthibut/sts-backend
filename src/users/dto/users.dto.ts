@@ -12,6 +12,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -362,7 +363,23 @@ export class StudentAccountBulkFilterDto {
   limit?: number;
 }
 
-export class GenerateStudentAccountsDto extends StudentAccountBulkFilterDto {}
+export class StudentAccountSelectionFilterDto extends StudentAccountBulkFilterDto {
+  @IsOptional()
+  @Transform(({ value }) => trimOptionalText(value))
+  @IsString()
+  @MaxLength(150)
+  searchTerm?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsUUID('4', { each: true })
+  studentIds?: string[];
+}
+
+export class PreviewStudentAccountsDto extends StudentAccountSelectionFilterDto {}
+
+export class GenerateStudentAccountsDto extends StudentAccountSelectionFilterDto {}
 
 export class StudentAccountListQueryDto extends StudentAccountBulkFilterDto {
   @IsOptional()

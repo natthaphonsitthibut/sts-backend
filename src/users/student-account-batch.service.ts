@@ -30,7 +30,7 @@ import {
   type BatchJobItemInput,
   type BatchJobRow,
 } from './student-account-batch.repository';
-import type { GenerateStudentAccountsDto, StudentAccountBatchListQueryDto } from './dto/users.dto';
+import type { StudentAccountBatchListQueryDto, StudentAccountBulkFilterDto } from './dto/users.dto';
 import type {
   ActorContext,
   DataScope,
@@ -112,7 +112,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
     await this.closeBullQueue();
   }
 
-  async enqueue(actor: ActorContext | undefined, filters: GenerateStudentAccountsDto) {
+  async enqueue(actor: ActorContext | undefined, filters: StudentAccountBulkFilterDto) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     this.assertCanManageStudentAccounts(currentActor);
     const scope = this.buildScopeSnapshot(currentActor, filters);
@@ -617,7 +617,7 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
 
   private buildScopeSnapshot(
     actor: ActorContext,
-    filters: GenerateStudentAccountsDto,
+    filters: StudentAccountBulkFilterDto,
   ): BatchScopeSnapshot {
     if (actor.data_scope?.own_only) {
       throw new ForbiddenException('บัญชีส่วนตัวไม่สามารถสร้างบัญชีนักเรียนได้');

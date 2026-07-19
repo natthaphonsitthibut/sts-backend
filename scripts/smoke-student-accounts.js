@@ -21,8 +21,9 @@ const PERSON_UUID = '10000000-0000-4000-8000-000000000001';
 const STUDENT_UUID = '10000000-0000-4000-8000-000000000002';
 const STUDENT_PERSON_ID = 'SMOKE-STUDENT-ACCT-001';
 const SCHOOL_ID = 10010002;
-const GRADE_LEVEL_ID = 6;
-const ROOM_ID = 1;
+// Match the active school_classrooms fixture used by the browser smoke.
+const GRADE_LEVEL_ID = 423;
+const ROOM_ID = 99;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

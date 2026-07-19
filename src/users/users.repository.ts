@@ -235,6 +235,8 @@ export interface StudentAccountManagementFilters {
 
 export interface StudentAccountCandidateFilters {
   actorScope?: DataScope;
+  studentIds?: string[];
+  searchTerm?: string;
   schoolId?: number;
   province?: string;
   district?: string;
@@ -1045,6 +1047,17 @@ export class UsersRepository {
         conditions.push(`(${scopeResult.sql})`);
         scopeResult.params.forEach((param) => params.push(param));
       }
+    }
+
+    if (filters.studentIds && filters.studentIds.length > 0) {
+      params.push(filters.studentIds);
+      conditions.push(`s.student_uuid = ANY($${params.length}::uuid[])`);
+    }
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      conditions.push(
+        `CONCAT_WS(' ', s."FirstName_Onec", s."MiddleName_Onec", s."LastName_Onec") ILIKE $${params.length}`,
+      );
     }
 
     if (typeof filters.schoolId === 'number') {
