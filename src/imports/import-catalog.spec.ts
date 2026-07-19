@@ -49,6 +49,11 @@ describe('canonical import catalog', () => {
       required: true,
       referenceSource: null,
     });
+    expect(
+      catalog.targets
+        .find((target) => target.target === 'school_classroom')
+        ?.fields.map((field) => field.key),
+    ).toEqual(['gradeLevelId', 'roomCode', 'roomName']);
   });
 
   it.each(['*', 'ALL'])(
@@ -98,7 +103,7 @@ describe('canonical import catalog', () => {
           grade_level_id: input.gradeLevelId,
           room_code: input.roomCode,
           room_name: input.roomName,
-          legacy_room_number: input.legacyRoomNumber,
+          legacy_room_number: Number(input.roomCode),
         });
         return Promise.resolve('501');
       }),
@@ -108,9 +113,7 @@ describe('canonical import catalog', () => {
     };
     const auditLog = { recordAtomic: jest.fn() };
     const service = new ImportsService(repository as never, auditLog as never);
-    const file = importFile([
-      { gradeLevelId: 101, roomCode: 'P1-1', roomName: 'ป.1/1', legacyRoomNumber: 1 },
-    ]);
+    const file = importFile([{ gradeLevelId: 101, roomCode: '1', roomName: 'ป.1/1' }]);
     const context = { schoolId: 1001, schoolTermId: 77 };
 
     const first = await service.processCatalogImport(

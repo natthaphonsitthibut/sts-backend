@@ -526,6 +526,8 @@ export class StudentAccountBatchService implements OnModuleInit, OnApplicationSh
         passwordHash,
         firstName: candidate.first_name || '-',
         lastName: candidate.last_name || '-',
+        // Resolve student identity through person_uuid; avoid a second mutable
+        // copy of the same national id on the login account.
         personIdOnec: '',
         personUuid: candidate.person_uuid,
         phone: null,

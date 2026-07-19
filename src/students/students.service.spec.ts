@@ -18,6 +18,7 @@ describe('StudentsService', () => {
     updateStudentByUuid: jest.Mock;
     findPersonUuidByStudentUuid: jest.Mock;
     findStudentPersonContact: jest.Mock;
+    findStudentAccountByPersonUuid: jest.Mock;
     listGuardiansByPersonUuid: jest.Mock;
     updateStudentPersonContacts: jest.Mock;
   };
@@ -40,6 +41,7 @@ describe('StudentsService', () => {
             updateStudentByUuid: jest.fn(),
             findPersonUuidByStudentUuid: jest.fn(),
             findStudentPersonContact: jest.fn().mockResolvedValue(null),
+            findStudentAccountByPersonUuid: jest.fn().mockResolvedValue(null),
             listGuardiansByPersonUuid: jest.fn().mockResolvedValue([]),
             updateStudentPersonContacts: jest.fn(),
           },
@@ -305,7 +307,16 @@ describe('StudentsService', () => {
     expect(studentsRepository.updateStudentPersonContacts).toHaveBeenCalledWith(
       personUuid,
       { phone: '0812345678' },
-      [{ relation: 'MOTHER', full_name: 'สมหญิง ใจดี', phone: '0898765432', is_primary: true }],
+      [
+        {
+          relation: 'MOTHER',
+          first_name: 'สมหญิง',
+          last_name: 'ใจดี',
+          full_name: 'สมหญิง ใจดี',
+          phone: '0898765432',
+          is_primary: true,
+        },
+      ],
       50,
     );
     expect(studentsRepository.updateStudentByUuid).not.toHaveBeenCalled();

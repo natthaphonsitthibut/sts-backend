@@ -25,6 +25,9 @@ const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9249);
 const MANAGER_USERNAME = 'timetable_browser_manager';
 const SCOPED_OTHER_SCHOOL_USERNAME = 'timetable_browser_other_school';
 const STAFF_USERNAME = 'timetable_browser_staff';
+const STUDENT_USERNAME = 'timetable_browser_student';
+const STUDENT_PERSON_UUID = '30000000-0000-4000-8000-000000000049';
+const STUDENT_UUID = '30000000-0000-4000-8000-000000000149';
 const FIXTURE_MARKER_PREFIX = 'TTSMK';
 
 function toSlotDayOfWeek(date) {
@@ -296,7 +299,8 @@ async function pickFixtureRoom(dataSource) {
   const [row] = await dataSource.query(`
     SELECT s."SchoolID_Onec" AS school_id, sc.name AS school_name,
            s."GradeLevelID_Onec" AS grade_level_id, gl.label AS grade_label,
-           s."RoomID_Onec" AS room_no, st.id AS school_term_id
+           s."RoomID_Onec" AS room_no, st.id AS school_term_id,
+           st.academic_year, st.semester
     FROM student_term s
     JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
     JOIN schools sc ON sc.id = s."SchoolID_Onec"
@@ -345,6 +349,7 @@ async function cleanup(dataSource) {
     [`${FIXTURE_MARKER_PREFIX}%`],
   );
   await dataSource.query(`DELETE FROM subjects WHERE code LIKE $1`, [`${FIXTURE_MARKER_PREFIX}%`]);
+  await dataSource.query(`DELETE FROM student_term WHERE student_uuid = $1::uuid`, [STUDENT_UUID]);
 }
 
 async function disableActors(dataSource) {
@@ -357,7 +362,7 @@ async function disableActors(dataSource) {
           deactivation_note = COALESCE(deactivation_note, 'Retained automated timetable browser smoke fixture')
       WHERE username = ANY($1::text[])
     `,
-    [[MANAGER_USERNAME, SCOPED_OTHER_SCHOOL_USERNAME, STAFF_USERNAME]],
+    [[MANAGER_USERNAME, SCOPED_OTHER_SCHOOL_USERNAME, STAFF_USERNAME, STUDENT_USERNAME]],
   );
 }
 
@@ -391,6 +396,97 @@ async function upsertActor(dataSource, passwordHash, username, permissions, data
       RETURNING id
     `,
     [username, passwordHash, JSON.stringify(permissions), JSON.stringify(dataScope)],
+  );
+  return row;
+}
+
+async function upsertStudentActor(dataSource, passwordHash, room) {
+  const [loginStatus] = await dataSource.query(
+    `SELECT code FROM student_status
+     WHERE category = 'ACTIVE' AND is_active_for_login IS TRUE AND is_enabled IS TRUE
+       AND deleted_at IS NULL
+     ORDER BY code LIMIT 1`,
+  );
+  assert(loginStatus, 'No login-capable student status was found');
+
+  await dataSource.query(
+    `INSERT INTO student_person (person_uuid, identity_status)
+     VALUES ($1::uuid, 'ACTIVE')
+     ON CONFLICT (person_uuid) DO UPDATE
+     SET identity_status = 'ACTIVE', merged_into = NULL, deleted_at = NULL, deleted_by = NULL`,
+    [STUDENT_PERSON_UUID],
+  );
+  await dataSource.query(
+    `INSERT INTO student_term (
+       student_uuid, person_uuid, "PersonID_Onec", "FirstName_Onec", "LastName_Onec",
+       "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec", student_status_code,
+       "AcademicYear_Onec", "Semester_Onec", deleted_at, deleted_by
+     )
+     VALUES ($1::uuid, $2::uuid, 'TTSMK-STUDENT', 'ตารางเรียน', 'นักเรียนทดสอบ',
+             $3, $4, $5, $6, $7, $8, NULL, NULL)
+     ON CONFLICT (student_uuid) DO UPDATE
+     SET person_uuid = EXCLUDED.person_uuid,
+         "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
+         "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
+         "RoomID_Onec" = EXCLUDED."RoomID_Onec",
+         student_status_code = EXCLUDED.student_status_code,
+         "AcademicYear_Onec" = EXCLUDED."AcademicYear_Onec",
+         "Semester_Onec" = EXCLUDED."Semester_Onec",
+         deleted_at = NULL,
+         deleted_by = NULL`,
+    [
+      STUDENT_UUID,
+      STUDENT_PERSON_UUID,
+      room.school_id,
+      room.grade_level_id,
+      room.room_no,
+      loginStatus.code,
+      room.academic_year,
+      room.semester,
+    ],
+  );
+
+  const defaultStudentPermissions = ['student-self'];
+  const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
+    STUDENT_USERNAME,
+  ]);
+  if (existing) {
+    await dataSource.query(
+      `UPDATE users
+       SET password = $2, "FirstName" = 'ตารางเรียน', "LastName" = 'นักเรียนทดสอบ',
+           status = 'ACTIVE', permissions = $3::jsonb, role = 'STUDENT',
+           data_scope = '{"own_only":true}'::jsonb, person_uuid = $4::uuid,
+           must_change_password = FALSE, temporary_password_issued_at = NULL,
+           temporary_password_expires_at = NULL, deactivated_at = NULL, deactivated_by = NULL,
+           deactivation_reason_code = NULL, deactivation_note = NULL,
+           affiliation = 'Automated timetable browser smoke', data_origin_code = 'AUTOMATED_TEST',
+           email = NULL, phone = NULL
+       WHERE id = $1`,
+      [
+        existing.id,
+        passwordHash,
+        JSON.stringify(defaultStudentPermissions),
+        STUDENT_PERSON_UUID,
+      ],
+    );
+    return existing;
+  }
+
+  const [row] = await dataSource.query(
+    `INSERT INTO users (
+       username, password, "FirstName", "LastName", status, permissions, role,
+       data_scope, person_uuid, must_change_password, affiliation, data_origin_code, email, phone
+     )
+     VALUES ($1, $2, 'ตารางเรียน', 'นักเรียนทดสอบ', 'ACTIVE', $3::jsonb, 'STUDENT',
+             '{"own_only":true}'::jsonb, $4::uuid, FALSE,
+             'Automated timetable browser smoke', 'AUTOMATED_TEST', NULL, NULL)
+     RETURNING id`,
+    [
+      STUDENT_USERNAME,
+      passwordHash,
+      JSON.stringify(defaultStudentPermissions),
+      STUDENT_PERSON_UUID,
+    ],
   );
   return row;
 }
@@ -492,6 +588,11 @@ async function main() {
       ['home'],
       { global: true },
     );
+    const studentActor = await upsertStudentActor(
+      dataSource,
+      await passwordService.hash(password),
+      room,
+    );
 
     const managerUser = {
       id: managerActor.id,
@@ -523,9 +624,21 @@ async function main() {
       data_scope: { global: true },
       must_change_password: false,
     };
+    const studentUser = {
+      id: studentActor.id,
+      username: STUDENT_USERNAME,
+      FirstName: 'ตารางเรียน',
+      LastName: 'นักเรียนทดสอบ',
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
+      data_scope: { own_only: true },
+      student_uuid: STUDENT_UUID,
+      must_change_password: false,
+    };
     const managerSession = createSessionCookie(sessionCookieService, managerActor.id);
     const scopedOtherSchoolSession = createSessionCookie(sessionCookieService, scopedOtherSchoolActor.id);
     const staffSession = createSessionCookie(sessionCookieService, staffActor.id);
+    const studentSession = createSessionCookie(sessionCookieService, studentActor.id);
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -592,7 +705,57 @@ async function main() {
     );
     await logoutInBrowser(client);
 
-    // 4. CreateTaskPage — the subject Combobox for an ATTENDANCE link resolves
+    // 4. A student lands on their own data even when opening `/`, sees exactly
+    //    the two default student navigation items, has no `home` permission,
+    //    and gets the own-room timetable without room-selection UI.
+    await loginInBrowser(client, studentUser, studentSession);
+    await navigate(client, `${FRONTEND_URL}/`);
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')) === '/my-attendance',
+      'Student root route did not redirect to own data',
+    );
+    const studentNavigation = await evaluate(
+      client,
+      `(() => {
+        const text = document.body.innerText;
+        return {
+          hasOwnData: text.includes('ข้อมูลตัวเอง'),
+          hasTimetable: text.includes('ตารางเรียน'),
+          hasHome: text.includes('หน้าหลัก'),
+          hasAttendanceGroup: text.includes('ระบบเช็คชื่อ')
+        };
+      })()`,
+    );
+    assert(studentNavigation.hasOwnData, 'Student own-data navigation item was missing');
+    assert(studentNavigation.hasTimetable, 'Student timetable navigation item was missing');
+    assert(!studentNavigation.hasHome, 'Student still saw the home navigation item');
+    assert(!studentNavigation.hasAttendanceGroup, 'Student timetable was still nested in the staff attendance group');
+
+    const studentHomeStatus = await evaluate(
+      client,
+      `(async () => {
+        const res = await fetch(${JSON.stringify(`${BROWSER_BACKEND_URL}/api/home-dashboard/summary`)}, {
+          credentials: 'include'
+        });
+        return res.status;
+      })()`,
+    );
+    assert(studentHomeStatus === 403, `Expected student home API to return 403, got ${studentHomeStatus}`);
+
+    await navigate(client, `${FRONTEND_URL}/timetable`);
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return text.includes('ดูตารางเรียนของคุณตามชั้นและห้องปัจจุบัน');
+      },
+      'Student own-room timetable did not render',
+    );
+    const studentTimetableText = String(await evaluate(client, 'document.body.innerText'));
+    assert(!studentTimetableText.includes('เลือกห้องเรียน'), 'Student timetable exposed the room picker');
+    assert(!studentTimetableText.includes('ตารางของฉัน'), 'Student timetable exposed staff view-mode tabs');
+    await logoutInBrowser(client);
+
+    // 5. CreateTaskPage — the subject Combobox for an ATTENDANCE link resolves
     //    from real timetable data (the seeded fixture), and the selection is
     //    persisted through to task_links.subject_id end-to-end.
     await loginInBrowser(client, managerUser, managerSession);
@@ -634,16 +797,26 @@ async function main() {
 
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'สร้างลิงก์')`,
+      `document.querySelector('form button[type="submit"]')`,
       'Create-link submit button was not found',
     );
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์สำเร็จ'),
       'Attendance link was not created',
     );
+    const publicTaskUrl = await evaluate(
+      client,
+      `(() => {
+        const link = [...document.querySelectorAll('a')]
+          .find((node) => node.textContent.trim() === 'เปิดลิงก์');
+        return link?.href || '';
+      })()`,
+    );
+    const token = String(publicTaskUrl).split('/task/').pop()?.split(/[?#]/)[0];
+    assert(token, 'Created task result did not expose a public task token');
 
     const [createdLink] = await dataSource.query(
-      `SELECT id, task_id, magic_link, subject, subject_id FROM task_links WHERE assigned_to_name = 'Timetable Smoke Assignee' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id, task_id, subject, subject_id FROM task_links WHERE assigned_to_name = 'Timetable Smoke Assignee' ORDER BY created_at DESC LIMIT 1`,
     );
     assert(createdLink, 'Created task_link was not found');
     assert(
@@ -673,8 +846,6 @@ async function main() {
       [room.school_id, room.grade_level_id, room.room_no],
     );
     assert(students.length > 0, 'No fixture student was available for subject attendance detail smoke');
-    const token = String(createdLink.magic_link || '').split('/task/').pop();
-    assert(token, 'Created magic link did not contain a task token');
     const attendanceRecords = students.map((student) => ({
       student_id: student.student_uuid,
       status: 'P_PRESENT',
@@ -705,7 +876,7 @@ async function main() {
     );
 
     console.log(
-      'timetable browser smoke passed (scope rejection, timetable UI gating, subject slot link creation, expiry warning, guest subject submit, subject detail tag)',
+      'timetable browser smoke passed (scope rejection, staff/manager/student UI gating, student home denial and own-room schedule, subject slot link creation, expiry warning, guest subject submit, subject detail tag)',
     );
   } finally {
     await closeChrome(chrome);

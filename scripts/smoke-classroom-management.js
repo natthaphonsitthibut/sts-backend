@@ -131,14 +131,14 @@ async function main() {
     const authed = { headers: { cookie } };
 
     // create → list shows it (with homeroomTeacherName field) → edit → delete
-    const roomCode = `SMK${suffix.slice(-4)}`;
+    const roomCode = String(1_500_000_000 + (Date.now() % 500_000_000));
+    const updatedRoomCode = String(Number(roomCode) + 1);
     const created = await request('POST', '/api/school-structure/classrooms', 201, {
       ...authed,
       body: {
         schoolTermId: Number(term.id),
         gradeLevelId: Number(grade.id),
         roomCode,
-        legacyRoomNumber: 9901,
       },
     });
     createdId = created.payload.data.id;
@@ -161,11 +161,14 @@ async function main() {
       200,
       {
         ...authed,
-        body: { roomCode: `${roomCode}X`, legacyRoomNumber: 9902, roomName: 'ห้องทดสอบระบบ' },
+        body: { roomCode: updatedRoomCode, roomName: 'ห้องทดสอบระบบ' },
       },
     );
-    assert(updated.payload.data.roomCode === `${roomCode}X`, 'roomCode did not update');
-    assert(updated.payload.data.legacyRoomNumber === 9902, 'legacyRoomNumber did not update');
+    assert(updated.payload.data.roomCode === updatedRoomCode, 'roomCode did not update');
+    assert(
+      updated.payload.data.legacyRoomNumber === Number(updatedRoomCode),
+      'legacyRoomNumber was not derived from roomCode',
+    );
 
     if (populated) {
       await request('DELETE', `/api/school-structure/classrooms/${populated.id}`, 409, authed);

@@ -165,7 +165,7 @@ describe('ImportsService', () => {
     expect(preview.rowsToUpdate).toBe(1);
     expect(preview.differentSchoolRows).toBe(1);
     expect(preview.sampleRows[0]).toMatchObject({
-      personIdMasked: '••••1111',
+      personIdMasked: '•••••••••••••',
       status: 'ready',
       schoolName: 'Test School',
       gradeLabel: 'ป.1',
@@ -177,7 +177,7 @@ describe('ImportsService', () => {
       status: 'ready',
       changedFields: ['ชื่อ', 'นามสกุล'],
     });
-    expect(preview.mappedColumnSamples.PassportNumber_Onec).toEqual(['••••ABCD']);
+    expect(preview.mappedColumnSamples.PassportNumber_Onec).toEqual(['••••••••••••••••••']);
     expect(JSON.stringify(preview.mappedColumnSamples)).not.toContain('TEST-PASSPORT-ABCD');
   });
 
@@ -553,7 +553,7 @@ describe('ImportsService', () => {
     expect(preview.sampleRows[0]).toMatchObject({
       firstName: 'Mapped',
       lastName: 'Student',
-      personIdMasked: '••••3333',
+      personIdMasked: '•••••••••••••',
     });
   });
 
@@ -581,7 +581,7 @@ describe('ImportsService', () => {
     expect(preview.sampleRows[0]).toMatchObject({
       firstName: 'ณัฐพล',
       lastName: 'สิทธิบุศย์',
-      personIdMasked: '••••3333',
+      personIdMasked: '•••••••••••••',
     });
   });
 
@@ -636,7 +636,7 @@ describe('ImportsService', () => {
       'FirstName_Onec',
     ]);
     expect(preview.sampleRows[0]).toMatchObject({
-      personIdMasked: '••••5555',
+      personIdMasked: '•••••••••••••',
       firstName: 'CSV',
       lastName: 'Student',
       schoolId: '1001',
@@ -1348,7 +1348,7 @@ describe('ImportsService', () => {
       },
       { school_ids: [1001] },
     );
-    expect(result.items[0].student.personIdMasked).toBe('••••0123');
+    expect(result.items[0].student.personIdMasked).toBe('•••••••••••••');
     expect(result.items[0].changedFieldDetails).toEqual([
       { label: 'ห้อง', oldValue: '99', newValue: '1' },
     ]);
@@ -1574,7 +1574,7 @@ describe('ImportsService', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
       candidateKey: candidateKey('1', 'person-a'),
-      personIdMasked: '••••0123',
+      personIdMasked: '•••••••••••••',
       schoolName: 'Candidate School',
       roomId: '2',
     });
@@ -1851,7 +1851,7 @@ describe('ImportsService', () => {
       } as never,
     );
 
-    expect(csv).toContain('••••0123');
+    expect(csv).toContain('•••••••••••••');
     expect(csv).toContain("'=FORMULA");
     expect(csv).toContain('สมชาย');
     expect(csv).toContain('เลขนี้ตรงกับหลายโปรไฟล์ในระบบ');

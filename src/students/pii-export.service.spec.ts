@@ -281,9 +281,9 @@ describe('PiiExportService', () => {
 
     expect(result.filename).toBe('pii-export-00000000.csv');
     expect(result.csv).toContain('export_id');
-    expect(result.csv).toContain('••••0123');
+    expect(result.csv).toContain('•••••••••••••');
     expect(result.csv).not.toContain('1234567890123');
-    expect(result.csv).toContain('••••3456');
+    expect(result.csv).toContain('••••••••');
     expect(repository.listStudentsForExport).toHaveBeenCalledWith(
       { school_ids: [10010002] },
       undefined,

@@ -70,9 +70,11 @@ describe('UsersService student accounts', () => {
       | 'reconcileTeacherMemberships'
       | 'findUserById'
       | 'findOwnProfileById'
+      | 'findResolvedNationalIdByUserId'
       | 'findStudentPersonContactByUserId'
       | 'findCurrentStudentUuidByUserId'
       | 'findSchoolNamesByIds'
+      | 'findGradeLevelLabelsByIds'
       | 'listStudentAccountsPaginated'
       | 'countStudentAccountStatuses'
       | 'findStudentAccountForManagement'
@@ -126,6 +128,7 @@ describe('UsersService student accounts', () => {
         .mockResolvedValue({ activatedSchoolIds: [], endedSchoolIds: [] }),
       findUserById: jest.fn().mockResolvedValue({ id: 77 }),
       findOwnProfileById: jest.fn().mockResolvedValue({ id: 77 }),
+      findResolvedNationalIdByUserId: jest.fn().mockResolvedValue(null),
       findStudentPersonContactByUserId: jest.fn().mockResolvedValue({
         person_uuid: candidate.person_uuid,
         has_canonical_contact: true,
@@ -135,6 +138,7 @@ describe('UsersService student accounts', () => {
       }),
       findCurrentStudentUuidByUserId: jest.fn().mockResolvedValue(null),
       findSchoolNamesByIds: jest.fn().mockResolvedValue([{ id: 10010002, name: 'โรงเรียนทดสอบ' }]),
+      findGradeLevelLabelsByIds: jest.fn().mockResolvedValue([{ id: 11, label: 'อ.1' }]),
       listStudentAccountsPaginated: jest
         .fn()
         .mockResolvedValue({ rows: [studentAccount], totalCount: 1 }),
@@ -182,7 +186,7 @@ describe('UsersService student accounts', () => {
         address_longitude: null,
         role: 'STUDENT',
         roles: ['STUDENT'],
-        permissions: ['home', 'student-self'],
+        permissions: ['student-self'],
         status: 'ACTIVE',
         data_scope: { school_ids: [10010002], own_only: true },
       }),
@@ -535,11 +539,15 @@ describe('UsersService student accounts', () => {
         username: 'teacher-one',
         phone: '0812345678',
         role: 'TEACHER',
-        data_scope_labels: { schools: [{ id: 10010002, name: 'โรงเรียนทดสอบ' }] },
+        data_scope_labels: {
+          schools: [{ id: 10010002, name: 'โรงเรียนทดสอบ' }],
+          gradeLevels: [{ id: 11, label: 'อ.1' }],
+        },
         has_profile_location: true,
       }),
     );
     expect(usersRepository.findSchoolNamesByIds).toHaveBeenCalledWith([10010002]);
+    expect(usersRepository.findGradeLevelLabelsByIds).toHaveBeenCalledWith([]);
     expect(detail).toHaveProperty('PersonID_Onec', '•••••••••••••');
     expect(detail).toHaveProperty('line_id', 'teacher.line');
     expect(detail).not.toHaveProperty('address_line');
@@ -574,8 +582,9 @@ describe('UsersService student accounts', () => {
   it('reveals a managed user national id only after an audited reason', async () => {
     usersRepository.findOwnProfileById.mockResolvedValueOnce({
       id: 77,
-      PersonID_Onec: '1234567890123',
+      PersonID_Onec: '',
     });
+    usersRepository.findResolvedNationalIdByUserId.mockResolvedValueOnce('1-2345-67890-12-3');
     usersRepository.hasActiveUserNationalIdReveal.mockResolvedValueOnce(false);
 
     const result = await service.revealUserNationalId(
@@ -961,7 +970,7 @@ describe('UsersService student accounts', () => {
         personIdOnec: '',
         personUuid: candidate.person_uuid,
         role: 'STUDENT',
-        permissions: ['home', 'student-self'],
+        permissions: ['student-self'],
         dataScope: { own_only: true },
         mustChangePassword: true,
         createdBy: 5,

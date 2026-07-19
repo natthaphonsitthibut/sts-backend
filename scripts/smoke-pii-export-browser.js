@@ -492,6 +492,35 @@ async function main() {
 
     await loginInBrowser(client, requesterUser, createSessionCookie(sessionCookieService, requesterId));
     await navigate(client, `${FRONTEND_URL}/students`);
+    let observedScopeFilters;
+    try {
+      await waitFor(async () => {
+        const filters = await evaluate(
+          client,
+          `(() => {
+            const grade = document.querySelector('[aria-label="กรองตามระดับชั้น"]');
+            const room = document.querySelector('[aria-label="กรองตามห้อง"]');
+            return {
+              gradeValue: grade?.value?.trim() ?? '',
+              gradeDisabled: Boolean(grade?.disabled),
+              roomValue: room?.value?.trim() ?? '',
+              roomDisabled: Boolean(room?.disabled),
+            };
+          })()`,
+        );
+        observedScopeFilters = filters;
+        return (
+          filters.gradeValue !== '' &&
+          filters.gradeValue !== 'ทุกชั้น' &&
+          filters.gradeDisabled === true &&
+          filters.roomValue === `ห้อง ${ROOM_ID}` &&
+          filters.roomDisabled === true
+        );
+      }, 'Single-grade/single-room actor scope was not selected and locked in the student list');
+    } catch (error) {
+      throw new Error(`${errorMessage(error)}; observed=${JSON.stringify(observedScopeFilters)}`);
+    }
+    await navigate(client, `${FRONTEND_URL}/students/export`);
     await waitFor(
       async () =>
         (await bodyText(client)).includes('ส่งออกข้อมูลส่วนบุคคล') &&
@@ -499,7 +528,25 @@ async function main() {
       'PII export panel did not render for requester',
     );
     await fillField(client, '#pii-export-note', 'Browser smoke request for export verification');
-    await clickByText(client, 'ส่งคำขอ', 'Create export request button was not found');
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `(() => {
+              const note = document.querySelector('#pii-export-note');
+              const submit = note?.closest('form')?.querySelector('button[type="submit"]');
+              return note?.value === 'Browser smoke request for export verification' &&
+                Boolean(submit) && !submit.disabled;
+            })()`,
+          ),
+        ),
+      'PII export submit did not become enabled after the scoped count loaded',
+    );
+    await evaluate(
+      client,
+      `document.querySelector('#pii-export-note')?.closest('form')?.querySelector('button[type="submit"]')?.click()`,
+    );
     try {
       await waitFor(
         async () => (await bodyText(client)).includes('ส่งคำขอแล้ว'),
@@ -529,7 +576,7 @@ async function main() {
 
     await clearBrowserSession(client);
     await loginInBrowser(client, approverUser, createSessionCookie(sessionCookieService, approverId));
-    await navigate(client, `${FRONTEND_URL}/students`);
+    await navigate(client, `${FRONTEND_URL}/students/export`);
     await waitFor(
       async () =>
         (await bodyText(client)).includes('ส่งออกข้อมูลส่วนบุคคล') &&
@@ -563,7 +610,7 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: true,
     });
-    await navigate(client, `${FRONTEND_URL}/students`);
+    await navigate(client, `${FRONTEND_URL}/students/export`);
     await waitFor(
       async () =>
         (await bodyText(client)).includes('ส่งออกข้อมูลส่วนบุคคล') &&

@@ -33,6 +33,8 @@ import {
   type PiiReasonCode,
   hasPiiValue,
   maskPiiValue,
+  maskNationalIdValue,
+  normalizeNationalIdValue,
 } from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
 import type {
@@ -88,10 +90,16 @@ function maskStudentDetail(
       if (!hasPiiValue(masked[column])) {
         continue;
       }
+      if (column === 'PersonID_Onec') {
+        masked[column] = normalizeNationalIdValue(masked[column]);
+      }
       if (active) {
         revealedFields.push(column);
       } else {
-        masked[column] = maskPiiValue(masked[column]);
+        masked[column] =
+          column === 'PersonID_Onec'
+            ? maskNationalIdValue(masked[column])
+            : maskPiiValue(masked[column]);
         maskedFields.push(column);
       }
     }
@@ -350,12 +358,13 @@ export class StudentsService {
       // Contact channels and guardians are person-level. Both are plain contact
       // data — scope-gated by this endpoint, not masked.
       const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
-      const [personContact, guardians] = personUuid
+      const [personContact, guardians, studentAccount] = personUuid
         ? await Promise.all([
             this.studentsRepository.findStudentPersonContact(personUuid),
             this.studentsRepository.listGuardiansByPersonUuid(personUuid),
+            this.studentsRepository.findStudentAccountByPersonUuid(personUuid),
           ])
-        : [null, []];
+        : [null, [], null];
 
       return maskStudentDetail(
         {
@@ -368,6 +377,7 @@ export class StudentsService {
               }
             : null,
           guardians,
+          account: studentAccount,
           address,
           resolved_home_lat: hasConfirmedLocation
             ? student.resolved_home_lat
@@ -457,7 +467,10 @@ export class StudentsService {
       const columns = PII_FIELD_GROUPS[group];
       const values: Record<string, unknown> = {};
       for (const column of columns) {
-        values[column] = student[column] ?? null;
+        values[column] =
+          column === 'PersonID_Onec'
+            ? normalizeNationalIdValue(student[column]) || null
+            : (student[column] ?? null);
       }
 
       if (!withinWindow) {
@@ -553,6 +566,7 @@ export class StudentsService {
       throw new NotFoundException(`Student with ID ${id} not found`);
     }
 
+    let normalizedGuardians = guardians;
     if (guardians !== undefined) {
       if (guardians.filter((guardian) => guardian.is_primary).length > 1) {
         throw new BadRequestException('เลือกผู้ติดต่อหลักได้เพียงคนเดียว');
@@ -562,6 +576,34 @@ export class StudentsService {
           throw new BadRequestException('ผู้ปกครองที่ไม่ใช่บิดามารดาต้องระบุความสัมพันธ์');
         }
       }
+      normalizedGuardians = guardians.map((guardian) => {
+        const explicitFirstName = guardian.first_name?.trim();
+        const explicitLastName = guardian.last_name?.trim();
+        if (explicitFirstName) {
+          if (!explicitLastName) {
+            throw new BadRequestException('กรุณากรอกนามสกุลผู้ปกครอง');
+          }
+          return {
+            ...guardian,
+            first_name: explicitFirstName,
+            last_name: explicitLastName,
+            full_name: `${explicitFirstName} ${explicitLastName}`,
+          };
+        }
+
+        const legacyFullName = guardian.full_name?.trim();
+        if (!legacyFullName) {
+          throw new BadRequestException('กรุณากรอกชื่อและนามสกุลผู้ปกครอง');
+        }
+        const nameParts = legacyFullName.split(/\s+/);
+        const lastName = nameParts.length > 1 ? (nameParts.pop() ?? null) : null;
+        return {
+          ...guardian,
+          first_name: nameParts.join(' '),
+          last_name: lastName,
+          full_name: legacyFullName,
+        };
+      });
     }
 
     if (contact !== undefined || guardians !== undefined) {
@@ -574,7 +616,7 @@ export class StudentsService {
       await this.studentsRepository.updateStudentPersonContacts(
         personUuid,
         contact,
-        guardians,
+        normalizedGuardians,
         resolveAuditActorId(actor),
       );
     }

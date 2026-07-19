@@ -95,12 +95,12 @@ export class StudentObservationsService {
     return enrollment;
   }
 
-  private async assertManagerSchoolAccess(
+  private async assertEnrollmentScopeAccess(
     actor: AuthenticatedRequestUser,
     enrollment: ObservationEnrollmentRow,
   ): Promise<void> {
-    const allowed = await this.repository.isSchoolInScope(
-      enrollment.school_id,
+    const allowed = await this.repository.isEnrollmentInScope(
+      enrollment.student_uuid,
       resolveActorDataScope(actor) ?? {},
     );
     if (!allowed) throw new NotFoundException('ไม่พบนักเรียนในขอบเขตของคุณ');
@@ -117,19 +117,19 @@ export class StudentObservationsService {
     this.denyExecutiveRaw(actor);
     const enrollment = await this.findEnrollment(studentUuid, queryRunner);
     if (this.canManage(actor)) {
-      await this.assertManagerSchoolAccess(actor, enrollment);
+      await this.assertEnrollmentScopeAccess(actor, enrollment);
       return { enrollment, assignment: null };
     }
     if (!this.canUseTeacherObservations(actor)) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูข้อสังเกตนักเรียน');
     }
+    await this.assertEnrollmentScopeAccess(actor, enrollment);
     const assignment = await this.repository.findActorAssignment(
       actor.id,
       studentUuid,
       getBangkokDateString(),
       queryRunner,
     );
-    if (!assignment) throw new NotFoundException('ไม่พบนักเรียนใน assignment ที่ใช้งานได้');
     return { enrollment, assignment };
   }
 
@@ -153,8 +153,18 @@ export class StudentObservationsService {
             queryRunner,
           )
         : readAccess.assignment;
-    if (!this.canManage(actor) && !assignment) {
-      throw new NotFoundException('ไม่พบ assignment ที่ใช้งานได้สำหรับนักเรียน');
+    if (!this.canManage(actor) && !assignment && assignmentId) {
+      throw new NotFoundException('ไม่พบการมอบหมายครูที่ใช้งานได้สำหรับนักเรียน');
+    }
+    if (!this.canManage(actor) && !assignment && timetableSlotId) {
+      const slotMatchesEnrollment = await this.repository.isTimetableSlotForEnrollment(
+        timetableSlotId,
+        readAccess.enrollment,
+        queryRunner,
+      );
+      if (!slotMatchesEnrollment) {
+        throw new NotFoundException('ไม่พบคาบเรียนในห้องของนักเรียน');
+      }
     }
     if (assignment && !this.canManage(actor) && assignment.teacher_user_id !== actor.id) {
       throw new NotFoundException('assignment อยู่นอกขอบเขตของคุณ');

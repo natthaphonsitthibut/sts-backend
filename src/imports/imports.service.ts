@@ -15,6 +15,7 @@ import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { maskPiiValue } from '../students/pii-fields.config';
 import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
 import { ImportsRepository, type QuarantineLookupRow } from './imports.repository';
 import {
@@ -208,7 +209,6 @@ interface StructureRowEvaluation {
   resolved?: {
     teacherMembershipId?: string;
     gradeLevelId?: number;
-    legacyRoomNumber?: number | null;
     subjectId?: number | null;
     assignmentKind?: 'HOMEROOM' | 'SUBJECT';
   };
@@ -301,16 +301,12 @@ export class ImportsService {
 
   private maskIdentifier(value: unknown): string {
     const normalized = this.normalizeNationalId(value);
-    if (normalized.length >= 4) {
-      return `••••${normalized.slice(-4)}`;
-    }
-
-    return '-';
+    return normalized ? maskPiiValue(normalized) : '-';
   }
 
   private maskDocumentIdentifier(value: unknown): string {
     const normalized = this.normalizeScalar(value);
-    return normalized.length >= 4 ? `••••${normalized.slice(-4)}` : '-';
+    return normalized ? maskPiiValue(normalized) : '-';
   }
 
   private fingerprint(value: unknown): string {
@@ -1035,10 +1031,6 @@ export class ImportsService {
     return `${gradeLevelId}:${roomCode.trim().toLocaleLowerCase('th')}`;
   }
 
-  private classroomLegacyKey(gradeLevelId: number, legacyRoomNumber: number): string {
-    return `${gradeLevelId}:${legacyRoomNumber}`;
-  }
-
   private async evaluateClassroomRows(
     rows: StructureImportRow[],
     schoolId: number,
@@ -1063,58 +1055,34 @@ export class ImportsService {
         classroom,
       ]),
     );
-    const existingByLegacy = new Map(
-      existing
-        .filter((classroom) => classroom.legacy_room_number !== null)
-        .map((classroom) => [
-          this.classroomLegacyKey(
-            Number(classroom.grade_level_id),
-            Number(classroom.legacy_room_number),
-          ),
-          classroom,
-        ]),
-    );
     const codeCounts = new Map<string, number>();
-    const legacyCounts = new Map<string, number>();
     for (const row of rows) {
       const gradeLevelId = Number(row.values.gradeLevelId);
       const roomCode = row.values.roomCode?.trim() ?? '';
-      const legacyRoomNumber = Number(row.values.legacyRoomNumber);
       if (Number.isInteger(gradeLevelId) && gradeLevelId > 0 && roomCode) {
         const key = this.classroomCodeKey(gradeLevelId, roomCode);
         codeCounts.set(key, (codeCounts.get(key) ?? 0) + 1);
-      }
-      if (
-        Number.isInteger(gradeLevelId) &&
-        gradeLevelId > 0 &&
-        Number.isInteger(legacyRoomNumber) &&
-        legacyRoomNumber > 0
-      ) {
-        const key = this.classroomLegacyKey(gradeLevelId, legacyRoomNumber);
-        legacyCounts.set(key, (legacyCounts.get(key) ?? 0) + 1);
       }
     }
 
     return rows.map((row) => {
       const gradeLevelId = Number(row.values.gradeLevelId);
       const roomCode = row.values.roomCode?.trim() ?? '';
+      const roomNumber = Number(roomCode);
       const roomName = row.values.roomName?.trim() ?? '';
-      const legacyRaw = row.values.legacyRoomNumber?.trim() ?? '';
-      const legacyRoomNumber = legacyRaw ? Number(legacyRaw) : null;
       if (
         !Number.isInteger(gradeLevelId) ||
         gradeLevelId <= 0 ||
-        !roomCode ||
-        roomCode.length > 32 ||
-        roomName.length > 120 ||
-        (legacyRoomNumber !== null &&
-          (!Number.isInteger(legacyRoomNumber) || legacyRoomNumber <= 0))
+        !/^[1-9][0-9]*$/.test(roomCode) ||
+        !Number.isInteger(roomNumber) ||
+        roomNumber > 2_147_483_647 ||
+        roomName.length > 120
       ) {
         return {
           row,
           action: 'quarantine',
           reason: 'MISSING_IMPORT_FIELD',
-          issue: 'ข้อมูลระดับชั้น รหัสห้อง หรือเลขห้องไม่ครบ/ไม่ถูกต้อง',
+          issue: 'ข้อมูลระดับชั้นหรือรหัสห้องไม่ครบ/ไม่ถูกต้อง',
         };
       }
       if (!knownGrades.has(gradeLevelId)) {
@@ -1126,12 +1094,7 @@ export class ImportsService {
         };
       }
       const codeKey = this.classroomCodeKey(gradeLevelId, roomCode);
-      const legacyKey =
-        legacyRoomNumber === null ? null : this.classroomLegacyKey(gradeLevelId, legacyRoomNumber);
-      if (
-        (codeCounts.get(codeKey) ?? 0) > 1 ||
-        (legacyKey && (legacyCounts.get(legacyKey) ?? 0) > 1)
-      ) {
+      if ((codeCounts.get(codeKey) ?? 0) > 1) {
         return {
           row,
           action: 'quarantine',
@@ -1140,28 +1103,13 @@ export class ImportsService {
         };
       }
       const byCode = existingByCode.get(codeKey);
-      const byLegacy = legacyKey ? existingByLegacy.get(legacyKey) : undefined;
-      if (byCode && (!byLegacy || byLegacy.id === byCode.id)) {
-        const existingLegacy =
-          byCode.legacy_room_number === null ? null : Number(byCode.legacy_room_number);
-        if (existingLegacy === legacyRoomNumber) {
-          return { row, action: 'skip', reason: null, issue: null };
-        }
-      }
-      if (byCode || byLegacy) {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'CLASSROOM_IDENTITY_CONFLICT',
-          issue: 'รหัสห้องหรือเลขห้องชนกับห้องเรียนเดิม',
-        };
-      }
+      if (byCode) return { row, action: 'skip', reason: null, issue: null };
       return {
         row,
         action: 'insert',
         reason: null,
         issue: null,
-        resolved: { gradeLevelId, legacyRoomNumber },
+        resolved: { gradeLevelId },
       };
     });
   }
@@ -1452,7 +1400,6 @@ export class ImportsService {
                 gradeLevelId: evaluation.resolved!.gradeLevelId!,
                 roomCode: evaluation.row.values.roomCode.trim(),
                 roomName: evaluation.row.values.roomName?.trim() || null,
-                legacyRoomNumber: evaluation.resolved!.legacyRoomNumber ?? null,
                 actorUserId,
               },
               executor,

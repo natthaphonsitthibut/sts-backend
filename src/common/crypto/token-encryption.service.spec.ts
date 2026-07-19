@@ -34,7 +34,8 @@ describe('TokenEncryptionService', () => {
     const service = buildService(KEY_A);
     const encrypted = service.encrypt('a-secret-token');
     const [version, iv, tag, ciphertext] = encrypted.split(':');
-    const tampered = [version, iv, tag, ciphertext.slice(0, -2) + '00'].join(':');
+    const tamperedCiphertext = `${ciphertext[0] === '0' ? '1' : '0'}${ciphertext.slice(1)}`;
+    const tampered = [version, iv, tag, tamperedCiphertext].join(':');
 
     expect(() => service.decrypt(tampered)).toThrow();
   });

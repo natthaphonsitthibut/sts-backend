@@ -55,6 +55,35 @@ function createHarness() {
 }
 
 describe('StudentObservationsRepository', () => {
+  it('enforces school, geography, grade and room scope for an enrollment', async () => {
+    const { repository, rawQuery, runner } = createHarness();
+    rawQuery.mockResolvedValueOnce({ records: [{ found: true }], affected: 1 });
+
+    await repository.isTimetableSlotForEnrollment(
+      901,
+      {
+        student_uuid: STUDENT_UUID,
+        school_id: 10,
+        grade_level_id: 11,
+        room_id: 1,
+        school_name: 'โรงเรียนหนึ่ง',
+        school_status: 'ACTIVE',
+        school_term_id: '21',
+        academic_year: 2569,
+        semester: 1,
+        term_status: 'ACTIVE',
+        term_starts_on: '2026-05-01',
+        term_ends_on: '2027-03-31',
+        classroom_id: '41',
+        classroom_status: 'ACTIVE',
+      },
+      runner,
+    );
+
+    expect(String(rawQuery.mock.calls[0][0])).toContain('slot.classroom_id = $3');
+    expect(rawQuery.mock.calls[0][1]).toEqual([901, 10, '41']);
+  });
+
   it('resolves assignment and enrollment through every active server-side boundary', async () => {
     const { repository, rawQuery, runner } = createHarness();
     rawQuery.mockResolvedValueOnce({

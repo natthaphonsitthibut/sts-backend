@@ -76,7 +76,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     school_term_id BIGINT NOT NULL,
     school_id INTEGER NOT NULL,
     grade_level_id INTEGER NOT NULL,
-    legacy_room_number INTEGER,
+    legacy_room_number INTEGER NOT NULL,
     room_code VARCHAR(32) NOT NULL,
     room_name VARCHAR(120),
     classroom_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
@@ -95,9 +95,15 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
       FOREIGN KEY (grade_level_id) REFERENCES grade_levels(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT chk_school_classrooms_room_code
-      CHECK (length(trim(room_code)) > 0),
+      CHECK (
+        room_code ~ '^[1-9][0-9]*$'
+        AND (
+          length(room_code) < 10
+          OR (length(room_code) = 10 AND room_code <= '2147483647')
+        )
+      ),
     CONSTRAINT chk_school_classrooms_legacy_room
-      CHECK (legacy_room_number IS NULL OR legacy_room_number > 0),
+      CHECK (legacy_room_number::text = room_code),
     CONSTRAINT chk_school_classrooms_status
       CHECK (classroom_status IN ('ACTIVE', 'INACTIVE'))
   );

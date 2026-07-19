@@ -531,7 +531,6 @@ async function main() {
         gradeLevelId: grade.id,
         roomCode: String(ROOM_NUMBER),
         roomName: 'ห้อง Browser Smoke',
-        legacyRoomNumber: ROOM_NUMBER,
       },
     );
     assert(
@@ -751,19 +750,54 @@ async function main() {
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes(path.basename(directImportCsvPath)),
       'Direct import did not render the selected file',
     );
+    try {
+      await waitFor(
+        async () =>
+          Boolean(
+            await evaluate(
+              chrome.client,
+              `(() => {
+                const button = Array.from(document.querySelectorAll('button'))
+                  .find((item) => item.textContent.includes('ตรวจสอบไฟล์'));
+                return button && !button.disabled;
+              })()`,
+            ),
+          ),
+        'Direct import preview button did not become enabled',
+      );
+    } catch (error) {
+      const previewState = await evaluate(
+        chrome.client,
+        `(() => ({
+          target: document.querySelector('#import-target')?.value,
+          school: document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value,
+          term: document.querySelector('[aria-label="เลือกภาคเรียน"]')?.value,
+          grade: document.querySelector('[aria-label="เลือกชั้น"]')?.value,
+          classroom: document.querySelector('[aria-label="เลือกห้องเรียน"]')?.value,
+          buttons: Array.from(document.querySelectorAll('button'))
+            .filter((item) => item.textContent.includes('ตรวจสอบไฟล์'))
+            .map((item) => ({ disabled: item.disabled, text: item.textContent.trim() }))
+        }))()`,
+      );
+      throw new Error(`${error.message}; observed=${JSON.stringify(previewState)}`);
+    }
     await evaluate(
       chrome.client,
       `Array.from(document.querySelectorAll('button'))
-        .find((button) => button.textContent.trim() === 'ตรวจสอบไฟล์')?.click()`,
+        .find((button) => button.textContent.includes('ตรวจสอบไฟล์'))?.click()`,
     );
-    await waitFor(
-      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ผลตรวจสอบไฟล์'),
-      'Direct import preview did not render',
-    );
+    try {
+      await waitFor(
+        async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ผลตรวจสอบไฟล์'),
+        'Direct import preview did not render',
+      );
+    } catch (error) {
+      throw new Error(`${error.message}\nBody:\n${await evaluate(chrome.client, 'document.body.innerText')}`);
+    }
     await evaluate(
       chrome.client,
       `Array.from(document.querySelectorAll('button'))
-        .filter((button) => button.textContent.trim() === 'นำเข้าข้อมูล').at(-1)?.click()`,
+        .filter((button) => button.textContent.includes('นำเข้าข้อมูล')).at(-1)?.click()`,
     );
     await waitFor(
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ยืนยันการนำเข้าข้อมูล'),
@@ -772,7 +806,7 @@ async function main() {
     await evaluate(
       chrome.client,
       `Array.from(document.querySelectorAll('button'))
-        .filter((button) => button.textContent.trim() === 'นำเข้าข้อมูล').at(-1)?.click()`,
+        .filter((button) => button.textContent.includes('นำเข้าข้อมูล')).at(-1)?.click()`,
     );
     await waitFor(
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('นำเข้าข้อมูลสำเร็จ'),

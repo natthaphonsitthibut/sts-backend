@@ -5,7 +5,6 @@ import {
   IsBoolean,
   IsEmail,
   IsIn,
-  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -61,10 +60,24 @@ export class StudentGuardianInputDto {
   @MaxLength(100)
   relation_note?: string | null;
 
+  @IsOptional()
+  @Transform(trimOptionalText)
   @IsString()
-  @IsNotEmpty()
+  @MaxLength(100)
+  first_name?: string | null;
+
+  @IsOptional()
+  @Transform(trimOptionalText)
+  @IsString()
+  @MaxLength(100)
+  last_name?: string | null;
+
+  // Compatibility input for clients deployed before guardian names were split.
+  @IsOptional()
+  @Transform(trimOptionalText)
+  @IsString()
   @MaxLength(200)
-  full_name!: string;
+  full_name?: string | null;
 
   @IsOptional()
   @Transform(trimOptionalText)

@@ -195,7 +195,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     name: 'STUDENT',
     label: 'นักเรียน',
     rank: 1,
-    default_permissions: ['home', 'student-self'],
+    default_permissions: ['student-self'],
     scope_mode: 'flexible',
     scope_policy: 'OWN_ONLY',
     is_assignable: true,

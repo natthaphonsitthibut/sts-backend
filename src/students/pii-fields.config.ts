@@ -47,12 +47,23 @@ export type PiiReasonCode = (typeof PII_REASON_CODES)[number];
 export const PII_REASON_REQUIRES_NOTE: PiiReasonCode[] = ['OTHER'];
 
 /**
- * Mask a PII value for transport: replace letters/digits (incl. Thai) with a mask
- * glyph while keeping separators so the field still reads as an ID/document.
+ * Fully mask a PII value for transport. Separators are masked too so neither a
+ * visible suffix nor the stored document format leaks through the response.
  */
 export function maskPiiValue(value: unknown): string {
-  const text = toPiiText(value);
-  return text.replace(/[\p{L}\p{N}]/gu, '•');
+  const text = toPiiText(value).trim();
+  return '•'.repeat(Array.from(text).length);
+}
+
+/** Canonical display/transport form for a Thai national id: no separators. */
+export function normalizeNationalIdValue(value: unknown): string {
+  const text = toPiiText(value).trim();
+  const digits = text.replace(/[^0-9]/g, '');
+  return digits || text.replace(/[\s-]/g, '');
+}
+
+export function maskNationalIdValue(value: unknown): string {
+  return maskPiiValue(normalizeNationalIdValue(value));
 }
 
 /** True when the value is present (non-empty) and therefore worth masking/revealing. */

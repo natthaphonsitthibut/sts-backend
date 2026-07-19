@@ -83,7 +83,8 @@ export class CreateSchoolClassroomDto {
   @Transform(trimText)
   @IsString()
   @MinLength(1)
-  @MaxLength(32)
+  @MaxLength(10)
+  @Matches(/^[1-9][0-9]*$/, { message: 'รหัสห้องต้องเป็นเลขจำนวนเต็มบวก' })
   roomCode!: string;
 
   @IsOptional()
@@ -91,11 +92,6 @@ export class CreateSchoolClassroomDto {
   @IsString()
   @MaxLength(120)
   roomName?: string;
-
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  legacyRoomNumber!: number;
 }
 
 export class UpdateSchoolClassroomDto {
@@ -109,14 +105,9 @@ export class UpdateSchoolClassroomDto {
   @Transform(trimText)
   @IsString()
   @MinLength(1)
-  @MaxLength(32)
+  @MaxLength(10)
+  @Matches(/^[1-9][0-9]*$/, { message: 'รหัสห้องต้องเป็นเลขจำนวนเต็มบวก' })
   roomCode?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  legacyRoomNumber?: number;
 
   @IsOptional()
   @Transform(trimText)

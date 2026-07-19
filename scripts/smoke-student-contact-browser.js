@@ -404,10 +404,11 @@ async function main() {
     await click(client, addButtonExpr, 'Add-guardian button was not found (row 1)');
     await waitFor(
       async () =>
-        Boolean(await evaluate(client, `Boolean(document.querySelector('[id="guardians.0.full_name"]'))`)),
+        Boolean(await evaluate(client, `Boolean(document.querySelector('[id="guardians.0.first_name"]'))`)),
       'First guardian row did not appear',
     );
-    await fillInput(client, '[id="guardians.0.full_name"]', 'สมพงษ์ อินทรกำแหง');
+    await fillInput(client, '[id="guardians.0.first_name"]', 'สมพงษ์');
+    await fillInput(client, '[id="guardians.0.last_name"]', 'อินทรกำแหง');
     await fillInput(client, '[id="guardians.0.phone"]', '0891234567');
 
     await click(client, addButtonExpr, 'Add-guardian button was not found (row 2)');
@@ -419,8 +420,10 @@ async function main() {
         ),
       'Third guardian row did not show the relation-note field for GUARDIAN',
     );
-    await fillInput(client, '[id="guardians.1.full_name"]', 'สายฝน อินทรกำแหง');
-    await fillInput(client, '[id="guardians.2.full_name"]', 'บุญส่ง แก้วกาญจน์');
+    await fillInput(client, '[id="guardians.1.first_name"]', 'สายฝน');
+    await fillInput(client, '[id="guardians.1.last_name"]', 'อินทรกำแหง');
+    await fillInput(client, '[id="guardians.2.first_name"]', 'บุญส่ง');
+    await fillInput(client, '[id="guardians.2.last_name"]', 'แก้วกาญจน์');
     await fillInput(client, '[id="guardians.2.relation_note"]', 'ยาย');
     await fillInput(client, '[id="guardians.2.phone"]', '0865554444');
 
@@ -506,7 +509,7 @@ async function main() {
       'Profile observation button was not found',
     );
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('บันทึกข้อสังเกตจากโปรไฟล์นักเรียน'),
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('บันทึกข้อสังเกตจากรายละเอียดนักเรียน'),
       'Profile observation dialog did not open',
     );
     await waitFor(

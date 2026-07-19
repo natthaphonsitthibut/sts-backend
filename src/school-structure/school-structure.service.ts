@@ -43,6 +43,21 @@ function databaseErrorCode(error: unknown): string | null {
   return typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : null;
 }
 
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
+
+function roomNumberFromCode(roomCode: string): number {
+  const normalized = roomCode.trim();
+  const roomNumber = Number(normalized);
+  if (
+    !/^[1-9][0-9]*$/.test(normalized) ||
+    !Number.isInteger(roomNumber) ||
+    roomNumber > POSTGRES_INTEGER_MAX
+  ) {
+    throw new BadRequestException('รหัสห้องต้องเป็นเลขจำนวนเต็มบวกไม่เกิน 2147483647');
+  }
+  return roomNumber;
+}
+
 @Injectable()
 export class SchoolStructureService {
   constructor(
@@ -202,6 +217,8 @@ export class SchoolStructureService {
   async createClassroom(dto: CreateSchoolClassroomDto, actor: AuthenticatedRequestUser) {
     this.resolveScope(actor);
     const actorId = resolveAuditActorId(actor);
+    const roomCode = dto.roomCode.trim();
+    const roomNumber = roomNumberFromCode(roomCode);
     try {
       const row = await this.repository.withTransaction(async (queryRunner) => {
         const schoolId = await this.repository.findTermSchoolId(dto.schoolTermId, queryRunner);
@@ -212,8 +229,8 @@ export class SchoolStructureService {
             schoolTermId: dto.schoolTermId,
             schoolId,
             gradeLevelId: dto.gradeLevelId,
-            legacyRoomNumber: dto.legacyRoomNumber ?? null,
-            roomCode: dto.roomCode.trim(),
+            roomCode,
+            roomNumber,
             roomName: dto.roomName?.trim() || null,
             actorId,
           },
@@ -256,11 +273,13 @@ export class SchoolStructureService {
   ) {
     if (Object.keys(dto).length === 0) throw new BadRequestException('ไม่มีข้อมูลที่ต้องแก้ไข');
     const actorId = resolveAuditActorId(actor);
+    const roomCode = dto.roomCode?.trim();
     try {
       const row = await this.repository.withTransaction(async (queryRunner) => {
         const existing = await this.repository.findClassroomById(classroomId, queryRunner);
         if (!existing) throw new NotFoundException('ไม่พบห้องเรียน');
         await this.assertSchoolAccess(existing.school_id, actor);
+        const roomNumber = roomCode === undefined ? undefined : roomNumberFromCode(roomCode);
         if (dto.gradeLevelId !== undefined && dto.gradeLevelId !== existing.grade_level_id) {
           const usage = await this.repository.getClassroomUsage(classroomId, queryRunner);
           if (usage.studentCount > 0) {
@@ -273,8 +292,8 @@ export class SchoolStructureService {
           classroomId,
           {
             gradeLevelId: dto.gradeLevelId,
-            roomCode: dto.roomCode,
-            legacyRoomNumber: dto.legacyRoomNumber,
+            roomCode,
+            roomNumber,
             roomName: dto.roomName === undefined ? undefined : dto.roomName.trim() || null,
             classroomStatus: dto.classroomStatus,
           },

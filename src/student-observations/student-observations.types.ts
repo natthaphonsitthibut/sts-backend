@@ -24,6 +24,8 @@ export interface ObservationBehaviorTagRow extends Record<string, unknown> {
 export interface ObservationEnrollmentRow extends Record<string, unknown> {
   student_uuid: string;
   school_id: number;
+  grade_level_id: number;
+  room_id: number;
   school_name: string;
   school_status: string;
   school_term_id: string;

@@ -245,7 +245,6 @@ describe('SchoolStructureService', () => {
           gradeLevelId: 423,
           roomCode: '1',
           roomName: 'ห้อง 1',
-          legacyRoomNumber: 1,
         },
         SCHOOL_ACTOR,
       ),
@@ -283,10 +282,7 @@ describe('SchoolStructureService', () => {
       service.createTeacherMembership({ schoolId: 2002, teacherUserId: 41 }, SCHOOL_ACTOR),
     ).rejects.toBeInstanceOf(NotFoundException);
     await expect(
-      service.createClassroom(
-        { schoolTermId: 99, gradeLevelId: 423, roomCode: '1', legacyRoomNumber: 1 },
-        SCHOOL_ACTOR,
-      ),
+      service.createClassroom({ schoolTermId: 99, gradeLevelId: 423, roomCode: '1' }, SCHOOL_ACTOR),
     ).rejects.toBeInstanceOf(NotFoundException);
     await expect(
       service.updateClassroom(99, { roomName: 'ห้อง B' }, SCHOOL_ACTOR),
@@ -321,15 +317,27 @@ describe('SchoolStructureService', () => {
     ).rejects.toMatchObject({ status: 409 });
 
     await expect(
-      service.updateClassroom(11, { roomCode: '2', legacyRoomNumber: 2 }, SCHOOL_ACTOR as never),
+      service.updateClassroom(11, { roomCode: '2' }, SCHOOL_ACTOR as never),
     ).resolves.toMatchObject({ data: { id: '11' } });
     expect(repository.updateClassroom).toHaveBeenCalledWith(
       11,
-      expect.objectContaining({ roomCode: '2', legacyRoomNumber: 2 }),
+      expect.objectContaining({ roomCode: '2', roomNumber: 2 }),
       SCHOOL_ACTOR.id,
       expect.anything(),
     );
   });
+
+  it.each(['ก', '0', '2147483648'])(
+    'rejects invalid numeric classroom code %s before persistence',
+    async (roomCode) => {
+      const { service, repository } = setup();
+
+      await expect(
+        service.createClassroom({ schoolTermId: 21, gradeLevelId: 423, roomCode }, SCHOOL_ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.createClassroom).not.toHaveBeenCalled();
+    },
+  );
 
   it('deletes only an unused classroom and records atomic audit', async () => {
     const { service, repository, auditLog } = setup();

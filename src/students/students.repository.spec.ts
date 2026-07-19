@@ -89,4 +89,15 @@ describe('StudentsRepository roster queries', () => {
     expect(queries).toHaveLength(1);
     expect(queries[0]).toContain("AND a.session_kind = 'DAILY'");
   });
+
+  it('derives the linked account lifecycle instead of exposing raw ACTIVE status', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.findStudentAccountByPersonUuid('10000000-0000-4000-8000-000000000001');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("THEN 'TEMP_PASSWORD_EXPIRED'");
+    expect(queries[0]).toContain('temporary_password_expires_at <= NOW()');
+  });
 });

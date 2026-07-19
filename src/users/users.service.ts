@@ -15,7 +15,8 @@ import { piiConfig } from '../config/pii.config';
 import {
   PII_REASON_CODES,
   PII_REASON_REQUIRES_NOTE,
-  maskPiiValue,
+  maskNationalIdValue,
+  normalizeNationalIdValue,
   type PiiReasonCode,
 } from '../students/pii-fields.config';
 import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
@@ -63,7 +64,7 @@ interface LifecycleAuditMeta {
 
 // Shared with StudentAccountBatchService so the async batch path can't drift
 // from the synchronous generate/reissue path (same TTL, alphabet, role, perms).
-export const STUDENT_ACCOUNT_PERMISSIONS = ['home', 'student-self'] as const;
+export const STUDENT_ACCOUNT_PERMISSIONS = ['student-self'] as const;
 export const STUDENT_ACCOUNT_ROLE = 'STUDENT';
 const SUPER_ADMIN_ROLE = 'ADMIN';
 const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
@@ -229,7 +230,7 @@ export class UsersService {
     meta: { ip: string | null; userAgent: string | null; requestId: string | null },
   ) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
-    await this.getUserById(id, currentActor);
+    const authorizedUser = await this.getUserById(id, currentActor);
     const profile = await this.usersRepository.findOwnProfileById(id);
     if (!profile) throw new NotFoundException('ไม่พบผู้ใช้งาน');
 
@@ -266,7 +267,10 @@ export class UsersService {
         ...meta,
       });
     }
-    return { PersonID_Onec: profile.PersonID_Onec ?? null };
+    const resolvedNationalId =
+      normalizeNationalIdValue(profile.PersonID_Onec) ||
+      normalizeNationalIdValue(authorizedUser?.PersonID_Onec);
+    return { PersonID_Onec: resolvedNationalId || null };
   }
 
   async getAllUsers(actor?: ActorContext, filters: Partial<UserListFilters> = {}) {
@@ -320,10 +324,18 @@ export class UsersService {
       throw new ForbiddenException('ไม่มีสิทธิ์เข้าถึงข้อมูลผู้ใช้งานนี้');
     }
 
-    const studentUuid = user.roles?.includes('STUDENT')
-      ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
-      : null;
-    return studentUuid ? { ...user, student_uuid: studentUuid } : user;
+    const isStudent = user.roles?.includes('STUDENT');
+    const [studentUuid, resolvedNationalId] = isStudent
+      ? await Promise.all([
+          this.usersRepository.findCurrentStudentUuidByUserId(user.id),
+          this.usersRepository.findResolvedNationalIdByUserId(user.id),
+        ])
+      : [null, user.PersonID_Onec ?? null];
+    const resolvedUser = {
+      ...user,
+      PersonID_Onec: normalizeNationalIdValue(resolvedNationalId) || null,
+    };
+    return studentUuid ? { ...resolvedUser, student_uuid: studentUuid } : resolvedUser;
   }
 
   async getUserDetailById(id: number, actor?: ActorContext) {
@@ -334,9 +346,14 @@ export class UsersService {
 
     const studentUuid =
       'student_uuid' in user && typeof user.student_uuid === 'string' ? user.student_uuid : null;
-    const schoolLabels = await this.usersRepository.findSchoolNamesByIds(
-      normalizeNumericScopeValues(user.data_scope?.school_ids),
-    );
+    const [schoolLabels, gradeLevelLabels] = await Promise.all([
+      this.usersRepository.findSchoolNamesByIds(
+        normalizeNumericScopeValues(user.data_scope?.school_ids),
+      ),
+      this.usersRepository.findGradeLevelLabelsByIds(
+        normalizeNumericScopeValues(user.data_scope?.grade_levels),
+      ),
+    ]);
     const profile = user;
     const hasProfileLocation = Boolean(
       profile?.address_line ||
@@ -357,8 +374,9 @@ export class UsersService {
       username: user.username,
       FirstName: user.FirstName ?? null,
       LastName: user.LastName ?? null,
-      fullname: user.fullname ?? null,
-      PersonID_Onec: user.PersonID_Onec ? maskPiiValue(user.PersonID_Onec) : null,
+      fullname:
+        [user.FirstName, user.LastName].filter(Boolean).join(' ').trim() || user.username || null,
+      PersonID_Onec: user.PersonID_Onec ? maskNationalIdValue(user.PersonID_Onec) : null,
       phone: user.phone ?? null,
       email: user.email ?? null,
       affiliation: user.affiliation ?? null,
@@ -381,6 +399,7 @@ export class UsersService {
       has_profile_location: hasProfileLocation,
       data_scope_labels: {
         schools: schoolLabels,
+        gradeLevels: gradeLevelLabels,
       },
     };
   }
@@ -394,17 +413,24 @@ export class UsersService {
     }
     const user = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
     const isStudent = user.roles?.includes('STUDENT') ?? false;
-    const [studentUuid, studentContact] = isStudent
+    const [studentUuid, studentContact, resolvedNationalId] = isStudent
       ? await Promise.all([
           this.usersRepository.findCurrentStudentUuidByUserId(user.id),
           this.usersRepository.findStudentPersonContactByUserId(user.id),
+          this.usersRepository.findResolvedNationalIdByUserId(user.id),
         ])
-      : [null, null];
-    const schoolLabels = await this.usersRepository.findSchoolNamesByIds(
-      normalizeNumericScopeValues(user.data_scope?.school_ids),
-    );
+      : [null, null, user.PersonID_Onec ?? null];
+    const [schoolLabels, gradeLevelLabels] = await Promise.all([
+      this.usersRepository.findSchoolNamesByIds(
+        normalizeNumericScopeValues(user.data_scope?.school_ids),
+      ),
+      this.usersRepository.findGradeLevelLabelsByIds(
+        normalizeNumericScopeValues(user.data_scope?.grade_levels),
+      ),
+    ]);
     return {
       ...user,
+      PersonID_Onec: normalizeNationalIdValue(resolvedNationalId) || null,
       phone: studentContact?.has_canonical_contact ? studentContact.phone : (user.phone ?? null),
       email: studentContact?.has_canonical_contact ? studentContact.email : (user.email ?? null),
       line_id: studentContact?.has_canonical_contact
@@ -413,6 +439,7 @@ export class UsersService {
       student_uuid: studentUuid,
       data_scope_labels: {
         schools: schoolLabels,
+        gradeLevels: gradeLevelLabels,
       },
     };
   }
@@ -1374,6 +1401,8 @@ export class UsersService {
               passwordHash,
               firstName: candidate.first_name || '-',
               lastName: candidate.last_name || '-',
+              // Student identity stays on the linked person/enrollment record;
+              // do not duplicate sensitive identity into the account mirror.
               personIdOnec: '',
               personUuid: candidate.person_uuid,
               phone: null,

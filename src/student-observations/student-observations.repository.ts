@@ -49,14 +49,16 @@ export class StudentObservationsRepository {
         };
   }
 
-  async isSchoolInScope(schoolId: number, scope: DataScope): Promise<boolean> {
+  async isEnrollmentInScope(studentUuid: string, scope: DataScope): Promise<boolean> {
     const scoped = buildDataScopeQuery(
       scope,
       {
-        school_id: 'school.id',
+        school_id: 'enrollment."SchoolID_Onec"',
         province: 'school.province',
         district: 'school.district',
         sub_district: 'school.sub_district',
+        grade: 'enrollment."GradeLevelID_Onec"',
+        room: 'enrollment."RoomID_Onec"::text',
       },
       2,
     );
@@ -64,13 +66,15 @@ export class StudentObservationsRepository {
       this.dataSource,
       `
         SELECT 1
-        FROM schools school
-        WHERE school.id = $1
+        FROM student_term enrollment
+        JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+        WHERE enrollment.student_uuid = $1
+          AND enrollment.deleted_at IS NULL
           AND school.school_status = 'ACTIVE'
           AND ${scoped.sql || 'TRUE'}
         LIMIT 1
       `,
-      [schoolId, ...scoped.params],
+      [studentUuid, ...scoped.params],
     );
     return result.rows.length > 0;
   }
@@ -84,6 +88,8 @@ export class StudentObservationsRepository {
         SELECT
           enrollment.student_uuid::text,
           enrollment."SchoolID_Onec" AS school_id,
+          enrollment."GradeLevelID_Onec" AS grade_level_id,
+          enrollment."RoomID_Onec" AS room_id,
           school.name AS school_name,
           school.school_status,
           term.id::text AS school_term_id,
@@ -112,6 +118,28 @@ export class StudentObservationsRepository {
       [studentUuid],
     );
     return result.rows[0] ?? null;
+  }
+
+  async isTimetableSlotForEnrollment(
+    timetableSlotId: number,
+    enrollment: ObservationEnrollmentRow,
+    queryRunner?: QueryRunner,
+  ): Promise<boolean> {
+    if (!enrollment.classroom_id) {
+      return false;
+    }
+    const result = await this.executor(queryRunner).query<{ found: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM timetable_slots slot
+         WHERE slot.id = $1
+           AND slot.school_id = $2
+           AND slot.classroom_id = $3
+           AND slot.deleted_at IS NULL
+       ) AS found`,
+      [timetableSlotId, enrollment.school_id, enrollment.classroom_id],
+    );
+    return result.rows[0]?.found === true;
   }
 
   async findActiveAssignment(

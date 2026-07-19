@@ -55,6 +55,7 @@ export class AttendanceController {
   @RequireAnyPermission(
     'attendance',
     'attendance-dashboard',
+    'students',
     'manage-school-structure',
     'export-data',
   )
@@ -67,6 +68,7 @@ export class AttendanceController {
   @RequireAnyPermission(
     'attendance',
     'attendance-dashboard',
+    'students',
     'manage-school-structure',
     'manage-teacher-access',
     'import-data',
@@ -92,6 +94,7 @@ export class AttendanceController {
   @RequireAnyPermission(
     'attendance',
     'attendance-dashboard',
+    'students',
     'manage-school-structure',
     'manage-teacher-access',
     'import-data',
@@ -182,7 +185,7 @@ export class AttendanceController {
 
   @Get('rooms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard', 'export-data')
+  @RequireAnyPermission('attendance', 'attendance-dashboard', 'students', 'export-data')
   async getRooms(
     @Query() query: GetRoomsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,

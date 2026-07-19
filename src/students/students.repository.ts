@@ -7,6 +7,7 @@ import type {
   StudentAttendanceRow,
   StudentCaseRow,
   StudentDetailRow,
+  StudentAccountSummaryRow,
   StudentFilterOptions,
   StudentGuardianRow,
   StudentListFilters,
@@ -450,11 +451,38 @@ export class StudentsRepository {
     return result.rows[0] ?? null;
   }
 
+  /** Current account when present; otherwise the most recently created historical account. */
+  async findStudentAccountByPersonUuid(
+    personUuid: string,
+  ): Promise<StudentAccountSummaryRow | null> {
+    const result = await this.query<StudentAccountSummaryRow>(
+      `
+        SELECT id AS user_id, username, status, must_change_password,
+          CASE
+            WHEN status <> 'ACTIVE' THEN 'DISABLED'
+            WHEN must_change_password IS TRUE
+              AND temporary_password_expires_at IS NOT NULL
+              AND temporary_password_expires_at <= NOW()
+              THEN 'TEMP_PASSWORD_EXPIRED'
+            WHEN must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'
+            ELSE 'ACTIVE'
+          END AS lifecycle_status
+        FROM users
+        WHERE person_uuid = $1 AND role = 'STUDENT'
+        ORDER BY (status = 'ACTIVE') DESC, created_at DESC, id DESC
+        LIMIT 1
+      `,
+      [personUuid],
+    );
+    return result.rows[0] ?? null;
+  }
+
   /** Live guardians of a person, primary first, then บิดา → มารดา → ผปค. */
   async listGuardiansByPersonUuid(personUuid: string): Promise<StudentGuardianRow[]> {
     const result = await this.query<StudentGuardianRow>(
       `
-        SELECT id::text, relation, relation_note, full_name, phone, email, line_id, is_primary
+        SELECT id::text, relation, relation_note, full_name, first_name, last_name,
+          phone, email, line_id, is_primary
         FROM student_guardian
         WHERE person_uuid = $1 AND deleted_at IS NULL
         ORDER BY is_primary DESC,
@@ -545,16 +573,18 @@ export class StudentsRepository {
           await manager.query(
             `
               INSERT INTO student_guardian (
-                person_uuid, relation, relation_note, full_name,
+                person_uuid, relation, relation_note, first_name, last_name, full_name,
                 phone, email, line_id, is_primary, created_by, updated_by
               )
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
             `,
             [
               personUuid,
               guardian.relation,
               guardian.relation === 'GUARDIAN' ? (guardian.relation_note ?? null) : null,
-              guardian.full_name.trim(),
+              guardian.first_name?.trim() ?? null,
+              guardian.last_name?.trim() || null,
+              guardian.full_name?.trim() ?? '',
               guardian.phone ?? null,
               guardian.email ?? null,
               guardian.line_id ?? null,

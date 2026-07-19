@@ -203,7 +203,6 @@ export class ImportsRepository {
       gradeLevelId: number;
       roomCode: string;
       roomName: string | null;
-      legacyRoomNumber: number | null;
       actorUserId: number | null;
     },
     executor: QueryExecutor,
@@ -213,7 +212,7 @@ export class ImportsRepository {
          school_id, school_term_id, grade_level_id, room_code, room_name,
          legacy_room_number, created_by, updated_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+       VALUES ($1, $2, $3, $4::varchar, $5, $4::integer, $6, $6)
        ON CONFLICT DO NOTHING
        RETURNING id::text`,
       [
@@ -222,7 +221,6 @@ export class ImportsRepository {
         input.gradeLevelId,
         input.roomCode,
         input.roomName,
-        input.legacyRoomNumber,
         input.actorUserId,
       ],
     );

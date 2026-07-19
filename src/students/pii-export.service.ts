@@ -11,7 +11,7 @@ import { clean, generateToken, hashToken } from '../common/utils/helpers';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import type { AuthenticatedRequestUser, DataScope } from '../auth';
 import { TaskPolicyService } from '../task/task-policy.service';
-import { PII_REASON_CODES } from './pii-fields.config';
+import { PII_REASON_CODES, maskPiiValue } from './pii-fields.config';
 import { PiiExportRepository } from './pii-export.repository';
 import type { CreatePiiExportRequestDto } from './dto/pii-export.dto';
 import type { PiiExportRequestRow, PiiExportStudentRow } from './pii-export.types';
@@ -40,12 +40,12 @@ function csvCell(value: unknown): string {
 
 function maskIdentifier(value: unknown): string {
   const normalized = normalizeScalar(value).replace(/[^0-9]/g, '');
-  return normalized.length >= 4 ? `••••${normalized.slice(-4)}` : '-';
+  return normalized ? maskPiiValue(normalized) : '-';
 }
 
 function maskDocument(value: unknown): string {
   const normalized = normalizeScalar(value);
-  return normalized.length >= 4 ? `••••${normalized.slice(-4)}` : '-';
+  return normalized ? maskPiiValue(normalized) : '-';
 }
 
 function normalizeSelectedStudentUuids(value: unknown): string[] {

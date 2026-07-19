@@ -20,8 +20,7 @@ const ACTOR_USERNAME = 'canonical_import_smoke_actor';
 const TEACHER_USERNAME = 'canonical_import_smoke_teacher';
 const ACADEMIC_YEAR = 9901;
 const SEMESTER = 1;
-const ROOM_CODE = 'CANONICAL-IMPORT-SMOKE';
-const ROOM_NUMBER = 9901;
+const ROOM_CODE = '1999999901';
 const MAX_IMPORT_ROWS = 10_000;
 
 function assert(condition, message) {
@@ -90,12 +89,13 @@ async function upsertUser(dataSource, passwordHash, input) {
     input.lastName,
     JSON.stringify(input.permissions),
     JSON.stringify(input.dataScope),
+    input.role,
   ];
   const rows = existing
     ? await dataSource.query(
         `UPDATE users
          SET password = $2, "FirstName" = $3, "LastName" = $4,
-             permissions = $5::jsonb, data_scope = $6::jsonb, role = 'ADMIN',
+             permissions = $5::jsonb, data_scope = $6::jsonb, role = $7,
              status = 'ACTIVE', must_change_password = FALSE,
              temporary_password_issued_at = NULL, temporary_password_expires_at = NULL,
              deactivated_at = NULL, deactivated_by = NULL,
@@ -111,13 +111,14 @@ async function upsertUser(dataSource, passwordHash, input) {
            role, status, must_change_password, data_origin_code, email, phone
          ) VALUES (
            $1, $2, $3, $4, $5::jsonb, $6::jsonb,
-           'ADMIN', 'ACTIVE', FALSE, 'AUTOMATED_TEST', NULL, NULL
+           $7, 'ACTIVE', FALSE, 'AUTOMATED_TEST', NULL, NULL
          )
          RETURNING id`,
         values,
       );
-  assert(rows[0]?.id, `Smoke user ${input.username} was not persisted`);
-  return rows[0];
+  const persisted = Array.isArray(rows[0]) ? rows[0][0] : rows[0];
+  assert(persisted?.id, `Smoke user ${input.username} was not persisted`);
+  return persisted;
 }
 
 async function cleanup(dataSource, actorId, schoolId) {
@@ -230,6 +231,7 @@ async function main() {
       lastName: 'Smoke Actor',
       permissions: ['import-data', 'import-school-roster'],
       dataScope: { school_ids: [school.id] },
+      role: 'ADMIN',
     });
     await upsertUser(dataSource, passwordHash, {
       username: TEACHER_USERNAME,
@@ -237,6 +239,7 @@ async function main() {
       lastName: 'Smoke Teacher',
       permissions: ['attendance'],
       dataScope: { school_ids: [school.id] },
+      role: 'TEACHER',
     });
     await cleanup(dataSource, actor.id, school.id);
 
@@ -303,9 +306,9 @@ async function main() {
       schoolTermId: term.id,
     };
     const classroomCsv = [
-      'gradeLevelId,roomCode,roomName,legacyRoomNumber',
-      `${grade.id},${ROOM_CODE},Canonical Import Smoke,${ROOM_NUMBER}`,
-      `2147483647,CANONICAL-IMPORT-BAD,Bad Grade,${ROOM_NUMBER + 1}`,
+      'gradeLevelId,roomCode,roomName',
+      `${grade.id},${ROOM_CODE},Canonical Import Smoke`,
+      '2147483647,1999999902,Bad Grade',
     ].join('\n');
     const classroomPreview = await csvRequest(
       baseUrl,

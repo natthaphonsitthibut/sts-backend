@@ -66,6 +66,7 @@ describe('AttendanceController access', () => {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'attendance',
         'attendance-dashboard',
+        'students',
         'manage-school-structure',
         'manage-teacher-access',
         'import-data',
@@ -88,6 +89,7 @@ describe('AttendanceController access', () => {
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getGradeLevels'))).toEqual([
       'attendance',
       'attendance-dashboard',
+      'students',
       'manage-school-structure',
       'export-data',
     ]);
@@ -99,8 +101,11 @@ describe('AttendanceController access', () => {
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getRooms'))).toEqual([
       'attendance',
       'attendance-dashboard',
+      'students',
       'export-data',
     ]);
+    expect(guard.canActivate(contextWithPermissions('getGradeLevels', ['students']))).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('getRooms', ['students']))).toBe(true);
     expect(guard.canActivate(contextWithPermissions('getRooms', ['export-data']))).toBe(true);
   });
 

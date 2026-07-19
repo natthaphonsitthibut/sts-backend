@@ -1,6 +1,6 @@
 import { hasPermission, type AuthenticatedRequestUser } from '../auth';
 
-export const IMPORT_CATALOG_VERSION = '2026-07-15' as const;
+export const IMPORT_CATALOG_VERSION = '2026-07-19' as const;
 
 export const IMPORT_CATALOG_TARGETS = [
   'school_teacher_membership',
@@ -113,15 +113,16 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
         'integer',
         'grade_levels',
       ),
-      field('roomCode', 'รหัสห้อง', true, ['room', 'roomId', 'ห้อง', 'ห้องเรียน']),
+      field('roomCode', 'รหัสห้อง', true, [
+        'room',
+        'roomId',
+        'ห้อง',
+        'ห้องเรียน',
+        'legacyRoom',
+        'roomNumber',
+        'เลขห้อง',
+      ]),
       field('roomName', 'ชื่อห้อง', false, ['ชื่อห้อง', 'ชื่อห้องเรียน']),
-      field(
-        'legacyRoomNumber',
-        'เลขห้องเดิม',
-        false,
-        ['legacyRoom', 'roomNumber', 'เลขห้อง'],
-        'integer',
-      ),
     ],
   },
   {

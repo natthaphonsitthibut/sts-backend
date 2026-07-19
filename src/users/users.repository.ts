@@ -666,6 +666,31 @@ export class UsersRepository {
     return result.rows[0] || null;
   }
 
+  /** Resolve a student account's identifier from its canonical person when the user mirror is blank. */
+  async findResolvedNationalIdByUserId(id: number): Promise<string | null> {
+    const result = await this.query<{ person_id: string | null }>(
+      `
+        SELECT COALESCE(
+          NULLIF(btrim(u."PersonID_Onec"), ''),
+          enrollment."PersonID_Onec"
+        ) AS person_id
+        FROM users u
+        LEFT JOIN LATERAL (
+          SELECT s."PersonID_Onec"
+          FROM student_term s
+          WHERE s.person_uuid = u.person_uuid
+          ORDER BY s."AcademicYear_Onec" DESC NULLS LAST,
+            s."Semester_Onec" DESC NULLS LAST,
+            s.created_at DESC NULLS LAST
+          LIMIT 1
+        ) enrollment ON true
+        WHERE u.id = $1
+      `,
+      [id],
+    );
+    return result.rows[0]?.person_id ?? null;
+  }
+
   async findStudentPersonContactByUserId(
     id: number,
     executor?: QueryExecutor,
@@ -840,6 +865,25 @@ export class UsersRepository {
         FROM schools
         WHERE id = ANY($1::int[])
         ORDER BY name ASC, id ASC
+      `,
+      [ids],
+    );
+    return result.rows;
+  }
+
+  async findGradeLevelLabelsByIds(
+    ids: number[],
+    executor?: QueryExecutor,
+  ): Promise<Array<{ id: number; label: string }>> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const result = await this.getExecutor(executor).query<{ id: number; label: string }>(
+      `
+        SELECT id, label
+        FROM grade_levels
+        WHERE id = ANY($1::int[])
+        ORDER BY id ASC
       `,
       [ids],
     );

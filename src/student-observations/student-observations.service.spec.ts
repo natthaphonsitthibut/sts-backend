@@ -30,12 +30,14 @@ const TEACHER: AuthenticatedRequestUser = {
   username: 'teacher.one',
   roles: ['TEACHER'],
   permissions: ['student-observations'],
-  data_scope: { school_ids: [10] },
+  data_scope: { school_ids: [10], grade_levels: [11], room_ids: ['1'] },
 };
 
 const ENROLLMENT: ObservationEnrollmentRow = {
   student_uuid: STUDENT_UUID,
   school_id: 10,
+  grade_level_id: 11,
+  room_id: 1,
   school_name: 'โรงเรียนหนึ่ง',
   school_status: 'ACTIVE',
   school_term_id: '21',
@@ -92,10 +94,12 @@ function createHarness() {
     withTransaction: jest.fn(
       async (operation: (queryRunner: QueryRunner) => Promise<unknown>) => await operation(RUNNER),
     ),
-    isSchoolInScope: jest.fn().mockResolvedValue(true),
+    isEnrollmentInScope: jest.fn().mockResolvedValue(true),
+    isTimetableSlotForEnrollment: jest.fn().mockResolvedValue(true),
     findEnrollment: jest.fn().mockResolvedValue(ENROLLMENT),
     findActiveAssignment: jest.fn().mockResolvedValue(ASSIGNMENT),
     findActorAssignment: jest.fn().mockResolvedValue(ASSIGNMENT),
+    findActorAssignmentForTimetableSlot: jest.fn().mockResolvedValue(ASSIGNMENT),
     resolveCatalog: jest.fn().mockResolvedValue({
       dimension: {
         id: '2',
@@ -254,10 +258,10 @@ describe('StudentObservationsService', () => {
 
   it('fails closed for cross-school managers and mismatched teacher assignments', async () => {
     const { service, repository } = createHarness();
-    repository.isSchoolInScope.mockResolvedValue(false);
+    repository.isEnrollmentInScope.mockResolvedValue(false);
     await expect(service.list(STUDENT_UUID, {}, MANAGER)).rejects.toBeInstanceOf(NotFoundException);
 
-    repository.isSchoolInScope.mockResolvedValue(true);
+    repository.isEnrollmentInScope.mockResolvedValue(true);
     repository.findActiveAssignment.mockResolvedValue({ ...ASSIGNMENT, teacher_user_id: 99 });
     await expect(
       service.create(
@@ -271,6 +275,47 @@ describe('StudentObservationsService', () => {
         TEACHER,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('allows a logged-in teacher to observe an in-scope student without an assignment', async () => {
+    const { service, repository } = createHarness();
+    repository.findActorAssignment.mockResolvedValue(null);
+    repository.findActorAssignmentForTimetableSlot.mockResolvedValue(null);
+
+    await expect(service.list(STUDENT_UUID, {}, TEACHER)).resolves.toMatchObject({
+      data: [expect.objectContaining({ studentTermId: STUDENT_UUID })],
+    });
+    await expect(
+      service.create(
+        STUDENT_UUID,
+        {
+          timetableSlotId: 901,
+          dimensionCode: 'LEARNING',
+          concernLevel: 'NOTE',
+          tagCodes: ['MISSING_ASSIGNMENTS'],
+        },
+        TEACHER,
+      ),
+    ).resolves.toMatchObject({ data: { id: '51' } });
+    expect(repository.isEnrollmentInScope).toHaveBeenCalledWith(STUDENT_UUID, TEACHER.data_scope);
+    expect(repository.isTimetableSlotForEnrollment).toHaveBeenCalledWith(901, ENROLLMENT, RUNNER);
+    expect(repository.createObservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceAssignmentId: null,
+        sourceTimetableSlotId: 901,
+      }),
+      RUNNER,
+    );
+  });
+
+  it('denies a logged-in teacher outside data scope even when assigned to the student', async () => {
+    const { service, repository } = createHarness();
+    repository.findActorAssignment.mockResolvedValue(ASSIGNMENT);
+    repository.isEnrollmentInScope.mockResolvedValue(false);
+
+    await expect(service.list(STUDENT_UUID, {}, TEACHER)).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.findActorAssignment).not.toHaveBeenCalled();
+    expect(repository.listObservations).not.toHaveBeenCalled();
   });
 
   it('denies raw comments to an executive even if the permission is explicitly granted', async () => {

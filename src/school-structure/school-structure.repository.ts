@@ -302,8 +302,8 @@ export class SchoolStructureRepository {
       schoolTermId: number;
       schoolId: number;
       gradeLevelId: number;
-      legacyRoomNumber: number | null;
       roomCode: string;
+      roomNumber: number;
       roomName: string | null;
       actorId: number | null;
     },
@@ -322,7 +322,7 @@ export class SchoolStructureRepository {
         input.schoolTermId,
         input.schoolId,
         input.gradeLevelId,
-        input.legacyRoomNumber,
+        input.roomNumber,
         input.roomCode,
         input.roomName,
         input.actorId,
@@ -336,7 +336,7 @@ export class SchoolStructureRepository {
     changes: {
       gradeLevelId?: number;
       roomCode?: string;
-      legacyRoomNumber?: number;
+      roomNumber?: number;
       roomName?: string | null;
       classroomStatus?: StructureStatus;
     },
@@ -358,7 +358,7 @@ export class SchoolStructureRepository {
         classroomId,
         changes.gradeLevelId ?? null,
         changes.roomCode ?? null,
-        changes.legacyRoomNumber ?? null,
+        changes.roomNumber ?? null,
         changes.roomName !== undefined,
         changes.roomName ?? null,
         changes.classroomStatus ?? null,

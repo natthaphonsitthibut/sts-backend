@@ -68,10 +68,21 @@ export interface StudentGuardianRow extends Record<string, unknown> {
   relation: 'FATHER' | 'MOTHER' | 'GUARDIAN';
   relation_note: string | null;
   full_name: string;
+  first_name: string;
+  last_name: string | null;
   phone: string | null;
   email: string | null;
   line_id: string | null;
   is_primary: boolean;
+}
+
+/** Account linked to the canonical student person, not to one term enrollment. */
+export interface StudentAccountSummaryRow extends Record<string, unknown> {
+  user_id: number;
+  username: string;
+  status: string;
+  lifecycle_status: 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED';
+  must_change_password: boolean;
 }
 
 /** Canonical person-level contact channels; independent of login accounts. */
