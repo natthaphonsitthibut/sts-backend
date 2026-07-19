@@ -72,6 +72,14 @@ describe('TimetableService', () => {
     permissions: ['manage-timetable'],
     data_scope: { global: true },
   };
+  const studentActor = {
+    id: 4,
+    username: 'student1',
+    roles: ['STUDENT'],
+    permissions: ['student-self'],
+    data_scope: { own_only: true },
+    student_uuid: '30000000-0000-4000-8000-000000000149',
+  };
 
   beforeEach(() => {
     repository = {
@@ -375,6 +383,23 @@ describe('TimetableService', () => {
       await expect(service.listPeriodTimes(globalActor, 999)).rejects.toBeInstanceOf(
         ForbiddenException,
       );
+      expect(repository.listPeriodTimesForSchool).not.toHaveBeenCalled();
+    });
+
+    it('allows a student to read period times for their own enrolled school', async () => {
+      await service.listPeriodTimes(studentActor, 10010002);
+
+      expect(repository.resolveStudentRoom).toHaveBeenCalledWith(studentActor.student_uuid);
+      expect(repository.isSchoolInScope).not.toHaveBeenCalled();
+      expect(repository.listPeriodTimesForSchool).toHaveBeenCalledWith(10010002);
+    });
+
+    it('rejects a student reading period times for another school', async () => {
+      await expect(service.listPeriodTimes(studentActor, 999)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+
+      expect(repository.resolveStudentRoom).toHaveBeenCalledWith(studentActor.student_uuid);
       expect(repository.listPeriodTimesForSchool).not.toHaveBeenCalled();
     });
   });

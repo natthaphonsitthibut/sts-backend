@@ -91,6 +91,22 @@ export class TimetableService {
     if (!allowed) throw new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ');
   }
 
+  private async assertPeriodTimesReadAccess(
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+  ): Promise<void> {
+    if (actor.roles?.includes('STUDENT')) {
+      const room = actor.student_uuid
+        ? await this.repository.resolveStudentRoom(actor.student_uuid)
+        : null;
+      if (!room || room.school_id !== schoolId) {
+        throw new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ');
+      }
+      return;
+    }
+    await this.assertSchoolAccess(schoolId, actor);
+  }
+
   private assertClassScope(
     gradeLevelId: number,
     roomNo: number,
@@ -342,7 +358,7 @@ export class TimetableService {
   }
 
   async listPeriodTimes(actor: AuthenticatedRequestUser, schoolId: number) {
-    await this.assertSchoolAccess(schoolId, actor);
+    await this.assertPeriodTimesReadAccess(schoolId, actor);
     const rows = await this.repository.listPeriodTimesForSchool(schoolId);
     return { success: true, data: rows.map((row) => this.toPeriodTimeResponse(row)) };
   }

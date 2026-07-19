@@ -324,6 +324,15 @@ async function pickDifferentSchool(dataSource, excludeSchoolId) {
 async function cleanup(dataSource) {
   await dataSource.query(
     `
+      DELETE FROM school_period_times
+      WHERE created_by IN (
+        SELECT id FROM users WHERE username = ANY($1::text[])
+      )
+    `,
+    [[MANAGER_USERNAME, SCOPED_OTHER_SCHOOL_USERNAME, STAFF_USERNAME, STUDENT_USERNAME]],
+  );
+  await dataSource.query(
+    `
       DELETE FROM attendance
       WHERE session_id IN (
         SELECT sess.id
@@ -593,6 +602,69 @@ async function main() {
       await passwordService.hash(password),
       room,
     );
+    const [emptyConfiguredPeriod] = await dataSource.query(
+      `
+        SELECT candidate.period
+        FROM generate_series(1, 20) AS candidate(period)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM school_period_times period_time
+          WHERE period_time.school_id = $1
+            AND period_time.period = candidate.period
+            AND period_time.deleted_at IS NULL
+        )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM timetable_slots slot
+            WHERE slot.school_id = $1
+              AND slot.period = candidate.period
+              AND slot.deleted_at IS NULL
+          )
+        ORDER BY candidate.period
+        LIMIT 1
+      `,
+      [room.school_id],
+    );
+    assert(emptyConfiguredPeriod, 'No free period number remained for configured-empty-column smoke');
+    await dataSource.query(
+      `
+        INSERT INTO school_period_times (
+          school_id, day_of_week, period, starts_at, ends_at, source, created_by, updated_by
+        )
+        VALUES ($1, 1, $2, '17:00', '17:30', 'MANUAL', $3, $3)
+      `,
+      [room.school_id, emptyConfiguredPeriod.period, managerActor.id],
+    );
+    const [expectedPeriodPrefill] = await dataSource.query(
+      `
+        WITH active_rows AS (
+          SELECT day_of_week, period, starts_at, ends_at
+          FROM school_period_times
+          WHERE school_id = $1 AND deleted_at IS NULL
+        ),
+        representative_day AS (
+          SELECT day_of_week
+          FROM active_rows
+          GROUP BY day_of_week
+          ORDER BY COUNT(*) DESC, day_of_week ASC
+          LIMIT 1
+        ),
+        duration_mode AS (
+          SELECT ROUND(EXTRACT(EPOCH FROM (ends_at - starts_at)) / 60)::integer AS minutes
+          FROM active_rows
+          GROUP BY minutes
+          ORDER BY COUNT(*) DESC, minutes ASC
+          LIMIT 1
+        )
+        SELECT
+          (SELECT MAX(period) FROM active_rows) AS periods_count,
+          (SELECT COALESCE(MAX(starts_at) FILTER (WHERE period = 1), MIN(starts_at))::text
+           FROM active_rows
+           WHERE day_of_week = (SELECT day_of_week FROM representative_day)) AS first_period_starts_at,
+          (SELECT minutes FROM duration_mode) AS period_length_minutes
+      `,
+      [room.school_id],
+    );
 
     const managerUser = {
       id: managerActor.id,
@@ -691,6 +763,71 @@ async function main() {
         ),
       'Timetable manage view did not render for the manager',
     );
+    await pickComboboxOption(client, 'input[placeholder="ค้นหาโรงเรียน"]', room.school_name, 'Pick timetable school');
+    await pickComboboxOption(client, 'input[placeholder="ค้นหาชั้น"]', room.grade_label, 'Pick timetable grade');
+    await pickComboboxOption(client, 'input[placeholder="ค้นหาห้อง"]', String(room.room_no), 'Pick timetable room');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('เพิ่มคาบสอน'),
+      'Timetable manage actions did not render after selecting a room',
+    );
+    const timetableActionMetrics = await evaluate(
+      client,
+      `(() => {
+        const buttons = [...document.querySelectorAll('button')];
+        const refresh = buttons.find((button) => button.textContent.includes('รีเฟรช'));
+        const add = buttons.find((button) => button.textContent.includes('เพิ่มคาบสอน'));
+        const configure = buttons.find((button) => button.textContent.includes('ตั้งเวลาคาบ'));
+        return {
+          refreshHeight: refresh?.getBoundingClientRect().height || 0,
+          addHeight: add?.getBoundingClientRect().height || 0,
+          addBackground: add ? getComputedStyle(add).backgroundColor : '',
+          configureBackground: configure ? getComputedStyle(configure).backgroundColor : ''
+        };
+      })()`,
+    );
+    assert(
+      timetableActionMetrics.refreshHeight === timetableActionMetrics.addHeight,
+      `Expected refresh/add actions to have equal heights, got ${timetableActionMetrics.refreshHeight}/${timetableActionMetrics.addHeight}`,
+    );
+    assert(
+      timetableActionMetrics.configureBackground === timetableActionMetrics.addBackground,
+      `Expected configure-period button to match primary add action, got ${timetableActionMetrics.configureBackground}/${timetableActionMetrics.addBackground}`,
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ตั้งเวลาคาบ'))`,
+      'Configure-period button was not found',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('จำนวนคาบต่อวัน'),
+      'Configure-period dialog did not render',
+    );
+    await waitFor(
+      async () =>
+        Number(await evaluate(client, `document.querySelector('#pt-count')?.value || 0`)) ===
+        Number(expectedPeriodPrefill.periods_count),
+      'Configure-period dialog did not prefill from the current school schedule',
+    );
+    const periodPrefill = await evaluate(
+      client,
+      `(() => ({
+        count: document.querySelector('#pt-count')?.value || '',
+        length: document.querySelector('#pt-length')?.value || '',
+        firstStart: document.querySelector('[aria-label="เวลาเริ่มคาบ 1"]')?.textContent.trim() || ''
+      }))()`,
+    );
+    assert(
+      Number(periodPrefill.count) === Number(expectedPeriodPrefill.periods_count),
+      `Expected current period count ${expectedPeriodPrefill.periods_count}, got ${periodPrefill.count}`,
+    );
+    assert(
+      Number(periodPrefill.length) === Number(expectedPeriodPrefill.period_length_minutes),
+      `Expected current period length ${expectedPeriodPrefill.period_length_minutes}, got ${periodPrefill.length}`,
+    );
+    assert(
+      periodPrefill.firstStart.includes(String(expectedPeriodPrefill.first_period_starts_at).slice(0, 5)),
+      `Expected current first period to start ${expectedPeriodPrefill.first_period_starts_at}, got ${periodPrefill.firstStart}`,
+    );
     await logoutInBrowser(client);
 
     // 3. Staff without manage-timetable sees the read-only "ตารางของฉัน" view
@@ -751,6 +888,10 @@ async function main() {
       'Student own-room timetable did not render',
     );
     const studentTimetableText = String(await evaluate(client, 'document.body.innerText'));
+    assert(
+      studentTimetableText.includes(`คาบ ${emptyConfiguredPeriod.period}`),
+      `Student timetable omitted configured empty period ${emptyConfiguredPeriod.period}`,
+    );
     assert(!studentTimetableText.includes('เลือกห้องเรียน'), 'Student timetable exposed the room picker');
     assert(!studentTimetableText.includes('ตารางของฉัน'), 'Student timetable exposed staff view-mode tabs');
     await logoutInBrowser(client);
@@ -876,7 +1017,7 @@ async function main() {
     );
 
     console.log(
-      'timetable browser smoke passed (scope rejection, staff/manager/student UI gating, student home denial and own-room schedule, subject slot link creation, expiry warning, guest subject submit, subject detail tag)',
+      'timetable browser smoke passed (scope rejection, timetable action sizing, period prefill, staff/manager/student UI gating, configured empty student period, student home denial and own-room schedule, subject slot link creation, expiry warning, guest subject submit, subject detail tag)',
     );
   } finally {
     await closeChrome(chrome);
