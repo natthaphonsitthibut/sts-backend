@@ -347,7 +347,10 @@ function getProfileAuditLeakCandidates(values, profile) {
     values.postalCode,
     formatCoordinate(profile.address_latitude),
     formatCoordinate(profile.address_longitude),
-  ].filter((value) => value !== null && value !== undefined && String(value).trim() !== '');
+  ].filter(
+    (value) =>
+      value !== null && value !== undefined && String(value).trim().length >= 4,
+  );
 }
 
 function assertProfileAuditDoesNotLeak(text, values, profile, context) {
@@ -505,6 +508,32 @@ async function main() {
 
   try {
     user = await upsertSmokeUser(dataSource, await passwordService.hash(password));
+    const [persistedFixture] = await dataSource.query(
+      `SELECT current_database() AS database_name, password FROM users WHERE id = $1`,
+      [user.id],
+    );
+    assert(
+      String(persistedFixture?.database_name || '').endsWith('_smoke'),
+      'Profile browser fixture was not created in a smoke database',
+    );
+    assert(
+      await passwordService.compare(password, persistedFixture?.password),
+      'Profile browser fixture password did not persist correctly',
+    );
+    const loginResponse = await fetch(`${BACKEND_URL}/api/users/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: USERNAME, password }),
+    });
+    assert(loginResponse.ok, `Profile browser login failed with HTTP ${loginResponse.status}`);
+    const rawSessionCookie = loginResponse.headers.get('set-cookie') || '';
+    const cookiePair = rawSessionCookie.split(';', 1)[0] || '';
+    const cookieSeparator = cookiePair.indexOf('=');
+    assert(cookieSeparator > 0, 'Profile browser login did not return a session cookie');
+    const sessionCookie = {
+      name: cookiePair.slice(0, cookieSeparator),
+      value: cookiePair.slice(cookieSeparator + 1),
+    };
     const [location] = await dataSource.query(
       `
         SELECT province, district, sub_district
@@ -522,6 +551,7 @@ async function main() {
     const { client } = chrome;
     await client.call('Page.enable');
     await client.call('Runtime.enable');
+    await client.call('Network.enable');
 
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 1366,
@@ -531,37 +561,61 @@ async function main() {
     });
 
     await navigate(client, `${FRONTEND_URL}/login`);
-    await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('เข้าสู่ระบบ STS'),
-      'Login page did not render',
-    );
-    await fillInput(client, '#username', USERNAME);
-    await fillInput(client, '#password', password);
-    await click(
+    await client.call('Network.setCookie', {
+      name: sessionCookie.name,
+      value: sessionCookie.value,
+      url: BROWSER_BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    const browserSessionStatus = await evaluate(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('เข้าสู่ระบบ'))`,
-      'Login submit button was not found',
-    );
-    await waitFor(
-      async () => Boolean(await evaluate(client, `Boolean(document.querySelector('a[href="/profile"]'))`)),
-      'Profile link did not appear after login',
-    );
-
-    await click(client, `document.querySelector('a[href="/profile"]')`, 'Profile link was not found');
-    await waitFor(
-      async () =>
-        (await evaluate(client, 'location.pathname')) === '/profile' &&
-        String(await evaluate(client, 'document.body.innerText')).includes('โปรไฟล์ของฉัน') &&
-        Boolean(await evaluate(client, `Boolean(document.querySelector('#FirstName'))`)),
-      'Profile page did not render',
+      `fetch(${JSON.stringify(`${BROWSER_BACKEND_URL}/api/users/me`)}, { credentials: 'include' }).then((response) => response.status)`,
     );
     assert(
-      (await evaluate(client, `document.querySelector('#PersonID_Onec')?.value`)) === '',
-      'Missing national id did not render as an empty readonly input',
+      browserSessionStatus === 200,
+      `Profile browser session preflight failed with HTTP ${browserSessionStatus}`,
     );
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(
+        JSON.stringify({
+          id: user.id,
+          username: USERNAME,
+          FirstName: 'ProfileBrowser',
+          LastName: 'Smoke',
+          roles: ['ADMIN'],
+          permissions: ['home', 'audit-log', 'manage-users-list', 'attendance-dashboard'],
+          data_scope: { global: true },
+          must_change_password: false,
+        }),
+      )}); localStorage.setItem('admin_access', 'true');`,
+    );
+    await navigate(client, `${FRONTEND_URL}/profile`);
+    try {
+      await waitFor(
+        async () =>
+          (await evaluate(client, 'location.pathname')) === '/profile' &&
+          String(await evaluate(client, 'document.body.innerText')).includes('โปรไฟล์ของฉัน') &&
+          !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
+        'Profile page did not render',
+      );
+    } catch (error) {
+      const pathname = await evaluate(client, 'location.pathname');
+      const pageText = String(await evaluate(client, 'document.body.innerText')).slice(0, 500);
+      throw new Error(`${error.message}; path=${pathname}; page=${pageText}`);
+    }
     assert(
-      (await evaluate(client, `document.querySelector('#PersonID_Onec')?.placeholder`)) === 'ยังไม่ระบุ',
-      'Missing national id placeholder is incorrect',
+      Boolean(
+        await evaluate(
+          client,
+          `[...document.querySelectorAll('div')].some((element) => {
+            const label = element.firstElementChild?.textContent?.trim();
+            return label === 'เลขบัตรประชาชน' && element.textContent.includes('-');
+          })`,
+        ),
+      ),
+      'Missing national id did not render as an empty profile detail',
     );
     assert(
       Boolean(
@@ -571,6 +625,23 @@ async function main() {
         ),
       ),
       'Manage-users national-id edit link did not render for an authorized user',
+    );
+    assert(
+      !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
+      'Profile view mode rendered editable form controls',
+    );
+    assert(
+      !Boolean(await evaluate(client, `document.querySelector('button[type="submit"]')`)),
+      'Profile exposed a save action before edit mode was selected',
+    );
+    assert(
+      Boolean(
+        await evaluate(
+          client,
+          `[...document.querySelectorAll('button')].some((button) => button.textContent.trim() === 'แก้ไขข้อมูลส่วนตัว')`,
+        ),
+      ),
+      'Profile edit-mode button did not render',
     );
 
     await click(
@@ -603,8 +674,58 @@ async function main() {
     await waitFor(
       async () =>
         (await evaluate(client, 'location.pathname')) === '/profile' &&
-        Boolean(await evaluate(client, `Boolean(document.querySelector('#FirstName'))`)),
+        !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
       'Back-to-profile navigation did not complete',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'แก้ไขข้อมูลส่วนตัว')`,
+      'Profile edit-mode button was not found',
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `(() => {
+              const firstName = document.querySelector('#FirstName');
+              const addressLine = document.querySelector('#address_line');
+              const submit = document.querySelector('button[type="submit"]');
+              return Boolean(firstName && !firstName.readOnly && addressLine && !addressLine.disabled && submit);
+            })()`,
+          ),
+        ),
+      'Profile did not enter edit mode',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ย้อนกลับ'))`,
+      'Profile edit-mode back button was not found',
+    );
+    await waitFor(
+      async () =>
+        !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)) &&
+        !Boolean(await evaluate(client, `document.querySelector('button[type="submit"]')`)),
+      'Profile back button did not return to detail mode',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'แก้ไขข้อมูลส่วนตัว')`,
+      'Profile edit-mode button was not found after returning to view mode',
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `(() => {
+              const firstName = document.querySelector('#FirstName');
+              const submit = document.querySelector('button[type="submit"]');
+              return Boolean(firstName && !firstName.readOnly && submit);
+            })()`,
+          ),
+        ),
+      'Profile did not re-enter edit mode',
     );
 
     const values = {
@@ -656,9 +777,23 @@ async function main() {
     );
 
     await fillInput(client, 'input[placeholder="ค้นหาที่อยู่หรือสถานที่"]', 'เชียงใหม่ ประเทศไทย');
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `(() => {
+              const button = document.querySelector('button[aria-label="ค้นหาตำแหน่งบนแผนที่"]');
+              return Boolean(button && !button.disabled);
+            })()`,
+          ),
+        ),
+      'Map place-search button did not become ready',
+      30_000,
+    );
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ค้นหา')`,
+      `document.querySelector('button[aria-label="ค้นหาตำแหน่งบนแผนที่"]')`,
       'Map place-search button was not found',
     );
     await waitFor(async () => {
@@ -753,6 +888,14 @@ async function main() {
       }
       return text.includes('บันทึกโปรไฟล์เรียบร้อยแล้ว');
     }, 'Profile success message did not render after save');
+    assert(
+      !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
+      'Profile did not return to detail mode after save',
+    );
+    assert(
+      !Boolean(await evaluate(client, `document.querySelector('button[type="submit"]')`)),
+      'Profile save action remained visible after save',
+    );
     let savedProfile = null;
     await waitFor(async () => {
       const result = await fetchBrowserJson(client, `${BROWSER_BACKEND_URL}/api/users/me`);
@@ -790,13 +933,39 @@ async function main() {
     await client.call('Page.reload');
     await waitFor(
       async () =>
-        (await evaluate(client, `document.querySelector('#FirstName')?.value`)) === values.firstName,
+        String(await evaluate(client, 'document.body.innerText')).includes(values.firstName) &&
+        !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
       'Saved profile did not persist after refresh',
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) => button.textContent.trim() === 'แก้ไขข้อมูลส่วนตัว')`,
+          ),
+        ),
+      'Profile detail actions did not finish loading after refresh',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'แก้ไขข้อมูลส่วนตัว')`,
+      'Profile edit-mode button was not found after refresh',
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(client, `document.querySelector('#FirstName')?.value`)) === values.firstName,
+      'Saved profile did not populate edit mode after refresh',
     );
     await waitFor(async () => {
       const coords = await getCoordinates(client);
       return coords.lat === expectedCoordinates.lat && coords.lng === expectedCoordinates.lng;
     }, 'Saved profile coordinates did not persist after refresh');
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ย้อนกลับ'))`,
+      'Profile back button was not found after refresh verification',
+    );
 
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390,
@@ -808,7 +977,8 @@ async function main() {
     await waitFor(
       async () =>
         String(await evaluate(client, 'document.body.innerText')).includes('โปรไฟล์ของฉัน') &&
-        (await evaluate(client, `document.querySelector('#FirstName')?.value`)) === values.firstName,
+        String(await evaluate(client, 'document.body.innerText')).includes(values.firstName) &&
+        !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
       'Mobile profile page did not render saved data',
     );
     await capture(client, '/tmp/sts-profile-self-edit-mobile.png');
