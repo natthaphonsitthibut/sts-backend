@@ -466,6 +466,146 @@ async function assertFullStudentSurfaceNavigation(client, label) {
   );
 }
 
+async function assertManualCaseFlow(client, row, createdCaseIds) {
+  const studentId = String(row.studentId);
+  const expectedRiskTier = String(row.riskTier);
+  const reason = `Browser smoke manual case ${Date.now()}`;
+
+  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => {
+          const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
+            .find((candidate) => candidate.offsetParent !== null
+              && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+          return Boolean(row?.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]'));
+        })()`,
+      ),
+    'risk dashboard did not expose the manual case action',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
+        .find((candidate) => candidate.offsetParent !== null
+          && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+      row?.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]')?.click();
+    })()`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => {
+          const dialog = document.querySelector('[role="dialog"]');
+          return Boolean(dialog
+            && dialog.innerText.includes('เปิดเคสช่วยเหลือ')
+            && getComputedStyle(dialog).textAlign === 'left');
+        })()`,
+      ),
+    'manual case dialog did not render with canonical left alignment',
+  );
+  await evaluate(
+    client,
+    `Array.from(document.querySelectorAll('[role="dialog"] button'))
+      .find((button) => button.innerText.trim() === 'ยกเลิก')?.click()`,
+  );
+
+  await navigate(client, `${FRONTEND_URL}/students/${studentId}`);
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `document.querySelector('[data-student-risk-tier]')
+          ?.getAttribute('data-student-risk-tier') === ${JSON.stringify(expectedRiskTier)}`,
+      ),
+    `student detail did not render persisted risk tier ${expectedRiskTier}`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `Boolean(document.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]'))`,
+      ),
+    'student detail did not expose the manual case action',
+  );
+  await evaluate(
+    client,
+    `document.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]')?.click()`,
+  );
+  await waitFor(
+    async () => evaluate(client, `Boolean(document.querySelector('#open-case-reason'))`),
+    'student detail case dialog did not render',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const textarea = document.querySelector('#open-case-reason');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(textarea, ${JSON.stringify(reason)});
+      textarea?.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
+  );
+  await evaluate(
+    client,
+    `Array.from(document.querySelectorAll('[role="dialog"] button'))
+      .find((button) => button.innerText.trim() === 'เปิดเคส')?.click()`,
+  );
+  await waitFor(
+    async () => evaluate(client, `window.location.pathname.startsWith('/cases/')`),
+    'opening a case did not navigate to case detail',
+  );
+  await waitFor(
+    async () => {
+      const text = await bodyText(client);
+      return text.includes('รายละเอียดเคส') && text.includes(reason);
+    },
+    'case detail did not render the submitted reason',
+  );
+
+  const caseId = Number(
+    await evaluate(client, `Number(window.location.pathname.split('/').filter(Boolean).at(-1))`),
+  );
+  assert(Number.isInteger(caseId) && caseId > 0, 'opened case id was invalid');
+  createdCaseIds.push(caseId);
+
+  const duplicate = await evaluate(
+    client,
+    `(async () => {
+      const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/cases`)}, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: ${JSON.stringify(studentId)}, reason: ${JSON.stringify(reason)} }),
+      });
+      return { status: response.status, payload: await response.json() };
+    })()`,
+  );
+  assert(duplicate.status === 200, `duplicate manual case request returned ${duplicate.status}`);
+  assert(duplicate.payload?.created === false, 'duplicate manual case request created another case');
+  assert(Number(duplicate.payload?.data?.id) === caseId, 'duplicate request returned another case');
+  await capture(client, '/tmp/sts-manual-case-detail.png');
+}
+
+async function cleanupManualCases(dataSource, caseIds, actorId) {
+  if (caseIds.length === 0 || !actorId) return;
+  const ids = caseIds.map(String);
+  await dataSource.query(
+    `DELETE FROM notifications WHERE ref_entity = 'case' AND ref_id = ANY($1::text[])`,
+    [ids],
+  );
+  await dataSource.query(
+    `DELETE FROM audit_logs WHERE target_type = 'case' AND target_id = ANY($1::text[])`,
+    [ids],
+  );
+  await dataSource.query(
+    `DELETE FROM cases WHERE id = ANY($1::int[]) AND created_by = $2`,
+    [caseIds, actorId],
+  );
+}
+
 async function assertCanonicalPageWidths(client) {
   const routes = ['/student-risk-report', '/manage-users', '/manage-student-accounts'];
   const widths = [];
@@ -501,11 +641,23 @@ async function assertCanonicalPageWidths(client) {
     async () => (await bodyText(client)).includes('เข้าสู่ระบบ STS'),
     'Guest/auth login content did not render',
   );
-  const guestWidth = await evaluate(
+  const guestLayout = await evaluate(
     client,
-    `getComputedStyle(document.querySelector('[data-page-container="guest"]')).maxWidth`,
+    `(() => {
+      const container = document.querySelector('[data-page-container="guest"]');
+      return {
+        className: container?.className ?? null,
+        maxWidth: container ? getComputedStyle(container).maxWidth : null,
+        contentMaxWidth: container?.firstElementChild
+          ? getComputedStyle(container.firstElementChild).maxWidth
+          : null,
+      };
+    })()`,
   );
-  assert(guestWidth === '1180px', `Guest/auth page width drifted: ${guestWidth}`);
+  assert(
+    guestLayout.maxWidth === 'none' && guestLayout.contentMaxWidth === '1024px',
+    `Guest/auth page width drifted: shell=${guestLayout.maxWidth}, content=${guestLayout.contentMaxWidth} (${guestLayout.className})`,
+  );
 }
 
 async function assertStatusSummaryCardFilters(client) {
@@ -920,10 +1072,12 @@ async function main() {
     `RiskDashboardBrowser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
   let chrome;
+  let actorId = null;
+  const createdCaseIds = [];
 
   try {
     await disableActor(dataSource);
-    const actorId = await upsertActor(dataSource, passwordHash);
+    actorId = await upsertActor(dataSource, passwordHash);
     const user = {
       id: actorId,
       username: USERNAME,
@@ -975,6 +1129,12 @@ async function main() {
     assert(expectedTotalCount > 0, 'Risk dashboard API totalCount was zero');
 
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop');
+    const manualCaseRow = apiResult.payload.data.find(
+      (row) => Number(row.openCaseCount) === 0 && row.studentId,
+    );
+    assert(manualCaseRow, 'risk dashboard dataset had no student without an active case');
+    await assertManualCaseFlow(client, manualCaseRow, createdCaseIds);
+    await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop after case flow');
     await assertVisibleStudentProfileLink(client, 'desktop');
     await assertFullStudentSurfaceNavigation(client, 'desktop');
     await assertRiskSortDirection(client, 'descending', 'desktop default');
@@ -1029,6 +1189,7 @@ async function main() {
     );
   } finally {
     await closeChrome(chrome);
+    await cleanupManualCases(dataSource, createdCaseIds, actorId).catch(() => null);
     await disableActor(dataSource).catch(() => null);
     await app.close();
   }

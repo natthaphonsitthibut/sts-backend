@@ -12,6 +12,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -263,6 +264,16 @@ export class ReviewCaseDto {
   // Legacy clients may still send this, but the service deliberately ignores it.
   // Reviewer attribution must come from the authenticated actor, not the body.
   reviewed_by?: string | null;
+}
+
+export class OpenCaseDto {
+  @IsUUID()
+  student_id!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  reason!: string;
 }
 
 export class GetCasesQueryDto extends PaginationQueryDto {

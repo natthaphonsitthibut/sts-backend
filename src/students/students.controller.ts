@@ -105,7 +105,13 @@ export class StudentsController {
   @Get('cases/by-name/:name')
   @RequirePermission('students')
   findCasesByName(@Param('name') name: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
-    return this.studentsService.findCasesByName(name, actor);
+    return this.studentsService.findCasesByName(name, actor, resolveActorDataScope(actor));
+  }
+
+  @Get(':id/cases')
+  @RequirePermission('students')
+  findCasesByStudentId(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
+    return this.studentsService.findCasesByStudentId(id, actor, resolveActorDataScope(actor));
   }
 
   @Get('attendance/:id')

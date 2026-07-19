@@ -32,7 +32,12 @@ describe('StudentsController', () => {
   });
 
   it('requires staff student access for raw lists while preserving scoped student self detail', () => {
-    for (const methodName of ['findAll', 'getFilterOptions', 'findCasesByName']) {
+    for (const methodName of [
+      'findAll',
+      'getFilterOptions',
+      'findCasesByName',
+      'findCasesByStudentId',
+    ]) {
       const handler = Object.getOwnPropertyDescriptor(StudentsController.prototype, methodName)
         ?.value as () => unknown;
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['students']);

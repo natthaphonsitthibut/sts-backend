@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import type { NotificationsService } from '../notifications/notifications.service';
@@ -28,6 +28,10 @@ describe('CaseService', () => {
     Pick<
       TaskRepository,
       | 'findCaseById'
+      | 'findCaseDetailById'
+      | 'findStudentForCaseCreation'
+      | 'findActiveCaseByStudentUuid'
+      | 'createCase'
       | 'withTransaction'
       | 'insertCaseReview'
       | 'updateCaseStatus'
@@ -42,9 +46,25 @@ describe('CaseService', () => {
   beforeEach(() => {
     taskRepository = {
       findCaseById: jest.fn().mockResolvedValue({ id: 10, school_id: 10010002 }),
-      withTransaction: jest.fn(async (callback) => {
-        await callback(undefined);
+      findCaseDetailById: jest.fn().mockResolvedValue({
+        id: 10,
+        student_id: '11111111-1111-4111-8111-111111111111',
+        student_name: 'เด็ก ทดสอบ',
+        student_school: 'โรงเรียนทดสอบ',
+        reason_flagged: 'ต้องติดตาม',
+        status: 'OPEN',
+        school_id: 10010002,
       }),
+      findStudentForCaseCreation: jest.fn().mockResolvedValue({
+        student_uuid: '11111111-1111-4111-8111-111111111111',
+        FirstName_Onec: 'เด็ก',
+        LastName_Onec: 'ทดสอบ',
+        school_id: 10010002,
+        school_name: 'โรงเรียนทดสอบ',
+      }),
+      findActiveCaseByStudentUuid: jest.fn().mockResolvedValue(null),
+      createCase: jest.fn().mockResolvedValue(10),
+      withTransaction: jest.fn(async (callback) => await callback(undefined)),
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       findCaseReviewById: jest.fn().mockResolvedValue({
@@ -61,6 +81,7 @@ describe('CaseService', () => {
     };
     notificationsService = {
       notifyCaseStatusChanged: jest.fn().mockResolvedValue(undefined),
+      notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
       notifyCaseSlaWarning: jest.fn().mockResolvedValue(undefined),
       notifyCaseSlaBreached: jest.fn().mockResolvedValue(undefined),
     };
@@ -71,6 +92,84 @@ describe('CaseService', () => {
       auditLog as unknown as AuditLogService,
       notificationsService as unknown as NotificationsService,
     );
+  });
+
+  it('opens one scoped case from the authoritative student record', async () => {
+    const studentId = '11111111-1111-4111-8111-111111111111';
+    const actor = buildActor(['review-cases']);
+
+    const result = await service.openCase(
+      { student_id: studentId, reason: '  ต้องติดตามเรื่องการมาเรียน  ' },
+      actor,
+    );
+
+    expect(result.created).toBe(true);
+    expect(result.data).toEqual(expect.objectContaining({ id: 10, status: 'OPEN' }));
+    expect(taskRepository.findStudentForCaseCreation).toHaveBeenCalledWith(
+      studentId,
+      actor,
+      undefined,
+    );
+    expect(taskRepository.createCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        studentUuid: studentId,
+        schoolId: 10010002,
+        reasonFlagged: 'ต้องติดตามเรื่องการมาเรียน',
+        createdBy: 1,
+      }),
+      undefined,
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CASE_CREATE', targetId: '10' }),
+    );
+    expect(notificationsService.notifyCaseCreated).toHaveBeenCalled();
+  });
+
+  it('returns the existing active case instead of creating a duplicate', async () => {
+    taskRepository.findActiveCaseByStudentUuid.mockResolvedValueOnce({ id: 10 });
+
+    const result = await service.openCase(
+      {
+        student_id: '11111111-1111-4111-8111-111111111111',
+        reason: 'ติดตามต่อ',
+      },
+      buildActor(['review-cases']),
+    );
+
+    expect(result.created).toBe(false);
+    expect(taskRepository.createCase).not.toHaveBeenCalled();
+    expect(auditLog.record).not.toHaveBeenCalled();
+    expect(notificationsService.notifyCaseCreated).not.toHaveBeenCalled();
+  });
+
+  it('hides an out-of-scope student when opening a case', async () => {
+    taskRepository.findStudentForCaseCreation.mockResolvedValueOnce(null);
+
+    await expect(
+      service.openCase(
+        {
+          student_id: '11111111-1111-4111-8111-111111111111',
+          reason: 'ติดตามต่อ',
+        },
+        buildActor(['review-cases']),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(taskRepository.createCase).not.toHaveBeenCalled();
+  });
+
+  it('rejects opening a case without review-cases permission', async () => {
+    await expect(
+      service.openCase(
+        {
+          student_id: '11111111-1111-4111-8111-111111111111',
+          reason: 'ติดตามต่อ',
+        },
+        buildActor(['students']),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
   it('allows ASSIST with review-cases permission and ignores client reviewed_by', async () => {

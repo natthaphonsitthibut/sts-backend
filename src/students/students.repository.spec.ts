@@ -100,4 +100,39 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain("THEN 'TEMP_PASSWORD_EXPIRED'");
     expect(queries[0]).toContain('temporary_password_expires_at <= NOW()');
   });
+
+  it('loads the persisted risk tier with student detail and defaults missing profiles to normal', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.findStudentById('00000000-0000-4000-8000-000000000001');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain(
+      'LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid',
+    );
+    expect(queries[0]).toContain("COALESCE(risk.risk_tier, 'NORMAL') as risk_tier");
+  });
+
+  it('scopes the legacy case-by-name lookup through the linked enrollment', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.findCasesByStudentName('เด็ก ทดสอบ', { school_ids: [10010002] });
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain('INNER JOIN student_term s ON s.student_uuid = c.student_uuid');
+    expect(queries[0]).toContain('s."SchoolID_Onec" = ANY($2::int[])');
+  });
+
+  it('loads student case history by stable UUID', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.findCasesByStudentId('00000000-0000-4000-8000-000000000001');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain('WHERE student_uuid = $1');
+    expect(queries[0]).not.toContain('student_name =');
+  });
 });

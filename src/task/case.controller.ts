@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpException,
   HttpStatus,
   ParseIntPipe,
@@ -17,13 +18,31 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import { CaseService } from './case.service';
-import { ReviewCaseDto } from './dto/task.dto';
+import { OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { getTaskErrorMessage, hasHttpStatusGetter } from './task.types';
 
 @UseGuards(AuthGuard)
 @Controller('api/cases')
 export class CaseController {
   constructor(private readonly caseService: CaseService) {}
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('review-cases')
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  async openCase(@Body() body: OpenCaseDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
+    return await this.caseService.openCase(body, actor);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('review-cases')
+  @Get(':caseId')
+  async getCase(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.caseService.getCase(caseId, actor);
+  }
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('review-cases')

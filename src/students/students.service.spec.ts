@@ -12,6 +12,7 @@ describe('StudentsService', () => {
     getStudentFilterOptions: jest.Mock;
     findStudentById: jest.Mock;
     findCasesByStudentName: jest.Mock;
+    findCasesByStudentId: jest.Mock;
     listAttendanceByStudentId: jest.Mock;
     insertPiiAccessEvent: jest.Mock;
     listActiveRevealGroups: jest.Mock;
@@ -35,6 +36,7 @@ describe('StudentsService', () => {
             getStudentFilterOptions: jest.fn(),
             findStudentById: jest.fn(),
             findCasesByStudentName: jest.fn(),
+            findCasesByStudentId: jest.fn(),
             listAttendanceByStudentId: jest.fn(),
             insertPiiAccessEvent: jest.fn(),
             listActiveRevealGroups: jest.fn(),
@@ -177,6 +179,37 @@ describe('StudentsService', () => {
       }),
       undefined,
     );
+  });
+
+  it('loads case history by stable student UUID after a scoped lookup', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const scope = { school_ids: [10010002] };
+    studentsRepository.findStudentById.mockResolvedValue({ student_uuid: studentUuid });
+    studentsRepository.findCasesByStudentId.mockResolvedValue([{ id: 10, status: 'OPEN' }]);
+
+    const result = await service.findCasesByStudentId(
+      studentUuid,
+      { id: 1, username: 'director', roles: ['DIRECTOR'], permissions: ['students'] },
+      scope,
+    );
+
+    expect(studentsRepository.findStudentById).toHaveBeenCalledWith(studentUuid, scope);
+    expect(studentsRepository.findCasesByStudentId).toHaveBeenCalledWith(studentUuid);
+    expect(result).toEqual([{ id: 10, status: 'OPEN' }]);
+  });
+
+  it('does not expose case history when the student is outside scope', async () => {
+    studentsRepository.findStudentById.mockResolvedValue(null);
+
+    await expect(
+      service.findCasesByStudentId(
+        '00000000-0000-4000-8000-000000000001',
+        { id: 1, username: 'director', roles: ['DIRECTOR'], permissions: ['students'] },
+        { school_ids: [10010002] },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(studentsRepository.findCasesByStudentId).not.toHaveBeenCalled();
   });
 
   it('updates a student by UUID after a scoped lookup succeeds', async () => {

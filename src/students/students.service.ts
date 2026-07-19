@@ -507,7 +507,7 @@ export class StudentsService {
     }
   }
 
-  async findCasesByName(name: string, actor?: AuthenticatedRequestUser) {
+  async findCasesByName(name: string, actor?: AuthenticatedRequestUser, userScope?: DataScope) {
     if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
@@ -516,12 +516,27 @@ export class StudentsService {
         return [];
       }
 
-      return await this.studentsRepository.findCasesByStudentName(name);
+      return await this.studentsRepository.findCasesByStudentName(name, userScope);
     } catch (error) {
       const resolvedError = error as Error;
       this.logger.error(`findCasesByName error: ${resolvedError.message}`);
       throw error;
     }
+  }
+
+  async findCasesByStudentId(
+    studentUuid: string,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+  ) {
+    if (isRestrictedExecutive(actor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
+    }
+    const student = await this.studentsRepository.findStudentById(studentUuid, userScope);
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    return await this.studentsRepository.findCasesByStudentId(studentUuid);
   }
 
   async findAttendanceByStudentId(

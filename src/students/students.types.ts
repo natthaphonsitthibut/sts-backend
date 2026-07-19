@@ -57,6 +57,7 @@ export interface StudentDetailRow extends Record<string, unknown> {
   grade?: string | null;
   room?: string | null;
   school_name?: string | null;
+  risk_tier?: 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
   student_status_label?: string | null;
   student_status_category?: string | null;
   student_status_badge_variant?: string | null;

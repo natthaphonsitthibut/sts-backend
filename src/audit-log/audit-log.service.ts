@@ -376,6 +376,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'room', label: 'ห้อง' },
     ],
   },
+  CASE_CREATE: {
+    domain: 'cases',
+    label: 'เปิดเคส',
+    detailKeys: [{ key: 'schoolId', label: 'รหัสโรงเรียน' }],
+  },
   LINK_LOCK: {
     domain: 'login_links',
     label: 'ปิดลิงก์',

@@ -680,6 +680,108 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
+  async findCaseDetailById(caseId: number, actor?: ActorContext): Promise<QueryResultRow | null> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        c.id,
+        c.student_uuid::text AS student_id,
+        c.student_name,
+        c.student_school,
+        c.student_address,
+        c.reason_flagged,
+        c.status,
+        case_status.label_th AS status_label,
+        case_status.badge_variant AS status_badge_variant,
+        case_status.summary_tone AS status_summary_tone,
+        c.created_at,
+        c.updated_at,
+        c.school_id,
+        grade.label AS grade,
+        student."RoomID_Onec"::text AS room,
+        latest_task.id AS task_id
+      FROM cases c
+      INNER JOIN case_workflow_statuses case_status ON case_status.code = c.status
+      LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
+      LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
+      LEFT JOIN LATERAL (
+        SELECT task.id
+        FROM tasks task
+        WHERE task.case_id = c.id AND task.deleted_at IS NULL
+        ORDER BY task.created_at DESC, task.id DESC
+        LIMIT 1
+      ) latest_task ON true
+      WHERE c.id = $1 AND c.deleted_at IS NULL${scopeSql}
+      LIMIT 1
+      `,
+      [caseId, ...scopeQuery.params],
+    );
+    return result.rows[0] || null;
+  }
+
+  async findStudentForCaseCreation(
+    studentUuid: string,
+    actor: ActorContext,
+    executor: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const params: unknown[] = [studentUuid];
+    const scopeQuery = buildDataScopeQuery(
+      actor.data_scope || {},
+      {
+        school_id: 'student."SchoolID_Onec"',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+        grade: 'student."GradeLevelID_Onec"',
+        room: 'student."RoomID_Onec"::text',
+      },
+      params.length + 1,
+    );
+    const scopeSql = scopeQuery.sql ? ` AND (${scopeQuery.sql})` : '';
+    params.push(...scopeQuery.params);
+
+    const result = await executor.query<QueryResultRow>(
+      `
+      SELECT
+        student.*,
+        student.student_uuid::text,
+        student."SchoolID_Onec" AS school_id,
+        school.name AS school_name
+      FROM student_term student
+      LEFT JOIN schools school ON school.id = student."SchoolID_Onec"
+      WHERE student.student_uuid = $1
+        AND student.deleted_at IS NULL${scopeSql}
+      FOR UPDATE OF student
+      `,
+      params,
+    );
+    return result.rows[0] || null;
+  }
+
+  async findActiveCaseByStudentUuid(
+    studentUuid: string,
+    actor: ActorContext,
+    executor: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await executor.query<QueryResultRow>(
+      `
+      SELECT c.id
+      FROM cases c
+      WHERE c.student_uuid = $1
+        AND c.status <> 'RESOLVED'
+        AND c.deleted_at IS NULL${scopeSql}
+      ORDER BY c.created_at DESC, c.id DESC
+      LIMIT 1
+      `,
+      [studentUuid, ...scopeQuery.params],
+    );
+    return result.rows[0] || null;
+  }
+
   async createCase(data: CreateCaseInput, executor?: QueryExecutor): Promise<number> {
     const result = await this.getExecutor(executor).query(
       `

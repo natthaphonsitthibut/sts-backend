@@ -1,6 +1,36 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('locks and scopes the authoritative student row before manual case creation', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const executor = {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { rows: [] };
+      }),
+    };
+    const repository = new TaskRepository({} as never, undefined as never, undefined as never);
+
+    await repository.findStudentForCaseCreation(
+      '00000000-0000-4000-8000-000000000001',
+      {
+        id: 7,
+        username: 'director',
+        roles: ['DIRECTOR'],
+        permissions: ['review-cases'],
+        data_scope: { school_ids: [101], grade_levels: [6], room_ids: ['2'] },
+      },
+      executor as never,
+    );
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].sql).toContain('FOR UPDATE OF student');
+    expect(queries[0].sql).toContain('student."SchoolID_Onec" = ANY($2::int[])');
+    expect(queries[0].sql).toContain('student."GradeLevelID_Onec" = ANY($3::int[])');
+    expect(queries[0].sql).toContain('student."RoomID_Onec"::text = ANY($4::text[])');
+    expect(queries[0].params).toEqual(['00000000-0000-4000-8000-000000000001', [101], [6], ['2']]);
+  });
+
   it('loads timetable slots for task-link validation with grade labels', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {

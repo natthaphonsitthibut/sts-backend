@@ -319,6 +319,7 @@ export class StudentsRepository {
         gl.label as grade,
         s."RoomID_Onec"::text as room,
         sc.name as school_name,
+        COALESCE(risk.risk_tier, 'NORMAL') as risk_tier,
         COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
         COALESCE(ss.category, 'UNMAPPED') as student_status_category,
         COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant,
@@ -333,6 +334,7 @@ export class StudentsRepository {
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       LEFT JOIN student_status ss
         ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
+      LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid
       LEFT JOIN LATERAL (
         SELECT c.student_lat, c.student_lng
         FROM cases c
@@ -662,15 +664,39 @@ export class StudentsRepository {
     return result.rows.map((row) => row.field_group);
   }
 
-  async findCasesByStudentName(name: string): Promise<StudentCaseRow[]> {
+  async findCasesByStudentName(name: string, userScope?: DataScope): Promise<StudentCaseRow[]> {
+    const params: unknown[] = [name];
+    const scope = userScope
+      ? buildDataScopeQuery(userScope, STUDENT_SCOPE_ALIASES, params.length + 1)
+      : { sql: '', params: [] };
+    params.push(...scope.params);
+    const scopeSql = scope.sql ? ` AND (${scope.sql})` : '';
     const result = await this.query<StudentCaseRow>(
       `
-        SELECT *
-        FROM cases
-        WHERE student_name = $1
-          AND deleted_at IS NULL
+        SELECT c.id, c.created_at, c.reason_flagged, c.status
+        FROM cases c
+        INNER JOIN student_term s ON s.student_uuid = c.student_uuid
+        LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        WHERE c.student_name = $1
+          AND c.deleted_at IS NULL${scopeSql}
+        ORDER BY c.created_at DESC, c.id DESC
       `,
-      [name],
+      params,
+    );
+
+    return result.rows;
+  }
+
+  async findCasesByStudentId(studentUuid: string): Promise<StudentCaseRow[]> {
+    const result = await this.query<StudentCaseRow>(
+      `
+        SELECT id, created_at, reason_flagged, status
+        FROM cases
+        WHERE student_uuid = $1
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC, id DESC
+      `,
+      [studentUuid],
     );
 
     return result.rows;
