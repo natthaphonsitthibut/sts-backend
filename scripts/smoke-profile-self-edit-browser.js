@@ -485,6 +485,7 @@ async function disableSmokeUser(dataSource) {
     `
       UPDATE users
       SET status = 'DISABLED',
+          data_origin_code = 'AUTOMATED_TEST',
           deactivated_at = COALESCE(deactivated_at, NOW()),
           deactivation_reason_code = COALESCE(deactivation_reason_code, 'OTHER'),
           deactivation_note = COALESCE(deactivation_note, 'Retained automated profile browser smoke fixture')

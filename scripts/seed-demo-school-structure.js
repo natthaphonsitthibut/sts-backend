@@ -151,20 +151,35 @@ async function auditStructure(dataSource, expectedTeacherPasswordHash = null) {
       ) AS classrooms_without_valid_homeroom,
       (SELECT COUNT(*)::int FROM kindergarten_rosters WHERE student_count < $2) AS kindergarten_classrooms_below_minimum,
       (SELECT COALESCE(MIN(student_count), 0)::int FROM kindergarten_rosters) AS minimum_kindergarten_students,
-      (SELECT COUNT(*)::int FROM users WHERE data_origin_code = 'DEMO' AND role = 'TEACHER') AS synthetic_teacher_accounts,
       (SELECT COUNT(*)::int FROM users
         WHERE data_origin_code = 'DEMO'
           AND role = 'TEACHER'
+          AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
+      ) AS synthetic_teacher_accounts,
+      (SELECT COUNT(*)::int FROM users
+        WHERE data_origin_code = 'DEMO'
+          AND role = 'TEACHER'
+          AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
           AND (
             must_change_password = TRUE
             OR temporary_password_issued_at IS NOT NULL
             OR temporary_password_expires_at IS NOT NULL
           )
       ) AS synthetic_teacher_password_state_issues,
+      (SELECT COUNT(*)::int FROM users
+        WHERE data_origin_code = 'DEMO'
+          AND role = 'TEACHER'
+          AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
+          AND (
+            email IS NULL
+            OR lower(email) <> lower(username || '@sts-demo.ac.th')
+          )
+      ) AS synthetic_teacher_email_issues,
       CASE WHEN $4::text IS NULL THEN NULL ELSE (
         SELECT COUNT(*)::int FROM users
         WHERE data_origin_code = 'DEMO'
           AND role = 'TEACHER'
+          AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
           AND password IS DISTINCT FROM $4::text
       ) END AS synthetic_teacher_password_hash_mismatches,
       (SELECT COUNT(*)::int FROM users WHERE username LIKE 'demo_teacher_%') AS fixture_style_teacher_usernames,
@@ -184,6 +199,7 @@ async function auditStructure(dataSource, expectedTeacherPasswordHash = null) {
   assert(audit.classrooms_without_valid_homeroom === 0, 'Some active classrooms have no valid homeroom teacher');
   assert(audit.kindergarten_classrooms_below_minimum === 0, 'Some kindergarten classrooms have too few students');
   assert(audit.synthetic_teacher_password_state_issues === 0, 'Some demo teachers have an invalid temporary-password state');
+  assert(audit.synthetic_teacher_email_issues === 0, 'Some demo teachers have no realistic demo email');
   if (expectedTeacherPasswordHash) {
     assert(audit.synthetic_teacher_password_hash_mismatches === 0, 'Some demo teachers retained an older password hash');
   }
@@ -196,8 +212,9 @@ async function seedStructure(dataSource, unusablePasswordHash) {
     SELECT id
     FROM users
     WHERE status = 'ACTIVE'
+      AND data_origin_code = 'DEMO'
+      AND username = 'orathai.b'
       AND (role = 'SUPER_ADMIN' OR role = 'ADMIN' OR permissions::jsonb ? 'manage-school-structure')
-    ORDER BY CASE WHEN role = 'SUPER_ADMIN' THEN 0 WHEN role = 'ADMIN' THEN 1 ELSE 2 END, id
     LIMIT 1
   `);
   assert(actor?.id, 'No active administrator is available for seed attribution');
@@ -367,6 +384,7 @@ async function seedStructure(dataSource, unusablePasswordHash) {
         username: identity.username,
         first_name: identity.firstName,
         last_name: identity.lastName,
+        email: `${identity.username}@sts-demo.ac.th`,
         school_name: classroom.school_name,
       };
     });
@@ -379,6 +397,7 @@ async function seedStructure(dataSource, unusablePasswordHash) {
         username TEXT NOT NULL UNIQUE,
         first_name TEXT NOT NULL,
         last_name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
         school_name TEXT NOT NULL
       ) ON COMMIT DROP;
     `);
@@ -386,7 +405,7 @@ async function seedStructure(dataSource, unusablePasswordHash) {
       INSERT INTO demo_teacher_plan_20260716
       SELECT * FROM jsonb_to_recordset($1::jsonb) AS plan(
         classroom_id BIGINT, school_id INTEGER, legacy_username TEXT, username TEXT,
-        first_name TEXT, last_name TEXT, school_name TEXT
+        first_name TEXT, last_name TEXT, email TEXT, school_name TEXT
       )
     `, [JSON.stringify(teacherPlan)]);
 
@@ -411,6 +430,7 @@ async function seedStructure(dataSource, unusablePasswordHash) {
           password = $1,
           "FirstName" = plan.first_name,
           "LastName" = plan.last_name,
+          email = plan.email,
           data_origin_code = 'DEMO'
       FROM demo_teacher_plan_20260716 plan
       WHERE teacher.username = plan.legacy_username
@@ -423,11 +443,11 @@ async function seedStructure(dataSource, unusablePasswordHash) {
 
     await manager.query(`
       INSERT INTO users (
-        username, password, "FirstName", "LastName", role,
+        username, password, "FirstName", "LastName", email, role,
         permissions, data_scope, affiliation, status, must_change_password,
         data_origin_code
       )
-      SELECT plan.username, $1, plan.first_name, plan.last_name, 'TEACHER', $2::jsonb,
+      SELECT plan.username, $1, plan.first_name, plan.last_name, plan.email, 'TEACHER', $2::jsonb,
         jsonb_build_object('school_ids', jsonb_build_array(plan.school_id)),
         plan.school_name, 'ACTIVE', FALSE, 'DEMO'
       FROM demo_teacher_plan_20260716 plan
@@ -435,6 +455,7 @@ async function seedStructure(dataSource, unusablePasswordHash) {
       SET password = EXCLUDED.password,
           "FirstName" = EXCLUDED."FirstName",
           "LastName" = EXCLUDED."LastName",
+          email = EXCLUDED.email,
           role = 'TEACHER',
           permissions = EXCLUDED.permissions,
           data_scope = EXCLUDED.data_scope,

@@ -617,8 +617,9 @@ async function findAuditActorId(dataSource) {
       SELECT id
       FROM users
       WHERE status = 'ACTIVE'
+        AND data_origin_code = 'DEMO'
+        AND username = 'orathai.b'
         AND (role = 'SUPER_ADMIN' OR role = 'ADMIN' OR permissions::jsonb ? 'manage-students')
-      ORDER BY CASE WHEN username = 'newnew' THEN 0 ELSE 1 END, id
       LIMIT 1
     `,
   );
@@ -1126,6 +1127,7 @@ async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn'] });
   const dataSource = app.get(DataSource);
   const actorId = await findAuditActorId(dataSource);
+  if (!actorId) throw new Error('No active DEMO administrator is available for seed attribution');
   const references = await loadReferenceMaps(dataSource);
   const students = STUDENTS.map((row, index) => buildStudent(row, index, references));
 

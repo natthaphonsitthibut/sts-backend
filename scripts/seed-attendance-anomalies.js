@@ -2,6 +2,10 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('Refusing to run attendance anomaly seed with NODE_ENV=production');
+}
+
 const DEMO_START = '2026-06-01';
 const DEMO_END = '2026-06-28';
 const TARGET_SCHOOL_ID = 10010003;
@@ -181,7 +185,7 @@ async function markCalendarDay(dataSource, termId, date, dayType, reason, actorI
   );
 }
 
-async function createSession(dataSource, fixture, date, actorId, roster) {
+async function createSession(dataSource, fixture, date, actor, roster) {
   const session = await queryOne(
     dataSource,
     `
@@ -198,6 +202,7 @@ async function createSession(dataSource, fixture, date, actorId, roster) {
         recorded_count = EXCLUDED.recorded_count,
         submitted_at = now(),
         submitted_by = EXCLUDED.submitted_by,
+        created_by = EXCLUDED.created_by,
         updated_by = EXCLUDED.updated_by,
         deleted_at = NULL,
         deleted_by = NULL
@@ -210,7 +215,7 @@ async function createSession(dataSource, fixture, date, actorId, roster) {
       fixture.room_id,
       date,
       roster.length,
-      actorId,
+      actor.id,
     ],
   );
   await dataSource.query(
@@ -218,11 +223,13 @@ async function createSession(dataSource, fixture, date, actorId, roster) {
       INSERT INTO attendance (
         student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
         "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
-        "AttendanceStatus", "RecordedAt", "RecordedBy", session_id
+        "AttendanceStatus", "RecordedAt", "RecordedBy", session_id,
+        created_by, updated_by
       )
-      SELECT input.student_uuid::uuid, $2, $3, $4, $5, $6, $7, 1, 1, now(), $8, $9
+      SELECT input.student_uuid::uuid, $2, $3, $4, $5, $6, $7, 1, 1, now(), $8, $9, $10, $10
       FROM UNNEST($1::uuid[]) AS input(student_uuid)
-      ON CONFLICT (student_uuid, "AttendanceDate", "Period") DO UPDATE SET
+      ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY'
+      DO UPDATE SET
         "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
         "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
         "RoomID_Onec" = EXCLUDED."RoomID_Onec",
@@ -231,7 +238,9 @@ async function createSession(dataSource, fixture, date, actorId, roster) {
         "AttendanceStatus" = EXCLUDED."AttendanceStatus",
         "RecordedAt" = now(),
         "RecordedBy" = EXCLUDED."RecordedBy",
-        session_id = EXCLUDED.session_id
+        session_id = EXCLUDED.session_id,
+        created_by = EXCLUDED.created_by,
+        updated_by = EXCLUDED.updated_by
     `,
     [
       roster,
@@ -241,8 +250,9 @@ async function createSession(dataSource, fixture, date, actorId, roster) {
       fixture.academic_year,
       fixture.semester,
       date,
-      'seed-attendance-anomalies',
+      actor.username,
       session.id,
+      actor.id,
     ],
   );
   return session.id;
@@ -252,14 +262,61 @@ async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn'] });
   const dataSource = app.get(DataSource);
   try {
-    const actor = await queryOne(dataSource, `SELECT MIN(id)::int AS id FROM users WHERE role = 'ADMIN'`);
-    if (!actor?.id) throw new Error('No ADMIN user is available for seed attribution');
+    const structuralActor = await queryOne(
+      dataSource,
+      `
+        SELECT id, username
+        FROM users
+        WHERE username = 'orathai.b'
+          AND role = 'ADMIN'
+          AND status = 'ACTIVE'
+          AND data_origin_code = 'DEMO'
+        LIMIT 1
+      `,
+    );
+    if (!structuralActor?.id) {
+      throw new Error('No active DEMO administrator is available for seed attribution');
+    }
 
     let fixture = await findActiveFixture(dataSource);
     if (!fixture) {
       const rosterFixture = await findRosterFixture(dataSource);
       if (!rosterFixture) throw new Error('No roster fixture without active term is available');
-      fixture = await ensureDemoTerm(dataSource, rosterFixture, actor.id);
+      fixture = await ensureDemoTerm(dataSource, rosterFixture, structuralActor.id);
+    }
+    const attendanceActor = await queryOne(
+      dataSource,
+      `
+        SELECT teacher.id, teacher.username
+        FROM school_classrooms classroom
+        JOIN classroom_teacher_assignments assignment
+          ON assignment.classroom_id = classroom.id
+         AND assignment.assignment_kind = 'HOMEROOM'
+         AND assignment.assignment_status = 'ACTIVE'
+         AND assignment.deleted_at IS NULL
+        JOIN school_teacher_memberships membership
+          ON membership.id = assignment.teacher_membership_id
+         AND membership.school_id = assignment.school_id
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+        JOIN users teacher
+          ON teacher.id = membership.teacher_user_id
+         AND teacher.role = 'TEACHER'
+         AND teacher.status = 'ACTIVE'
+         AND teacher.data_origin_code = 'DEMO'
+        WHERE classroom.school_term_id = $1
+          AND classroom.school_id = $2
+          AND classroom.grade_level_id = $3
+          AND classroom.legacy_room_number = $4
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+        ORDER BY assignment.effective_on DESC, assignment.id DESC
+        LIMIT 1
+      `,
+      [fixture.term_id, fixture.school_id, fixture.grade_level_id, fixture.room_id],
+    );
+    if (!attendanceActor?.id) {
+      throw new Error('No active DEMO teacher is available in the selected school');
     }
 
     const rosterRows = await dataSource.query(
@@ -313,7 +370,7 @@ async function main() {
         holidayDate,
         'HOLIDAY',
         'วันหยุดตามปฏิทินโรงเรียน',
-        actor.id,
+        structuralActor.id,
       );
       await markCalendarDay(
         manager,
@@ -321,7 +378,7 @@ async function main() {
         cancelledDate,
         'CANCELLED',
         'ยกเลิกการเรียนการสอน',
-        actor.id,
+        structuralActor.id,
       );
       await manager.query(
         `
@@ -329,12 +386,12 @@ async function main() {
           SET deleted_at = now(), deleted_by = $3, updated_by = $3
           WHERE school_term_id = $1 AND calendar_date = $2 AND deleted_at IS NULL
         `,
-        [fixture.term_id, missingCalendarDate, actor.id],
+        [fixture.term_id, missingCalendarDate, structuralActor.id],
       );
-      await createSession(manager, fixture, holidayDate, actor.id, roster);
-      await createSession(manager, fixture, cancelledDate, actor.id, roster);
-      await createSession(manager, fixture, missingCalendarDate, actor.id, roster);
-      await createSession(manager, fixture, outOfTermDate, actor.id, roster);
+      await createSession(manager, fixture, holidayDate, attendanceActor, roster);
+      await createSession(manager, fixture, cancelledDate, attendanceActor, roster);
+      await createSession(manager, fixture, missingCalendarDate, attendanceActor, roster);
+      await createSession(manager, fixture, outOfTermDate, attendanceActor, roster);
     });
 
     console.log(JSON.stringify({

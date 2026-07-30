@@ -8,14 +8,12 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const LOOKBACK_DAYS = 45;
+const SKIP_RISK_RECALCULATION = process.argv.includes('--skip-risk-recalculation');
 
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn'] });
   const dataSource = app.get(DataSource);
   try {
-    const [actor] = await dataSource.query(`SELECT MIN(id)::int AS id FROM users WHERE role = 'ADMIN'`);
-    if (!actor?.id) throw new Error('No ADMIN user is available for seed attribution');
-
     const result = await dataSource.transaction(async (manager) => {
       const [sessionStats] = await manager.query(
         `
@@ -63,8 +61,14 @@ async function main() {
           ),
           homeroom_teachers AS (
             SELECT DISTINCT ON (ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no)
-              ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no, ts.teacher_user_id
+              ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no,
+              teacher.id AS teacher_user_id
             FROM timetable_slots ts
+            JOIN users teacher
+              ON teacher.id = ts.teacher_user_id
+             AND teacher.role = 'TEACHER'
+             AND teacher.status = 'ACTIVE'
+             AND teacher.data_origin_code = 'DEMO'
             WHERE ts.deleted_at IS NULL AND ts.period = 1 AND ts.teacher_user_id IS NOT NULL
             ORDER BY ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no, ts.day_of_week
           )
@@ -75,10 +79,10 @@ async function main() {
           )
           SELECT rd.term_id, rd.school_id, rd.grade_level_id, rd.room_id, rd.attendance_date,
             1, 'DAILY', 'SUBMITTED', rd.roster_count, rd.roster_count,
-            rd.attendance_date + TIME '15:00', COALESCE(ht.teacher_user_id, $2::int),
-            $2::int, $2::int
+            rd.attendance_date + TIME '15:00', ht.teacher_user_id,
+            ht.teacher_user_id, ht.teacher_user_id
           FROM room_days rd
-          LEFT JOIN homeroom_teachers ht ON ht.school_term_id = rd.term_id
+          JOIN homeroom_teachers ht ON ht.school_term_id = rd.term_id
             AND ht.school_id = rd.school_id AND ht.grade_level_id = rd.grade_level_id
             AND ht.room_no = rd.room_id
           ON CONFLICT (school_term_id, grade_level_id, room_id, attendance_date, period, session_kind)
@@ -88,12 +92,13 @@ async function main() {
             recorded_count = EXCLUDED.recorded_count,
             submitted_at = EXCLUDED.submitted_at,
             submitted_by = EXCLUDED.submitted_by,
+            created_by = EXCLUDED.created_by,
             updated_by = EXCLUDED.updated_by,
             deleted_at = NULL,
             deleted_by = NULL
           RETURNING id
         `,
-        [LOOKBACK_DAYS, actor.id],
+        [LOOKBACK_DAYS],
       ).then((rows) => [{ sessions: rows.length }]);
 
       const [attendanceStats] = await manager.query(
@@ -162,23 +167,27 @@ async function main() {
           INSERT INTO attendance (
             student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
             "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
-            "AttendanceStatus", "RecordedAt", "RecordedBy", session_id
+            "AttendanceStatus", "RecordedAt", "RecordedBy", session_id,
+            created_by, updated_by
           )
           SELECT s.student_uuid, s.school_id, s.grade_level_id, s.room_id,
             s.academic_year, s.semester, s.attendance_date, 1,
             s.attendance_status, s.attendance_date + TIME '15:00',
-            'seed-demo-attendance-history', sess.id
+            recorder.username, sess.id, sess.submitted_by, sess.submitted_by
           FROM statused s
           JOIN attendance_sessions sess ON sess.school_term_id = s.term_id
             AND sess.grade_level_id = s.grade_level_id AND sess.room_id = s.room_id
             AND sess.attendance_date = s.attendance_date AND sess.period = 1
             AND sess.session_kind = 'DAILY'
+          JOIN users recorder ON recorder.id = sess.submitted_by
           ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY'
           DO UPDATE SET
             "AttendanceStatus" = EXCLUDED."AttendanceStatus",
             "RecordedAt" = EXCLUDED."RecordedAt",
             "RecordedBy" = EXCLUDED."RecordedBy",
-            session_id = EXCLUDED.session_id
+            session_id = EXCLUDED.session_id,
+            created_by = EXCLUDED.created_by,
+            updated_by = EXCLUDED.updated_by
           RETURNING "AttendanceID"
         `,
         [LOOKBACK_DAYS],
@@ -187,12 +196,20 @@ async function main() {
       return { sessions: sessionStats.sessions, records: attendanceStats.records };
     });
 
-    const riskProfileRepository = app.get(RiskProfileRepository);
-    const thresholds = await riskProfileRepository.getRiskThresholds();
-    const profilesUpdated = await riskProfileRepository.recalculateAll(thresholds);
+    let profilesUpdated = null;
+    if (!SKIP_RISK_RECALCULATION) {
+      const riskProfileRepository = app.get(RiskProfileRepository);
+      const thresholds = await riskProfileRepository.getRiskThresholds();
+      profilesUpdated = await riskProfileRepository.recalculateAll(thresholds);
+    }
 
     console.log(
-      JSON.stringify({ status: 'demo_attendance_history_seeded', ...result, profilesUpdated }),
+      JSON.stringify({
+        status: 'demo_attendance_history_seeded',
+        ...result,
+        profilesUpdated,
+        riskProfileRecalculationSkipped: SKIP_RISK_RECALCULATION,
+      }),
     );
   } finally {
     await app.close();

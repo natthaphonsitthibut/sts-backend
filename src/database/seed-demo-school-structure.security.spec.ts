@@ -14,4 +14,11 @@ describe('demo school structure seed security contract', () => {
     );
     expect(source).toContain('synthetic_teacher_password_hash_mismatches');
   });
+
+  it('uses DEMO actors and assigns every generated teacher a realistic demo email', () => {
+    expect(source).toContain("data_origin_code = 'DEMO'");
+    expect(source).toContain('email: `${identity.username}@sts-demo.ac.th`');
+    expect(source).toContain('synthetic_teacher_email_issues');
+    expect(source).toMatch(/email = EXCLUDED\.email/);
+  });
 });
