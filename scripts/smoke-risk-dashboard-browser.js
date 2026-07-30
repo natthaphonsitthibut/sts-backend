@@ -931,8 +931,7 @@ async function assertCollapsedGroupAccordion(client) {
       evaluate(
         client,
         `(() => {
-          const button = document.querySelector('button[aria-label="ขยายเมนูด้านข้าง"]');
-          const sidebar = button?.closest('aside');
+          const sidebar = document.querySelector('aside');
           return Boolean(sidebar && getComputedStyle(sidebar).width === '80px');
         })()`,
       ),
@@ -963,7 +962,7 @@ async function assertCollapsedGroupAccordion(client) {
     client,
     `(() => {
       const child = document.querySelector('a[aria-label="เคสติดตาม"]');
-      const sidebar = document.querySelector('button[aria-label="ขยายเมนูด้านข้าง"]')?.closest('aside');
+      const sidebar = document.querySelector('aside');
       return Boolean(
         child
         && child.offsetParent !== null
@@ -984,7 +983,7 @@ async function assertHeaderProfileMenu(client) {
     `(() => ({
       hasSettingsShortcut: Boolean(document.querySelector('header a[aria-label="ตั้งค่าระบบ"]')),
       opened: (() => {
-        const trigger = document.querySelector('header button[aria-label="เปิดเมนูบัญชีผู้ใช้"]');
+        const trigger = document.querySelector('header button[aria-label^="เปิดเมนูบัญชีผู้ใช้"]');
         if (!trigger) return false;
         trigger.click();
         return true;
@@ -1001,7 +1000,7 @@ async function assertHeaderProfileMenu(client) {
           const menu = document.querySelector('[role="menu"][aria-label="บัญชีผู้ใช้"]');
           return Boolean(
             menu
-            && menu.innerText.includes('โปรไฟล์ของฉัน')
+            && menu.innerText.includes('แก้ไขข้อมูลส่วนตัว')
             && menu.innerText.includes('ออกจากระบบ')
           );
         })()`,
@@ -1012,7 +1011,7 @@ async function assertHeaderProfileMenu(client) {
   await evaluate(
     client,
     `(() => {
-      const trigger = document.querySelector('header button[aria-label="เปิดเมนูบัญชีผู้ใช้"]');
+      const trigger = document.querySelector('header button[aria-label^="เปิดเมนูบัญชีผู้ใช้"]');
       trigger?.click();
       trigger?.focus();
       trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
@@ -1023,7 +1022,7 @@ async function assertHeaderProfileMenu(client) {
       evaluate(
         client,
         `document.activeElement?.getAttribute('role') === 'menuitem'
-          && document.activeElement?.innerText.includes('โปรไฟล์ของฉัน')`,
+          && document.activeElement?.innerText.includes('แก้ไขข้อมูลส่วนตัว')`,
       ),
     'ArrowDown did not open the header profile menu and focus its first action',
   );
@@ -1048,7 +1047,7 @@ async function assertHeaderProfileMenu(client) {
       evaluate(
         client,
         `(() => {
-          const trigger = document.querySelector('header button[aria-label="เปิดเมนูบัญชีผู้ใช้"]');
+          const trigger = document.querySelector('header button[aria-label^="เปิดเมนูบัญชีผู้ใช้"]');
           return !document.querySelector('[role="menu"][aria-label="บัญชีผู้ใช้"]')
             && document.activeElement === trigger;
         })()`,
@@ -1100,6 +1099,138 @@ async function assertRiskDashboard(client, expectedStudentName, expectedTotalCou
       );
     },
     `${label} did not render total count ${expectedTotalCount}`,
+  );
+}
+
+async function assertSharedVisualSystem(client) {
+  const colors = await evaluate(
+    client,
+    `(() => {
+      const breadcrumb = document.querySelector('nav[aria-label="เส้นทางนำทาง"]');
+      const previousPage = breadcrumb?.querySelector('a');
+      const currentPage = breadcrumb?.querySelector('[aria-current="page"]');
+      const description = breadcrumb?.parentElement?.querySelector('p');
+      const tableHeading = document.querySelector('table thead th');
+      const tableHeadingRow = tableHeading?.closest('tr');
+      const main = document.querySelector('main');
+      const notificationTrigger = document.querySelector('header button[aria-label^="รายการแจ้งเตือน"]');
+      const profileTrigger = document.querySelector('header button[aria-label^="เปิดเมนูบัญชีผู้ใช้"]');
+      const activeNavigation = document.querySelector('aside a[aria-current="page"]');
+      const refreshButton = Array.from(document.querySelectorAll('button'))
+        .find((button) => button.innerText.trim() === 'รีเฟรช');
+      return {
+        pageBackground: main ? getComputedStyle(main).backgroundColor : null,
+        previousPage: previousPage ? getComputedStyle(previousPage).color : null,
+        currentPage: currentPage ? getComputedStyle(currentPage).color : null,
+        description: description ? getComputedStyle(description).color : null,
+        tableHeadingBackground: tableHeadingRow
+          ? getComputedStyle(tableHeadingRow).backgroundColor
+          : null,
+        tableHeadingText: tableHeading ? getComputedStyle(tableHeading).color : null,
+        tableHeadingHeight: tableHeading ? getComputedStyle(tableHeading).height : null,
+        notificationSurface: notificationTrigger
+          ? getComputedStyle(notificationTrigger).backgroundColor
+          : null,
+        profileSurface: profileTrigger?.firstElementChild
+          ? getComputedStyle(profileTrigger.firstElementChild).backgroundColor
+          : null,
+        activeNavigationSurface: activeNavigation
+          ? getComputedStyle(activeNavigation).backgroundColor
+          : null,
+        refreshBackground: refreshButton ? getComputedStyle(refreshButton).backgroundColor : null,
+        refreshText: refreshButton ? getComputedStyle(refreshButton).color : null,
+        refreshBorder: refreshButton ? getComputedStyle(refreshButton).borderColor : null,
+      };
+    })()`,
+  );
+  assert(
+    colors.pageBackground === 'rgb(250, 250, 250)',
+    `Shared page background drifted: ${colors.pageBackground}`,
+  );
+  assert(
+    colors.previousPage === 'rgb(103, 103, 103)',
+    `Previous breadcrumb ink drifted: ${colors.previousPage}`,
+  );
+  assert(colors.currentPage === 'rgb(17, 17, 17)', `Breadcrumb ink drifted: ${colors.currentPage}`);
+  assert(
+    colors.description === 'rgb(103, 103, 103)',
+    `Page description ink drifted: ${colors.description}`,
+  );
+  assert(
+    colors.tableHeadingBackground === 'rgb(15, 73, 189)' &&
+      colors.tableHeadingText === 'rgb(255, 255, 255)' &&
+      Number.parseFloat(colors.tableHeadingHeight) >= 48,
+    `Table heading colors drifted: ${JSON.stringify(colors)}`,
+  );
+  assert(
+    colors.notificationSurface === 'rgb(226, 233, 247)' &&
+      colors.profileSurface === 'rgb(226, 233, 247)',
+    `Header brand surfaces drifted: ${JSON.stringify(colors)}`,
+  );
+  assert(
+    colors.activeNavigationSurface === 'rgb(231, 237, 248)',
+    `Active navigation surface drifted: ${colors.activeNavigationSurface}`,
+  );
+  assert(
+    colors.refreshBackground === 'rgb(255, 255, 255)' &&
+      colors.refreshText === 'rgb(17, 17, 17)' &&
+      colors.refreshBorder === 'rgb(212, 212, 212)',
+    `Refresh button colors drifted: ${JSON.stringify(colors)}`,
+  );
+
+  await navigate(client, `${FRONTEND_URL}/manage-users`);
+  await waitFor(
+    async () => evaluate(client, `Boolean(document.querySelector('[role="tab"]'))`),
+    'Manage-users tabs did not render',
+  );
+  const tabColors = await evaluate(
+    client,
+    `(() => {
+      const activeTab = document.querySelector('[role="tab"][aria-selected="true"]');
+      const inactiveTab = document.querySelector('[role="tab"][aria-selected="false"]');
+      return {
+        activeText: activeTab ? getComputedStyle(activeTab).color : null,
+        activeUnderline: activeTab ? getComputedStyle(activeTab).borderBottomColor : null,
+        inactiveText: inactiveTab ? getComputedStyle(inactiveTab).color : null,
+      };
+    })()`,
+  );
+  assert(
+    tabColors.activeText === 'rgb(15, 73, 189)' &&
+      tabColors.activeUnderline === 'rgb(15, 73, 189)' &&
+      tabColors.inactiveText === 'rgb(17, 17, 17)',
+    `Underline tab colors drifted: ${JSON.stringify(tabColors)}`,
+  );
+
+  await navigate(client, `${FRONTEND_URL}/`);
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `Boolean(document.querySelector('nav[aria-label="เส้นทางนำทาง"] [aria-current="page"]'))`,
+      ),
+    'Home breadcrumb did not render',
+  );
+  const homeInk = await evaluate(
+    client,
+    `getComputedStyle(document.querySelector('nav[aria-label="เส้นทางนำทาง"] [aria-current="page"]')).color`,
+  );
+  assert(homeInk === 'rgb(17, 17, 17)', `Home breadcrumb ink drifted: ${homeInk}`);
+  const homeBrandTile = await evaluate(
+    client,
+    `(() => {
+      const tile = document.querySelector('main .bg-brand-soft');
+      return tile ? getComputedStyle(tile).backgroundColor : null;
+    })()`,
+  );
+  assert(
+    homeBrandTile === 'rgb(226, 233, 247)',
+    `Home blue-icon surface drifted: ${homeBrandTile}`,
+  );
+  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
+  await waitFor(
+    async () => (await bodyText(client)).includes('รายงานนักเรียน'),
+    'Risk dashboard did not restore after visual-system checks',
   );
 }
 
@@ -1172,6 +1303,7 @@ async function main() {
     assert(expectedTotalCount > 0, 'Risk dashboard API totalCount was zero');
 
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop');
+    await assertSharedVisualSystem(client);
     const manualCaseRow = apiResult.payload.data.find(
       (row) => Number(row.openCaseCount) === 0 && row.studentId,
     );
