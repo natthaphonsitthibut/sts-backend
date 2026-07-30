@@ -8,6 +8,8 @@ import type {
   HomeDashboardFilters,
   HomeDashboardMetric,
   HomeDashboardPeriod,
+  HomeDashboardRiskAreaDimension,
+  HomeDashboardRiskAreaPoint,
   HomeDashboardSection,
   HomeDashboardSummary,
   HomeDashboardTrends,
@@ -67,7 +69,7 @@ export class HomeDashboardService {
   }
 
   private resolveSections(actor: HomeDashboardActor): HomeDashboardSection[] {
-    const sections: HomeDashboardSection[] = ['attention', 'recentWork'];
+    const sections: HomeDashboardSection[] = ['riskAreaRanking'];
     if (
       hasActorPermission(actor, 'attendance') ||
       hasActorPermission(actor, 'attendance-dashboard')
@@ -81,6 +83,35 @@ export class HomeDashboardService {
       sections.push('casePipeline', 'caseMovement');
     }
     return sections;
+  }
+
+  private resolveRiskAreaDimension(
+    filters: NormalizedHomeDashboardFilters,
+  ): HomeDashboardRiskAreaDimension {
+    if (filters.subDistrict || filters.schoolId) return 'SCHOOL';
+    if (filters.district) return 'SUB_DISTRICT';
+    if (filters.province) return 'DISTRICT';
+    return 'PROVINCE';
+  }
+
+  private getRiskAreaDimensionLabel(dimension: HomeDashboardRiskAreaDimension): string {
+    const labels: Record<HomeDashboardRiskAreaDimension, string> = {
+      PROVINCE: 'จังหวัด',
+      DISTRICT: 'อำเภอ/เขต',
+      SUB_DISTRICT: 'ตำบล/แขวง',
+      SCHOOL: 'โรงเรียน',
+    };
+    return labels[dimension];
+  }
+
+  private getRiskAreaTargetFilter(
+    dimension: HomeDashboardRiskAreaDimension,
+    point: Omit<HomeDashboardRiskAreaPoint, 'targetFilter'>,
+  ): HomeDashboardRiskAreaPoint['targetFilter'] {
+    if (dimension === 'PROVINCE') return { province: point.key };
+    if (dimension === 'DISTRICT') return { district: point.key };
+    if (dimension === 'SUB_DISTRICT') return { subDistrict: point.key };
+    return { schoolId: Number(point.key) };
   }
 
   private async getPeriodStart(
@@ -127,7 +158,8 @@ export class HomeDashboardService {
     await this.assertFiltersAllowed(actor, filters);
 
     const sections = this.resolveSections(actor);
-    const [totalStudents, activeCases, watchStudents, casePipeline, attentionRows] =
+    const riskAreaDimension = this.resolveRiskAreaDimension(filters);
+    const [totalStudents, activeCases, watchStudents, casePipeline, riskAreaRows] =
       await Promise.all([
         this.repository.countStudents(actor, filters),
         hasActorPermission(actor, 'review-cases')
@@ -139,7 +171,7 @@ export class HomeDashboardService {
         hasActorPermission(actor, 'review-cases')
           ? this.repository.getCasePipeline(actor, filters)
           : Promise.resolve(null),
-        this.repository.getAttentionItems(actor, filters, getBangkokDateString()),
+        this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
       ]);
 
     const baseQuery = this.targetQuery(filters);
@@ -182,28 +214,6 @@ export class HomeDashboardService {
       });
     }
 
-    const attentionItems = attentionRows
-      .filter((item) => {
-        if (item.kind === 'ATTENDANCE_INCOMPLETE') {
-          return sections.includes('attendanceTrend');
-        }
-        if (item.kind === 'RISK_HIGH') {
-          return sections.includes('riskDistribution');
-        }
-        return sections.includes('casePipeline');
-      })
-      .map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        label: item.label,
-        reason: item.reason,
-        count: Number(item.count || 0),
-        ageLabel: item.age_label,
-        targetPath: item.target_path,
-        targetQuery: { ...baseQuery, ...(item.target_query || {}) },
-        priority: Number(item.priority || 99),
-      }));
-
     return {
       success: true,
       data: {
@@ -213,11 +223,20 @@ export class HomeDashboardService {
         availableSections: sections,
         metrics,
         attentionSummary: {
-          total: attentionItems.reduce((sum, item) => sum + item.count, 0),
-          critical: attentionItems.filter((item) => item.kind === 'RISK_HIGH').length,
-          warning: attentionItems.length,
+          total: 0,
+          critical: 0,
+          warning: 0,
         },
-        attentionItems,
+        attentionItems: [],
+        riskAreaRanking: {
+          dimension: riskAreaDimension,
+          dimensionLabel: this.getRiskAreaDimensionLabel(riskAreaDimension),
+          items: riskAreaRows.map((point) => ({
+            ...point,
+            targetFilter: this.getRiskAreaTargetFilter(riskAreaDimension, point),
+          })),
+        },
+        casePipeline,
       },
     };
   }
@@ -229,7 +248,7 @@ export class HomeDashboardService {
     const filters = this.normalizeFilters(input);
     await this.assertFiltersAllowed(actor, filters);
 
-    const sections = this.resolveSections(actor);
+    const sections = this.resolveSections(actor).filter((section) => section !== 'riskAreaRanking');
     const today = getBangkokDateString();
     const startsOn = await this.getPeriodStart(actor, filters, today);
 

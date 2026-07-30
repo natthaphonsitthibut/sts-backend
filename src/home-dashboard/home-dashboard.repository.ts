@@ -11,6 +11,8 @@ import type {
   HomeDashboardFilterOptions,
   HomeDashboardFilters,
   HomeDashboardOption,
+  HomeDashboardRiskAreaDimension,
+  HomeDashboardRiskAreaPoint,
   HomeDashboardRiskDistribution,
   HomeDashboardTrendPoint,
   NormalizedHomeDashboardFilters,
@@ -46,6 +48,12 @@ interface CasePipelineRow extends Record<string, unknown> {
   IN_PROGRESS: number | string;
   PENDING_REVIEW: number | string;
   RESOLVED: number | string;
+}
+
+interface RiskAreaRankingRow extends Record<string, unknown> {
+  key: string;
+  label: string;
+  count: number | string;
 }
 
 const CURRENT_ENROLLMENT_JOIN = `
@@ -301,6 +309,66 @@ export class HomeDashboardRepository {
       scope.params,
     );
     return toNumber(result.rows[0]?.count);
+  }
+
+  async getHighRiskAreaRanking(
+    actor: HomeDashboardActor,
+    filters: HomeDashboardFilters,
+    dimension: HomeDashboardRiskAreaDimension,
+  ): Promise<Array<Omit<HomeDashboardRiskAreaPoint, 'targetFilter'>>> {
+    const scope = this.buildStudentScopeQuery(actor, filters);
+    const dimensions: Record<
+      HomeDashboardRiskAreaDimension,
+      { key: string; label: string; present: string }
+    > = {
+      PROVINCE: {
+        key: 'sc.province',
+        label: 'sc.province',
+        present: `NULLIF(BTRIM(sc.province), '') IS NOT NULL`,
+      },
+      DISTRICT: {
+        key: 'sc.district',
+        label: 'sc.district',
+        present: `NULLIF(BTRIM(sc.district), '') IS NOT NULL`,
+      },
+      SUB_DISTRICT: {
+        key: 'sc.sub_district',
+        label: 'sc.sub_district',
+        present: `NULLIF(BTRIM(sc.sub_district), '') IS NOT NULL`,
+      },
+      SCHOOL: {
+        key: 'sc.id::text',
+        label: `COALESCE(NULLIF(BTRIM(sc.name), ''), 'โรงเรียน ' || sc.id::text)`,
+        present: 'sc.id IS NOT NULL',
+      },
+    };
+    const selected = dimensions[dimension];
+    const whereSql = [scope.sql, `profile.risk_tier = 'HIGH'`, selected.present]
+      .filter(Boolean)
+      .join(' AND ');
+    const result = await this.query<RiskAreaRankingRow>(
+      `
+        SELECT
+          ${selected.key} AS key,
+          ${selected.label} AS label,
+          COUNT(DISTINCT s.student_uuid)::int AS count
+        FROM student_term s
+        ${CURRENT_ENROLLMENT_JOIN}
+        LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+        INNER JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
+        WHERE ${whereSql}
+        GROUP BY ${selected.key}, ${selected.label}
+        ORDER BY count DESC, label ASC
+        LIMIT 10
+      `,
+      scope.params,
+    );
+    return result.rows.map((row) => ({
+      key: String(row.key),
+      label: String(row.label),
+      count: toNumber(row.count),
+    }));
   }
 
   async getCasePipeline(

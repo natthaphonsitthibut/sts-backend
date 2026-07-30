@@ -292,7 +292,7 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     await waitFor(
       async () => {
         const text = await bodyText(client);
-        return text.includes('หน้าหลัก') && text.includes('ต้องดำเนินการวันนี้');
+        return text.includes('หน้าหลัก') && text.includes('นักเรียนเสี่ยงสูง Top 10');
       },
       `${label} home dashboard did not render`,
     );
@@ -302,13 +302,26 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     throw new Error(`${errorMessage(error)}; url=${currentUrl}; body=${currentBody}`);
   }
   const text = await bodyText(client);
-  assert(text.includes('ต้องดำเนินการวันนี้'), `${label} action queue was missing`);
+  assert(!text.includes('ต้องดำเนินการวันนี้'), `${label} rendered the removed action queue`);
+  assert(!text.includes('ทางลัดทำงานต่อ'), `${label} rendered the removed shortcut section`);
   assert(text.includes('ทั้งหมด'), `${label} student summary metric was missing`);
+  assert(
+    text.includes('นักเรียนเสี่ยงสูง Top 10'),
+    `${label} high-risk area ranking was missing`,
+  );
+  const riskDimension = await evaluate(
+    client,
+    `document.querySelector('[data-risk-area-dimension]')?.getAttribute('data-risk-area-dimension')`,
+  );
+  assert(riskDimension === 'PROVINCE', `${label} default risk dimension was ${riskDimension}`);
   if (expectations.risk) {
     assert(text.includes('เสี่ยงสูง'), `${label} risk metric was missing`);
   }
   if (expectations.cases) {
     assert(text.includes('กำลังติดตาม'), `${label} active case metric was missing`);
+    assert(text.includes('เคสที่ยังดำเนินการ'), `${label} case pipeline chart was missing`);
+  } else {
+    assert(!text.includes('เคสที่ยังดำเนินการ'), `${label} rendered case pipeline without permission`);
   }
   assert(!text.includes('แนวโน้มการมาเรียน'), `${label} rendered the retired attendance chart`);
   assert(!text.includes('การกระจายระดับความเสี่ยง'), `${label} rendered the retired risk chart`);
@@ -341,6 +354,16 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     assert(
       caseMetricLinks.some((link) => link.text.includes('รอตรวจผล') && link.href.includes('status=PENDING_REVIEW')),
       `${label} pending-review case metric did not retain its filter context`,
+    );
+    const pipelineLinks = await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('[data-case-pipeline-status]'))
+        .map((link) => ({ status: link.getAttribute('data-case-pipeline-status'), href: link.getAttribute('href') }))`,
+    );
+    assert(
+      pipelineLinks.length === 3 &&
+        pipelineLinks.every((link) => String(link.href).includes(`status=${link.status}`)),
+      `${label} case pipeline did not expose three scoped status links`,
     );
   }
   if (expectations.risk) {
@@ -410,6 +433,19 @@ async function main() {
         expectations: { attendance: false, risk: true, cases: false, exports: true },
       },
     ];
+    const scopeSchools = await dataSource.query(
+      `SELECT id FROM schools ORDER BY id LIMIT 2`,
+    );
+    assert(scopeSchools.length === 2, 'Home dashboard scope smoke needs at least two schools');
+    actors.push({
+      label: 'school-scoped',
+      username: `${USERNAME_PREFIX}_school_scoped`,
+      firstName: 'Home School Scope',
+      role: 'TEACHER',
+      permissions: ['home'],
+      dataScope: { school_ids: [Number(scopeSchools[0].id)] },
+      expectations: { attendance: false, risk: false, cases: false, exports: false },
+    });
     const actorIds = new Map();
     for (const actor of actors) {
       actorIds.set(actor.label, await upsertActor(dataSource, passwordHash, actor));
@@ -444,6 +480,50 @@ async function main() {
       createSessionCookie(sessionCookieService, actorIds.get(admin.label)),
     );
     await assertOverview(client, expectedActiveCases, 'desktop', admin.expectations);
+    const selectedProvince = await evaluate(
+      client,
+      `(() => {
+        const button = document.querySelector('button[data-risk-area-item]');
+        const key = button?.getAttribute('data-risk-area-item') || null;
+        button?.click();
+        return key;
+      })()`,
+    );
+    assert(selectedProvince, 'National risk ranking did not expose a province drill-down item');
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `document.querySelector('[data-risk-area-dimension]')
+            ?.getAttribute('data-risk-area-dimension') === 'DISTRICT'`,
+        ),
+      'Selecting a province did not drill the risk ranking down to districts',
+    );
+    const drilledSearch = await evaluate(client, 'location.search');
+    assert(
+      String(drilledSearch).includes(`province=${encodeURIComponent(selectedProvince)}`),
+      'Province drill-down did not retain the selected scope in the URL',
+    );
+    const backLabel = await evaluate(
+      client,
+      `document.querySelector('button[data-risk-area-back]')?.textContent?.trim() || null`,
+    );
+    assert(backLabel === 'กลับไปดูจังหวัด', `Unexpected risk ranking back label: ${backLabel}`);
+    await evaluate(client, `document.querySelector('button[data-risk-area-back]')?.click()`);
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `document.querySelector('[data-risk-area-dimension]')
+            ?.getAttribute('data-risk-area-dimension') === 'PROVINCE'`,
+        ),
+      'Risk ranking back control did not return from districts to provinces',
+    );
+    const restoredSearch = await evaluate(client, 'location.search');
+    assert(
+      !String(restoredSearch).includes('province='),
+      'Risk ranking back control did not clear the selected province',
+    );
     const apiActiveCases = await evaluate(
       client,
       `(async () => {
@@ -483,6 +563,16 @@ async function main() {
       );
       await assertOverview(client, expectedActiveCases, actor.label, actor.expectations);
     }
+    const outOfScopeStatus = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(
+          `${BACKEND_URL}/api/home-dashboard/summary?schoolId=${Number(scopeSchools[1].id)}`,
+        )}, { credentials: 'include' });
+        return response.status;
+      })()`,
+    );
+    assert(outOfScopeStatus === 403, `Out-of-scope home filter returned ${outOfScopeStatus}`);
 
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390,
@@ -505,6 +595,11 @@ async function main() {
       createSessionCookie(sessionCookieService, actorIds.get(admin.label)),
     );
     await assertOverview(client, expectedActiveCases, 'mobile', admin.expectations);
+    const hasHorizontalOverflow = await evaluate(
+      client,
+      `document.documentElement.scrollWidth > window.innerWidth + 1`,
+    );
+    assert(!hasHorizontalOverflow, 'Mobile home dashboard has horizontal overflow');
     await capture(client, '/tmp/sts-home-overview-mobile.png');
     await evaluate(
       client,
@@ -513,7 +608,9 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 200));
     await capture(client, '/tmp/sts-home-overview-trends-mobile.png');
 
-    console.log('home dashboard browser smoke passed (role sections, no export card, desktop/mobile render)');
+    console.log(
+      'home dashboard browser smoke passed (risk drill-down/back, scoped denial, case permissions, desktop/mobile render)',
+    );
   } finally {
     await closeChrome(chrome);
     await disableActor(dataSource).catch(() => null);

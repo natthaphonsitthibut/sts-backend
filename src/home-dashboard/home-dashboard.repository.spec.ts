@@ -125,4 +125,28 @@ describe('HomeDashboardRepository', () => {
 
     expect(queries[0].sql).toContain('COUNT(DISTINCT sess.id)');
   });
+
+  it('builds a bounded high-risk ranking for the requested area dimension', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+
+    await repository.getHighRiskAreaRanking(
+      {
+        id: 1,
+        username: 'admin',
+        roles: ['ADMIN'],
+        permissions: ['home'],
+        data_scope: { global: true },
+      },
+      { province: 'เชียงใหม่' },
+      'DISTRICT',
+    );
+
+    expect(queries).toHaveLength(1);
+    expectCurrentEnrollmentPolicy(queries[0].sql);
+    expect(queries[0].sql).toContain("profile.risk_tier = 'HIGH'");
+    expect(queries[0].sql).toContain('COUNT(DISTINCT s.student_uuid)');
+    expect(queries[0].sql).toContain('GROUP BY sc.district');
+    expect(queries[0].sql).toContain('LIMIT 10');
+    expect(queries[0].params).toEqual(['เชียงใหม่']);
+  });
 });

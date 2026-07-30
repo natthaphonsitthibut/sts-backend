@@ -18,6 +18,7 @@ function createRepositoryMock(): jest.Mocked<
     | 'countStudents'
     | 'countActiveCases'
     | 'countHighRiskStudents'
+    | 'getHighRiskAreaRanking'
     | 'getCasePipeline'
     | 'getAttentionItems'
     | 'getAttendanceTrend'
@@ -33,6 +34,9 @@ function createRepositoryMock(): jest.Mocked<
     countStudents: jest.fn().mockResolvedValue(120),
     countActiveCases: jest.fn().mockResolvedValue(8),
     countHighRiskStudents: jest.fn().mockResolvedValue(5),
+    getHighRiskAreaRanking: jest
+      .fn()
+      .mockResolvedValue([{ key: 'เชียงใหม่', label: 'เชียงใหม่', count: 5 }]),
     getCasePipeline: jest.fn().mockResolvedValue({
       OPEN: 1,
       IN_PROGRESS: 2,
@@ -83,13 +87,13 @@ describe('HomeDashboardService', () => {
     const repository = createRepositoryMock();
     const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
 
-    const result = await service.getSummary(baseActor, { schoolId: 10010002 });
+    const result = await service.getSummary(baseActor, {});
 
     expect(result.data.availableSections).toEqual(
       expect.arrayContaining([
-        'attention',
         'attendanceTrend',
         'riskDistribution',
+        'riskAreaRanking',
         'casePipeline',
         'caseMovement',
       ]),
@@ -122,14 +126,25 @@ describe('HomeDashboardService', () => {
         }),
       ]),
     );
-    expect(result.data.attentionItems).toHaveLength(1);
-    const targetQuery = result.data.attentionItems[0]?.targetQuery;
-    expect(result.data.attentionItems[0]).toEqual(
-      expect.objectContaining({
-        targetPath: '/student-risk-report',
-      }),
-    );
-    expect(targetQuery).toMatchObject({ schoolId: 10010002, riskTier: 'HIGH' });
+    expect(result.data.attentionItems).toEqual([]);
+    expect(result.data.riskAreaRanking).toEqual({
+      dimension: 'PROVINCE',
+      dimensionLabel: 'จังหวัด',
+      items: [
+        {
+          key: 'เชียงใหม่',
+          label: 'เชียงใหม่',
+          count: 5,
+          targetFilter: { province: 'เชียงใหม่' },
+        },
+      ],
+    });
+    expect(result.data.casePipeline).toEqual({
+      OPEN: 1,
+      IN_PROGRESS: 2,
+      PENDING_REVIEW: 3,
+      RESOLVED: 4,
+    });
   });
 
   it('hides dashboard/case sections when actor only has attendance permissions', async () => {
@@ -143,7 +158,7 @@ describe('HomeDashboardService', () => {
 
     const result = await service.getTrends(actor, {});
 
-    expect(result.data.availableSections).toEqual(['attention', 'recentWork', 'attendanceTrend']);
+    expect(result.data.availableSections).toEqual(['attendanceTrend']);
     expect(result.data.riskDistribution).toBeNull();
     expect(result.data.casePipeline).toBeNull();
     expect(repository.getRiskDistribution).not.toHaveBeenCalled();
@@ -187,6 +202,32 @@ describe('HomeDashboardService', () => {
       expect.any(Object),
       '2026-05-16',
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    );
+  });
+
+  it.each([
+    [{}, 'PROVINCE'],
+    [{ province: 'เชียงใหม่' }, 'DISTRICT'],
+    [{ province: 'เชียงใหม่', district: 'เมืองเชียงใหม่' }, 'SUB_DISTRICT'],
+    [
+      {
+        province: 'เชียงใหม่',
+        district: 'เมืองเชียงใหม่',
+        subDistrict: 'สุเทพ',
+      },
+      'SCHOOL',
+    ],
+    [{ schoolId: 10010002 }, 'SCHOOL'],
+  ] as const)('groups high-risk students by the next area level', async (filters, dimension) => {
+    const repository = createRepositoryMock();
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+
+    await service.getSummary(baseActor, filters);
+
+    expect(repository.getHighRiskAreaRanking).toHaveBeenCalledWith(
+      baseActor,
+      expect.objectContaining(filters),
+      dimension,
     );
   });
 });

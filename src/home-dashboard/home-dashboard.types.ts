@@ -5,6 +5,7 @@ export type HomeDashboardSection =
   | 'attention'
   | 'attendanceTrend'
   | 'riskDistribution'
+  | 'riskAreaRanking'
   | 'casePipeline'
   | 'caseMovement'
   | 'recentWork';
@@ -57,6 +58,26 @@ export interface HomeDashboardAttentionItem {
   priority: number;
 }
 
+export type HomeDashboardRiskAreaDimension = 'PROVINCE' | 'DISTRICT' | 'SUB_DISTRICT' | 'SCHOOL';
+
+export interface HomeDashboardRiskAreaPoint {
+  key: string;
+  label: string;
+  count: number;
+  targetFilter: {
+    province?: string;
+    district?: string;
+    subDistrict?: string;
+    schoolId?: number;
+  };
+}
+
+export interface HomeDashboardRiskAreaRanking {
+  dimension: HomeDashboardRiskAreaDimension;
+  dimensionLabel: string;
+  items: HomeDashboardRiskAreaPoint[];
+}
+
 export interface HomeDashboardSummary {
   success: true;
   data: {
@@ -71,6 +92,8 @@ export interface HomeDashboardSummary {
       warning: number;
     };
     attentionItems: HomeDashboardAttentionItem[];
+    riskAreaRanking: HomeDashboardRiskAreaRanking;
+    casePipeline: HomeDashboardCasePipeline | null;
   };
 }
 
