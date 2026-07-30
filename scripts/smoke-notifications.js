@@ -32,11 +32,13 @@ async function main() {
   });
   const service = app.get(NotificationsService);
   const dataSource = app.get(DataSource);
-  const refId = `smoke-${Date.now()}`;
-  const importRefId = `${refId}-import`;
-  const accountBatchRefId = `${refId}-account-batch`;
-  const expiredRefId = `${refId}-retention-expired`;
-  const retainedRefId = `${refId}-retention-retained`;
+  const runId = `smoke-${Date.now()}`;
+  const importRefId = `${runId}-import`;
+  const accountBatchRefId = `${runId}-account-batch`;
+  const expiredRefId = `${runId}-retention-expired`;
+  const retainedRefId = `${runId}-retention-retained`;
+  let caseId;
+  let refId;
 
   try {
     // Pick real fixtures: a school, a global admin, a school-scoped admin
@@ -46,6 +48,30 @@ async function main() {
     );
     assert(schools.length === 2, 'need two schools');
     const [schoolA, schoolB] = schools;
+    const enrollments = await dataSource.query(
+      `SELECT student_uuid, CONCAT_WS(' ', "FirstName_Onec", "LastName_Onec") AS student_name
+       FROM student_term
+       WHERE "SchoolID_Onec" = $1 AND person_uuid IS NOT NULL
+       ORDER BY student_uuid
+       LIMIT 1`,
+      [schoolA.id],
+    );
+    assert(enrollments.length === 1, 'need one canonical student enrollment in the smoke school');
+    const [createdCase] = await dataSource.query(
+      `INSERT INTO cases
+         (student_uuid, student_name, school_id, student_school, reason_flagged, status)
+       VALUES ($1, $2, $3, $4, $5, 'OPEN')
+       RETURNING id`,
+      [
+        enrollments[0].student_uuid,
+        enrollments[0].student_name,
+        schoolA.id,
+        schoolA.name,
+        'ขาดเรียนติดต่อกัน 3 วัน',
+      ],
+    );
+    caseId = createdCase.id;
+    refId = String(caseId);
 
     const globalAdmins = await dataSource.query(
       `SELECT u.id FROM users u LEFT JOIN roles r ON r.name = u.role
@@ -66,17 +92,12 @@ async function main() {
     const before = await dataSource.query(`SELECT COUNT(*)::int AS c FROM notifications`);
 
     await service.notifyCaseCreated({
-      caseId: 999999,
-      studentName: 'ทดสอบ ระบบแจ้งเตือน',
+      caseId,
+      studentName: enrollments[0].student_name,
       schoolId: schoolA.id,
       schoolName: schoolA.name,
       reason: 'ขาดเรียนติดต่อกัน 3 วัน',
     });
-    // Overwrite ref for precise cleanup: fan-out uses caseId as ref, so patch rows.
-    await dataSource.query(
-      `UPDATE notifications SET ref_id = $1 WHERE ref_entity='case' AND ref_id='999999'`,
-      [refId],
-    );
 
     const rows = await dataSource.query(
       `SELECT n.recipient_user_id, u.data_scope, u.role
@@ -121,10 +142,17 @@ async function main() {
 
     // PII: title/body must not contain the raw full name.
     const contents = await dataSource.query(
-      `SELECT title, body FROM notifications WHERE ref_id = $1 LIMIT 1`,
+      `SELECT title, body, student_person_uuid, case_id, student_name_masked, reason_text
+       FROM notifications WHERE ref_id = $1 LIMIT 1`,
       [refId],
     );
-    assert(!`${contents[0].title} ${contents[0].body}`.includes('ระบบแจ้งเตือน'), 'body must mask the name');
+    assert(contents[0].student_person_uuid, 'student notification must persist the person FK');
+    assert(contents[0].case_id === caseId, 'case notification must persist the case FK');
+    assert(contents[0].student_name_masked, 'student notification must persist the masked name');
+    assert(
+      contents[0].reason_text === 'ขาดเรียนติดต่อกัน 3 วัน',
+      'student notification must persist the reason separately',
+    );
 
     // Inbox API behaviour for the global admin.
     const list1 = await service.listForUser(globalAdminId, {});
@@ -207,9 +235,9 @@ async function main() {
       `INSERT INTO notifications
          (recipient_user_id, type_code, title, ref_entity, ref_id, created_at)
        VALUES
-         ($1, 'CASE_CREATED', 'Retention expired fixture', 'case', $2,
+         ($1, 'IMPORT_COMPLETED', 'Retention expired fixture', 'import', $2,
           $4::timestamptz - INTERVAL '91 days'),
-         ($1, 'CASE_CREATED', 'Retention retained fixture', 'case', $3,
+         ($1, 'IMPORT_COMPLETED', 'Retention retained fixture', 'import', $3,
           $4::timestamptz - INTERVAL '89 days')`,
       [globalAdminId, expiredRefId, retainedRefId, retentionNow.toISOString()],
     );
@@ -231,8 +259,11 @@ async function main() {
     );
   } finally {
     await dataSource.query(`DELETE FROM notifications WHERE ref_id = ANY($1::text[])`, [
-      [refId, importRefId, accountBatchRefId, expiredRefId, retainedRefId],
+      [refId, importRefId, accountBatchRefId, expiredRefId, retainedRefId].filter(Boolean),
     ]);
+    if (caseId) {
+      await dataSource.query(`DELETE FROM cases WHERE id = $1`, [caseId]);
+    }
     await app.close();
   }
 }

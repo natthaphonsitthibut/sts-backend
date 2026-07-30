@@ -50,6 +50,7 @@ interface SubjectRiskTierEscalationEvent {
 }
 
 interface LateWatchNotificationEvent {
+  studentUuid: string;
   studentName: string | null;
   schoolId: number | null;
   gradeLevel: string | number | null;
@@ -368,6 +369,7 @@ export class SubjectRiskMonitorService {
           );
           if (alreadyNotified) continue;
           lateWatchEvents.push({
+            studentUuid,
             studentName: this.buildStudentName(row),
             schoolId: this.normalizeSchoolId(row.school_id_onec),
             gradeLevel: this.normalizeText(row.grade_level_id_onec) || null,

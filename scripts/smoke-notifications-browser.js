@@ -152,7 +152,12 @@ async function evaluate(client, expression) {
     awaitPromise: true,
     returnByValue: true,
   });
-  if (result.exceptionDetails) throw new Error('Browser expression failed');
+  if (result.exceptionDetails) {
+    const description = result.exceptionDetails.exception?.description;
+    throw new Error(
+      description ? `Browser expression failed: ${description}` : 'Browser expression failed',
+    );
+  }
   return result.result?.value;
 }
 
@@ -205,17 +210,57 @@ async function upsertFixture(dataSource, passwordHash) {
 }
 
 async function seedNotifications(dataSource, userId, refPrefix) {
+  const [enrollment] = await dataSource.query(
+    `SELECT
+       enrollment.student_uuid,
+       enrollment.person_uuid,
+       enrollment."SchoolID_Onec" AS school_id,
+       CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec") AS student_name,
+       school.name AS school_name
+     FROM student_term enrollment
+     INNER JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+     WHERE enrollment.person_uuid IS NOT NULL
+     ORDER BY enrollment.student_uuid
+     LIMIT 1`,
+  );
+  assert(enrollment, 'Notification browser smoke needs one canonical student enrollment');
+  const [caseRecord] = returningRows(
+    await dataSource.query(
+      `INSERT INTO cases
+         (student_uuid, student_name, school_id, student_school, reason_flagged, status)
+       VALUES ($1, $2, $3, $4, $5, 'OPEN')
+       RETURNING id`,
+      [
+        enrollment.student_uuid,
+        enrollment.student_name,
+        enrollment.school_id,
+        enrollment.school_name,
+        'ขาดเรียนติดต่อกัน 3 วัน',
+      ],
+    ),
+  );
   await dataSource.query(
     `INSERT INTO notifications
-       (recipient_user_id, type_code, title, body, ref_entity, ref_id, created_at)
+       (recipient_user_id, type_code, title, body, ref_entity, ref_id, created_at,
+        student_person_uuid, case_id, student_name_masked, reason_text)
      VALUES
-       ($1, 'CASE_CREATED', 'Browser smoke case', 'Scoped case notification', 'case', $2, now()),
+       ($1, 'CASE_CREATED', 'Browser smoke case', 'BODY_MUST_NOT_RENDER', 'case', $2, now(),
+        $5, $6, 'ด.ช. ทด****', 'ขาดเรียนติดต่อกัน 3 วัน'),
        ($1, 'IMPORT_COMPLETED', 'Browser smoke import', 'Import completed', 'import', $3,
-        now() - interval '1 minute'),
+        now() - interval '1 minute', NULL, NULL, NULL, NULL),
        ($1, 'STUDENT_ACCOUNT_BATCH_COMPLETED', 'Browser smoke account batch',
-        'Account batch completed', 'student-account-batch', $4, now() - interval '2 minutes')`,
-    [userId, `${refPrefix}-case`, `${refPrefix}-import`, `${refPrefix}-account`],
+        'Account batch completed', 'student-account-batch', $4, now() - interval '2 minutes',
+        NULL, NULL, NULL, NULL)`,
+    [
+      userId,
+      String(caseRecord.id),
+      `${refPrefix}-import`,
+      `${refPrefix}-account`,
+      enrollment.person_uuid,
+      caseRecord.id,
+    ],
   );
+  return caseRecord.id;
 }
 
 async function login(password) {
@@ -281,11 +326,12 @@ async function main() {
   const password = `Browser-${suffix}-Password`;
   let chrome;
   let userId;
+  let caseId;
 
   try {
     userId = await upsertFixture(dataSource, await passwordService.hash(password));
     await dataSource.query(`DELETE FROM notifications WHERE recipient_user_id = $1`, [userId]);
-    await seedNotifications(dataSource, userId, refPrefix);
+    caseId = await seedNotifications(dataSource, userId, refPrefix);
     const session = await login(password);
 
     chrome = await openChrome();
@@ -349,6 +395,12 @@ async function main() {
       async () => String(await evaluate(client, 'document.body.innerText')).includes('Browser smoke import'),
       'Notification dropdown did not render fixtures',
     );
+    const dropdownText = String(await evaluate(client, 'document.body.innerText'));
+    assert(
+      dropdownText.includes('ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน'),
+      'Structured student notification body did not render',
+    );
+    assert(!dropdownText.includes('BODY_MUST_NOT_RENDER'), 'Structured notification used body fallback');
     await waitFor(async () => {
       const [row] = await dataSource.query(
         `SELECT COUNT(*) FILTER (WHERE seen_at IS NOT NULL)::int AS seen_count
@@ -361,7 +413,7 @@ async function main() {
     await evaluate(
       client,
       `[...document.querySelectorAll('button')]
-        .find((button) => button.textContent.includes('ดูการแจ้งเตือนทั้งหมด'))?.click()`,
+        .find((button) => button.textContent.includes('แสดงรายการแจ้งเตือนทั้งหมด'))?.click()`,
     );
     await waitFor(
       async () =>
@@ -399,6 +451,12 @@ async function main() {
       async () => String(await evaluate(client, 'document.body.innerText')).includes('Browser smoke case'),
       'Mobile notification inbox did not render',
     );
+    const mobileText = String(await evaluate(client, 'document.body.innerText'));
+    assert(
+      mobileText.includes('ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน'),
+      'Mobile inbox did not render structured student fields',
+    );
+    assert(!mobileText.includes('BODY_MUST_NOT_RENDER'), 'Mobile inbox used body fallback');
     await capture(client, '/tmp/sts-notifications-mobile.png');
 
     console.log(
@@ -408,6 +466,9 @@ async function main() {
     await closeChrome(chrome);
     if (userId) {
       await dataSource.query(`DELETE FROM notifications WHERE recipient_user_id = $1`, [userId]);
+      if (caseId) {
+        await dataSource.query(`DELETE FROM cases WHERE id = $1`, [caseId]);
+      }
       await dataSource.query(
         `UPDATE users SET status = 'DISABLED', deactivated_at = now(),
             deactivation_reason_code = 'OTHER', deactivation_note = 'Browser smoke fixture'

@@ -1246,12 +1246,69 @@ export const NOTIFICATION_TABLES_SQL = `
       REFERENCES notification_types(code) ON DELETE RESTRICT ON UPDATE CASCADE,
     title TEXT NOT NULL,
     body TEXT,
+    student_person_uuid UUID CONSTRAINT fk_notifications_student_person
+      REFERENCES student_person(person_uuid)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    case_id INTEGER CONSTRAINT fk_notifications_case
+      REFERENCES cases(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    student_name_masked TEXT,
+    reason_text TEXT,
     ref_entity VARCHAR(32),
     ref_id TEXT,
     seen_at TIMESTAMP WITH TIME ZONE,
     read_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_notifications_title CHECK (length(trim(title)) > 0)
+    CONSTRAINT chk_notifications_title CHECK (length(trim(title)) > 0),
+    CONSTRAINT chk_notifications_student_context CHECK (
+      (
+        type_code IN (
+          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
+          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
+        )
+        AND student_person_uuid IS NOT NULL
+        AND student_name_masked IS NOT NULL
+        AND length(trim(student_name_masked)) > 0
+      )
+      OR (
+        type_code NOT IN (
+          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
+          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
+        )
+        AND student_person_uuid IS NULL
+        AND student_name_masked IS NULL
+        AND reason_text IS NULL
+      )
+    ),
+    CONSTRAINT chk_notifications_case_context CHECK (
+      (
+        type_code IN (
+          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
+          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED'
+        )
+        AND case_id IS NOT NULL
+      )
+      OR (
+        type_code NOT IN (
+          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
+          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED'
+        )
+        AND case_id IS NULL
+      )
+    ),
+    CONSTRAINT chk_notifications_reason_text CHECK (
+      reason_text IS NULL OR length(trim(reason_text)) > 0
+    ),
+    CONSTRAINT chk_notifications_reason_type CHECK (
+      (
+        type_code IN ('CASE_CREATED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH')
+        AND reason_text IS NOT NULL
+      )
+      OR (
+        type_code NOT IN ('CASE_CREATED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH')
+        AND reason_text IS NULL
+      )
+    )
   );
 
   CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created
@@ -1259,6 +1316,12 @@ export const NOTIFICATION_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_notifications_recipient_unread
     ON notifications (recipient_user_id, created_at DESC)
     WHERE read_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_notifications_student_person_created
+    ON notifications (student_person_uuid, created_at DESC)
+    WHERE student_person_uuid IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_notifications_case_created
+    ON notifications (case_id, created_at DESC)
+    WHERE case_id IS NOT NULL;
 `;
 
 export const DATABASE_BASELINE_SQL = `

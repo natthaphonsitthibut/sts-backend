@@ -35,7 +35,18 @@ async function main() {
   const caseIds = [];
 
   try {
-    const schoolRows = await dataSource.query(`SELECT id, name FROM schools ORDER BY id LIMIT 1`);
+    const schoolRows = await dataSource.query(
+      `SELECT
+         school.id,
+         school.name,
+         enrollment.student_uuid,
+         CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec") AS student_name
+       FROM schools school
+       INNER JOIN student_term enrollment ON enrollment."SchoolID_Onec" = school.id
+       WHERE enrollment.person_uuid IS NOT NULL
+       ORDER BY school.id, enrollment.student_uuid
+       LIMIT 1`,
+    );
     assert(schoolRows.length === 1, 'need at least one school');
     const school = schoolRows[0];
 
@@ -43,6 +54,7 @@ async function main() {
       const rows = await dataSource.query(
         `
           INSERT INTO cases (
+            student_uuid,
             student_name,
             school_id,
             student_school,
@@ -52,11 +64,12 @@ async function main() {
             sla_due_at,
             created_at
           )
-          VALUES ($1, $2, $3, $4, 'OPEN', $5, $6, $7)
+          VALUES ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8)
           RETURNING id
         `,
         [
-          `${runId} ${suffix}`,
+          school.student_uuid,
+          school.student_name,
           school.id,
           school.name,
           'ขาดเรียนติดต่อกัน 5 วัน',
@@ -109,7 +122,7 @@ async function main() {
 
     const notifications = await dataSource.query(
       `
-        SELECT type_code, ref_id
+        SELECT type_code, ref_id, student_person_uuid, case_id, student_name_masked
         FROM notifications
         WHERE ref_entity = 'case'
           AND ref_id = ANY($1::text[])
@@ -131,6 +144,12 @@ async function main() {
     assert(
       !notifications.some((row) => row.ref_id === String(freshCaseId)),
       'fresh case must not create notifications',
+    );
+    assert(
+      notifications.every(
+        (row) => row.student_person_uuid && row.case_id && row.student_name_masked,
+      ),
+      'SLA notifications must persist relational student context',
     );
     const auditRows = await dataSource.query(
       `

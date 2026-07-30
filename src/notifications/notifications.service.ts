@@ -121,14 +121,16 @@ export class NotificationsService {
     studentName: string | null;
     schoolId: number | null;
     schoolName: string | null;
-    reason: string | null;
+    reason: string;
   }): Promise<void> {
     const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    const bodyParts = [student, event.schoolName, event.reason].filter(Boolean);
     await this.fanOutSafely({
       typeCode: 'CASE_CREATED',
       title: 'มีเคสติดตามใหม่',
-      body: bodyParts.join(' · '),
+      body: [student, event.reason].filter(Boolean).join(' · '),
+      caseId: event.caseId,
+      studentNameMasked: student,
+      reasonText: event.reason,
       refEntity: 'case',
       refId: String(event.caseId),
       schoolId: event.schoolId,
@@ -148,6 +150,8 @@ export class NotificationsService {
       typeCode: 'CASE_STATUS_CHANGED',
       title: `เคสเปลี่ยนสถานะ: ${statusLabel}`,
       body: `เคสของ ${student}`,
+      caseId: event.caseId,
+      studentNameMasked: student,
       refEntity: 'case',
       refId: String(event.caseId),
       schoolId: event.schoolId,
@@ -163,16 +167,12 @@ export class NotificationsService {
     dueAt: Date | string | null;
   }): Promise<void> {
     const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    const dueAt =
-      event.dueAt instanceof Date
-        ? event.dueAt.toISOString()
-        : typeof event.dueAt === 'string'
-          ? event.dueAt
-          : 'ไม่ระบุวันกำหนด';
     await this.fanOutSafely({
       typeCode: 'CASE_SLA_WARNING',
       title: 'เคสใกล้เกินกำหนดดำเนินการ',
-      body: `เคสของ ${student} · ระดับ ${event.riskTier ?? 'ไม่ระบุ'} · กำหนด ${dueAt}`,
+      body: `เคสของ ${student}`,
+      caseId: event.caseId,
+      studentNameMasked: student,
       refEntity: 'case',
       refId: String(event.caseId),
       schoolId: event.schoolId,
@@ -187,16 +187,12 @@ export class NotificationsService {
     dueAt: Date | string | null;
   }): Promise<void> {
     const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    const dueAt =
-      event.dueAt instanceof Date
-        ? event.dueAt.toISOString()
-        : typeof event.dueAt === 'string'
-          ? event.dueAt
-          : 'ไม่ระบุวันกำหนด';
     await this.fanOutSafely({
       typeCode: 'CASE_SLA_BREACHED',
       title: 'เคสเกินกำหนดดำเนินการ',
-      body: `เคสของ ${student} · ระดับ ${event.riskTier ?? 'ไม่ระบุ'} · กำหนด ${dueAt}`,
+      body: `เคสของ ${student}`,
+      caseId: event.caseId,
+      studentNameMasked: student,
       refEntity: 'case',
       refId: String(event.caseId),
       schoolId: event.schoolId,
@@ -209,18 +205,16 @@ export class NotificationsService {
     schoolId: number | null;
     fromTier: string;
     toTier: string;
-    reason: string | null;
+    reason: string;
   }): Promise<void> {
     const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    const bodyParts = [
-      `เคสของ ${student}`,
-      `${event.fromTier} → ${event.toTier}`,
-      event.reason,
-    ].filter(Boolean);
     await this.fanOutSafely({
       typeCode: 'CASE_RISK_ESCALATED',
       title: 'เคสถูกยกระดับความเสี่ยง',
-      body: bodyParts.join(' · '),
+      body: [`เคสของ ${student}`, event.reason].filter(Boolean).join(' · '),
+      caseId: event.caseId,
+      studentNameMasked: student,
+      reasonText: event.reason,
       refEntity: 'case',
       refId: String(event.caseId),
       schoolId: event.schoolId,
@@ -228,6 +222,7 @@ export class NotificationsService {
   }
 
   async notifyStudentRiskWatch(event: {
+    studentUuid: string;
     studentName: string | null;
     schoolId: number | null;
     gradeLevel: string | number | null;
@@ -240,6 +235,9 @@ export class NotificationsService {
       typeCode: STUDENT_RISK_WATCH_NOTIFICATION_TYPE,
       title: 'นักเรียนเข้าเกณฑ์เฝ้าระวัง',
       body: `เฝ้าระวัง ${student} · ${event.reason}`,
+      studentUuid: event.studentUuid,
+      studentNameMasked: student,
+      reasonText: event.reason,
       refEntity: STUDENT_RISK_WATCH_REF_ENTITY,
       refId: event.refId,
       schoolId: event.schoolId,
@@ -380,6 +378,10 @@ export class NotificationsService {
         type_label: row.type_label,
         title: row.title,
         body: row.body,
+        student_person_uuid: row.student_person_uuid,
+        case_id: row.case_id,
+        student_name_masked: row.student_name_masked,
+        reason_text: row.reason_text,
         ref_entity: row.ref_entity,
         ref_id: row.ref_id,
         seen_at: row.seen_at,

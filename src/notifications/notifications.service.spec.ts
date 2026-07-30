@@ -1,4 +1,5 @@
 import { NotificationsService } from './notifications.service';
+import { maskName } from '../common/utils/helpers';
 
 describe('NotificationsService retention cleanup', () => {
   function createService(repositoryOverrides: { deleteOlderThan?: jest.Mock } = {}) {
@@ -113,5 +114,164 @@ describe('NotificationsService student-account batch events', () => {
       refEntity: 'student-account-batch',
       refId: 'job-2',
     });
+  });
+});
+
+describe('NotificationsService structured student events', () => {
+  it('writes only the student display fields required by each notification type', async () => {
+    const repository = { fanOut: jest.fn().mockResolvedValue(1) };
+    const service = new NotificationsService(repository as never);
+    const studentName = 'เด็กชาย ทดสอบระบบ';
+    const studentNameMasked = maskName(studentName);
+
+    await service.notifyCaseCreated({
+      caseId: 11,
+      studentName,
+      schoolId: 10010002,
+      schoolName: 'โรงเรียนทดสอบ',
+      reason: 'ขาดเรียนติดต่อกัน 3 วัน',
+    });
+    await service.notifyCaseStatusChanged({
+      caseId: 11,
+      studentName,
+      schoolId: 10010002,
+      nextStatus: 'IN_PROGRESS',
+      actorUserId: 7,
+    });
+    await service.notifyCaseSlaWarning({
+      caseId: 11,
+      studentName,
+      schoolId: 10010002,
+      riskTier: 'HIGH',
+      dueAt: '2026-08-03T00:00:00.000Z',
+    });
+    await service.notifyCaseSlaBreached({
+      caseId: 11,
+      studentName,
+      schoolId: 10010002,
+      riskTier: 'HIGH',
+      dueAt: '2026-08-03T00:00:00.000Z',
+    });
+    await service.notifyCaseRiskEscalated({
+      caseId: 11,
+      studentName,
+      schoolId: 10010002,
+      fromTier: 'MEDIUM',
+      toTier: 'HIGH',
+      reason: 'ขาดเรียนติดต่อกัน 7 วัน',
+    });
+    await service.notifyStudentRiskWatch({
+      studentUuid: '22222222-2222-4222-8222-222222222222',
+      studentName,
+      schoolId: 10010002,
+      gradeLevel: '6',
+      roomId: '1',
+      reason: 'มาสาย 5 ครั้งใน 30 วัน',
+      refId: '22222222-2222-4222-8222-222222222222:subject-late:30:5',
+    });
+
+    expect(repository.fanOut).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        typeCode: 'CASE_CREATED',
+        caseId: 11,
+        studentNameMasked,
+        reasonText: 'ขาดเรียนติดต่อกัน 3 วัน',
+      }),
+    );
+    expect(repository.fanOut).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        typeCode: 'CASE_STATUS_CHANGED',
+        caseId: 11,
+        studentNameMasked,
+        body: `เคสของ ${studentNameMasked}`,
+      }),
+    );
+    expect(repository.fanOut).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        typeCode: 'CASE_SLA_WARNING',
+        caseId: 11,
+        studentNameMasked,
+        body: `เคสของ ${studentNameMasked}`,
+      }),
+    );
+    expect(repository.fanOut).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        typeCode: 'CASE_SLA_BREACHED',
+        caseId: 11,
+        studentNameMasked,
+        body: `เคสของ ${studentNameMasked}`,
+      }),
+    );
+    expect(repository.fanOut).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        typeCode: 'CASE_RISK_ESCALATED',
+        caseId: 11,
+        studentNameMasked,
+        reasonText: 'ขาดเรียนติดต่อกัน 7 วัน',
+      }),
+    );
+    expect(repository.fanOut).toHaveBeenNthCalledWith(
+      6,
+      expect.objectContaining({
+        typeCode: 'STUDENT_RISK_WATCH',
+        studentUuid: '22222222-2222-4222-8222-222222222222',
+        studentNameMasked,
+        reasonText: 'มาสาย 5 ครั้งใน 30 วัน',
+      }),
+    );
+
+    for (const [input] of repository.fanOut.mock.calls) {
+      expect(input).not.toHaveProperty('riskTier');
+      expect(input).not.toHaveProperty('dueAt');
+      expect(input).not.toHaveProperty('fromTier');
+      expect(input).not.toHaveProperty('toTier');
+    }
+  });
+
+  it('returns relational student fields in the explicit list response', async () => {
+    const repository = {
+      listForRecipient: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            id: 'notification-1',
+            type_code: 'CASE_CREATED',
+            type_label: 'เคสใหม่',
+            title: 'มีเคสติดตามใหม่',
+            body: 'legacy body',
+            student_person_uuid: '11111111-1111-4111-8111-111111111111',
+            case_id: 11,
+            student_name_masked: 'เด็กชาย ทด****',
+            reason_text: 'ขาดเรียนติดต่อกัน 3 วัน',
+            ref_entity: 'case',
+            ref_id: '11',
+            seen_at: null,
+            read_at: null,
+            created_at: '2026-07-31T00:00:00.000Z',
+            total_count: 1,
+          },
+        ],
+        totalCount: 1,
+      }),
+      countForRecipient: jest.fn().mockResolvedValue({ unreadCount: 1, unseenCount: 1 }),
+    };
+    const service = new NotificationsService(repository as never);
+
+    await expect(service.listForUser(42, {})).resolves.toEqual(
+      expect.objectContaining({
+        rows: [
+          expect.objectContaining({
+            student_person_uuid: '11111111-1111-4111-8111-111111111111',
+            case_id: 11,
+            student_name_masked: 'เด็กชาย ทด****',
+            reason_text: 'ขาดเรียนติดต่อกัน 3 วัน',
+          }),
+        ],
+      }),
+    );
   });
 });

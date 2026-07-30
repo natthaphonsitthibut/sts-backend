@@ -89,12 +89,29 @@ export class NotificationsRepository {
   async fanOut(input: NotificationFanOutInput): Promise<number> {
     const result = await this.query(
       `
-        INSERT INTO notifications (recipient_user_id, type_code, title, body, ref_entity, ref_id)
-        SELECT u.id, nt.code, $2, $3, $4, $5
+        INSERT INTO notifications
+          (recipient_user_id, type_code, title, body, ref_entity, ref_id,
+           student_person_uuid, case_id, student_name_masked, reason_text)
+        SELECT
+          u.id,
+          nt.code,
+          $2,
+          $3,
+          $4,
+          $5,
+          COALESCE(notification_case_student.person_uuid, notification_student.person_uuid),
+          $10::int,
+          $12,
+          $13
         FROM notification_types nt
         CROSS JOIN users u
         LEFT JOIN roles r ON r.name = u.role
         LEFT JOIN schools sc ON sc.id = $7::int
+        LEFT JOIN cases notification_case ON notification_case.id = $10::int
+        LEFT JOIN student_term notification_case_student
+          ON notification_case_student.student_uuid = notification_case.student_uuid
+        LEFT JOIN student_term notification_student
+          ON notification_student.student_uuid = $11::uuid
         WHERE nt.code = $1
           AND nt.is_enabled IS TRUE
           AND u.status = 'ACTIVE'
@@ -121,6 +138,10 @@ export class NotificationsRepository {
           ? null
           : String(input.gradeLevel),
         input.roomId === null || input.roomId === undefined ? null : String(input.roomId),
+        input.caseId ?? null,
+        input.studentUuid ?? null,
+        input.studentNameMasked ?? null,
+        input.reasonText ?? null,
       ],
     );
     return result.rows.length;
@@ -174,6 +195,10 @@ export class NotificationsRepository {
           nt.label_th AS type_label,
           n.title,
           n.body,
+          n.student_person_uuid,
+          n.case_id,
+          n.student_name_masked,
+          n.reason_text,
           n.ref_entity,
           n.ref_id,
           n.seen_at,

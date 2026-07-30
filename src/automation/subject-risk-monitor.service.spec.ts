@@ -192,6 +192,7 @@ describe('SubjectRiskMonitorService', () => {
 
     expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
     expect(notificationsService.notifyStudentRiskWatch).toHaveBeenCalledWith({
+      studentUuid: '22222222-2222-4222-8222-222222222222',
       studentName: 'สมหญิง ตั้งใจ',
       schoolId: 10010002,
       gradeLevel: '6',

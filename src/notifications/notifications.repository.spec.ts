@@ -40,4 +40,52 @@ describe('NotificationsRepository direct recipient eligibility', () => {
     ]);
     expect(queryRunner.release).toHaveBeenCalled();
   });
+
+  it('persists typed student context for case fan-out', async () => {
+    const query = jest
+      .fn<Promise<{ records: Array<{ id: string }> }>, [sql: string, params?: unknown[]]>()
+      .mockResolvedValue({ records: [{ id: 'notification-id' }] });
+    const queryRunner = {
+      connect: jest.fn(),
+      query,
+      release: jest.fn(),
+    };
+    const repository = new NotificationsRepository({
+      createQueryRunner: jest.fn().mockReturnValue(queryRunner),
+    } as never);
+
+    await expect(
+      repository.fanOut({
+        typeCode: 'CASE_CREATED',
+        title: 'มีเคสติดตามใหม่',
+        body: 'ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน',
+        refEntity: 'case',
+        refId: '17',
+        schoolId: 10010002,
+        caseId: 17,
+        studentNameMasked: 'ด.ช. ทด****',
+        reasonText: 'ขาดเรียนติดต่อกัน 3 วัน',
+      }),
+    ).resolves.toBe(1);
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('student_person_uuid, case_id, student_name_masked, reason_text');
+    expect(sql).toContain('notification_case_student.person_uuid');
+    expect(sql).toContain('notification_case.id = $10::int');
+    expect(params).toEqual([
+      'CASE_CREATED',
+      'มีเคสติดตามใหม่',
+      'ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน',
+      'case',
+      '17',
+      null,
+      10010002,
+      null,
+      null,
+      17,
+      null,
+      'ด.ช. ทด****',
+      'ขาดเรียนติดต่อกัน 3 วัน',
+    ]);
+  });
 });

@@ -233,7 +233,7 @@ export class CaseService {
         studentName: mapped.student_name || null,
         schoolId: mapped.school_id,
         schoolName: mapped.student_school,
-        reason: mapped.reason_flagged,
+        reason: mapped.reason_flagged ?? reason,
       });
       await this.riskProfileService?.enqueueStudents([studentUuid], 'case-open').catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
