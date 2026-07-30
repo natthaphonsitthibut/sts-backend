@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import type { NotificationsService } from '../notifications/notifications.service';
@@ -37,6 +37,9 @@ describe('CaseService', () => {
       | 'insertCaseReview'
       | 'transitionPendingReviewCase'
       | 'findCaseReviewById'
+      | 'listTasksByCase'
+      | 'listCaseReviews'
+      | 'listCaseRiskSignals'
       | 'claimCaseSlaWarnings'
       | 'claimCaseSlaBreaches'
     >
@@ -74,6 +77,9 @@ describe('CaseService', () => {
         review_action: 'CONTINUE',
         reviewed_by: 'ผอ. ทดสอบ',
       }),
+      listTasksByCase: jest.fn().mockResolvedValue([]),
+      listCaseReviews: jest.fn().mockResolvedValue([]),
+      listCaseRiskSignals: jest.fn().mockResolvedValue([]),
       claimCaseSlaWarnings: jest.fn().mockResolvedValue([]),
       claimCaseSlaBreaches: jest.fn().mockResolvedValue([]),
     };
@@ -167,6 +173,46 @@ describe('CaseService', () => {
     expect(notificationsService.notifyCaseCreated).not.toHaveBeenCalled();
   });
 
+  it('separates system risk signals from human review history', async () => {
+    taskRepository.listCaseReviews.mockResolvedValueOnce([
+      {
+        id: 'review-id',
+        review_action: 'CONTINUE',
+        review_note: 'ติดตามการมาเรียนต่อ',
+        reviewer_display: 'ผอ. ทดสอบ',
+        reviewed_at: '2026-07-24T00:00:00.000Z',
+      },
+    ]);
+    taskRepository.listCaseRiskSignals.mockResolvedValueOnce([
+      {
+        id: 'signal-id',
+        signal_source_code: 'SUBJECT_RISK_MONITOR',
+        signal_rule_code: 'LOW_ATTENDANCE_PERCENT',
+        signal_reason: 'เวลาเรียนต่ำกว่าเกณฑ์',
+        detected_at: '2026-07-23T00:00:00.000Z',
+      },
+    ]);
+
+    const result = await service.getCase(10, buildActor(['review-cases']));
+
+    expect(result.data.reviews).toEqual([
+      expect.objectContaining({
+        id: 'review-id',
+        reviewed_by: 'ผอ. ทดสอบ',
+        review_note: 'ติดตามการมาเรียนต่อ',
+      }),
+    ]);
+    expect(result.data.risk_signals).toEqual([
+      {
+        id: 'signal-id',
+        source_code: 'SUBJECT_RISK_MONITOR',
+        rule_code: 'LOW_ATTENDANCE_PERCENT',
+        reason: 'เวลาเรียนต่ำกว่าเกณฑ์',
+        detected_at: '2026-07-23T00:00:00.000Z',
+      },
+    ]);
+  });
+
   it('hides an out-of-scope student when opening a case', async () => {
     taskRepository.findStudentForCaseCreation.mockResolvedValueOnce(null);
 
@@ -215,6 +261,7 @@ describe('CaseService', () => {
         reviewAction: 'CONTINUE',
         reviewNote: 'ติดตามต่อ',
         reviewedBy: 'ผอ. ทดสอบ',
+        sourceActorUserId: 1,
       }),
       undefined,
     );
@@ -225,6 +272,19 @@ describe('CaseService', () => {
         targetId: '10',
       }),
     );
+  });
+
+  it('requires a reason before recording a human review', async () => {
+    await expect(
+      service.reviewCase(
+        10,
+        { review_action: 'CONTINUE', review_note: '' },
+        buildActor(['review-cases']),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(taskRepository.findCaseById).not.toHaveBeenCalled();
+    expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
   });
 
   it('allows CLOSE with an outcome when the reviewer has both permissions', async () => {
@@ -277,7 +337,7 @@ describe('CaseService', () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'CLOSE', review_note: null },
+        { review_action: 'CLOSE', review_note: 'ไม่มีสิทธิ์ปิดเคส' },
         buildActor(['review-cases']),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -302,7 +362,7 @@ describe('CaseService', () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'CLOSE', review_note: null },
+        { review_action: 'CLOSE', review_note: 'ไม่มีสิทธิ์พิจารณาเคส' },
         buildActor(['close-case']),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);

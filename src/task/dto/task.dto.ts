@@ -258,9 +258,10 @@ export class ReviewCaseDto {
   @IsNotEmpty()
   review_action?: string | null;
 
-  @IsOptional()
   @IsString()
-  review_note?: string | null;
+  @IsNotEmpty()
+  @MaxLength(1000)
+  review_note!: string;
 
   @IsOptional()
   @IsIn(['RETURNED_TO_SCHOOL', 'TRANSFERRED_SCHOOL', 'ILLNESS', 'WORKING', 'UNREACHABLE', 'OTHER'])

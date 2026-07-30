@@ -570,6 +570,27 @@ async function cleanup(dataSource) {
     `,
     [userIds],
   );
+  const [{ active_user_count: activeUserCount }] = await dataSource.query(
+    `
+      SELECT COUNT(*)::int AS active_user_count
+      FROM users
+      WHERE username = ANY($1::text[])
+        AND status = 'ACTIVE'
+    `,
+    [Object.values(USERNAMES)],
+  );
+  const [{ active_case_count: activeCaseCount }] = await dataSource.query(
+    `
+      SELECT COUNT(*)::int AS active_case_count
+      FROM cases case_record
+      JOIN student_term student ON student.student_uuid = case_record.student_uuid
+      WHERE student."PersonID_Onec" LIKE $1
+        AND case_record.deleted_at IS NULL
+    `,
+    [`${FIXTURE_PREFIX}%`],
+  );
+  assert(activeUserCount === 0, 'Browser smoke cleanup left active fixture users');
+  assert(activeCaseCount === 0, 'Browser smoke cleanup left active fixture cases');
 }
 
 async function assertPrerequisites(dataSource) {
@@ -1385,6 +1406,19 @@ async function main() {
       assignedVisit?.task_id && assignedVisit?.case_id,
       'Approved follow-up visit task/link was not persisted',
     );
+    await dataSource.query(
+      `
+        INSERT INTO case_risk_signals (
+          case_id,
+          signal_source_code,
+          signal_rule_code,
+          signal_reason
+        )
+        VALUES ($1, 'SUBJECT_RISK_MONITOR', 'LOW_ATTENDANCE_PERCENT', $2)
+        ON CONFLICT (case_id, signal_source_code, signal_reason) DO NOTHING
+      `,
+      [assignedVisit.case_id, 'Automated browser smoke risk signal'],
+    );
     await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1::uuid`, [
       assignedVisit.link_id,
     ]);
@@ -1439,9 +1473,16 @@ async function main() {
     );
     await clickLink(client, 'ดูรายละเอียด');
     await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes('รายงานการติดตาม'),
-      'Case detail did not show the submitted home-visit report',
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          text.includes('รายงานการติดตาม') &&
+          text.includes('เหตุผลที่เริ่มติดตามเคส') &&
+          text.includes('สัญญาณความเสี่ยงเพิ่มเติมจากระบบ') &&
+          text.includes('Automated browser smoke risk signal')
+        );
+      },
+      'Case detail did not separate the initial reason, risk signal, and follow-up report',
     );
     await clickButton(client, 'พิจารณาผล');
     await waitFor(
@@ -1450,6 +1491,19 @@ async function main() {
       'Case workflow dialog did not open after visit submission',
     );
     await setSelectByOptionText(client, '#case-action', 'ติดตามต่อ');
+    const reviewSubmitDisabledWithoutReason = await evaluate(
+      client,
+      `(() => {
+        const note = document.querySelector('#case-note');
+        const dialog = note?.closest('[role="dialog"]');
+        const buttons = dialog ? [...dialog.querySelectorAll('button')] : [];
+        return Boolean(buttons.at(-1)?.disabled);
+      })()`,
+    );
+    assert(
+      reviewSubmitDisabledWithoutReason,
+      'Human review submission was enabled without a required reason',
+    );
     await evaluate(
       client,
       `(() => {
@@ -1511,6 +1565,110 @@ async function main() {
     ]);
     const followUpVisitToken = new URL(followUpVisitLink).pathname.split('/').filter(Boolean).at(-1);
     assert(followUpVisitToken, 'Next follow-up guest link did not contain a token');
+
+    const [continuedReview] = await dataSource.query(
+      `
+        SELECT
+          review.id::text,
+          review.source_actor_user_id,
+          actor.username AS actor_username
+        FROM case_reviews review
+        INNER JOIN users actor ON actor.id = review.source_actor_user_id
+        WHERE review.case_id = $1
+          AND review.review_action = 'CONTINUE'
+        ORDER BY review.reviewed_at DESC
+        LIMIT 1
+      `,
+      [assignedVisit.case_id],
+    );
+    assert(continuedReview?.id, 'Continue decision review was not persisted');
+    assert(
+      continuedReview.source_actor_user_id &&
+        continuedReview.actor_username === USERNAMES.manager,
+      'Human review was not attributed to the authenticated manager user',
+    );
+    await navigate(client, `${FRONTEND_URL}/cases/${assignedVisit.case_id}`);
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          text.includes('ประวัติการพิจารณา') &&
+          text.includes('Automated browser smoke continue reason')
+        );
+      },
+      'Case detail did not render the continue decision history',
+    );
+    const openedReviewDetail = await evaluate(
+      client,
+      `(() => {
+        const heading = [...document.querySelectorAll('h2')]
+          .find((node) => node.textContent.trim() === 'ประวัติการพิจารณา');
+        const container = heading?.parentElement;
+        const link = container
+          ? [...container.querySelectorAll('a')]
+              .find((node) => node.textContent.trim() === 'ดูรายละเอียด')
+          : null;
+        link?.click();
+        return Boolean(link);
+      })()`,
+    );
+    assert(openedReviewDetail, 'Review history did not expose the shared detail link button');
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `window.location.pathname === ${JSON.stringify(
+            `/cases/${assignedVisit.case_id}/reviews/${continuedReview.id}`,
+          )}`,
+        ),
+      'Review history detail link did not navigate to the selected review route',
+    );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          text.includes('รายละเอียดผลการพิจารณา') &&
+          text.includes('เหตุผลที่ให้ติดตามต่อ') &&
+          text.includes('Automated browser smoke continue reason') &&
+          text.includes('รายงานล่าสุดก่อนการพิจารณา') &&
+          text.includes('Automated browser smoke visit result') &&
+          text.includes('Automated browser smoke recommendation')
+        );
+      },
+      'Review detail did not render the decision, comment, and supporting report',
+    );
+    const caseDetailPath = `/cases/${assignedVisit.case_id}`;
+    const reviewDetailPath = `${caseDetailPath}/reviews/${continuedReview.id}`;
+    await clickButton(client, 'ย้อนกลับ');
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `window.location.pathname === ${JSON.stringify(caseDetailPath)}`,
+        ),
+      'Review detail back action did not return to the case detail history entry',
+    );
+    await clickButton(client, 'ย้อนกลับ');
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `!${JSON.stringify([caseDetailPath, reviewDetailPath])}.includes(window.location.pathname)`,
+        ),
+      'Case detail back action looped to the review detail route',
+    );
+    await navigate(
+      client,
+      `${FRONTEND_URL}/cases/${assignedVisit.case_id}/reviews/00000000-0000-4000-8000-000000000000`,
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'ไม่พบผลการพิจารณา',
+        ),
+      'Unknown review id did not render the not-found state',
+    );
+
     await navigate(client, `${FRONTEND_URL}/task/${followUpVisitToken}/report`);
     await waitFor(
       async () =>
@@ -1715,6 +1873,7 @@ async function main() {
           'P4 scoped observation write and provenance',
           'P4 teacher follow-up request and manager approval',
           'visit report request-review, manager continue, next-round link, and direct close',
+          'case review detail route, back-history regression, decision context, supporting report, and not-found state',
           'full homeroom attendance submit and teacher attribution',
           'full-link reopen',
           'rotate denies old link and enables new link',

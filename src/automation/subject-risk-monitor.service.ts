@@ -32,9 +32,10 @@ interface SubjectRiskSettings {
   slaMediumDays: number;
 }
 
-interface CaseReviewNoteEvent {
+interface CaseRiskSignalEvent {
   caseId: number;
   studentUuid: string | null;
+  signalRuleCode: SubjectRiskSignalCode;
   note: string;
 }
 
@@ -224,21 +225,22 @@ export class SubjectRiskMonitorService {
     return value === 'HIGH' || value === 'MEDIUM' ? value : 'LOW';
   }
 
-  private async appendCaseNoteIfNew(
+  private async appendCaseRiskSignalIfNew(
     existingCase: ActiveAttendanceRiskCaseRow,
+    signalRuleCode: SubjectRiskSignalCode,
     note: string,
     studentUuid: string | null,
     executor: QueryExecutor,
-    events: CaseReviewNoteEvent[],
+    events: CaseRiskSignalEvent[],
   ): Promise<void> {
-    const alreadyInserted = await this.automationRepository.hasSystemCaseReviewNote(
+    const inserted = await this.automationRepository.insertCaseRiskSignal(
       existingCase.id,
+      signalRuleCode,
       note,
       executor,
     );
-    if (alreadyInserted) return;
-    await this.automationRepository.insertSystemCaseReviewNote(existingCase.id, note, executor);
-    events.push({ caseId: existingCase.id, studentUuid, note });
+    if (!inserted) return;
+    events.push({ caseId: existingCase.id, studentUuid, signalRuleCode, note });
   }
 
   async checkSubjectRiskSignals(): Promise<NewCase[]> {
@@ -246,7 +248,7 @@ export class SubjectRiskMonitorService {
     const settings = await this.loadSettings();
     const asOfDate = getBangkokDateString();
     const newCases: NewCase[] = [];
-    const caseReviewEvents: CaseReviewNoteEvent[] = [];
+    const caseRiskSignalEvents: CaseRiskSignalEvent[] = [];
     const tierEscalationEvents: SubjectRiskTierEscalationEvent[] = [];
     const lateWatchEvents: LateWatchNotificationEvent[] = [];
     const riskProfileStudentUuids = new Set<string>();
@@ -290,12 +292,13 @@ export class SubjectRiskMonitorService {
             );
 
           if (existingCase) {
-            await this.appendCaseNoteIfNew(
+            await this.appendCaseRiskSignalIfNew(
               existingCase,
+              candidate.signal_code,
               reason,
               studentUuid,
               executor,
-              caseReviewEvents,
+              caseRiskSignalEvents,
             );
             const currentTier = this.normalizeCaseRiskTier(existingCase.risk_tier);
             if (CASE_RISK_TIER_RANK[riskTier] > CASE_RISK_TIER_RANK[currentTier]) {
@@ -375,18 +378,18 @@ export class SubjectRiskMonitorService {
         }
       });
 
-      for (const event of caseReviewEvents) {
+      for (const event of caseRiskSignalEvents) {
         await this.auditLog.record({
           actorUserId: null,
           actorLabel: SYSTEM_ACTOR_LABEL,
-          action: 'CASE_REVIEW',
+          action: 'CASE_RISK_SIGNAL_DETECTED',
           targetType: 'case',
           targetId: String(event.caseId),
           metadata: {
-            reviewAction: 'CONTINUE',
-            reason: 'subject_risk_signal',
+            signalSource: 'SUBJECT_RISK_MONITOR',
+            signalRuleCode: event.signalRuleCode,
             studentUuid: event.studentUuid,
-            note: event.note,
+            reason: event.note,
           },
           ip: null,
         });

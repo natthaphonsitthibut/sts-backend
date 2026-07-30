@@ -216,4 +216,34 @@ describe('AutomationRepository', () => {
       'เวลาเรียนต่ำกว่า%',
     ]);
   });
+
+  it('stores a bounded case risk signal without creating a human review row', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [{ id: 'signal-id' }], affected: 1 };
+      }),
+    };
+    const dataSource = {
+      createQueryRunner: jest.fn(() => queryRunner),
+    };
+    const repository = new AutomationRepository(dataSource as never);
+
+    const inserted = await repository.insertCaseRiskSignal(
+      55,
+      'LOW_ATTENDANCE_PERCENT',
+      'เวลาเรียนต่ำกว่าเกณฑ์',
+    );
+
+    expect(inserted).toBe(true);
+    expect(queries[0].sql).toContain('INSERT INTO case_risk_signals');
+    expect(queries[0].sql).toContain(
+      'ON CONFLICT (case_id, signal_source_code, signal_reason) DO NOTHING',
+    );
+    expect(queries[0].sql).not.toContain('case_reviews');
+    expect(queries[0].params).toEqual([55, 'LOW_ATTENDANCE_PERCENT', 'เวลาเรียนต่ำกว่าเกณฑ์']);
+  });
 });

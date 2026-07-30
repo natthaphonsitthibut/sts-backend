@@ -473,43 +473,26 @@ export class AutomationRepository {
     return result.rows[0].id;
   }
 
-  async insertSystemCaseReviewNote(
+  async insertCaseRiskSignal(
     caseId: number,
-    reviewNote: string,
-    executor?: QueryExecutor,
-  ): Promise<void> {
-    const queryExecutor = this.getExecutor(executor);
-    await queryExecutor.query(
-      `
-        INSERT INTO case_reviews (
-          id,
-          case_id,
-          review_action,
-          review_note,
-          reviewed_by
-        )
-        VALUES (gen_random_uuid()::text, $1, 'CONTINUE', $2, $3)
-      `,
-      [caseId, reviewNote, 'system:subject-risk-monitor'],
-    );
-  }
-
-  async hasSystemCaseReviewNote(
-    caseId: number,
-    reviewNote: string,
+    signalRuleCode: string,
+    signalReason: string,
     executor?: QueryExecutor,
   ): Promise<boolean> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<{ id: string }>(
       `
-        SELECT id
-        FROM case_reviews
-        WHERE case_id = $1
-          AND reviewed_by = $2
-          AND review_note = $3
-        LIMIT 1
+        INSERT INTO case_risk_signals (
+          case_id,
+          signal_source_code,
+          signal_rule_code,
+          signal_reason
+        )
+        VALUES ($1, 'SUBJECT_RISK_MONITOR', $2, $3)
+        ON CONFLICT (case_id, signal_source_code, signal_reason) DO NOTHING
+        RETURNING id
       `,
-      [caseId, 'system:subject-risk-monitor', reviewNote],
+      [caseId, signalRuleCode, signalReason],
     );
     return result.rows.length > 0;
   }

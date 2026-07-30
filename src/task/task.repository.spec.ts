@@ -444,4 +444,55 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('RETURNING id');
     expect(queries[0].params).toEqual(['PENDING_REVIEW', 'รายงานการติดตาม', null, null, null, 10]);
   });
+
+  it('resolves a human reviewer from the persisted user foreign key', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.listCaseReviews(1254);
+
+    expect(queries[0].params).toEqual([1254]);
+    expect(queries[0].sql).toContain(
+      'LEFT JOIN users actor ON actor.id = review.source_actor_user_id',
+    );
+    expect(queries[0].sql).toContain('AS reviewer_display');
+  });
+
+  it('loads system risk signals separately from human reviews', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new TaskRepository(
+      dataSource as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.listCaseRiskSignals(1254);
+
+    expect(queries[0].params).toEqual([1254]);
+    expect(queries[0].sql).toContain('FROM case_risk_signals');
+    expect(queries[0].sql).toContain('ORDER BY detected_at DESC');
+    expect(queries[0].sql).not.toContain('case_reviews');
+  });
 });

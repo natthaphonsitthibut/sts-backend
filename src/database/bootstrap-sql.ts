@@ -648,6 +648,118 @@ export const CASE_TRACKING_DECISION_TABLES_SQL = `
   ALTER TABLE case_reviews
     ADD COLUMN IF NOT EXISTS review_summary VARCHAR(2000),
     ADD COLUMN IF NOT EXISTS source_actor_user_id INTEGER;
+  CREATE TABLE IF NOT EXISTS case_risk_signals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    case_id INTEGER NOT NULL,
+    signal_source_code VARCHAR(40) NOT NULL,
+    signal_rule_code VARCHAR(40),
+    signal_reason VARCHAR(1000) NOT NULL,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT fk_case_risk_signals_case
+      FOREIGN KEY (case_id) REFERENCES cases(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT uq_case_risk_signals_reason
+      UNIQUE (case_id, signal_source_code, signal_reason),
+    CONSTRAINT chk_case_risk_signals_source
+      CHECK (signal_source_code IN ('SUBJECT_RISK_MONITOR')),
+    CONSTRAINT chk_case_risk_signals_rule
+      CHECK (
+        signal_rule_code IS NULL
+        OR signal_rule_code IN (
+          'MIXED_SUBJECT_ABSENCE',
+          'SUBJECT_AVOIDANCE_STREAK',
+          'SUBJECT_AVOIDANCE_PERCENT',
+          'TERM_ABSENCE_ACCUMULATION',
+          'LOW_ATTENDANCE_PERCENT'
+        )
+      ),
+    CONSTRAINT chk_case_risk_signals_reason
+      CHECK (length(trim(signal_reason)) BETWEEN 1 AND 1000)
+  );
+  CREATE INDEX IF NOT EXISTS idx_case_risk_signals_case_detected
+    ON case_risk_signals (case_id, detected_at DESC);
+  DO $case_risk_signal_bootstrap_duplicate_check$
+  BEGIN
+    IF EXISTS (
+      SELECT 1
+      FROM case_reviews review
+      WHERE review.reviewed_by = 'system:subject-risk-monitor'
+        AND review.source_actor_user_id IS NULL
+        AND review.review_action = 'CONTINUE'
+        AND review.review_note IS NOT NULL
+      GROUP BY review.case_id, review.review_note
+      HAVING COUNT(*) > 1
+    ) THEN
+      RAISE EXCEPTION 'duplicate subject-risk review rows must be reconciled before bootstrap';
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM case_reviews review
+      JOIN case_risk_signals signal
+        ON signal.case_id = review.case_id
+       AND signal.signal_source_code = 'SUBJECT_RISK_MONITOR'
+       AND signal.signal_reason = review.review_note
+      WHERE review.reviewed_by = 'system:subject-risk-monitor'
+        AND review.source_actor_user_id IS NULL
+        AND review.review_action = 'CONTINUE'
+        AND review.review_note IS NOT NULL
+        AND signal.id <> review.id
+    ) THEN
+      RAISE EXCEPTION 'subject-risk review conflicts with an existing risk signal';
+    END IF;
+  END
+  $case_risk_signal_bootstrap_duplicate_check$;
+  INSERT INTO case_risk_signals (
+    id, case_id, signal_source_code, signal_rule_code, signal_reason, detected_at, created_at
+  )
+  SELECT
+    review.id,
+    review.case_id,
+    'SUBJECT_RISK_MONITOR',
+    CASE
+      WHEN review.review_note LIKE 'โดดคาบ:%' THEN 'MIXED_SUBJECT_ABSENCE'
+      WHEN review.review_note LIKE 'เลี่ยงวิชาเดิม:%คาบติดกัน' THEN 'SUBJECT_AVOIDANCE_STREAK'
+      WHEN review.review_note LIKE 'เลี่ยงวิชาเดิม:%ของคาบในช่วงที่กำหนด' THEN 'SUBJECT_AVOIDANCE_PERCENT'
+      WHEN review.review_note LIKE 'ขาดสะสมต่อเทอม%' THEN 'TERM_ABSENCE_ACCUMULATION'
+      WHEN review.review_note LIKE 'เวลาเรียนต่ำกว่าเกณฑ์:%' THEN 'LOW_ATTENDANCE_PERCENT'
+      ELSE NULL
+    END,
+    review.review_note,
+    COALESCE(review.reviewed_at, review.created_at),
+    review.created_at
+  FROM case_reviews review
+  WHERE review.reviewed_by = 'system:subject-risk-monitor'
+    AND review.source_actor_user_id IS NULL
+    AND review.review_action = 'CONTINUE'
+    AND review.review_note IS NOT NULL
+  ON CONFLICT (id) DO NOTHING;
+  DO $case_risk_signal_bootstrap_reconcile$
+  BEGIN
+    IF EXISTS (
+      SELECT 1
+      FROM case_reviews review
+      LEFT JOIN case_risk_signals signal
+        ON signal.id = review.id
+       AND signal.case_id = review.case_id
+       AND signal.signal_source_code = 'SUBJECT_RISK_MONITOR'
+       AND signal.signal_reason = review.review_note
+      WHERE review.reviewed_by = 'system:subject-risk-monitor'
+        AND review.source_actor_user_id IS NULL
+        AND review.review_action = 'CONTINUE'
+        AND review.review_note IS NOT NULL
+        AND signal.id IS NULL
+    ) THEN
+      RAISE EXCEPTION 'subject-risk bootstrap reconciliation failed';
+    END IF;
+  END
+  $case_risk_signal_bootstrap_reconcile$;
+  DELETE FROM case_reviews
+  WHERE reviewed_by = 'system:subject-risk-monitor'
+    AND source_actor_user_id IS NULL
+    AND review_action = 'CONTINUE'
+    AND review_note IS NOT NULL;
   ALTER TABLE case_reviews DROP CONSTRAINT IF EXISTS chk_case_reviews_resolution_outcome;
   UPDATE case_reviews
   SET resolution_outcome = 'OTHER'

@@ -224,3 +224,24 @@ export class CaseReviewEntity {
   @Column({ name: 'reviewed_at', type: 'timestamptz', nullable: true })
   reviewedAt!: Date | null;
 }
+
+@Entity({ name: 'case_risk_signals' })
+export class CaseRiskSignalEntity {
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
+  id!: string;
+
+  @Column({ name: 'case_id', type: 'integer' })
+  caseId!: number;
+
+  @Column({ name: 'signal_source_code', type: 'varchar', length: 40 })
+  signalSourceCode!: string;
+
+  @Column({ name: 'signal_rule_code', type: 'varchar', length: 40, nullable: true })
+  signalRuleCode!: string | null;
+
+  @Column({ name: 'signal_reason', type: 'varchar', length: 1000 })
+  signalReason!: string;
+
+  @Column({ name: 'detected_at', type: 'timestamptz' })
+  detectedAt!: Date;
+}

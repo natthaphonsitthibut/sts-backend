@@ -56,8 +56,7 @@ describe('SubjectRiskMonitorService', () => {
       | 'withTransaction'
       | 'listSubjectRiskCandidates'
       | 'findActiveAttendanceRiskCaseByStudent'
-      | 'hasSystemCaseReviewNote'
-      | 'insertSystemCaseReviewNote'
+      | 'insertCaseRiskSignal'
       | 'escalateCaseRiskTier'
       | 'createAutomatedCase'
       | 'listSubjectLateWatchCandidates'
@@ -94,8 +93,7 @@ describe('SubjectRiskMonitorService', () => {
       }),
       listSubjectRiskCandidates: jest.fn().mockResolvedValue([]),
       findActiveAttendanceRiskCaseByStudent: jest.fn().mockResolvedValue(null),
-      hasSystemCaseReviewNote: jest.fn().mockResolvedValue(false),
-      insertSystemCaseReviewNote: jest.fn().mockResolvedValue(undefined),
+      insertCaseRiskSignal: jest.fn().mockResolvedValue(true),
       escalateCaseRiskTier: jest.fn().mockResolvedValue(true),
       createAutomatedCase: jest.fn().mockResolvedValue(88),
       listSubjectLateWatchCandidates: jest.fn().mockResolvedValue([]),
@@ -148,7 +146,7 @@ describe('SubjectRiskMonitorService', () => {
     );
   });
 
-  it('adds a review note to an existing attendance-risk case and escalates only upward', async () => {
+  it('adds a system risk signal outside human review history and escalates only upward', async () => {
     automationRepository.listSubjectRiskCandidates.mockResolvedValue([
       buildRiskCandidate({
         signal_code: 'LOW_ATTENDANCE_PERCENT',
@@ -165,8 +163,9 @@ describe('SubjectRiskMonitorService', () => {
     await service.checkSubjectRiskSignals();
 
     expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
-    expect(automationRepository.insertSystemCaseReviewNote).toHaveBeenCalledWith(
+    expect(automationRepository.insertCaseRiskSignal).toHaveBeenCalledWith(
       55,
+      'LOW_ATTENDANCE_PERCENT',
       'เวลาเรียนต่ำกว่าเกณฑ์: มาเรียน 79% (ต่ำกว่า 80%)',
       undefined,
     );
@@ -177,6 +176,13 @@ describe('SubjectRiskMonitorService', () => {
     expect(notificationsService.notifyCaseRiskEscalated).toHaveBeenCalledWith(
       expect.objectContaining({ caseId: 55, fromTier: 'MEDIUM', toTier: 'HIGH' }),
     );
+    const recordedEvent = auditLog.record.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.action === 'CASE_RISK_SIGNAL_DETECTED');
+    expect(recordedEvent?.action).toBe('CASE_RISK_SIGNAL_DETECTED');
+    expect(recordedEvent?.metadata).toMatchObject({
+      signalRuleCode: 'LOW_ATTENDANCE_PERCENT',
+    });
   });
 
   it('sends a watch notification for subject lateness without creating a case', async () => {

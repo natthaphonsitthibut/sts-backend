@@ -406,6 +406,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ยกเลิกเคสอัตโนมัติ',
     detailKeys: [],
   },
+  CASE_RISK_SIGNAL_DETECTED: {
+    domain: 'cases',
+    label: 'ตรวจพบสัญญาณความเสี่ยง',
+    detailKeys: [
+      { key: 'signalRuleCode', label: 'กฎที่ตรวจพบ' },
+      { key: 'reason', label: 'เหตุผล' },
+    ],
+  },
   CASE_RISK_TIER_ESCALATE: {
     domain: 'cases',
     label: 'ปรับระดับความเสี่ยงอัตโนมัติ',

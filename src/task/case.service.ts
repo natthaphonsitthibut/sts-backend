@@ -129,8 +129,19 @@ export class CaseService {
       review_note: this.normalizeText(row.review_note) || null,
       review_summary: this.normalizeText(row.review_summary) || null,
       resolution_outcome: this.normalizeText(row.resolution_outcome) || null,
-      reviewed_by: this.normalizeText(row.reviewed_by) || null,
+      reviewed_by:
+        this.normalizeText(row.reviewer_display) || this.normalizeText(row.reviewed_by) || null,
       reviewed_at: row.reviewed_at ?? null,
+    };
+  }
+
+  private mapCaseRiskSignal(row: Record<string, unknown>) {
+    return {
+      id: this.normalizeText(row.id),
+      source_code: this.normalizeText(row.signal_source_code),
+      rule_code: this.normalizeText(row.signal_rule_code) || null,
+      reason: this.normalizeText(row.signal_reason),
+      detected_at: row.detected_at ?? null,
     };
   }
 
@@ -246,9 +257,10 @@ export class CaseService {
     if (!detail) {
       throw new NotFoundException('Case not found');
     }
-    const [rounds, reviews] = await Promise.all([
+    const [rounds, reviews, riskSignals] = await Promise.all([
       this.taskRepository.listTasksByCase(caseId),
       this.taskRepository.listCaseReviews(caseId),
+      this.taskRepository.listCaseRiskSignals(caseId),
     ]);
     return {
       success: true,
@@ -256,6 +268,7 @@ export class CaseService {
         ...this.mapCaseDetail(detail),
         follow_up_rounds: rounds.map((round) => this.mapFollowUpRound(round)),
         reviews: reviews.map((review) => this.mapCaseReview(review)),
+        risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
       },
     };
   }
@@ -315,6 +328,9 @@ export class CaseService {
     const reviewAction = await this.caseTrackingOptions.getReviewAction(reviewActionCode);
     this.assertCanReviewCaseAction(currentActor, reviewAction.requiredPermission);
     const reviewNote = clean(this.normalizeText(body.review_note)) || null;
+    if (!reviewNote) {
+      throw new BadRequestException('กรุณาระบุเหตุผลการพิจารณา');
+    }
     const resolutionOutcome = await this.caseTrackingOptions.assertResolutionOutcome(
       this.normalizeText(body.resolution_outcome).toUpperCase() || null,
     );

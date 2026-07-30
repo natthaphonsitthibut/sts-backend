@@ -3020,10 +3020,31 @@ export class TaskRepository {
   async listCaseReviews(caseId: number): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
-      SELECT *
-      FROM case_reviews
+      SELECT
+        review.*,
+        COALESCE(
+          NULLIF(trim(concat_ws(' ', actor."FirstName", actor."LastName")), ''),
+          actor.username,
+          review.reviewed_by
+        ) AS reviewer_display
+      FROM case_reviews review
+      LEFT JOIN users actor ON actor.id = review.source_actor_user_id
+      WHERE review.case_id = $1
+      ORDER BY review.reviewed_at DESC
+    `,
+      [caseId],
+    );
+
+    return result.rows;
+  }
+
+  async listCaseRiskSignals(caseId: number): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT id, signal_source_code, signal_rule_code, signal_reason, detected_at
+      FROM case_risk_signals
       WHERE case_id = $1
-      ORDER BY reviewed_at DESC
+      ORDER BY detected_at DESC, id DESC
     `,
       [caseId],
     );

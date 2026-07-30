@@ -31,6 +31,7 @@ import {
 } from './attendance-operations.entities';
 import {
   CaseEntity,
+  CaseRiskSignalEntity,
   CaseReviewEntity,
   TaskEntity,
   TaskLinkEntity,
@@ -45,6 +46,7 @@ export const DATABASE_ENTITIES = [
   ScheduleEntity,
   ExternalUserEntity,
   CaseEntity,
+  CaseRiskSignalEntity,
   TaskEntity,
   TaskLinkEntity,
   TaskSubmissionEntity,
@@ -78,6 +80,7 @@ export {
   AttendanceEntity,
   AttendanceSessionEntity,
   CaseEntity,
+  CaseRiskSignalEntity,
   CaseReviewEntity,
   DisabilityTypeEntity,
   EducationalAreaEntity,
