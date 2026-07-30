@@ -189,6 +189,8 @@ interface TaskSubmissionInput {
   updatedStudentAddress: string | null;
   updatedLat: number | null;
   updatedLng: number | null;
+  caseFollowUpDecision: string | null;
+  caseResolutionOutcomeCode: string | null;
 }
 
 interface AttendanceReplaceInput {
@@ -205,6 +207,7 @@ interface AttendanceReplaceInput {
 
 interface CaseSubmissionUpdateInput {
   caseId: number;
+  nextStatus: string;
   nextSummary: string;
   updatedStudentAddress: string | null;
   updatedLat: number | null;
@@ -229,8 +232,10 @@ interface CaseReviewInput {
   caseId: number;
   reviewAction: string;
   reviewNote: string | null;
+  reviewSummary: string | null;
   resolutionOutcome: string | null;
   reviewedBy: string;
+  sourceActorUserId: number | null;
 }
 
 interface CountRow extends QueryResultRow {
@@ -670,7 +675,7 @@ export class TaskRepository {
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.getExecutor(executor).query(
       `
-      SELECT id, school_id, student_uuid::text
+      SELECT id, school_id, student_uuid::text, student_name, status
       FROM cases c
       WHERE c.id = $1 AND c.deleted_at IS NULL${scopeSql}
       LIMIT 1
@@ -842,6 +847,28 @@ export class TaskRepository {
       `UPDATE cases c SET status = $1 WHERE c.id = $2 AND c.deleted_at IS NULL${scopeSql}`,
       [status, caseId, ...scopeQuery.params],
     );
+  }
+
+  async transitionPendingReviewCase(
+    caseId: number,
+    nextStatus: string,
+    executor: QueryExecutor,
+    actor?: ActorContext,
+  ): Promise<boolean> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 3);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await executor.query(
+      `
+        UPDATE cases c
+        SET status = $1
+        WHERE c.id = $2
+          AND c.status = 'PENDING_REVIEW'
+          AND c.deleted_at IS NULL${scopeSql}
+        RETURNING c.id
+      `,
+      [nextStatus, caseId, ...scopeQuery.params],
+    );
+    return result.rows.length === 1;
   }
 
   async createTask(data: CreateTaskInput, executor?: QueryExecutor): Promise<void> {
@@ -1789,11 +1816,15 @@ export class TaskRepository {
       `
       SELECT
         tl.id AS link_id,
+        tl.assigned_to_name,
         t.id AS task_id,
         t.case_id,
-        t.task_type
+        t.task_type,
+        c.student_name,
+        c.school_id
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
+      LEFT JOIN cases c ON c.id = t.case_id AND c.deleted_at IS NULL
       WHERE tl.token_hash = $1
         AND tl.deleted_at IS NULL
         AND t.deleted_at IS NULL
@@ -1818,9 +1849,11 @@ export class TaskRepository {
         address_changed,
         updated_student_address,
         updated_lat,
-        updated_lng
+        updated_lng,
+        case_follow_up_decision,
+        case_resolution_outcome_code
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
     `,
       [
         data.linkId,
@@ -1834,6 +1867,8 @@ export class TaskRepository {
         data.updatedStudentAddress,
         data.updatedLat,
         data.updatedLng,
+        data.caseFollowUpDecision,
+        data.caseResolutionOutcomeCode,
       ],
     );
   }
@@ -1841,11 +1876,11 @@ export class TaskRepository {
   async updateCaseAfterSubmission(
     data: CaseSubmissionUpdateInput,
     executor?: QueryExecutor,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Address text and coordinates update independently: COALESCE keeps the
     // existing value when a field is null, so a pin-only correction (coords with
     // no typed address) still saves student_lat/lng without wiping the address.
-    await this.getExecutor(executor).query(
+    const result = await this.getExecutor(executor).query(
       `
         UPDATE cases
         SET
@@ -1854,10 +1889,13 @@ export class TaskRepository {
           student_address = COALESCE($3, student_address),
           student_lat = COALESCE($4, student_lat),
           student_lng = COALESCE($5, student_lng)
-        WHERE id = $6 AND deleted_at IS NULL
+        WHERE id = $6
+          AND status IN ('OPEN', 'IN_PROGRESS')
+          AND deleted_at IS NULL
+        RETURNING id
       `,
       [
-        'PENDING_REVIEW',
+        data.nextStatus,
         data.nextSummary,
         data.updatedStudentAddress,
         data.updatedLat,
@@ -1865,6 +1903,7 @@ export class TaskRepository {
         data.caseId,
       ],
     );
+    return (result.rowCount ?? result.rows.length) === 1;
   }
 
   async updateTaskStatus(taskId: string, status: string, executor?: QueryExecutor): Promise<void> {
@@ -2559,7 +2598,7 @@ export class TaskRepository {
   }
 
   async countAtRiskStudents(actor?: ActorContext): Promise<number> {
-    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'REPORTED_UP', 'PENDING_REVIEW'];
+    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW'];
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
@@ -2895,46 +2934,24 @@ export class TaskRepository {
         case_id,
         review_action,
         review_note,
+        review_summary,
         resolution_outcome,
-        reviewed_by
+        reviewed_by,
+        source_actor_user_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `,
       [
         data.reviewId,
         data.caseId,
         data.reviewAction,
         data.reviewNote,
+        data.reviewSummary,
         data.resolutionOutcome,
         data.reviewedBy,
+        data.sourceActorUserId,
       ],
     );
-  }
-
-  async listCaseReportUps(caseId: number): Promise<QueryResultRow[]> {
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        report_up.id,
-        report_up.case_id,
-        report_up.school_id,
-        report_up.reported_by,
-        report_up.reported_by_label,
-        report_up.report_reason,
-        report_up.report_summary,
-        report_up.school_name_snapshot,
-        report_up.province_snapshot,
-        report_up.district_snapshot,
-        report_up.sub_district_snapshot,
-        report_up.reported_at
-      FROM case_report_ups report_up
-      WHERE report_up.case_id = $1
-      ORDER BY report_up.reported_at DESC
-    `,
-      [caseId],
-    );
-
-    return result.rows;
   }
 
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {
@@ -2956,19 +2973,40 @@ export class TaskRepository {
       `
       SELECT
         t.id AS task_id,
+        t.status AS task_status,
         t.created_at,
         tl.assigned_to_name AS initial_assignee,
         (SELECT COUNT(*) FROM task_links WHERE task_id = t.id AND deleted_at IS NULL) AS link_count,
-        EXISTS(
-          SELECT 1
-          FROM task_links tl2
-          JOIN task_submissions ts ON ts.task_link_id = tl2.id
-          WHERE tl2.task_id = t.id
-            AND tl2.deleted_at IS NULL
-            AND ts.deleted_at IS NULL
-        ) AS has_submission
+        latest_submission.submitted_at,
+        latest_submission.cause_category,
+        latest_submission.cause_detail,
+        latest_submission.recommendation,
+        latest_submission.visit_lat,
+        latest_submission.visit_lng,
+        latest_submission.photo_paths,
+        latest_submission.address_changed,
+        latest_submission.updated_student_address,
+        latest_submission.updated_lat,
+        latest_submission.updated_lng,
+        latest_submission.case_follow_up_decision,
+        latest_submission.case_resolution_outcome_code
       FROM tasks t
       LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.delegation_depth = 0 AND tl.deleted_at IS NULL
+      LEFT JOIN LATERAL (
+        SELECT submission.submitted_at, submission.cause_category, submission.cause_detail,
+               submission.recommendation, submission.visit_lat, submission.visit_lng,
+               submission.photo_paths, submission.address_changed,
+               submission.updated_student_address, submission.updated_lat, submission.updated_lng,
+               submission.case_follow_up_decision,
+               submission.case_resolution_outcome_code
+        FROM task_links round_link
+        JOIN task_submissions submission ON submission.task_link_id = round_link.id
+        WHERE round_link.task_id = t.id
+          AND round_link.deleted_at IS NULL
+          AND submission.deleted_at IS NULL
+        ORDER BY submission.submitted_at DESC, submission.id DESC
+        LIMIT 1
+      ) latest_submission ON TRUE
       WHERE t.case_id = $1
         AND t.deleted_at IS NULL
       ORDER BY t.created_at ASC
@@ -2991,6 +3029,77 @@ export class TaskRepository {
     );
 
     return result.rows;
+  }
+
+  async listCaseReviewActions(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th, target_case_status_code, requires_resolution_outcome,
+             required_permission_code
+      FROM case_review_actions
+      WHERE is_active = TRUE AND deleted_at IS NULL
+      ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async listCaseFollowUpDecisions(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th, target_case_status_code, requires_resolution_outcome
+      FROM case_follow_up_decisions
+      WHERE is_active = TRUE AND deleted_at IS NULL
+      ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async listCaseResolutionOutcomes(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th
+      FROM case_resolution_outcomes
+      WHERE is_active = TRUE AND deleted_at IS NULL
+      ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async findCaseReviewAction(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT code, label_th, target_case_status_code, requires_resolution_outcome,
+             required_permission_code
+      FROM case_review_actions
+      WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
+      LIMIT 1
+    `,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findCaseFollowUpDecision(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT code, label_th, target_case_status_code, requires_resolution_outcome
+      FROM case_follow_up_decisions
+      WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
+      LIMIT 1
+    `,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findCaseResolutionOutcome(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT code, label_th
+      FROM case_resolution_outcomes
+      WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
+      LIMIT 1
+    `,
+      [code],
+    );
+    return result.rows[0] ?? null;
   }
 
   private getExecutor(executor?: QueryExecutor): QueryExecutor {

@@ -21,6 +21,8 @@ import { TaskSubmissionService } from './task-submission.service';
 import { TaskStatsService } from './task-stats.service';
 import { AttendanceModule } from '../attendance/attendance.module';
 import { RiskProfileModule } from '../risk-profile/risk-profile.module';
+import { CaseTrackingOptionsController } from './case-tracking-options.controller';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
 @Module({
   imports: [
@@ -37,6 +39,7 @@ import { RiskProfileModule } from '../risk-profile/risk-profile.module';
     DelegationController,
     SubmissionController,
     CaseController,
+    CaseTrackingOptionsController,
   ],
   providers: [
     TaskRepository,
@@ -50,6 +53,7 @@ import { RiskProfileModule } from '../risk-profile/risk-profile.module';
     DelegationService,
     EmailService,
     CaseService,
+    CaseTrackingOptionsService,
   ],
   exports: [
     TaskService,

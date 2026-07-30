@@ -383,7 +383,7 @@ export class SubjectRiskMonitorService {
           targetType: 'case',
           targetId: String(event.caseId),
           metadata: {
-            reviewAction: 'ASSIST',
+            reviewAction: 'CONTINUE',
             reason: 'subject_risk_signal',
             studentUuid: event.studentUuid,
             note: event.note,

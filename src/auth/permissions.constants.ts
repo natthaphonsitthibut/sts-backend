@@ -38,11 +38,10 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
   { id: 'edit-students', label: 'แก้ไขข้อมูลนักเรียน' },
   {
     id: 'case-management',
-    label: 'จัดการเคสช่วยเหลือ',
+    label: 'จัดการเคสติดตามนักเรียน',
     children: [
-      { id: 'review-cases', label: 'ดูเคสช่วยเหลือ' },
+      { id: 'review-cases', label: 'ดูเคสติดตามนักเรียน' },
       { id: 'assign-follow-up-cases', label: 'มอบหมายผู้ติดตามเคสในโรงเรียน' },
-      { id: 'report-up-cases', label: 'รายงานเคสขึ้นส่วนกลาง' },
       { id: 'close-case', label: 'ปิดเคส' },
     ],
   },
@@ -123,7 +122,6 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'edit-students',
       'review-cases',
       'assign-follow-up-cases',
-      'report-up-cases',
       'close-case',
       'create',
       'attendance',

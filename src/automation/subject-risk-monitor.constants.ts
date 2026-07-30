@@ -37,9 +37,4 @@ export const ATTENDANCE_RISK_CASE_REASON_PREFIXES = [
   'เวลาเรียนต่ำกว่า%',
 ] as const;
 
-export const ACTIVE_CASE_STATUSES = [
-  'OPEN',
-  'IN_PROGRESS',
-  'REPORTED_UP',
-  'PENDING_REVIEW',
-] as const;
+export const ACTIVE_CASE_STATUSES = ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW'] as const;

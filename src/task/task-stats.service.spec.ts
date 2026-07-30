@@ -84,7 +84,7 @@ describe('TaskStatsService', () => {
         totalStudents: 120,
         activeCases: 4,
         atRiskStudents: 9,
-        helpStats: {
+        caseTrackingStats: {
           waiting: 3,
           inProgress: 5,
           resolved: 12,

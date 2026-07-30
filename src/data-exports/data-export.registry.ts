@@ -218,7 +218,7 @@ export const DATA_EXPORT_CATALOG: DataExportCatalogItem[] = [
   },
   {
     code: 'case_summary',
-    label: 'สรุปเคสช่วยเหลือ',
+    label: 'สรุปเคสติดตามนักเรียน',
     description: 'จำนวนเคสตามสถานะ SLA พื้นที่ และช่วงเวลา โดยไม่รวมบันทึกละเอียด',
     sensitivityClass: 'AGGREGATE',
     formats: ['CSV'],
@@ -246,7 +246,7 @@ export const DATA_EXPORT_CATALOG: DataExportCatalogItem[] = [
   },
   {
     code: 'case_operational',
-    label: 'เคสช่วยเหลือเชิงปฏิบัติการ',
+    label: 'เคสติดตามนักเรียนเชิงปฏิบัติการ',
     description:
       'ข้อมูลติดตามงานเคสแบบลดข้อมูลอ่อนไหว ใช้ case reference, สถานะ, due/SLA และ outcome; ไม่รวมบันทึก ที่อยู่ พิกัด หรือลิงก์ลับ',
     sensitivityClass: 'SENSITIVE_OPERATIONAL',
@@ -416,34 +416,6 @@ export const DATA_EXPORT_CATALOG: DataExportCatalogItem[] = [
       'dateTo',
     ),
     requiredPermissions: ['export-data', 'manage-student-observations'],
-    purposePolicy: 'OPTIONAL',
-    deliveryMode: 'ASYNC_JOB',
-    status: 'AVAILABLE',
-  },
-  {
-    code: 'case_report_up_aggregate',
-    label: 'สรุปเคสที่รายงานขึ้นส่วนกลาง',
-    description: 'จำนวนเคสที่รายงานขึ้นตามวัน โรงเรียน และสถานะ โดยไม่มีเหตุผลหรือสรุปข้อความ',
-    sensitivityClass: 'AGGREGATE',
-    formats: ['CSV'],
-    fieldBundles: [
-      {
-        code: 'report-up-counts',
-        label: 'จำนวนการรายงานขึ้น',
-        description: 'จำนวนเคสตามวัน โรงเรียน และสถานะปัจจุบัน',
-      },
-    ],
-    supportedFilters: ['province', 'district', 'subDistrict', 'schoolId', 'status', 'dateRange'],
-    filterDefinitions: filterDefinitions(
-      'province',
-      'district',
-      'subDistrict',
-      'schoolId',
-      'status',
-      'dateFrom',
-      'dateTo',
-    ),
-    requiredPermissions: ['export-data', 'report-up-cases'],
     purposePolicy: 'OPTIONAL',
     deliveryMode: 'ASYNC_JOB',
     status: 'AVAILABLE',

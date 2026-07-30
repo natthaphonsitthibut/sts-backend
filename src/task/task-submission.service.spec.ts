@@ -1,10 +1,13 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
 import { TaskSubmissionService } from './task-submission.service';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 
 const STUDENT_IDS = [
   '00000000-0000-4000-8000-000000000001',
@@ -29,10 +32,20 @@ describe('TaskSubmissionService', () => {
       | 'lockLiveTaskLink'
       | 'listLinkedTimetableSlots'
       | 'getSystemSettingValue'
+      | 'insertTaskSubmission'
+      | 'updateCaseAfterSubmission'
+      | 'insertCaseReview'
+      | 'updateTaskStatus'
+      | 'updateTaskLinkStatus'
     >
   >;
   let attendanceWriteService: jest.Mocked<
     Pick<AttendanceWriteService, 'saveAttendanceGroupsWithinTransaction'>
+  >;
+  let notificationsService: { [k: string]: jest.Mock };
+  let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let trackingOptions: jest.Mocked<
+    Pick<CaseTrackingOptionsService, 'getFollowUpDecision' | 'assertResolutionOutcome'>
   >;
 
   beforeEach(() => {
@@ -46,11 +59,32 @@ describe('TaskSubmissionService', () => {
       lockLiveTaskLink: jest.fn().mockResolvedValue({ id: 'link-1' }),
       listLinkedTimetableSlots: jest.fn().mockResolvedValue([]),
       getSystemSettingValue: jest.fn().mockResolvedValue('SCHEDULED'),
+      insertTaskSubmission: jest.fn().mockResolvedValue(undefined),
+      updateCaseAfterSubmission: jest.fn().mockResolvedValue(true),
+      insertCaseReview: jest.fn().mockResolvedValue(undefined),
+      updateTaskStatus: jest.fn().mockResolvedValue(undefined),
+      updateTaskLinkStatus: jest.fn().mockResolvedValue(undefined),
     };
     attendanceWriteService = {
       saveAttendanceGroupsWithinTransaction: jest
         .fn()
         .mockResolvedValue([{ calendarConfigured: false, affectedStudentIds: STUDENT_IDS }]),
+    };
+    notificationsService = {
+      notifyCaseStatusChanged: jest.fn().mockResolvedValue(undefined),
+      notifyTaskSubmitted: jest.fn().mockResolvedValue(undefined),
+    };
+    auditLog = { record: jest.fn().mockResolvedValue(undefined) };
+    trackingOptions = {
+      getFollowUpDecision: jest.fn((code: string) =>
+        Promise.resolve({
+          code,
+          label: code === 'CLOSE_CASE' ? 'ปิดเคส' : 'ส่งให้ตรวจผล',
+          targetStatus: code === 'CLOSE_CASE' ? 'RESOLVED' : 'PENDING_REVIEW',
+          requiresResolutionOutcome: code === 'CLOSE_CASE',
+        }),
+      ),
+      assertResolutionOutcome: jest.fn((code: string | null) => Promise.resolve(code)),
     };
 
     service = new TaskSubmissionService(
@@ -58,6 +92,9 @@ describe('TaskSubmissionService', () => {
       taskAccessService as unknown as TaskAccessService,
       {} as AutomationService,
       attendanceWriteService as unknown as AttendanceWriteService,
+      notificationsService as unknown as NotificationsService,
+      auditLog as unknown as AuditLogService,
+      trackingOptions as unknown as CaseTrackingOptionsService,
     );
   });
 
@@ -167,5 +204,111 @@ describe('TaskSubmissionService', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(attendanceWriteService.saveAttendanceGroupsWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  it('sends a home-visit report for review without closing the case', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+
+    await service.saveTaskSubmission('public-token', {
+      cause_category: 'ATTENDANCE',
+      notes: 'พบผู้ปกครองแล้ว',
+      case_follow_up_decision: 'REQUEST_REVIEW',
+    });
+
+    expect(taskRepository.insertTaskSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caseFollowUpDecision: 'REQUEST_REVIEW',
+        caseResolutionOutcomeCode: null,
+      }),
+      undefined,
+    );
+    expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ caseId: 10, nextStatus: 'PENDING_REVIEW' }),
+      undefined,
+    );
+    expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
+    expect(auditLog.record).not.toHaveBeenCalled();
+  });
+
+  it('allows the home visitor to close a simple case with an outcome', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+
+    await service.saveTaskSubmission('public-token', {
+      notes: 'กลับมาเรียนแล้ว',
+      case_follow_up_decision: 'CLOSE_CASE',
+      case_resolution_outcome_code: 'RETURNED_TO_SCHOOL',
+    });
+
+    expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ caseId: 10, nextStatus: 'RESOLVED' }),
+      undefined,
+    );
+    expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caseId: 10,
+        reviewAction: 'CLOSE',
+        resolutionOutcome: 'RETURNED_TO_SCHOOL',
+        reviewedBy: 'ครูลงพื้นที่',
+      }),
+      undefined,
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CASE_CLOSE', targetId: '10' }),
+    );
+  });
+
+  it('rejects a stale visit report after the case has already transitioned', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+    taskRepository.updateCaseAfterSubmission.mockResolvedValueOnce(false);
+
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        notes: 'รายงานจากลิงก์เก่า',
+        case_follow_up_decision: 'REQUEST_REVIEW',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
+    expect(taskRepository.updateTaskStatus).not.toHaveBeenCalled();
+    expect(notificationsService.notifyCaseStatusChanged).not.toHaveBeenCalled();
   });
 });

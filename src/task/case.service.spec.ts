@@ -5,6 +5,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { CaseService } from './case.service';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
 function buildActor(
   permissions: string[],
@@ -34,7 +35,7 @@ describe('CaseService', () => {
       | 'createCase'
       | 'withTransaction'
       | 'insertCaseReview'
-      | 'updateCaseStatus'
+      | 'transitionPendingReviewCase'
       | 'findCaseReviewById'
       | 'claimCaseSlaWarnings'
       | 'claimCaseSlaBreaches'
@@ -66,11 +67,11 @@ describe('CaseService', () => {
       createCase: jest.fn().mockResolvedValue(10),
       withTransaction: jest.fn(async (callback) => await callback(undefined)),
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
-      updateCaseStatus: jest.fn().mockResolvedValue(undefined),
+      transitionPendingReviewCase: jest.fn().mockResolvedValue(true),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
         case_id: 10,
-        review_action: 'ASSIST',
+        review_action: 'CONTINUE',
         reviewed_by: 'ผอ. ทดสอบ',
       }),
       claimCaseSlaWarnings: jest.fn().mockResolvedValue([]),
@@ -91,6 +92,30 @@ describe('CaseService', () => {
       new TaskPolicyService({} as TaskRepository),
       auditLog as unknown as AuditLogService,
       notificationsService as unknown as NotificationsService,
+      {
+        getReviewAction: jest.fn((code: string) => {
+          if (code === 'CONTINUE') {
+            return Promise.resolve({
+              code,
+              label: 'ติดตามต่อ',
+              targetStatus: 'IN_PROGRESS',
+              requiresResolutionOutcome: false,
+              requiredPermission: 'review-cases',
+            });
+          }
+          if (code === 'CLOSE') {
+            return Promise.resolve({
+              code,
+              label: 'ปิดเคส',
+              targetStatus: 'RESOLVED',
+              requiresResolutionOutcome: true,
+              requiredPermission: 'close-case',
+            });
+          }
+          throw new Error('การดำเนินการกับเคสไม่ถูกต้อง');
+        }),
+        assertResolutionOutcome: jest.fn((code: string | null) => Promise.resolve(code)),
+      } as unknown as CaseTrackingOptionsService,
     );
   });
 
@@ -172,11 +197,11 @@ describe('CaseService', () => {
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
-  it('allows ASSIST with review-cases permission and ignores client reviewed_by', async () => {
+  it('allows CONTINUE with review-cases permission and ignores client reviewed_by', async () => {
     const result = await service.reviewCase(
       10,
       {
-        review_action: 'ASSIST',
+        review_action: 'CONTINUE',
         review_note: 'ติดตามต่อ',
         reviewed_by: 'client-forged-reviewer',
       },
@@ -187,7 +212,7 @@ describe('CaseService', () => {
     expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
       expect.objectContaining({
         caseId: 10,
-        reviewAction: 'ASSIST',
+        reviewAction: 'CONTINUE',
         reviewNote: 'ติดตามต่อ',
         reviewedBy: 'ผอ. ทดสอบ',
       }),
@@ -200,6 +225,52 @@ describe('CaseService', () => {
         targetId: '10',
       }),
     );
+  });
+
+  it('allows CLOSE with an outcome when the reviewer has both permissions', async () => {
+    taskRepository.findCaseReviewById.mockResolvedValueOnce({
+      id: 'closed-review-id',
+      case_id: 10,
+      review_action: 'CLOSE',
+      resolution_outcome: 'RETURNED_TO_SCHOOL',
+      reviewed_by: 'ผอ. ทดสอบ',
+    });
+
+    const result = await service.reviewCase(
+      10,
+      {
+        review_action: 'CLOSE',
+        review_note: 'ตรวจรายงานแล้ว ปิดเคสได้',
+        resolution_outcome: 'RETURNED_TO_SCHOOL',
+      },
+      buildActor(['review-cases', 'close-case']),
+    );
+
+    expect(result.case_status).toBe('RESOLVED');
+    expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
+      10,
+      'RESOLVED',
+      undefined,
+      expect.objectContaining({ id: 1 }),
+    );
+    expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caseId: 10,
+        reviewAction: 'CLOSE',
+        resolutionOutcome: 'RETURNED_TO_SCHOOL',
+        reviewedBy: 'ผอ. ทดสอบ',
+      }),
+      undefined,
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_CLOSE',
+      }),
+    );
+    expect(auditLog.record.mock.calls[0]?.[0].metadata).toEqual({
+      reviewAction: 'CLOSE',
+      resolutionOutcome: 'RETURNED_TO_SCHOOL',
+    });
   });
 
   it('rejects CLOSE without close-case permission before mutating', async () => {
@@ -219,7 +290,7 @@ describe('CaseService', () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'ASSIST', review_note: 'ไม่ควรทำได้' },
+        { review_action: 'CONTINUE', review_note: 'ไม่ควรทำได้' },
         buildActor(['review-cases'], { roles: ['EXECUTIVE'] }),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -247,7 +318,7 @@ describe('CaseService', () => {
         { review_action: 'FORWARD', review_note: 'legacy request' },
         buildActor(['review-cases']),
       ),
-    ).rejects.toThrow('review_action must be one of: ASSIST, CLOSE');
+    ).rejects.toThrow('การดำเนินการกับเคสไม่ถูกต้อง');
 
     expect(taskRepository.findCaseById).not.toHaveBeenCalled();
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();

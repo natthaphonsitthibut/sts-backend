@@ -880,8 +880,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         return await this.loadClassroomAssignments(job, limit, cursor);
       case 'observation_aggregate':
         return await this.loadObservationAggregate(job, limit, cursor);
-      case 'case_report_up_aggregate':
-        return await this.loadCaseReportUpAggregate(job, limit, cursor);
       default:
         throw new Error('Unsupported data export dataset');
     }
@@ -1105,18 +1103,18 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       `
         SELECT c.id AS case_id, c.student_uuid::text, c.student_first_name, c.student_last_name,
                sc.name AS school_name, c.status, c.reason_flagged, c.created_at, c.sla_due_at,
-               latest_report_up.report_reason AS latest_report_up_reason,
-               latest_report_up.report_summary AS latest_report_up_summary,
-               latest_report_up.reported_at AS latest_reported_up_at
+               latest_review.review_action AS latest_review_action,
+               latest_review.resolution_outcome AS latest_resolution_outcome,
+               latest_review.reviewed_at AS latest_reviewed_at
         FROM cases c
         LEFT JOIN schools sc ON sc.id = c.school_id
         LEFT JOIN LATERAL (
-          SELECT report_up.report_reason, report_up.report_summary, report_up.reported_at
-          FROM case_report_ups report_up
-          WHERE report_up.case_id = c.id
-          ORDER BY report_up.reported_at DESC
+          SELECT review.review_action, review.resolution_outcome, review.reviewed_at
+          FROM case_reviews review
+          WHERE review.case_id = c.id
+          ORDER BY review.reviewed_at DESC, review.id DESC
           LIMIT 1
-        ) latest_report_up ON TRUE
+        ) latest_review ON TRUE
         WHERE ${whereSql}
         ORDER BY c.id
         LIMIT $${params.length}
@@ -1134,9 +1132,9 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'reason_flagged',
         'created_at',
         'sla_due_at',
-        'latest_report_up_reason',
-        'latest_report_up_summary',
-        'latest_reported_up_at',
+        'latest_review_action',
+        'latest_resolution_outcome',
+        'latest_reviewed_at',
       ],
       rows: result.rows,
       nextCursor: this.cursorFromLastRow(result.rows, { caseId: 'case_id' }),
@@ -1482,62 +1480,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         schoolId: 'cursor_school_id',
         dimensionCode: 'dimension_code',
         concernLevel: 'concern_level',
-      }),
-    };
-  }
-
-  private async loadCaseReportUpAggregate(
-    job: DataExportJobRow,
-    limit: number,
-    cursor: ExportCursor | null,
-  ): Promise<ExportRowsResult> {
-    const scope = this.buildCaseScopeWhere(job.scope_snapshot, job.filter_snapshot);
-    const conditions = ['c.deleted_at IS NULL', scope.sql];
-    const params = [...scope.params];
-    if (job.filter_snapshot.dateFrom) {
-      conditions.push(
-        `report_up.reported_at::date >= $${params.push(job.filter_snapshot.dateFrom)}::date`,
-      );
-    }
-    if (job.filter_snapshot.dateTo) {
-      conditions.push(
-        `report_up.reported_at::date <= $${params.push(job.filter_snapshot.dateTo)}::date`,
-      );
-    }
-    if (cursor?.reportDate && cursor.schoolId && cursor.status) {
-      params.push(cursor.reportDate, cursor.schoolId, cursor.status);
-      conditions.push(`(report_up.reported_at::date, c.school_id, c.status)
-        > ($${params.length - 2}::date, $${params.length - 1}::integer, $${params.length}::text)`);
-    }
-    params.push(limit);
-    const result = await queryDataSource<Record<string, unknown>>(
-      this.dataSource,
-      `
-        SELECT report_up.reported_at::date::text AS report_date,
-               c.school_id AS cursor_school_id,
-               sc.name AS school_name,
-               sc.province,
-               sc.district,
-               c.status,
-               COUNT(*)::int AS case_count
-        FROM case_report_ups report_up
-        JOIN cases c ON c.id = report_up.case_id
-        JOIN schools sc ON sc.id = c.school_id
-        WHERE ${conditions.filter(Boolean).join(' AND ')}
-        GROUP BY report_up.reported_at::date, c.school_id, sc.name,
-                 sc.province, sc.district, c.status
-        ORDER BY report_up.reported_at::date, c.school_id, c.status
-        LIMIT $${params.length}
-      `,
-      params,
-    );
-    return {
-      headers: ['report_date', 'school_name', 'province', 'district', 'status', 'case_count'],
-      rows: result.rows,
-      nextCursor: this.cursorFromLastRow(result.rows, {
-        reportDate: 'report_date',
-        schoolId: 'cursor_school_id',
-        status: 'status',
       }),
     };
   }

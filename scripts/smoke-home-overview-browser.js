@@ -306,20 +306,13 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   assert(text.includes('ทั้งหมด'), `${label} student summary metric was missing`);
   if (expectations.risk) {
     assert(text.includes('เสี่ยงสูง'), `${label} risk metric was missing`);
-    assert(text.includes('การกระจายระดับความเสี่ยง'), `${label} risk chart was missing`);
-  } else {
-    assert(!text.includes('การกระจายระดับความเสี่ยง'), `${label} rendered risk chart without permission`);
   }
   if (expectations.cases) {
-    assert(text.includes('สถานะเคสช่วยเหลือ'), `${label} case pipeline chart was missing`);
-  } else {
-    assert(!text.includes('สถานะเคสช่วยเหลือ'), `${label} rendered case chart without permission`);
+    assert(text.includes('กำลังติดตาม'), `${label} active case metric was missing`);
   }
-  if (expectations.attendance) {
-    assert(text.includes('แนวโน้มการมาเรียน'), `${label} attendance trend was missing`);
-  } else {
-    assert(!text.includes('แนวโน้มการมาเรียน'), `${label} rendered attendance trend without permission`);
-  }
+  assert(!text.includes('แนวโน้มการมาเรียน'), `${label} rendered the retired attendance chart`);
+  assert(!text.includes('การกระจายระดับความเสี่ยง'), `${label} rendered the retired risk chart`);
+  assert(!text.includes('เคสเปิดใหม่เทียบปิดแล้ว'), `${label} rendered the retired case chart`);
   const hasExportNavigation = await evaluate(
     client,
     `Boolean(document.querySelector('a[href="/data-exports"]'))`,

@@ -16,19 +16,11 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
-import { OpenCaseDto, ReviewCaseDto, type CaseResolutionOutcome } from './dto/task.dto';
+import { OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 
-type ReviewAction = 'ASSIST' | 'CLOSE';
-const CASE_RESOLUTION_OUTCOMES: CaseResolutionOutcome[] = [
-  'RETURNED_TO_SCHOOL',
-  'TRANSFERRED_SCHOOL',
-  'ILLNESS',
-  'WORKING',
-  'UNREACHABLE',
-  'OTHER',
-];
 const CASE_SLA_REMINDER_CRON = '0 45 4 * * *';
 
 @Injectable()
@@ -40,6 +32,7 @@ export class CaseService {
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
     private readonly notificationsService: NotificationsService,
+    private readonly caseTrackingOptions: CaseTrackingOptionsService,
     private readonly riskProfileService?: RiskProfileService,
   ) {}
 
@@ -67,35 +60,13 @@ export class CaseService {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  private normalizeAction(action: unknown): ReviewAction {
-    const normalized = this.normalizeText(action).toUpperCase();
-    if (normalized === 'ASSIST') return 'ASSIST';
-    if (normalized === 'CLOSE') return 'CLOSE';
-    throw new Error('review_action must be one of: ASSIST, CLOSE');
-  }
-
-  private normalizeResolutionOutcome(value: unknown): CaseResolutionOutcome | null {
-    const normalized = this.normalizeText(value).toUpperCase();
-    if (!normalized) {
-      return null;
-    }
-    if (CASE_RESOLUTION_OUTCOMES.includes(normalized as CaseResolutionOutcome)) {
-      return normalized as CaseResolutionOutcome;
-    }
-    throw new BadRequestException('resolution_outcome is invalid');
-  }
-
-  private getCaseStatusByAction(action: ReviewAction): string {
-    if (action === 'CLOSE') return 'RESOLVED';
-    return 'IN_PROGRESS'; // ASSIST — วนกลับเข้ากระบวนการติดตามใหม่
-  }
-
-  private assertCanReviewCaseAction(actor: AuthenticatedRequestUser, action: ReviewAction): void {
+  private assertCanReviewCaseAction(
+    actor: AuthenticatedRequestUser,
+    requiredPermission: string,
+  ): void {
     if (!this.taskPolicyService.hasPermission(actor, 'review-cases')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
     }
-
-    const requiredPermission = action === 'CLOSE' ? 'close-case' : 'review-cases';
 
     if (!this.taskPolicyService.hasPermission(actor, requiredPermission)) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
@@ -125,6 +96,41 @@ export class CaseService {
       task_id: this.normalizeText(row.task_id) || null,
       created_at: row.created_at ?? null,
       updated_at: row.updated_at ?? null,
+    };
+  }
+
+  private mapFollowUpRound(row: Record<string, unknown>) {
+    return {
+      task_id: this.normalizeText(row.task_id),
+      task_status: this.normalizeText(row.task_status),
+      created_at: row.created_at ?? null,
+      initial_assignee: this.normalizeText(row.initial_assignee) || null,
+      link_count: this.normalizeNumber(row.link_count) ?? 0,
+      submitted_at: row.submitted_at ?? null,
+      cause_category: this.normalizeText(row.cause_category) || null,
+      cause_detail: this.normalizeText(row.cause_detail) || null,
+      recommendation: this.normalizeText(row.recommendation) || null,
+      visit_lat: row.visit_lat ?? null,
+      visit_lng: row.visit_lng ?? null,
+      photo_paths: this.normalizeText(row.photo_paths) || null,
+      address_changed: row.address_changed === true,
+      updated_student_address: this.normalizeText(row.updated_student_address) || null,
+      updated_lat: row.updated_lat ?? null,
+      updated_lng: row.updated_lng ?? null,
+      follow_up_decision: this.normalizeText(row.case_follow_up_decision) || null,
+      resolution_outcome: this.normalizeText(row.case_resolution_outcome_code) || null,
+    };
+  }
+
+  private mapCaseReview(row: Record<string, unknown>) {
+    return {
+      id: this.normalizeText(row.id),
+      review_action: this.normalizeText(row.review_action),
+      review_note: this.normalizeText(row.review_note) || null,
+      review_summary: this.normalizeText(row.review_summary) || null,
+      resolution_outcome: this.normalizeText(row.resolution_outcome) || null,
+      reviewed_by: this.normalizeText(row.reviewed_by) || null,
+      reviewed_at: row.reviewed_at ?? null,
     };
   }
 
@@ -240,7 +246,18 @@ export class CaseService {
     if (!detail) {
       throw new NotFoundException('Case not found');
     }
-    return { success: true, data: this.mapCaseDetail(detail) };
+    const [rounds, reviews] = await Promise.all([
+      this.taskRepository.listTasksByCase(caseId),
+      this.taskRepository.listCaseReviews(caseId),
+    ]);
+    return {
+      success: true,
+      data: {
+        ...this.mapCaseDetail(detail),
+        follow_up_rounds: rounds.map((round) => this.mapFollowUpRound(round)),
+        reviews: reviews.map((review) => this.mapCaseReview(review)),
+      },
+    };
   }
 
   async remindCaseSla(now = new Date()): Promise<{ warned: number; breached: number }> {
@@ -294,16 +311,22 @@ export class CaseService {
     if (isRestrictedExecutive(currentActor)) {
       throw new ForbiddenException('บัญชีผู้บริหารไม่มีสิทธิ์ดำเนินการกับเคสรายบุคคล');
     }
-    const reviewAction = this.normalizeAction(body.review_action);
-    this.assertCanReviewCaseAction(currentActor, reviewAction);
+    const reviewActionCode = this.normalizeText(body.review_action).toUpperCase();
+    const reviewAction = await this.caseTrackingOptions.getReviewAction(reviewActionCode);
+    this.assertCanReviewCaseAction(currentActor, reviewAction.requiredPermission);
     const reviewNote = clean(this.normalizeText(body.review_note)) || null;
-    const resolutionOutcome = this.normalizeResolutionOutcome(body.resolution_outcome);
-    if (reviewAction === 'CLOSE' && !resolutionOutcome) {
+    const resolutionOutcome = await this.caseTrackingOptions.assertResolutionOutcome(
+      this.normalizeText(body.resolution_outcome).toUpperCase() || null,
+    );
+    if (reviewAction.requiresResolutionOutcome && !resolutionOutcome) {
       throw new BadRequestException('resolution_outcome is required for CLOSE');
     }
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     const reviewedBy = actorName || actor?.username || 'ผอ.';
-    const nextStatus = this.getCaseStatusByAction(reviewAction);
+    if (!reviewAction.targetStatus) {
+      throw new BadRequestException('การดำเนินการนี้ไม่มีสถานะปลายทาง');
+    }
+    const nextStatus = reviewAction.targetStatus;
     const reviewId = crypto.randomUUID();
 
     try {
@@ -312,30 +335,40 @@ export class CaseService {
         throw new Error('Case not found');
       }
       await this.taskRepository.withTransaction(async (executor) => {
+        const transitioned = await this.taskRepository.transitionPendingReviewCase(
+          caseId,
+          nextStatus,
+          executor,
+          currentActor,
+        );
+        if (!transitioned) {
+          throw new BadRequestException('เคสนี้ไม่ได้อยู่ในสถานะรอตรวจผลแล้ว');
+        }
         await this.taskRepository.insertCaseReview(
           {
             reviewId,
             caseId,
-            reviewAction,
+            reviewAction: reviewAction.code,
             reviewNote,
-            resolutionOutcome: reviewAction === 'CLOSE' ? resolutionOutcome : null,
+            reviewSummary: null,
+            resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
             reviewedBy,
+            sourceActorUserId: resolveAuditActorId(actor),
           },
           executor,
         );
-        await this.taskRepository.updateCaseStatus(caseId, nextStatus, executor, currentActor);
       });
 
       const reviewRecord = await this.taskRepository.findCaseReviewById(reviewId);
       await this.auditLog.record({
         actorUserId: resolveAuditActorId(actor),
         actorLabel: this.actorLabel(actor),
-        action: reviewAction === 'CLOSE' ? 'CASE_CLOSE' : 'CASE_REVIEW',
+        action: reviewAction.code === 'CLOSE' ? 'CASE_CLOSE' : 'CASE_REVIEW',
         targetType: 'case',
         targetId: String(caseId),
         metadata: {
-          reviewAction,
-          resolutionOutcome: reviewAction === 'CLOSE' ? resolutionOutcome : null,
+          reviewAction: reviewAction.code,
+          resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
         },
         ip: null,
       });

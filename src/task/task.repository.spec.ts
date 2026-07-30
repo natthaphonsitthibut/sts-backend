@@ -168,12 +168,7 @@ describe('TaskRepository', () => {
 
     expect(count).toBe(2);
     expect(queries).toHaveLength(1);
-    expect(queries[0].params).toEqual([
-      ['OPEN', 'IN_PROGRESS', 'REPORTED_UP', 'PENDING_REVIEW'],
-      [101],
-      [6],
-      7,
-    ]);
+    expect(queries[0].params).toEqual([['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW'], [101], [6], 7]);
     expect(queries[0].sql).toContain('count(DISTINCT CASE');
     expect(queries[0].sql).toContain('c.status = ANY($1::text[])');
     expect(queries[0].sql).toContain('c.school_id = ANY($2::int[])');
@@ -419,5 +414,34 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('CASE_SLA_BREACHED');
     expect(queries[0].sql).toContain('c.sla_due_at < $1::timestamptz');
     expect(queries[0].sql).not.toContain('sla_warning_notified_at IS NOT NULL');
+  });
+
+  it('transitions a case from an active tracking status only', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const executor = {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { rows: [{ id: 10 }], rowCount: 1 };
+      }),
+    };
+    const repository = new TaskRepository({} as never, undefined as never, undefined as never);
+
+    await expect(
+      repository.updateCaseAfterSubmission(
+        {
+          caseId: 10,
+          nextStatus: 'PENDING_REVIEW',
+          nextSummary: 'รายงานการติดตาม',
+          updatedStudentAddress: null,
+          updatedLat: null,
+          updatedLng: null,
+        },
+        executor as never,
+      ),
+    ).resolves.toBe(true);
+
+    expect(queries[0].sql).toContain("status IN ('OPEN', 'IN_PROGRESS')");
+    expect(queries[0].sql).toContain('RETURNING id');
+    expect(queries[0].params).toEqual(['PENDING_REVIEW', 'รายงานการติดตาม', null, null, null, 10]);
   });
 });

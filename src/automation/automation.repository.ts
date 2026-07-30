@@ -488,7 +488,7 @@ export class AutomationRepository {
           review_note,
           reviewed_by
         )
-        VALUES (gen_random_uuid()::text, $1, 'ASSIST', $2, $3)
+        VALUES (gen_random_uuid()::text, $1, 'CONTINUE', $2, $3)
       `,
       [caseId, reviewNote, 'system:subject-risk-monitor'],
     );

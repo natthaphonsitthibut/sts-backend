@@ -558,7 +558,7 @@ async function main() {
 
     // --- Cases history: same shared panel wired to a different domain ---
     await navigate(client, `${FRONTEND_URL}/cases/history`);
-    await waitForHistoryPanel(client, 'ประวัติเคสช่วยเหลือนักเรียน');
+    await waitForHistoryPanel(client, 'ประวัติเคสติดตามนักเรียน');
     assertNoSecretLeak(await bodyText(client), 'Cases history');
     await capture(client, '/tmp/sts-entity-history-cases-desktop.png');
 

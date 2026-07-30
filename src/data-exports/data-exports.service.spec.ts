@@ -221,17 +221,12 @@ describe('DataExportsService', () => {
     expect(repository.createJob).not.toHaveBeenCalled();
   });
 
-  it('publishes minimized school, observation, and report-up products by permission', async () => {
+  it('publishes minimized school and observation products by permission', async () => {
     const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
       roles: ['ADMIN'],
-      permissions: [
-        'export-data',
-        'manage-school-structure',
-        'manage-student-observations',
-        'report-up-cases',
-      ],
+      permissions: ['export-data', 'manage-school-structure', 'manage-student-observations'],
       data_scope: { global: true },
     });
 
@@ -241,7 +236,6 @@ describe('DataExportsService', () => {
         'school_classroom_structure',
         'classroom_assignments',
         'observation_aggregate',
-        'case_report_up_aggregate',
       ]),
     );
     for (const item of result.data.filter((candidate) => candidate.deliveryMode === 'ASYNC_JOB')) {
@@ -557,11 +551,6 @@ describe('DataExportsService', () => {
         concernLevel: 'WATCH',
       },
       'observation.observed_at::date',
-    ],
-    [
-      'case_report_up_aggregate',
-      { reportDate: '2026-07-01', schoolId: 1, status: 'REPORTED_UP' },
-      'report_up.reported_at::date',
     ],
   ])('uses a stable keyset query for %s', async (datasetCode, cursor, keysetSql) => {
     const query = jest.fn().mockResolvedValue({ records: [], affected: 0 });

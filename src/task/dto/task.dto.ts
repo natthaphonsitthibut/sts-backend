@@ -187,6 +187,14 @@ export class SaveTaskAttendanceDto {
 // ValidationPipe whitelist. (Primary submit flow is multipart via SubmissionController.)
 export class SaveTaskSubmissionDto {
   @IsOptional()
+  @IsString()
+  case_follow_up_decision?: string | null;
+
+  @IsOptional()
+  @IsString()
+  case_resolution_outcome_code?: string | null;
+
+  @IsOptional()
   visit_lat?: string | number | null;
 
   @IsOptional()
@@ -248,7 +256,6 @@ export class DelegateTaskDto {
 export class ReviewCaseDto {
   @IsString()
   @IsNotEmpty()
-  @IsIn(['ASSIST', 'CLOSE'])
   review_action?: string | null;
 
   @IsOptional()

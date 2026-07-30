@@ -554,9 +554,12 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
     ('OPEN', 'รอสร้างลิงก์', 'secondary', 'default', 10),
     ('PENDING_REVIEW', 'รอตรวจผล', 'default', 'info', 20),
     ('IN_PROGRESS', 'กำลังติดตาม', 'warning', 'warning', 30),
-    ('REPORTED_UP', 'รายงานขึ้นส่วนกลางแล้ว', 'destructive', 'danger', 45),
     ('RESOLVED', 'ปิดเคสแล้ว', 'success', 'success', 50)
   ON CONFLICT (code) DO NOTHING;
+  UPDATE cases
+  SET status = 'PENDING_REVIEW'
+  WHERE status IN ('REPORTED_UP', 'AWAITING_HELP');
+  DELETE FROM case_workflow_statuses WHERE code IN ('REPORTED_UP', 'AWAITING_HELP');
   ALTER TABLE cases DROP CONSTRAINT IF EXISTS chk_cases_status;
   DO $case_workflow_status_fk$
   BEGIN
@@ -569,6 +572,125 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
         ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
   END $case_workflow_status_fk$;
+`;
+
+export const CASE_TRACKING_DECISION_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS case_resolution_outcomes (
+    code VARCHAR(40) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_case_resolution_outcomes_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_case_resolution_outcomes_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('case_resolution_outcomes')}
+  INSERT INTO case_resolution_outcomes (code, label_th, sort_order) VALUES
+    ('RETURNED_TO_SCHOOL', 'กลับมาเรียนแล้ว', 10),
+    ('TRANSFERRED_SCHOOL', 'ย้ายสถานศึกษา', 20),
+    ('ILLNESS', 'เจ็บป่วย/รักษาตัว', 30),
+    ('WORKING', 'ทำงานหรือมีภาระครอบครัว', 40),
+    ('UNREACHABLE', 'ติดต่อไม่ได้', 50),
+    ('OTHER', 'อื่น ๆ', 60)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS case_review_actions (
+    code VARCHAR(24) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    target_case_status_code VARCHAR(32) NOT NULL,
+    requires_resolution_outcome BOOLEAN NOT NULL DEFAULT FALSE,
+    required_permission_code VARCHAR(64) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT fk_case_review_actions_target_status
+      FOREIGN KEY (target_case_status_code) REFERENCES case_workflow_statuses(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_case_review_actions_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_case_review_actions_permission CHECK (length(trim(required_permission_code)) > 0),
+    CONSTRAINT chk_case_review_actions_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('case_review_actions')}
+  INSERT INTO case_review_actions (
+    code, label_th, target_case_status_code, requires_resolution_outcome,
+    required_permission_code, sort_order
+  ) VALUES
+    ('CONTINUE', 'ติดตามต่อ', 'IN_PROGRESS', FALSE, 'review-cases', 10),
+    ('CLOSE', 'ปิดเคส', 'RESOLVED', TRUE, 'close-case', 20)
+  ON CONFLICT (code) DO NOTHING;
+  UPDATE case_reviews SET review_action = 'CONTINUE' WHERE UPPER(review_action) = 'ASSIST';
+
+  CREATE TABLE IF NOT EXISTS case_follow_up_decisions (
+    code VARCHAR(24) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    target_case_status_code VARCHAR(32) NOT NULL,
+    requires_resolution_outcome BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT fk_case_follow_up_decisions_target_status
+      FOREIGN KEY (target_case_status_code) REFERENCES case_workflow_statuses(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_case_follow_up_decisions_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_case_follow_up_decisions_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('case_follow_up_decisions')}
+  INSERT INTO case_follow_up_decisions (
+    code, label_th, target_case_status_code, requires_resolution_outcome, sort_order
+  ) VALUES
+    ('REQUEST_REVIEW', 'ส่งให้ตรวจผล', 'PENDING_REVIEW', FALSE, 10),
+    ('CLOSE_CASE', 'ปิดเคส', 'RESOLVED', TRUE, 20)
+  ON CONFLICT (code) DO NOTHING;
+
+  ALTER TABLE task_submissions
+    ADD COLUMN IF NOT EXISTS case_follow_up_decision VARCHAR(24),
+    ADD COLUMN IF NOT EXISTS case_resolution_outcome_code VARCHAR(40);
+  ALTER TABLE case_reviews
+    ADD COLUMN IF NOT EXISTS review_summary VARCHAR(2000),
+    ADD COLUMN IF NOT EXISTS source_actor_user_id INTEGER;
+  ALTER TABLE case_reviews DROP CONSTRAINT IF EXISTS chk_case_reviews_resolution_outcome;
+  UPDATE case_reviews
+  SET resolution_outcome = 'OTHER'
+  WHERE review_action = 'CLOSE' AND resolution_outcome IS NULL;
+  DO $case_tracking_fks$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_case_reviews_action') THEN
+      ALTER TABLE case_reviews ADD CONSTRAINT fk_case_reviews_action
+        FOREIGN KEY (review_action) REFERENCES case_review_actions(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_case_reviews_resolution_outcome') THEN
+      ALTER TABLE case_reviews ADD CONSTRAINT fk_case_reviews_resolution_outcome
+        FOREIGN KEY (resolution_outcome) REFERENCES case_resolution_outcomes(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_case_reviews_source_actor') THEN
+      ALTER TABLE case_reviews ADD CONSTRAINT fk_case_reviews_source_actor
+        FOREIGN KEY (source_actor_user_id) REFERENCES users(id)
+        ON DELETE SET NULL ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_submissions_follow_up_decision') THEN
+      ALTER TABLE task_submissions ADD CONSTRAINT fk_task_submissions_follow_up_decision
+        FOREIGN KEY (case_follow_up_decision) REFERENCES case_follow_up_decisions(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_submissions_resolution_outcome') THEN
+      ALTER TABLE task_submissions ADD CONSTRAINT fk_task_submissions_resolution_outcome
+        FOREIGN KEY (case_resolution_outcome_code) REFERENCES case_resolution_outcomes(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $case_tracking_fks$;
+  ALTER TABLE case_reviews DROP CONSTRAINT IF EXISTS chk_case_reviews_action_outcome;
+  ALTER TABLE case_reviews ADD CONSTRAINT chk_case_reviews_action_outcome CHECK (
+    (review_action = 'CONTINUE' AND resolution_outcome IS NULL)
+    OR (review_action = 'CLOSE' AND resolution_outcome IS NOT NULL)
+  );
+  ALTER TABLE task_submissions DROP CONSTRAINT IF EXISTS chk_task_submission_case_decision;
+  ALTER TABLE task_submissions ADD CONSTRAINT chk_task_submission_case_decision CHECK (
+    (case_follow_up_decision IS NULL AND case_resolution_outcome_code IS NULL)
+    OR (case_follow_up_decision = 'REQUEST_REVIEW' AND case_resolution_outcome_code IS NULL)
+    OR (case_follow_up_decision = 'CLOSE_CASE' AND case_resolution_outcome_code IS NOT NULL)
+  );
 `;
 
 export const STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL = `
@@ -1332,35 +1454,6 @@ export const DATABASE_BASELINE_SQL = `
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
-  CREATE TABLE IF NOT EXISTS case_report_ups (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    case_id INTEGER NOT NULL,
-    school_id INTEGER,
-    reported_by INTEGER,
-    reported_by_label VARCHAR(255),
-    report_reason VARCHAR(500),
-    report_summary VARCHAR(2000),
-    school_name_snapshot VARCHAR(255),
-    province_snapshot VARCHAR(255),
-    district_snapshot VARCHAR(255),
-    sub_district_snapshot VARCHAR(255),
-    reported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_case_report_ups_case UNIQUE (case_id),
-    CONSTRAINT fk_case_report_ups_case
-      FOREIGN KEY (case_id) REFERENCES cases(id)
-      ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_case_report_ups_school
-      FOREIGN KEY (school_id) REFERENCES schools(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_case_report_ups_reported_by
-      FOREIGN KEY (reported_by) REFERENCES users(id)
-      ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT chk_case_report_ups_reason
-      CHECK (report_reason IS NULL OR length(trim(report_reason)) > 0),
-    CONSTRAINT chk_case_report_ups_summary
-      CHECK (report_summary IS NULL OR length(trim(report_summary)) > 0)
-  );
-
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "PersonID_Onec" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "FirstName" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "LastName" TEXT;
@@ -1471,12 +1564,6 @@ export const DATABASE_BASELINE_SQL = `
       );
     END IF;
   END $case_review_outcome$;
-  CREATE INDEX IF NOT EXISTS idx_case_report_ups_case_time
-    ON case_report_ups (case_id, reported_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_case_report_ups_school_time
-    ON case_report_ups (school_id, reported_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_case_report_ups_province_time
-    ON case_report_ups (province_snapshot, reported_at DESC);
   CREATE INDEX IF NOT EXISTS idx_cases_school_id ON cases(school_id);
   CREATE INDEX IF NOT EXISTS idx_cases_student_uuid ON cases(student_uuid);
   CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance("AttendanceDate");
@@ -2066,6 +2153,8 @@ export const DATABASE_BASELINE_SQL = `
   ${CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL}
 
   ${CASE_WORKFLOW_STATUS_TABLE_SQL}
+
+  ${CASE_TRACKING_DECISION_TABLES_SQL}
 
   ${OPERATIONAL_STATUS_CATALOG_TABLES_SQL}
 

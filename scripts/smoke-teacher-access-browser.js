@@ -96,10 +96,13 @@ async function evaluate(client, expression) {
     returnByValue: true,
   });
   if (result.exceptionDetails) {
+    const selectors = [...expression.matchAll(/#[A-Za-z0-9_-]+/g)].map(([selector]) => selector);
     throw new Error(
-      result.exceptionDetails.exception?.description ||
+      `${
+        result.exceptionDetails.exception?.description ||
         result.exceptionDetails.text ||
-        'Browser expression failed',
+        'Browser expression failed'
+      }; selectors=${JSON.stringify([...new Set(selectors)])}`,
     );
   }
   return result.result?.value;
@@ -115,15 +118,36 @@ async function navigate(client, url) {
 
 async function clickButton(client, label, withinDialog = false) {
   const expression = `(() => {
-    const root = ${withinDialog ? "document.querySelector('[role=dialog]')" : 'document'};
-    return [...(root?.querySelectorAll('button') || [])]
-      .find((button) => button.textContent.trim() === ${JSON.stringify(label)});
+    const roots = ${withinDialog
+      ? "[...document.querySelectorAll('[role=dialog]')].filter((dialog) => dialog.getClientRects().length > 0)"
+      : '[document]'};
+    return roots
+      .flatMap((root) => [...root.querySelectorAll('button')])
+      .find((button) => button.innerText.trim() === ${JSON.stringify(label)});
   })()`;
-  await waitFor(
-    async () =>
-      Boolean(await evaluate(client, `Boolean(${expression} && !${expression}.disabled)`)),
-    `Enabled button “${label}” was not found`,
-  );
+  try {
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(${expression} && !${expression}.disabled)`)),
+      `Enabled button “${label}” was not found`,
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      client,
+      `({
+        buttons: [...document.querySelectorAll('button')].map((button) => ({
+          text: button.innerText.trim(),
+          disabled: button.disabled,
+          visible: button.getClientRects().length > 0,
+        })),
+        dialogs: [...document.querySelectorAll('[role=dialog]')].map((dialog) => ({
+          visible: dialog.getClientRects().length > 0,
+          text: dialog.textContent.trim().slice(0, 500),
+        })),
+      })`,
+    );
+    throw new Error(`${errorMessage(error)}; diagnostic=${JSON.stringify(diagnostic)}`);
+  }
   await evaluate(client, `${expression}.scrollIntoView({ block: 'center', inline: 'center' })`);
   await waitFor(
     async () =>
@@ -159,6 +183,16 @@ async function clickButton(client, label, withinDialog = false) {
     button: 'left',
     clickCount: 1,
   });
+}
+
+async function clickLink(client, label) {
+  const expression = `([...document.querySelectorAll('a')]
+    .find((link) => link.innerText.trim() === ${JSON.stringify(label)}))`;
+  await waitFor(
+    async () => Boolean(await evaluate(client, `Boolean(${expression})`)),
+    `Link “${label}” was not found`,
+  );
+  await evaluate(client, `${expression}.click()`);
 }
 
 async function setSelectByOptionText(client, selector, optionText) {
@@ -466,7 +500,6 @@ async function cleanup(dataSource) {
         [caseIds],
       );
       await dataSource.query(`DELETE FROM tasks WHERE case_id = ANY($1::int[])`, [caseIds]);
-      await dataSource.query(`DELETE FROM case_report_ups WHERE case_id = ANY($1::int[])`, [caseIds]);
       await dataSource.query(`DELETE FROM case_reviews WHERE case_id = ANY($1::int[])`, [caseIds]);
       await dataSource.query(`DELETE FROM cases WHERE id = ANY($1::int[])`, [caseIds]);
     }
@@ -515,8 +548,8 @@ async function cleanup(dataSource) {
       adminId,
     ]);
     await dataSource.query(
-      `DELETE FROM school_classrooms WHERE created_by = $1 AND room_code LIKE $2`,
-      [adminId, `${FIXTURE_PREFIX}%`],
+      `DELETE FROM school_classrooms WHERE created_by = $1`,
+      [adminId],
     );
     await dataSource.query(
       `DELETE FROM school_calendar_days WHERE created_by = $1 AND reason = $2`,
@@ -620,7 +653,7 @@ async function createFixture(dataSource, actors) {
       term.school_id,
       grade.id,
       roomNumber,
-      `${FIXTURE_PREFIX}${suffix}`,
+      String(roomNumber),
       roomName,
       actors.admin.id,
     ],
@@ -843,7 +876,7 @@ async function main() {
           'create',
           'assign-follow-up-cases',
           'review-cases',
-          'report-up-cases',
+          'close-case',
         ],
         dataScope: { school_ids: [Number(initialSchool.id)] },
       }),
@@ -1046,7 +1079,7 @@ async function main() {
         });
       })()`,
     );
-    await clickButton(client, 'ออกลิงก์', true);
+    await clickButton(client, 'ออกลิงก์');
     await waitFor(
       async () =>
         String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์พร้อมส่งให้ครู'),
@@ -1237,7 +1270,7 @@ async function main() {
     await navigate(client, `${FRONTEND_URL}/students/${fixture.students[0].studentUuid}`);
     await waitFor(
       async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes('คำขอติดตามจากครู'),
+        String(await evaluate(client, 'document.body.innerText')).includes('คำขอเยี่ยมบ้านจากครู'),
       'Manager student detail did not render the follow-up review panel',
     );
     await waitFor(
@@ -1265,13 +1298,18 @@ async function main() {
     );
     await waitFor(
       async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes('สร้างงานเยี่ยมบ้าน'),
-      'Approved follow-up did not become assignable in the manager UI',
+        String(await evaluate(client, 'document.body.innerText')).includes('ไปหน้าเคส'),
+      'Approved follow-up did not expose the opened case in the manager UI',
     );
-    await evaluate(
-      client,
-      `([...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'สร้างงานเยี่ยมบ้าน'))?.click()`,
+    await clickButton(client, 'ไปหน้าเคส');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          fixture.students[0].name,
+        ),
+      'Approved follow-up case did not appear in the case list',
     );
+    await clickButton(client, 'สร้างลิงก์');
     try {
       await waitFor(
         async () =>
@@ -1378,7 +1416,7 @@ async function main() {
         }
       })()`,
     );
-    await clickButton(client, 'บันทึกและส่งรายงาน');
+    await clickButton(client, 'ส่งให้ตรวจผล');
     await waitFor(
       async () =>
         String(await evaluate(client, 'document.body.innerText')).includes('บันทึกสำเร็จ'),
@@ -1399,19 +1437,24 @@ async function main() {
         ),
       'Submitted visit case did not appear in the manager case queue',
     );
-    await clickButton(client, 'ดำเนินการ');
+    await clickLink(client, 'ดูรายละเอียด');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('รายงานการติดตาม'),
+      'Case detail did not show the submitted home-visit report',
+    );
+    await clickButton(client, 'พิจารณาผล');
     await waitFor(
       async () =>
         Boolean(await evaluate(client, `Boolean(document.querySelector('#case-action'))`)),
       'Case workflow dialog did not open after visit submission',
     );
-    await setSelectByOptionText(client, '#case-action', 'รายงานขึ้นส่วนกลาง');
+    await setSelectByOptionText(client, '#case-action', 'ติดตามต่อ');
     await evaluate(
       client,
       `(() => {
         for (const [selector, value] of Object.entries({
-          '#case-note': 'Automated browser smoke report-up reason',
-          '#case-report-summary': 'Automated browser smoke report-up summary',
+          '#case-note': 'Automated browser smoke continue reason',
         })) {
           const input = document.querySelector(selector);
           const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
@@ -1420,14 +1463,83 @@ async function main() {
         }
       })()`,
     );
-    await clickButton(client, 'บันทึก', true);
+    await clickButton(client, 'ติดตามต่อ', true);
     await waitFor(
       async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes(
-          'รายงานขึ้นส่วนกลางแล้ว',
-        ),
-      'Unresolved submitted visit case did not report up through the manager UI',
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#assigned_to_name'))`)),
+      'Continue decision did not open the next follow-up round form',
     );
+    await evaluate(
+      client,
+      `(() => {
+        for (const [selector, value] of Object.entries({
+          '#assigned_to_name': 'Teacher Access Browser Follow-up Visitor',
+          '#assigned_to_email': 'teacher-access-browser-follow-up@example.invalid',
+        })) {
+          const input = document.querySelector(selector);
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          setter.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()`,
+    );
+    await clickButton(client, 'สร้างลิงก์');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์สำเร็จ'),
+      'Next follow-up round did not create a visit link',
+    );
+    const followUpVisitLink = await evaluate(
+      client,
+      `([...document.querySelectorAll('a')].find((link) => link.textContent.includes('เปิดลิงก์'))?.href) || null`,
+    );
+    assert(typeof followUpVisitLink === 'string', 'Next follow-up round did not expose a guest link');
+    const [followUpVisit] = await dataSource.query(
+      `
+        SELECT link.id::text AS link_id
+        FROM task_links link
+        WHERE link.assigned_to_email = $1
+        ORDER BY link.created_at DESC
+        LIMIT 1
+      `,
+      ['teacher-access-browser-follow-up@example.invalid'],
+    );
+    assert(followUpVisit?.link_id, 'Next follow-up task link was not persisted');
+    await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1::uuid`, [
+      followUpVisit.link_id,
+    ]);
+    const followUpVisitToken = new URL(followUpVisitLink).pathname.split('/').filter(Boolean).at(-1);
+    assert(followUpVisitToken, 'Next follow-up guest link did not contain a token');
+    await navigate(client, `${FRONTEND_URL}/task/${followUpVisitToken}/report`);
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#cause-category'))`)),
+      'Next follow-up report form did not render',
+    );
+    await setSelectByOptionText(client, '#cause-category', 'อื่นๆ');
+    await setSelectByOptionText(client, '#follow-up-decision', 'ปิดเคส');
+    await setSelectByOptionText(client, '#resolution-outcome', 'กลับมาเรียนแล้ว');
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#cause-detail');
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(input, 'Automated browser smoke direct close result');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await clickButton(client, 'ปิดเคส');
+    await clickButton(client, 'ปิดเคส', true);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('บันทึกสำเร็จ'),
+      'Home visitor could not close the simple follow-up case',
+    );
+    const [closedCase] = await dataSource.query(`SELECT status FROM cases WHERE id = $1`, [
+      assignedVisit.case_id,
+    ]);
+    assert(closedCase?.status === 'RESOLVED', 'Direct close did not resolve the tracked case');
 
     await navigate(client, original.link);
     await waitFor(
@@ -1602,7 +1714,7 @@ async function main() {
           'fragment stripping and no token local/session/body storage',
           'P4 scoped observation write and provenance',
           'P4 teacher follow-up request and manager approval',
-          'P6 approved visit assignment, guest report, and unresolved report-up',
+          'visit report request-review, manager continue, next-round link, and direct close',
           'full homeroom attendance submit and teacher attribution',
           'full-link reopen',
           'rotate denies old link and enables new link',

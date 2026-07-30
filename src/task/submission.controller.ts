@@ -76,6 +76,8 @@ export class SubmissionController {
       updated_lat: this.parseOptionalNumber(body.updated_lat),
       updated_lng: this.parseOptionalNumber(body.updated_lng),
       photo_paths: JSON.stringify(photoPaths),
+      case_follow_up_decision: body.case_follow_up_decision,
+      case_resolution_outcome_code: body.case_resolution_outcome_code,
     };
 
     try {

@@ -11,6 +11,8 @@ import { AutomationService } from '../automation/automation.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import * as crypto from 'crypto';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { hashToken } from '../common/utils/helpers';
 import {
@@ -21,6 +23,7 @@ import {
 import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
 import type { QueryExecutor } from './task.types';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
 @Injectable()
 export class TaskSubmissionService {
@@ -32,6 +35,8 @@ export class TaskSubmissionService {
     private readonly automationService: AutomationService,
     private readonly attendanceWriteService: AttendanceWriteService,
     private readonly notificationsService: NotificationsService,
+    private readonly auditLog: AuditLogService,
+    private readonly caseTrackingOptions: CaseTrackingOptionsService,
     private readonly riskProfileService?: RiskProfileService,
   ) {}
 
@@ -305,6 +310,23 @@ export class TaskSubmissionService {
         throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
       }
 
+      const caseId = typeof link.case_id === 'number' ? link.case_id : null;
+      const decisionCode = this.toScalarString(data.case_follow_up_decision)?.toUpperCase() ?? '';
+      const decision = caseId
+        ? await this.caseTrackingOptions.getFollowUpDecision(decisionCode)
+        : null;
+      const resolutionOutcome = await this.caseTrackingOptions.assertResolutionOutcome(
+        this.toScalarString(data.case_resolution_outcome_code)?.toUpperCase() ?? null,
+      );
+      if (decision?.requiresResolutionOutcome && !resolutionOutcome) {
+        throw new BadRequestException('กรุณาเลือกผลลัพธ์การติดตามก่อนปิดเคส');
+      }
+      if (decision && !decision.targetStatus) {
+        throw new BadRequestException('ผลการส่งรายงานไม่มีสถานะปลายทาง');
+      }
+      const reviewId = decision?.code === 'CLOSE_CASE' ? crypto.randomUUID() : null;
+      const reviewerLabel = this.toScalarString(link.assigned_to_name) ?? 'ผู้ลงพื้นที่';
+
       await this.taskRepository.withTransaction(async (executor) => {
         const live = await this.taskRepository.lockLiveTaskLink(String(link.link_id), executor);
         if (!live) {
@@ -323,20 +345,25 @@ export class TaskSubmissionService {
             updatedStudentAddress: data.updated_student_address ?? null,
             updatedLat: this.normalizeNumber(data.updated_lat),
             updatedLng: this.normalizeNumber(data.updated_lng),
+            caseFollowUpDecision: decision?.code ?? null,
+            caseResolutionOutcomeCode: decision?.requiresResolutionOutcome
+              ? resolutionOutcome
+              : null,
           },
           executor,
         );
 
-        if (link.task_type === 'VISIT' && typeof link.case_id === 'number') {
+        if (link.task_type === 'VISIT' && caseId !== null && decision?.targetStatus) {
           const nextSummary = data.notes || data.cause_detail || 'No notes provided';
           const addressChanged = this.normalizeBoolean(data.address_changed);
           // When the visitor flags the home location as wrong, persist the
           // corrected coordinates to the case independently of the address TEXT —
           // changing only the pin (no typed address) must still update the canonical
           // student_lat/lng. Address text updates only when actually provided.
-          await this.taskRepository.updateCaseAfterSubmission(
+          const caseTransitioned = await this.taskRepository.updateCaseAfterSubmission(
             {
-              caseId: link.case_id,
+              caseId,
+              nextStatus: decision.targetStatus,
               nextSummary,
               // Trim to null so an empty/whitespace address does not wipe the
               // existing one via COALESCE (pin-only correction sends no address).
@@ -352,11 +379,54 @@ export class TaskSubmissionService {
             },
             executor,
           );
+          if (!caseTransitioned) {
+            throw new ConflictException('เคสนี้ถูกดำเนินการไปแล้ว กรุณาโหลดข้อมูลล่าสุด');
+          }
+          if (reviewId) {
+            await this.taskRepository.insertCaseReview(
+              {
+                reviewId,
+                caseId,
+                reviewAction: 'CLOSE',
+                reviewNote: data.notes ?? data.cause_detail ?? null,
+                reviewSummary: data.recommendation ?? null,
+                resolutionOutcome,
+                reviewedBy: reviewerLabel,
+                sourceActorUserId: null,
+              },
+              executor,
+            );
+          }
         }
 
         await this.taskRepository.updateTaskStatus(String(link.task_id), 'COMPLETED', executor);
         await this.taskRepository.updateTaskLinkStatus(String(link.link_id), 'COMPLETED', executor);
       });
+
+      if (caseId !== null && decision?.targetStatus) {
+        if (reviewId) {
+          await this.auditLog.record({
+            actorUserId: null,
+            actorLabel: reviewerLabel,
+            action: 'CASE_CLOSE',
+            targetType: 'case',
+            targetId: String(caseId),
+            metadata: {
+              source: 'VISIT_REPORT',
+              taskId: String(link.task_id),
+              resolutionOutcome,
+            },
+            ip: null,
+          });
+        }
+        await this.notificationsService.notifyCaseStatusChanged({
+          caseId,
+          studentName: this.toScalarString(link.student_name),
+          schoolId: this.normalizeNumber(link.school_id as string | number | null | undefined),
+          nextStatus: decision.targetStatus,
+          actorUserId: null,
+        });
+      }
 
       this.logger.log('[saveTaskSubmission] success');
       await this.notificationsService.notifyTaskSubmitted({

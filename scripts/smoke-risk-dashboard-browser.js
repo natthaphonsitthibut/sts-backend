@@ -480,7 +480,7 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
           const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
             .find((candidate) => candidate.offsetParent !== null
               && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-          return Boolean(row?.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]'));
+          return Boolean(row?.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]'));
         })()`,
       ),
     'risk dashboard did not expose the manual case action',
@@ -491,7 +491,7 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
       const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
         .find((candidate) => candidate.offsetParent !== null
           && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-      row?.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]')?.click();
+      row?.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]')?.click();
     })()`,
   );
   await waitFor(
@@ -501,7 +501,7 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
         `(() => {
           const dialog = document.querySelector('[role="dialog"]');
           return Boolean(dialog
-            && dialog.innerText.includes('เปิดเคสช่วยเหลือ')
+            && dialog.innerText.includes('เปิดเคสติดตามนักเรียน')
             && getComputedStyle(dialog).textAlign === 'left');
         })()`,
       ),
@@ -527,13 +527,13 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     async () =>
       evaluate(
         client,
-        `Boolean(document.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]'))`,
+        `Boolean(document.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]'))`,
       ),
     'student detail did not expose the manual case action',
   );
   await evaluate(
     client,
-    `document.querySelector('button[aria-label="เปิดเคสช่วยเหลือ"]')?.click()`,
+    `document.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]')?.click()`,
   );
   await waitFor(
     async () => evaluate(client, `Boolean(document.querySelector('#open-case-reason'))`),
@@ -942,7 +942,7 @@ async function assertCollapsedGroupAccordion(client) {
   const openedGroup = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('button[aria-label="งานเคส/ช่วยเหลือ"]');
+      const button = document.querySelector('button[aria-label="งานติดตามเคส"]');
       if (!button) return false;
       button.click();
       return true;
@@ -954,7 +954,7 @@ async function assertCollapsedGroupAccordion(client) {
       evaluate(
         client,
         `(() => Array.from(document.querySelectorAll('button'))
-          .some((button) => button.innerText.includes('งานเคส/ช่วยเหลือ')
+          .some((button) => button.innerText.includes('งานติดตามเคส')
             && button.getAttribute('aria-expanded') === 'true'))()`,
       ),
     'collapsed sidebar group did not open its nested icon list',
@@ -962,7 +962,7 @@ async function assertCollapsedGroupAccordion(client) {
   const childVisibleAndWidthStable = await evaluate(
     client,
     `(() => {
-      const child = document.querySelector('a[aria-label="เคสช่วยเหลือ"]');
+      const child = document.querySelector('a[aria-label="เคสติดตาม"]');
       const sidebar = document.querySelector('button[aria-label="ขยายเมนูด้านข้าง"]')?.closest('aside');
       return Boolean(
         child
