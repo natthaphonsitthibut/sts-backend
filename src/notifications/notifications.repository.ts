@@ -102,7 +102,17 @@ export class NotificationsRepository {
           COALESCE(notification_case_student.person_uuid, notification_student.person_uuid),
           $10::int,
           $12,
-          $13
+          CASE
+            WHEN nt.code = ANY(ARRAY[
+              'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
+              'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
+            ]::varchar[])
+              THEN COALESCE(
+                NULLIF(btrim($13::text), ''),
+                NULLIF(btrim(notification_case.reason_flagged), '')
+              )
+            ELSE NULL
+          END
         FROM notification_types nt
         CROSS JOIN users u
         LEFT JOIN roles r ON r.name = u.role

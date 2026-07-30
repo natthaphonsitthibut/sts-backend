@@ -72,6 +72,7 @@ describe('NotificationsRepository direct recipient eligibility', () => {
     expect(sql).toContain('student_person_uuid, case_id, student_name_masked, reason_text');
     expect(sql).toContain('notification_case_student.person_uuid');
     expect(sql).toContain('notification_case.id = $10::int');
+    expect(sql).toContain("NULLIF(btrim(notification_case.reason_flagged), '')");
     expect(params).toEqual([
       'CASE_CREATED',
       'มีเคสติดตามใหม่',

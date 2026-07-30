@@ -1301,11 +1301,17 @@ export const NOTIFICATION_TABLES_SQL = `
     ),
     CONSTRAINT chk_notifications_reason_type CHECK (
       (
-        type_code IN ('CASE_CREATED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH')
+        type_code IN (
+          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
+          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
+        )
         AND reason_text IS NOT NULL
       )
       OR (
-        type_code NOT IN ('CASE_CREATED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH')
+        type_code NOT IN (
+          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
+          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
+        )
         AND reason_text IS NULL
       )
     )

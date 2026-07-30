@@ -185,7 +185,7 @@ describe('NotificationsService structured student events', () => {
         typeCode: 'CASE_STATUS_CHANGED',
         caseId: 11,
         studentNameMasked,
-        body: `เคสของ ${studentNameMasked}`,
+        body: studentNameMasked,
       }),
     );
     expect(repository.fanOut).toHaveBeenNthCalledWith(
@@ -194,7 +194,7 @@ describe('NotificationsService structured student events', () => {
         typeCode: 'CASE_SLA_WARNING',
         caseId: 11,
         studentNameMasked,
-        body: `เคสของ ${studentNameMasked}`,
+        body: studentNameMasked,
       }),
     );
     expect(repository.fanOut).toHaveBeenNthCalledWith(
@@ -203,7 +203,7 @@ describe('NotificationsService structured student events', () => {
         typeCode: 'CASE_SLA_BREACHED',
         caseId: 11,
         studentNameMasked,
-        body: `เคสของ ${studentNameMasked}`,
+        body: studentNameMasked,
       }),
     );
     expect(repository.fanOut).toHaveBeenNthCalledWith(

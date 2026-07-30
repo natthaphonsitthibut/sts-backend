@@ -244,7 +244,7 @@ async function seedNotifications(dataSource, userId, refPrefix) {
        (recipient_user_id, type_code, title, body, ref_entity, ref_id, created_at,
         student_person_uuid, case_id, student_name_masked, reason_text)
      VALUES
-       ($1, 'CASE_CREATED', 'Browser smoke case', 'BODY_MUST_NOT_RENDER', 'case', $2, now(),
+       ($1, 'CASE_SLA_BREACHED', 'Browser smoke case', 'BODY_MUST_NOT_RENDER', 'case', $2, now(),
         $5, $6, 'ด.ช. ทด****', 'ขาดเรียนติดต่อกัน 3 วัน'),
        ($1, 'IMPORT_COMPLETED', 'Browser smoke import', 'Import completed', 'import', $3,
         now() - interval '1 minute', NULL, NULL, NULL, NULL),

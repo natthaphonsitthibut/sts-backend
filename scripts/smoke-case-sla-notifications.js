@@ -122,7 +122,7 @@ async function main() {
 
     const notifications = await dataSource.query(
       `
-        SELECT type_code, ref_id, student_person_uuid, case_id, student_name_masked
+        SELECT type_code, ref_id, student_person_uuid, case_id, student_name_masked, reason_text
         FROM notifications
         WHERE ref_entity = 'case'
           AND ref_id = ANY($1::text[])
@@ -147,9 +147,13 @@ async function main() {
     );
     assert(
       notifications.every(
-        (row) => row.student_person_uuid && row.case_id && row.student_name_masked,
+        (row) =>
+          row.student_person_uuid &&
+          row.case_id &&
+          row.student_name_masked &&
+          row.reason_text === 'ขาดเรียนติดต่อกัน 5 วัน',
       ),
-      'SLA notifications must persist relational student context',
+      'SLA notifications must persist relational student context and the case reason',
     );
     const auditRows = await dataSource.query(
       `

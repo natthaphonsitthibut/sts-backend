@@ -149,7 +149,7 @@ export class NotificationsService {
     await this.fanOutSafely({
       typeCode: 'CASE_STATUS_CHANGED',
       title: `เคสเปลี่ยนสถานะ: ${statusLabel}`,
-      body: `เคสของ ${student}`,
+      body: student,
       caseId: event.caseId,
       studentNameMasked: student,
       refEntity: 'case',
@@ -170,7 +170,7 @@ export class NotificationsService {
     await this.fanOutSafely({
       typeCode: 'CASE_SLA_WARNING',
       title: 'เคสใกล้เกินกำหนดดำเนินการ',
-      body: `เคสของ ${student}`,
+      body: student,
       caseId: event.caseId,
       studentNameMasked: student,
       refEntity: 'case',
@@ -190,7 +190,7 @@ export class NotificationsService {
     await this.fanOutSafely({
       typeCode: 'CASE_SLA_BREACHED',
       title: 'เคสเกินกำหนดดำเนินการ',
-      body: `เคสของ ${student}`,
+      body: student,
       caseId: event.caseId,
       studentNameMasked: student,
       refEntity: 'case',
@@ -211,7 +211,7 @@ export class NotificationsService {
     await this.fanOutSafely({
       typeCode: 'CASE_RISK_ESCALATED',
       title: 'เคสถูกยกระดับความเสี่ยง',
-      body: [`เคสของ ${student}`, event.reason].filter(Boolean).join(' · '),
+      body: [student, event.reason].filter(Boolean).join(' · '),
       caseId: event.caseId,
       studentNameMasked: student,
       reasonText: event.reason,
