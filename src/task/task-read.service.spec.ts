@@ -17,6 +17,10 @@ describe('TaskReadService', () => {
         id: 'task-id',
         case_id: null,
         task_type: 'VISIT',
+        target_grade: null,
+        target_room: null,
+        resolved_target_grade: 'ม.6',
+        resolved_target_room: '2',
         status: 'IN_PROGRESS',
       }),
       listTaskLinksByTaskId: jest.fn().mockResolvedValue([
@@ -59,6 +63,10 @@ describe('TaskReadService', () => {
         delegated_at: '2026-06-27T05:00:00.000Z',
       }),
     ]);
+    expect(result).toMatchObject({
+      target_grade: 'ม.6',
+      target_room: '2',
+    });
     expect(taskRepository.findTaskSubmissionByLinkId).toHaveBeenCalledTimes(2);
   });
 });

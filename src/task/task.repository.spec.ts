@@ -1,6 +1,33 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('falls back to the case enrollment for missing task grade and room', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.findTaskChainTask('task-id');
+    await repository.findLinkDetailById('link-id');
+
+    expect(queries[0].sql).toContain('ON case_enrollment.student_uuid = c.student_uuid');
+    expect(queries[0].sql).toContain(`NULLIF(TRIM(t.target_grade), '')`);
+    expect(queries[0].sql).toContain('case_enrollment."RoomID_Onec"::text');
+    expect(queries[1].sql).toContain('ON link_enrollment.student_uuid = c.student_uuid');
+    expect(queries[1].sql).toContain('link_grade.label');
+    expect(queries[1].sql).toContain('link_enrollment."RoomID_Onec"::text');
+  });
+
   it('locks and scopes the authoritative student row before manual case creation', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const executor = {

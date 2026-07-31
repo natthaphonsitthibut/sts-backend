@@ -1728,6 +1728,14 @@ export class TaskRepository {
       `
       SELECT
         t.*,
+        COALESCE(
+          NULLIF(TRIM(t.target_grade), ''),
+          case_grade.label
+        ) AS resolved_target_grade,
+        COALESCE(
+          NULLIF(TRIM(t.target_room), ''),
+          case_enrollment."RoomID_Onec"::text
+        ) AS resolved_target_room,
         c.student_name,
         c.student_first_name,
         c.student_last_name,
@@ -1743,6 +1751,10 @@ export class TaskRepository {
         c.result_summary
       FROM tasks t
       LEFT JOIN cases c ON c.id = t.case_id AND c.deleted_at IS NULL
+      LEFT JOIN student_term case_enrollment
+        ON case_enrollment.student_uuid = c.student_uuid
+      LEFT JOIN grade_levels case_grade
+        ON case_grade.id = case_enrollment."GradeLevelID_Onec"
       WHERE t.id = $1
         AND t.deleted_at IS NULL
         AND (t.case_id IS NULL OR c.id IS NOT NULL)${scopeSql}
@@ -2197,13 +2209,23 @@ export class TaskRepository {
       SELECT
         tl.*,
         t.task_type,
-        t.target_grade,
-        t.target_room,
+        COALESCE(
+          NULLIF(TRIM(t.target_grade), ''),
+          link_grade.label
+        ) AS target_grade,
+        COALESCE(
+          NULLIF(TRIM(t.target_room), ''),
+          link_enrollment."RoomID_Onec"::text
+        ) AS target_room,
         t.target_school_id,
         c.created_by AS case_created_by
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       LEFT JOIN cases c ON c.id = t.case_id
+      LEFT JOIN student_term link_enrollment
+        ON link_enrollment.student_uuid = c.student_uuid
+      LEFT JOIN grade_levels link_grade
+        ON link_grade.id = link_enrollment."GradeLevelID_Onec"
       WHERE tl.id = $1
         AND tl.deleted_at IS NULL
         AND t.deleted_at IS NULL
@@ -2240,8 +2262,14 @@ export class TaskRepository {
         r.label AS login_role_label,
         t.created_at,
         t.task_type,
-        t.target_grade,
-        t.target_room,
+        COALESCE(
+          NULLIF(TRIM(t.target_grade), ''),
+          link_grade.label
+        ) AS target_grade,
+        COALESCE(
+          NULLIF(TRIM(t.target_room), ''),
+          link_enrollment."RoomID_Onec"::text
+        ) AS target_room,
         t.target_school_id,
         s.name AS school_name,
         c.created_by AS case_created_by
@@ -2250,6 +2278,10 @@ export class TaskRepository {
       LEFT JOIN schools s ON s.id = t.target_school_id
       LEFT JOIN roles r ON r.name = COALESCE(NULLIF(TRIM(tl.login_role), ''), 'TEACHER')
       LEFT JOIN cases c ON c.id = t.case_id
+      LEFT JOIN student_term link_enrollment
+        ON link_enrollment.student_uuid = c.student_uuid
+      LEFT JOIN grade_levels link_grade
+        ON link_grade.id = link_enrollment."GradeLevelID_Onec"
       WHERE tl.id = $1
         AND tl.deleted_at IS NULL
         AND t.deleted_at IS NULL
