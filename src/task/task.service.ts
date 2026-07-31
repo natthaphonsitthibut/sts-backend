@@ -61,6 +61,10 @@ export class TaskService {
     return await this.taskLifecycleService.createTask(actor, data, baseUrl);
   }
 
+  async assertVisitSubmissionAccess(token: string, sessionToken?: string): Promise<void> {
+    await this.taskSubmissionService.assertVisitSubmissionAccess(token, sessionToken);
+  }
+
   async getTaskByToken(token: string, sessionToken?: string) {
     const result = await this.taskAccessService.getTaskByToken(token, sessionToken);
     if (!result || typeof result !== 'object') {

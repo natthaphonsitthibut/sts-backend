@@ -25,6 +25,9 @@ import { TaskRepository } from './task.repository';
 import type { QueryExecutor } from './task.types';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
+/** Clock-skew allowance for a guest-reported visit timestamp. */
+const VISITED_AT_FUTURE_GRACE_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class TaskSubmissionService {
   private readonly logger = new Logger(TaskSubmissionService.name);
@@ -115,6 +118,14 @@ export class TaskSubmissionService {
     return link;
   }
 
+  async assertVisitSubmissionAccess(
+    token: string,
+    sessionToken?: string,
+  ): Promise<Record<string, unknown>> {
+    const task = await this.taskAccessService.getTaskByToken(token, sessionToken);
+    return this.validateUsableLink(task, 'VISIT');
+  }
+
   private toScalarString(value: unknown): string | null {
     if (typeof value === 'string') {
       return value.trim().length > 0 ? value : null;
@@ -123,6 +134,50 @@ export class TaskSubmissionService {
       return String(value);
     }
     return null;
+  }
+
+  private toTimestamp(value: unknown): number | null {
+    const raw = this.toScalarString(value);
+    if (!raw) {
+      return null;
+    }
+    const parsed = new Date(raw).getTime();
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  /**
+   * The visit timestamp is guest-supplied evidence on a public magic link, so it
+   * is bounded on both ends: never after now (a small grace absorbs client clock
+   * skew) and never before the assignment window opened. Without the bounds a
+   * link holder could date a home visit years away from when it happened.
+   */
+  private normalizeVisitedAt(value: unknown, task: Record<string, unknown>): string {
+    const raw = this.toScalarString(value);
+    if (!raw) {
+      return new Date().toISOString();
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('วันและเวลาที่ลงพื้นที่ไม่ถูกต้อง');
+    }
+    if (parsed.getTime() > Date.now() + VISITED_AT_FUTURE_GRACE_MS) {
+      throw new BadRequestException('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ในอนาคต');
+    }
+    const assignedFrom = this.toTimestamp(task.opens_at) ?? this.toTimestamp(task.created_at);
+    if (assignedFrom !== null && parsed.getTime() < assignedFrom) {
+      throw new BadRequestException('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ก่อนเวลาที่ได้รับมอบหมาย');
+    }
+    return parsed.toISOString();
+  }
+
+  private composeUpdatedAddress(
+    line: string,
+    subDistrict: string,
+    district: string,
+    province: string,
+    postalCode: string,
+  ): string {
+    return [line, `ต.${subDistrict}`, `อ.${district}`, `จ.${province}`, postalCode].join(' ');
   }
 
   private normalizeOptionalPositiveInt(value: unknown, fieldName: string): number | null {
@@ -300,8 +355,7 @@ export class TaskSubmissionService {
 
   async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto, sessionToken?: string) {
     try {
-      const task = await this.taskAccessService.getTaskByToken(token, sessionToken);
-      this.validateUsableLink(task, 'VISIT');
+      const task = await this.assertVisitSubmissionAccess(token, sessionToken);
 
       const tokenHash = hashToken(token);
       const link = await this.taskRepository.findTaskSubmissionContextByTokenHash(tokenHash);
@@ -311,7 +365,9 @@ export class TaskSubmissionService {
       }
 
       const caseId = typeof link.case_id === 'number' ? link.case_id : null;
-      const decisionCode = this.toScalarString(data.case_follow_up_decision)?.toUpperCase() ?? '';
+      const decisionCode =
+        this.toScalarString(data.case_follow_up_decision)?.toUpperCase() ??
+        (caseId !== null ? 'REQUEST_REVIEW' : '');
       const decision = caseId
         ? await this.caseTrackingOptions.getFollowUpDecision(decisionCode)
         : null;
@@ -324,6 +380,56 @@ export class TaskSubmissionService {
       if (decision && !decision.targetStatus) {
         throw new BadRequestException('ผลการส่งรายงานไม่มีสถานะปลายทาง');
       }
+      const visitedAt = this.normalizeVisitedAt(data.visited_at, task);
+      const homeVisitException = await this.caseTrackingOptions.getHomeVisitException(
+        this.toScalarString(data.home_visit_exception_code)?.toUpperCase() ?? null,
+      );
+      const followUpAssessment = await this.caseTrackingOptions.getHomeVisitAssessment(
+        this.toScalarString(data.follow_up_assessment_code)?.toUpperCase() ?? null,
+      );
+      if (link.task_type === 'VISIT' && !followUpAssessment) {
+        throw new BadRequestException('กรุณาเลือกผลประเมินหลังลงพื้นที่');
+      }
+      const causeDetail = this.toScalarString(data.notes ?? data.cause_detail);
+      if (homeVisitException?.code === 'STUDENT_NOT_FOUND' && !causeDetail) {
+        throw new BadRequestException('กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน');
+      }
+      const updatedAddressLine = this.toScalarString(data.updated_address_line);
+      const updatedAddressProvince = this.toScalarString(data.updated_address_province);
+      const updatedAddressDistrict = this.toScalarString(data.updated_address_district);
+      const updatedAddressSubDistrict = this.toScalarString(data.updated_address_sub_district);
+      const updatedPostalCode = this.toScalarString(data.updated_postal_code);
+      if (
+        homeVisitException?.requiresUpdatedAddress &&
+        (!updatedAddressLine ||
+          !updatedAddressProvince ||
+          !updatedAddressDistrict ||
+          !updatedAddressSubDistrict ||
+          !updatedPostalCode)
+      ) {
+        throw new BadRequestException('กรุณากรอกที่อยู่ใหม่ให้ครบถ้วน');
+      }
+      if (updatedPostalCode && !/^\d{5}$/.test(updatedPostalCode)) {
+        throw new BadRequestException('รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก');
+      }
+      const addressChanged =
+        homeVisitException?.code === 'ADDRESS_CHANGED' ||
+        (!homeVisitException && this.normalizeBoolean(data.address_changed));
+      const structuredUpdatedAddress =
+        homeVisitException?.requiresUpdatedAddress &&
+        updatedAddressLine &&
+        updatedAddressProvince &&
+        updatedAddressDistrict &&
+        updatedAddressSubDistrict &&
+        updatedPostalCode
+          ? this.composeUpdatedAddress(
+              updatedAddressLine,
+              updatedAddressSubDistrict,
+              updatedAddressDistrict,
+              updatedAddressProvince,
+              updatedPostalCode,
+            )
+          : null;
       const reviewId = decision?.code === 'CLOSE_CASE' ? crypto.randomUUID() : null;
       const reviewerLabel = this.toScalarString(link.assigned_to_name) ?? 'ผู้ลงพื้นที่';
 
@@ -337,12 +443,21 @@ export class TaskSubmissionService {
             linkId: String(link.link_id),
             visitLat: this.normalizeNumber(data.visit_lat),
             visitLng: this.normalizeNumber(data.visit_lng),
+            visitedAt,
             causeCategory: data.cause_category ?? null,
-            causeDetail: data.notes ?? data.cause_detail ?? null,
+            followUpAssessmentCode: followUpAssessment?.code ?? null,
+            causeDetail,
             recommendation: data.recommendation ?? null,
             photoPaths: data.photo_paths ?? null,
-            addressChanged: this.normalizeBoolean(data.address_changed),
-            updatedStudentAddress: data.updated_student_address ?? null,
+            addressChanged,
+            homeVisitExceptionCode: homeVisitException?.code ?? null,
+            updatedStudentAddress:
+              structuredUpdatedAddress ?? this.toScalarString(data.updated_student_address),
+            updatedAddressLine: addressChanged ? updatedAddressLine : null,
+            updatedAddressProvince: addressChanged ? updatedAddressProvince : null,
+            updatedAddressDistrict: addressChanged ? updatedAddressDistrict : null,
+            updatedAddressSubDistrict: addressChanged ? updatedAddressSubDistrict : null,
+            updatedPostalCode: addressChanged ? updatedPostalCode : null,
             updatedLat: this.normalizeNumber(data.updated_lat),
             updatedLng: this.normalizeNumber(data.updated_lng),
             caseFollowUpDecision: decision?.code ?? null,
@@ -354,8 +469,7 @@ export class TaskSubmissionService {
         );
 
         if (link.task_type === 'VISIT' && caseId !== null && decision?.targetStatus) {
-          const nextSummary = data.notes || data.cause_detail || 'No notes provided';
-          const addressChanged = this.normalizeBoolean(data.address_changed);
+          const nextSummary = causeDetail || homeVisitException?.label || 'บันทึกผลการลงพื้นที่';
           // When the visitor flags the home location as wrong, persist the
           // corrected coordinates to the case independently of the address TEXT —
           // changing only the pin (no typed address) must still update the canonical
@@ -368,14 +482,20 @@ export class TaskSubmissionService {
               // Trim to null so an empty/whitespace address does not wipe the
               // existing one via COALESCE (pin-only correction sends no address).
               updatedStudentAddress: addressChanged
-                ? data.updated_student_address?.trim() || null
+                ? (structuredUpdatedAddress ?? data.updated_student_address?.trim() ?? null)
                 : null,
+              updatedAddressLine: addressChanged ? updatedAddressLine : null,
+              updatedAddressProvince: addressChanged ? updatedAddressProvince : null,
+              updatedAddressDistrict: addressChanged ? updatedAddressDistrict : null,
+              updatedAddressSubDistrict: addressChanged ? updatedAddressSubDistrict : null,
+              updatedPostalCode: addressChanged ? updatedPostalCode : null,
               updatedLat: addressChanged
                 ? (this.normalizeNumber(data.updated_lat) ?? this.normalizeNumber(data.visit_lat))
                 : null,
               updatedLng: addressChanged
                 ? (this.normalizeNumber(data.updated_lng) ?? this.normalizeNumber(data.visit_lng))
                 : null,
+              clearMissingCoordinates: structuredUpdatedAddress !== null,
             },
             executor,
           );
@@ -428,7 +548,9 @@ export class TaskSubmissionService {
         });
       }
 
-      this.logger.log('[saveTaskSubmission] success');
+      this.logger.log(
+        `[saveTaskSubmission] success decision=${decision?.code ?? 'NONE'} exception=${homeVisitException?.code ?? 'NONE'}`,
+      );
       await this.notificationsService.notifyTaskSubmitted({
         taskId: String(link.task_id),
         submitterName: typeof task?.assigned_to_name === 'string' ? task.assigned_to_name : null,

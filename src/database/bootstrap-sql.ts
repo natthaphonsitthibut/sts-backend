@@ -805,6 +805,109 @@ export const CASE_TRACKING_DECISION_TABLES_SQL = `
   );
 `;
 
+export const HOME_VISIT_REPORT_DETAILS_SQL = `
+  CREATE TABLE IF NOT EXISTS home_visit_exception_options (
+    code VARCHAR(40) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    requires_updated_address BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_home_visit_exception_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_home_visit_exception_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('home_visit_exception_options')}
+  INSERT INTO home_visit_exception_options (
+    code, label_th, requires_updated_address, sort_order
+  ) VALUES
+    ('ADDRESS_CHANGED', 'เปลี่ยนที่อยู่', TRUE, 10),
+    ('STUDENT_NOT_FOUND', 'ไม่พบนักเรียน', FALSE, 20)
+  ON CONFLICT (code) DO NOTHING;
+
+  ALTER TABLE task_submissions
+    ADD COLUMN IF NOT EXISTS visited_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS home_visit_exception_code VARCHAR(40),
+    ADD COLUMN IF NOT EXISTS updated_address_line TEXT,
+    ADD COLUMN IF NOT EXISTS updated_address_province TEXT,
+    ADD COLUMN IF NOT EXISTS updated_address_district TEXT,
+    ADD COLUMN IF NOT EXISTS updated_address_sub_district TEXT,
+    ADD COLUMN IF NOT EXISTS updated_postal_code VARCHAR(5);
+  DO $home_visit_report_detail_fks$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'fk_task_submissions_home_visit_exception'
+    ) THEN
+      ALTER TABLE task_submissions
+        ADD CONSTRAINT fk_task_submissions_home_visit_exception
+        FOREIGN KEY (home_visit_exception_code)
+        REFERENCES home_visit_exception_options(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $home_visit_report_detail_fks$;
+  ALTER TABLE task_submissions
+    DROP CONSTRAINT IF EXISTS chk_task_submissions_updated_postal_code;
+  ALTER TABLE task_submissions
+    ADD CONSTRAINT chk_task_submissions_updated_postal_code CHECK (
+      updated_postal_code IS NULL
+      OR updated_postal_code ~ '^[0-9]{5}$'
+    );
+  ALTER TABLE task_submissions
+    DROP CONSTRAINT IF EXISTS chk_task_submissions_home_visit_address;
+  ALTER TABLE task_submissions
+    ADD CONSTRAINT chk_task_submissions_home_visit_address CHECK (
+      home_visit_exception_code <> 'ADDRESS_CHANGED'
+      OR (
+        address_changed = TRUE
+        AND updated_address_line IS NOT NULL
+        AND length(btrim(updated_address_line)) > 0
+        AND updated_address_province IS NOT NULL
+        AND length(btrim(updated_address_province)) > 0
+        AND updated_address_district IS NOT NULL
+        AND length(btrim(updated_address_district)) > 0
+        AND updated_address_sub_district IS NOT NULL
+        AND length(btrim(updated_address_sub_district)) > 0
+        AND updated_postal_code IS NOT NULL
+      )
+    );
+`;
+
+export const HOME_VISIT_ASSESSMENT_SQL = `
+  CREATE TABLE IF NOT EXISTS home_visit_assessment_options (
+    code VARCHAR(40) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_home_visit_assessment_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_home_visit_assessment_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('home_visit_assessment_options')}
+  INSERT INTO home_visit_assessment_options (code, label_th, sort_order)
+  VALUES
+    ('NO_CONCERN', 'ไม่พบปัญหาเพิ่มเติม', 10),
+    ('CONTINUE_FOLLOW_UP', 'ควรติดตามต่อ', 20),
+    ('URGENT_SUPPORT', 'ต้องช่วยเหลือเร่งด่วน', 30),
+    ('REFER_SUPPORT', 'ควรส่งต่อหน่วยงานหรือผู้เชี่ยวชาญ', 40)
+  ON CONFLICT (code) DO NOTHING;
+
+  ALTER TABLE task_submissions
+    ADD COLUMN IF NOT EXISTS follow_up_assessment_code VARCHAR(40);
+  DO $home_visit_assessment_fks$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'fk_task_submissions_follow_up_assessment'
+    ) THEN
+      ALTER TABLE task_submissions
+        ADD CONSTRAINT fk_task_submissions_follow_up_assessment
+        FOREIGN KEY (follow_up_assessment_code)
+        REFERENCES home_visit_assessment_options(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $home_visit_assessment_fks$;
+`;
+
 export const STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS student_follow_up_request_statuses (
     code VARCHAR(24) PRIMARY KEY,
@@ -1412,6 +1515,10 @@ export const DATABASE_BASELINE_SQL = `
     token_encrypted TEXT NULL,
     delegation_depth INTEGER DEFAULT 0,
     assigned_to_name TEXT,
+    assigned_to_first_name VARCHAR(150)
+      CHECK (assigned_to_first_name IS NULL OR BTRIM(assigned_to_first_name) <> ''),
+    assigned_to_last_name VARCHAR(150)
+      CHECK (assigned_to_last_name IS NULL OR BTRIM(assigned_to_last_name) <> ''),
     assigned_to_phone TEXT,
     assigned_to_email TEXT,
     otp_code TEXT,
@@ -1420,6 +1527,7 @@ export const DATABASE_BASELINE_SQL = `
     otp_attempts INTEGER NOT NULL DEFAULT 0,
     otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
+    delegation_note TEXT,
     status TEXT DEFAULT 'ACTIVE',
     admin_locked INTEGER DEFAULT 0,
     admin_lock_reason TEXT,
@@ -1776,6 +1884,7 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_permissions JSONB DEFAULT '[]'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS delegation_note TEXT;
 
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS result_summary TEXT;
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_school_id INTEGER;
@@ -2336,6 +2445,10 @@ export const DATABASE_BASELINE_SQL = `
   ${CASE_WORKFLOW_STATUS_TABLE_SQL}
 
   ${CASE_TRACKING_DECISION_TABLES_SQL}
+
+  ${HOME_VISIT_REPORT_DETAILS_SQL}
+
+  ${HOME_VISIT_ASSESSMENT_SQL}
 
   ${OPERATIONAL_STATUS_CATALOG_TABLES_SQL}
 

@@ -89,6 +89,12 @@ export class TaskLinkEntity {
   @Column({ name: 'assigned_to_name', type: 'text', nullable: true })
   assignedToName!: string | null;
 
+  @Column({ name: 'assigned_to_first_name', type: 'varchar', length: 150, nullable: true })
+  assignedToFirstName!: string | null;
+
+  @Column({ name: 'assigned_to_last_name', type: 'varchar', length: 150, nullable: true })
+  assignedToLastName!: string | null;
+
   @Column({ name: 'assigned_to_phone', type: 'text', nullable: true })
   assignedToPhone!: string | null;
 
@@ -116,6 +122,9 @@ export class TaskLinkEntity {
 
   @Column({ name: 'subject', type: 'text', nullable: true })
   subject!: string | null;
+
+  @Column({ name: 'delegation_note', type: 'text', nullable: true })
+  delegationNote!: string | null;
 
   @Column({ name: 'status', type: 'text', default: 'ACTIVE' })
   status!: string;
@@ -173,8 +182,14 @@ export class TaskSubmissionEntity {
   @Column({ name: 'visit_lng', type: 'real', nullable: true })
   visitLng!: number | null;
 
+  @Column({ name: 'visited_at', type: 'timestamptz', nullable: true })
+  visitedAt!: Date | null;
+
   @Column({ name: 'cause_category', type: 'text', nullable: true })
   causeCategory!: string | null;
+
+  @Column({ name: 'follow_up_assessment_code', type: 'varchar', length: 40, nullable: true })
+  followUpAssessmentCode!: string | null;
 
   @Column({ name: 'cause_detail', type: 'text', nullable: true })
   causeDetail!: string | null;
@@ -188,8 +203,26 @@ export class TaskSubmissionEntity {
   @Column({ name: 'address_changed', type: 'boolean', default: false })
   addressChanged!: boolean;
 
+  @Column({ name: 'home_visit_exception_code', type: 'varchar', length: 40, nullable: true })
+  homeVisitExceptionCode!: string | null;
+
   @Column({ name: 'updated_student_address', type: 'text', nullable: true })
   updatedStudentAddress!: string | null;
+
+  @Column({ name: 'updated_address_line', type: 'text', nullable: true })
+  updatedAddressLine!: string | null;
+
+  @Column({ name: 'updated_address_province', type: 'text', nullable: true })
+  updatedAddressProvince!: string | null;
+
+  @Column({ name: 'updated_address_district', type: 'text', nullable: true })
+  updatedAddressDistrict!: string | null;
+
+  @Column({ name: 'updated_address_sub_district', type: 'text', nullable: true })
+  updatedAddressSubDistrict!: string | null;
+
+  @Column({ name: 'updated_postal_code', type: 'varchar', length: 5, nullable: true })
+  updatedPostalCode!: string | null;
 
   @Column({ name: 'updated_lat', type: 'real', nullable: true })
   updatedLat!: number | null;

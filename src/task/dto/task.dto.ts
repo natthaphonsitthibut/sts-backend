@@ -11,12 +11,14 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
+import { MAX_LINK_LIFETIME_HOURS } from '../task-link-expiry';
 
 export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
@@ -44,6 +46,16 @@ export class CreateTaskDto {
   assigned_to_name?: string | null;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  assigned_to_first_name?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  assigned_to_last_name?: string | null;
+
+  @IsOptional()
   assigned_to_email?: string | null;
 
   @IsOptional()
@@ -59,6 +71,11 @@ export class CreateTaskDto {
   @IsOptional()
   @IsDateString()
   opens_at?: string | null;
+
+  /** Optional explicit deadline for assignments that use a date/time range. */
+  @IsOptional()
+  @IsDateString()
+  expires_at?: string | null;
 
   @IsOptional()
   student_name?: string | null;
@@ -201,7 +218,16 @@ export class SaveTaskSubmissionDto {
   visit_lng?: string | number | null;
 
   @IsOptional()
+  @IsDateString()
+  visited_at?: string | null;
+
+  @IsOptional()
   cause_category?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  follow_up_assessment_code?: string | null;
 
   @IsOptional()
   cause_detail?: string | null;
@@ -219,7 +245,37 @@ export class SaveTaskSubmissionDto {
   address_changed?: boolean | string | number | null;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  home_visit_exception_code?: string | null;
+
+  @IsOptional()
   updated_student_address?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  updated_address_line?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  updated_address_province?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  updated_address_district?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  updated_address_sub_district?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{5}$/)
+  updated_postal_code?: string | null;
 
   @IsOptional()
   updated_lat?: string | number | null;
@@ -232,25 +288,46 @@ export class SaveTaskSubmissionDto {
 }
 
 export class DelegateTaskDto {
+  /** @deprecated Send structured first/last name fields for new clients. */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   new_assignee_name?: string | null;
 
   @IsOptional()
   @IsString()
-  new_assignee_phone?: string | null;
+  @MaxLength(150)
+  new_assignee_first_name?: string | null;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  new_assignee_last_name?: string | null;
+
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\d{9,10}$/)
+  new_assignee_phone?: string | null;
+
   @IsEmail()
   @IsString()
+  @IsNotEmpty()
   new_assignee_email?: string | null;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  delegation_note?: string | null;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(2160)
+  @Max(MAX_LINK_LIFETIME_HOURS)
   expires_in_hours?: number | null;
+
+  @IsOptional()
+  @IsDateString()
+  expires_at?: string | null;
 }
 
 export class ReviewCaseDto {

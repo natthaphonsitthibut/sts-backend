@@ -90,7 +90,8 @@ describe('TaskLifecycleService', () => {
       buildActor(),
       {
         task_type: 'VISIT',
-        assigned_to_name: 'ครูเยี่ยมบ้าน',
+        assigned_to_first_name: 'ครูเยี่ยม',
+        assigned_to_last_name: 'บ้าน',
         assigned_to_email: 'teacher@example.invalid',
         expires_value: 7,
         expires_unit: 'days',
@@ -131,6 +132,14 @@ describe('TaskLifecycleService', () => {
       }),
       undefined,
     );
+    expect(taskRepository.createTaskLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignedToName: 'ครูเยี่ยม บ้าน',
+        assignedToFirstName: 'ครูเยี่ยม',
+        assignedToLastName: 'บ้าน',
+      }),
+      undefined,
+    );
     const auditEvent = auditLog.record.mock.calls[0]?.[0];
     expect(auditEvent).toMatchObject({
       action: 'TASK_CREATE',
@@ -144,6 +153,80 @@ describe('TaskLifecycleService', () => {
       schoolId: 10010002,
       caseId: 123,
     });
+  });
+
+  it('uses the explicit start and end timestamps for a visit assignment', async () => {
+    const opensAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString();
+
+    await service.createTask(
+      buildActor(),
+      {
+        task_type: 'VISIT',
+        assigned_to_name: 'ครูเยี่ยมบ้าน',
+        student_name: 'นักเรียนทดสอบ',
+        target_school_id: 10010002,
+        opens_at: opensAt,
+        expires_at: expiresAt,
+      },
+      'https://app.example.invalid',
+    );
+
+    expect(taskRepository.createTaskLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opensAt,
+        expiresAt,
+      }),
+      undefined,
+    );
+  });
+
+  it('rejects a visit assignment whose explicit end is not after its start', async () => {
+    await expect(
+      service.createTask(
+        buildActor(),
+        {
+          task_type: 'VISIT',
+          assigned_to_name: 'ครูเยี่ยมบ้าน',
+          student_name: 'นักเรียนทดสอบ',
+          target_school_id: 10010002,
+          opens_at: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString(),
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        },
+        'https://app.example.invalid',
+      ),
+    ).rejects.toThrow('เวลาที่เปิดใช้งานต้องอยู่ก่อนเวลาหมดอายุของลิงก์');
+  });
+
+  it('rejects a link lifetime beyond the shared 90-day ceiling', async () => {
+    await expect(
+      service.createTask(
+        buildActor(),
+        {
+          task_type: 'VISIT',
+          assigned_to_name: 'ครูเยี่ยมบ้าน',
+          student_name: 'นักเรียนทดสอบ',
+          target_school_id: 10010002,
+          expires_at: new Date(Date.now() + 91 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        'https://app.example.invalid',
+      ),
+    ).rejects.toThrow('อายุลิงก์ต้องไม่เกิน 90 วัน');
+
+    await expect(
+      service.createTask(
+        buildActor(),
+        {
+          task_type: 'VISIT',
+          assigned_to_name: 'ครูเยี่ยมบ้าน',
+          student_name: 'นักเรียนทดสอบ',
+          target_school_id: 10010002,
+          expires_value: 100,
+          expires_unit: 'days',
+        },
+        'https://app.example.invalid',
+      ),
+    ).rejects.toThrow('อายุลิงก์ต้องไม่เกิน 90 วัน');
   });
 
   it('binds validated timetable slots when creating an attendance link', async () => {

@@ -20,6 +20,8 @@ import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
+import { resolveAssigneeName } from './task-assignee-name';
+import { MAX_LINK_LIFETIME_MS } from './task-link-expiry';
 import type { ActorContext, DataScope, QueryExecutor, QueryResultRow } from './task.types';
 
 const OVERDUE_TASK_REMINDER_CRON = '0 15 4 * * *';
@@ -114,6 +116,24 @@ export class TaskLifecycleService {
     }
     if (parsed.getTime() >= new Date(expiresAt).getTime()) {
       throw new BadRequestException('เวลาที่เปิดใช้งานต้องอยู่ก่อนเวลาหมดอายุของลิงก์');
+    }
+    return parsed.toISOString();
+  }
+
+  private resolveExpiresAt(value: string | null | undefined, fallbackExpiresAt: string): string {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) {
+      return fallbackExpiresAt;
+    }
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('รูปแบบเวลาสิ้นสุดไม่ถูกต้อง');
+    }
+    if (parsed.getTime() <= Date.now()) {
+      throw new BadRequestException('เวลาสิ้นสุดต้องอยู่ในอนาคต');
+    }
+    if (parsed.getTime() > Date.now() + MAX_LINK_LIFETIME_MS) {
+      throw new BadRequestException('อายุลิงก์ต้องไม่เกิน 90 วัน');
     }
     return parsed.toISOString();
   }
@@ -296,11 +316,19 @@ export class TaskLifecycleService {
   async createTask(actor: ActorContext | undefined, data: CreateTaskDto, baseUrl: string) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     const taskType = clean(data.task_type) || clean(data.type) || 'VISIT';
-    const assignedName = clean(data.assigned_to_name);
+    const assigneeName = resolveAssigneeName({
+      firstName: data.assigned_to_first_name,
+      lastName: data.assigned_to_last_name,
+      fullName: data.assigned_to_name,
+    });
+    const assignedName = assigneeName.fullName;
     const assignedEmail = clean(data.assigned_to_email);
 
     if (!assignedName) {
-      throw new Error('assigned_to_name is required');
+      throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
+    }
+    if (assigneeName.usesStructuredInput && (!assigneeName.firstName || !assigneeName.lastName)) {
+      throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
     if (taskType === 'LOGIN' && !assignedEmail) {
       throw new Error('assigned_to_email is required for LOGIN');
@@ -356,7 +384,12 @@ export class TaskLifecycleService {
       expiresMs = Math.max(expiresMs, 60 * 60 * 1000);
     }
 
-    const expiresAt = new Date(Date.now() + expiresMs).toISOString();
+    if (expiresMs > MAX_LINK_LIFETIME_MS) {
+      throw new BadRequestException('อายุลิงก์ต้องไม่เกิน 90 วัน');
+    }
+
+    const fallbackExpiresAt = new Date(Date.now() + expiresMs).toISOString();
+    const expiresAt = this.resolveExpiresAt(data.expires_at, fallbackExpiresAt);
     const opensAt = this.resolveOpensAt(data.opens_at, expiresAt);
     let responseToken = token;
     let responseExpiresAt = expiresAt;
@@ -607,11 +640,14 @@ export class TaskLifecycleService {
             tokenEncrypted,
             delegationDepth: 0,
             assignedToName: assignedName,
+            assignedToFirstName: assigneeName.firstName,
+            assignedToLastName: assigneeName.lastName,
             assignedToPhone: clean(data.assigned_to_phone),
             assignedToEmail: assignedEmail,
             expiresAt,
             opensAt,
             subject: clean(data.subject),
+            delegationNote: null,
             subjectId,
             // Email-assigned links require OTP (start unverified); links with no
             // email can't be OTP'd, so mark them pre-verified to skip the gate.

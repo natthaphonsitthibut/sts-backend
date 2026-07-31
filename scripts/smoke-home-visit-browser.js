@@ -174,6 +174,16 @@ async function evaluate(client, expression) {
   return result.result?.value;
 }
 
+async function captureScreenshot(client, outputPath) {
+  if (!outputPath) return;
+  const screenshot = await client.call('Page.captureScreenshot', {
+    captureBeyondViewport: true,
+    format: 'png',
+    fromSurface: true,
+  });
+  fs.writeFileSync(outputPath, Buffer.from(screenshot.data, 'base64'));
+}
+
 async function navigate(client, url, label = 'page') {
   try {
     await client.call('Page.navigate', { url });
@@ -193,7 +203,10 @@ async function setInputValue(client, selector, value) {
       const input = document.querySelector(${JSON.stringify(selector)});
       if (!input) throw new Error('Input not found: ${selector}');
       input.focus();
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const prototype = input instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
       if (setter) {
         setter.call(input, ${JSON.stringify(value)});
       } else {
@@ -214,14 +227,18 @@ async function setInputValue(client, selector, value) {
 }
 
 async function click(client, expression, message) {
-  await evaluate(
-    client,
-    `(() => {
-      const target = ${expression};
-      if (!target) throw new Error(${JSON.stringify(message)});
-      target.click();
-    })()`,
-  );
+  try {
+    await evaluate(
+      client,
+      `(() => {
+        const target = ${expression};
+        if (!target) throw new Error(${JSON.stringify(message)});
+        target.click();
+      })()`,
+    );
+  } catch (error) {
+    throw new Error(`${message}: ${errorMessage(error)}`);
+  }
 }
 
 async function clearBrowserSession(client) {
@@ -319,7 +336,7 @@ async function upsertUser(
             deactivation_reason_code = NULL,
             deactivation_note = NULL,
             affiliation = 'Automated home visit browser smoke',
-            data_origin_code = 'OPERATIONAL',
+            data_origin_code = 'AUTOMATED_TEST',
             email = NULL,
             phone = NULL
         WHERE id = $1
@@ -337,7 +354,7 @@ async function upsertUser(
       )
       VALUES ($1, $2, $3, 'Smoke', 'ACTIVE', $4::jsonb, 'ADMIN',
         '{"global":true}'::jsonb, FALSE, 'Automated home visit browser smoke',
-        'OPERATIONAL', NULL, NULL)
+        'AUTOMATED_TEST', NULL, NULL)
       RETURNING id
     `,
     [username, passwordHash, firstName, JSON.stringify(permissions)],
@@ -371,20 +388,35 @@ async function cleanupSmokeTasks(dataSource) {
     `,
     [ASSIGNEE_EMAIL, ASSIGNEE_NAME],
   );
-  if (!rows.length) return;
-
   const taskIds = rows.map((row) => row.task_id).filter(Boolean);
-  const caseIds = rows.map((row) => row.case_id).filter(Boolean);
   const linkIds = rows.map((row) => row.link_id).filter(Boolean);
-  await dataSource.query(`DELETE FROM task_submissions WHERE task_link_id = ANY($1::uuid[])`, [
-    linkIds,
-  ]);
-  await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::uuid[])`, [taskIds]);
-  await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [taskIds]);
+  const orphanCaseRows = await dataSource.query(
+    `SELECT id FROM cases WHERE reason_flagged = $1`,
+    [REASON_FLAGGED],
+  );
+  const caseIds = [
+    ...new Set([
+      ...rows.map((row) => row.case_id).filter(Boolean),
+      ...orphanCaseRows.map((row) => row.id).filter(Boolean),
+    ]),
+  ];
+  if (linkIds.length) {
+    await dataSource.query(`DELETE FROM task_submissions WHERE task_link_id = ANY($1::uuid[])`, [
+      linkIds,
+    ]);
+  }
+  if (taskIds.length) {
+    await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::uuid[])`, [taskIds]);
+    await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [taskIds]);
+  }
   if (caseIds.length) {
+    await dataSource.query(`DELETE FROM notifications WHERE case_id = ANY($1::int[])`, [caseIds]);
     await dataSource.query(
       `
-        DELETE FROM cases
+        UPDATE cases
+        SET deleted_at = COALESCE(deleted_at, NOW()),
+            status = 'RESOLVED',
+            result_summary = COALESCE(result_summary, 'Automated home visit browser smoke cleanup')
         WHERE id = ANY($1::int[])
           AND reason_flagged = $2
       `,
@@ -461,6 +493,52 @@ async function selectStudent(client, student) {
   );
 }
 
+async function selectCombobox(client, selector, label) {
+  await click(
+    client,
+    `document.querySelector(${JSON.stringify(selector)})`,
+    `Combobox was not found: ${selector}`,
+  );
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const label = ${JSON.stringify(label)};
+            return [...document.querySelectorAll('button')].some(
+              (button) => button.textContent.trim() === label
+            );
+          })()`,
+        ),
+      ),
+    `Combobox option did not render: ${label}`,
+  );
+  await click(
+    client,
+    `(() => {
+      const label = ${JSON.stringify(label)};
+      return [...document.querySelectorAll('button')].find(
+        (button) => button.textContent.trim() === label
+      );
+    })()`,
+    `Combobox option was not found: ${label}`,
+  );
+}
+
+async function selectHomeVisitException(client, label) {
+  await click(
+    client,
+    `(() => {
+      const label = ${JSON.stringify(label)};
+      return [...document.querySelectorAll('label')].find(
+        (candidate) => candidate.textContent.trim() === label
+      )?.querySelector('input[type="radio"]');
+    })()`,
+    `Home visit exception option was not found: ${label}`,
+  );
+}
+
 async function waitForMapSurface(client, message) {
   await waitFor(async () => {
     const text = String(await evaluate(client, 'document.body.innerText'));
@@ -480,48 +558,6 @@ async function waitForMapSurface(client, message) {
       ),
     );
   }, message, 35_000);
-}
-
-async function waitForMapReady(client, message) {
-  await waitFor(async () => {
-    await waitForMapSurface(client, message);
-    return Boolean(await getMarkerCoordinates(client));
-  }, message, 35_000);
-}
-
-async function getMarkerCoordinates(client) {
-  return await evaluate(
-    client,
-    `(() => {
-      const marker = document.querySelector('[data-sts-map-surface]')?.__stsGoogleMarker;
-      const position = marker?.getPosition?.();
-      return position ? { lat: position.lat(), lng: position.lng() } : null;
-    })()`,
-  );
-}
-
-function coordinatesChanged(before, after) {
-  return before?.lat && before?.lng && after?.lat && after?.lng
-    ? before.lat !== after.lat || before.lng !== after.lng
-    : false;
-}
-
-async function dragMapMarker(client) {
-  const triggered = await evaluate(
-    client,
-    `(() => {
-      const surface = document.querySelector('[data-sts-map-surface]');
-      const google = window.google;
-      const marker = surface?.__stsGoogleMarker;
-      const position = marker?.getPosition?.();
-      if (!surface || !google || !marker || !position) return false;
-      const next = new google.maps.LatLng(position.lat() + 0.001, position.lng() + 0.001);
-      marker.setPosition(next);
-      google.maps.event.trigger(marker, 'dragend', { latLng: next });
-      return true;
-    })()`,
-  );
-  assert(triggered, 'Home visit map marker was not available for drag smoke');
 }
 
 async function clickMap(client) {
@@ -555,7 +591,9 @@ async function getCreatedLink(dataSource) {
         t.id AS task_id,
         c.id AS case_id,
         c.student_lat,
-        c.student_lng
+        c.student_lng,
+        tl.assigned_to_first_name,
+        tl.assigned_to_last_name
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       JOIN cases c ON c.id = t.case_id
@@ -568,7 +606,58 @@ async function getCreatedLink(dataSource) {
   );
   assert(row, 'Created home visit task link was not persisted');
   assert(row.student_lat !== null && row.student_lng !== null, 'Created case did not persist coordinates');
+  assert(
+    row.assigned_to_first_name === 'Home Visit' &&
+      row.assigned_to_last_name === 'Browser Smoke',
+    'Created task link did not persist structured assignee names',
+  );
   return row;
+}
+
+async function assertSubmittedReport(dataSource, createdLink) {
+  const [row] = await dataSource.query(
+    `
+      SELECT
+        t.status AS task_status,
+        tl.status AS link_status,
+        c.status AS case_status,
+        submission.visited_at,
+        submission.home_visit_exception_code,
+        submission.cause_category,
+        submission.follow_up_assessment_code,
+        submission.cause_detail,
+        submission.case_follow_up_decision
+      FROM tasks t
+      JOIN task_links tl ON tl.task_id = t.id
+      JOIN cases c ON c.id = t.case_id
+      JOIN task_submissions submission ON submission.task_link_id = tl.id
+      WHERE t.id = $1
+        AND tl.id = $2
+      ORDER BY submission.submitted_at DESC
+      LIMIT 1
+    `,
+    [createdLink.task_id, createdLink.link_id],
+  );
+  assert(row, 'Home visit report submission was not persisted');
+  assert(row.task_status === 'COMPLETED', `Expected task COMPLETED, received ${row.task_status}`);
+  assert(row.link_status === 'COMPLETED', `Expected link COMPLETED, received ${row.link_status}`);
+  assert(
+    row.case_status === 'PENDING_REVIEW',
+    `Expected case PENDING_REVIEW, received ${row.case_status}`,
+  );
+  assert(row.visited_at, 'Home visit report did not persist visited_at');
+  assert(
+    row.home_visit_exception_code === 'STUDENT_NOT_FOUND',
+    `Expected STUDENT_NOT_FOUND, received ${row.home_visit_exception_code}`,
+  );
+  assert(
+    row.follow_up_assessment_code === 'CONTINUE_FOLLOW_UP',
+    `Expected CONTINUE_FOLLOW_UP assessment, received ${row.follow_up_assessment_code}`,
+  );
+  assert(
+    row.case_follow_up_decision === 'REQUEST_REVIEW',
+    `Expected REQUEST_REVIEW, received ${row.case_follow_up_decision}`,
+  );
 }
 
 async function main() {
@@ -589,7 +678,7 @@ async function main() {
       username: CREATOR_USERNAME,
       passwordHash: await passwordService.hash(`HomeVisitCreator-${suffix}-Password`),
       firstName: 'Home Visit Creator',
-      permissions: ['home', 'create'],
+      permissions: ['home', 'create', 'students'],
     });
     const noCreate = await upsertUser(dataSource, {
       username: NO_CREATE_USERNAME,
@@ -627,18 +716,28 @@ async function main() {
 
     await loginSession(
       client,
-      browserUser(creator, CREATOR_USERNAME, ['home', 'create']),
+      browserUser(creator, CREATOR_USERNAME, ['home', 'create', 'students']),
       createSessionCookie(sessionCookieService, creator.id),
     );
     await navigate(client, `${FRONTEND_URL}/create/visit`, 'create visit');
     await waitFor(
       async () =>
         String(await evaluate(client, 'document.body.innerText')).includes('รายละเอียด') &&
-        Boolean(await evaluate(client, `Boolean(document.querySelector('#assigned_to_name'))`)),
+        Boolean(
+          await evaluate(client, `Boolean(document.querySelector('#assigned_to_first_name'))`),
+        ) &&
+        Boolean(
+          await evaluate(client, `Boolean(document.querySelector('#assigned_to_last_name'))`),
+        ) &&
+        Boolean(
+          await evaluate(client, `Boolean(document.querySelector('#assignment-start-time'))`),
+        ) &&
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#assignment-end-time'))`)),
       'Create visit page did not render',
     );
 
-    await setInputValue(client, '#assigned_to_name', ASSIGNEE_NAME);
+    await setInputValue(client, '#assigned_to_first_name', 'Home Visit');
+    await setInputValue(client, '#assigned_to_last_name', 'Browser Smoke');
     await setInputValue(client, '#assigned_to_email', ASSIGNEE_EMAIL);
     await selectStudent(client, student);
     await setInputValue(client, '#reason_flagged', REASON_FLAGGED);
@@ -675,18 +774,6 @@ async function main() {
         ),
       'Clicking the home visit map did not update coordinate inputs',
     );
-    await waitFor(
-      async () => Boolean(await getMarkerCoordinates(client)),
-      'Clicking the home visit map did not create a marker',
-    );
-
-    const geocodedCoordinates = await getMarkerCoordinates(client);
-    await dragMapMarker(client);
-    await waitFor(async () => {
-      const next = await getMarkerCoordinates(client);
-      return coordinatesChanged(geocodedCoordinates, next);
-    }, 'Dragging the home visit marker did not update coordinates');
-
     await click(
       client,
       `document.querySelector('button[type="submit"]')`,
@@ -698,7 +785,7 @@ async function main() {
     );
     const guestLink = await evaluate(
       client,
-      `([...document.querySelectorAll('a')].find((link) => link.textContent.includes('เปิดลิงก์'))?.href) || null`,
+      `document.querySelector('a[aria-label="เปิดลิงก์"]')?.href || null`,
     );
     assert(
       typeof guestLink === 'string' && guestLink.startsWith(FRONTEND_URL),
@@ -710,12 +797,197 @@ async function main() {
       createdLink.link_id,
     ]);
     await navigate(client, guestLink, 'guest visit');
-    await waitForMapReady(client, 'Guest home visit page did not render a persisted map marker');
+    await waitFor(
+      async () => {
+        const pageText = String(await evaluate(client, 'document.body.innerText'));
+        const ready =
+          pageText.includes(REASON_FLAGGED) &&
+          pageText.includes('ขั้นตอนการติดตาม') &&
+          Boolean(await evaluate(client, `Boolean(document.querySelector('#visited-time'))`));
+        if (!ready) {
+          throw new Error(`Current guest page: ${pageText.slice(0, 500)}`);
+        }
+        return true;
+      },
+      'Guest link did not open the report form with persisted visit details',
+    );
+    await click(
+      client,
+      `document.querySelector('button[aria-label="ดูเบอร์ติดต่อนักเรียนและผู้ปกครอง"]')`,
+      'Contact dialog button was not found',
+    );
     await waitFor(
       async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes(REASON_FLAGGED) &&
-        Boolean(await getMarkerCoordinates(client)),
-      'Guest home visit page did not reveal persisted visit details after fixture OTP verification',
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'ช่องทางติดต่อนักเรียนและผู้ปกครอง',
+        ),
+      'Contact dialog did not open',
+    );
+    await click(
+      client,
+      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]')`,
+      'Contact dialog close button was not found',
+    );
+    await click(
+      client,
+      `document.querySelector('button[aria-label="ดูพิกัดบ้านนักเรียน"]')`,
+      'Student-home map dialog button was not found',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('พิกัดบ้านนักเรียน'),
+      'Student-home map dialog did not open',
+    );
+    await click(
+      client,
+      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]')`,
+      'Student-home map dialog close button was not found',
+    );
+    await captureScreenshot(client, process.env.SMOKE_SCREENSHOT_PATH);
+    const reportAlignment = await evaluate(
+      client,
+      `(() => {
+        const detail = document.querySelector('#cause-detail')?.getBoundingClientRect();
+        const upload = document.querySelector('[data-visit-upload-dropzone]')?.getBoundingClientRect();
+        const exceptions = document.querySelector('[data-home-visit-exceptions]')?.getBoundingClientRect();
+        if (!detail || !upload || !exceptions) return null;
+        return {
+          topDelta: Math.abs(
+            document.querySelector('#visited-date')?.getBoundingClientRect().top - upload.top
+          ),
+          bottomDelta: Math.abs(detail.bottom - upload.bottom),
+          exceptionsClearBoth: exceptions.top > Math.max(detail.bottom, upload.bottom),
+          trackingStepTop: document.querySelector('[data-flow-step="2"]')?.getBoundingClientRect().top,
+        };
+      })()`,
+    );
+    assert(reportAlignment, 'Report alignment elements were not rendered');
+    assert(
+      reportAlignment.topDelta <= 1,
+      `Report visit-date/upload tops differ by ${reportAlignment.topDelta}px`,
+    );
+    assert(
+      reportAlignment.bottomDelta <= 1,
+      `Report description/upload bottoms differ by ${reportAlignment.bottomDelta}px`,
+    );
+    assert(
+      reportAlignment.exceptionsClearBoth,
+      'Home-visit exceptions overlap the report fields',
+    );
+    const publicLocations = await fetchBrowserJson(
+      client,
+      `${BROWSER_BACKEND_URL}/api/public/locations`,
+    );
+    assert(
+      publicLocations.status === 200 && publicLocations.body?.data?.provinces?.length > 0,
+      'Guest report could not load the public cascading location catalog',
+    );
+    const guardedLocations = await fetchBrowserJson(
+      client,
+      `${BROWSER_BACKEND_URL}/api/attendance/locations`,
+    );
+    assert(
+      guardedLocations.status === 404,
+      `Attendance module still exposes an ungated locations route (${guardedLocations.status})`,
+    );
+
+    await navigate(client, `${guestLink}/delegate`, 'delegate visit');
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[
+              '#delegate-first-name',
+              '#delegate-last-name',
+              '#delegate-phone',
+              '#delegate-email',
+              '#delegate-note',
+              '#delegate-expiry-date',
+              '#delegate-expiry-time'
+            ].every((selector) => Boolean(document.querySelector(selector)))`,
+          ),
+        ),
+      'Delegation form did not render structured assignee and expiry fields',
+    );
+    await click(
+      client,
+      `([...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ย้อนกลับ'))`,
+      'Delegation back button was not found',
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('#visited-time')) &&
+             document.body.innerText.includes('ขั้นตอนการติดตาม')`,
+          ),
+        ),
+      'Delegation back button did not return to the report form',
+    );
+
+    await selectHomeVisitException(client, 'เปลี่ยนที่อยู่');
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('#updated-address-province'))`,
+          ),
+        ) &&
+        String(await evaluate(client, 'document.body.innerText')).includes('ที่อยู่ใหม่') &&
+        String(await evaluate(client, 'document.body.innerText')).includes('พิกัดที่อยู่ใหม่') &&
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('#updated-address-province')?.disabled === false`,
+          ),
+        ),
+      'Address-changed option did not reveal the structured address form',
+    );
+    const expandedTrackingStepTop = await evaluate(
+      client,
+      `document.querySelector('[data-flow-step="2"]')?.getBoundingClientRect().top`,
+    );
+    assert(
+      Math.abs(expandedTrackingStepTop - reportAlignment.trackingStepTop) <= 1,
+      'Tracking step moved when the address-changed form expanded',
+    );
+    await captureScreenshot(client, process.env.SMOKE_ADDRESS_SCREENSHOT_PATH);
+    await click(
+      client,
+      `document.querySelector('#updated-address-province')`,
+      'Updated province combobox was not found',
+    );
+    await waitFor(
+      async () =>
+        Number(
+          await evaluate(
+            client,
+            `document.querySelector('#updated-address-province')?.parentElement?.querySelectorAll('li button').length || 0`,
+          ),
+        ) > 0,
+      'Updated province combobox did not render catalog options',
+    );
+    await selectHomeVisitException(client, 'ไม่พบนักเรียน');
+    await waitFor(
+      async () =>
+        !(await evaluate(client, `Boolean(document.querySelector('#updated-address-province'))`)),
+      'Switching to student-not-found did not hide the updated address form',
+    );
+    await selectCombobox(client, '#follow-up-assessment', 'ควรติดตามต่อ');
+    await click(
+      client,
+      `document.querySelector('button[type="submit"]')`,
+      'Report submit button was not found',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน',
+        ),
+      'Student-not-found did not require a report detail',
     );
 
     await client.call('Emulation.setDeviceMetricsOverride', {
@@ -725,10 +997,35 @@ async function main() {
       mobile: true,
     });
     await navigate(client, guestLink, 'mobile guest visit');
-    await waitForMapReady(client, 'Mobile guest home visit page did not render a map marker');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('ขั้นตอนการติดตาม') &&
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#visited-time'))`)),
+      'Mobile guest home visit report did not render',
+    );
+    await selectHomeVisitException(client, 'ไม่พบนักเรียน');
+    await selectCombobox(client, '#follow-up-assessment', 'ควรติดตามต่อ');
+    await setInputValue(
+      client,
+      '#cause-detail',
+      'ตรวจสอบบริเวณบ้านและสอบถามเพื่อนบ้านแล้ว ไม่พบนักเรียน',
+    );
+    await click(
+      client,
+      `document.querySelector('button[type="submit"]')`,
+      'Mobile report submit button was not found',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'บันทึกข้อมูลเรียบร้อยแล้ว',
+        ),
+      'Home visit success state did not render after report submission',
+    );
+    await assertSubmittedReport(dataSource, createdLink);
 
     console.log(
-      'home visit browser smoke passed (permission 403, map UX/drag/click, persisted link, guest/mobile map)',
+      'home visit browser smoke passed (assignee names, assignment times, dialogs, delegation form, aligned report, assessment, changed-address map, mobile submit, pending review)',
     );
   } finally {
     await closeChrome(chrome);

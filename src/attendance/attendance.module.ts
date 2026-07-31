@@ -12,6 +12,7 @@ import { AttendanceReadService } from './attendance-read.service';
 import { AttendanceWriteService } from './attendance-write.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import { AttendanceOperationsService } from './attendance-operations.service';
+import { PublicLocationsController } from './public-locations.controller';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { AttendanceOperationsService } from './attendance-operations.service';
     RiskProfileModule,
     TokenEncryptionModule,
   ],
-  controllers: [AttendanceController],
+  controllers: [AttendanceController, PublicLocationsController],
   providers: [
     AttendanceRepository,
     AttendanceLookupService,

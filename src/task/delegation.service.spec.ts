@@ -120,7 +120,13 @@ describe('DelegationService', () => {
     await expect(
       service.delegateTask(
         'public-token',
-        { new_assignee_name: 'ผู้รับใหม่', expires_in_hours: 24 },
+        {
+          new_assignee_name: 'ผู้รับใหม่',
+          new_assignee_phone: '0812345678',
+          new_assignee_email: 'delegate@example.invalid',
+          delegation_note: 'ติดตามนักเรียนตามแผน',
+          expires_in_hours: 24,
+        },
         'http://localhost:5173',
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -130,7 +136,14 @@ describe('DelegationService', () => {
   it('passes the magic session through validation and delegates atomically', async () => {
     const result = await service.delegateTask(
       'public-token',
-      { new_assignee_name: 'ผู้รับใหม่', expires_in_hours: 24 },
+      {
+        new_assignee_first_name: 'ผู้รับ',
+        new_assignee_last_name: 'ใหม่',
+        new_assignee_phone: '0812345678',
+        new_assignee_email: 'delegate@example.invalid',
+        delegation_note: 'ติดตามนักเรียนตามแผน',
+        expires_in_hours: 24,
+      },
       'http://localhost:5173',
       'verified-session',
     );
@@ -151,6 +164,9 @@ describe('DelegationService', () => {
         parentLinkId: 'parent-link',
         taskId: 'task-id',
         delegationDepth: 1,
+        assignedToName: 'ผู้รับ ใหม่',
+        assignedToFirstName: 'ผู้รับ',
+        assignedToLastName: 'ใหม่',
       }),
       expect.anything(),
     );
@@ -164,13 +180,25 @@ describe('DelegationService', () => {
     const requests = [
       service.delegateTask(
         'public-token',
-        { new_assignee_name: 'ผู้รับใหม่ A', expires_in_hours: 24 },
+        {
+          new_assignee_name: 'ผู้รับใหม่ A',
+          new_assignee_phone: '0812345678',
+          new_assignee_email: 'delegate-a@example.invalid',
+          delegation_note: 'ติดตามนักเรียนตามแผน A',
+          expires_in_hours: 24,
+        },
         'http://localhost:5173',
         'verified-session',
       ),
       service.delegateTask(
         'public-token',
-        { new_assignee_name: 'ผู้รับใหม่ B', expires_in_hours: 24 },
+        {
+          new_assignee_name: 'ผู้รับใหม่ B',
+          new_assignee_phone: '0898765432',
+          new_assignee_email: 'delegate-b@example.invalid',
+          delegation_note: 'ติดตามนักเรียนตามแผน B',
+          expires_in_hours: 24,
+        },
         'http://localhost:5173',
         'verified-session',
       ),
@@ -195,7 +223,13 @@ describe('DelegationService', () => {
     await expect(
       service.delegateTask(
         'public-token',
-        { new_assignee_name: 'ผู้รับใหม่', expires_in_hours: 24 },
+        {
+          new_assignee_name: 'ผู้รับใหม่',
+          new_assignee_phone: '0812345678',
+          new_assignee_email: 'delegate@example.invalid',
+          delegation_note: 'ติดตามนักเรียนตามแผน',
+          expires_in_hours: 24,
+        },
         'http://localhost:5173',
         'verified-session',
       ),

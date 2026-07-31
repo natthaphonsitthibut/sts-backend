@@ -2,6 +2,7 @@ import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard, PermissionsGuard } from '../auth';
+import { IS_PUBLIC_KEY } from '../auth/public.decorator';
 import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY } from '../auth/permissions.decorator';
 import { AttendanceController } from './attendance.controller';
 
@@ -29,7 +30,6 @@ describe('AttendanceController access', () => {
   const guardedReadMethods: Array<keyof AttendanceController> = [
     'getGradeLevels',
     'getSchools',
-    'getLocations',
     'getStudents',
     'getHistory',
     'getAttendanceTasks',
@@ -41,6 +41,15 @@ describe('AttendanceController access', () => {
 
     for (const method of guardedReadMethods) {
       expect(Reflect.getMetadata(GUARDS_METADATA, handler(method))).toEqual([PermissionsGuard]);
+    }
+  });
+
+  it('keeps no unauthenticated route on the attendance controller', () => {
+    for (const name of Object.getOwnPropertyNames(AttendanceController.prototype)) {
+      if (name === 'constructor') continue;
+      expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler(name as keyof AttendanceController))).toBe(
+        undefined,
+      );
     }
   });
 
@@ -62,7 +71,7 @@ describe('AttendanceController access', () => {
       );
     }
 
-    for (const method of ['getSchools', 'getLocations'] as const) {
+    for (const method of ['getSchools'] as const) {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'attendance',
         'attendance-dashboard',

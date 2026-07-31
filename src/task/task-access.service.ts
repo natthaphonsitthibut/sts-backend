@@ -122,10 +122,16 @@ export class TaskAccessService {
       target_room: link.target_room,
       target_school_id: link.target_school_id,
       assigned_to_name: link.assigned_to_name,
+      assigned_to_first_name: link.assigned_to_first_name ?? null,
+      assigned_to_last_name: link.assigned_to_last_name ?? null,
       delegation_depth: link.delegation_depth,
       max_delegation_depth: link.max_delegation_depth,
       can_delegate: canDelegate,
+      status: link.status,
+      opens_at: link.opens_at ?? null,
       expires_at: link.expires_at,
+      delegation_note: link.delegation_note ?? null,
+      created_at: link.created_at ?? null,
       subject: link.subject,
       school_name: link.school_name,
       auth_required: authRequired,
@@ -145,6 +151,7 @@ export class TaskAccessService {
           typeof caseData?.student_school === 'string' ? caseData.student_school : null,
         );
         result.student_address = '*** (กรุณายืนยันตัวตน) ***';
+        result.student_phone = null;
         result.reason_flagged = '*** (กรุณายืนยันตัวตน) ***';
         result.student_lat = null;
         result.student_lng = null;
@@ -152,9 +159,40 @@ export class TaskAccessService {
         result.student_name = caseData?.student_name || null;
         result.student_school = caseData?.student_school || null;
         result.student_address = caseData?.student_address || null;
+        result.student_phone = caseData?.student_phone || null;
+        result.address_line = caseData?.address_line || null;
+        result.address_province = caseData?.address_province || null;
+        result.address_district = caseData?.address_district || null;
+        result.address_sub_district = caseData?.address_sub_district || null;
+        result.postal_code = caseData?.postal_code || null;
         result.student_lat = caseData?.student_lat || null;
         result.student_lng = caseData?.student_lng || null;
         result.reason_flagged = caseData?.reason_flagged || null;
+        result.academic_year = caseData?.academic_year || null;
+        result.semester = caseData?.semester || null;
+        result.student_grade = caseData?.grade || null;
+        result.student_room = caseData?.room || null;
+        const caseId = Number(caseData?.id);
+        result.contact_channels = Number.isInteger(caseId)
+          ? (await this.taskRepository.listPublicCaseContactChannels(caseId)).map((row) => ({
+              contact_kind: row.contact_kind === 'STUDENT' ? 'STUDENT' : 'GUARDIAN',
+              relation: typeof row.relation === 'string' ? row.relation : null,
+              relation_note: typeof row.relation_note === 'string' ? row.relation_note : null,
+              full_name: typeof row.full_name === 'string' ? row.full_name : null,
+              phone: typeof row.phone === 'string' ? row.phone : null,
+              is_primary: row.is_primary === true,
+            }))
+          : [];
+        result.follow_up_history = Number.isInteger(caseId)
+          ? (await this.taskRepository.listPublicCaseFollowUpHistory(caseId, 5)).map((row) => ({
+              assigned_to_name:
+                typeof row.assigned_to_name === 'string' ? row.assigned_to_name : null,
+              visited_at: row.visited_at ?? null,
+              submitted_at: row.submitted_at ?? null,
+              cause_detail: typeof row.cause_detail === 'string' ? row.cause_detail : null,
+              exception_label: typeof row.exception_label === 'string' ? row.exception_label : null,
+            }))
+          : [];
       }
     }
 

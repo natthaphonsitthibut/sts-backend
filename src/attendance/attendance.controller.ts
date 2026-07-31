@@ -89,22 +89,6 @@ export class AttendanceController {
     );
   }
 
-  @Get('locations')
-  @UseGuards(PermissionsGuard)
-  @RequireAnyPermission(
-    'attendance',
-    'attendance-dashboard',
-    'students',
-    'manage-school-structure',
-    'manage-teacher-access',
-    'import-data',
-    'import-school-roster',
-    'export-data',
-  )
-  async getLocations() {
-    return await this.attendanceService.getLocations();
-  }
-
   @Get('students')
   @UseGuards(PermissionsGuard)
   @RequirePermission('attendance')

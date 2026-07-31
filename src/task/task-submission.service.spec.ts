@@ -45,7 +45,13 @@ describe('TaskSubmissionService', () => {
   let notificationsService: { [k: string]: jest.Mock };
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
   let trackingOptions: jest.Mocked<
-    Pick<CaseTrackingOptionsService, 'getFollowUpDecision' | 'assertResolutionOutcome'>
+    Pick<
+      CaseTrackingOptionsService,
+      | 'getFollowUpDecision'
+      | 'assertResolutionOutcome'
+      | 'getHomeVisitException'
+      | 'getHomeVisitAssessment'
+    >
   >;
 
   beforeEach(() => {
@@ -85,6 +91,11 @@ describe('TaskSubmissionService', () => {
         }),
       ),
       assertResolutionOutcome: jest.fn((code: string | null) => Promise.resolve(code)),
+      getHomeVisitException: jest.fn().mockResolvedValue(null),
+      getHomeVisitAssessment: jest.fn().mockResolvedValue({
+        code: 'NO_CONCERN',
+        label: 'ไม่พบปัญหาเพิ่มเติม',
+      }),
     };
 
     service = new TaskSubmissionService(
@@ -206,6 +217,29 @@ describe('TaskSubmissionService', () => {
     expect(attendanceWriteService.saveAttendanceGroupsWithinTransaction).not.toHaveBeenCalled();
   });
 
+  it('requires a review assessment for a home-visit report', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+    });
+    trackingOptions.getHomeVisitAssessment.mockResolvedValueOnce(null);
+
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        notes: 'ลงพื้นที่แล้ว',
+        case_follow_up_decision: 'REQUEST_REVIEW',
+      }),
+    ).rejects.toThrow('กรุณาเลือกผลประเมินหลังลงพื้นที่');
+    expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+  });
+
   it('sends a home-visit report for review without closing the case', async () => {
     taskAccessService.getTaskByToken.mockResolvedValue({
       task_type: 'VISIT',
@@ -241,6 +275,154 @@ describe('TaskSubmissionService', () => {
     );
     expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
     expect(auditLog.record).not.toHaveBeenCalled();
+  });
+
+  it('defaults a case-linked BA form submission to review', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+
+    await service.saveTaskSubmission('public-token', {
+      notes: 'พบผู้ปกครองและบันทึกข้อมูลแล้ว',
+      visited_at: '2026-07-31T02:30:00.000Z',
+    });
+
+    expect(trackingOptions.getFollowUpDecision).toHaveBeenCalledWith('REQUEST_REVIEW');
+    expect(taskRepository.insertTaskSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visitedAt: '2026-07-31T02:30:00.000Z',
+        caseFollowUpDecision: 'REQUEST_REVIEW',
+      }),
+      undefined,
+    );
+    expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ nextStatus: 'PENDING_REVIEW' }),
+      undefined,
+    );
+  });
+
+  it('rejects a visit timestamp outside the assignment window', async () => {
+    const openedAt = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+      opens_at: openedAt,
+      created_at: openedAt,
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        notes: 'ลงพื้นที่แล้ว',
+        visited_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      }),
+    ).rejects.toThrow('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ในอนาคต');
+
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        notes: 'ลงพื้นที่แล้ว',
+        visited_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    ).rejects.toThrow('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ก่อนเวลาที่ได้รับมอบหมาย');
+
+    expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+  });
+
+  it('persists a structured changed address and updates the case address fields', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+    trackingOptions.getHomeVisitException.mockResolvedValue({
+      code: 'ADDRESS_CHANGED',
+      label: 'เปลี่ยนที่อยู่',
+      requiresUpdatedAddress: true,
+    });
+
+    await service.saveTaskSubmission('public-token', {
+      notes: 'ยืนยันที่อยู่ใหม่จากผู้ปกครอง',
+      home_visit_exception_code: 'ADDRESS_CHANGED',
+      updated_address_line: '99/9 หมู่ 5',
+      updated_address_province: 'กรุงเทพมหานคร',
+      updated_address_district: 'ดอนเมือง',
+      updated_address_sub_district: 'สีกัน',
+      updated_postal_code: '10210',
+    });
+
+    expect(taskRepository.insertTaskSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        addressChanged: true,
+        homeVisitExceptionCode: 'ADDRESS_CHANGED',
+        updatedStudentAddress: '99/9 หมู่ 5 ต.สีกัน อ.ดอนเมือง จ.กรุงเทพมหานคร 10210',
+        updatedAddressLine: '99/9 หมู่ 5',
+      }),
+      undefined,
+    );
+    expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updatedAddressLine: '99/9 หมู่ 5',
+        updatedAddressProvince: 'กรุงเทพมหานคร',
+        updatedPostalCode: '10210',
+      }),
+      undefined,
+    );
+  });
+
+  it('requires an explanation when the student was not found', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+    });
+    trackingOptions.getHomeVisitException.mockResolvedValue({
+      code: 'STUDENT_NOT_FOUND',
+      label: 'ไม่พบนักเรียน',
+      requiresUpdatedAddress: false,
+    });
+
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        home_visit_exception_code: 'STUDENT_NOT_FOUND',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
   });
 
   it('allows the home visitor to close a simple case with an outcome', async () => {

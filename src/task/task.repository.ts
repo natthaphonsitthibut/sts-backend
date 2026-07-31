@@ -129,12 +129,15 @@ interface CreateTaskLinkInput {
   tokenEncrypted: string;
   delegationDepth: number;
   assignedToName: string;
+  assignedToFirstName: string | null;
+  assignedToLastName: string | null;
   assignedToPhone: string | null;
   assignedToEmail: string | null;
   expiresAt: string;
   /** Optional future open time; null = usable immediately. */
   opensAt: string | null;
   subject: string | null;
+  delegationNote: string | null;
   subjectId: number | null;
   sourceFieldFollowerId: number | null;
   otpVerified: number;
@@ -181,12 +184,20 @@ interface TaskSubmissionInput {
   linkId: string;
   visitLat: number | null;
   visitLng: number | null;
+  visitedAt: string | null;
   causeCategory: string | null;
+  followUpAssessmentCode: string | null;
   causeDetail: string | null;
   recommendation: string | null;
   photoPaths: string | null;
   addressChanged: boolean;
+  homeVisitExceptionCode: string | null;
   updatedStudentAddress: string | null;
+  updatedAddressLine: string | null;
+  updatedAddressProvince: string | null;
+  updatedAddressDistrict: string | null;
+  updatedAddressSubDistrict: string | null;
+  updatedPostalCode: string | null;
   updatedLat: number | null;
   updatedLng: number | null;
   caseFollowUpDecision: string | null;
@@ -210,8 +221,14 @@ interface CaseSubmissionUpdateInput {
   nextStatus: string;
   nextSummary: string;
   updatedStudentAddress: string | null;
+  updatedAddressLine: string | null;
+  updatedAddressProvince: string | null;
+  updatedAddressDistrict: string | null;
+  updatedAddressSubDistrict: string | null;
+  updatedPostalCode: string | null;
   updatedLat: number | null;
   updatedLng: number | null;
+  clearMissingCoordinates: boolean;
 }
 
 interface TaskLinkOtpInput {
@@ -910,10 +927,13 @@ export class TaskRepository {
         token_encrypted,
         delegation_depth,
         assigned_to_name,
+        assigned_to_first_name,
+        assigned_to_last_name,
         assigned_to_phone,
         assigned_to_email,
         expires_at,
         subject,
+        delegation_note,
         subject_id,
         otp_verified,
         created_by,
@@ -939,12 +959,15 @@ export class TaskRepository {
         $12,
         $13,
         $14,
-        $14,
         $15,
         $16,
         $17,
+        $17,
         $18,
-        $19
+        $19,
+        $20,
+        $21,
+        $22
       )
     `,
       [
@@ -955,10 +978,13 @@ export class TaskRepository {
         data.tokenEncrypted,
         data.delegationDepth,
         data.assignedToName,
+        data.assignedToFirstName,
+        data.assignedToLastName,
         data.assignedToPhone,
         data.assignedToEmail,
         data.expiresAt,
         data.subject,
+        data.delegationNote,
         data.subjectId,
         data.otpVerified,
         data.createdBy,
@@ -1201,15 +1227,127 @@ export class TaskRepository {
   async findCaseByTaskId(taskId: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
-      SELECT c.*
+      SELECT
+        c.id,
+        c.student_name,
+        c.student_school,
+        c.student_address,
+        c.address_line,
+        c.address_province,
+        c.address_district,
+        c.address_sub_district,
+        c.postal_code,
+        c.student_lat,
+        c.student_lng,
+        c.reason_flagged,
+        c.status,
+        person_contact.phone AS student_phone,
+        enrollment."AcademicYear_Onec" AS academic_year,
+        enrollment."Semester_Onec" AS semester,
+        grade.label AS grade,
+        enrollment."RoomID_Onec"::text AS room
       FROM cases c
       JOIN tasks t ON t.case_id = c.id
+      LEFT JOIN student_person_contact person_contact
+        ON person_contact.person_uuid = c.student_uuid
+      LEFT JOIN LATERAL (
+        SELECT current_enrollment.*
+        FROM student_term current_enrollment
+        WHERE current_enrollment.student_uuid = c.student_uuid
+        ORDER BY
+          current_enrollment."AcademicYear_Onec" DESC NULLS LAST,
+          current_enrollment."Semester_Onec" DESC NULLS LAST
+        LIMIT 1
+      ) enrollment ON true
+      LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
       WHERE t.id = $1 AND c.deleted_at IS NULL AND t.deleted_at IS NULL
-    `,
+      `,
       [taskId],
     );
 
     return result.rows[0] || null;
+  }
+
+  async listPublicCaseFollowUpHistory(caseId: number, limit = 5): Promise<QueryResultRow[]> {
+    const normalizedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 5;
+    const boundedLimit = Math.max(1, Math.min(normalizedLimit, 5));
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        link.assigned_to_name,
+        submission.visited_at,
+        submission.submitted_at,
+        submission.cause_detail,
+        exception.label_th AS exception_label
+      FROM tasks task
+      JOIN task_links link
+        ON link.task_id = task.id
+        AND link.deleted_at IS NULL
+      JOIN task_submissions submission
+        ON submission.task_link_id = link.id
+        AND submission.deleted_at IS NULL
+      LEFT JOIN home_visit_exception_options exception
+        ON exception.code = submission.home_visit_exception_code
+      WHERE task.case_id = $1
+        AND task.task_type = 'VISIT'
+        AND task.deleted_at IS NULL
+      ORDER BY submission.submitted_at DESC, submission.id DESC
+      LIMIT $2
+      `,
+      [caseId, boundedLimit],
+    );
+    return result.rows;
+  }
+
+  async listPublicCaseContactChannels(caseId: number): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        contact_kind,
+        relation,
+        relation_note,
+        full_name,
+        phone,
+        is_primary
+      FROM (
+        SELECT
+          0 AS sort_order,
+          'STUDENT'::text AS contact_kind,
+          'STUDENT'::text AS relation,
+          NULL::text AS relation_note,
+          c.student_name AS full_name,
+          person_contact.phone,
+          TRUE AS is_primary
+        FROM cases c
+        LEFT JOIN student_person_contact person_contact
+          ON person_contact.person_uuid = c.student_uuid
+        WHERE c.id = $1
+          AND c.deleted_at IS NULL
+
+        UNION ALL
+
+        SELECT
+          CASE WHEN guardian.is_primary THEN 1 ELSE 2 END AS sort_order,
+          'GUARDIAN'::text AS contact_kind,
+          guardian.relation::text,
+          guardian.relation_note::text,
+          guardian.full_name::text,
+          guardian.phone::text,
+          guardian.is_primary
+        FROM cases c
+        JOIN student_guardian guardian
+          ON guardian.person_uuid = c.student_uuid
+         AND guardian.deleted_at IS NULL
+        WHERE c.id = $1
+          AND c.deleted_at IS NULL
+      ) contact
+      WHERE NULLIF(btrim(phone), '') IS NOT NULL
+      ORDER BY sort_order, full_name
+      `,
+      [caseId],
+    );
+
+    return result.rows;
   }
 
   async listLoginLinksPaginated(
@@ -1806,16 +1944,21 @@ export class TaskRepository {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
-        cause_category,
-        cause_detail,
-        recommendation,
-        submitted_at,
-        visit_lat,
-        visit_lng,
-        photo_paths
-      FROM task_submissions
-      WHERE task_link_id = $1
-        AND deleted_at IS NULL
+        submission.cause_category,
+        submission.follow_up_assessment_code,
+        assessment.label_th AS follow_up_assessment_label,
+        submission.cause_detail,
+        submission.recommendation,
+        submission.submitted_at,
+        submission.visit_lat,
+        submission.visit_lng,
+        submission.photo_paths
+      FROM task_submissions submission
+      LEFT JOIN home_visit_assessment_options assessment
+        ON assessment.code = submission.follow_up_assessment_code
+        AND assessment.deleted_at IS NULL
+      WHERE submission.task_link_id = $1
+        AND submission.deleted_at IS NULL
     `,
       [linkId],
     );
@@ -1854,29 +1997,49 @@ export class TaskRepository {
         task_link_id,
         visit_lat,
         visit_lng,
+        visited_at,
         cause_category,
+        follow_up_assessment_code,
         cause_detail,
         recommendation,
         photo_paths,
         address_changed,
+        home_visit_exception_code,
         updated_student_address,
+        updated_address_line,
+        updated_address_province,
+        updated_address_district,
+        updated_address_sub_district,
+        updated_postal_code,
         updated_lat,
         updated_lng,
         case_follow_up_decision,
         case_resolution_outcome_code
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+        $21
+      )
     `,
       [
         data.linkId,
         data.visitLat,
         data.visitLng,
+        data.visitedAt,
         data.causeCategory,
+        data.followUpAssessmentCode,
         data.causeDetail,
         data.recommendation,
         data.photoPaths,
         data.addressChanged,
+        data.homeVisitExceptionCode,
         data.updatedStudentAddress,
+        data.updatedAddressLine,
+        data.updatedAddressProvince,
+        data.updatedAddressDistrict,
+        data.updatedAddressSubDistrict,
+        data.updatedPostalCode,
         data.updatedLat,
         data.updatedLng,
         data.caseFollowUpDecision,
@@ -1899,9 +2062,14 @@ export class TaskRepository {
           status = $1,
           result_summary = $2,
           student_address = COALESCE($3, student_address),
-          student_lat = COALESCE($4, student_lat),
-          student_lng = COALESCE($5, student_lng)
-        WHERE id = $6
+          address_line = COALESCE($4, address_line),
+          address_province = COALESCE($5, address_province),
+          address_district = COALESCE($6, address_district),
+          address_sub_district = COALESCE($7, address_sub_district),
+          postal_code = COALESCE($8, postal_code),
+          student_lat = CASE WHEN $11 THEN $9 ELSE COALESCE($9, student_lat) END,
+          student_lng = CASE WHEN $11 THEN $10 ELSE COALESCE($10, student_lng) END
+        WHERE id = $12
           AND status IN ('OPEN', 'IN_PROGRESS')
           AND deleted_at IS NULL
         RETURNING id
@@ -1910,8 +2078,14 @@ export class TaskRepository {
         data.nextStatus,
         data.nextSummary,
         data.updatedStudentAddress,
+        data.updatedAddressLine,
+        data.updatedAddressProvince,
+        data.updatedAddressDistrict,
+        data.updatedAddressSubDistrict,
+        data.updatedPostalCode,
         data.updatedLat,
         data.updatedLng,
+        data.clearMissingCoordinates,
         data.caseId,
       ],
     );
@@ -3010,14 +3184,23 @@ export class TaskRepository {
         tl.assigned_to_name AS initial_assignee,
         (SELECT COUNT(*) FROM task_links WHERE task_id = t.id AND deleted_at IS NULL) AS link_count,
         latest_submission.submitted_at,
+        latest_submission.visited_at,
         latest_submission.cause_category,
+        latest_submission.follow_up_assessment_code,
+        latest_submission.follow_up_assessment_label,
         latest_submission.cause_detail,
         latest_submission.recommendation,
         latest_submission.visit_lat,
         latest_submission.visit_lng,
         latest_submission.photo_paths,
         latest_submission.address_changed,
+        latest_submission.home_visit_exception_code,
         latest_submission.updated_student_address,
+        latest_submission.updated_address_line,
+        latest_submission.updated_address_province,
+        latest_submission.updated_address_district,
+        latest_submission.updated_address_sub_district,
+        latest_submission.updated_postal_code,
         latest_submission.updated_lat,
         latest_submission.updated_lng,
         latest_submission.case_follow_up_decision,
@@ -3025,14 +3208,24 @@ export class TaskRepository {
       FROM tasks t
       LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.delegation_depth = 0 AND tl.deleted_at IS NULL
       LEFT JOIN LATERAL (
-        SELECT submission.submitted_at, submission.cause_category, submission.cause_detail,
+        SELECT submission.submitted_at, submission.visited_at,
+               submission.cause_category, submission.follow_up_assessment_code,
+               assessment.label_th AS follow_up_assessment_label,
+               submission.cause_detail,
                submission.recommendation, submission.visit_lat, submission.visit_lng,
                submission.photo_paths, submission.address_changed,
-               submission.updated_student_address, submission.updated_lat, submission.updated_lng,
+               submission.home_visit_exception_code,
+               submission.updated_student_address, submission.updated_address_line,
+               submission.updated_address_province, submission.updated_address_district,
+               submission.updated_address_sub_district, submission.updated_postal_code,
+               submission.updated_lat, submission.updated_lng,
                submission.case_follow_up_decision,
                submission.case_resolution_outcome_code
         FROM task_links round_link
         JOIN task_submissions submission ON submission.task_link_id = round_link.id
+        LEFT JOIN home_visit_assessment_options assessment
+          ON assessment.code = submission.follow_up_assessment_code
+          AND assessment.deleted_at IS NULL
         WHERE round_link.task_id = t.id
           AND round_link.deleted_at IS NULL
           AND submission.deleted_at IS NULL
@@ -3113,6 +3306,52 @@ export class TaskRepository {
       ORDER BY sort_order, code
     `);
     return result.rows;
+  }
+
+  async listHomeVisitExceptionOptions(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th, requires_updated_address
+      FROM home_visit_exception_options
+      WHERE is_active = TRUE AND deleted_at IS NULL
+      ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async listHomeVisitAssessmentOptions(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th
+      FROM home_visit_assessment_options
+      WHERE is_active = TRUE AND deleted_at IS NULL
+      ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async findHomeVisitAssessmentOption(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT code, label_th
+      FROM home_visit_assessment_options
+      WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
+      LIMIT 1
+    `,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findHomeVisitExceptionOption(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT code, label_th, requires_updated_address
+      FROM home_visit_exception_options
+      WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
+      LIMIT 1
+    `,
+      [code],
+    );
+    return result.rows[0] ?? null;
   }
 
   async findCaseReviewAction(code: string): Promise<QueryResultRow | null> {

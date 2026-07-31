@@ -7,9 +7,13 @@ describe('CaseTrackingOptionsService', () => {
     listCaseReviewActions: jest.fn(),
     listCaseFollowUpDecisions: jest.fn(),
     listCaseResolutionOutcomes: jest.fn(),
+    listHomeVisitExceptionOptions: jest.fn(),
+    listHomeVisitAssessmentOptions: jest.fn(),
     findCaseReviewAction: jest.fn(),
     findCaseFollowUpDecision: jest.fn(),
     findCaseResolutionOutcome: jest.fn(),
+    findHomeVisitExceptionOption: jest.fn(),
+    findHomeVisitAssessmentOption: jest.fn(),
   };
   const service = new CaseTrackingOptionsService(repository as unknown as TaskRepository);
 
@@ -36,6 +40,16 @@ describe('CaseTrackingOptionsService', () => {
     repository.listCaseResolutionOutcomes.mockResolvedValue([
       { code: 'RETURNED_TO_SCHOOL', label_th: 'กลับมาเรียนแล้ว' },
     ]);
+    repository.listHomeVisitExceptionOptions.mockResolvedValue([
+      {
+        code: 'ADDRESS_CHANGED',
+        label_th: 'เปลี่ยนที่อยู่',
+        requires_updated_address: true,
+      },
+    ]);
+    repository.listHomeVisitAssessmentOptions.mockResolvedValue([
+      { code: 'CONTINUE_FOLLOW_UP', label_th: 'ควรติดตามต่อ' },
+    ]);
 
     await expect(service.getOptions()).resolves.toEqual({
       reviewActions: [
@@ -56,6 +70,14 @@ describe('CaseTrackingOptionsService', () => {
         },
       ],
       resolutionOutcomes: [{ code: 'RETURNED_TO_SCHOOL', label: 'กลับมาเรียนแล้ว' }],
+      homeVisitExceptions: [
+        {
+          code: 'ADDRESS_CHANGED',
+          label: 'เปลี่ยนที่อยู่',
+          requiresUpdatedAddress: true,
+        },
+      ],
+      homeVisitAssessments: [{ code: 'CONTINUE_FOLLOW_UP', label: 'ควรติดตามต่อ' }],
     });
   });
 

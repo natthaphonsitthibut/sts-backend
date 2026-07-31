@@ -460,8 +460,14 @@ describe('TaskRepository', () => {
           nextStatus: 'PENDING_REVIEW',
           nextSummary: 'รายงานการติดตาม',
           updatedStudentAddress: null,
+          updatedAddressLine: null,
+          updatedAddressProvince: null,
+          updatedAddressDistrict: null,
+          updatedAddressSubDistrict: null,
+          updatedPostalCode: null,
           updatedLat: null,
           updatedLng: null,
+          clearMissingCoordinates: false,
         },
         executor as never,
       ),
@@ -469,7 +475,20 @@ describe('TaskRepository', () => {
 
     expect(queries[0].sql).toContain("status IN ('OPEN', 'IN_PROGRESS')");
     expect(queries[0].sql).toContain('RETURNING id');
-    expect(queries[0].params).toEqual(['PENDING_REVIEW', 'รายงานการติดตาม', null, null, null, 10]);
+    expect(queries[0].params).toEqual([
+      'PENDING_REVIEW',
+      'รายงานการติดตาม',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      false,
+      10,
+    ]);
   });
 
   it('resolves a human reviewer from the persisted user foreign key', async () => {

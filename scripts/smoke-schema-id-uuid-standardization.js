@@ -172,6 +172,7 @@ async function cleanup(dataSource, taskIds, createdSlotId) {
     await dataSource.query(`DELETE FROM task_links WHERE task_id = ANY($1::uuid[])`, [taskIds]);
     await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [taskIds]);
     if (caseIds.length > 0) {
+      await dataSource.query(`DELETE FROM notifications WHERE case_id = ANY($1::int[])`, [caseIds]);
       await dataSource.query(
         `DELETE FROM cases WHERE id = ANY($1::int[]) AND reason_flagged = $2`,
         [caseIds, MARKER],
@@ -192,6 +193,35 @@ async function cleanup(dataSource, taskIds, createdSlotId) {
   );
 }
 
+async function cleanupStaleFixtures(dataSource) {
+  const rows = await dataSource.query(
+    `
+      SELECT DISTINCT task.id
+      FROM tasks task
+      LEFT JOIN cases case_record ON case_record.id = task.case_id
+      LEFT JOIN task_links link ON link.task_id = task.id
+      WHERE case_record.reason_flagged = $1
+         OR link.assigned_to_name LIKE $2
+    `,
+    [MARKER, `${MARKER}%`],
+  );
+  await cleanup(
+    dataSource,
+    rows.map((row) => row.id).filter(Boolean),
+    null,
+  );
+  const orphanCases = await dataSource.query(`SELECT id FROM cases WHERE reason_flagged = $1`, [
+    MARKER,
+  ]);
+  const orphanCaseIds = orphanCases.map((row) => Number(row.id)).filter(Number.isFinite);
+  if (orphanCaseIds.length > 0) {
+    await dataSource.query(`DELETE FROM notifications WHERE case_id = ANY($1::int[])`, [
+      orphanCaseIds,
+    ]);
+    await dataSource.query(`DELETE FROM cases WHERE id = ANY($1::int[])`, [orphanCaseIds]);
+  }
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -205,6 +235,7 @@ async function main() {
   let createdSlotId = null;
 
   try {
+    await cleanupStaleFixtures(dataSource);
     const actor = await getActor(dataSource);
     const student = await getStudentFixture(dataSource);
     const slot = await ensureTodayTimetableSlot(dataSource, student, actor.id);
@@ -215,6 +246,8 @@ async function main() {
       {
         task_type: 'VISIT',
         assigned_to_name: `${MARKER} Delegate Parent`,
+        assigned_to_first_name: `${MARKER} Delegate`,
+        assigned_to_last_name: 'Parent',
         student_id: student.student_uuid,
         student_first_name: student.first_name,
         student_last_name: student.last_name,
@@ -231,7 +264,14 @@ async function main() {
     const delegatedToken = tokenOf(delegatedVisit);
     const delegated = await delegationService.delegateTask(
       delegatedToken,
-      { new_assignee_name: `${MARKER} Child`, expires_in_hours: '24' },
+      {
+        new_assignee_first_name: `${MARKER}`,
+        new_assignee_last_name: 'Child',
+        new_assignee_phone: '0812345678',
+        new_assignee_email: 'schema.uuid.child@example.test',
+        delegation_note: 'Schema UUID smoke delegation',
+        expires_in_hours: '24',
+      },
       BASE_URL,
     );
     const delegatedChildToken = tokenOf(delegated);
@@ -265,6 +305,7 @@ async function main() {
     await taskService.saveTaskSubmission(visitToken, {
       visit_lat: 18.79,
       visit_lng: 98.98,
+      follow_up_assessment_code: 'CONTINUE_FOLLOW_UP',
       cause_category: 'FAMILY',
       cause_detail: MARKER,
       recommendation: 'Smoke recommendation',
@@ -296,7 +337,7 @@ async function main() {
     const loginVerified = await taskService.verifyMagicLogin(tokenOf(login), undefined);
     const [loginLinkRow] = await dataSource.query(
       `SELECT login_role FROM task_links WHERE task_id = $1`,
-      [taskIds[3]],
+      [taskIds[2]],
     );
     assert(
       loginVerified?.otp_required === true && loginLinkRow?.login_role === 'TEACHER',
@@ -326,7 +367,7 @@ async function main() {
         WHERE link.task_id = $1
           AND link_slot.timetable_slot_id = $2
       `,
-      [taskIds[4], slot.slotId],
+      [taskIds[3], slot.slotId],
     );
     assert(linkedSlot, 'Attendance task did not persist task_link_timetable_slots row');
     const attendanceRoster = await taskService.getTaskStudents(attendanceToken);
@@ -337,7 +378,7 @@ async function main() {
     }));
     assert(rosterRecords.length > 0, 'Attendance link did not return a roster');
     const attendanceTask = await taskService.getTaskByToken(attendanceToken, undefined);
-    assert(attendanceTask?.task_id === taskIds[4], 'ATTENDANCE link did not resolve');
+    assert(attendanceTask?.task_id === taskIds[3], 'ATTENDANCE link did not resolve');
 
     await riskProfiles.enqueueStudents([student.student_uuid], 'schema-id-uuid-smoke');
     const dashboard = await taskService.getRiskDashboard(actor, { limit: 5 });

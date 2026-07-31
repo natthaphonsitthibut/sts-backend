@@ -21,7 +21,13 @@ describe('DelegationController', () => {
 
     await controller.delegateTask(
       'public-token',
-      { new_assignee_name: 'ผู้รับใหม่', expires_in_hours: 24 },
+      {
+        new_assignee_name: 'ผู้รับใหม่',
+        new_assignee_phone: '0812345678',
+        new_assignee_email: 'delegate@example.invalid',
+        delegation_note: 'ติดตามนักเรียนตามแผน',
+        expires_in_hours: 24,
+      },
       request,
     );
 

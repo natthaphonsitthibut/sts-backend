@@ -12,6 +12,17 @@ interface CaseReviewActionPolicy extends CaseTrackingOption {
   requiredPermission: string;
 }
 
+export interface HomeVisitExceptionOption {
+  code: string;
+  label: string;
+  requiresUpdatedAddress: boolean;
+}
+
+export interface HomeVisitAssessmentOption {
+  code: string;
+  label: string;
+}
+
 @Injectable()
 export class CaseTrackingOptionsService {
   constructor(private readonly taskRepository: TaskRepository) {}
@@ -31,10 +42,18 @@ export class CaseTrackingOptionsService {
   }
 
   async getOptions() {
-    const [reviewActions, followUpDecisions, resolutionOutcomes] = await Promise.all([
+    const [
+      reviewActions,
+      followUpDecisions,
+      resolutionOutcomes,
+      homeVisitExceptions,
+      homeVisitAssessments,
+    ] = await Promise.all([
       this.taskRepository.listCaseReviewActions(),
       this.taskRepository.listCaseFollowUpDecisions(),
       this.taskRepository.listCaseResolutionOutcomes(),
+      this.taskRepository.listHomeVisitExceptionOptions(),
+      this.taskRepository.listHomeVisitAssessmentOptions(),
     ]);
     return {
       reviewActions: reviewActions.map((row) => ({
@@ -43,6 +62,15 @@ export class CaseTrackingOptionsService {
       })),
       followUpDecisions: followUpDecisions.map((row) => this.mapOption(row)),
       resolutionOutcomes: resolutionOutcomes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      homeVisitExceptions: homeVisitExceptions.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+        requiresUpdatedAddress: row.requires_updated_address === true,
+      })),
+      homeVisitAssessments: homeVisitAssessments.map((row) => ({
         code: this.stringValue(row.code),
         label: this.stringValue(row.label_th),
       })),
@@ -69,5 +97,26 @@ export class CaseTrackingOptionsService {
     const row = await this.taskRepository.findCaseResolutionOutcome(code);
     if (!row) throw new BadRequestException('ผลลัพธ์การติดตามไม่ถูกต้อง');
     return this.stringValue(row.code);
+  }
+
+  async getHomeVisitException(code: string | null): Promise<HomeVisitExceptionOption | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findHomeVisitExceptionOption(code);
+    if (!row) throw new BadRequestException('กรณีพิเศษจากการลงพื้นที่ไม่ถูกต้อง');
+    return {
+      code: this.stringValue(row.code),
+      label: this.stringValue(row.label_th),
+      requiresUpdatedAddress: row.requires_updated_address === true,
+    };
+  }
+
+  async getHomeVisitAssessment(code: string | null): Promise<HomeVisitAssessmentOption | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findHomeVisitAssessmentOption(code);
+    if (!row) throw new BadRequestException('ผลประเมินหลังลงพื้นที่ไม่ถูกต้อง');
+    return {
+      code: this.stringValue(row.code),
+      label: this.stringValue(row.label_th),
+    };
   }
 }

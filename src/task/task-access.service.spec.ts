@@ -267,6 +267,143 @@ describe('TaskAccessService attendance link slots', () => {
   });
 });
 
+describe('TaskAccessService home visit report context', () => {
+  let taskRepository: jest.Mocked<
+    Pick<
+      TaskRepository,
+      | 'findTaskLinkByTokenHash'
+      | 'findCaseByTaskId'
+      | 'listPublicCaseContactChannels'
+      | 'listPublicCaseFollowUpHistory'
+    >
+  >;
+  let magicSessionStore: jest.Mocked<Pick<MagicSessionStoreService, 'isVerified'>>;
+
+  function createService(emailEnabled: boolean): TaskAccessService {
+    return new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      {} as EmailService,
+      {} as AuditLogService,
+      {
+        sessionSecret: 'test-session-secret-at-least-16-chars',
+        magicSessionTtlSeconds: 21_600,
+      } as AuthRuntimeConfig,
+      {
+        enabled: emailEnabled,
+        user: emailEnabled ? 'sender@example.test' : '',
+      } as EmailRuntimeConfig,
+      magicSessionStore as unknown as MagicSessionStoreService,
+    );
+  }
+
+  beforeEach(() => {
+    taskRepository = {
+      findTaskLinkByTokenHash: jest.fn().mockResolvedValue({
+        id: 'visit-link-1',
+        task_id: 'visit-task-1',
+        task_type: 'VISIT',
+        status: 'ACTIVE',
+        expires_at: '2999-01-01T00:00:00.000Z',
+        admin_locked: 0,
+        otp_verified: 0,
+        delegation_depth: 0,
+        max_delegation_depth: 0,
+        assigned_to_name: 'ครูเยี่ยมบ้าน',
+        assigned_to_email: 'visitor@example.test',
+      }),
+      findCaseByTaskId: jest.fn().mockResolvedValue({
+        id: 88,
+        student_name: 'เด็กหญิงทดสอบ',
+        student_school: 'โรงเรียนทดสอบ',
+        student_address: '99 ถนนทดสอบ',
+        student_phone: '0812345678',
+        address_province: 'กรุงเทพมหานคร',
+        address_district: 'ดุสิต',
+        address_sub_district: 'ดุสิต',
+        postal_code: '10300',
+        reason_flagged: 'ขาดเรียนต่อเนื่อง',
+        academic_year: 2569,
+        semester: 1,
+        grade: 'ม.3',
+        room: '2',
+      }),
+      listPublicCaseContactChannels: jest.fn().mockResolvedValue([
+        {
+          contact_kind: 'STUDENT',
+          relation: 'STUDENT',
+          relation_note: null,
+          full_name: 'เด็กหญิงทดสอบ',
+          phone: '0812345678',
+          is_primary: true,
+        },
+        {
+          contact_kind: 'GUARDIAN',
+          relation: 'MOTHER',
+          relation_note: null,
+          full_name: 'มารดาทดสอบ',
+          phone: '0899999999',
+          is_primary: true,
+        },
+      ]),
+      listPublicCaseFollowUpHistory: jest.fn().mockResolvedValue([
+        {
+          assigned_to_name: 'ครูคนก่อน',
+          visited_at: '2026-06-13T09:00:00.000Z',
+          submitted_at: '2026-06-13T10:00:00.000Z',
+          cause_detail: 'ลงพื้นที่แล้ว',
+          exception_label: null,
+        },
+      ]),
+    };
+    magicSessionStore = {
+      isVerified: jest.fn().mockResolvedValue(false),
+    };
+  });
+
+  it('returns class, structured address, and bounded history after the guest is authorized', async () => {
+    await expect(createService(false).getTaskByToken('public-token')).resolves.toMatchObject({
+      student_name: 'เด็กหญิงทดสอบ',
+      academic_year: 2569,
+      semester: 1,
+      student_grade: 'ม.3',
+      student_room: '2',
+      address_province: 'กรุงเทพมหานคร',
+      contact_channels: [
+        {
+          contact_kind: 'STUDENT',
+          phone: '0812345678',
+        },
+        {
+          contact_kind: 'GUARDIAN',
+          phone: '0899999999',
+        },
+      ],
+      follow_up_history: [
+        {
+          assigned_to_name: 'ครูคนก่อน',
+          cause_detail: 'ลงพื้นที่แล้ว',
+        },
+      ],
+    });
+    expect(taskRepository.listPublicCaseFollowUpHistory).toHaveBeenCalledWith(88, 5);
+  });
+
+  it('does not expose report history before OTP verification', async () => {
+    const result = await createService(true).getTaskByToken('public-token');
+
+    expect(result).toMatchObject({
+      auth_required: true,
+      student_address: '*** (กรุณายืนยันตัวตน) ***',
+      reason_flagged: '*** (กรุณายืนยันตัวตน) ***',
+    });
+    expect(result).not.toHaveProperty('follow_up_history');
+    expect(result).not.toHaveProperty('contact_channels');
+    expect(taskRepository.listPublicCaseContactChannels).not.toHaveBeenCalled();
+    expect(taskRepository.listPublicCaseFollowUpHistory).not.toHaveBeenCalled();
+  });
+});
+
 describe('TaskAccessService OTP sessions', () => {
   let service: TaskAccessService;
   let taskRepository: jest.Mocked<

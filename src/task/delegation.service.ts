@@ -16,9 +16,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { DelegateTaskDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
+import { resolveAssigneeName } from './task-assignee-name';
+import { MAX_LINK_LIFETIME_HOURS, MAX_LINK_LIFETIME_MS } from './task-link-expiry';
 import type { QueryResultRow } from './task.types';
-
-const MAX_EXPIRY_HOURS = 2160;
 const DEFAULT_EXPIRY_HOURS = 24;
 
 @Injectable()
@@ -103,16 +103,44 @@ export class DelegationService {
     this.validateDelegationAccess(accessTask);
 
     const tokenHash = hashToken(token);
-    const newAssigneeName = clean(data.new_assignee_name);
+    const newAssignee = resolveAssigneeName({
+      firstName: data.new_assignee_first_name,
+      lastName: data.new_assignee_last_name,
+      fullName: data.new_assignee_name,
+    });
+    const newAssigneeName = newAssignee.fullName;
     const newAssigneePhone = clean(data.new_assignee_phone);
     const newAssigneeEmail = clean(data.new_assignee_email);
+    const delegationNote = clean(data.delegation_note);
     const delegateHours = Math.min(
       this.normalizeNumber(data.expires_in_hours) || DEFAULT_EXPIRY_HOURS,
-      MAX_EXPIRY_HOURS,
+      MAX_LINK_LIFETIME_HOURS,
     );
 
     if (!newAssigneeName) {
-      throw new Error('new_assignee_name is required');
+      throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับงาน');
+    }
+    if (newAssignee.usesStructuredInput && (!newAssignee.firstName || !newAssignee.lastName)) {
+      throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับงาน');
+    }
+    if (!newAssigneeEmail) {
+      throw new BadRequestException('กรุณาระบุอีเมลผู้รับงานเพื่อยืนยัน OTP');
+    }
+    if (!newAssigneePhone || !/^\d{9,10}$/.test(newAssigneePhone)) {
+      throw new BadRequestException('กรุณาระบุเบอร์โทรศัพท์ผู้รับงาน 9–10 หลัก');
+    }
+    if (!delegationNote) {
+      throw new BadRequestException('กรุณาระบุรายละเอียดการมอบหมาย');
+    }
+
+    const now = Date.now();
+    const requestedExpiry = clean(data.expires_at);
+    const requestedExpiryTime = requestedExpiry ? new Date(requestedExpiry).getTime() : null;
+    if (requestedExpiryTime !== null && requestedExpiryTime <= now) {
+      throw new BadRequestException('วันและเวลาหมดอายุต้องอยู่ในอนาคต');
+    }
+    if (requestedExpiryTime !== null && requestedExpiryTime > now + MAX_LINK_LIFETIME_MS) {
+      throw new BadRequestException('วันและเวลาหมดอายุต้องไม่เกิน 90 วัน');
     }
 
     const link = await this.taskRepository.findDelegationLinkByTokenHash(tokenHash);
@@ -123,10 +151,10 @@ export class DelegationService {
     const newToken = generateToken();
     const newTokenHash = hashToken(newToken);
     const newLinkId = crypto.randomUUID();
-    // Email-assigned links require OTP (start unverified); links with no email
-    // can't be OTP'd, so mark them pre-verified to skip the gate.
-    const otpVerified = newAssigneeEmail ? 0 : 1;
-    const expiresAt = new Date(Date.now() + delegateHours * 60 * 60 * 1000).toISOString();
+    const otpVerified = 0;
+    const expiresAt = new Date(
+      requestedExpiryTime ?? now + delegateHours * 60 * 60 * 1000,
+    ).toISOString();
     const magicLink = `${baseUrl}/task/${newToken}`;
     const tokenEncrypted = this.tokenEncryption.encrypt(newToken);
 
@@ -154,6 +182,8 @@ export class DelegationService {
           tokenEncrypted,
           delegationDepth: nextDepth,
           assignedToName: newAssigneeName,
+          assignedToFirstName: newAssignee.firstName,
+          assignedToLastName: newAssignee.lastName,
           assignedToPhone: newAssigneePhone,
           assignedToEmail: newAssigneeEmail,
           expiresAt,
@@ -161,6 +191,7 @@ export class DelegationService {
           // parent link is already open (redemption is blocked before opens_at).
           opensAt: null,
           subject: null,
+          delegationNote,
           subjectId: null,
           sourceFieldFollowerId: null,
           otpVerified,
