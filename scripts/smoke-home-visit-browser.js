@@ -658,6 +658,24 @@ async function assertSubmittedReport(dataSource, createdLink) {
     row.case_follow_up_decision === 'REQUEST_REVIEW',
     `Expected REQUEST_REVIEW, received ${row.case_follow_up_decision}`,
   );
+
+  // One submission must not tell a single person about it twice, even though it
+  // raises both a case-status and a task-submitted notification type.
+  const duplicateRecipients = await dataSource.query(
+    `
+      SELECT recipient_user_id, COUNT(*)::int AS notification_count
+      FROM notifications
+      WHERE (case_id = (SELECT case_id FROM tasks WHERE id = $1) OR ref_id = $1::text)
+        AND type_code IN ('CASE_STATUS_CHANGED', 'TASK_SUBMITTED')
+      GROUP BY recipient_user_id
+      HAVING COUNT(*) > 1
+    `,
+    [createdLink.task_id],
+  );
+  assert(
+    duplicateRecipients.length === 0,
+    `One submission produced duplicate notifications for ${duplicateRecipients.length} recipient(s)`,
+  );
 }
 
 async function main() {
@@ -1016,12 +1034,18 @@ async function main() {
       'Mobile report submit button was not found',
     );
     await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes(
-          'บันทึกข้อมูลเรียบร้อยแล้ว',
-        ),
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        // Receipt keeps the submitted form's heading (term + student + class),
+        // proving the context survived the redirect, plus the sent confirmation.
+        return (
+          text.includes('แบบฟอร์มการติดตามนักเรียน') &&
+          text.includes('ส่งผลการติดตามเพื่อรอผู้รับผิดชอบตรวจสอบแล้ว')
+        );
+      },
       'Home visit success state did not render after report submission',
     );
+    await captureScreenshot(client, process.env.SMOKE_SUCCESS_SCREENSHOT_PATH);
     await assertSubmittedReport(dataSource, createdLink);
 
     console.log(
