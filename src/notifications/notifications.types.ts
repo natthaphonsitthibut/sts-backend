@@ -41,6 +41,13 @@ export interface NotificationFanOutInput {
   gradeLevel?: string | number | null;
   roomId?: string | number | null;
   excludeUserId?: number | null;
+  /**
+   * Recipients that already received another notification for the same event.
+   * One action can legitimately raise two notification types with different
+   * required permissions; this keeps a user who holds both from being told the
+   * same thing twice.
+   */
+  excludeUserIds?: number[] | null;
 }
 
 export interface DirectNotificationInput {

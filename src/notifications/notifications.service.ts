@@ -29,13 +29,17 @@ export class NotificationsService {
    * Fan-out is best-effort by design: a notification failure must never break
    * the domain flow that triggered it (case write, delegation, submission).
    */
-  private async fanOutSafely(input: NotificationFanOutInput): Promise<void> {
+  private async fanOutSafely(input: NotificationFanOutInput): Promise<number[]> {
     try {
       const recipients = await this.notificationsRepository.fanOut(input);
-      this.logger.log(`Notification ${input.typeCode} fanned out to ${recipients} recipient(s).`);
+      this.logger.log(
+        `Notification ${input.typeCode} fanned out to ${recipients.length} recipient(s).`,
+      );
+      return recipients;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Notification fan-out failed for ${input.typeCode}: ${message}`);
+      return [];
     }
   }
 
@@ -137,16 +141,17 @@ export class NotificationsService {
     });
   }
 
+  /** Returns the recipients, so a caller can avoid notifying them twice for one action. */
   async notifyCaseStatusChanged(event: {
     caseId: number;
     studentName: string | null;
     schoolId: number | null;
     nextStatus: string;
     actorUserId: number | null;
-  }): Promise<void> {
+  }): Promise<number[]> {
     const statusLabel = CASE_STATUS_LABELS[event.nextStatus] ?? event.nextStatus;
     const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    await this.fanOutSafely({
+    return await this.fanOutSafely({
       typeCode: 'CASE_STATUS_CHANGED',
       title: `เคสเปลี่ยนสถานะ: ${statusLabel}`,
       body: student,
@@ -336,9 +341,16 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * `alreadyNotifiedUserIds` carries the recipients of the case-status
+   * notification raised by the same submission. Both types are kept because
+   * they require different permissions and therefore reach different people,
+   * but anyone holding both would otherwise see the one report twice.
+   */
   async notifyTaskSubmitted(event: {
     taskId: string;
     submitterName: string | null;
+    alreadyNotifiedUserIds?: number[];
   }): Promise<void> {
     const context = await this.findTaskContextSafely(event.taskId);
     const submitter = event.submitterName ? maskName(event.submitterName) : 'ผู้รับงาน';
@@ -351,6 +363,7 @@ export class NotificationsService {
       schoolId: context?.target_school_id ?? null,
       gradeLevel: context?.target_grade ?? null,
       roomId: context?.target_room ?? null,
+      excludeUserIds: event.alreadyNotifiedUserIds ?? [],
     });
   }
 

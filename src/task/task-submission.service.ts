@@ -523,6 +523,7 @@ export class TaskSubmissionService {
         await this.taskRepository.updateTaskLinkStatus(String(link.link_id), 'COMPLETED', executor);
       });
 
+      let caseStatusRecipients: number[] = [];
       if (caseId !== null && decision?.targetStatus) {
         if (reviewId) {
           await this.auditLog.record({
@@ -539,7 +540,7 @@ export class TaskSubmissionService {
             ip: null,
           });
         }
-        await this.notificationsService.notifyCaseStatusChanged({
+        caseStatusRecipients = await this.notificationsService.notifyCaseStatusChanged({
           caseId,
           studentName: this.toScalarString(link.student_name),
           schoolId: this.normalizeNumber(link.school_id as string | number | null | undefined),
@@ -551,9 +552,13 @@ export class TaskSubmissionService {
       this.logger.log(
         `[saveTaskSubmission] success decision=${decision?.code ?? 'NONE'} exception=${homeVisitException?.code ?? 'NONE'}`,
       );
+      // One submission, one notification per person: whoever was just told the
+      // case changed status is skipped here instead of getting a second row
+      // saying the same report came back.
       await this.notificationsService.notifyTaskSubmitted({
         taskId: String(link.task_id),
         submitterName: typeof task?.assigned_to_name === 'string' ? task.assigned_to_name : null,
+        alreadyNotifiedUserIds: caseStatusRecipients,
       });
       return { success: true };
     } catch (err) {

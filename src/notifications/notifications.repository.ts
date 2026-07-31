@@ -84,9 +84,11 @@ export class NotificationsRepository {
    * Insert one notification row per eligible recipient in a single statement.
    * Eligibility is enforced here, at write time: active non-student users whose
    * effective permission set contains the type's required permission and whose
-   * data_scope covers the event context. Returns the number of recipients.
+   * data_scope covers the event context. Returns the recipient user ids, so a
+   * caller raising a second notification for the same event can exclude whoever
+   * was already told.
    */
-  async fanOut(input: NotificationFanOutInput): Promise<number> {
+  async fanOut(input: NotificationFanOutInput): Promise<number[]> {
     const result = await this.query(
       `
         INSERT INTO notifications
@@ -128,13 +130,14 @@ export class NotificationsRepository {
           AND u.role IS DISTINCT FROM 'STUDENT'
           AND u.data_origin_code <> 'AUTOMATED_TEST'
           AND ($6::int IS NULL OR u.id <> $6::int)
+          AND NOT (u.id = ANY($14::int[]))
           AND CASE
             WHEN jsonb_typeof(u.permissions) = 'array' AND jsonb_array_length(u.permissions) > 0
               THEN u.permissions ? nt.required_permission
             ELSE COALESCE(r.default_permissions ? nt.required_permission, FALSE)
           END
           AND ${SCOPE_COVERS_EVENT_SQL}
-        RETURNING id
+        RETURNING recipient_user_id
       `,
       [
         input.typeCode,
@@ -152,9 +155,10 @@ export class NotificationsRepository {
         input.studentUuid ?? null,
         input.studentNameMasked ?? null,
         input.reasonText ?? null,
+        input.excludeUserIds ?? [],
       ],
     );
-    return result.rows.length;
+    return result.rows.map((row) => Number(row.recipient_user_id));
   }
 
   async createForEligibleRecipient(input: DirectNotificationInput): Promise<boolean> {

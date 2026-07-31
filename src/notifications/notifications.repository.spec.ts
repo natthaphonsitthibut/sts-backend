@@ -43,8 +43,11 @@ describe('NotificationsRepository direct recipient eligibility', () => {
 
   it('persists typed student context for case fan-out', async () => {
     const query = jest
-      .fn<Promise<{ records: Array<{ id: string }> }>, [sql: string, params?: unknown[]]>()
-      .mockResolvedValue({ records: [{ id: 'notification-id' }] });
+      .fn<
+        Promise<{ records: Array<{ recipient_user_id: number }> }>,
+        [sql: string, params?: unknown[]]
+      >()
+      .mockResolvedValue({ records: [{ recipient_user_id: 42 }] });
     const queryRunner = {
       connect: jest.fn(),
       query,
@@ -66,7 +69,7 @@ describe('NotificationsRepository direct recipient eligibility', () => {
         studentNameMasked: 'ด.ช. ทด****',
         reasonText: 'ขาดเรียนติดต่อกัน 3 วัน',
       }),
-    ).resolves.toBe(1);
+    ).resolves.toEqual([42]);
 
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain('student_person_uuid, case_id, student_name_masked, reason_text');
@@ -87,6 +90,36 @@ describe('NotificationsRepository direct recipient eligibility', () => {
       null,
       'ด.ช. ทด****',
       'ขาดเรียนติดต่อกัน 3 วัน',
+      [],
     ]);
+  });
+
+  it('skips recipients that were already notified for the same action', async () => {
+    const query = jest
+      .fn<
+        Promise<{ records: Array<{ recipient_user_id: number }> }>,
+        [sql: string, params?: unknown[]]
+      >()
+      .mockResolvedValue({ records: [] });
+    const queryRunner = {
+      connect: jest.fn(),
+      query,
+      release: jest.fn(),
+    };
+    const repository = new NotificationsRepository({
+      createQueryRunner: jest.fn().mockReturnValue(queryRunner),
+    } as never);
+
+    await repository.fanOut({
+      typeCode: 'TASK_SUBMITTED',
+      title: 'มีรายงานเยี่ยมบ้านส่งกลับ',
+      refEntity: 'task',
+      refId: 'task-1',
+      excludeUserIds: [7, 9],
+    });
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('NOT (u.id = ANY($14::int[]))');
+    expect(params?.[13]).toEqual([7, 9]);
   });
 });

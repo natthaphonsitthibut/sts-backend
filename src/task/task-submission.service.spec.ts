@@ -77,7 +77,7 @@ describe('TaskSubmissionService', () => {
         .mockResolvedValue([{ calendarConfigured: false, affectedStudentIds: STUDENT_IDS }]),
     };
     notificationsService = {
-      notifyCaseStatusChanged: jest.fn().mockResolvedValue(undefined),
+      notifyCaseStatusChanged: jest.fn().mockResolvedValue([]),
       notifyTaskSubmitted: jest.fn().mockResolvedValue(undefined),
     };
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
@@ -309,6 +309,34 @@ describe('TaskSubmissionService', () => {
     expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalledWith(
       expect.objectContaining({ nextStatus: 'PENDING_REVIEW' }),
       undefined,
+    );
+  });
+
+  it('does not notify the same person twice for one submission', async () => {
+    notificationsService.notifyCaseStatusChanged.mockResolvedValue([7, 9]);
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+      assigned_to_name: 'ครูลงพื้นที่',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+
+    await service.saveTaskSubmission('public-token', {
+      notes: 'พบผู้ปกครองแล้ว',
+      case_follow_up_decision: 'REQUEST_REVIEW',
+    });
+
+    expect(notificationsService.notifyTaskSubmitted).toHaveBeenCalledWith(
+      expect.objectContaining({ alreadyNotifiedUserIds: [7, 9] }),
     );
   });
 
