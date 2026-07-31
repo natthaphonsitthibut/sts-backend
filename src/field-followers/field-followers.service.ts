@@ -128,6 +128,8 @@ export class FieldFollowersService {
       subDistrict: query.subDistrict,
       searchTerm: query.searchTerm,
       campaignId: query.campaignId,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
       page,
       limit,
     });

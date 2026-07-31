@@ -4,6 +4,16 @@ import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 
 export const FIELD_FOLLOWER_STATUSES = ['APPLIED', 'VERIFIED', 'ACTIVE', 'SUSPENDED'] as const;
 export type FieldFollowerStatus = (typeof FIELD_FOLLOWER_STATUSES)[number];
+export const FIELD_FOLLOWER_SORT_KEYS = [
+  'applicant',
+  'phone',
+  'area',
+  'status',
+  'createdAt',
+] as const;
+export type FieldFollowerSortKey = (typeof FIELD_FOLLOWER_SORT_KEYS)[number];
+export const FIELD_FOLLOWER_SORT_DIRECTIONS = ['asc', 'desc'] as const;
+export type FieldFollowerSortDirection = (typeof FIELD_FOLLOWER_SORT_DIRECTIONS)[number];
 export const FIELD_FOLLOWER_VERIFICATION_METHODS = ['THAID', 'ID_CARD_PHOTO'] as const;
 export type FieldFollowerVerificationMethod = (typeof FIELD_FOLLOWER_VERIFICATION_METHODS)[number];
 
@@ -110,6 +120,14 @@ export class ListFieldFollowersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   campaignId?: string;
+
+  @IsOptional()
+  @IsIn(FIELD_FOLLOWER_SORT_KEYS)
+  sortBy?: FieldFollowerSortKey;
+
+  @IsOptional()
+  @IsIn(FIELD_FOLLOWER_SORT_DIRECTIONS)
+  sortDirection?: FieldFollowerSortDirection;
 }
 
 export class ReviewFieldFollowerDto {

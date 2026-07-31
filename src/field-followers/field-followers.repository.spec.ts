@@ -56,6 +56,29 @@ describe('FieldFollowersRepository', () => {
     expect(queries[0].sql).toContain('(1=0)');
   });
 
+  it('uses an allowlisted multi-column applicant sort with a stable tie-breaker', async () => {
+    const { repository, queries } = buildRepository();
+
+    await repository.listFollowers(
+      { global: true },
+      { page: 1, limit: 20, sortBy: 'applicant', sortDirection: 'asc' },
+    );
+
+    expect(queries[0].sql).toContain(
+      'ORDER BY field_followers.first_name ASC NULLS LAST, field_followers.last_name ASC NULLS LAST, field_followers.id ASC',
+    );
+  });
+
+  it('preserves newest-first ordering when no sort is supplied', async () => {
+    const { repository, queries } = buildRepository();
+
+    await repository.listFollowers({ global: true }, { page: 1, limit: 20 });
+
+    expect(queries[0].sql).toContain(
+      'ORDER BY field_followers.created_at DESC NULLS LAST, field_followers.id DESC',
+    );
+  });
+
   it('scopes findByIdInScope the same way as listFollowers', async () => {
     const { repository, queries } = buildRepository();
 

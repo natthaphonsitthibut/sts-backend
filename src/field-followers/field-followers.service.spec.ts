@@ -182,6 +182,30 @@ describe('FieldFollowersService', () => {
     });
   });
 
+  describe('listFollowers', () => {
+    it('passes validated sorting through without changing actor scope or pagination', async () => {
+      await service.listFollowers(actor, {
+        page: 2,
+        limit: 10,
+        sortBy: 'status',
+        sortDirection: 'asc',
+      });
+
+      expect(repository.listFollowers).toHaveBeenCalledWith(actor.data_scope, {
+        status: undefined,
+        province: undefined,
+        district: undefined,
+        subDistrict: undefined,
+        searchTerm: undefined,
+        campaignId: undefined,
+        sortBy: 'status',
+        sortDirection: 'asc',
+        page: 2,
+        limit: 10,
+      });
+    });
+  });
+
   describe('reviewFollower', () => {
     it('verifies an APPLIED follower and audits the transition', async () => {
       repository.updateStatus.mockResolvedValue(followerRow({ status: 'VERIFIED' }));

@@ -3,6 +3,8 @@ import { DataSource } from 'typeorm';
 import type { DataScope } from '../auth';
 import { queryDataSource } from '../database/sql-query';
 import type {
+  FieldFollowerSortDirection,
+  FieldFollowerSortKey,
   FieldFollowerStatus,
   FieldFollowerVerificationMethod,
 } from './dto/field-followers.dto';
@@ -30,9 +32,19 @@ export interface ListFieldFollowersFilters {
   subDistrict?: string;
   searchTerm?: string;
   campaignId?: string;
+  sortBy?: FieldFollowerSortKey;
+  sortDirection?: FieldFollowerSortDirection;
   page: number;
   limit: number;
 }
+
+const FIELD_FOLLOWER_SORT_COLUMNS: Record<FieldFollowerSortKey, readonly string[]> = {
+  applicant: ['field_followers.first_name', 'field_followers.last_name'],
+  phone: ['field_followers.phone'],
+  area: ['field_followers.province', 'field_followers.district', 'field_followers.sub_district'],
+  status: ['field_followers.status'],
+  createdAt: ['field_followers.created_at'],
+};
 
 @Injectable()
 export class FieldFollowersRepository {
@@ -162,6 +174,12 @@ export class FieldFollowersRepository {
     }
 
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const sortColumns = FIELD_FOLLOWER_SORT_COLUMNS[filters.sortBy ?? 'createdAt'];
+    const sortDirection = filters.sortDirection === 'asc' ? 'ASC' : 'DESC';
+    const orderBySql = [
+      ...sortColumns.map((column) => `${column} ${sortDirection} NULLS LAST`),
+      `field_followers.id ${sortDirection}`,
+    ].join(', ');
     const offset = (filters.page - 1) * filters.limit;
     params.push(filters.limit, offset);
 
@@ -174,7 +192,7 @@ export class FieldFollowersRepository {
         LEFT JOIN follower_recruitment_campaigns campaigns
           ON campaigns.id = field_followers.campaign_id
         ${whereSql}
-        ORDER BY field_followers.created_at DESC
+        ORDER BY ${orderBySql}
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       params,
