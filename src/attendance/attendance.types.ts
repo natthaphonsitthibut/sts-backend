@@ -1,6 +1,7 @@
 import type { DataScope } from '../common/utils/authorization';
+import type { AttendanceSelectionStatus } from './attendance-status';
 
-export type AttendanceSelectionStatus = 'P_PRESENT' | 'P_ABSENT' | 'P_LATE';
+export type { AttendanceHistoryStatus, AttendanceSelectionStatus } from './attendance-status';
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
   rows: T[];

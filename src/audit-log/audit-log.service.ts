@@ -482,6 +482,15 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ลบข้อมูลนักเรียน',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่เกี่ยวข้อง' }],
   },
+  CLASSROOM_DATA_EXPORT: {
+    domain: 'students',
+    label: 'ส่งออกข้อมูลห้องเรียน',
+    detailKeys: [
+      { key: 'exportScope', label: 'ขอบเขตข้อมูล' },
+      { key: 'format', label: 'รูปแบบไฟล์' },
+      { key: 'schoolId', label: 'โรงเรียน' },
+    ],
+  },
   FIELD_FOLLOWER_APPLY: {
     domain: 'field_followers',
     label: 'สมัครเป็นผู้ติดตามภาคสนาม',

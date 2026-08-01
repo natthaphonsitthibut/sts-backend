@@ -1,5 +1,7 @@
 export type StructureStatus = 'ACTIVE' | 'INACTIVE';
 export type TeacherAssignmentKind = 'HOMEROOM' | 'SUBJECT';
+/** Uppercase 7-character hex colour (`#RRGGBB`), enforced by DTO + CHECK constraint. */
+export type ClassroomCardCoverColor = string;
 
 export interface ScopedSchoolRow extends Record<string, unknown> {
   id: number;
@@ -21,6 +23,14 @@ export interface SchoolClassroomRow extends Record<string, unknown> {
   room_code: string;
   room_name: string | null;
   classroom_status: StructureStatus;
+  card_cover_color: ClassroomCardCoverColor;
+  cover_image_storage_key: string | null;
+  cover_image_position_x: number;
+  cover_image_position_y: number;
+  cover_image_scale: number | string;
+  updated_at: Date | string;
+  is_favorite: boolean;
+  favorited_at: Date | string | null;
   homeroom_teacher_name?: string | null;
   student_count: number | string;
 }
@@ -73,6 +83,10 @@ export interface ClassroomTeacherAssignmentRow extends Record<string, unknown> {
 
 export interface ClassroomRosterRow extends Record<string, unknown> {
   student_uuid: string;
+  student_number: string | null;
+  risk_tier: string | null;
+  risk_severity: number | null;
+  teacher_comment: string | null;
   first_name: string | null;
   last_name: string | null;
   student_status_code: number | null;
@@ -87,4 +101,32 @@ export interface ClassroomRosterRow extends Record<string, unknown> {
   classroom_id: string;
   grade_label: string;
   room_code: string;
+}
+
+export interface ClassroomDailyAttendanceRow extends Record<string, unknown> {
+  attendance_date: string;
+  recorded_by: string;
+  present_count: number;
+  late_count: number;
+  leave_count: number;
+  absent_count: number;
+}
+
+export interface ClassroomStudentAttendanceSummaryRow extends Record<string, unknown> {
+  student_uuid: string;
+  student_number: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  present_count: number;
+  late_count: number;
+  leave_count: number;
+  absent_count: number;
+}
+
+export interface ClassroomStudentAttendanceDayRow extends Record<string, unknown> {
+  attendance_id: string;
+  attendance_date: string;
+  recorded_time: string | null;
+  recorded_by: string;
+  attendance_status: number;
 }

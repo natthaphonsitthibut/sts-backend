@@ -42,12 +42,17 @@ async function main() {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const deniedUsername = 'attendance_operations_smoke_no_permission';
   const settingsOnlyUsername = 'attendance_operations_smoke_settings_only';
+  const allowedUsername = 'attendance_operations_smoke_allowed';
   let deniedActorId = null;
   let settingsOnlyActorId = null;
+  let allowedActorId = null;
+  let fixturePrepared = false;
 
   const fixtureRows = await dataSource.query(`
     SELECT term.id AS term_id, term.school_id, term.academic_year, term.semester,
-      roster.grade_level_id, grade.label AS grade_label, roster.room_id, roster.roster_count
+      roster.grade_level_id, grade.label AS grade_label, roster.room_id, roster.roster_count,
+      term.status AS original_status, term.starts_on AS original_starts_on,
+      term.ends_on AS original_ends_on
     FROM school_terms term
     JOIN (
       SELECT "SchoolID_Onec" AS school_id, "AcademicYear_Onec" AS academic_year,
@@ -60,8 +65,7 @@ async function main() {
     ) roster ON roster.school_id = term.school_id
       AND roster.academic_year = term.academic_year AND roster.semester = term.semester
     JOIN grade_levels grade ON grade.id = roster.grade_level_id
-    WHERE term.status = 'DRAFT' AND term.deleted_at IS NULL
-      AND term.starts_on IS NULL AND term.ends_on IS NULL
+    WHERE term.status IN ('DRAFT', 'ACTIVE') AND term.deleted_at IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM school_calendar_days day
         WHERE day.school_term_id = term.id AND day.deleted_at IS NULL
@@ -69,14 +73,8 @@ async function main() {
     ORDER BY roster.roster_count DESC, term.id
     LIMIT 1
   `);
-  assert(fixtureRows.length === 1, 'No isolated DRAFT term fixture is available');
+  assert(fixtureRows.length === 1, 'No isolated term fixture is available');
   const fixture = fixtureRows[0];
-
-  const [actors] = await dataSource.query(`
-    SELECT MIN(id) FILTER (WHERE role = 'ADMIN')::int AS admin_id
-    FROM users WHERE status = 'ACTIVE'
-  `);
-  assert(Number.isInteger(actors.admin_id), 'No active ADMIN actor is available');
 
   const roster = await dataSource.query(
     `SELECT student_uuid FROM student_term
@@ -111,7 +109,24 @@ async function main() {
   };
 
   try {
-    const adminId = actors.admin_id;
+    const [allowedActor] = await dataSource.query(
+      `INSERT INTO users
+         (username, password, status, permissions, "FirstName", "LastName", role, data_scope, data_origin_code)
+       VALUES ($1, 'NOT_A_LOGIN_CREDENTIAL', 'ACTIVE', $2::jsonb,
+         'Attendance', 'Allowed Smoke', 'ADMIN', $3::jsonb, 'AUTOMATED_TEST')
+       ON CONFLICT (username) DO UPDATE SET
+         status = 'ACTIVE', permissions = EXCLUDED.permissions,
+         role = 'ADMIN', data_scope = EXCLUDED.data_scope, data_origin_code = 'AUTOMATED_TEST'
+       RETURNING id`,
+      [
+        allowedUsername,
+        JSON.stringify(['home', 'attendance', 'attendance-dashboard', 'manage-attendance-calendar']),
+        JSON.stringify({ school_ids: [fixture.school_id] }),
+      ],
+    );
+    allowedActorId = Number(allowedActor.id);
+    assert(Number.isInteger(allowedActorId), 'Allowed staff fixture was not created');
+    const adminId = allowedActorId;
     const [deniedActor] = await dataSource.query(
       `INSERT INTO users
          (username, password, status, permissions, "FirstName", "LastName", role, data_scope, data_origin_code)
@@ -141,6 +156,14 @@ async function main() {
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(new Date());
+
+    await dataSource.query(
+      `UPDATE school_terms
+       SET status = 'DRAFT', starts_on = NULL, ends_on = NULL
+       WHERE id = $1`,
+      [fixture.term_id],
+    );
+    fixturePrepared = true;
 
     await request('GET', `/api/attendance/terms?schoolId=${fixture.school_id}`, 401);
     await request('GET', `/api/attendance/terms?schoolId=${fixture.school_id}`, 403, deniedActorId);
@@ -207,7 +230,7 @@ async function main() {
     console.error('[smoke] reopen validation passed');
 
     const correctedRecords = presentRecords.map((record, index) => ({
-      ...record, status: index === 0 ? 'P_ABSENT' : record.status,
+      ...record, status: index === 0 ? 'P_LEAVE' : record.status,
     }));
     const corrected = await request('POST', '/api/attendance', 201, adminId, {
       records: correctedRecords,
@@ -246,6 +269,7 @@ async function main() {
     );
     const changes = auditRows[2].metadata.correctionChanges;
     assert(Array.isArray(changes) && changes.length === 1, 'Correction audit is incorrect');
+    assert(changes[0].nextStatusCode === 4, 'Leave correction was not persisted as status code 4');
 
     console.log(JSON.stringify({
       status: 'attendance_operations_smoke_ok', checks: 20, rosterCount: roster.length,
@@ -254,6 +278,38 @@ async function main() {
       reconciliation: classRow.operationalStatus, auditEvents: auditRows.length,
     }));
   } finally {
+    if (allowedActorId) {
+      const smokeSessions = await dataSource.query(
+        `SELECT id FROM attendance_sessions WHERE created_by = $1`,
+        [allowedActorId],
+      );
+      const smokeSessionIds = smokeSessions.map((row) => row.id);
+      if (smokeSessionIds.length > 0) {
+        await dataSource.query(`DELETE FROM attendance WHERE session_id = ANY($1::uuid[])`, [
+          smokeSessionIds,
+        ]);
+        await dataSource.query(`DELETE FROM attendance_sessions WHERE id = ANY($1::uuid[])`, [
+          smokeSessionIds,
+        ]);
+      }
+      await dataSource.query(
+        `DELETE FROM school_calendar_days WHERE school_term_id = $1 AND created_by = $2`,
+        [fixture.term_id, allowedActorId],
+      );
+    }
+    if (fixturePrepared) {
+      await dataSource.query(
+        `UPDATE school_terms
+         SET status = $2, starts_on = $3, ends_on = $4
+         WHERE id = $1`,
+        [
+          fixture.term_id,
+          fixture.original_status,
+          fixture.original_starts_on,
+          fixture.original_ends_on,
+        ],
+      );
+    }
     await dataSource.query(
       `
         UPDATE users
@@ -264,7 +320,7 @@ async function main() {
         WHERE username = ANY($1::text[])
           AND data_origin_code = 'AUTOMATED_TEST'
       `,
-      [[deniedUsername, settingsOnlyUsername]],
+      [[allowedUsername, deniedUsername, settingsOnlyUsername]],
     );
     await app.close();
   }

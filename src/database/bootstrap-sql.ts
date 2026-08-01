@@ -1004,7 +1004,8 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   ) VALUES
     (1, 'P_PRESENT', 'มา', 'มาเรียน', 'success', 10),
     (2, 'P_ABSENT', 'ขาด', 'ขาดเรียน', 'destructive', 20),
-    (3, 'P_LATE', 'สาย', 'มาสาย', 'warning', 30)
+    (3, 'P_LATE', 'สาย', 'มาสาย', 'warning', 30),
+    (4, 'P_LEAVE', 'ลา', 'ลากิจ/ลาป่วย', 'secondary', 40)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS school_term_statuses (
@@ -1571,6 +1572,7 @@ export const DATABASE_BASELINE_SQL = `
     "PersonID_Onec" TEXT PRIMARY KEY,
     "student_uuid" UUID NOT NULL DEFAULT gen_random_uuid()
       CONSTRAINT uq_student_term_student_uuid UNIQUE,
+    "student_number" VARCHAR(50),
     "PassportNumber_Onec" TEXT,
     "PrefixID_Onec" INTEGER,
     "FirstName_Onec" TEXT,

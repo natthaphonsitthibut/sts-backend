@@ -16,8 +16,9 @@ import {
 } from 'class-validator';
 import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 import { ISO_DATE_PATTERN } from './attendance-operations.dto';
+import { ATTENDANCE_SELECTION_STATUS_VALUES } from '../attendance-status';
 
-const ATTENDANCE_STATUS_VALUES = ['P_PRESENT', 'P_ABSENT', 'P_LATE'] as const;
+const ATTENDANCE_STATUS_VALUES = ATTENDANCE_SELECTION_STATUS_VALUES;
 const ATTENDANCE_SESSION_KIND_VALUES = ['DAILY', 'SUBJECT'] as const;
 
 export const ATTENDANCE_LINK_STATE_VALUES = ['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'] as const;

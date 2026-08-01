@@ -112,6 +112,7 @@ const REQUIRED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
 
 const RECOMMENDED_IMPORT_COLUMNS: Record<ImportTarget, readonly string[]> = {
   student_term: [
+    'student_number',
     'AcademicYear_Onec',
     'Semester_Onec',
     'SchoolID_Onec',

@@ -670,7 +670,7 @@ async function assertCanonicalPageWidths(client) {
     );
   }
   assert(
-    widths.every((width) => width === '1180px'),
+    widths.every((width) => width === '1700px'),
     `Authenticated page widths drifted: ${routes.map((route, index) => `${route}=${widths[index]}`).join(', ')}`,
   );
 
@@ -698,7 +698,7 @@ async function assertCanonicalPageWidths(client) {
     })()`,
   );
   assert(
-    guestLayout.maxWidth === 'none' && guestLayout.contentMaxWidth === '1024px',
+    guestLayout.maxWidth === '1380px' && guestLayout.contentMaxWidth === 'none',
     `Guest/auth page width drifted: shell=${guestLayout.maxWidth}, content=${guestLayout.contentMaxWidth} (${guestLayout.className})`,
   );
 }

@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const sharp = require('sharp');
 const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
@@ -18,9 +19,16 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9253);
 const DIRECTOR_USERNAME = 'school_structure_browser_director';
+const MULTI_DIRECTOR_USERNAME = 'classrooms_browser_multi_director';
 const TEACHER_USERNAME = 'school_structure_browser_teacher';
 const ACADEMIC_YEAR = 2999;
 const ROOM_NUMBER = 991;
+const DIAGNOSTIC_PATH = process.env.SMOKE_DIAGNOSTIC_PATH || '';
+const SCREENSHOT_PATH = process.env.SMOKE_SCREENSHOT_PATH || '';
+
+function diagnostic(message) {
+  if (DIAGNOSTIC_PATH) fs.appendFileSync(DIAGNOSTIC_PATH, `${message}\n`);
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -140,11 +148,11 @@ async function closeChrome(chrome) {
   fs.rmSync(chrome.userDataDir, { recursive: true, force: true, maxRetries: 5 });
 }
 
-async function login(password) {
+async function login(password, username = DIRECTOR_USERNAME) {
   const response = await fetch(`${BACKEND_URL}/api/users/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: DIRECTOR_USERNAME, password }),
+    body: JSON.stringify({ username, password }),
   });
   assert(response.status === 201, `Browser fixture login returned ${response.status}`);
   const user = await response.json();
@@ -281,6 +289,7 @@ async function chooseCombobox(client, ariaLabel, optionLabel, searchTerm = '') {
         .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)});
       if (!option) return false;
       option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      option.click();
       return true;
     })()`,
   );
@@ -337,6 +346,14 @@ async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) 
     : [];
   if (identifier) {
     await dataSource.query(
+      `DELETE FROM attendance
+       WHERE student_uuid IN (
+         SELECT student_uuid FROM student_term
+         WHERE person_uuid=$1 AND "SchoolID_Onec"=$2
+       )`,
+      [identifier.person_uuid, schoolId],
+    );
+    await dataSource.query(
       `DELETE FROM student_term enrollment
        USING school_terms term
        WHERE enrollment.school_term_id=term.id
@@ -386,21 +403,32 @@ async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) 
 }
 
 async function main() {
-  const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
+  diagnostic('main:start');
+  const app = await NestFactory.createApplicationContext(AppModule, {
+    logger: false,
+    abortOnError: false,
+  });
+  diagnostic('main:app-context');
   const dataSource = app.get(DataSource);
   const passwordService = app.get(PasswordService);
   let chrome;
   let actor;
   let schoolA;
   const studentIdentifier = `98${String(Date.now()).slice(-11)}`;
+  const studentNumber = `66${String(Date.now()).slice(-6)}`;
   const directImportCsvPath = path.join(
     os.tmpdir(),
     `sts-direct-import-${studentIdentifier}.csv`,
+  );
+  const classroomCoverPath = path.join(
+    os.tmpdir(),
+    `sts-classroom-cover-${studentIdentifier}.png`,
   );
   try {
     const schools = await dataSource.query(
       `SELECT id, name FROM schools WHERE school_status='ACTIVE' ORDER BY id LIMIT 2`,
     );
+    diagnostic('main:fixtures-start');
     assert(schools.length === 2, 'Smoke requires two active schools');
     [schoolA] = schools;
     const schoolB = schools[1];
@@ -419,7 +447,14 @@ async function main() {
       firstName: 'School Structure',
       lastName: 'Browser Smoke',
       role: 'DIRECTOR',
-      permissions: ['home', 'manage-school-structure', 'import-data', 'import-school-roster'],
+      permissions: [
+        'home',
+        'students',
+        'manage-school-structure',
+        'import-data',
+        'import-school-roster',
+        'export-data',
+      ],
       dataScope: { school_ids: [schoolA.id] },
     });
     await upsertUser(dataSource, hash, {
@@ -430,7 +465,25 @@ async function main() {
       permissions: ['attendance'],
       dataScope: { school_ids: [schoolA.id] },
     });
+    await upsertUser(dataSource, hash, {
+      username: MULTI_DIRECTOR_USERNAME,
+      firstName: 'Multi School',
+      lastName: 'Browser Smoke',
+      role: 'DIRECTOR',
+      permissions: ['home', 'manage-school-structure'],
+      dataScope: { school_ids: [schoolA.id, schoolB.id] },
+    });
     await cleanup(dataSource, actor.id, schoolA.id);
+    await sharp({
+      create: {
+        width: 64,
+        height: 36,
+        channels: 3,
+        background: { r: 79, g: 134, b: 232 },
+      },
+    })
+      .png()
+      .toFile(classroomCoverPath);
     const [identifierCollision] = await dataSource.query(
       `SELECT 1 FROM student_person_identifier
        WHERE identifier_type='NATIONAL_ID' AND identifier_normalized=$1`,
@@ -438,8 +491,10 @@ async function main() {
     );
     assert(!identifierCollision, 'Generated student identifier unexpectedly already exists');
     const session = await login(password);
+    diagnostic('main:login');
 
     chrome = await openChrome();
+    diagnostic('main:chrome');
     await chrome.client.call('Page.enable');
     await chrome.client.call('Runtime.enable');
     await chrome.client.call('Network.enable');
@@ -458,6 +513,7 @@ async function main() {
        localStorage.setItem('admin_access','true');`,
     );
     await navigate(chrome.client, `${FRONTEND_URL}/school-structure`);
+    diagnostic('main:school-structure-page');
     try {
       await waitFor(
         async () =>
@@ -607,7 +663,7 @@ async function main() {
     );
     assert(assignment.status === 201, 'Homeroom assignment failed');
 
-    const studentCsv = `PersonID_Onec,FirstName_Onec,LastName_Onec,StudentStatusID_Onec\n${studentIdentifier},นักเรียน,ทดสอบโครงสร้าง,${status.code}\n`;
+    const studentCsv = `student_number,PersonID_Onec,FirstName_Onec,LastName_Onec,StudentStatusID_Onec,SchoolAdmissionYear_Onec\n${studentNumber},${studentIdentifier},นักเรียน,ทดสอบโครงสร้าง,${status.code},2566\n`;
     fs.writeFileSync(directImportCsvPath, studentCsv);
     const importFields = {
       target: 'student_term',
@@ -652,14 +708,60 @@ async function main() {
     assert(
       rosterResponse.status === 200 &&
         rosterResponse.payload.data?.length === 1 &&
+        rosterResponse.payload.data[0]?.studentNumber === studentNumber &&
         rosterResponse.payload.meta?.totalCount === 1,
       `Roster API did not return the imported student: ${rosterResponse.status} ${JSON.stringify(rosterResponse.payload)}`,
     );
     const importedStudent = rosterResponse.payload.data[0];
+    const exportAuthorization = await browserRequest(
+      chrome.client,
+      'POST',
+      `/api/school-structure/classrooms/${classroom.id}/export-events`,
+      {
+        exportScope: 'ROSTER',
+        format: 'csv',
+        columns: ['studentNumber', 'name'],
+      },
+    );
+    assert(
+      exportAuthorization.status === 201 && exportAuthorization.payload.data?.authorized === true,
+      `Classroom export authorization failed: ${exportAuthorization.status} ${JSON.stringify(exportAuthorization.payload)}`,
+    );
+    const [exportAudit] = await dataSource.query(
+      `SELECT action, metadata
+       FROM audit_log
+       WHERE actor_user_id = $1
+         AND action = 'CLASSROOM_DATA_EXPORT'
+         AND target_type = 'school_classrooms'
+         AND target_id = $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [actor.id, String(classroom.id)],
+    );
+    assert(
+      exportAudit?.metadata?.exportScope === 'ROSTER' && exportAudit?.metadata?.format === 'csv',
+      'Classroom export authorization was not audited',
+    );
     const importedStudentName = [importedStudent.firstName, importedStudent.lastName]
       .filter(Boolean)
       .join(' ');
     assert(importedStudentName, 'Roster API returned the imported student without a display name');
+    await dataSource.query(
+      `INSERT INTO attendance (
+         student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
+         "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
+         session_kind, "AttendanceStatus", "RecordedAt", "RecordedBy"
+       ) VALUES ($1, $2, $3, $4, $5, 1, '2026-07-14', 1, 'DAILY', 1,
+         '2026-07-14T08:12:08+07:00', $6)`,
+      [
+        importedStudent.studentUuid,
+        schoolA.id,
+        grade.id,
+        ROOM_NUMBER,
+        ACADEMIC_YEAR,
+        DIRECTOR_USERNAME,
+      ],
+    );
 
     const classroomSummaryCases = [
       {
@@ -913,8 +1015,498 @@ async function main() {
         (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
       'Classroom summary card did not reopen the matching tab and table',
     );
+
+    const pageTerms = await browserRequest(
+      chrome.client,
+      'GET',
+      `/api/attendance/terms?schoolId=${schoolA.id}`,
+    );
+    const activePageTerm = pageTerms.payload.data?.find((item) => item.status === 'ACTIVE');
+    assert(activePageTerm, 'All-classrooms smoke requires an active school term');
+    const pageClassroomResponse = await browserRequest(
+      chrome.client,
+      'POST',
+      '/api/school-structure/classrooms',
+      {
+        schoolTermId: Number(activePageTerm.id),
+        gradeLevelId: grade.id,
+        roomCode: String(ROOM_NUMBER),
+        roomName: 'ห้อง All Classrooms Smoke',
+      },
+    );
+    assert(
+      pageClassroomResponse.status === 201,
+      `Active-term classroom creation failed: ${JSON.stringify(pageClassroomResponse.payload)}`,
+    );
+    const pageClassroom = pageClassroomResponse.payload.data;
+    const pageAssignment = await browserRequest(
+      chrome.client,
+      'POST',
+      '/api/school-structure/assignments',
+      {
+        classroomId: Number(pageClassroom.id),
+        teacherMembershipId: Number(membership.id),
+        assignmentKind: 'HOMEROOM',
+      },
+    );
+    assert(pageAssignment.status === 201, 'Active-term homeroom assignment failed');
+    const classroomsPageProbe = await browserRequest(
+      chrome.client,
+      'GET',
+      `/api/school-structure/classrooms?schoolId=${schoolA.id}&termId=${activePageTerm.id}&search=${encodeURIComponent(TEACHER_USERNAME)}&page=1&limit=20&sortBy=grade&sortDirection=asc`,
+    );
+    assert(
+      classroomsPageProbe.status === 200 &&
+        classroomsPageProbe.payload.data?.some((item) => item.id === pageClassroom.id),
+      `All-classrooms API probe failed: ${classroomsPageProbe.status} ${JSON.stringify(classroomsPageProbe.payload)}`,
+    );
+    await chrome.client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 1000,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await navigate(chrome.client, `${FRONTEND_URL}/classrooms?smoke=${Date.now()}`);
+    diagnostic('main:classrooms-page');
+    const classroomLabel = `${pageClassroom.gradeLabel}/${ROOM_NUMBER}`;
+    try {
+      await waitFor(
+        async () =>
+          Boolean(
+            await evaluate(
+              chrome.client,
+              `Boolean(document.querySelector('[data-classroom-card="${pageClassroom.id}"]'))`,
+            ),
+          ),
+        'All-classrooms page did not render the scoped classroom card',
+      );
+    } catch (error) {
+      const pageState = await evaluate(
+        chrome.client,
+        `({ url: location.href, text: document.body.innerText.slice(0, 1600) })`,
+      );
+      throw new Error(`${error.message}; observed=${JSON.stringify(pageState)}`);
+    }
+    assert(
+      !(await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="กรองตามโรงเรียน"]'))`)),
+      'Single-school actor should not see a school filter',
+    );
+    if (SCREENSHOT_PATH) {
+      const screenshot = await chrome.client.call('Page.captureScreenshot', {
+        format: 'png',
+        fromSurface: true,
+      });
+      fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(screenshot.data, 'base64'));
+    }
+    await evaluate(
+      chrome.client,
+      `(() => {
+        const input = document.querySelector('input[placeholder="ค้นหา"]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, ${JSON.stringify(TEACHER_USERNAME)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, `document.querySelectorAll('[data-classroom-card]').length`)) === 1,
+      'Classroom server search did not settle to the matching homeroom teacher',
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector(${JSON.stringify(`[aria-label="ปักดาวห้อง ${classroomLabel}"]`)})?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `document.querySelector(${JSON.stringify(`[aria-label="นำห้อง ${classroomLabel} ออกจากรายการโปรด"]`)})?.getAttribute('aria-pressed')`,
+        )) === 'true',
+      'Favorite action did not update and keep the classroom first',
+    );
+    const favoriteList = await browserRequest(
+      chrome.client,
+      'GET',
+      `/api/school-structure/classrooms?schoolId=${schoolA.id}&termId=${activePageTerm.id}&search=${encodeURIComponent(TEACHER_USERNAME)}&page=1&limit=20&sortBy=grade&sortDirection=asc`,
+    );
+    assert(
+      favoriteList.payload.data?.[0]?.id === pageClassroom.id &&
+        favoriteList.payload.data?.[0]?.isFavorite === true,
+      'Favorite-first API order was not applied',
+    );
+
+    await evaluate(
+      chrome.client,
+      `document.querySelector(${JSON.stringify(`[aria-label="ปรับแต่งการ์ดห้อง ${classroomLabel}"]`)})?.click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('เลือกสี'),
+      'Classroom color palette did not open',
+    );
+    await evaluate(chrome.client, `document.querySelector('[aria-label="เลือกสีเขียวสด"]')?.click()`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            chrome.client,
+            `document.querySelector('[data-classroom-card="${pageClassroom.id}"] > div')?.style.backgroundColor === 'rgb(60, 207, 145)'`,
+          ),
+        ),
+      'Classroom cover color did not update',
+    );
+
+    await evaluate(
+      chrome.client,
+      `document.querySelector(${JSON.stringify(`[aria-label="ปรับแต่งการ์ดห้อง ${classroomLabel}"]`)})?.click()`,
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector(${JSON.stringify(`[aria-label="เลือกรูปสำหรับห้อง ${classroomLabel}"]`)})?.click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('จัดรูปปกห้อง'),
+      'Classroom cover crop dialog did not open',
+    );
+    const coverInput = await chrome.client.call('Runtime.evaluate', {
+      expression: 'document.querySelector(\'input[type="file"][accept^="image/"]\')',
+      returnByValue: false,
+    });
+    assert(coverInput.result?.objectId, 'Classroom cover file input was not found');
+    await chrome.client.call('DOM.setFileInputFiles', {
+      objectId: coverInput.result.objectId,
+      files: [classroomCoverPath],
+    });
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('เปลี่ยนรูป'),
+      'Classroom cover draft did not update the dialog preview',
+    );
+    const saveCoverClicked = await evaluate(
+      chrome.client,
+      `(() => {
+        const zoom = Array.from(document.querySelectorAll('input[type="range"]')).at(-1);
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(zoom, '2');
+        zoom.dispatchEvent(new Event('input', { bubbles: true }));
+        const save = Array.from(document.querySelectorAll('button')).find((button) => button.textContent.includes('บันทึก'));
+        save?.click();
+        return Boolean(save);
+      })()`,
+    );
+    assert(saveCoverClicked, 'Classroom cover save button was not found');
+    try {
+      await waitFor(
+        async () =>
+          !(await evaluate(chrome.client, 'document.body.innerText')).includes('จัดรูปปกห้อง') &&
+          (await evaluate(chrome.client, `Boolean(document.querySelector('[data-classroom-card="${pageClassroom.id}"] img'))`)),
+        'Confirmed classroom cover did not render on the card',
+      );
+    } catch (error) {
+      const uploadState = await evaluate(
+        chrome.client,
+        `({ text: document.body.innerText.slice(-1200), resources: performance.getEntriesByType('resource').filter((entry) => entry.name.includes('/presentation')).map((entry) => ({ name: entry.name, status: entry.responseStatus })) })`,
+      );
+      throw new Error(`${error.message}; observed=${JSON.stringify(uploadState)}`);
+    }
+
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[data-classroom-card="${pageClassroom.id}"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'location.pathname')).startsWith('/classrooms/') &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('รายชื่อนักเรียน'),
+      'Classroom card did not open the classroom detail page',
+    );
+    await navigate(chrome.client, `${FRONTEND_URL}/classrooms/${classroom.id}?smoke=${Date.now()}`);
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'document.body.innerText')).includes(studentNumber),
+      `Classroom detail did not render student number ${studentNumber}`,
+    );
+    const openedStudentProfile = await evaluate(
+      chrome.client,
+      `(() => { const button = document.querySelector(${JSON.stringify(`[aria-label="เปิดข้อมูลนักเรียน ${importedStudentName}"]`)}); if (!button) return false; button.click(); return true; })()`,
+    );
+    assert(openedStudentProfile, 'Classroom student profile button was not available');
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'location.pathname')).startsWith('/students/'),
+      'Classroom student profile button did not navigate to the student profile',
+    );
+    await navigate(chrome.client, `${FRONTEND_URL}/classrooms/${classroom.id}?smoke=${Date.now()}`);
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes(studentNumber),
+      'Classroom detail did not return after profile navigation',
+    );
+    const rosterSortHeaders = await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('th button')).map((button) => button.textContent.trim())`,
+    );
+    assert(
+      ['รหัสประจำตัว', 'ชื่อ-นามสกุล', 'หมายเหตุ', 'สถานะนักเรียน'].every((label) =>
+        rosterSortHeaders.some((header) => header.includes(label)),
+      ),
+      'Classroom roster sortable headers were incomplete',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('th button')).find((button) => button.textContent.includes('ชื่อ-นามสกุล'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `Array.from(document.querySelectorAll('th')).some((header) => header.getAttribute('aria-sort') === 'descending' && header.textContent.includes('ชื่อ-นามสกุล'))`,
+        )),
+      'Classroom roster sort direction did not change',
+    );
+    const commentButtonLabel = `เพิ่มความคิดเห็นของ ${importedStudentName}`;
+    const openedComment = await evaluate(
+      chrome.client,
+      `(() => { const button = document.querySelector(${JSON.stringify(`[aria-label="${commentButtonLabel}"]`)}); if (!button) return false; button.click(); return true; })()`,
+    );
+    assert(openedComment, 'Classroom student comment button was not available');
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ความคิดเห็น'),
+      'Classroom student comment dialog did not open',
+    );
+    const dialogActionStyles = await evaluate(
+      chrome.client,
+      `(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const cancel = buttons.find((button) => button.textContent.trim() === 'ยกเลิก');
+        const confirm = buttons.find((button) => button.textContent.includes('บันทึกข้อมูล'));
+        if (!cancel || !confirm) return null;
+        const cancelStyle = getComputedStyle(cancel);
+        const confirmStyle = getComputedStyle(confirm);
+        return {
+          cancelBackground: cancelStyle.backgroundColor,
+          cancelColor: cancelStyle.color,
+          confirmBackground: confirmStyle.backgroundColor,
+          confirmColor: confirmStyle.color,
+        };
+      })()`,
+    );
+    assert(
+      dialogActionStyles?.cancelBackground === 'rgb(229, 229, 229)' &&
+        dialogActionStyles?.cancelColor === 'rgb(17, 17, 17)',
+      `Classroom dialog cancel action was not gray with black text: ${JSON.stringify(dialogActionStyles)}`,
+    );
+    assert(
+      dialogActionStyles?.confirmBackground === 'rgb(15, 73, 189)' &&
+        dialogActionStyles?.confirmColor === 'rgb(255, 255, 255)',
+      `Classroom dialog confirm action was not blue with white text: ${JSON.stringify(dialogActionStyles)}`,
+    );
+    await evaluate(chrome.client, `document.querySelector('#classroom-student-comment')?.focus()`);
+    await chrome.client.call('Input.insertText', { text: 'ติดตามจาก browser smoke' });
+    const savedComment = await evaluate(
+      chrome.client,
+      `(() => { const button = Array.from(document.querySelectorAll('button')).find((item) => item.textContent.includes('บันทึกข้อมูล')); if (!button) return false; button.click(); return true; })()`,
+    );
+    assert(savedComment, 'Classroom student comment save button was not available');
+    await waitFor(
+      async () =>
+        !(await evaluate(chrome.client, 'document.body.innerText')).includes('กำลังบันทึก') &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ติดตามจาก browser smoke'),
+      'Latest classroom student comment did not render in the note column',
+    );
+    const openedHistory = await evaluate(
+      chrome.client,
+      `(() => { const button = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.textContent.includes('ประวัติการเช็คชื่อ')); if (!button) return false; button.click(); return true; })()`,
+    );
+    assert(openedHistory, 'Classroom attendance-history tab was not available');
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('14/07/2569'),
+      'Daily classroom attendance summary did not render',
+    );
+    const dailySortHeaders = await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('th button')).map((button) => button.textContent.trim())`,
+    );
+    assert(
+      ['วันที่', 'ผู้เช็คชื่อ', 'จำนวนที่มา (คน)', 'จำนวนที่ขาด (คน)'].every((label) =>
+        dailySortHeaders.some((header) => header.includes(label)),
+      ),
+      'Daily attendance sortable headers were incomplete',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('th button')).find((button) => button.textContent.includes('วันที่'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `Array.from(document.querySelectorAll('th')).some((header) => header.getAttribute('aria-sort') === 'ascending' && header.textContent.includes('วันที่'))`,
+        )),
+      'Daily attendance sort direction did not change',
+    );
+    const openedDailyDetail = await evaluate(
+      chrome.client,
+      `(() => { const button = document.querySelector('[aria-label="ดูรายละเอียดวันที่ 14/07/2569"]'); if (!button) return false; button.click(); return true; })()`,
+    );
+    assert(openedDailyDetail, 'Daily attendance drill-down button was not available');
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็คชื่อรายวัน') &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes(studentNumber) &&
+        (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันที่เช็คชื่อ"]'))`)) &&
+        (await evaluate(chrome.client, `Array.from(document.querySelectorAll('th button')).some((button) => button.textContent.includes('สถานะการเข้าเรียน'))`)),
+      'Daily attendance drill-down did not render the student, date picker, and sortable headers',
+    );
+    await evaluate(chrome.client, `document.querySelector('[aria-label="กลับไปหน้าสรุป"]')?.click()`);
+    await waitFor(
+      async () => await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="รูปแบบประวัติเช็คชื่อ"]'))`),
+      'Attendance summary controls did not return after daily drill-down',
+    );
+    await changeNativeSelect(chrome.client, 'รูปแบบประวัติเช็คชื่อ', 'STUDENT');
+    await waitFor(
+      async () => await evaluate(chrome.client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="ดูประวัติของ ${importedStudentName}"]`)}))`),
+      'Student attendance summary did not render',
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector(${JSON.stringify(`[aria-label="ดูประวัติของ ${importedStudentName}"]`)})?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็คชื่อรายคน') &&
+        (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันเริ่ม"]') && document.querySelector('[aria-label="วันจบ"]'))`)),
+      'Student attendance drill-down or date range did not render',
+    );
+    if (SCREENSHOT_PATH) {
+      const screenshot = await chrome.client.call('Page.captureScreenshot', {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: false,
+      });
+      const extension = path.extname(SCREENSHOT_PATH) || '.png';
+      const detailPath = `${SCREENSHOT_PATH.slice(0, -extension.length)}-detail${extension}`;
+      fs.writeFileSync(detailPath, Buffer.from(screenshot.data, 'base64'));
+    }
+
+    await chrome.client.call('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true,
+    });
+    await navigate(chrome.client, `${FRONTEND_URL}/classrooms?mobile=${Date.now()}`);
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, `Boolean(document.querySelector('[data-classroom-card]'))`)),
+      'Classroom card did not render on mobile',
+    );
+    const mobileGeometry = await evaluate(
+      chrome.client,
+      `(() => {
+        const card = document.querySelector('[data-classroom-card]')?.getBoundingClientRect();
+        return { cardRight: card?.right ?? 0, viewport: document.documentElement.clientWidth,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+      })()`,
+    );
+    assert(!mobileGeometry.overflow && mobileGeometry.cardRight <= mobileGeometry.viewport, 'Mobile classroom layout overflowed');
+    await chrome.client.call('Emulation.clearDeviceMetricsOverride');
+
+    const multiSession = await login(password, MULTI_DIRECTOR_USERNAME);
+    await chrome.client.call('Network.setCookie', {
+      name: multiSession.cookieName,
+      value: multiSession.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await evaluate(
+      chrome.client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(multiSession.user))});`,
+    );
+    await navigate(chrome.client, `${FRONTEND_URL}/classrooms?multi=${Date.now()}`);
+    await waitFor(
+      async () => (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="กรองตามโรงเรียน"]'))`)),
+      'Multi-school actor did not receive the school filter',
+    );
+    await chooseCombobox(chrome.client, 'กรองตามโรงเรียน', schoolA.name, schoolA.name);
+    await waitFor(
+      async () => (await evaluate(chrome.client, `Boolean(document.querySelector('[data-classroom-card="${pageClassroom.id}"]'))`)),
+      'Multi-school filter did not load the selected school classrooms',
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('button[aria-label^="เปิดเมนูบัญชีผู้ใช้:"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `Array.from(document.querySelectorAll('[role="menuitem"]')).some((item) => item.textContent.trim() === 'ออกจากระบบ')`,
+        )),
+      'Profile menu did not expose logout on the classrooms page',
+    );
+    const logoutClicked = await evaluate(
+      chrome.client,
+      `(() => {
+        const logout = Array.from(document.querySelectorAll('[role="menuitem"]'))
+          .find((item) => item.textContent.trim() === 'ออกจากระบบ');
+        logout?.click();
+        return Boolean(logout);
+      })()`,
+    );
+    assert(logoutClicked, 'Classrooms logout action was not clickable');
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'location.pathname')) === '/login',
+      'Classrooms logout did not clear the session and navigate to login',
+    );
+    await chrome.client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('เข้าสู่ระบบ STS'),
+      'Login page did not render after classroom logout',
+    );
+    const loginGeometry = await evaluate(
+      chrome.client,
+      `(() => {
+        const root = document.documentElement;
+        const page = document.querySelector('main');
+        const username = document.querySelector('#username');
+        const passwordToggle = document.querySelector('button[aria-label="แสดงหรือซ่อนรหัสผ่าน"]');
+        const passwordToggleIcon = passwordToggle?.querySelector('svg');
+        const submit = document.querySelector('button[type="submit"]');
+        const card = document.querySelector('main [class*="rounded-login-card"]');
+        const rect = (element) => element ? element.getBoundingClientRect() : null;
+        const style = (element) => element ? getComputedStyle(element) : null;
+        return {
+          hasGuestHeader: Boolean(document.querySelector('header')),
+          heroColor: page ? getComputedStyle(page, '::before').backgroundColor : null,
+          overflowY: Math.max(root.scrollHeight, document.body.scrollHeight) > window.innerHeight + 1,
+          scrollHeight: Math.max(root.scrollHeight, document.body.scrollHeight),
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          card: rect(card) ? { top: rect(card).top, bottom: rect(card).bottom, height: rect(card).height } : null,
+          username: { height: rect(username)?.height ?? 0, fontSize: style(username)?.fontSize ?? null },
+          passwordToggle: {
+            size: rect(passwordToggle)?.width ?? 0,
+            iconSize: rect(passwordToggleIcon)?.width ?? 0,
+          },
+          submit: { height: rect(submit)?.height ?? 0, fontSize: style(submit)?.fontSize ?? null },
+        };
+      })()`,
+    );
+    assert(!loginGeometry.hasGuestHeader, `Login page unexpectedly rendered the guest header: ${JSON.stringify(loginGeometry)}`);
+    assert(loginGeometry.heroColor === 'rgb(231, 237, 248)', `Login hero color drifted: ${JSON.stringify(loginGeometry)}`);
+    assert(!loginGeometry.overflowY, `Login page overflowed a 1440x900 viewport: ${JSON.stringify(loginGeometry)}`);
+    assert(
+      loginGeometry.username.height === 48 && loginGeometry.username.fontSize === '16px'
+        && loginGeometry.passwordToggle.size === 40 && loginGeometry.passwordToggle.iconSize === 20
+        && loginGeometry.submit.height === 48 && loginGeometry.submit.fontSize === '16px',
+      `Login control scale drifted: ${JSON.stringify(loginGeometry)}`,
+    );
     console.log('school structure browser smoke passed');
+    diagnostic('main:passed');
   } finally {
+    diagnostic('main:finally');
     if (actor && schoolA) {
       await cleanup(dataSource, actor.id, schoolA.id, studentIdentifier);
     }
@@ -923,15 +1515,17 @@ async function main() {
          deactivation_reason_code=COALESCE(deactivation_reason_code, 'OTHER'),
          deactivation_note=COALESCE(deactivation_note, 'Retained automated smoke fixture')
        WHERE username=ANY($1::text[])`,
-      [[DIRECTOR_USERNAME, TEACHER_USERNAME]],
+      [[DIRECTOR_USERNAME, MULTI_DIRECTOR_USERNAME, TEACHER_USERNAME]],
     );
     await closeChrome(chrome);
     fs.rmSync(directImportCsvPath, { force: true });
+    fs.rmSync(classroomCoverPath, { force: true });
     await app.close();
   }
 }
 
 main().catch((error) => {
-  console.error(error);
+  diagnostic(`main:error:${error?.stack || String(error)}`);
+  fs.writeSync(2, `${error?.stack || String(error)}\n`);
   process.exitCode = 1;
 });

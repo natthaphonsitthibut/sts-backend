@@ -11,6 +11,7 @@ import { AutomationService, NewCase } from '../automation/automation.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceRepository } from './attendance.repository';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
+import { ATTENDANCE_STATUS_CODE } from './attendance-status';
 import type {
   AttendanceSaveRecordInput,
   AttendanceSelectionStatus,
@@ -18,12 +19,6 @@ import type {
   AttendanceWriteRecord,
   QueryExecutor,
 } from './attendance.types';
-
-const STATUS_CODE_MAP: Record<AttendanceSelectionStatus, number> = {
-  P_PRESENT: 1,
-  P_ABSENT: 2,
-  P_LATE: 3,
-};
 
 interface TimetableSlotSessionRow extends Record<string, unknown> {
   id: number | string;
@@ -237,7 +232,7 @@ export class AttendanceWriteService {
       throw new ConflictException('รอบเช็คชื่อนี้ถูกยกเลิกแล้ว');
     }
 
-    const statusCodes = normalizedRecords.map((record) => STATUS_CODE_MAP[record.status]);
+    const statusCodes = normalizedRecords.map((record) => ATTENDANCE_STATUS_CODE[record.status]);
     const previousStatuses =
       session.status === 'REOPENED' && sessionContext.kind === 'DAILY'
         ? await this.attendanceRepository.listAttendanceStatuses(
@@ -448,6 +443,6 @@ export class AttendanceWriteService {
   }
 
   private isAttendanceSelectionStatus(status: string): status is AttendanceSelectionStatus {
-    return status in STATUS_CODE_MAP;
+    return status in ATTENDANCE_STATUS_CODE;
   }
 }

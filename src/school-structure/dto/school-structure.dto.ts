@@ -1,11 +1,16 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsBoolean,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -42,12 +47,62 @@ export class ListSchoolClassroomsDto extends PaginationQueryDto {
   classroomId?: number;
 
   @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  @IsOptional()
   @IsIn(['room', 'grade', 'students'])
   sortBy?: 'room' | 'grade' | 'students';
 
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sortDirection?: 'asc' | 'desc';
+}
+
+export class SetClassroomFavoriteDto {
+  @IsBoolean()
+  isFavorite!: boolean;
+}
+
+export class UpdateClassroomPresentationDto {
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @Matches(/^#[0-9A-F]{6}$/)
+  cardCoverColor?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  coverImagePositionX?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  coverImagePositionY?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
+  @Max(3)
+  coverImageScale?: number;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  removeCover?: boolean;
 }
 
 export class ListSchoolClassroomOptionsDto {
@@ -236,7 +291,39 @@ export class ListClassroomAssignmentsDto {
   classroomId!: number;
 }
 
+export class CreateClassroomStudentCommentDto {
+  @Transform(trimText)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2000)
+  commentText!: string;
+}
+
+export class AuthorizeClassroomExportDto {
+  @IsIn(['ROSTER', 'ATTENDANCE'])
+  exportScope!: 'ROSTER' | 'ATTENDANCE';
+
+  @IsIn(['pdf', 'xlsx', 'csv'])
+  format!: 'pdf' | 'xlsx' | 'csv';
+
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(50, { each: true })
+  columns!: string[];
+}
+
 export class ListClassroomRosterDto extends PaginationQueryDto {
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  @IsOptional()
+  @IsIn(['HIGH', 'MEDIUM', 'LOW', 'WATCH', 'NORMAL'])
+  riskTier?: 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -262,8 +349,67 @@ export class ListClassroomRosterDto extends PaginationQueryDto {
   classroomId?: number;
 
   @IsOptional()
-  @IsIn(['name', 'status'])
-  sortBy?: 'name' | 'status';
+  @IsIn(['studentNumber', 'name', 'comment', 'status'])
+  sortBy?: 'studentNumber' | 'name' | 'comment' | 'status';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
+}
+
+export class ListClassroomAttendanceHistoryDto extends PaginationQueryDto {
+  @IsIn(['DAILY', 'STUDENT'])
+  view!: 'DAILY' | 'STUDENT';
+
+  @IsOptional()
+  @IsUUID()
+  studentUuid?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(ISO_DATE_PATTERN)
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(ISO_DATE_PATTERN)
+  dateFrom?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(ISO_DATE_PATTERN)
+  dateTo?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  @IsOptional()
+  @IsIn([
+    'date',
+    'time',
+    'recordedBy',
+    'studentNumber',
+    'name',
+    'status',
+    'present',
+    'late',
+    'leave',
+    'absent',
+  ])
+  sortBy?:
+    | 'date'
+    | 'time'
+    | 'recordedBy'
+    | 'studentNumber'
+    | 'name'
+    | 'status'
+    | 'present'
+    | 'late'
+    | 'leave'
+    | 'absent';
 
   @IsOptional()
   @IsIn(['asc', 'desc'])

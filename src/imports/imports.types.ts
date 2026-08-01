@@ -22,6 +22,7 @@ export const IMPORT_TARGET_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = 
     'DepartmentID_Onec',
     'SchoolID_Onec',
     'PersonID_Onec',
+    'student_number',
     'PassportNumber_Onec',
     'PrefixID_Onec',
     'FirstName_Onec',
@@ -67,6 +68,7 @@ export const STUDENT_TERM_NATURAL_KEY_COLUMNS: readonly string[] = [
 ];
 
 export const STUDENT_TERM_MUTABLE_IMPORT_COLUMNS: ReadonlySet<string> = new Set([
+  'student_number',
   'DepartmentID_Onec',
   'PassportNumber_Onec',
   'PrefixID_Onec',

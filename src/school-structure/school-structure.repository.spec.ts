@@ -78,8 +78,10 @@ describe('SchoolStructureRepository scope', () => {
     await expect(
       repository.listClassrooms({
         schoolId: 1001,
+        userId: 7,
         termId: 21,
         gradeLevelId: 4,
+        search: 'ม.1',
         sortBy: 'students',
         sortDirection: 'desc',
         page: 2,
@@ -97,13 +99,15 @@ describe('SchoolStructureRepository scope', () => {
       expect.stringMatching(
         /filtered_classrooms[\s\S]*COUNT\(DISTINCT membership\.teacher_user_id\)[\s\S]*COUNT\(DISTINCT enrollment\.student_uuid\)/,
       ),
-      [1001, 21, 4],
+      [1001, 21, 4, '%ม.1%'],
       true,
     );
 
     expect(runner.query).toHaveBeenLastCalledWith(
-      expect.stringMatching(/ORDER BY student_count DESC[\s\S]*LIMIT \$4 OFFSET \$5/),
-      [1001, 21, 4, 10, 10],
+      expect.stringMatching(
+        /user_classroom_favorites[\s\S]*ILIKE \$4[\s\S]*ORDER BY \(favorite\.user_id IS NOT NULL\) DESC[\s\S]*student_count DESC[\s\S]*LIMIT \$6 OFFSET \$7/,
+      ),
+      [1001, 21, 4, '%ม.1%', 7, 10, 10],
       true,
     );
   });
@@ -222,9 +226,173 @@ describe('SchoolStructureRepository scope', () => {
 
     expect(runner.query).toHaveBeenLastCalledWith(
       expect.stringMatching(
-        /status\.badge_variant AS student_status_badge_variant[\s\S]*ORDER BY COALESCE\(status\.label_th, ''\) ASC[\s\S]*LIMIT \$2 OFFSET \$3/,
+        /profile\.risk_tier[\s\S]*profile\.risk_severity[\s\S]*LEFT JOIN LATERAL[\s\S]*classroom_student_comments[\s\S]*ORDER BY COALESCE\(profile\.risk_severity, 0\) ASC[\s\S]*LIMIT \$2 OFFSET \$3/,
       ),
       [42, 10, 20],
+      true,
+    );
+  });
+
+  it('matches roster and attendance searches literally instead of as LIKE wildcards', async () => {
+    const runner = {
+      connect: jest.fn(),
+      release: jest.fn(),
+      query: jest.fn().mockResolvedValue({ records: [{ total_count: 0 }], affected: 1 }),
+    };
+    const repository = new SchoolStructureRepository({
+      createQueryRunner: jest.fn(() => runner),
+    } as never);
+
+    await repository.listRoster({
+      classroomId: 42,
+      search: '50%_ก',
+      sortBy: 'name',
+      sortDirection: 'asc',
+      page: 1,
+      limit: 10,
+    });
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringContaining(`ESCAPE '\\'`),
+      expect.arrayContaining(['%50\\%\\_ก%']),
+      true,
+    );
+
+    runner.query.mockClear();
+    await repository.listClassroomStudentAttendance({
+      classroomId: 42,
+      search: '50%_ก',
+      sortBy: 'name',
+      sortDirection: 'asc',
+      page: 1,
+      limit: 10,
+    });
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringContaining(`ESCAPE '\\'`),
+      expect.arrayContaining(['%50\\%\\_ก%']),
+      true,
+    );
+
+    runner.query.mockClear();
+    await repository.listClassroomDailyAttendance({
+      classroomId: 42,
+      search: '100%_ครู',
+      sortBy: 'date',
+      sortDirection: 'desc',
+      page: 1,
+      limit: 10,
+    });
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringContaining(`ESCAPE '\\'`),
+      expect.arrayContaining(['%100\\%\\_ครู%']),
+      true,
+    );
+
+    runner.query.mockClear();
+    await repository.listStudentAttendanceDays({
+      classroomId: 42,
+      studentUuid: '00000000-0000-4000-8000-000000000001',
+      search: '100%_ครู',
+      sortBy: 'date',
+      sortDirection: 'desc',
+      page: 1,
+      limit: 10,
+    });
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringContaining(`ESCAPE '\\'`),
+      expect.arrayContaining(['%100\\%\\_ครู%']),
+      true,
+    );
+  });
+
+  it('appends a comment only when the student belongs to the classroom', async () => {
+    const runner = {
+      query: jest.fn().mockResolvedValue({
+        records: [{ id: '91', comment_text: 'ติดตาม', created_at: new Date() }],
+        affected: 1,
+      }),
+    };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await expect(
+      repository.createStudentComment(
+        42,
+        '00000000-0000-4000-8000-000000000001',
+        'ติดตาม',
+        7,
+        runner as never,
+      ),
+    ).resolves.toMatchObject({ id: '91', comment_text: 'ติดตาม' });
+    // Stored against the cross-term person identity, looked up from the
+    // enrollment the caller addressed, so the history survives a term change.
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /INSERT INTO classroom_student_comments[\s\S]*person_uuid[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
+      ),
+      [42, '00000000-0000-4000-8000-000000000001', 'ติดตาม', 7],
+      true,
+    );
+  });
+
+  it('aggregates classroom attendance by day and resolves recorder display names', async () => {
+    const runner = {
+      connect: jest.fn(),
+      release: jest.fn(),
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ records: [{ total_count: 1 }], affected: 1 })
+        .mockResolvedValueOnce({ records: [], affected: 0 }),
+    };
+    const repository = new SchoolStructureRepository({
+      createQueryRunner: jest.fn(() => runner),
+    } as never);
+
+    await repository.listClassroomDailyAttendance({
+      classroomId: 42,
+      date: '2026-07-14',
+      sortBy: 'date',
+      sortDirection: 'desc',
+      page: 1,
+      limit: 10,
+    });
+
+    expect(runner.query).toHaveBeenLastCalledWith(
+      expect.stringMatching(
+        /STRING_AGG[\s\S]*recorder\."FirstName"[\s\S]*COUNT\(\*\) FILTER[\s\S]*LEFT JOIN users recorder[\s\S]*GROUP BY attendance\."AttendanceDate"/,
+      ),
+      [42, '2026-07-14', 10, 0],
+      true,
+    );
+  });
+
+  it('applies inclusive start and end dates to one student attendance history', async () => {
+    const runner = {
+      connect: jest.fn(),
+      release: jest.fn(),
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ records: [{ total_count: 0 }], affected: 1 })
+        .mockResolvedValueOnce({ records: [], affected: 0 }),
+    };
+    const repository = new SchoolStructureRepository({
+      createQueryRunner: jest.fn(() => runner),
+    } as never);
+
+    await repository.listStudentAttendanceDays({
+      classroomId: 42,
+      studentUuid: '00000000-0000-4000-8000-000000000001',
+      dateFrom: '2026-07-01',
+      dateTo: '2026-07-31',
+      sortBy: 'date',
+      sortDirection: 'desc',
+      page: 1,
+      limit: 10,
+    });
+
+    expect(runner.query).toHaveBeenLastCalledWith(
+      expect.stringMatching(
+        /attendance\."AttendanceDate" >= \$3[\s\S]*attendance\."AttendanceDate" <= \$4[\s\S]*ORDER BY attendance\."AttendanceDate" DESC/,
+      ),
+      [42, '00000000-0000-4000-8000-000000000001', '2026-07-01', '2026-07-31', 10, 0],
       true,
     );
   });

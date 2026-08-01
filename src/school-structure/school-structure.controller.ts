@@ -5,11 +5,18 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import {
   AuthGuard,
   CurrentUser,
@@ -19,18 +26,24 @@ import {
 } from '../auth';
 import type { AuthenticatedRequestUser } from '../auth';
 import {
+  AuthorizeClassroomExportDto,
   CreateClassroomTeacherAssignmentDto,
+  CreateClassroomStudentCommentDto,
   CreateSchoolClassroomDto,
   CreateSchoolTeacherMembershipDto,
   ListClassroomAssignmentsDto,
   ListClassroomRosterDto,
+  ListClassroomAttendanceHistoryDto,
   ListSchoolClassroomOptionsDto,
   ListSchoolClassroomsDto,
   ListSchoolTeacherCandidatesDto,
   ListSchoolTeachersDto,
+  SetClassroomFavoriteDto,
+  UpdateClassroomPresentationDto,
   UpdateSchoolClassroomDto,
   UpdateSchoolTeacherMembershipDto,
 } from './dto/school-structure.dto';
+import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { SchoolStructureService } from './school-structure.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -81,6 +94,14 @@ export class SchoolStructureController {
     return this.service.listClassroomOptions(query, actor);
   }
 
+  @Get('classrooms/:classroomId')
+  getClassroom(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.getClassroom(classroomId, actor);
+  }
+
   @Post('classrooms')
   createClassroom(
     @Body() body: CreateSchoolClassroomDto,
@@ -104,6 +125,41 @@ export class SchoolStructureController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.deleteClassroom(classroomId, actor);
+  }
+
+  @Put('classrooms/:classroomId/favorite')
+  setClassroomFavorite(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @Body() body: SetClassroomFavoriteDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.setClassroomFavorite(classroomId, body.isFavorite, actor);
+  }
+
+  @Patch('classrooms/:classroomId/presentation')
+  @UseInterceptors(FileInterceptor('photo', multerConfig))
+  updateClassroomPresentation(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @Body() body: UpdateClassroomPresentationDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.updateClassroomPresentation(classroomId, body, actor, file);
+  }
+
+  @Get('classrooms/:classroomId/cover')
+  async getClassroomCover(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.service.resolveClassroomCover(classroomId, actor);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
   }
 
   @Get('teachers')
@@ -173,5 +229,34 @@ export class SchoolStructureController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listRoster(query, actor);
+  }
+
+  @Post('classrooms/:classroomId/students/:studentUuid/comments')
+  createStudentComment(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @Param('studentUuid', ParseUUIDPipe) studentUuid: string,
+    @Body() body: CreateClassroomStudentCommentDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.createStudentComment(classroomId, studentUuid, body, actor);
+  }
+
+  @Post('classrooms/:classroomId/export-events')
+  @RequirePermission('manage-school-structure', 'export-data')
+  authorizeClassroomExport(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @Body() body: AuthorizeClassroomExportDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.authorizeClassroomExport(classroomId, body, actor);
+  }
+
+  @Get('classrooms/:classroomId/attendance-history')
+  listClassroomAttendanceHistory(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @Query() query: ListClassroomAttendanceHistoryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listClassroomAttendanceHistory(classroomId, query, actor);
   }
 }

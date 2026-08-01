@@ -2,9 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import type { DataScope } from '../auth';
 import { buildDataScopeQuery } from '../common/utils/authorization';
+import { ATTENDANCE_STATUS_CODE } from '../attendance/attendance-status';
+import { escapeLikePattern } from '../common/utils/helpers';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import type {
   ClassroomRosterRow,
+  ClassroomDailyAttendanceRow,
+  ClassroomStudentAttendanceDayRow,
+  ClassroomStudentAttendanceSummaryRow,
   ClassroomTeacherAssignmentRow,
   SchoolClassroomOptionRow,
   SchoolClassroomRow,
@@ -15,6 +20,32 @@ import type {
   StructureStatus,
   TeacherAssignmentKind,
 } from './school-structure.types';
+
+/**
+ * Free-text match on an enrolled student (school-owned number or full name).
+ * Pair with a parameter built through {@link escapeLikePattern} so `%`/`_`
+ * typed by the user match literally instead of acting as wildcards.
+ */
+function enrolledStudentSearchCondition(paramIndex: number): string {
+  return `(
+    COALESCE(enrollment.student_number, '') ILIKE $${paramIndex} ESCAPE '\\'
+    OR CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec")
+         ILIKE $${paramIndex} ESCAPE '\\'
+  )`;
+}
+
+/** Free-text match on the person who recorded an attendance row (login or full name). */
+function recorderSearchCondition(paramIndex: number): string {
+  return `(
+    COALESCE(attendance."RecordedBy", '') ILIKE $${paramIndex} ESCAPE '\\'
+    OR EXISTS (
+      SELECT 1 FROM users recorder_search
+      WHERE recorder_search.username = attendance."RecordedBy"
+        AND CONCAT_WS(' ', recorder_search."FirstName", recorder_search."LastName")
+              ILIKE $${paramIndex} ESCAPE '\\'
+    )
+  )`;
+}
 
 @Injectable()
 export class SchoolStructureRepository {
@@ -102,9 +133,11 @@ export class SchoolStructureRepository {
 
   async listClassrooms(input: {
     schoolId: number;
+    userId: number | null;
     termId?: number;
     gradeLevelId?: number;
     classroomId?: number;
+    search?: string;
     sortBy: 'room' | 'grade' | 'students';
     sortDirection: 'asc' | 'desc';
     page: number;
@@ -128,6 +161,34 @@ export class SchoolStructureRepository {
     if (input.classroomId) {
       params.push(input.classroomId);
       conditions.push(`classroom.id = $${params.length}`);
+    }
+    if (input.search) {
+      params.push(`%${escapeLikePattern(input.search)}%`);
+      const searchParam = `$${params.length}`;
+      conditions.push(`(
+        classroom.room_code ILIKE ${searchParam} ESCAPE '\\'
+        OR COALESCE(classroom.room_name, '') ILIKE ${searchParam} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM grade_levels search_grade
+          WHERE search_grade.id = classroom.grade_level_id
+            AND search_grade.label ILIKE ${searchParam} ESCAPE '\\'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM classroom_teacher_assignments search_assignment
+          JOIN school_teacher_memberships search_membership
+            ON search_membership.id = search_assignment.teacher_membership_id
+           AND search_membership.membership_status = 'ACTIVE'
+           AND search_membership.deleted_at IS NULL
+          JOIN users search_teacher ON search_teacher.id = search_membership.teacher_user_id
+          WHERE search_assignment.classroom_id = classroom.id
+            AND search_assignment.assignment_kind = 'HOMEROOM'
+            AND search_assignment.assignment_status = 'ACTIVE'
+            AND search_assignment.deleted_at IS NULL
+            AND CONCAT_WS(' ', search_teacher."FirstName", search_teacher."LastName", search_teacher.username)
+                ILIKE ${searchParam} ESCAPE '\\'
+        )
+      )`);
     }
     const orderBy =
       input.sortBy === 'room'
@@ -175,7 +236,8 @@ export class SchoolStructureRepository {
       `,
       params,
     );
-    const listParams = [...params, input.limit, offset];
+    const favoriteUserParam = params.length + 1;
+    const listParams = [...params, input.userId, input.limit, offset];
     const result = await queryDataSource<SchoolClassroomRow>(
       this.dataSource,
       `
@@ -191,11 +253,22 @@ export class SchoolStructureRepository {
           classroom.room_code,
           classroom.room_name,
           classroom.classroom_status,
+          classroom.card_cover_color,
+          classroom.cover_image_storage_key,
+          classroom.cover_image_position_x,
+          classroom.cover_image_position_y,
+          classroom.cover_image_scale,
+          classroom.updated_at,
+          (favorite.user_id IS NOT NULL) AS is_favorite,
+          favorite.created_at AS favorited_at,
           homeroom.homeroom_teacher_name,
           COUNT(enrollment.student_uuid)::int AS student_count
         FROM school_classrooms classroom
         JOIN school_terms term ON term.id = classroom.school_term_id
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        LEFT JOIN user_classroom_favorites favorite
+          ON favorite.classroom_id = classroom.id
+         AND favorite.user_id = $${favoriteUserParam}
         LEFT JOIN student_term enrollment
           ON enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
         LEFT JOIN LATERAL (
@@ -220,8 +293,10 @@ export class SchoolStructureRepository {
         ) homeroom ON TRUE
         WHERE ${conditions.join(' AND ')}
         GROUP BY classroom.id, term.academic_year, term.semester, grade.label,
+                 favorite.user_id, favorite.created_at,
                  homeroom.homeroom_teacher_name
-        ORDER BY ${orderBy} ${direction}, classroom.room_code ${direction}, classroom.id ${direction}
+        ORDER BY (favorite.user_id IS NOT NULL) DESC, favorite.created_at DESC NULLS LAST,
+                 ${orderBy} ${direction}, classroom.room_code ${direction}, classroom.id ${direction}
         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
       `,
       listParams,
@@ -265,9 +340,14 @@ export class SchoolStructureRepository {
     return result.rows;
   }
 
+  /**
+   * `favoriteUserId` resolves the star for a specific actor; omit it (writes,
+   * `FOR UPDATE` reads) and the row reports no favorite rather than guessing.
+   */
   async findClassroomById(
     classroomId: number,
     queryRunner?: QueryRunner,
+    favoriteUserId?: number | null,
   ): Promise<SchoolClassroomRow | null> {
     const sql = `
       SELECT
@@ -282,18 +362,50 @@ export class SchoolStructureRepository {
         classroom.room_code,
         classroom.room_name,
         classroom.classroom_status,
+        classroom.card_cover_color,
+        classroom.cover_image_storage_key,
+        classroom.cover_image_position_x,
+        classroom.cover_image_position_y,
+        classroom.cover_image_scale,
+        classroom.updated_at,
+        (favorite.user_id IS NOT NULL) AS is_favorite,
+        favorite.created_at AS favorited_at,
+        (
+          SELECT COALESCE(
+            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            teacher.username
+          )
+          FROM classroom_teacher_assignments assignment
+          JOIN school_teacher_memberships membership
+            ON membership.id = assignment.teacher_membership_id
+           AND membership.school_id = assignment.school_id
+           AND membership.membership_status = 'ACTIVE'
+           AND membership.deleted_at IS NULL
+          JOIN users teacher ON teacher.id = membership.teacher_user_id
+          WHERE assignment.classroom_id = classroom.id
+            AND assignment.school_id = classroom.school_id
+            AND assignment.assignment_kind = 'HOMEROOM'
+            AND assignment.assignment_status = 'ACTIVE'
+            AND assignment.deleted_at IS NULL
+          ORDER BY assignment.id DESC
+          LIMIT 1
+        ) AS homeroom_teacher_name,
         (SELECT COUNT(*)::int FROM student_term enrollment
           WHERE enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
         ) AS student_count
       FROM school_classrooms classroom
       JOIN school_terms term ON term.id = classroom.school_term_id
       JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+      LEFT JOIN user_classroom_favorites favorite
+        ON favorite.classroom_id = classroom.id
+       AND favorite.user_id = $2
       WHERE classroom.id = $1 AND classroom.deleted_at IS NULL
       ${queryRunner ? 'FOR UPDATE OF classroom' : ''}
     `;
+    const params = [classroomId, favoriteUserId ?? null];
     const result = queryRunner
-      ? await createSqlQueryExecutor(queryRunner).query<SchoolClassroomRow>(sql, [classroomId])
-      : await queryDataSource<SchoolClassroomRow>(this.dataSource, sql, [classroomId]);
+      ? await createSqlQueryExecutor(queryRunner).query<SchoolClassroomRow>(sql, params)
+      : await queryDataSource<SchoolClassroomRow>(this.dataSource, sql, params);
     return result.rows[0] ?? null;
   }
 
@@ -414,6 +526,66 @@ export class SchoolStructureRepository {
         WHERE id = $1 AND deleted_at IS NULL
       `,
       [classroomId, actorId],
+    );
+  }
+
+  async setClassroomFavorite(
+    userId: number,
+    classroomId: number,
+    isFavorite: boolean,
+  ): Promise<void> {
+    if (isFavorite) {
+      await queryDataSource(
+        this.dataSource,
+        `
+          INSERT INTO user_classroom_favorites (user_id, classroom_id, created_at)
+          VALUES ($1, $2, now())
+          ON CONFLICT (user_id, classroom_id)
+          DO UPDATE SET created_at = EXCLUDED.created_at
+        `,
+        [userId, classroomId],
+      );
+      return;
+    }
+    await queryDataSource(
+      this.dataSource,
+      `DELETE FROM user_classroom_favorites WHERE user_id = $1 AND classroom_id = $2`,
+      [userId, classroomId],
+    );
+  }
+
+  async updateClassroomPresentation(
+    classroomId: number,
+    presentation: {
+      cardCoverColor: string;
+      coverImageStorageKey: string | null;
+      coverImagePositionX: number;
+      coverImagePositionY: number;
+      coverImageScale: number;
+    },
+    actorId: number,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        UPDATE school_classrooms
+        SET card_cover_color = $2,
+            cover_image_storage_key = $3,
+            cover_image_position_x = $4,
+            cover_image_position_y = $5,
+            cover_image_scale = $6,
+            updated_by = $7
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
+      [
+        classroomId,
+        presentation.cardCoverColor,
+        presentation.coverImageStorageKey,
+        presentation.coverImagePositionX,
+        presentation.coverImagePositionY,
+        presentation.coverImageScale,
+        actorId,
+      ],
     );
   }
 
@@ -854,11 +1026,13 @@ export class SchoolStructureRepository {
   }
 
   async listRoster(input: {
+    search?: string;
+    riskTier?: 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
     schoolId?: number;
     termId?: number;
     gradeLevelId?: number;
     classroomId?: number;
-    sortBy: 'name' | 'status';
+    sortBy: 'studentNumber' | 'name' | 'comment' | 'status';
     sortDirection: 'asc' | 'desc';
     page: number;
     limit: number;
@@ -881,9 +1055,21 @@ export class SchoolStructureRepository {
       params.push(input.classroomId);
       conditions.push(`classroom.id = $${params.length}`);
     }
+    if (input.search) {
+      params.push(`%${escapeLikePattern(input.search)}%`);
+      conditions.push(enrolledStudentSearchCondition(params.length));
+    }
+    if (input.riskTier) {
+      params.push(input.riskTier);
+      conditions.push(`COALESCE(profile.risk_tier, 'NORMAL') = $${params.length}`);
+    }
     const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
-    const orderBy =
-      input.sortBy === 'status' ? `COALESCE(status.label_th, '')` : `enrollment."FirstName_Onec"`;
+    const orderBy = {
+      studentNumber: `enrollment.student_number`,
+      name: `enrollment."FirstName_Onec"`,
+      comment: `latest_comment.comment_text`,
+      status: `COALESCE(profile.risk_severity, 0)`,
+    }[input.sortBy];
     const offset = (input.page - 1) * input.limit;
     const countResult = await queryDataSource<{ total_count: number }>(
       this.dataSource,
@@ -891,6 +1077,7 @@ export class SchoolStructureRepository {
         SELECT COUNT(DISTINCT enrollment.student_uuid)::int AS total_count
         FROM student_term enrollment
         JOIN school_classrooms classroom ON classroom.id = enrollment.classroom_id
+        LEFT JOIN student_risk_profiles profile ON profile.student_uuid = enrollment.student_uuid
         WHERE ${conditions.join(' AND ')}
       `,
       params,
@@ -900,6 +1087,10 @@ export class SchoolStructureRepository {
       `
         SELECT
           enrollment.student_uuid::text,
+          enrollment.student_number,
+          profile.risk_tier,
+          profile.risk_severity,
+          latest_comment.comment_text AS teacher_comment,
           enrollment."FirstName_Onec" AS first_name,
           enrollment."LastName_Onec" AS last_name,
           enrollment.student_status_code,
@@ -912,6 +1103,15 @@ export class SchoolStructureRepository {
         JOIN school_classrooms classroom ON classroom.id = enrollment.classroom_id
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
+        LEFT JOIN student_risk_profiles profile ON profile.student_uuid = enrollment.student_uuid
+        LEFT JOIN LATERAL (
+          SELECT comment.comment_text
+          FROM classroom_student_comments comment
+          WHERE comment.classroom_id = classroom.id
+            AND comment.person_uuid = enrollment.person_uuid
+          ORDER BY comment.created_at DESC, comment.id DESC
+          LIMIT 1
+        ) latest_comment ON TRUE
         WHERE ${conditions.join(' AND ')}
         ORDER BY ${orderBy} ${direction}, enrollment."LastName_Onec" ${direction}, enrollment.student_uuid ${direction}
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}
@@ -919,5 +1119,262 @@ export class SchoolStructureRepository {
       [...params, input.limit, offset],
     );
     return { rows: result.rows, totalCount: countResult.rows[0]?.total_count ?? 0 };
+  }
+
+  async createStudentComment(
+    classroomId: number,
+    studentUuid: string,
+    commentText: string,
+    authoredByUserId: number,
+    queryRunner: QueryRunner,
+  ): Promise<{ id: string; comment_text: string; created_at: Date } | null> {
+    const result = await createSqlQueryExecutor(queryRunner).query<{
+      id: string;
+      comment_text: string;
+      created_at: Date;
+    }>(
+      `
+        INSERT INTO classroom_student_comments (
+          classroom_id,
+          person_uuid,
+          comment_text,
+          authored_by_user_id
+        )
+        SELECT $1, enrollment.person_uuid, $3, $4
+        FROM student_term enrollment
+        WHERE enrollment.student_uuid = $2
+          AND enrollment.classroom_id = $1
+          AND enrollment.deleted_at IS NULL
+          AND enrollment.person_uuid IS NOT NULL
+        RETURNING id::text, comment_text, created_at
+      `,
+      [classroomId, studentUuid, commentText, authoredByUserId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listClassroomDailyAttendance(input: {
+    classroomId: number;
+    date?: string;
+    search?: string;
+    sortBy: 'date' | 'recordedBy' | 'present' | 'late' | 'leave' | 'absent';
+    sortDirection: 'asc' | 'desc';
+    page: number;
+    limit: number;
+  }): Promise<{ rows: ClassroomDailyAttendanceRow[]; totalCount: number }> {
+    const params: unknown[] = [input.classroomId];
+    const conditions = [
+      'enrollment.classroom_id = $1',
+      'enrollment.deleted_at IS NULL',
+      `attendance.session_kind = 'DAILY'`,
+    ];
+    if (input.date) {
+      params.push(input.date);
+      conditions.push(`attendance."AttendanceDate" = $${params.length}`);
+    }
+    if (input.search) {
+      params.push(`%${escapeLikePattern(input.search)}%`);
+      conditions.push(recorderSearchCondition(params.length));
+    }
+    const where = conditions.join(' AND ');
+    const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const orderBy = {
+      date: 'attendance_date',
+      recordedBy: 'recorded_by',
+      present: 'present_count',
+      late: 'late_count',
+      leave: 'leave_count',
+      absent: 'absent_count',
+    }[input.sortBy];
+    const offset = (input.page - 1) * input.limit;
+    const count = await queryDataSource<{ total_count: number }>(
+      this.dataSource,
+      `
+        SELECT COUNT(DISTINCT attendance."AttendanceDate")::int AS total_count
+        FROM attendance
+        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
+        WHERE ${where}
+      `,
+      params,
+    );
+    const rows = await queryDataSource<ClassroomDailyAttendanceRow>(
+      this.dataSource,
+      `
+        SELECT
+          attendance."AttendanceDate"::text AS attendance_date,
+          STRING_AGG(
+            DISTINCT COALESCE(
+              NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+              CASE
+                WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
+                ELSE NULLIF(attendance."RecordedBy", '')
+              END,
+              '-'
+            ),
+            ', '
+          ) AS recorded_by,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_PRESENT})::int AS present_count,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LATE})::int AS late_count,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LEAVE})::int AS leave_count,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
+        FROM attendance
+        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
+        LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
+        WHERE ${where}
+        GROUP BY attendance."AttendanceDate"
+        ORDER BY ${orderBy} ${direction}, attendance."AttendanceDate" DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `,
+      [...params, input.limit, offset],
+    );
+    return { rows: rows.rows, totalCount: count.rows[0]?.total_count ?? 0 };
+  }
+
+  async listClassroomStudentAttendance(input: {
+    classroomId: number;
+    date?: string;
+    search?: string;
+    sortBy: 'studentNumber' | 'name' | 'status' | 'present' | 'late' | 'leave' | 'absent';
+    sortDirection: 'asc' | 'desc';
+    page: number;
+    limit: number;
+  }): Promise<{ rows: ClassroomStudentAttendanceSummaryRow[]; totalCount: number }> {
+    const params: unknown[] = [input.classroomId];
+    const conditions = ['enrollment.classroom_id = $1', 'enrollment.deleted_at IS NULL'];
+    if (input.search) {
+      params.push(`%${escapeLikePattern(input.search)}%`);
+      conditions.push(enrolledStudentSearchCondition(params.length));
+    }
+    const attendanceJoinParams: unknown[] = [];
+    let attendanceDateCondition = '';
+    if (input.date) {
+      attendanceJoinParams.push(input.date);
+      attendanceDateCondition = ` AND attendance."AttendanceDate" = $${params.length + 1}`;
+    }
+    const allParams = [...params, ...attendanceJoinParams];
+    const where = conditions.join(' AND ');
+    const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const orderBy = {
+      studentNumber: 'enrollment.student_number',
+      name: `enrollment."FirstName_Onec"`,
+      status: `COALESCE(MAX(attendance."AttendanceStatus"), 0)`,
+      present: 'present_count',
+      late: 'late_count',
+      leave: 'leave_count',
+      absent: 'absent_count',
+    }[input.sortBy];
+    const offset = (input.page - 1) * input.limit;
+    const count = await queryDataSource<{ total_count: number }>(
+      this.dataSource,
+      `SELECT COUNT(*)::int AS total_count FROM student_term enrollment WHERE ${where}`,
+      params,
+    );
+    const rows = await queryDataSource<ClassroomStudentAttendanceSummaryRow>(
+      this.dataSource,
+      `
+        SELECT
+          enrollment.student_uuid::text,
+          enrollment.student_number,
+          enrollment."FirstName_Onec" AS first_name,
+          enrollment."LastName_Onec" AS last_name,
+          COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_PRESENT})::int AS present_count,
+          COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LATE})::int AS late_count,
+          COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LEAVE})::int AS leave_count,
+          COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
+        FROM student_term enrollment
+        LEFT JOIN attendance
+          ON attendance.student_uuid = enrollment.student_uuid
+         AND attendance.session_kind = 'DAILY'
+         ${attendanceDateCondition}
+        WHERE ${where}
+        GROUP BY enrollment.student_uuid
+        ORDER BY ${orderBy} ${direction}, enrollment."LastName_Onec" ${direction}, enrollment.student_uuid ${direction}
+        LIMIT $${allParams.length + 1} OFFSET $${allParams.length + 2}
+      `,
+      [...allParams, input.limit, offset],
+    );
+    return { rows: rows.rows, totalCount: count.rows[0]?.total_count ?? 0 };
+  }
+
+  async listStudentAttendanceDays(input: {
+    classroomId: number;
+    studentUuid: string;
+    date?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+    sortBy: 'date' | 'time' | 'recordedBy' | 'status';
+    sortDirection: 'asc' | 'desc';
+    page: number;
+    limit: number;
+  }): Promise<{ rows: ClassroomStudentAttendanceDayRow[]; totalCount: number }> {
+    const params: unknown[] = [input.classroomId, input.studentUuid];
+    const conditions = [
+      'enrollment.classroom_id = $1',
+      'enrollment.student_uuid = $2',
+      'enrollment.deleted_at IS NULL',
+      `attendance.session_kind = 'DAILY'`,
+    ];
+    if (input.date) {
+      params.push(input.date);
+      conditions.push(`attendance."AttendanceDate" = $${params.length}`);
+    }
+    if (input.dateFrom) {
+      params.push(input.dateFrom);
+      conditions.push(`attendance."AttendanceDate" >= $${params.length}`);
+    }
+    if (input.dateTo) {
+      params.push(input.dateTo);
+      conditions.push(`attendance."AttendanceDate" <= $${params.length}`);
+    }
+    if (input.search) {
+      params.push(`%${escapeLikePattern(input.search)}%`);
+      conditions.push(recorderSearchCondition(params.length));
+    }
+    const where = conditions.join(' AND ');
+    const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const orderBy = {
+      date: `attendance."AttendanceDate"`,
+      time: `attendance."RecordedAt"`,
+      recordedBy: 'recorded_by',
+      status: `attendance."AttendanceStatus"`,
+    }[input.sortBy];
+    const offset = (input.page - 1) * input.limit;
+    const count = await queryDataSource<{ total_count: number }>(
+      this.dataSource,
+      `
+        SELECT COUNT(*)::int AS total_count
+        FROM attendance
+        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
+        WHERE ${where}
+      `,
+      params,
+    );
+    const rows = await queryDataSource<ClassroomStudentAttendanceDayRow>(
+      this.dataSource,
+      `
+        SELECT
+          attendance."AttendanceID"::text AS attendance_id,
+          attendance."AttendanceDate"::text AS attendance_date,
+          TO_CHAR(attendance."RecordedAt" AT TIME ZONE 'Asia/Bangkok', 'HH24:MI:SS') AS recorded_time,
+          COALESCE(
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+            CASE
+              WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
+              ELSE NULLIF(attendance."RecordedBy", '')
+            END,
+            '-'
+          ) AS recorded_by,
+          attendance."AttendanceStatus"::int AS attendance_status
+        FROM attendance
+        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
+        LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
+        WHERE ${where}
+        ORDER BY ${orderBy} ${direction}, attendance."AttendanceID" ${direction}
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `,
+      [...params, input.limit, offset],
+    );
+    return { rows: rows.rows, totalCount: count.rows[0]?.total_count ?? 0 };
   }
 }

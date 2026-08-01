@@ -45,10 +45,17 @@ describe('canonical import catalog', () => {
       ],
     });
     const studentTarget = catalog.targets.find((target) => target.target === 'student_term');
+    expect(studentTarget?.fields.find((field) => field.key === 'student_number')).toMatchObject({
+      label: 'รหัสประจำตัวนักเรียน',
+      required: false,
+    });
     expect(studentTarget?.fields.find((field) => field.key === 'PersonID_Onec')).toMatchObject({
       required: true,
       referenceSource: null,
     });
+    expect(
+      studentTarget?.fields.find((field) => field.key === 'PersonID_Onec')?.aliases,
+    ).not.toContain('รหัสนักเรียน');
     expect(
       catalog.targets
         .find((target) => target.target === 'school_classroom')

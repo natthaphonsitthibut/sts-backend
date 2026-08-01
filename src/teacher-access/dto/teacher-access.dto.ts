@@ -17,6 +17,10 @@ import {
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import {
+  ATTENDANCE_SELECTION_STATUS_VALUES,
+  type AttendanceSelectionStatus,
+} from '../../attendance/attendance-status';
+import {
   TEACHER_ACCESS_CAPABILITIES,
   type TeacherAccessCapability,
 } from '../teacher-access.constants';
@@ -121,8 +125,8 @@ export class TeacherAccessAttendanceRecordDto {
   @IsUUID()
   studentId!: string;
 
-  @IsIn(['P_PRESENT', 'P_ABSENT', 'P_LATE'])
-  status!: 'P_PRESENT' | 'P_ABSENT' | 'P_LATE';
+  @IsIn(ATTENDANCE_SELECTION_STATUS_VALUES)
+  status!: AttendanceSelectionStatus;
 }
 
 export class SaveTeacherAccessAttendanceDto {

@@ -19,10 +19,14 @@ import {
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 import { MAX_LINK_LIFETIME_HOURS } from '../task-link-expiry';
+import {
+  ATTENDANCE_SELECTION_STATUS_VALUES,
+  type AttendanceSelectionStatus,
+} from '../../attendance/attendance-status';
 
 export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
-export type AttendanceTaskStatus = 'P_PRESENT' | 'P_ABSENT' | 'P_LATE';
+export type AttendanceTaskStatus = AttendanceSelectionStatus;
 export type CaseResolutionOutcome =
   | 'RETURNED_TO_SCHOOL'
   | 'TRANSFERRED_SCHOOL'
@@ -185,7 +189,7 @@ export class TaskAttendanceRecordDto {
   student_id?: string;
 
   @IsString()
-  @IsIn(['P_PRESENT', 'P_ABSENT', 'P_LATE'])
+  @IsIn(ATTENDANCE_SELECTION_STATUS_VALUES)
   status?: AttendanceTaskStatus;
 }
 

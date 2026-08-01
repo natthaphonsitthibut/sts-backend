@@ -33,6 +33,15 @@ const CLASSROOM = {
   room_code: '1',
   room_name: 'ห้อง 1',
   classroom_status: 'ACTIVE',
+  card_cover_color: '#4F86E8',
+  cover_image_storage_key: null,
+  cover_image_position_x: 50,
+  cover_image_position_y: 50,
+  cover_image_scale: '1.00',
+  updated_at: '2026-08-01T00:00:00.000Z',
+  is_favorite: false,
+  favorited_at: null,
+  homeroom_teacher_name: 'ครูทดสอบ',
   student_count: 20,
 };
 
@@ -62,6 +71,8 @@ describe('SchoolStructureService', () => {
       updateClassroom: jest.fn().mockResolvedValue(CLASSROOM),
       getClassroomUsage: jest.fn().mockResolvedValue({ studentCount: 0, assignmentCount: 0 }),
       softDeleteClassroom: jest.fn().mockResolvedValue(undefined),
+      setClassroomFavorite: jest.fn().mockResolvedValue(undefined),
+      updateClassroomPresentation: jest.fn().mockResolvedValue(undefined),
       listTeachers: jest.fn().mockResolvedValue({ rows: [], totalCount: 0, activeCount: 0 }),
       listTeacherCandidates: jest.fn().mockResolvedValue([]),
       listTeacherOptions: jest.fn().mockResolvedValue([]),
@@ -72,15 +83,32 @@ describe('SchoolStructureService', () => {
       listAssignments: jest.fn().mockResolvedValue([]),
       createAssignment: jest.fn(),
       listRoster: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
+      createStudentComment: jest.fn().mockResolvedValue({
+        id: '91',
+        comment_text: 'ควรติดตามการส่งงาน',
+        created_at: new Date('2026-08-01T03:00:00.000Z'),
+      }),
+      listClassroomDailyAttendance: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
+      listClassroomStudentAttendance: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
+      listStudentAttendanceDays: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
       withTransaction: jest.fn(async (operation: (runner: unknown) => Promise<unknown>) =>
         operation({ query: jest.fn() }),
       ),
     };
     const auditLog = { recordAtomic: jest.fn() };
+    const storage = {
+      kind: 'local',
+      save: jest.fn().mockResolvedValue(undefined),
+      saveStream: jest.fn().mockResolvedValue(undefined),
+      resolve: jest.fn().mockResolvedValue(null),
+      open: jest.fn().mockResolvedValue(null),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
     return {
-      service: new SchoolStructureService(repository as never, auditLog as never),
+      service: new SchoolStructureService(repository as never, auditLog as never, storage as never),
       repository,
       auditLog,
+      storage,
     };
   }
 
@@ -124,8 +152,77 @@ describe('SchoolStructureService', () => {
     });
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
     expect(repository.listClassrooms).toHaveBeenCalledWith(
-      expect.objectContaining({ schoolId: 1001, termId: 21, page: 1, limit: 20 }),
+      expect.objectContaining({ schoolId: 1001, userId: 7, termId: 21, page: 1, limit: 20 }),
     );
+  });
+
+  it('keeps favorites user-specific and validates school scope before changing them', async () => {
+    const { service, repository } = setup();
+
+    await expect(service.setClassroomFavorite(11, true, SCHOOL_ACTOR)).resolves.toEqual({
+      data: { classroomId: '11', isFavorite: true },
+    });
+    expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
+    expect(repository.setClassroomFavorite).toHaveBeenCalledWith(7, 11, true);
+
+    repository.isSchoolInScope.mockResolvedValueOnce(false);
+    await expect(service.setClassroomFavorite(11, false, SCHOOL_ACTOR)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('updates only classroom presentation fields and returns the complete card shape', async () => {
+    const { service, repository, auditLog } = setup();
+    const updatedClassroom = {
+      ...CLASSROOM,
+      card_cover_color: '#3CCF91',
+      cover_image_position_x: 25,
+      cover_image_position_y: 75,
+      cover_image_scale: '1.50',
+    };
+    repository.findClassroomById
+      .mockResolvedValueOnce(CLASSROOM)
+      .mockResolvedValueOnce(CLASSROOM)
+      .mockResolvedValueOnce(updatedClassroom);
+
+    await expect(
+      service.updateClassroomPresentation(
+        11,
+        {
+          cardCoverColor: '#3CCF91',
+          coverImagePositionX: 25,
+          coverImagePositionY: 75,
+          coverImageScale: 1.5,
+        },
+        SCHOOL_ACTOR,
+      ),
+    ).resolves.toMatchObject({
+      data: {
+        cardCoverColor: '#3CCF91',
+        coverImagePositionX: 25,
+        coverImagePositionY: 75,
+        coverImageScale: 1.5,
+        homeroomTeacherName: 'ครูทดสอบ',
+      },
+    });
+    expect(repository.updateClassroomPresentation).toHaveBeenCalledWith(
+      11,
+      {
+        cardCoverColor: '#3CCF91',
+        coverImageStorageKey: null,
+        coverImagePositionX: 25,
+        coverImagePositionY: 75,
+        coverImageScale: 1.5,
+      },
+      7,
+      expect.anything(),
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledTimes(1);
+    const auditCall = auditLog.recordAtomic.mock.calls[0] as unknown as [
+      { metadata: { changedFields: string[] } },
+      unknown,
+    ];
+    expect(auditCall[0].metadata.changedFields).toEqual(['cardCoverColor', 'coverImageFraming']);
   });
 
   it('allows import actors to read classrooms within their server-side school scope', async () => {
@@ -182,6 +279,10 @@ describe('SchoolStructureService', () => {
       rows: [
         {
           student_uuid: '00000000-0000-4000-8000-000000000001',
+          student_number: '66000001',
+          risk_tier: 'WATCH',
+          risk_severity: 1,
+          teacher_comment: 'ควรติดตามการส่งงาน',
           first_name: 'กานต์',
           last_name: 'ศึกษา',
           student_status_code: 1,
@@ -200,11 +301,154 @@ describe('SchoolStructureService', () => {
     ).resolves.toMatchObject({
       data: [
         {
+          studentNumber: '66000001',
+          riskTier: 'WATCH',
+          riskSeverity: 1,
+          teacherComment: 'ควรติดตามการส่งงาน',
           studentStatusLabel: 'กำลังศึกษา',
           studentStatusBadgeVariant: 'success',
         },
       ],
     });
+  });
+
+  it('appends a scoped classroom comment and records an audit without comment content', async () => {
+    const { service, repository, auditLog } = setup();
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+
+    await expect(
+      service.createStudentComment(
+        11,
+        studentUuid,
+        { commentText: 'ควรติดตามการส่งงาน' },
+        SCHOOL_ACTOR,
+      ),
+    ).resolves.toMatchObject({
+      data: { id: '91', studentUuid, teacherComment: 'ควรติดตามการส่งงาน' },
+    });
+    expect(repository.createStudentComment).toHaveBeenCalledWith(
+      11,
+      studentUuid,
+      'ควรติดตามการส่งงาน',
+      SCHOOL_ACTOR.id,
+      expect.anything(),
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'classroom_student_comments',
+        targetId: '91',
+        metadata: {
+          op: 'create',
+          schoolId: 1001,
+          classroomId: 11,
+          studentUuid,
+          commentLength: 'ควรติดตามการส่งงาน'.length,
+        },
+      }),
+      expect.anything(),
+    );
+    expect(JSON.stringify(auditLog.recordAtomic.mock.calls[0])).not.toContain('ควรติดตาม');
+  });
+
+  it('rejects a comment when the student is not enrolled in the scoped classroom', async () => {
+    const { service, repository } = setup();
+    repository.createStudentComment.mockResolvedValueOnce(null);
+
+    await expect(
+      service.createStudentComment(
+        11,
+        '00000000-0000-4000-8000-000000000099',
+        { commentText: 'ทดสอบ' },
+        SCHOOL_ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns scoped daily attendance summaries with paginated counts', async () => {
+    const { service, repository } = setup();
+    repository.listClassroomDailyAttendance.mockResolvedValueOnce({
+      rows: [
+        {
+          attendance_date: '2026-07-14',
+          recorded_by: 'วิภาวี สายสมร',
+          present_count: 28,
+          late_count: 5,
+          leave_count: 0,
+          absent_count: 2,
+        },
+      ],
+      totalCount: 1,
+    });
+
+    await expect(
+      service.listClassroomAttendanceHistory(11, { view: 'DAILY' }, SCHOOL_ACTOR),
+    ).resolves.toMatchObject({
+      data: [
+        {
+          date: '2026-07-14',
+          recordedBy: 'วิภาวี สายสมร',
+          presentCount: 28,
+          lateCount: 5,
+          leaveCount: 0,
+          absentCount: 2,
+        },
+      ],
+      meta: { totalCount: 1 },
+    });
+    expect(repository.listClassroomDailyAttendance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classroomId: 11,
+        page: 1,
+        sortBy: 'date',
+        sortDirection: 'desc',
+      }),
+    );
+  });
+
+  it('passes an inclusive date range to student attendance history', async () => {
+    const { service, repository } = setup();
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+
+    await expect(
+      service.listClassroomAttendanceHistory(
+        11,
+        {
+          view: 'STUDENT',
+          studentUuid,
+          dateFrom: '2026-07-01',
+          dateTo: '2026-07-31',
+        },
+        SCHOOL_ACTOR,
+      ),
+    ).resolves.toMatchObject({ data: [], meta: { totalCount: 0 } });
+    expect(repository.listStudentAttendanceDays).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classroomId: 11,
+        studentUuid,
+        dateFrom: '2026-07-01',
+        dateTo: '2026-07-31',
+        sortBy: 'date',
+        sortDirection: 'desc',
+      }),
+    );
+  });
+
+  it('rejects an attendance range whose start is after its end', async () => {
+    const { service, repository } = setup();
+
+    await expect(
+      service.listClassroomAttendanceHistory(
+        11,
+        {
+          view: 'STUDENT',
+          studentUuid: '00000000-0000-4000-8000-000000000001',
+          dateFrom: '2026-07-31',
+          dateTo: '2026-07-01',
+        },
+        SCHOOL_ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.listStudentAttendanceDays).not.toHaveBeenCalled();
   });
 
   it('rejects a roster query without a school or classroom context', async () => {
@@ -365,6 +609,40 @@ describe('SchoolStructureService', () => {
       expect.objectContaining({
         targetType: 'school_classrooms',
         metadata: { op: 'delete', schoolId: 1001 },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('requires export permission and records classroom exports atomically', async () => {
+    const { service, auditLog } = setup();
+    const request = {
+      exportScope: 'ROSTER' as const,
+      format: 'xlsx' as const,
+      columns: ['studentNumber', 'name'],
+    };
+
+    await expect(
+      service.authorizeClassroomExport(11, request, SCHOOL_ACTOR),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    await expect(
+      service.authorizeClassroomExport(11, request, {
+        ...SCHOOL_ACTOR,
+        permissions: ['manage-school-structure', 'export-data'],
+      }),
+    ).resolves.toEqual({ data: { authorized: true } });
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CLASSROOM_DATA_EXPORT',
+        targetType: 'school_classrooms',
+        targetId: '11',
+        metadata: {
+          schoolId: 1001,
+          exportScope: 'ROSTER',
+          format: 'xlsx',
+          columns: ['studentNumber', 'name'],
+        },
       }),
       expect.anything(),
     );

@@ -80,6 +80,11 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     room_code VARCHAR(32) NOT NULL,
     room_name VARCHAR(120),
     classroom_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    card_cover_color VARCHAR(7) NOT NULL DEFAULT '#4F86E8',
+    cover_image_storage_key VARCHAR(255),
+    cover_image_position_x SMALLINT NOT NULL DEFAULT 50,
+    cover_image_position_y SMALLINT NOT NULL DEFAULT 50,
+    cover_image_scale NUMERIC(4,2) NOT NULL DEFAULT 1.00,
     ${AUDIT_COLUMNS_SQL},
     CONSTRAINT uq_school_classrooms_identity
       UNIQUE (id, school_term_id, school_id, grade_level_id, legacy_room_number),
@@ -105,7 +110,15 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT chk_school_classrooms_legacy_room
       CHECK (legacy_room_number::text = room_code),
     CONSTRAINT chk_school_classrooms_status
-      CHECK (classroom_status IN ('ACTIVE', 'INACTIVE'))
+      CHECK (classroom_status IN ('ACTIVE', 'INACTIVE')),
+    CONSTRAINT chk_school_classrooms_card_cover_color
+      CHECK (card_cover_color ~ '^#[0-9A-F]{6}$'),
+    CONSTRAINT chk_school_classrooms_cover_image_position_x
+      CHECK (cover_image_position_x BETWEEN 0 AND 100),
+    CONSTRAINT chk_school_classrooms_cover_image_position_y
+      CHECK (cover_image_position_y BETWEEN 0 AND 100),
+    CONSTRAINT chk_school_classrooms_cover_image_scale
+      CHECK (cover_image_scale BETWEEN 1.00 AND 3.00)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS uq_school_classrooms_term_grade_code
     ON school_classrooms (school_term_id, grade_level_id, lower(room_code))
@@ -116,6 +129,51 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_school_classrooms_scope
     ON school_classrooms (school_id, classroom_status, school_term_id, grade_level_id)
     WHERE deleted_at IS NULL;
+
+  CREATE TABLE IF NOT EXISTS user_classroom_favorites (
+    user_id INTEGER NOT NULL,
+    classroom_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_user_classroom_favorites PRIMARY KEY (user_id, classroom_id),
+    CONSTRAINT fk_user_classroom_favorites_user
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_user_classroom_favorites_classroom
+      FOREIGN KEY (classroom_id) REFERENCES school_classrooms(id)
+      ON DELETE CASCADE ON UPDATE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_classroom_favorites_order
+    ON user_classroom_favorites (user_id, created_at DESC, classroom_id);
+
+  CREATE TABLE IF NOT EXISTS classroom_student_comments (
+    id BIGSERIAL PRIMARY KEY,
+    classroom_id BIGINT NOT NULL,
+    person_uuid UUID NOT NULL,
+    comment_text TEXT NOT NULL,
+    authored_by_user_id INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_classroom_student_comments_classroom
+      FOREIGN KEY (classroom_id) REFERENCES school_classrooms(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_student_comments_person
+      FOREIGN KEY (person_uuid) REFERENCES student_person(person_uuid)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_student_comments_author
+      FOREIGN KEY (authored_by_user_id) REFERENCES users(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_classroom_student_comments_text
+      CHECK (
+        comment_text = BTRIM(comment_text)
+        AND CHAR_LENGTH(comment_text) BETWEEN 1 AND 2000
+      )
+  );
+  CREATE INDEX IF NOT EXISTS idx_classroom_student_comments_latest
+    ON classroom_student_comments (
+      classroom_id,
+      person_uuid,
+      created_at DESC,
+      id DESC
+    );
 
   CREATE TABLE IF NOT EXISTS school_teacher_memberships (
     id BIGSERIAL PRIMARY KEY,
@@ -229,6 +287,35 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   BEGIN
     ALTER TABLE student_term ADD COLUMN IF NOT EXISTS school_term_id BIGINT;
     ALTER TABLE student_term ADD COLUMN IF NOT EXISTS classroom_id BIGINT;
+    ALTER TABLE student_term ADD COLUMN IF NOT EXISTS student_number VARCHAR(50);
+
+    DO $student_number_constraints$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_student_term_student_number_format'
+      ) THEN
+        ALTER TABLE student_term
+        ADD CONSTRAINT chk_student_term_student_number_format
+        CHECK (
+          student_number IS NULL
+          OR (
+            student_number = BTRIM(student_number)
+            AND CHAR_LENGTH(student_number) BETWEEN 1 AND 50
+          )
+        );
+      END IF;
+    END
+    $student_number_constraints$;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_student_term_school_term_student_number
+      ON student_term (
+        "SchoolID_Onec",
+        "AcademicYear_Onec",
+        "Semester_Onec",
+        student_number
+      )
+      WHERE student_number IS NOT NULL AND deleted_at IS NULL;
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint
       WHERE conname = 'fk_student_term_school_term_school'

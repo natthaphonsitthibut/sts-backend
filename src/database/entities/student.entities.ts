@@ -18,6 +18,9 @@ export class StudentTermEntity {
   @Column({ name: 'person_uuid', type: 'uuid' })
   personUuid!: string;
 
+  @Column({ name: 'student_number', type: 'varchar', length: 50, nullable: true })
+  studentNumber!: string | null;
+
   @Column({ name: 'AcademicYear_Onec', type: 'integer' })
   academicYearOnec!: number;
 

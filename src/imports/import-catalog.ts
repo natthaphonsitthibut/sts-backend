@@ -1,6 +1,6 @@
 import { hasPermission, type AuthenticatedRequestUser } from '../auth';
 
-export const IMPORT_CATALOG_VERSION = '2026-07-19' as const;
+export const IMPORT_CATALOG_VERSION = '2026-08-01' as const;
 
 export const IMPORT_CATALOG_TARGETS = [
   'school_teacher_membership',
@@ -165,6 +165,12 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
     dependsOn: ['school_classroom'],
     canonicalContext: [SCHOOL_CONTEXT, TERM_CONTEXT, CLASSROOM_CONTEXT],
     fields: [
+      field('student_number', 'รหัสประจำตัวนักเรียน', false, [
+        'studentNumber',
+        'studentCode',
+        'รหัสประจำตัวนักเรียน',
+        'รหัสนักเรียน',
+      ]),
       field('PersonID_Onec', 'เลขประจำตัว/เลขบัตร', true, [
         'id',
         'studentId',
@@ -173,7 +179,6 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
         'เลขประจำตัวประชาชน',
         'เลขบัตรประชาชน',
         'เลขบัตร',
-        'รหัสนักเรียน',
       ]),
       field('FullName_Onec', 'ชื่อ-นามสกุล (คอลัมน์เดียว)', false, [
         'fullName',

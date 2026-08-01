@@ -127,6 +127,22 @@ describe('AttendanceWriteService', () => {
     expect(operationsRepository.recordSessionAudit).toHaveBeenCalledTimes(1);
   });
 
+  it('persists leave with attendance status code 4', async () => {
+    await service.saveAttendanceWithinTransaction(
+      [
+        { student_id: STUDENT_IDS[0], status: 'P_LEAVE' },
+        { student_id: STUDENT_IDS[1], status: 'P_PRESENT' },
+      ],
+      { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
+      executor,
+    );
+
+    expect(attendanceRepository.upsertAttendanceBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ statusCodes: [4, 1] }),
+      executor,
+    );
+  });
+
   it('enqueues risk profile recalculation after attendance is committed', async () => {
     await service.saveAttendance(
       STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),

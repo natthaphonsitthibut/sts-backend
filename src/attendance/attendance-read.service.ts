@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { DataScope } from '../common/utils/authorization';
 import { AttendanceRepository } from './attendance.repository';
+import { attendanceStatusFromCode } from './attendance-status';
 
 @Injectable()
 export class AttendanceReadService {
@@ -43,7 +44,7 @@ export class AttendanceReadService {
 
     const data = rows.map((row) => ({
       ...row,
-      status: this.mapHistoryStatus(row.status),
+      status: attendanceStatusFromCode(row.status),
     }));
 
     return { success: true, data };
@@ -84,25 +85,5 @@ export class AttendanceReadService {
     }
 
     return parsed;
-  }
-
-  private mapHistoryStatus(status: unknown): string {
-    const code =
-      typeof status === 'number'
-        ? status
-        : typeof status === 'string'
-          ? Number.parseInt(status, 10)
-          : Number.NaN;
-
-    if (code === 1) {
-      return 'P_PRESENT';
-    }
-    if (code === 2) {
-      return 'P_ABSENT';
-    }
-    if (code === 3) {
-      return 'P_LATE';
-    }
-    return 'NONE';
   }
 }
