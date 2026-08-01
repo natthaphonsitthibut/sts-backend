@@ -14,9 +14,10 @@ import { detectImageType } from './file-signature.util';
 // as-is, so the original GPS-bearing file never lands in storage. Where the
 // re-encoded result is persisted (local disk vs Supabase Storage) is the
 // injected adapter's concern, not this function's.
-export async function processVisitPhoto(
+export async function processImageUpload(
   file: Express.Multer.File,
   storage: FileStorageAdapter,
+  directory?: string,
 ): Promise<string> {
   const detected = detectImageType(file.buffer);
   if (!detected) {
@@ -43,6 +44,14 @@ export async function processVisitPhoto(
   }
 
   const filename = `${randomBytes(16).toString('hex')}${ext}`;
-  await storage.save(output, filename);
-  return filename;
+  const storageKey = directory ? `${directory.replace(/^\/+|\/+$/g, '')}/${filename}` : filename;
+  await storage.save(output, storageKey);
+  return storageKey;
+}
+
+export async function processVisitPhoto(
+  file: Express.Multer.File,
+  storage: FileStorageAdapter,
+): Promise<string> {
+  return processImageUpload(file, storage);
 }

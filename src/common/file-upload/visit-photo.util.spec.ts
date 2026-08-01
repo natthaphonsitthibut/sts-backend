@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { BadRequestException } from '@nestjs/common';
-import { processVisitPhoto } from './visit-photo.util';
+import { processImageUpload, processVisitPhoto } from './visit-photo.util';
 import type { FileStorageAdapter } from '../../files/storage/file-storage.types';
 
 function fakeStorage(): jest.Mocked<FileStorageAdapter> {
@@ -60,5 +60,19 @@ describe('processVisitPhoto', () => {
       BadRequestException,
     );
     expect(storage.save).not.toHaveBeenCalled();
+  });
+
+  it('stores a generic image under the requested safe directory', async () => {
+    const source = await sharp({
+      create: { width: 4, height: 4, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const storage = fakeStorage();
+
+    const storageKey = await processImageUpload(multerFile(source), storage, 'classroom-covers');
+
+    expect(storageKey).toMatch(/^classroom-covers\/[0-9a-f]{32}\.jpg$/);
+    expect(storage.save).toHaveBeenCalledWith(expect.any(Buffer), storageKey);
   });
 });
