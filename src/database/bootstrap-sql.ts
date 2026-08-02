@@ -551,11 +551,18 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
   INSERT INTO case_workflow_statuses (
     code, label_th, badge_variant, summary_tone, sort_order
   ) VALUES
-    ('OPEN', 'รอสร้างลิงก์', 'secondary', 'default', 10),
-    ('PENDING_REVIEW', 'รอตรวจผล', 'default', 'info', 20),
-    ('IN_PROGRESS', 'กำลังติดตาม', 'warning', 'warning', 30),
-    ('RESOLVED', 'ปิดเคสแล้ว', 'success', 'success', 50)
-  ON CONFLICT (code) DO NOTHING;
+    ('OPEN', 'รอมอบหมาย', 'secondary', 'default', 10),
+    ('PENDING_REVIEW', 'รอพิจารณา', 'default', 'info', 20),
+    ('IN_PROGRESS', 'รอติดตาม', 'warning', 'warning', 30),
+    ('STUDENT_NOT_FOUND', 'ไม่พบนักเรียน', 'destructive', 'danger', 40),
+    ('RESOLVED', 'เสร็จสิ้น', 'success', 'success', 50)
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    badge_variant = EXCLUDED.badge_variant,
+    summary_tone = EXCLUDED.summary_tone,
+    sort_order = EXCLUDED.sort_order,
+    is_active = TRUE,
+    deleted_at = NULL;
   UPDATE cases
   SET status = 'PENDING_REVIEW'
   WHERE status IN ('REPORTED_UP', 'AWAITING_HELP');
@@ -575,6 +582,43 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
 `;
 
 export const CASE_TRACKING_DECISION_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS case_completion_outcomes (
+    code VARCHAR(40) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_case_completion_outcomes_label CHECK (length(trim(label_th)) > 0),
+    CONSTRAINT chk_case_completion_outcomes_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('case_completion_outcomes')}
+  INSERT INTO case_completion_outcomes (code, label_th, sort_order) VALUES
+    ('CLOSED', 'ปิดเคส', 10),
+    ('REFERRED_AGENCY', 'ส่งต่อหน่วยงาน', 20)
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    sort_order = EXCLUDED.sort_order,
+    is_active = TRUE,
+    deleted_at = NULL;
+
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS completion_outcome_code VARCHAR(40);
+  UPDATE cases SET completion_outcome_code = 'CLOSED'
+  WHERE status = 'RESOLVED' AND completion_outcome_code IS NULL;
+  DO $case_completion_outcome_constraints$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_cases_completion_outcome') THEN
+      ALTER TABLE cases ADD CONSTRAINT fk_cases_completion_outcome
+        FOREIGN KEY (completion_outcome_code) REFERENCES case_completion_outcomes(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_cases_completion_outcome') THEN
+      ALTER TABLE cases ADD CONSTRAINT chk_cases_completion_outcome CHECK (
+        (status = 'RESOLVED' AND completion_outcome_code IS NOT NULL)
+        OR (status <> 'RESOLVED' AND completion_outcome_code IS NULL)
+      );
+    END IF;
+  END $case_completion_outcome_constraints$;
+
   CREATE TABLE IF NOT EXISTS case_resolution_outcomes (
     code VARCHAR(40) PRIMARY KEY,
     label_th VARCHAR(120) NOT NULL,
@@ -598,6 +642,7 @@ export const CASE_TRACKING_DECISION_TABLES_SQL = `
     code VARCHAR(24) PRIMARY KEY,
     label_th VARCHAR(120) NOT NULL,
     target_case_status_code VARCHAR(32) NOT NULL,
+    completion_outcome_code VARCHAR(40),
     requires_resolution_outcome BOOLEAN NOT NULL DEFAULT FALSE,
     required_permission_code VARCHAR(64) NOT NULL,
     sort_order SMALLINT NOT NULL,
@@ -606,18 +651,44 @@ export const CASE_TRACKING_DECISION_TABLES_SQL = `
     CONSTRAINT fk_case_review_actions_target_status
       FOREIGN KEY (target_case_status_code) REFERENCES case_workflow_statuses(code)
       ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_case_review_actions_completion_outcome
+      FOREIGN KEY (completion_outcome_code) REFERENCES case_completion_outcomes(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT chk_case_review_actions_label CHECK (length(trim(label_th)) > 0),
     CONSTRAINT chk_case_review_actions_permission CHECK (length(trim(required_permission_code)) > 0),
     CONSTRAINT chk_case_review_actions_sort_order CHECK (sort_order >= 0)
   );
   ${auditUpdatedAtTriggerSql('case_review_actions')}
+  ALTER TABLE case_review_actions
+    ADD COLUMN IF NOT EXISTS completion_outcome_code VARCHAR(40);
+  DO $case_review_action_completion_fk$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'fk_case_review_actions_completion_outcome'
+    ) THEN
+      ALTER TABLE case_review_actions
+        ADD CONSTRAINT fk_case_review_actions_completion_outcome
+        FOREIGN KEY (completion_outcome_code) REFERENCES case_completion_outcomes(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $case_review_action_completion_fk$;
   INSERT INTO case_review_actions (
-    code, label_th, target_case_status_code, requires_resolution_outcome,
+    code, label_th, target_case_status_code, completion_outcome_code, requires_resolution_outcome,
     required_permission_code, sort_order
   ) VALUES
-    ('CONTINUE', 'ติดตามต่อ', 'IN_PROGRESS', FALSE, 'review-cases', 10),
-    ('CLOSE', 'ปิดเคส', 'RESOLVED', TRUE, 'close-case', 20)
-  ON CONFLICT (code) DO NOTHING;
+    ('REFER_AGENCY', 'ส่งต่อหน่วยงาน', 'RESOLVED', 'REFERRED_AGENCY', FALSE, 'review-cases', 10),
+    ('CLOSE', 'ปิดเคส', 'RESOLVED', 'CLOSED', FALSE, 'close-case', 20)
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    target_case_status_code = EXCLUDED.target_case_status_code,
+    completion_outcome_code = EXCLUDED.completion_outcome_code,
+    requires_resolution_outcome = EXCLUDED.requires_resolution_outcome,
+    required_permission_code = EXCLUDED.required_permission_code,
+    sort_order = EXCLUDED.sort_order,
+    is_active = TRUE,
+    deleted_at = NULL;
+  UPDATE case_review_actions SET is_active = FALSE WHERE code = 'CONTINUE';
   UPDATE case_reviews SET review_action = 'CONTINUE' WHERE UPPER(review_action) = 'ASSIST';
 
   CREATE TABLE IF NOT EXISTS case_follow_up_decisions (
@@ -1873,7 +1944,7 @@ export const DATABASE_BASELINE_SQL = `
     ON attendance (student_uuid, "AcademicYear_Onec", "Semester_Onec", "AttendanceDate" DESC);
   CREATE INDEX IF NOT EXISTS idx_cases_risk_profile_open_student
     ON cases (student_uuid, created_at DESC, id DESC)
-    WHERE deleted_at IS NULL AND status <> 'RESOLVED';
+    WHERE deleted_at IS NULL AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW');
   CREATE INDEX IF NOT EXISTS idx_school_calendar_days_risk_profile
     ON school_calendar_days (school_term_id, day_type, deleted_at, calendar_date);
 
