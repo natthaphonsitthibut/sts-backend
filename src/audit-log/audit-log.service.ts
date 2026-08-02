@@ -401,6 +401,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ปิดเคส',
     detailKeys: [{ key: 'resolutionOutcome', label: 'ผลลัพธ์' }],
   },
+  CASE_REFER_AGENCY: {
+    domain: 'cases',
+    label: 'ส่งต่อหน่วยงาน',
+    detailKeys: [{ key: 'completionOutcome', label: 'ผลการดำเนินการ' }],
+  },
   CASE_AUTO_CANCEL: {
     domain: 'cases',
     label: 'ยกเลิกเคสอัตโนมัติ',

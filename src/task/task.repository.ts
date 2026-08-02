@@ -219,6 +219,7 @@ interface AttendanceReplaceInput {
 interface CaseSubmissionUpdateInput {
   caseId: number;
   nextStatus: string;
+  completionOutcomeCode?: string | null;
   nextSummary: string;
   updatedStudentAddress: string | null;
   updatedAddressLine: string | null;
@@ -565,7 +566,7 @@ export class TaskRepository {
           UPDATE cases c
           SET sla_warning_notified_at = now(), updated_at = now()
           WHERE c.deleted_at IS NULL
-            AND c.status NOT IN ('RESOLVED', 'CANCELLED')
+            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
             AND c.sla_due_at IS NOT NULL
             AND c.sla_warning_notified_at IS NULL
             AND $1::timestamptz >= c.created_at + ((c.sla_due_at - c.created_at) * 0.8)
@@ -632,7 +633,7 @@ export class TaskRepository {
           UPDATE cases c
           SET sla_breached_notified_at = now(), updated_at = now()
           WHERE c.deleted_at IS NULL
-            AND c.status NOT IN ('RESOLVED', 'CANCELLED')
+            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
             AND c.sla_due_at IS NOT NULL
             AND c.sla_breached_notified_at IS NULL
             AND c.sla_due_at < $1::timestamptz
@@ -716,6 +717,13 @@ export class TaskRepository {
         c.reason_flagged,
         c.status,
         case_status.label_th AS status_label,
+        c.completion_outcome_code,
+        completion_outcome.label_th AS completion_outcome_label,
+        CASE
+          WHEN c.status = 'RESOLVED' AND completion_outcome.label_th IS NOT NULL
+            THEN CONCAT(case_status.label_th, ' : ', completion_outcome.label_th)
+          ELSE case_status.label_th
+        END AS display_status_label,
         case_status.badge_variant AS status_badge_variant,
         case_status.summary_tone AS status_summary_tone,
         c.created_at,
@@ -726,6 +734,8 @@ export class TaskRepository {
         latest_task.id AS task_id
       FROM cases c
       INNER JOIN case_workflow_statuses case_status ON case_status.code = c.status
+      LEFT JOIN case_completion_outcomes completion_outcome
+        ON completion_outcome.code = c.completion_outcome_code
       LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
       LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
       LEFT JOIN LATERAL (
@@ -794,7 +804,7 @@ export class TaskRepository {
       SELECT c.id
       FROM cases c
       WHERE c.student_uuid = $1
-        AND c.status <> 'RESOLVED'
+        AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
         AND c.deleted_at IS NULL${scopeSql}
       ORDER BY c.created_at DESC, c.id DESC
       LIMIT 1
@@ -861,7 +871,13 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 3);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     await this.getExecutor(executor).query(
-      `UPDATE cases c SET status = $1 WHERE c.id = $2 AND c.deleted_at IS NULL${scopeSql}`,
+      `UPDATE cases c
+       SET status = $1,
+           completion_outcome_code = CASE
+             WHEN $1 = 'RESOLVED' THEN COALESCE(c.completion_outcome_code, 'CLOSED')
+             ELSE NULL
+           END
+       WHERE c.id = $2 AND c.deleted_at IS NULL${scopeSql}`,
       [status, caseId, ...scopeQuery.params],
     );
   }
@@ -869,21 +885,22 @@ export class TaskRepository {
   async transitionPendingReviewCase(
     caseId: number,
     nextStatus: string,
+    completionOutcomeCode: string | null,
     executor: QueryExecutor,
     actor?: ActorContext,
   ): Promise<boolean> {
-    const scopeQuery = this.buildCaseScopeQuery(actor, 3);
+    const scopeQuery = this.buildCaseScopeQuery(actor, 4);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await executor.query(
       `
         UPDATE cases c
-        SET status = $1
-        WHERE c.id = $2
+        SET status = $1, completion_outcome_code = $2
+        WHERE c.id = $3
           AND c.status = 'PENDING_REVIEW'
           AND c.deleted_at IS NULL${scopeSql}
         RETURNING c.id
       `,
-      [nextStatus, caseId, ...scopeQuery.params],
+      [nextStatus, completionOutcomeCode, caseId, ...scopeQuery.params],
     );
     return result.rows.length === 1;
   }
@@ -1886,9 +1903,18 @@ export class TaskRepository {
         c.postal_code,
         c.reason_flagged,
         c.status AS case_status,
+        c.completion_outcome_code,
+        CASE
+          WHEN c.status = 'RESOLVED' AND completion_outcome.label_th IS NOT NULL
+            THEN CONCAT('เสร็จสิ้น : ', completion_outcome.label_th)
+          ELSE case_status.label_th
+        END AS display_status_label,
         c.result_summary
       FROM tasks t
       LEFT JOIN cases c ON c.id = t.case_id AND c.deleted_at IS NULL
+      LEFT JOIN case_workflow_statuses case_status ON case_status.code = c.status
+      LEFT JOIN case_completion_outcomes completion_outcome
+        ON completion_outcome.code = c.completion_outcome_code
       LEFT JOIN student_term case_enrollment
         ON case_enrollment.student_uuid = c.student_uuid
       LEFT JOIN grade_levels case_grade
@@ -2060,6 +2086,7 @@ export class TaskRepository {
         UPDATE cases
         SET
           status = $1,
+          completion_outcome_code = $13,
           result_summary = $2,
           student_address = COALESCE($3, student_address),
           address_line = COALESCE($4, address_line),
@@ -2087,6 +2114,7 @@ export class TaskRepository {
         data.updatedLng,
         data.clearMissingCoordinates,
         data.caseId,
+        data.completionOutcomeCode ?? null,
       ],
     );
     return (result.rowCount ?? result.rows.length) === 1;
@@ -2603,6 +2631,13 @@ export class TaskRepository {
         c.reason_flagged,
         c.status,
         case_status.label_th AS status_label,
+        c.completion_outcome_code,
+        completion_outcome.label_th AS completion_outcome_label,
+        CASE
+          WHEN c.status = 'RESOLVED' AND completion_outcome.label_th IS NOT NULL
+            THEN CONCAT(case_status.label_th, ' : ', completion_outcome.label_th)
+          ELSE case_status.label_th
+        END AS display_status_label,
         case_status.badge_variant AS status_badge_variant,
         case_status.summary_tone AS status_summary_tone,
         c.created_at,
@@ -2616,9 +2651,14 @@ export class TaskRepository {
         tl.expires_at AS active_link_expires_at,
         tl.assigned_to_name AS active_link_assigned_to,
         tl.delegation_depth AS active_link_depth,
+        latest_link.id AS latest_link_id,
+        latest_link.status AS latest_link_status,
+        latest_link.assigned_to_name AS latest_link_assigned_to,
         COALESCE(link_state_snapshot.link_state, 'NONE') AS link_state
       FROM cases c
       INNER JOIN case_workflow_statuses case_status ON case_status.code = c.status
+      LEFT JOIN case_completion_outcomes completion_outcome
+        ON completion_outcome.code = c.completion_outcome_code
       LEFT JOIN LATERAL (
         SELECT
           CASE
@@ -2661,6 +2701,15 @@ export class TaskRepository {
         ORDER BY delegation_depth DESC
         LIMIT 1
       ) tl ON true
+      LEFT JOIN LATERAL (
+        SELECT latest_assignee_link.*
+        FROM task_links latest_assignee_link
+        WHERE latest_assignee_link.task_id = t.id
+          AND latest_assignee_link.deleted_at IS NULL
+        ORDER BY latest_assignee_link.delegation_depth DESC,
+                 latest_assignee_link.created_at DESC
+        LIMIT 1
+      ) latest_link ON true
       ${whereSql}
       ORDER BY c.created_at DESC, c.id DESC, t.id DESC NULLS LAST
       LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
@@ -2796,7 +2845,7 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 1);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM cases c WHERE c.status <> 'RESOLVED' AND c.deleted_at IS NULL${scopeSql}`,
+      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW') AND c.deleted_at IS NULL${scopeSql}`,
       scopeQuery.params,
     );
 
@@ -3280,7 +3329,7 @@ export class TaskRepository {
   async listCaseReviewActions(): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(`
       SELECT code, label_th, target_case_status_code, requires_resolution_outcome,
-             required_permission_code
+             required_permission_code, completion_outcome_code
       FROM case_review_actions
       WHERE is_active = TRUE AND deleted_at IS NULL
       ORDER BY sort_order, code
@@ -3358,7 +3407,7 @@ export class TaskRepository {
     const result = await this.query<QueryResultRow>(
       `
       SELECT code, label_th, target_case_status_code, requires_resolution_outcome,
-             required_permission_code
+             required_permission_code, completion_outcome_code
       FROM case_review_actions
       WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
       LIMIT 1

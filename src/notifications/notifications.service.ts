@@ -11,10 +11,11 @@ import type { NotificationFanOutInput, NotificationListFilters } from './notific
 import type { DirectNotificationInput } from './notifications.types';
 
 const CASE_STATUS_LABELS: Record<string, string> = {
-  OPEN: 'เปิดเคส',
-  IN_PROGRESS: 'กำลังติดตาม',
+  OPEN: 'รอมอบหมาย',
+  IN_PROGRESS: 'รอติดตาม',
   PENDING_REVIEW: 'รอพิจารณา',
-  RESOLVED: 'ปิดเคสแล้ว',
+  RESOLVED: 'เสร็จสิ้น',
+  STUDENT_NOT_FOUND: 'ไม่พบนักเรียน',
 };
 const NOTIFICATION_RETENTION_DAYS = 90;
 const NOTIFICATION_RETENTION_CRON = '0 30 3 * * *';
@@ -148,8 +149,18 @@ export class NotificationsService {
     schoolId: number | null;
     nextStatus: string;
     actorUserId: number | null;
+    completionOutcomeCode?: string | null;
   }): Promise<number[]> {
-    const statusLabel = CASE_STATUS_LABELS[event.nextStatus] ?? event.nextStatus;
+    const completionLabel =
+      event.completionOutcomeCode === 'CLOSED'
+        ? 'ปิดเคส'
+        : event.completionOutcomeCode === 'REFERRED_AGENCY'
+          ? 'ส่งต่อหน่วยงาน'
+          : null;
+    const baseStatusLabel = CASE_STATUS_LABELS[event.nextStatus] ?? event.nextStatus;
+    const statusLabel = completionLabel
+      ? `${baseStatusLabel} : ${completionLabel}`
+      : baseStatusLabel;
     const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
     return await this.fanOutSafely({
       typeCode: 'CASE_STATUS_CHANGED',

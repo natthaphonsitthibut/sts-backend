@@ -238,6 +238,31 @@ describe('TaskRepository', () => {
     }
   });
 
+  it('keeps the latest assignee visible after the active task link is completed', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [{ count: '0' }], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.listCasesWithActiveLinks(undefined, { page: 1, limit: 20 });
+
+    const listQuery = queries[1].sql;
+    expect(listQuery).toContain('latest_link.assigned_to_name AS latest_link_assigned_to');
+    expect(listQuery).toContain('LEFT JOIN LATERAL (\n        SELECT latest_assignee_link.*');
+    expect(listQuery).toContain('latest_assignee_link.deleted_at IS NULL');
+    expect(listQuery).not.toContain("latest_assignee_link.status = 'ACTIVE'");
+  });
+
   it('lists risk dashboard students with actor scope, risk filter, and server sorting', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
@@ -488,6 +513,7 @@ describe('TaskRepository', () => {
       null,
       false,
       10,
+      null,
     ]);
   });
 

@@ -114,13 +114,13 @@ describe('HomeDashboardService', () => {
         }),
         expect.objectContaining({
           key: 'activeCases',
-          label: 'กำลังติดตาม',
+          label: 'รอติดตาม',
           tone: 'warning',
           value: 8,
         }),
         expect.objectContaining({
           key: 'pendingReview',
-          label: 'รอตรวจผล',
+          label: 'รอพิจารณา',
           tone: 'info',
           value: 3,
         }),

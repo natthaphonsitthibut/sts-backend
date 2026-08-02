@@ -110,6 +110,8 @@ export class TaskReadService {
         reason_flagged: task.reason_flagged,
         task_status: task.status,
         case_status: task.case_status,
+        completion_outcome_code: task.completion_outcome_code,
+        display_status_label: task.display_status_label,
         result_summary: task.result_summary,
         chain,
         reviews,

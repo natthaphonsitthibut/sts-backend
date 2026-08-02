@@ -198,7 +198,7 @@ export class HomeDashboardService {
     if (sections.includes('casePipeline')) {
       metrics.push({
         key: 'activeCases',
-        label: 'กำลังติดตาม',
+        label: 'รอติดตาม',
         value: activeCases,
         targetPath: '/cases',
         targetQuery: { ...baseQuery, status: 'IN_PROGRESS' },
@@ -206,7 +206,7 @@ export class HomeDashboardService {
       });
       metrics.push({
         key: 'pendingReview',
-        label: 'รอตรวจผล',
+        label: 'รอพิจารณา',
         value: casePipeline?.PENDING_REVIEW ?? 0,
         targetPath: '/cases',
         targetQuery: { ...baseQuery, status: 'PENDING_REVIEW' },

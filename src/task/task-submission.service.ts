@@ -384,6 +384,8 @@ export class TaskSubmissionService {
       const homeVisitException = await this.caseTrackingOptions.getHomeVisitException(
         this.toScalarString(data.home_visit_exception_code)?.toUpperCase() ?? null,
       );
+      const studentNotFound = homeVisitException?.code === 'STUDENT_NOT_FOUND';
+      const targetCaseStatus = studentNotFound ? 'STUDENT_NOT_FOUND' : decision?.targetStatus;
       const followUpAssessment = await this.caseTrackingOptions.getHomeVisitAssessment(
         this.toScalarString(data.follow_up_assessment_code)?.toUpperCase() ?? null,
       );
@@ -430,7 +432,8 @@ export class TaskSubmissionService {
               updatedPostalCode,
             )
           : null;
-      const reviewId = decision?.code === 'CLOSE_CASE' ? crypto.randomUUID() : null;
+      const reviewId =
+        !studentNotFound && decision?.code === 'CLOSE_CASE' ? crypto.randomUUID() : null;
       const reviewerLabel = this.toScalarString(link.assigned_to_name) ?? 'ผู้ลงพื้นที่';
 
       await this.taskRepository.withTransaction(async (executor) => {
@@ -460,15 +463,14 @@ export class TaskSubmissionService {
             updatedPostalCode: addressChanged ? updatedPostalCode : null,
             updatedLat: this.normalizeNumber(data.updated_lat),
             updatedLng: this.normalizeNumber(data.updated_lng),
-            caseFollowUpDecision: decision?.code ?? null,
-            caseResolutionOutcomeCode: decision?.requiresResolutionOutcome
-              ? resolutionOutcome
-              : null,
+            caseFollowUpDecision: studentNotFound ? null : (decision?.code ?? null),
+            caseResolutionOutcomeCode:
+              !studentNotFound && decision?.requiresResolutionOutcome ? resolutionOutcome : null,
           },
           executor,
         );
 
-        if (link.task_type === 'VISIT' && caseId !== null && decision?.targetStatus) {
+        if (link.task_type === 'VISIT' && caseId !== null && targetCaseStatus) {
           const nextSummary = causeDetail || homeVisitException?.label || 'บันทึกผลการลงพื้นที่';
           // When the visitor flags the home location as wrong, persist the
           // corrected coordinates to the case independently of the address TEXT —
@@ -477,7 +479,8 @@ export class TaskSubmissionService {
           const caseTransitioned = await this.taskRepository.updateCaseAfterSubmission(
             {
               caseId,
-              nextStatus: decision.targetStatus,
+              nextStatus: targetCaseStatus,
+              completionOutcomeCode: null,
               nextSummary,
               // Trim to null so an empty/whitespace address does not wipe the
               // existing one via COALESCE (pin-only correction sends no address).
@@ -524,7 +527,7 @@ export class TaskSubmissionService {
       });
 
       let caseStatusRecipients: number[] = [];
-      if (caseId !== null && decision?.targetStatus) {
+      if (caseId !== null && targetCaseStatus) {
         if (reviewId) {
           await this.auditLog.record({
             actorUserId: null,
@@ -544,7 +547,7 @@ export class TaskSubmissionService {
           caseId,
           studentName: this.toScalarString(link.student_name),
           schoolId: this.normalizeNumber(link.school_id as string | number | null | undefined),
-          nextStatus: decision.targetStatus,
+          nextStatus: targetCaseStatus,
           actorUserId: null,
         });
       }

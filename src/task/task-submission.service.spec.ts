@@ -88,6 +88,7 @@ describe('TaskSubmissionService', () => {
           label: code === 'CLOSE_CASE' ? 'ปิดเคส' : 'ส่งให้ตรวจผล',
           targetStatus: code === 'CLOSE_CASE' ? 'RESOLVED' : 'PENDING_REVIEW',
           requiresResolutionOutcome: code === 'CLOSE_CASE',
+          completionOutcomeCode: null,
         }),
       ),
       assertResolutionOutcome: jest.fn((code: string | null) => Promise.resolve(code)),
@@ -451,6 +452,48 @@ describe('TaskSubmissionService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+  });
+
+  it('moves the case directly to STUDENT_NOT_FOUND and completes the task link', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+    trackingOptions.getHomeVisitException.mockResolvedValue({
+      code: 'STUDENT_NOT_FOUND',
+      label: 'ไม่พบนักเรียน',
+      requiresUpdatedAddress: false,
+    });
+
+    await service.saveTaskSubmission('public-token', {
+      home_visit_exception_code: 'STUDENT_NOT_FOUND',
+      notes: 'สอบถามเพื่อนบ้านแล้วไม่พบตัวนักเรียน',
+    });
+
+    expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caseId: 10,
+        nextStatus: 'STUDENT_NOT_FOUND',
+        completionOutcomeCode: null,
+      }),
+      undefined,
+    );
+    expect(taskRepository.updateTaskStatus).toHaveBeenCalledWith('task-1', 'COMPLETED', undefined);
+    expect(taskRepository.updateTaskLinkStatus).toHaveBeenCalledWith(
+      'link-1',
+      'COMPLETED',
+      undefined,
+    );
+    expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
   });
 
   it('allows the home visitor to close a simple case with an outcome', async () => {

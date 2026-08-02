@@ -22,11 +22,20 @@ describe('CaseTrackingOptionsService', () => {
   it('returns active catalog values as the shared UI contract', async () => {
     repository.listCaseReviewActions.mockResolvedValue([
       {
-        code: 'CONTINUE',
-        label_th: 'ติดตามต่อ',
-        target_case_status_code: 'IN_PROGRESS',
+        code: 'REFER_AGENCY',
+        label_th: 'ส่งต่อหน่วยงาน',
+        target_case_status_code: 'RESOLVED',
+        completion_outcome_code: 'REFERRED_AGENCY',
         requires_resolution_outcome: false,
         required_permission_code: 'review-cases',
+      },
+      {
+        code: 'CLOSE',
+        label_th: 'ปิดเคส',
+        target_case_status_code: 'RESOLVED',
+        completion_outcome_code: 'CLOSED',
+        requires_resolution_outcome: false,
+        required_permission_code: 'close-case',
       },
     ]);
     repository.listCaseFollowUpDecisions.mockResolvedValue([
@@ -54,16 +63,26 @@ describe('CaseTrackingOptionsService', () => {
     await expect(service.getOptions()).resolves.toEqual({
       reviewActions: [
         {
-          code: 'CONTINUE',
-          label: 'ติดตามต่อ',
-          targetStatus: 'IN_PROGRESS',
+          code: 'REFER_AGENCY',
+          completionOutcomeCode: 'REFERRED_AGENCY',
+          label: 'ส่งต่อหน่วยงาน',
+          targetStatus: 'RESOLVED',
           requiresResolutionOutcome: false,
           requiredPermission: 'review-cases',
+        },
+        {
+          code: 'CLOSE',
+          completionOutcomeCode: 'CLOSED',
+          label: 'ปิดเคส',
+          targetStatus: 'RESOLVED',
+          requiresResolutionOutcome: false,
+          requiredPermission: 'close-case',
         },
       ],
       followUpDecisions: [
         {
           code: 'REQUEST_REVIEW',
+          completionOutcomeCode: null,
           label: 'ส่งให้ตรวจผล',
           targetStatus: 'PENDING_REVIEW',
           requiresResolutionOutcome: false,

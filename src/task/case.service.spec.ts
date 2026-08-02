@@ -74,7 +74,7 @@ describe('CaseService', () => {
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
         case_id: 10,
-        review_action: 'CONTINUE',
+        review_action: 'REFER_AGENCY',
         reviewed_by: 'ผอ. ทดสอบ',
       }),
       listTasksByCase: jest.fn().mockResolvedValue([]),
@@ -100,12 +100,13 @@ describe('CaseService', () => {
       notificationsService as unknown as NotificationsService,
       {
         getReviewAction: jest.fn((code: string) => {
-          if (code === 'CONTINUE') {
+          if (code === 'REFER_AGENCY') {
             return Promise.resolve({
               code,
-              label: 'ติดตามต่อ',
-              targetStatus: 'IN_PROGRESS',
+              label: 'ส่งต่อหน่วยงาน',
+              targetStatus: 'RESOLVED',
               requiresResolutionOutcome: false,
+              completionOutcomeCode: 'REFERRED_AGENCY',
               requiredPermission: 'review-cases',
             });
           }
@@ -114,7 +115,8 @@ describe('CaseService', () => {
               code,
               label: 'ปิดเคส',
               targetStatus: 'RESOLVED',
-              requiresResolutionOutcome: true,
+              requiresResolutionOutcome: false,
+              completionOutcomeCode: 'CLOSED',
               requiredPermission: 'close-case',
             });
           }
@@ -243,23 +245,24 @@ describe('CaseService', () => {
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
-  it('allows CONTINUE with review-cases permission and ignores client reviewed_by', async () => {
+  it('allows REFER_AGENCY with review-cases permission and ignores client reviewed_by', async () => {
     const result = await service.reviewCase(
       10,
       {
-        review_action: 'CONTINUE',
-        review_note: 'ติดตามต่อ',
+        review_action: 'REFER_AGENCY',
+        review_note: 'ส่งต่อหน่วยงาน',
         reviewed_by: 'client-forged-reviewer',
       },
       buildActor(['review-cases']),
     );
 
-    expect(result.case_status).toBe('IN_PROGRESS');
+    expect(result.case_status).toBe('RESOLVED');
+    expect(result.completion_outcome_code).toBe('REFERRED_AGENCY');
     expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
       expect.objectContaining({
         caseId: 10,
-        reviewAction: 'CONTINUE',
-        reviewNote: 'ติดตามต่อ',
+        reviewAction: 'REFER_AGENCY',
+        reviewNote: 'ส่งต่อหน่วยงาน',
         reviewedBy: 'ผอ. ทดสอบ',
         sourceActorUserId: 1,
       }),
@@ -267,7 +270,7 @@ describe('CaseService', () => {
     );
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: 'CASE_REVIEW',
+        action: 'CASE_REFER_AGENCY',
         targetType: 'case',
         targetId: '10',
       }),
@@ -278,7 +281,7 @@ describe('CaseService', () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'CONTINUE', review_note: '' },
+        { review_action: 'REFER_AGENCY', review_note: '' },
         buildActor(['review-cases']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -287,7 +290,7 @@ describe('CaseService', () => {
     expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
   });
 
-  it('allows CLOSE with an outcome when the reviewer has both permissions', async () => {
+  it('allows CLOSE and stores the CLOSED completion outcome', async () => {
     taskRepository.findCaseReviewById.mockResolvedValueOnce({
       id: 'closed-review-id',
       case_id: 10,
@@ -301,7 +304,6 @@ describe('CaseService', () => {
       {
         review_action: 'CLOSE',
         review_note: 'ตรวจรายงานแล้ว ปิดเคสได้',
-        resolution_outcome: 'RETURNED_TO_SCHOOL',
       },
       buildActor(['review-cases', 'close-case']),
     );
@@ -310,6 +312,7 @@ describe('CaseService', () => {
     expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
       10,
       'RESOLVED',
+      'CLOSED',
       undefined,
       expect.objectContaining({ id: 1 }),
     );
@@ -317,7 +320,7 @@ describe('CaseService', () => {
       expect.objectContaining({
         caseId: 10,
         reviewAction: 'CLOSE',
-        resolutionOutcome: 'RETURNED_TO_SCHOOL',
+        resolutionOutcome: null,
         reviewedBy: 'ผอ. ทดสอบ',
       }),
       undefined,
@@ -329,7 +332,8 @@ describe('CaseService', () => {
     );
     expect(auditLog.record.mock.calls[0]?.[0].metadata).toEqual({
       reviewAction: 'CLOSE',
-      resolutionOutcome: 'RETURNED_TO_SCHOOL',
+      completionOutcome: 'CLOSED',
+      resolutionOutcome: null,
     });
   });
 
@@ -350,7 +354,7 @@ describe('CaseService', () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'CONTINUE', review_note: 'ไม่ควรทำได้' },
+        { review_action: 'REFER_AGENCY', review_note: 'ไม่ควรทำได้' },
         buildActor(['review-cases'], { roles: ['EXECUTIVE'] }),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);

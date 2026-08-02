@@ -6,6 +6,7 @@ export interface CaseTrackingOption {
   label: string;
   targetStatus: string | null;
   requiresResolutionOutcome: boolean;
+  completionOutcomeCode: string | null;
 }
 
 interface CaseReviewActionPolicy extends CaseTrackingOption {
@@ -38,6 +39,8 @@ export class CaseTrackingOptionsService {
       targetStatus:
         typeof row.target_case_status_code === 'string' ? row.target_case_status_code : null,
       requiresResolutionOutcome: row.requires_resolution_outcome === true,
+      completionOutcomeCode:
+        typeof row.completion_outcome_code === 'string' ? row.completion_outcome_code : null,
     };
   }
 

@@ -252,7 +252,7 @@ export class RiskProfileRepository {
             LIMIT 1
           ) latest_task ON true
           WHERE c.deleted_at IS NULL
-            AND c.status <> 'RESOLVED'
+            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
           GROUP BY c.student_uuid
         ),
         metrics AS (

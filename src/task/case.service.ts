@@ -88,6 +88,12 @@ export class CaseService {
       reason_flagged: this.normalizeText(row.reason_flagged) || null,
       status: this.normalizeText(row.status),
       status_label: this.normalizeText(row.status_label) || null,
+      completion_outcome_code: this.normalizeText(row.completion_outcome_code) || null,
+      completion_outcome_label: this.normalizeText(row.completion_outcome_label) || null,
+      display_status_label:
+        this.normalizeText(row.display_status_label) ||
+        this.normalizeText(row.status_label) ||
+        null,
       status_badge_variant: this.normalizeText(row.status_badge_variant) || null,
       status_summary_tone: this.normalizeText(row.status_summary_tone) || null,
       school_id: this.normalizeNumber(row.school_id),
@@ -363,6 +369,7 @@ export class CaseService {
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
           nextStatus,
+          reviewAction.completionOutcomeCode,
           executor,
           currentActor,
         );
@@ -388,11 +395,17 @@ export class CaseService {
       await this.auditLog.record({
         actorUserId: resolveAuditActorId(actor),
         actorLabel: this.actorLabel(actor),
-        action: reviewAction.code === 'CLOSE' ? 'CASE_CLOSE' : 'CASE_REVIEW',
+        action:
+          reviewAction.code === 'CLOSE'
+            ? 'CASE_CLOSE'
+            : reviewAction.code === 'REFER_AGENCY'
+              ? 'CASE_REFER_AGENCY'
+              : 'CASE_REVIEW',
         targetType: 'case',
         targetId: String(caseId),
         metadata: {
           reviewAction: reviewAction.code,
+          completionOutcome: reviewAction.completionOutcomeCode,
           resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
         },
         ip: null,
@@ -403,6 +416,7 @@ export class CaseService {
         studentName: this.normalizeText(caseRecord.student_name) || null,
         schoolId: this.normalizeNumber(caseRecord.school_id),
         nextStatus,
+        completionOutcomeCode: reviewAction.completionOutcomeCode,
         actorUserId: resolveAuditActorId(actor),
       });
       const riskProfileStudentUuid =
@@ -424,6 +438,7 @@ export class CaseService {
         success: true,
         case_id: caseId,
         case_status: nextStatus,
+        completion_outcome_code: reviewAction.completionOutcomeCode,
         review: reviewRecord || null,
       };
     } catch (err) {
