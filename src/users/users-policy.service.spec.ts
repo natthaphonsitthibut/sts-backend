@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
 import type { ActorContext, RoleDefinition } from './users.types';
@@ -53,10 +53,10 @@ const definitions: RoleDefinition[] = [
     name: 'STUDENT',
     label: 'นักเรียน',
     rank: 1,
-    default_permissions: ['home', 'student-self'],
+    default_permissions: [],
     scope_mode: 'flexible',
     scope_policy: 'OWN_ONLY',
-    is_assignable: true,
+    is_assignable: false,
     is_system: true,
   },
 ];
@@ -200,34 +200,20 @@ describe('UsersPolicyService functional roles and data scope', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('requires own-only scope for STUDENT', async () => {
+  it('rejects assignment of the retired STUDENT role', async () => {
     await expect(
       service.assertAssignablePayload(
         globalAdmin,
         {
           role: 'STUDENT',
           roles: ['STUDENT'],
-          permissions: ['home', 'student-self'],
+          permissions: [],
           data_scope: { school_ids: [10010002] },
         },
         { allowEqualRole: true },
         roleMap,
       ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-
-    await expect(
-      service.assertAssignablePayload(
-        globalAdmin,
-        {
-          role: 'STUDENT',
-          roles: ['STUDENT'],
-          permissions: ['home', 'student-self'],
-          data_scope: { school_ids: [10010002], own_only: true },
-        },
-        { allowEqualRole: true },
-        roleMap,
-      ),
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it.each([

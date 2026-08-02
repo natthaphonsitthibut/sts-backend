@@ -15,21 +15,21 @@ function buildUser(overrides: Partial<HydratableUserRow> = {}): HydratableUserRo
     email: null,
     affiliation: null,
     status: 'ACTIVE',
-    permissions: ['home', 'student-self'],
-    role: 'STUDENT',
-    data_scope: { own_only: true },
+    permissions: ['home'],
+    role: 'TEACHER',
+    data_scope: { school_ids: [10010001] },
     must_change_password: true,
     temporary_password_issued_at: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
     temporary_password_expires_at: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    roles: ['STUDENT'],
-    labels: ['นักเรียน'],
-    role_default_permissions: ['home', 'student-self'],
+    roles: ['TEACHER'],
+    labels: ['ครู'],
+    role_default_permissions: ['home'],
     password: 'hashed-password',
     ...overrides,
   };
 }
 
-describe('UserAuthService temporary password expiry', () => {
+describe('UserAuthService login policy', () => {
   let usersRepository: jest.Mocked<
     Pick<UsersRepository, 'findUserByUsername' | 'findCurrentStudentUuidByUserId'>
   >;
@@ -65,7 +65,7 @@ describe('UserAuthService temporary password expiry', () => {
     expect(passwordService.compare).not.toHaveBeenCalled();
   });
 
-  it('allows unexpired temporary-password logins and hydrates permissions', async () => {
+  it('allows unexpired staff temporary-password logins and hydrates permissions', async () => {
     const user = buildUser({
       temporary_password_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
@@ -74,7 +74,6 @@ describe('UserAuthService temporary password expiry', () => {
     await expect(service.validateUser('student-temp', 'TEMP123')).resolves.toMatchObject({
       id: 77,
       username: 'student-temp',
-      student_uuid: 'student-uuid-1',
     });
     expect(passwordService.compare).toHaveBeenCalledWith('TEMP123', 'hashed-password');
     expect(usersPolicyService.hydrateUserPermissions).toHaveBeenCalled();
@@ -87,15 +86,18 @@ describe('UserAuthService temporary password expiry', () => {
     expect(passwordService.compare).not.toHaveBeenCalled();
   });
 
-  it('rejects a student whose current enrollment is not eligible', async () => {
+  it('rejects retired persisted student accounts before checking the password', async () => {
     const user = buildUser({
+      role: 'STUDENT',
+      roles: ['STUDENT'],
+      permissions: ['student-self'],
       must_change_password: false,
       temporary_password_expires_at: null,
     });
     usersRepository.findUserByUsername.mockResolvedValue(user);
-    usersRepository.findCurrentStudentUuidByUserId.mockResolvedValue(null);
 
     await expect(service.validateUser('student-temp', 'PASSWORD')).resolves.toBeNull();
-    expect(passwordService.compare).toHaveBeenCalledWith('PASSWORD', 'hashed-password');
+    expect(passwordService.compare).not.toHaveBeenCalled();
+    expect(usersRepository.findCurrentStudentUuidByUserId).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TeacherAccessModule } from '../teacher-access/teacher-access.module';
 import { TaskModule } from '../task/task.module';
 import {
-  PublicStudentObservationsController,
   PublicTaskLinkStudentObservationsController,
   StudentObservationCatalogController,
   StudentObservationsController,
@@ -15,7 +14,6 @@ import { StudentObservationsService } from './student-observations.service';
   controllers: [
     StudentObservationsController,
     StudentObservationCatalogController,
-    PublicStudentObservationsController,
     PublicTaskLinkStudentObservationsController,
   ],
   providers: [StudentObservationsRepository, StudentObservationsService],

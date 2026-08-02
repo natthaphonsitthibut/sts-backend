@@ -7,9 +7,9 @@ import { StudentAuthService } from './student-auth.service';
 describe('AuthController mock ThaID login', () => {
   const user = { id: 77, username: '10010002-ABCDE' };
 
-  it('sets the normal session cookie for the linked user', async () => {
+  it('clears a staff cookie and returns the virtual session without a user FK', async () => {
     const studentAuthService = { loginWithMockThaId: jest.fn().mockResolvedValue(user) };
-    const sessionCookieService = { setSession: jest.fn() };
+    const sessionCookieService = { clearSession: jest.fn() };
     const auditLog = { record: jest.fn().mockResolvedValue(undefined) };
     const controller = new AuthController(
       studentAuthService as unknown as StudentAuthService,
@@ -24,9 +24,13 @@ describe('AuthController mock ThaID login', () => {
         {} as never,
       ),
     ).resolves.toBe(user);
-    expect(sessionCookieService.setSession).toHaveBeenCalledWith({}, 77);
+    expect(sessionCookieService.clearSession).toHaveBeenCalledWith({});
     expect(auditLog.record).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'LOGIN', actorUserId: 77 }),
+      expect.objectContaining({
+        action: 'LOGIN',
+        actorUserId: null,
+        actorLabel: 'THAID_MOCK_STUDENT',
+      }),
     );
   });
 
@@ -34,7 +38,7 @@ describe('AuthController mock ThaID login', () => {
     const studentAuthService = {
       loginWithMockThaId: jest.fn().mockRejectedValue(new NotFoundException()),
     };
-    const sessionCookieService = { setSession: jest.fn() };
+    const sessionCookieService = { clearSession: jest.fn() };
     const auditLog = { record: jest.fn().mockResolvedValue(undefined) };
     const controller = new AuthController(
       studentAuthService as unknown as StudentAuthService,
@@ -49,7 +53,7 @@ describe('AuthController mock ThaID login', () => {
         {} as never,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
-    expect(sessionCookieService.setSession).not.toHaveBeenCalled();
+    expect(sessionCookieService.clearSession).not.toHaveBeenCalled();
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'LOGIN_FAILED', actorLabel: 'THAID_MOCK' }),
     );

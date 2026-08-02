@@ -33,19 +33,12 @@ import {
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { PERMISSION_CATALOG } from '../auth/permissions.constants';
 import {
-  BulkReissueStudentAccountsDto,
   ChangePasswordDto,
   CreateRoleGroupDto,
   CreateUserDto,
   DeactivateStudentAccountDto,
-  GenerateStudentAccountsDto,
   GetUsersQueryDto,
   LoginDto,
-  PreviewStudentAccountsDto,
-  StudentAccountBatchCredentialQueryDto,
-  StudentAccountBatchListQueryDto,
-  StudentAccountBulkFilterDto,
-  StudentAccountListQueryDto,
   RoleGroupListQueryDto,
   UpdateRoleGroupDto,
   UpdateOwnProfileDto,
@@ -54,7 +47,6 @@ import {
 import { RoleGroupsService } from './role-groups.service';
 import { UserAuthService } from './user-auth.service';
 import { PasswordMigrationService } from './password-migration.service';
-import { StudentAccountBatchService } from './student-account-batch.service';
 import { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 
 /**
@@ -84,7 +76,6 @@ export class UsersController {
     private readonly passwordMigrationService: PasswordMigrationService,
     private readonly sessionCookieService: SessionCookieService,
     private readonly auditLog: AuditLogService,
-    private readonly studentAccountBatchService: StudentAccountBatchService,
   ) {}
 
   private logAuditFailure(action: string, error: unknown): void {
@@ -243,28 +234,6 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Get('student-accounts')
-  async listStudentAccounts(
-    @Query() query: StudentAccountListQueryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.usersService.listStudentAccounts(actor, {
-      searchTerm: query.searchTerm?.trim() || undefined,
-      province: query.province?.trim() || undefined,
-      district: query.district?.trim() || undefined,
-      subDistrict: query.subDistrict?.trim() || undefined,
-      schoolId: query.schoolId,
-      grade: query.grade?.trim() || undefined,
-      room: query.room,
-      accountStatus: query.accountStatus,
-      onlyExpired: query.onlyExpired,
-      page: query.page,
-      limit: query.limit,
-    });
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-users-list')
   @Get(':id/detail')
   async getUserDetailById(
@@ -290,202 +259,6 @@ export class UsersController {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
     }
     return user;
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/preview')
-  async previewStudentAccounts(
-    @Body() data: PreviewStudentAccountsDto,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.usersService.previewStudentAccounts(actor, data);
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/generate')
-  async generateStudentAccounts(
-    @Body() data: GenerateStudentAccountsDto,
-    @Req() req: Request,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    const result = await this.usersService.generateStudentAccounts(actor, data);
-    await this.auditLog.record({
-      action: 'STUDENT_ACCOUNT_BULK_GENERATE',
-      actorUserId: resolveAuditActorId(actor),
-      actorLabel: actor?.username,
-      targetType: 'student_accounts',
-      metadata: {
-        createdCount: result.createdCount,
-        scopeLabel:
-          !data.province && !data.district && !data.subDistrict && !data.schoolId
-            ? 'ทุกโรงเรียน'
-            : null,
-        province: data.province ?? null,
-        district: data.district ?? null,
-        subDistrict: data.subDistrict ?? null,
-        schoolId: data.schoolId ?? null,
-        grade: data.grade ?? null,
-        room: data.room ?? null,
-      },
-      ip: requestIp(req),
-    });
-    return result;
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/batch-jobs')
-  async enqueueStudentAccountBatch(
-    @Body() data: StudentAccountBulkFilterDto,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.studentAccountBatchService.enqueue(actor, data);
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Get('student-accounts/batch-jobs')
-  async listStudentAccountBatches(
-    @Query() query: StudentAccountBatchListQueryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.studentAccountBatchService.listJobs(actor, query);
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Get('student-accounts/batch-jobs/:id')
-  async getStudentAccountBatch(
-    @Param('id') id: string,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.studentAccountBatchService.getJob(actor, id);
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/batch-jobs/:id/resume')
-  async resumeStudentAccountBatch(
-    @Param('id') id: string,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.studentAccountBatchService.resume(actor, id);
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/batch-jobs/:id/cancel')
-  async cancelStudentAccountBatch(
-    @Param('id') id: string,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.studentAccountBatchService.cancel(actor, id);
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/batch-jobs/:id/credentials')
-  async downloadStudentAccountBatchCredentials(
-    @Param('id') id: string,
-    @Query() query: StudentAccountBatchCredentialQueryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.studentAccountBatchService.downloadCredentials(actor, id, query);
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/bulk-reissue-temporary-password')
-  async bulkReissueStudentTemporaryPasswords(
-    @Body() data: BulkReissueStudentAccountsDto,
-    @Req() req: Request,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    const result = await this.usersService.bulkReissueStudentTemporaryPasswords(actor, data);
-    const auditResults = await Promise.allSettled(
-      result.credentials.map((credential) =>
-        this.auditLog.record({
-          action: 'STUDENT_TEMP_PASSWORD_REISSUE',
-          actorUserId: resolveAuditActorId(actor),
-          actorLabel: actor?.username,
-          targetType: 'user',
-          targetId: String(credential.userId),
-          metadata: {
-            op: 'bulk-reissue',
-            expiresAt: credential.temporaryPasswordExpiresAt,
-            schoolId: credential.schoolId,
-            schoolName: credential.schoolName,
-            grade: credential.grade,
-            room: credential.room,
-          },
-          ip: requestIp(req),
-        }),
-      ),
-    );
-    for (const auditResult of auditResults) {
-      if (auditResult.status === 'rejected') {
-        this.logAuditFailure('STUDENT_TEMP_PASSWORD_REISSUE', auditResult.reason);
-      }
-    }
-    return result;
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/:id/reissue-temporary-password')
-  async reissueStudentTemporaryPassword(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    const result = await this.usersService.reissueStudentTemporaryPassword(actor, id);
-    const { auditMetadata, ...response } = result;
-    try {
-      await this.auditLog.record({
-        action: 'STUDENT_TEMP_PASSWORD_REISSUE',
-        actorUserId: resolveAuditActorId(actor),
-        actorLabel: actor?.username,
-        targetType: 'user',
-        targetId: String(id),
-        metadata: {
-          expiresAt: result.temporaryPasswordExpiresAt,
-          ...auditMetadata,
-        },
-        ip: requestIp(req),
-      });
-    } catch (error) {
-      this.logAuditFailure('STUDENT_TEMP_PASSWORD_REISSUE', error);
-    }
-    return response;
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/:id/deactivate')
-  async deactivateStudentAccount(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() data: DeactivateStudentAccountDto,
-    @Req() req: Request,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.usersService.deactivateStudentAccount(actor, id, data, {
-      ip: requestIp(req),
-    });
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-student-accounts')
-  @Post('student-accounts/:id/reactivate')
-  async reactivateStudentAccount(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
-  ) {
-    return await this.usersService.reactivateStudentAccount(actor, id, {
-      ip: requestIp(req),
-    });
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

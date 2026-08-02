@@ -3,7 +3,6 @@ import { TeacherAccessModule } from '../teacher-access/teacher-access.module';
 import { TaskModule } from '../task/task.module';
 import {
   HomeVisitRequestReportsController,
-  PublicStudentFollowUpRequestsController,
   StudentFollowUpRequestsController,
   StudentRiskReviewController,
   TeacherObservationReportsController,
@@ -16,7 +15,6 @@ import { ObservationReviewsService } from './observation-reviews.service';
   controllers: [
     StudentRiskReviewController,
     StudentFollowUpRequestsController,
-    PublicStudentFollowUpRequestsController,
     TeacherObservationReportsController,
     HomeVisitRequestReportsController,
   ],

@@ -42,7 +42,6 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
 import { HomeDashboardModule } from './home-dashboard/home-dashboard.module';
 import { DataExportsModule } from './data-exports/data-exports.module';
 import { SchoolStructureModule } from './school-structure/school-structure.module';
-import { TeacherAccessModule } from './teacher-access/teacher-access.module';
 import { StudentObservationsModule } from './student-observations/student-observations.module';
 import { StudentObservationSummaryModule } from './student-observation-summaries/student-observation-summary.module';
 import { ObservationReviewsModule } from './observation-reviews/observation-reviews.module';
@@ -124,7 +123,6 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     HomeDashboardModule,
     DataExportsModule,
     SchoolStructureModule,
-    TeacherAccessModule,
     StudentObservationsModule,
     ObservationReviewsModule,
     StudentObservationSummaryModule,

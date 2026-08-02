@@ -475,26 +475,21 @@ export class TaskAccessService {
         link.task_type !== 'ATTENDANCE' &&
         link.task_type !== 'VISIT'
       ) {
-        throw new Error('Only LOGIN, ATTENDANCE, and VISIT links can be changed by admin');
+        throw new Error('Only ATTENDANCE and VISIT links can be changed by admin');
       }
       if (link.status !== 'ACTIVE') {
         throw new Error('Only ACTIVE links can be changed by admin');
       }
 
-      const roleMap = await this.taskPolicyService.getRoleMap();
       if (
-        !this.taskPolicyService.canManageAdminLink(
-          currentActor,
-          {
-            task_type: typeof link.task_type === 'string' ? link.task_type : null,
-            login_role: typeof link.login_role === 'string' ? link.login_role : null,
-            login_data_scope: link.login_data_scope,
-            target_school_id: link.target_school_id,
-            target_room: link.target_room,
-            case_created_by: link.case_created_by,
-          },
-          roleMap,
-        )
+        !this.taskPolicyService.canManageAdminLink(currentActor, {
+          task_type: typeof link.task_type === 'string' ? link.task_type : null,
+          login_role: typeof link.login_role === 'string' ? link.login_role : null,
+          login_data_scope: link.login_data_scope,
+          target_school_id: link.target_school_id,
+          target_room: link.target_room,
+          case_created_by: link.case_created_by,
+        })
       ) {
         throw new ForbiddenException('ไม่มีสิทธิ์จัดการลิงก์นี้');
       }
@@ -584,20 +579,15 @@ export class TaskAccessService {
         throw new NotFoundException('ไม่พบลิงก์');
       }
 
-      const roleMap = await this.taskPolicyService.getRoleMap();
       if (
-        !this.taskPolicyService.canManageAdminLink(
-          currentActor,
-          {
-            task_type: typeof link.task_type === 'string' ? link.task_type : null,
-            login_role: typeof link.login_role === 'string' ? link.login_role : null,
-            login_data_scope: link.login_data_scope,
-            target_school_id: link.target_school_id,
-            target_room: link.target_room,
-            case_created_by: link.case_created_by,
-          },
-          roleMap,
-        )
+        !this.taskPolicyService.canManageAdminLink(currentActor, {
+          task_type: typeof link.task_type === 'string' ? link.task_type : null,
+          login_role: typeof link.login_role === 'string' ? link.login_role : null,
+          login_data_scope: link.login_data_scope,
+          target_school_id: link.target_school_id,
+          target_room: link.target_room,
+          case_created_by: link.case_created_by,
+        })
       ) {
         throw new ForbiddenException('ไม่มีสิทธิ์ดูลิงก์นี้');
       }

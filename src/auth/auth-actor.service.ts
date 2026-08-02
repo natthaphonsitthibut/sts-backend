@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { hashToken } from '../common/utils/helpers';
 import { queryDataSource } from '../database/sql-query';
 import {
   normalizeDataScope,
@@ -9,7 +8,6 @@ import {
 } from './auth.types';
 import { StudentAuthService } from './student-auth.service';
 import { SessionCookieService } from './session-cookie.service';
-import { MagicSessionStoreService } from './magic-session-store.service';
 
 interface QueryResult<T extends Record<string, unknown>> {
   rows: T[];
@@ -25,20 +23,6 @@ interface UserActorRow extends Record<string, unknown> {
   person_uuid?: string | null;
   student_uuid?: string | null;
   role_default_permissions?: unknown;
-}
-
-interface MagicLinkActorRow extends Record<string, unknown> {
-  id: string;
-  assigned_to_email?: string | null;
-  login_role?: string | null;
-  login_permissions?: unknown;
-  role_default_permissions?: unknown;
-  login_data_scope?: Record<string, unknown> | null;
-  otp_verified?: boolean | number | null;
-  expires_at: string | Date;
-  admin_locked?: boolean | number | null;
-  status?: string | null;
-  task_type?: string | null;
 }
 
 function resolvePermissions(permissions: unknown, defaultPermissions: unknown): string[] {
@@ -71,7 +55,6 @@ export class AuthActorService {
     private readonly dataSource: DataSource,
     private readonly studentAuthService: StudentAuthService,
     private readonly sessionCookieService: SessionCookieService,
-    private readonly magicSessionStore: MagicSessionStoreService,
   ) {}
 
   async loadRequiredUser(
@@ -96,16 +79,10 @@ export class AuthActorService {
 
     const virtualAuthToken = this.readHeader(request.headers, 'x-virtual-auth');
     if (virtualAuthToken) {
-      return this.studentAuthService.loadVirtualStudentActor(virtualAuthToken);
+      return await this.studentAuthService.loadVirtualStudentActor(virtualAuthToken);
     }
 
-    const magicLinkToken = this.readHeader(request.headers, 'x-magic-link-token');
-    if (!magicLinkToken) {
-      return null;
-    }
-
-    const sessionToken = this.readHeader(request.headers, 'x-magic-session');
-    return await this.loadMagicLinkUser(magicLinkToken, sessionToken);
+    return null;
   }
 
   private extractUserId(request: Pick<RequestWithUser, 'headers' | 'session'>): number | null {
@@ -138,11 +115,9 @@ export class AuthActorService {
           LEFT JOIN student_current_enrollment_resolution current_enrollment
             ON current_enrollment.person_uuid = u.person_uuid
            AND current_enrollment.resolution_state = 'ACTIVE'
-          WHERE u.id = $1 AND u.status = 'ACTIVE'
-            AND (
-              u.role IS DISTINCT FROM 'STUDENT'
-              OR current_enrollment.selected_student_uuid IS NOT NULL
-            )
+          WHERE u.id = $1
+            AND u.status = 'ACTIVE'
+            AND u.role IS DISTINCT FROM 'STUDENT'
         `,
         [userId],
       )) as QueryResult<UserActorRow>;
@@ -163,91 +138,6 @@ export class AuthActorService {
         person_uuid: typeof row.person_uuid === 'string' ? row.person_uuid : undefined,
         student_uuid: typeof row.student_uuid === 'string' ? row.student_uuid : undefined,
         auth_source: 'LOCAL',
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private buildVirtualUserId(linkId: string): number {
-    const parsed = Number.parseInt(hashToken(linkId).slice(0, 8), 16);
-    return Number.isFinite(parsed) && parsed > 0 ? -parsed : -1;
-  }
-
-  private async loadMagicLinkUser(
-    rawToken: string,
-    sessionToken?: string,
-  ): Promise<AuthenticatedRequestUser | null> {
-    try {
-      const tokenHash = hashToken(rawToken);
-      const result = (await queryDataSource<MagicLinkActorRow>(
-        this.dataSource,
-        `
-          SELECT
-            tl.id,
-            tl.assigned_to_email,
-            tl.login_role,
-            tl.login_permissions,
-            r.default_permissions AS role_default_permissions,
-            tl.login_data_scope,
-            tl.otp_verified,
-            tl.expires_at,
-            tl.admin_locked,
-            tl.status,
-            t.task_type
-          FROM task_links tl
-          JOIN tasks t ON t.id = tl.task_id
-          LEFT JOIN roles r ON r.name = tl.login_role
-          WHERE tl.token_hash = $1
-            AND tl.deleted_at IS NULL
-            AND t.deleted_at IS NULL
-        `,
-        [tokenHash],
-      )) as QueryResult<MagicLinkActorRow>;
-
-      const row = result.rows[0];
-      if (!row) {
-        return null;
-      }
-
-      if (row.task_type !== 'LOGIN') {
-        return null;
-      }
-      if (row.admin_locked) {
-        return null;
-      }
-      if (row.status !== 'ACTIVE') {
-        return null;
-      }
-      if (new Date(row.expires_at) < new Date()) {
-        return null;
-      }
-
-      const hasEmailForOtp =
-        typeof row.assigned_to_email === 'string' && row.assigned_to_email.trim().length > 0;
-      const otpVerified = row.otp_verified === true || row.otp_verified === 1;
-
-      if (
-        hasEmailForOtp &&
-        !otpVerified &&
-        !(await this.magicSessionStore.isVerified(row.id, sessionToken))
-      ) {
-        return null;
-      }
-
-      const role =
-        typeof row.login_role === 'string' && row.login_role.trim().length > 0
-          ? row.login_role.trim()
-          : 'TEACHER';
-
-      return {
-        id: this.buildVirtualUserId(row.id),
-        username: row.assigned_to_email || `magic-link-${row.id}`,
-        roles: [role],
-        permissions: resolvePermissions(row.login_permissions, row.role_default_permissions),
-        data_scope: normalizeDataScope(row.login_data_scope) || {},
-        virtual_login: true,
-        auth_source: 'MAGIC_LINK',
       };
     } catch {
       return null;

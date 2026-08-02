@@ -25,11 +25,13 @@ export class AuthController {
   ) {
     try {
       const user = await this.studentAuthService.loginWithMockThaId(body.personId);
-      this.sessionCookieService.setSession(res, user.id);
+      // Mock ThaID is a signed virtual student session, not a persisted user.
+      // Clear any previous staff cookie so actor resolution cannot mix identities.
+      this.sessionCookieService.clearSession(res);
       await this.auditLog.record({
         action: 'LOGIN',
-        actorUserId: user.id,
-        actorLabel: user.username,
+        actorUserId: null,
+        actorLabel: 'THAID_MOCK_STUDENT',
         metadata: { auth_method: 'THAID_MOCK' },
         ip: req.ip || null,
       });

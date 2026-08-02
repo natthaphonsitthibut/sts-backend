@@ -28,23 +28,16 @@ describe('hasPermission', () => {
     expect(hasPermission(['EXECUTIVE', 'DIRECTOR'], ['students'], 'students')).toBe(true);
   });
 
-  it('gives ADMIN every grantable permission except student self-service', () => {
+  it('gives ADMIN every grantable permission', () => {
     const admin = SYSTEM_ROLE_DEFINITIONS.find((role) => role.name === 'ADMIN');
-    const expected = PERMISSION_CATALOG.map((permission) => permission.id).filter(
-      (permissionId) => permissionId !== 'student-self',
-    );
+    const expected = PERMISSION_CATALOG.map((permission) => permission.id);
 
     expect(admin?.default_permissions).toEqual(expected);
   });
 
-  it('reserves student self-service for the STUDENT default role', () => {
-    const rolesWithStudentSelf = SYSTEM_ROLE_DEFINITIONS.filter((role) =>
-      role.default_permissions.includes('student-self'),
-    );
-
-    expect(rolesWithStudentSelf).toEqual([
-      expect.objectContaining({ name: 'STUDENT', default_permissions: ['student-self'] }),
-    ]);
+  it('keeps student self-service internal and retires the STUDENT role', () => {
+    expect(PERMISSION_CATALOG.map((permission) => permission.id)).not.toContain('student-self');
+    expect(SYSTEM_ROLE_DEFINITIONS.map((role) => role.name)).not.toContain('STUDENT');
   });
 
   it('keeps every system role baseline explicit, unique, and inside the catalog', () => {

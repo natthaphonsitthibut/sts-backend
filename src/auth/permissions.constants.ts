@@ -45,7 +45,6 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
       { id: 'close-case', label: 'ปิดเคส' },
     ],
   },
-  { id: 'student-self', label: 'ข้อมูลตัวเอง' },
   { id: 'create', label: 'สร้างลิงก์' },
   { id: 'import-data', label: 'นำเข้าข้อมูล' },
   { id: 'export-data', label: 'ส่งออกข้อมูล' },
@@ -65,14 +64,11 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
     children: [
       { id: 'manage-users-list', label: 'จัดการรายชื่อผู้ใช้งาน' },
       { id: 'manage-users-hard-delete', label: 'ลบบัญชีถาวร' },
-      { id: 'manage-student-accounts', label: 'บัญชีนักเรียน' },
-      { id: 'manage-role-groups', label: 'จัดการกลุ่มผู้ใช้งาน' },
-      { id: 'login-links', label: 'ลิงก์เข้าสู่ระบบ' },
+      { id: 'manage-role-groups', label: 'จัดการกลุ่มเมนู' },
     ],
   },
   { id: 'manage-schools', label: 'จัดการข้อมูลโรงเรียน' },
   { id: 'manage-school-structure', label: 'จัดการภาคเรียน ห้อง และครู' },
-  { id: 'manage-teacher-access', label: 'ออกและยกเลิกลิงก์เข้าใช้งานครู' },
   { id: 'student-observations', label: 'บันทึกและดูข้อสังเกตนักเรียนที่รับผิดชอบ' },
   { id: 'manage-student-observations', label: 'จัดการข้อสังเกตนักเรียนในโรงเรียน' },
   { id: 'import-school-roster', label: 'นำเข้าครูและนักเรียนของโรงเรียน' },
@@ -96,9 +92,7 @@ export const VALID_PERMISSION_IDS = PERMISSION_CATALOG.map((item) => item.id);
 
 export const GRANT_EXEMPT_PERMISSION_IDS = ['student-self'];
 
-const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter(
-  (permissionId) => permissionId !== 'student-self',
-);
+const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS;
 
 export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
@@ -129,10 +123,8 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'manage-attendance-calendar',
       'manage-timetable',
       'manage-users-list',
-      'login-links',
       'manage-schools',
       'manage-school-structure',
-      'manage-teacher-access',
       'manage-student-observations',
       'import-school-roster',
       'settings',
@@ -162,16 +154,6 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     default_permissions: ['home', 'students', 'attendance', 'student-observations'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
-    is_assignable: true,
-    is_system: true,
-  },
-  {
-    name: 'STUDENT',
-    label: 'นักเรียน',
-    rank: 1,
-    default_permissions: ['student-self'],
-    scope_mode: 'flexible',
-    scope_policy: 'OWN_ONLY',
     is_assignable: true,
     is_system: true,
   },

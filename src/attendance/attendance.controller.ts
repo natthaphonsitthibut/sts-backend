@@ -70,7 +70,6 @@ export class AttendanceController {
     'attendance-dashboard',
     'students',
     'manage-school-structure',
-    'manage-teacher-access',
     'import-data',
     'import-school-roster',
     'export-data',
@@ -187,7 +186,6 @@ export class AttendanceController {
     'attendance-dashboard',
     'manage-attendance-calendar',
     'manage-school-structure',
-    'manage-teacher-access',
     'import-data',
     'import-school-roster',
   )

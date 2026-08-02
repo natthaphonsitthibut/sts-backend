@@ -276,14 +276,7 @@ export class TaskPolicyService {
 
   assertCanCreateTask(actor: ActorContext, taskType: string): void {
     if (taskType === 'LOGIN') {
-      const canCreateLoginLink =
-        this.hasPermission(actor, 'login-links') && this.hasPermission(actor, 'create');
-
-      if (!canCreateLoginLink) {
-        throw new ForbiddenException('ไม่มีสิทธิ์สร้างลิงก์เข้าสู่ระบบ');
-      }
-
-      return;
+      throw new BadRequestException('ยกเลิกการสร้างลิงก์เข้าสู่ระบบแล้ว');
     }
 
     if (!this.hasPermission(actor, 'create')) {
@@ -403,14 +396,11 @@ export class TaskPolicyService {
       target_room?: unknown;
       case_created_by?: unknown;
     },
-    roleMap?: Map<string, RoleDefinition>,
   ): boolean {
     const taskType = typeof link.task_type === 'string' ? link.task_type.trim() : '';
 
     if (taskType === 'LOGIN') {
-      return (
-        this.hasPermission(actor, 'login-links') && this.canManageLoginLink(actor, link, roleMap)
-      );
+      return false;
     }
 
     if (taskType === 'ATTENDANCE') {

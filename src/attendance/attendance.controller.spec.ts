@@ -77,15 +77,14 @@ describe('AttendanceController access', () => {
         'attendance-dashboard',
         'students',
         'manage-school-structure',
-        'manage-teacher-access',
         'import-data',
         'import-school-roster',
         'export-data',
       ]);
       expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
-      expect(guard.canActivate(contextWithPermissions(method, ['manage-teacher-access']))).toBe(
-        true,
-      );
+      expect(() =>
+        guard.canActivate(contextWithPermissions(method, ['manage-teacher-access'])),
+      ).toThrow(ForbiddenException);
       expect(guard.canActivate(contextWithPermissions(method, ['import-school-roster']))).toBe(
         true,
       );
@@ -159,16 +158,15 @@ describe('AttendanceController access', () => {
       'attendance-dashboard',
       'manage-attendance-calendar',
       'manage-school-structure',
-      'manage-teacher-access',
       'import-data',
       'import-school-roster',
     ]);
     expect(
       guard.canActivate(contextWithPermissions('listTerms', ['manage-school-structure'])),
     ).toBe(true);
-    expect(guard.canActivate(contextWithPermissions('listTerms', ['manage-teacher-access']))).toBe(
-      true,
-    );
+    expect(() =>
+      guard.canActivate(contextWithPermissions('listTerms', ['manage-teacher-access'])),
+    ).toThrow(ForbiddenException);
     expect(guard.canActivate(contextWithPermissions('listTerms', ['import-data']))).toBe(true);
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('upsertTerm'))).toEqual([

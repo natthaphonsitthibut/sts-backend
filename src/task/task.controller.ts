@@ -22,7 +22,6 @@ import { appConfig } from '../config/app.config';
 import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decorators';
 import {
   CreateTaskDto,
-  GetLoginLinksQueryDto,
   GetVisitLinksQueryDto,
   SaveTaskAttendanceDto,
   SaveTaskSubmissionDto,
@@ -65,24 +64,6 @@ export class TaskController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('login-links')
-  @Get('login-links')
-  async getLoginLinks(@Req() req: RequestWithActor, @Query() query: GetLoginLinksQueryDto) {
-    return await this.taskService.getLoginLinks(req.user, {
-      status: query.status,
-      searchTerm: query.searchTerm?.trim() || undefined,
-      province: query.province?.trim() || undefined,
-      district: query.district?.trim() || undefined,
-      subDistrict: query.subDistrict?.trim() || undefined,
-      schoolId: query.schoolId,
-      gradeLevelId: query.gradeLevelId,
-      room: query.room?.trim() || undefined,
-      page: query.page,
-      limit: query.limit,
-    });
-  }
-
-  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('review-cases')
   @Get('visit-links')
   async getVisitLinks(@Req() req: RequestWithActor, @Query() query: GetVisitLinksQueryDto) {
@@ -118,17 +99,6 @@ export class TaskController {
   @Get(':token/students')
   async getTaskStudents(@Param('token') token: string) {
     return await this.taskService.getTaskStudents(token);
-  }
-
-  @Public()
-  @Get(':token/login-verify')
-  async verifyMagicLogin(@Param('token') token: string, @Req() req: Request) {
-    try {
-      const sessionToken = getHeaderValue(req.headers['x-magic-session']);
-      return await this.taskService.verifyMagicLogin(token, sessionToken);
-    } catch (err) {
-      throw new HttpException(getTaskErrorMessage(err), HttpStatus.UNAUTHORIZED);
-    }
   }
 
   @Public()

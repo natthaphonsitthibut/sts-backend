@@ -29,6 +29,10 @@ export class UserAuthService {
       return null;
     }
 
+    if (user.role === 'STUDENT' || user.roles?.includes('STUDENT') === true) {
+      return null;
+    }
+
     if (this.isTemporaryPasswordExpired(user)) {
       return null;
     }
@@ -40,15 +44,7 @@ export class UserAuthService {
 
     const { password: _password, ...safeUser } = user;
     void _password;
-    const hydratedUser = this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
-    const isStudent = hydratedUser.roles?.includes('STUDENT') === true;
-    const studentUuid = isStudent
-      ? await this.usersRepository.findCurrentStudentUuidByUserId(user.id)
-      : null;
-    if (isStudent && !studentUuid) {
-      return null;
-    }
-    return studentUuid ? { ...hydratedUser, student_uuid: studentUuid } : hydratedUser;
+    return this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
   }
 
   private isTemporaryPasswordExpired(user: {

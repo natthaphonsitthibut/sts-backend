@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -8,25 +7,18 @@ import {
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
+import { isUUID } from 'class-validator';
 import { hashToken } from '../common/utils/helpers';
 import { queryDataSource } from '../database/sql-query';
 import { DataSource } from 'typeorm';
-import { normalizeDataScope, type AuthenticatedRequestUser } from './auth.types';
+import type { AuthenticatedRequestUser } from './auth.types';
 import { authConfig } from '../config/auth.config';
 
 interface StudentAuthRow extends Record<string, unknown> {
-  id: number;
-  username: string;
+  person_uuid: string;
   FirstName: string | null;
   LastName: string | null;
   affiliation: string | null;
-  permissions: unknown;
-  role: string;
-  data_scope: unknown;
-  must_change_password: boolean | null;
-  roles: string[] | null;
-  labels: string[] | null;
-  role_default_permissions: unknown;
   student_uuid: string;
 }
 
@@ -45,10 +37,8 @@ interface StudentVirtualTokenPayload {
   expiresAt: number;
 }
 
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : [];
+interface ActiveVirtualStudentRow extends Record<string, unknown> {
+  person_uuid: string;
 }
 
 function normalizePersonId(value: string): string {
@@ -74,36 +64,46 @@ export class StudentAuthService {
       throw new BadRequestException('personId ต้องเป็นเลขบัตรประชาชน 13 หลัก');
     }
 
-    const users = await this.findActiveStudentUsersByPersonId(normalizedPersonId);
-    if (users.length === 0) {
-      throw new NotFoundException('ไม่พบบัญชีนักเรียนที่พร้อมใช้งาน');
+    const enrollments = await this.findCurrentStudentByPersonId(normalizedPersonId);
+    if (enrollments.length === 0) {
+      throw new NotFoundException('ไม่พบข้อมูลนักเรียนที่กำลังศึกษา');
     }
-    if (users.length > 1) {
-      throw new ConflictException('ข้อมูลตัวตนเชื่อมกับบัญชีมากกว่าหนึ่งรายการ');
-    }
-    const user = users[0];
-    const permissions = normalizeStringArray(user.permissions);
-    const defaultPermissions = normalizeStringArray(user.role_default_permissions);
+    const student = enrollments[0];
+    const roles: string[] = [];
+    const permissions = ['student-self'];
+    const virtualAuthToken = this.signVirtualStudentToken({
+      studentUuid: student.student_uuid,
+      personUuid: student.person_uuid,
+      roles,
+      permissions,
+    });
 
     return {
-      id: user.id,
-      username: user.username,
-      FirstName: user.FirstName,
-      LastName: user.LastName,
-      affiliation: user.affiliation,
-      roles: normalizeStringArray(user.roles),
-      labels: normalizeStringArray(user.labels),
-      permissions: permissions.length > 0 ? permissions : defaultPermissions,
-      data_scope: normalizeDataScope(user.data_scope) || { own_only: true },
-      student_uuid: user.student_uuid,
+      id: this.buildVirtualStudentId(student.student_uuid),
+      username: student.student_uuid,
+      FirstName: student.FirstName,
+      LastName: student.LastName,
+      affiliation: student.affiliation,
+      roles,
+      labels: [],
+      permissions,
+      data_scope: { own_only: true },
+      student_uuid: student.student_uuid,
       must_change_password: false,
+      virtual_login: true,
+      virtual_auth_token: virtualAuthToken,
       auth_source: 'THAID_MOCK' as const,
     };
   }
 
-  loadVirtualStudentActor(sessionToken: string): AuthenticatedRequestUser | null {
+  async loadVirtualStudentActor(sessionToken: string): Promise<AuthenticatedRequestUser | null> {
     const payload = this.verifyVirtualStudentToken(sessionToken);
     if (!payload) {
+      return null;
+    }
+
+    const activeStudent = await this.findActiveVirtualStudent(payload);
+    if (!activeStudent) {
       return null;
     }
 
@@ -115,7 +115,7 @@ export class StudentAuthService {
       data_scope: { own_only: true },
       virtual_login: true,
       student_uuid: payload.studentUuid,
-      person_uuid: payload.personUuid,
+      person_uuid: activeStudent.person_uuid,
       auth_source: payload.source,
     };
   }
@@ -126,43 +126,81 @@ export class StudentAuthService {
     }
   }
 
-  private async findActiveStudentUsersByPersonId(personId: string): Promise<StudentAuthRow[]> {
+  private async findCurrentStudentByPersonId(personId: string): Promise<StudentAuthRow[]> {
     const result = await queryDataSource<StudentAuthRow>(
       this.dataSource,
       `
-        SELECT DISTINCT ON (u.id)
-          u.id,
-          u.username,
-          u."FirstName",
-          u."LastName",
-          u.affiliation,
-          u.permissions,
-          u.role,
-          u.data_scope,
-          u.must_change_password,
-          ARRAY[u.role]::text[] AS roles,
-          CASE WHEN r.label IS NULL THEN ARRAY[]::text[] ELSE ARRAY[r.label]::text[] END AS labels,
-          r.default_permissions AS role_default_permissions,
-          current_enrollment.selected_student_uuid AS student_uuid
+        SELECT
+          person.person_uuid,
+          enrollment."FirstName_Onec" AS "FirstName",
+          enrollment."LastName_Onec" AS "LastName",
+          school.name AS affiliation,
+          enrollment.student_uuid
         FROM student_person_identifier spi
         JOIN student_person person ON person.person_uuid = spi.person_uuid
-        JOIN users u ON u.person_uuid = person.person_uuid
-        LEFT JOIN roles r ON r.name = u.role
         JOIN student_current_enrollment_resolution current_enrollment
           ON current_enrollment.person_uuid = person.person_uuid
          AND current_enrollment.resolution_state = 'ACTIVE'
+        JOIN student_term enrollment
+          ON enrollment.student_uuid = current_enrollment.selected_student_uuid
+        LEFT JOIN schools school ON school.id = enrollment."SchoolID_Onec"
         WHERE spi.identifier_type = 'NATIONAL_ID'
           AND spi.identifier_normalized = $1
           AND spi.is_primary = TRUE
           AND person.identity_status = 'ACTIVE'
-          AND u.role = 'STUDENT'
-          AND u.status = 'ACTIVE'
-        ORDER BY u.id
+        LIMIT 1
       `,
       [personId],
     );
 
     return result.rows;
+  }
+
+  private async findActiveVirtualStudent(
+    payload: StudentVirtualTokenPayload,
+  ): Promise<ActiveVirtualStudentRow | null> {
+    const result = await queryDataSource<ActiveVirtualStudentRow>(
+      this.dataSource,
+      `
+        SELECT person.person_uuid
+        FROM student_person person
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = person.person_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
+        WHERE current_enrollment.selected_student_uuid = $1
+          AND person.identity_status = 'ACTIVE'
+          AND ($2::text IS NULL OR person.person_uuid::text = $2::text)
+        LIMIT 1
+      `,
+      [payload.studentUuid, payload.personUuid ?? null],
+    );
+
+    return result.rows[0] ?? null;
+  }
+
+  private signVirtualStudentToken(input: {
+    studentUuid: string;
+    personUuid: string;
+    roles: string[];
+    permissions: string[];
+  }): string {
+    const issuedAt = Date.now();
+    const payload: StudentVirtualTokenPayload = {
+      source: 'THAID_MOCK',
+      studentUuid: input.studentUuid,
+      personUuid: input.personUuid,
+      roles: input.roles,
+      permissions: input.permissions,
+      issuedAt,
+      expiresAt: issuedAt + this.authRuntimeConfig.tokenTtlSeconds * 1000,
+    };
+    const serialized = JSON.stringify(payload);
+    const base64Payload = Buffer.from(serialized, 'utf-8').toString('base64');
+    const signature = crypto
+      .createHmac('sha256', this.virtualAuthSecret)
+      .update(serialized)
+      .digest('hex');
+    return `${base64Payload}.${signature}`;
   }
 
   private verifyVirtualStudentToken(sessionToken: string): StudentVirtualTokenPayload | null {
@@ -178,7 +216,15 @@ export class StudentAuthService {
         .update(payload)
         .digest('hex');
 
-      if (expectedSignature !== signature) {
+      if (!/^[0-9a-f]{64}$/.test(signature)) {
+        return null;
+      }
+      const expectedSignatureBuffer = Buffer.from(expectedSignature, 'hex');
+      const signatureBuffer = Buffer.from(signature, 'hex');
+      if (
+        expectedSignatureBuffer.length !== signatureBuffer.length ||
+        !crypto.timingSafeEqual(expectedSignatureBuffer, signatureBuffer)
+      ) {
         return null;
       }
 
@@ -186,6 +232,9 @@ export class StudentAuthService {
       if (
         decoded.source !== 'THAID_MOCK' ||
         typeof decoded.studentUuid !== 'string' ||
+        !isUUID(decoded.studentUuid) ||
+        (decoded.personUuid !== undefined &&
+          (typeof decoded.personUuid !== 'string' || !isUUID(decoded.personUuid))) ||
         !Array.isArray(decoded.roles) ||
         !Array.isArray(decoded.permissions) ||
         typeof decoded.expiresAt !== 'number' ||
