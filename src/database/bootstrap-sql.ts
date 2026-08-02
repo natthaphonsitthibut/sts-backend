@@ -95,6 +95,54 @@ const SYSTEM_ROLE_BASELINE_SQL = SYSTEM_ROLE_DEFINITIONS.map(
   ON CONFLICT (name) DO NOTHING;`,
 ).join('\n');
 
+const SCHOOL_ROLE_GROUP_BASELINE_SQL = `
+  WITH templates(template_key, label, source_name, fallback_source_name) AS (
+    VALUES
+      ('ADMIN', 'ผู้ดูแลระบบ', 'ADMIN', NULL::TEXT),
+      ('EXECUTIVE', 'ผู้บริหาร', 'EXECUTIVE', NULL::TEXT),
+      ('ADMIN_SCHOOL', 'ผู้ดูแลระบบประจำโรงเรียน', 'ADMIN_SCHOOL', 'ADMIN'),
+      ('DIRECTOR', 'ผู้อำนวยการ', 'DIRECTOR', NULL::TEXT)
+  ),
+  template_roles AS (
+    SELECT template.template_key, template.label, source_role.rank, source_role.default_permissions
+    FROM templates template
+    JOIN LATERAL (
+      SELECT role_record.rank, role_record.default_permissions
+      FROM roles role_record
+      WHERE role_record.school_id IS NULL
+        AND role_record.name IN (
+          template.source_name,
+          COALESCE(template.fallback_source_name, template.source_name)
+        )
+      ORDER BY CASE WHEN role_record.name = template.source_name THEN 0 ELSE 1 END
+      LIMIT 1
+    ) source_role ON TRUE
+  )
+  INSERT INTO roles (
+    name, label, rank, default_permissions, scope_mode, scope_policy,
+    is_assignable, is_system, school_id
+  )
+  SELECT
+    'S' || school.id || '_BASE_' || template.template_key,
+    template.label,
+    template.rank,
+    template.default_permissions,
+    'school',
+    'ASSIGNABLE',
+    TRUE,
+    FALSE,
+    school.id
+  FROM schools school
+  CROSS JOIN template_roles template
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM roles existing_role
+    WHERE existing_role.school_id = school.id
+      AND LOWER(BTRIM(existing_role.label)) = LOWER(BTRIM(template.label))
+  )
+  ON CONFLICT DO NOTHING;
+`;
+
 const SYSTEM_SETTING_BASELINE_SQL = SYSTEM_SETTING_DEFINITIONS.map(
   (setting) => `
   INSERT INTO system_settings (setting_key, setting_value, description)
@@ -1739,7 +1787,8 @@ export const DATABASE_BASELINE_SQL = `
     scope_mode TEXT NOT NULL DEFAULT 'flexible',
     scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE',
     is_assignable BOOLEAN NOT NULL DEFAULT TRUE,
-    is_system BOOLEAN NOT NULL DEFAULT FALSE
+    is_system BOOLEAN NOT NULL DEFAULT FALSE,
+    school_id INTEGER
   );
 
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
@@ -1748,8 +1797,37 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_assignable BOOLEAN NOT NULL DEFAULT TRUE;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE roles ADD COLUMN IF NOT EXISTS school_id INTEGER;
+
+  DO $roles_school_scope$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_roles_school'
+    ) THEN
+      ALTER TABLE roles
+        ADD CONSTRAINT fk_roles_school
+        FOREIGN KEY (school_id) REFERENCES schools(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_roles_scoped_group_not_system'
+    ) THEN
+      ALTER TABLE roles
+        ADD CONSTRAINT chk_roles_scoped_group_not_system
+        CHECK (school_id IS NULL OR is_system = FALSE);
+    END IF;
+  END $roles_school_scope$;
+
+  CREATE INDEX IF NOT EXISTS idx_roles_school_rank_name
+    ON roles (school_id, rank DESC, name)
+    WHERE school_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_school_label_ci
+    ON roles (school_id, LOWER(BTRIM(label)))
+    WHERE school_id IS NOT NULL;
 
   ${SYSTEM_ROLE_BASELINE_SQL}
+
+  ${SCHOOL_ROLE_GROUP_BASELINE_SQL}
 
   UPDATE roles
   SET is_assignable = FALSE
@@ -1897,6 +1975,7 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_assignable BOOLEAN NOT NULL DEFAULT TRUE;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE roles ADD COLUMN IF NOT EXISTS school_id INTEGER;
 
   CREATE INDEX IF NOT EXISTS idx_task_links_token ON task_links(token_hash);
   CREATE INDEX IF NOT EXISTS idx_task_links_task_id ON task_links(task_id);

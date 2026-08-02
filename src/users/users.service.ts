@@ -1455,11 +1455,16 @@ export class UsersService {
   }
 
   async getRoles(actor?: ActorContext) {
-    const definitions = await this.usersPolicyService.getRoleDefinitions();
     if (!actor) {
-      return definitions;
+      return await this.usersPolicyService.getRoleDefinitions();
     }
 
+    const actorScope = this.usersPolicyService.normalizeScope(actor.data_scope);
+    const ownedSchoolId =
+      actorScope.global !== true && actorScope.school_ids.length === 1
+        ? Number(actorScope.school_ids[0])
+        : null;
+    const definitions = await this.usersPolicyService.getRoleDefinitions(false, ownedSchoolId);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const actorRole = this.usersPolicyService.getPrimaryRole({
       roles: actor.roles,

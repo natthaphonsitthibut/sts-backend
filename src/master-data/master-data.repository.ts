@@ -239,6 +239,62 @@ export class MasterDataRepository {
     return result.rows[0];
   }
 
+  async createDefaultSchoolRoleGroups(schoolId: number, queryRunner: QueryRunner): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        WITH templates(template_key, label, source_name, fallback_source_name) AS (
+          VALUES
+            ('ADMIN', 'ผู้ดูแลระบบ', 'ADMIN', NULL::TEXT),
+            ('EXECUTIVE', 'ผู้บริหาร', 'EXECUTIVE', NULL::TEXT),
+            ('ADMIN_SCHOOL', 'ผู้ดูแลระบบประจำโรงเรียน', 'ADMIN_SCHOOL', 'ADMIN'),
+            ('DIRECTOR', 'ผู้อำนวยการ', 'DIRECTOR', NULL::TEXT)
+        ),
+        template_roles AS (
+          SELECT
+            template.template_key,
+            template.label,
+            source_role.rank,
+            source_role.default_permissions
+          FROM templates template
+          JOIN LATERAL (
+            SELECT role_record.rank, role_record.default_permissions
+            FROM roles role_record
+            WHERE role_record.school_id IS NULL
+              AND role_record.name IN (
+                template.source_name,
+                COALESCE(template.fallback_source_name, template.source_name)
+              )
+            ORDER BY CASE WHEN role_record.name = template.source_name THEN 0 ELSE 1 END
+            LIMIT 1
+          ) source_role ON TRUE
+        )
+        INSERT INTO roles (
+          name, label, rank, default_permissions, scope_mode, scope_policy,
+          is_assignable, is_system, school_id
+        )
+        SELECT
+          'S' || $1 || '_BASE_' || template.template_key,
+          template.label,
+          template.rank,
+          template.default_permissions,
+          'school',
+          'ASSIGNABLE',
+          TRUE,
+          FALSE,
+          $1
+        FROM template_roles template
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM roles existing_role
+          WHERE existing_role.school_id = $1
+            AND LOWER(BTRIM(existing_role.label)) = LOWER(BTRIM(template.label))
+        )
+        ON CONFLICT DO NOTHING
+      `,
+      [schoolId],
+    );
+  }
+
   async updateSchool(
     id: number,
     input: SchoolMasterDataInput,

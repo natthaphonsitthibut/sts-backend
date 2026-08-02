@@ -294,17 +294,69 @@ async function clickSaveButton(client) {
 }
 
 async function clickButton(client, label) {
-  const clicked = await evaluate(
+  const result = await evaluate(
     client,
     `(() => {
-      const button = [...document.querySelectorAll('button')]
+      const buttons = [...document.querySelectorAll('button')];
+      const button = buttons
         .find((candidate) => candidate.textContent.trim() === ${JSON.stringify(label)});
-      if (!button) return false;
+      if (!button) {
+        return {
+          clicked: false,
+          labels: buttons.map((candidate) => candidate.textContent.trim()).filter(Boolean),
+        };
+      }
       button.click();
+      return { clicked: true, labels: [] };
+    })()`,
+  );
+  assert(
+    result?.clicked,
+    `Button "${label}" was not found (available: ${JSON.stringify(result?.labels ?? [])})`,
+  );
+}
+
+async function selectComboboxOption(client, ariaLabel, optionLabel) {
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('input[aria-label=${JSON.stringify(ariaLabel)}]'))`,
+        ),
+      ),
+    `Combobox "${ariaLabel}" did not render`,
+  );
+  const opened = await evaluate(
+    client,
+    `(() => {
+      const input = document.querySelector('input[aria-label=${JSON.stringify(ariaLabel)}]');
+      if (!input) return false;
+      input.click();
       return true;
     })()`,
   );
-  assert(clicked, `Button "${label}" was not found`);
+  assert(opened, `Combobox "${ariaLabel}" was not found`);
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `Boolean([...document.querySelectorAll('li button')]
+          .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)}))`,
+      ),
+    `Combobox option "${optionLabel}" did not open`,
+  );
+  const selected = await evaluate(
+    client,
+    `(() => {
+      const option = [...document.querySelectorAll('li button')]
+        .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)});
+      if (!option) return false;
+      option.click();
+      return true;
+    })()`,
+  );
+  assert(selected, `Combobox option "${optionLabel}" was not found`);
 }
 
 // The base Dialog renders as an overlay `<div class="fixed inset-0 z-50 …">`
@@ -340,19 +392,28 @@ async function reviewDialogText(client) {
 }
 
 async function clickDialogButton(client, label) {
-  const clicked = await evaluate(
+  const result = await evaluate(
     client,
     `(() => {
       const dialog = ${DIALOG_ROOT};
-      if (!dialog) return false;
-      const button = [...dialog.querySelectorAll('button')]
-        .find((candidate) => candidate.textContent.trim() === ${JSON.stringify(label)});
-      if (!button) return false;
+      if (!dialog) return { clicked: false, labels: [] };
+      const buttons = [...dialog.querySelectorAll('button')];
+      const button = buttons
+        .find((candidate) => candidate.textContent.trim().startsWith(${JSON.stringify(label)}));
+      if (!button) {
+        return {
+          clicked: false,
+          labels: buttons.map((candidate) => candidate.textContent.trim()).filter(Boolean),
+        };
+      }
       button.click();
-      return true;
+      return { clicked: true, labels: [] };
     })()`,
   );
-  assert(clicked, `Dialog button "${label}" was not found`);
+  assert(
+    result?.clicked,
+    `Dialog button "${label}" was not found (available: ${JSON.stringify(result?.labels ?? [])})`,
+  );
 }
 
 async function main() {
@@ -361,6 +422,7 @@ async function main() {
   const passwordService = app.get(PasswordService);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const adminPassword = `Role-${suffix}-Admin`;
+  const menuGroupLabel = `กลุ่มเมนูทดสอบ ${suffix}`;
   let chrome;
   let adminId;
   let teacherId;
@@ -385,6 +447,14 @@ async function main() {
     });
 
     const session = await login(ADMIN_USERNAME, adminPassword);
+    const scopedSchoolsResponse = await fetch(`${BACKEND_URL}/api/school-structure/schools`, {
+      headers: { cookie: `${session.cookieName}=${session.cookieValue}` },
+    });
+    const scopedSchoolsBody = await scopedSchoolsResponse.text();
+    assert(
+      scopedSchoolsResponse.status === 200,
+      `Scoped schools returned ${scopedSchoolsResponse.status}: ${scopedSchoolsBody.slice(0, 300)}`,
+    );
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -405,6 +475,96 @@ async function main() {
       `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(session.user))});
        localStorage.setItem('admin_access', 'true');`,
     );
+    const browserSchoolsProbe = await evaluate(
+      client,
+      `fetch(${JSON.stringify(`${BACKEND_URL}/api/school-structure/schools`)}, {
+        credentials: 'include'
+      }).then(async (response) => ({ status: response.status, body: await response.text() }))
+        .catch((error) => ({ status: 0, body: error.message }))`,
+    );
+    assert(
+      browserSchoolsProbe?.status === 200,
+      `Browser scoped-schools probe failed: ${JSON.stringify(browserSchoolsProbe)}`,
+    );
+
+    // --- Test 0: school-scoped menu groups, server sort/pagination and dialog UI ---
+    await navigate(client, `${FRONTEND_URL}/manage-role-groups`);
+    await waitFor(
+      async () => (await bodyText(client)).includes('จัดการกลุ่มเมนู'),
+      'Menu-group page did not render',
+    );
+    await waitFor(
+      async () => {
+        const text = await bodyText(client);
+        if (text.includes('เลือกโรงเรียน')) return true;
+        throw new Error(text.slice(0, 500));
+      },
+      'Nationwide admin was not required to select a school',
+    );
+    await selectComboboxOption(client, 'กรองตามโรงเรียน', SCHOOL.name);
+    await clickButton(client, 'เพิ่มกลุ่มเมนู');
+    await waitFor(
+      async () => (await bodyText(client)).includes('กำหนดชื่อและเมนูสำหรับ'),
+      'Create menu-group dialog did not open',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.getElementById('menu-group-label');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, ${JSON.stringify(menuGroupLabel)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const checkbox = [...document.querySelectorAll('label')]
+          .find((label) => label.textContent.trim() === 'หน้าหลัก')?.querySelector('input');
+        checkbox?.click();
+      })()`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const menuGroupFieldGeometry = await evaluate(
+      client,
+      `(() => {
+        const labelInput = document.getElementById('menu-group-label');
+        const rankCombobox = document.getElementById('menu-group-rank');
+        const rankHeader = document.querySelector('label[for="menu-group-rank"]')?.parentElement;
+        const labelRect = labelInput?.getBoundingClientRect();
+        const rankRect = rankCombobox?.getBoundingClientRect();
+        return {
+          labelTop: labelRect?.top ?? 0,
+          labelHeight: labelRect?.height ?? 0,
+          rankTop: rankRect?.top ?? 0,
+          rankHeight: rankRect?.height ?? 0,
+          rankHeaderAlignment: rankHeader ? getComputedStyle(rankHeader).alignItems : '',
+        };
+      })()`,
+    );
+    assert(
+      Math.abs(menuGroupFieldGeometry.labelTop - menuGroupFieldGeometry.rankTop) <= 1 &&
+        Math.abs(menuGroupFieldGeometry.labelHeight - menuGroupFieldGeometry.rankHeight) <= 1 &&
+        menuGroupFieldGeometry.rankHeaderAlignment === 'baseline',
+      `Menu-group fields were not position-aligned: ${JSON.stringify(menuGroupFieldGeometry)}`,
+    );
+    await capture(client, '/tmp/sts-role-groups-dialog-desktop.png');
+    await clickSaveButton(client);
+    await waitFor(
+      async () => {
+        const text = await bodyText(client);
+        return text.includes(menuGroupLabel) && !text.includes('กำหนดชื่อและเมนูสำหรับ');
+      },
+      'Created school menu group did not appear in the table',
+    );
+    const menuGroupPageText = await bodyText(client);
+    assert(
+      ['กลุ่มเมนู', 'เมนู', 'เครื่องมือ'].every((heading) => menuGroupPageText.includes(heading)),
+      'Menu-group table headings do not match the approved reference',
+    );
+    assert(
+      await evaluate(
+        client,
+        `document.querySelectorAll('thead button').length >= 2`,
+      ),
+      'Menu-group table did not expose sortable headers',
+    );
+    await capture(client, '/tmp/sts-role-groups-desktop.png');
 
     // --- Test A: edit a school-scoped TEACHER -> real names, Thai perms, preserve scope ---
     await navigate(client, `${FRONTEND_URL}/manage-users/${teacherId}/edit/permissions`);
@@ -574,11 +734,41 @@ async function main() {
     );
     await capture(client, '/tmp/sts-role-scope-edit-mobile.png');
 
+    await navigate(client, `${FRONTEND_URL}/manage-role-groups`);
+    await selectComboboxOption(client, 'กรองตามโรงเรียน', SCHOOL.name);
+    await waitFor(
+      async () => (await bodyText(client)).includes(menuGroupLabel),
+      'Mobile menu-group table did not render the school-owned group',
+    );
+    const editOpened = await evaluate(
+      client,
+      `(() => {
+        const button = document.querySelector(
+          'button[aria-label=${JSON.stringify(`แก้ไขกลุ่มเมนู ${menuGroupLabel}`)}]',
+        );
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`,
+    );
+    assert(editOpened, 'Mobile edit menu-group action was not found');
+    await waitFor(
+      async () => (await bodyText(client)).includes('แก้ไขกลุ่มเมนู'),
+      'Mobile edit menu-group dialog did not open',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await capture(client, '/tmp/sts-role-groups-dialog-mobile.png');
+    await clickButton(client, 'ยกเลิก');
+
     console.log(
       'role/scope browser smoke passed (Thai permission catalog, hidden validation feedback, retired permission cleanup, real scope names, preserve-scope save, nationwide highlight, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);
+    await dataSource.query(`DELETE FROM roles WHERE school_id = $1 AND label = $2`, [
+      SCHOOL.id,
+      menuGroupLabel,
+    ]);
     await disableUser(dataSource, teacherId, TEACHER_USERNAME);
     await disableUser(dataSource, nationalId, NATIONAL_USERNAME);
     await disableUser(dataSource, adminId, ADMIN_USERNAME);

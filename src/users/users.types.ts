@@ -28,6 +28,7 @@ export interface RoleDefinition {
   scope_policy: RoleScopePolicy;
   is_assignable: boolean;
   is_system: boolean;
+  school_id?: number | null;
   user_count?: number;
   login_link_count?: number;
 }
@@ -54,6 +55,7 @@ export interface RoleRow extends Record<string, unknown> {
   scope_policy: unknown;
   is_assignable: boolean;
   is_system: boolean;
+  school_id?: number | null;
   user_count?: number;
   login_link_count?: number;
 }

@@ -113,6 +113,43 @@ describe('UsersPolicyService functional roles and data scope', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('keeps a school-owned menu group inside its owning school', async () => {
+    const schoolRole: RoleDefinition = {
+      ...definitions[3],
+      id: 41,
+      name: 'S10010002_COUNSELOR',
+      label: 'ครูแนะแนว',
+      school_id: 10010002,
+    };
+    const scopedRoleMap = new Map([...roleMap, [schoolRole.name, schoolRole]]);
+
+    await expect(
+      service.assertAssignablePayload(
+        globalAdmin,
+        {
+          role: schoolRole.name,
+          permissions: ['home'],
+          data_scope: { school_ids: [10010002] },
+        },
+        { allowEqualRole: false },
+        scopedRoleMap,
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      service.assertAssignablePayload(
+        globalAdmin,
+        {
+          role: schoolRole.name,
+          permissions: ['home'],
+          data_scope: { school_ids: [99999999] },
+        },
+        { allowEqualRole: false },
+        scopedRoleMap,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('rejects assigning global scope from a school-scoped admin', async () => {
     await expect(
       service.assertAssignablePayload(

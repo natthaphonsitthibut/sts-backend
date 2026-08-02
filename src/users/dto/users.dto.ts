@@ -484,9 +484,15 @@ export class ChangePasswordDto {
 }
 
 export class CreateRoleGroupDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  name!: string;
+  name?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -510,3 +516,19 @@ export class CreateRoleGroupDto {
 }
 
 export class UpdateRoleGroupDto extends PartialType(CreateRoleGroupDto) {}
+
+export class RoleGroupListQueryDto extends PaginatedSearchQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
+  @IsIn(['group', 'menus'])
+  sortBy?: 'group' | 'menus';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
+}

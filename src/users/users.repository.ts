@@ -130,6 +130,7 @@ interface CreateRoleRecordInput {
   default_permissions: string[];
   scope_mode: string;
   scope_policy: string;
+  school_id: number;
 }
 
 export interface UserListFilters {
@@ -426,7 +427,13 @@ export class UsersRepository {
     });
   }
 
-  async listRoleRows(includeUsage = false): Promise<RoleRow[]> {
+  async listRoleRows(includeUsage = false, schoolId?: number | null): Promise<RoleRow[]> {
+    const schoolCondition =
+      schoolId === undefined
+        ? ''
+        : schoolId === null
+          ? 'AND r.school_id IS NULL'
+          : 'AND (r.school_id IS NULL OR r.school_id = $1)';
     const sql = includeUsage
       ? `
           SELECT
@@ -439,6 +446,7 @@ export class UsersRepository {
             r.scope_policy,
             r.is_assignable,
             r.is_system,
+            r.school_id,
             COALESCE(u.user_count, 0)::int AS user_count,
             COALESCE(tl.login_link_count, 0)::int AS login_link_count
           FROM roles r
@@ -457,26 +465,75 @@ export class UsersRepository {
             GROUP BY tl.login_role
           ) tl ON tl.login_role = r.name
           WHERE r.is_assignable = TRUE
+            ${schoolCondition}
           ORDER BY r.rank DESC, r.name ASC
         `
       : `
           SELECT
-            id,
-            name,
-            label,
-            rank,
-            default_permissions,
-            scope_mode,
-            scope_policy,
-            is_assignable,
-            is_system
-          FROM roles
-          WHERE is_assignable = TRUE
-          ORDER BY rank DESC, name ASC
+            r.id,
+            r.name,
+            r.label,
+            r.rank,
+            r.default_permissions,
+            r.scope_mode,
+            r.scope_policy,
+            r.is_assignable,
+            r.is_system,
+            r.school_id
+          FROM roles r
+          WHERE r.is_assignable = TRUE
+            ${schoolCondition}
+          ORDER BY r.rank DESC, r.name ASC
         `;
 
-    const result = await this.query<RoleRow>(sql);
+    const result = await this.query<RoleRow>(sql, typeof schoolId === 'number' ? [schoolId] : []);
     return result.rows;
+  }
+
+  async isSchoolInScope(schoolId: number, scope: DataScope): Promise<boolean> {
+    const scopeQuery = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+      },
+      2,
+    );
+    const result = await this.query(
+      `
+        SELECT 1
+        FROM schools school
+        WHERE school.id = $1
+          AND school.school_status = 'ACTIVE'
+          AND ${scopeQuery.sql || 'TRUE'}
+        LIMIT 1
+      `,
+      [schoolId, ...scopeQuery.params],
+    );
+    return result.rows.length > 0;
+  }
+
+  async schoolRoleLabelExists(
+    schoolId: number,
+    label: string,
+    excludeName?: string,
+  ): Promise<boolean> {
+    const params: unknown[] = [schoolId, label];
+    const exclude = excludeName ? `AND name <> $${params.push(excludeName)}` : '';
+    const result = await this.query(
+      `
+        SELECT 1
+        FROM roles
+        WHERE school_id = $1
+          AND LOWER(BTRIM(label)) = LOWER(BTRIM($2))
+          ${exclude}
+        LIMIT 1
+      `,
+      params,
+    );
+    return result.rows.length > 0;
   }
 
   async listUsersPaginated(filters: UserListFilters): Promise<{
@@ -1760,11 +1817,12 @@ export class UsersRepository {
     const result = await queryExecutor.query<RoleRow>(
       `
         INSERT INTO roles (
-          name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+          name, label, rank, default_permissions, scope_mode, scope_policy,
+          is_assignable, is_system, school_id
         )
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6, TRUE, FALSE)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, TRUE, FALSE, $7)
         RETURNING id, name, label, rank, default_permissions, scope_mode,
-          scope_policy, is_assignable, is_system
+          scope_policy, is_assignable, is_system, school_id
       `,
       [
         data.name,
@@ -1773,6 +1831,7 @@ export class UsersRepository {
         JSON.stringify(data.default_permissions),
         data.scope_mode,
         data.scope_policy,
+        data.school_id,
       ],
     );
 
@@ -1781,7 +1840,7 @@ export class UsersRepository {
 
   async updateRole(
     name: string,
-    data: CreateRoleRecordInput,
+    data: Omit<CreateRoleRecordInput, 'school_id'>,
     executor?: QueryExecutor,
   ): Promise<RoleRow> {
     const queryExecutor = this.getExecutor(executor);
@@ -1795,7 +1854,7 @@ export class UsersRepository {
             scope_policy = $6
         WHERE name = $1
         RETURNING id, name, label, rank, default_permissions, scope_mode,
-          scope_policy, is_assignable, is_system
+          scope_policy, is_assignable, is_system, school_id
       `,
       [
         name,

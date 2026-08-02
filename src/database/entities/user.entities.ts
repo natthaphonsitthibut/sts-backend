@@ -32,6 +32,9 @@ export class RoleEntity {
 
   @Column({ name: 'is_system', type: 'boolean', default: false })
   isSystem!: boolean;
+
+  @Column({ name: 'school_id', type: 'integer', nullable: true })
+  schoolId!: number | null;
 }
 
 @Entity({ name: 'users' })

@@ -40,6 +40,7 @@ describe('MasterDataService', () => {
       listSchools: jest.fn(),
       findSchoolById: jest.fn(),
       createSchool: jest.fn(),
+      createDefaultSchoolRoleGroups: jest.fn(),
       updateSchool: jest.fn(),
       disableSchool: jest.fn(),
       withTransaction: jest.fn(async (operation: (queryRunner: unknown) => Promise<unknown>) =>
@@ -207,6 +208,10 @@ describe('MasterDataService', () => {
       1001,
       expect.objectContaining({ name: SCHOOL_ROW.name }),
       1,
+      expect.anything(),
+    );
+    expect(repository.createDefaultSchoolRoleGroups).toHaveBeenCalledWith(
+      SCHOOL_ROW.id,
       expect.anything(),
     );
     repository.findSchoolById.mockResolvedValue(SCHOOL_ROW);

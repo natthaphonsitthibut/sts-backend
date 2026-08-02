@@ -103,14 +103,18 @@ export class UsersPolicyService {
       scope_policy: row.scope_policy === 'OWN_ONLY' ? 'OWN_ONLY' : 'ASSIGNABLE',
       is_assignable: row.is_assignable !== false,
       is_system: row.is_system === true,
+      school_id: row.school_id == null ? null : Number(row.school_id),
       user_count: row.user_count !== undefined ? Number(row.user_count) || 0 : undefined,
       login_link_count:
         row.login_link_count !== undefined ? Number(row.login_link_count) || 0 : undefined,
     };
   }
 
-  async getRoleDefinitions(includeUsage = false): Promise<RoleDefinition[]> {
-    const rows = await this.usersRepository.listRoleRows(includeUsage);
+  async getRoleDefinitions(
+    includeUsage = false,
+    schoolId?: number | null,
+  ): Promise<RoleDefinition[]> {
+    const rows = await this.usersRepository.listRoleRows(includeUsage, schoolId);
     return rows.map((row) => this.mapRoleRow(row));
   }
 
@@ -383,9 +387,26 @@ export class UsersPolicyService {
     const requestedRole = this.normalizeRole(data);
     const actorRank = this.getRoleRank(actorRole, currentRoleMap);
     const requestedRank = this.getRoleRank(requestedRole, currentRoleMap);
+    const requestedDefinition = currentRoleMap.get(requestedRole);
+
+    if (requestedDefinition?.is_assignable === false) {
+      throw new BadRequestException(`ตำแหน่ง ${requestedRole} ไม่เปิดให้กำหนดกับบัญชีผู้ใช้`);
+    }
 
     if (requestedRank === 0) {
       throw new ForbiddenException(`ไม่สามารถกำหนดตำแหน่ง ${requestedRole} ได้`);
+    }
+
+    if (requestedDefinition?.school_id != null) {
+      const targetScope = this.normalizeScope(data.data_scope);
+      const schoolIds = targetScope.school_ids.map(Number).filter(Number.isInteger);
+      if (
+        targetScope.global === true ||
+        schoolIds.length !== 1 ||
+        schoolIds[0] !== requestedDefinition.school_id
+      ) {
+        throw new ForbiddenException('กลุ่มเมนูนี้ใช้ได้เฉพาะผู้ใช้ในโรงเรียนเจ้าของกลุ่ม');
+      }
     }
 
     const exceedsRoleAuthority = options.allowEqualRole

@@ -19,7 +19,6 @@ import {
 import type { Request, Response } from 'express';
 import { ThrottleLogin } from '../config/throttle.decorators';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
 import { UsersService } from './users.service';
 import {
   AuthGuard,
@@ -47,6 +46,7 @@ import {
   StudentAccountBatchListQueryDto,
   StudentAccountBulkFilterDto,
   StudentAccountListQueryDto,
+  RoleGroupListQueryDto,
   UpdateRoleGroupDto,
   UpdateOwnProfileDto,
   UpdateUserDto,
@@ -130,13 +130,16 @@ export class UsersController {
   @RequirePermission('manage-role-groups')
   @Get('role-groups')
   async getRoleGroups(
-    @Query() query: PaginatedSearchQueryDto,
+    @Query() query: RoleGroupListQueryDto,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
     return await this.roleGroupsService.getRoleGroups(actor, {
       searchTerm: query.searchTerm?.trim() || undefined,
       page: query.page,
       limit: query.limit,
+      schoolId: query.schoolId,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
     });
   }
 

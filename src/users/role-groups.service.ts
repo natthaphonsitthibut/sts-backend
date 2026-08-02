@@ -1,15 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { CreateRoleGroupDto, UpdateRoleGroupDto } from './dto/users.dto';
+import { PERMISSION_CATALOG } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
   resolveLimit,
   resolvePage,
 } from '../common/pagination/pagination.util';
+import type { CreateRoleGroupDto, UpdateRoleGroupDto } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
 import type { ActorContext, RoleDefinition } from './users.types';
@@ -18,6 +21,21 @@ interface RoleGroupListOptions {
   searchTerm?: string;
   page?: number;
   limit?: number;
+  schoolId?: number;
+  sortBy?: 'group' | 'menus';
+  sortDirection?: 'asc' | 'desc';
+}
+
+const PERMISSION_LABELS = new Map(PERMISSION_CATALOG.map((item) => [item.id, item.label]));
+
+function menuLabel(role: RoleDefinition): string {
+  return role.default_permissions
+    .map((permission) => PERMISSION_LABELS.get(permission) ?? permission)
+    .join(', ');
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
 @Injectable()
@@ -27,53 +45,70 @@ export class RoleGroupsService {
     private readonly usersPolicyService: UsersPolicyService,
   ) {}
 
-  private assertGlobalRoleManagement(actor: ActorContext): void {
-    if (!this.usersPolicyService.isScopeGlobal(actor.data_scope)) {
-      throw new ForbiddenException('จัดการกลุ่มสิทธิ์ได้เฉพาะผู้ดูแลขอบเขตทั้งระบบ');
+  private async resolveSchoolId(actor: ActorContext, requestedSchoolId?: number): Promise<number> {
+    let schoolId = requestedSchoolId;
+    if (!schoolId) {
+      const scope = this.usersPolicyService.normalizeScope(actor.data_scope);
+      if (!scope.global && scope.school_ids.length === 1) {
+        const inferredSchoolId = Number(scope.school_ids[0]);
+        if (Number.isInteger(inferredSchoolId) && inferredSchoolId > 0) {
+          schoolId = inferredSchoolId;
+        }
+      }
     }
+    if (!schoolId) {
+      throw new BadRequestException('กรุณาเลือกโรงเรียนก่อนจัดการกลุ่มเมนู');
+    }
+    const allowed = await this.usersRepository.isSchoolInScope(schoolId, actor.data_scope || {});
+    if (!allowed) {
+      throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
+    }
+    return schoolId;
   }
 
-  // Role definitions are a small, bounded *config* set (tens of rows, bounded by
-  // design — not by population), so this is intentionally a Class-B bounded
-  // management catalog: the policy filter runs in memory and the page is sliced
-  // from the filtered set. Do NOT "optimize" this into SQL-level COUNT/LIMIT —
-  // visibility is gated per-actor by runtime policy (canManageRole /
-  // canGrantPermissions, which compare the actor's rank and grantable
-  // permissions), which cannot be expressed as plain column predicates.
-  // Pushing it into SQL would duplicate the security logic into a second source
-  // of truth and risk scope-bypass / totalCount divergence whenever the
-  // permission rules change. The contract (PaginatedSearchQueryDto + { success,
-  // data, meta }) is already uniform with /api/users.
-  async getRoleGroups(actor?: ActorContext, options: RoleGroupListOptions = {}) {
-    const definitions = await this.usersPolicyService.getRoleDefinitions(true);
-
-    let visible: RoleDefinition[] = definitions;
-    if (actor) {
-      const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
-      const actorRole = this.usersPolicyService.getPrimaryRole({
-        roles: actor.roles,
-      });
-
-      visible = definitions.filter(
-        (role) =>
-          this.usersPolicyService.canManageRole(actorRole, role.name, roleMap) &&
-          this.usersPolicyService.canGrantPermissions(
-            actor.permissions || [],
-            role.default_permissions || [],
-            actorRole,
-            roleMap,
-          ),
-      );
+  private async assertScopedRoleAccess(actor: ActorContext, role: RoleDefinition): Promise<number> {
+    if (role.school_id == null || role.is_system) {
+      throw new ForbiddenException('กลุ่มระบบไม่สามารถแก้ไขจากหน้ากลุ่มเมนูโรงเรียนได้');
     }
+    return await this.resolveSchoolId(actor, role.school_id);
+  }
 
-    const search = options.searchTerm?.trim().toLowerCase();
+  async getRoleGroups(actor?: ActorContext, options: RoleGroupListOptions = {}) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    const schoolId = await this.resolveSchoolId(currentActor, options.schoolId);
+    const schoolDefinitions = await this.usersPolicyService.getRoleDefinitions(true, schoolId);
+    const definitions = schoolDefinitions.filter((role) => role.school_id === schoolId);
+    const roleMap = new Map(schoolDefinitions.map((definition) => [definition.name, definition]));
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
+
+    let visible = definitions.filter(
+      (role) =>
+        this.usersPolicyService.canManageRole(actorRole, role.name, roleMap) &&
+        this.usersPolicyService.canGrantPermissions(
+          currentActor.permissions || [],
+          role.default_permissions || [],
+          actorRole,
+          roleMap,
+        ),
+    );
+
+    const search = options.searchTerm?.trim().toLocaleLowerCase('th');
     if (search) {
       visible = visible.filter(
         (role) =>
-          (role.label || '').toLowerCase().includes(search) ||
-          (role.name || '').toLowerCase().includes(search),
+          role.label.toLocaleLowerCase('th').includes(search) ||
+          menuLabel(role).toLocaleLowerCase('th').includes(search),
       );
     }
+
+    const sortBy = options.sortBy ?? 'group';
+    const direction = options.sortDirection === 'desc' ? -1 : 1;
+    visible.sort((left, right) => {
+      const leftText = sortBy === 'menus' ? menuLabel(left) : left.label;
+      const rightText = sortBy === 'menus' ? menuLabel(right) : right.label;
+      const compared = leftText.localeCompare(rightText, 'th');
+      return compared === 0 ? left.name.localeCompare(right.name) : compared * direction;
+    });
 
     const page = resolvePage(options.page);
     const limit = resolveLimit(options.limit);
@@ -88,25 +123,30 @@ export class RoleGroupsService {
 
   async createRoleGroup(actor: ActorContext | undefined, data: CreateRoleGroupDto) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertGlobalRoleManagement(currentActor);
-    const definitions = await this.usersPolicyService.getRoleDefinitions();
+    const schoolId = await this.resolveSchoolId(currentActor, data.schoolId);
+    const definitions = await this.usersPolicyService.getRoleDefinitions(false, schoolId);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
-    const payload = this.usersPolicyService.normalizeRoleGroupPayload(data);
+    const internalName = `S${schoolId}_${randomUUID()
+      .replaceAll('-', '')
+      .slice(0, 24)
+      .toUpperCase()}`;
+    const payload = this.usersPolicyService.normalizeRoleGroupPayload({
+      ...data,
+      name: internalName,
+      scope_mode: 'school',
+    });
 
-    if (roleMap.has(payload.name)) {
-      throw new BadRequestException('มีกลุ่มผู้ใช้งานนี้อยู่แล้ว');
+    if (await this.usersRepository.schoolRoleLabelExists(schoolId, payload.label)) {
+      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในโรงเรียนแล้ว');
     }
 
-    const actorRole = this.usersPolicyService.getPrimaryRole({
-      roles: currentActor.roles,
-    });
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
     const actorRank = this.usersPolicyService.getRoleRank(actorRole, roleMap);
     if (payload.rank > actorRank || (payload.rank === actorRank && actorRole !== 'ADMIN')) {
       throw new ForbiddenException(
-        'ไม่สามารถสร้างกลุ่มผู้ใช้งานที่มีลำดับสิทธิ์สูงกว่าหรือเทียบเท่าตนเองได้',
+        'ไม่สามารถสร้างกลุ่มเมนูที่มีลำดับสิทธิ์สูงกว่าหรือเทียบเท่าตนเองได้',
       );
     }
-
     if (
       !this.usersPolicyService.canGrantPermissions(
         currentActor.permissions || [],
@@ -115,15 +155,18 @@ export class RoleGroupsService {
         roleMap,
       )
     ) {
-      throw new ForbiddenException('ไม่สามารถกำหนดสิทธิ์เริ่มต้นที่ตนเองไม่มีได้');
+      throw new ForbiddenException('ไม่สามารถกำหนดเมนูที่ตนเองไม่มีสิทธิ์เข้าถึงได้');
     }
 
-    const row = await this.usersRepository.createRole(payload);
-
-    return {
-      success: true,
-      role: this.usersPolicyService.mapRoleRow(row),
-    };
+    try {
+      const row = await this.usersRepository.createRole({ ...payload, school_id: schoolId });
+      return { success: true, role: this.usersPolicyService.mapRoleRow(row) };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('มีกลุ่มเมนูชื่อนี้ในโรงเรียนแล้ว');
+      }
+      throw error;
+    }
   }
 
   async updateRoleGroup(
@@ -132,29 +175,27 @@ export class RoleGroupsService {
     data: UpdateRoleGroupDto,
   ) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertGlobalRoleManagement(currentActor);
     const normalizedRoleName = this.usersPolicyService.normalizeRoleName(roleName);
     const definitions = await this.usersPolicyService.getRoleDefinitions(true);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const existingRole = roleMap.get(normalizedRoleName);
+    if (!existingRole) throw new NotFoundException('ไม่พบกลุ่มเมนู');
+    const schoolId = await this.assertScopedRoleAccess(currentActor, existingRole);
 
-    if (!existingRole) {
-      throw new NotFoundException('ไม่พบกลุ่มผู้ใช้งาน');
-    }
-
-    const actorRole = this.usersPolicyService.getPrimaryRole({
-      roles: currentActor.roles,
-    });
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
     if (!this.usersPolicyService.canManageRole(actorRole, existingRole.name, roleMap)) {
-      throw new ForbiddenException('ไม่มีสิทธิ์จัดการกลุ่มผู้ใช้งานนี้');
+      throw new ForbiddenException('ไม่มีสิทธิ์จัดการกลุ่มเมนูนี้');
     }
-
     const payload = this.usersPolicyService.normalizeRoleGroupPayload(data, existingRole);
+    if (
+      await this.usersRepository.schoolRoleLabelExists(schoolId, payload.label, existingRole.name)
+    ) {
+      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในโรงเรียนแล้ว');
+    }
     const actorRank = this.usersPolicyService.getRoleRank(actorRole, roleMap);
     if (payload.rank > actorRank || (payload.rank === actorRank && actorRole !== 'ADMIN')) {
       throw new ForbiddenException('ไม่สามารถกำหนดลำดับสิทธิ์สูงกว่าหรือเทียบเท่าตนเองได้');
     }
-
     if (
       !this.usersPolicyService.canGrantPermissions(
         currentActor.permissions || [],
@@ -163,45 +204,38 @@ export class RoleGroupsService {
         roleMap,
       )
     ) {
-      throw new ForbiddenException('ไม่สามารถกำหนดสิทธิ์เริ่มต้นที่ตนเองไม่มีได้');
+      throw new ForbiddenException('ไม่สามารถกำหนดเมนูที่ตนเองไม่มีสิทธิ์เข้าถึงได้');
     }
 
-    const row = await this.usersRepository.updateRole(existingRole.name, payload);
-    return {
-      success: true,
-      role: this.usersPolicyService.mapRoleRow(row),
-    };
+    try {
+      const row = await this.usersRepository.updateRole(existingRole.name, payload);
+      return { success: true, role: this.usersPolicyService.mapRoleRow(row) };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('มีกลุ่มเมนูชื่อนี้ในโรงเรียนแล้ว');
+      }
+      throw error;
+    }
   }
 
   async deleteRoleGroup(actor: ActorContext | undefined, roleName: string) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertGlobalRoleManagement(currentActor);
     const normalizedRoleName = this.usersPolicyService.normalizeRoleName(roleName);
     const definitions = await this.usersPolicyService.getRoleDefinitions(true);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const existingRole = roleMap.get(normalizedRoleName);
+    if (!existingRole) throw new NotFoundException('ไม่พบกลุ่มเมนู');
+    await this.assertScopedRoleAccess(currentActor, existingRole);
 
-    if (!existingRole) {
-      throw new NotFoundException('ไม่พบกลุ่มผู้ใช้งาน');
-    }
-
-    const actorRole = this.usersPolicyService.getPrimaryRole({
-      roles: currentActor.roles,
-    });
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
     if (!this.usersPolicyService.canManageRole(actorRole, existingRole.name, roleMap)) {
-      throw new ForbiddenException('ไม่มีสิทธิ์ลบกลุ่มผู้ใช้งานนี้');
+      throw new ForbiddenException('ไม่มีสิทธิ์ลบกลุ่มเมนูนี้');
     }
-
-    if (existingRole.is_system) {
-      throw new ForbiddenException('ไม่สามารถลบบทบาทระบบได้');
-    }
-
     if ((existingRole.user_count || 0) > 0) {
-      throw new ForbiddenException('ไม่สามารถลบบทบาทที่ยังมีผู้ใช้งานอยู่ได้');
+      throw new ForbiddenException('ไม่สามารถลบกลุ่มเมนูที่ยังมีผู้ใช้งานอยู่ได้');
     }
-
     if ((existingRole.login_link_count || 0) > 0) {
-      throw new ForbiddenException('ไม่สามารถลบบทบาทที่ยังถูกใช้งานในลิงก์เข้าสู่ระบบได้');
+      throw new ForbiddenException('ไม่สามารถลบกลุ่มเมนูที่ยังถูกใช้งานในลิงก์เข้าสู่ระบบได้');
     }
 
     await this.usersRepository.deleteRole(existingRole.name);

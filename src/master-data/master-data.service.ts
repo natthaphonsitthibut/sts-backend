@@ -217,6 +217,7 @@ export class MasterDataService {
           actorId,
           queryRunner,
         );
+        await this.masterDataRepository.createDefaultSchoolRoleGroups(row.id, queryRunner);
         await this.auditLog.recordAtomic(
           {
             actorUserId: actorId,
