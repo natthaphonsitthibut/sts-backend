@@ -55,6 +55,24 @@ export class FilesController {
       throw new NotFoundException('File not found');
     }
 
+    const extension = safeName.slice(safeName.lastIndexOf('.')).toLowerCase();
+    const contentType: Record<string, string> = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', contentType[extension] ?? 'application/octet-stream');
+    if (extension === '.doc' || extension === '.docx') {
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    } else {
+      res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+    }
+
     if (result.kind === 'redirect') {
       res.redirect(302, result.url);
       return;

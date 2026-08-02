@@ -55,3 +55,58 @@ export async function processVisitPhoto(
 ): Promise<string> {
   return processImageUpload(file, storage);
 }
+
+const PDF_SIGNATURE = Buffer.from('%PDF-');
+const OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+const ZIP_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+function startsWith(buffer: Buffer, signature: Buffer): boolean {
+  return (
+    buffer.length >= signature.length && buffer.subarray(0, signature.length).equals(signature)
+  );
+}
+
+function isDocx(buffer: Buffer): boolean {
+  if (!startsWith(buffer, ZIP_SIGNATURE)) return false;
+  const archiveText = buffer.toString('latin1');
+  return archiveText.includes('[Content_Types].xml') && archiveText.includes('word/');
+}
+
+export async function processVisitAttachment(
+  file: Express.Multer.File,
+  storage: FileStorageAdapter,
+): Promise<string> {
+  const detectedImage = detectImageType(file.buffer);
+  if (detectedImage) {
+    const expectedMimeTypes: Record<typeof detectedImage, string[]> = {
+      jpeg: ['image/jpeg', 'image/jpg'],
+      png: ['image/png'],
+      gif: ['image/gif'],
+      webp: ['image/webp'],
+    };
+    if (!expectedMimeTypes[detectedImage].includes(file.mimetype)) {
+      throw new BadRequestException('ชนิดไฟล์หรือเนื้อหาไฟล์ไม่ถูกต้อง');
+    }
+    return processVisitPhoto(file, storage);
+  }
+
+  let extension: '.pdf' | '.doc' | '.docx' | null = null;
+  if (file.mimetype === 'application/pdf' && startsWith(file.buffer, PDF_SIGNATURE)) {
+    extension = '.pdf';
+  } else if (file.mimetype === 'application/msword' && startsWith(file.buffer, OLE_SIGNATURE)) {
+    extension = '.doc';
+  } else if (
+    file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' &&
+    isDocx(file.buffer)
+  ) {
+    extension = '.docx';
+  }
+
+  if (!extension) {
+    throw new BadRequestException('ชนิดไฟล์หรือเนื้อหาไฟล์ไม่ถูกต้อง');
+  }
+
+  const filename = `${randomBytes(16).toString('hex')}${extension}`;
+  await storage.save(file.buffer, filename);
+  return filename;
+}

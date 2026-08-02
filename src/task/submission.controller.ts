@@ -17,7 +17,7 @@ import { FilesInterceptor } from '@nestjs/platform-express';
 import { TaskService } from './task.service';
 import { Public } from '../auth';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
-import { processVisitPhoto } from '../common/file-upload/visit-photo.util';
+import { processVisitAttachment } from '../common/file-upload/visit-photo.util';
 import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
 import { getHeaderValue } from './task.types';
 
@@ -69,13 +69,20 @@ export class SubmissionController {
     // races with expiry, completion, delegation, or an admin lock.
     await this.taskService.assertVisitSubmissionAccess(token, sessionToken);
 
-    // Strip EXIF/GPS + re-encode each photo before persisting; the stored name is
-    // server-generated. Raw uploads stay in memory and are never written as-is.
-    const photoPaths = files?.length
-      ? await Promise.all(
-          files.map(async (f) => `/uploads/${await processVisitPhoto(f, this.storage)}`),
-        )
-      : [];
+    // Images are re-encoded to strip EXIF/GPS. Documents are signature-checked.
+    // Every stored name is server-generated and raw uploads stay in memory.
+    const storedKeys: string[] = [];
+    const photoPaths: string[] = [];
+    try {
+      for (const file of files ?? []) {
+        const storageKey = await processVisitAttachment(file, this.storage);
+        storedKeys.push(storageKey);
+        photoPaths.push(`/uploads/${storageKey}`);
+      }
+    } catch (error) {
+      await Promise.allSettled(storedKeys.map((storageKey) => this.storage.delete(storageKey)));
+      throw error;
+    }
 
     const causeDetail = body.cause_detail || body.notes || '';
     const addressChanged = this.parseBoolean(body.address_changed);
@@ -108,6 +115,7 @@ export class SubmissionController {
       const result = await this.taskService.saveTaskSubmission(token, data, sessionToken);
       return { ...result, success: true };
     } catch (err: unknown) {
+      await Promise.allSettled(storedKeys.map((storageKey) => this.storage.delete(storageKey)));
       if (err instanceof HttpException) {
         throw err;
       }

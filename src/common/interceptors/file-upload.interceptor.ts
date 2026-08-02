@@ -5,12 +5,15 @@ import { memoryStorage } from 'multer';
 // upload in processVisitPhoto(): magic-byte validation, EXIF/GPS strip, and a
 // re-encode. Files are held in memory (never written raw to disk) so an untrusted
 // photo's EXIF GPS never touches the filesystem.
-const ALLOWED_IMAGE_MIME = new Set([
+const ALLOWED_VISIT_ATTACHMENT_MIME = new Set([
   'image/jpeg',
   'image/jpg', // non-standard alias some clients still send for JPEG
   'image/png',
   'image/gif',
   'image/webp',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
 const imageFileFilter = (
@@ -18,8 +21,8 @@ const imageFileFilter = (
   file: Express.Multer.File,
   callback: (error: Error | null, acceptFile: boolean) => void,
 ) => {
-  if (!ALLOWED_IMAGE_MIME.has(file.mimetype)) {
-    return callback(new BadRequestException('รองรับเฉพาะไฟล์รูปภาพ (jpg, png, gif, webp)'), false);
+  if (!ALLOWED_VISIT_ATTACHMENT_MIME.has(file.mimetype)) {
+    return callback(new BadRequestException('รองรับเฉพาะไฟล์รูปภาพ, PDF, DOC และ DOCX'), false);
   }
   callback(null, true);
 };
