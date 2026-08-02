@@ -20,7 +20,7 @@ describe('SchoolStructureController access', () => {
     ]);
   });
 
-  it('allows teacher-access administrators to use read-only lookup routes only', () => {
+  it('does not accept the retired teacher-access permission on lookup routes', () => {
     const reflector = new Reflector();
     const guard = new PermissionsGuard(reflector);
     const context = (method: keyof SchoolStructureController) =>
@@ -43,23 +43,21 @@ describe('SchoolStructureController access', () => {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([]);
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'manage-school-structure',
-        'manage-teacher-access',
         'import-data',
         'import-school-roster',
+        ...(method === 'listSchools' ? ['manage-role-groups'] : []),
       ]);
-      expect(guard.canActivate(context(method))).toBe(true);
+      expect(() => guard.canActivate(context(method))).toThrow();
     }
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTeachers'))).toEqual([
       'manage-school-structure',
-      'manage-teacher-access',
     ]);
-    expect(guard.canActivate(context('listTeachers'))).toBe(true);
+    expect(() => guard.canActivate(context('listTeachers'))).toThrow();
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTeacherOptions'))).toEqual([
       'manage-school-structure',
-      'manage-teacher-access',
     ]);
-    expect(guard.canActivate(context('listTeacherOptions'))).toBe(true);
+    expect(() => guard.canActivate(context('listTeacherOptions'))).toThrow();
 
     expect(() => guard.canActivate(context('createTeacherMembership'))).toThrow();
     expect(() => guard.canActivate(context('updateTeacherMembership'))).toThrow();

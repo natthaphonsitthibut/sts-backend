@@ -642,6 +642,8 @@ describe('SchoolStructureService', () => {
           exportScope: 'ROSTER',
           format: 'xlsx',
           columns: ['studentNumber', 'name'],
+          dateFrom: null,
+          dateTo: null,
         },
       }),
       expect.anything(),

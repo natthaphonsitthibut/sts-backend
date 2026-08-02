@@ -56,9 +56,9 @@ export class SchoolStructureController {
   @RequirePermission()
   @RequireAnyPermission(
     'manage-school-structure',
-    'manage-teacher-access',
     'import-data',
     'import-school-roster',
+    'manage-role-groups',
   )
   listSchools(@CurrentUser() actor: AuthenticatedRequestUser) {
     return this.service.listSchools(actor);
@@ -66,12 +66,7 @@ export class SchoolStructureController {
 
   @Get('classrooms')
   @RequirePermission()
-  @RequireAnyPermission(
-    'manage-school-structure',
-    'manage-teacher-access',
-    'import-data',
-    'import-school-roster',
-  )
+  @RequireAnyPermission('manage-school-structure', 'import-data', 'import-school-roster')
   listClassrooms(
     @Query() query: ListSchoolClassroomsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -81,12 +76,7 @@ export class SchoolStructureController {
 
   @Get('classrooms/options')
   @RequirePermission()
-  @RequireAnyPermission(
-    'manage-school-structure',
-    'manage-teacher-access',
-    'import-data',
-    'import-school-roster',
-  )
+  @RequireAnyPermission('manage-school-structure', 'import-data', 'import-school-roster')
   listClassroomOptions(
     @Query() query: ListSchoolClassroomOptionsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -164,7 +154,7 @@ export class SchoolStructureController {
 
   @Get('teachers')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure', 'manage-teacher-access')
+  @RequireAnyPermission('manage-school-structure')
   listTeachers(
     @Query() query: ListSchoolTeachersDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -174,7 +164,7 @@ export class SchoolStructureController {
 
   @Get('teachers/options')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure', 'manage-teacher-access')
+  @RequireAnyPermission('manage-school-structure')
   listTeacherOptions(
     @Query() query: ListSchoolTeacherCandidatesDto,
     @CurrentUser() actor: AuthenticatedRequestUser,

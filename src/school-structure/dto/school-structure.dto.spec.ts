@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
+  AuthorizeClassroomExportDto,
   CreateSchoolClassroomDto,
   CreateClassroomStudentCommentDto,
   ListClassroomAttendanceHistoryDto,
@@ -107,5 +108,20 @@ describe('school structure DTOs', () => {
         }),
       ),
     ).not.toHaveLength(0);
+  });
+
+  it('accepts only calendar-date values for custom export ranges', () => {
+    const build = (dateFrom: string, dateTo: string) =>
+      plainToInstance(AuthorizeClassroomExportDto, {
+        exportScope: 'ATTENDANCE',
+        format: 'csv',
+        columns: ['studentNumber'],
+        dateFrom,
+        dateTo,
+      });
+
+    expect(validateSync(build('2026-08-01', '2026-08-31'))).toHaveLength(0);
+    expect(validateSync(build('2026-08-01T00:00:00Z', '2026-08-31T23:59:59Z'))).not.toHaveLength(0);
+    expect(validateSync(build('2026-02-30', '2026-08-31'))).not.toHaveLength(0);
   });
 });

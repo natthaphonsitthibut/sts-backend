@@ -4,6 +4,7 @@ import {
   IsArray,
   IsIn,
   IsBoolean,
+  IsDateString,
   IsInt,
   IsNumber,
   IsOptional,
@@ -311,6 +312,16 @@ export class AuthorizeClassroomExportDto {
   @IsString({ each: true })
   @MaxLength(50, { each: true })
   columns!: string[];
+
+  @IsOptional()
+  @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
+  dateFrom?: string;
+
+  @IsOptional()
+  @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
+  dateTo?: string;
 }
 
 export class ListClassroomRosterDto extends PaginationQueryDto {

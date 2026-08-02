@@ -90,8 +90,8 @@ export class SchoolStructureService {
     );
     const canUseRelatedRead =
       allowRelatedRead &&
-      ['manage-teacher-access', 'import-data', 'import-school-roster'].some((permission) =>
-        hasPermission(actor.roles, actor.permissions, permission),
+      ['manage-teacher-access', 'import-data', 'import-school-roster', 'manage-role-groups'].some(
+        (permission) => hasPermission(actor.roles, actor.permissions, permission),
       );
     if (!canManageStructure && !canUseRelatedRead) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการโครงสร้างโรงเรียน');
@@ -351,6 +351,12 @@ export class SchoolStructureService {
     dto: AuthorizeClassroomExportDto,
     actor: AuthenticatedRequestUser,
   ) {
+    if (Boolean(dto.dateFrom) !== Boolean(dto.dateTo)) {
+      throw new BadRequestException('dateFrom and dateTo must be provided together');
+    }
+    if (dto.dateFrom && dto.dateTo && dto.dateFrom > dto.dateTo) {
+      throw new BadRequestException('dateFrom must not be after dateTo');
+    }
     this.resolveScope(actor);
     if (!hasPermission(actor.roles, actor.permissions, 'export-data')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ส่งออกข้อมูล');
@@ -374,6 +380,8 @@ export class SchoolStructureService {
             exportScope: dto.exportScope,
             format: dto.format,
             columns: dto.columns,
+            dateFrom: dto.dateFrom ?? null,
+            dateTo: dto.dateTo ?? null,
           },
           ip: null,
         },
