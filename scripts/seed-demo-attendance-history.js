@@ -193,7 +193,196 @@ async function main() {
         [LOOKBACK_DAYS],
       ).then((rows) => [{ records: rows.length }]);
 
-      return { sessions: sessionStats.sessions, records: attendanceStats.records };
+      await manager.query(`
+        UPDATE student_term student
+        SET "GPAX_Onec" = ROUND(
+          2.40 + (
+            MOD(
+              ABS(hashtextextended(COALESCE(student.person_uuid, student.student_uuid)::text, 17)),
+              151
+            )::numeric / 100
+          ),
+          2
+        )::real
+        FROM school_terms term
+        WHERE term.school_id = student."SchoolID_Onec"
+          AND term.academic_year = student."AcademicYear_Onec"
+          AND term.semester = student."Semester_Onec"
+          AND term.status = 'ACTIVE'
+          AND term.deleted_at IS NULL
+          AND student.deleted_at IS NULL
+          AND student."GPAX_Onec" IS NULL
+      `);
+      await manager.query(`
+        UPDATE student_term student
+        SET term_gpa = ROUND(LEAST(4.00, GREATEST(
+          0.00,
+          COALESCE(student."GPAX_Onec"::numeric, 2.75)
+            + ((MOD(ABS(hashtextextended(student.student_uuid::text, 0)), 41) - 20)::numeric / 100)
+        )), 2)
+        FROM school_terms term
+        WHERE term.school_id = student."SchoolID_Onec"
+          AND term.academic_year = student."AcademicYear_Onec"
+          AND term.semester = student."Semester_Onec"
+          AND term.status = 'ACTIVE'
+          AND term.deleted_at IS NULL
+          AND student.deleted_at IS NULL
+          AND student.term_gpa IS NULL
+      `);
+      const [gpaStats] = await manager.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE student.term_gpa IS NOT NULL)::int AS term_profiles,
+          COUNT(*) FILTER (WHERE student."GPAX_Onec" IS NOT NULL)::int AS cumulative_profiles
+        FROM student_term student
+        JOIN school_terms term ON term.school_id = student."SchoolID_Onec"
+          AND term.academic_year = student."AcademicYear_Onec"
+          AND term.semester = student."Semester_Onec"
+        WHERE term.status = 'ACTIVE'
+          AND term.deleted_at IS NULL
+          AND student.deleted_at IS NULL
+      `);
+
+      const [subjectSessionStats] = await manager.query(
+        `
+          WITH active_terms AS (
+            SELECT id AS term_id, school_id, academic_year, semester, starts_on, ends_on
+            FROM school_terms
+            WHERE status = 'ACTIVE' AND deleted_at IS NULL
+          ),
+          school_days AS (
+            SELECT term.*, day_value::date AS attendance_date
+            FROM active_terms term,
+              generate_series(
+                GREATEST(term.starts_on, (CURRENT_DATE - ($1::int * INTERVAL '1 day'))::date),
+                LEAST(term.ends_on, CURRENT_DATE),
+                INTERVAL '1 day'
+              ) AS day_value
+            WHERE EXTRACT(ISODOW FROM day_value) < 6
+              AND NOT EXISTS (
+                SELECT 1 FROM school_calendar_days calendar
+                WHERE calendar.school_term_id = term.term_id
+                  AND calendar.calendar_date = day_value::date
+                  AND calendar.day_type <> 'SCHOOL_DAY'
+                  AND calendar.deleted_at IS NULL
+              )
+          ),
+          roster_counts AS (
+            SELECT student."SchoolID_Onec" AS school_id,
+              student."AcademicYear_Onec" AS academic_year,
+              student."Semester_Onec" AS semester,
+              student."GradeLevelID_Onec" AS grade_level_id,
+              student."RoomID_Onec"::int AS room_id,
+              COUNT(*)::int AS roster_count
+            FROM student_term student
+            WHERE student.deleted_at IS NULL AND student.student_uuid IS NOT NULL
+            GROUP BY 1, 2, 3, 4, 5
+          )
+          INSERT INTO attendance_sessions (
+            school_term_id, school_id, grade_level_id, room_id, attendance_date,
+            period, session_kind, subject_id, timetable_slot_id, status,
+            expected_roster_count, recorded_count, submitted_at, submitted_by,
+            created_by, updated_by
+          )
+          SELECT day.term_id, day.school_id, slot.grade_level_id, slot.room_no,
+            day.attendance_date, slot.period, 'SUBJECT', slot.subject_id, slot.id,
+            'SUBMITTED', roster.roster_count, roster.roster_count,
+            day.attendance_date + TIME '15:00', slot.teacher_user_id,
+            slot.teacher_user_id, slot.teacher_user_id
+          FROM school_days day
+          JOIN timetable_slots slot ON slot.school_term_id = day.term_id
+            AND slot.school_id = day.school_id
+            AND slot.day_of_week = EXTRACT(ISODOW FROM day.attendance_date)::int
+            AND slot.deleted_at IS NULL
+            AND slot.subject_id IS NOT NULL
+            AND slot.teacher_user_id IS NOT NULL
+          JOIN users teacher ON teacher.id = slot.teacher_user_id AND teacher.status = 'ACTIVE'
+          JOIN roster_counts roster ON roster.school_id = day.school_id
+            AND roster.academic_year = day.academic_year
+            AND roster.semester = day.semester
+            AND roster.grade_level_id = slot.grade_level_id
+            AND roster.room_id = slot.room_no
+          ON CONFLICT (school_term_id, grade_level_id, room_id, attendance_date, period, session_kind)
+          DO UPDATE SET
+            subject_id = EXCLUDED.subject_id,
+            timetable_slot_id = EXCLUDED.timetable_slot_id,
+            status = EXCLUDED.status,
+            expected_roster_count = EXCLUDED.expected_roster_count,
+            recorded_count = EXCLUDED.recorded_count,
+            submitted_at = EXCLUDED.submitted_at,
+            submitted_by = EXCLUDED.submitted_by,
+            updated_by = EXCLUDED.updated_by,
+            deleted_at = NULL,
+            deleted_by = NULL
+          RETURNING id
+        `,
+        [LOOKBACK_DAYS],
+      ).then((rows) => [{ sessions: rows.length }]);
+
+      const [subjectAttendanceStats] = await manager.query(`
+        WITH subject_roster AS (
+          SELECT session.id AS session_id, session.school_id, session.grade_level_id,
+            session.room_id, session.attendance_date, session.period,
+            student.student_uuid, student."AcademicYear_Onec" AS academic_year,
+            student."Semester_Onec" AS semester, teacher.username AS recorded_by,
+            session.submitted_by
+          FROM attendance_sessions session
+          JOIN school_terms term ON term.id = session.school_term_id
+          JOIN student_term student ON student."SchoolID_Onec" = session.school_id
+            AND student."AcademicYear_Onec" = term.academic_year
+            AND student."Semester_Onec" = term.semester
+            AND student."GradeLevelID_Onec" = session.grade_level_id
+            AND student."RoomID_Onec"::int = session.room_id
+            AND student.deleted_at IS NULL
+          JOIN users teacher ON teacher.id = session.submitted_by
+          WHERE session.session_kind = 'SUBJECT'
+            AND session.status = 'SUBMITTED'
+            AND session.deleted_at IS NULL
+        ),
+        scored AS (
+          SELECT subject_roster.*,
+            MOD(ABS(hashtextextended(
+              student_uuid::text || attendance_date::text || period::text,
+              0
+            )), 100) AS subject_roll
+          FROM subject_roster
+        )
+        INSERT INTO attendance (
+          student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
+          "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
+          "AttendanceStatus", "RecordedAt", "RecordedBy", session_id,
+          session_kind, created_by, updated_by
+        )
+        SELECT student_uuid, school_id, grade_level_id, room_id, academic_year,
+          semester, attendance_date, period,
+          CASE
+            WHEN subject_roll < 6 THEN 2
+            WHEN subject_roll < 12 THEN 3
+            WHEN subject_roll < 16 THEN 4
+            ELSE 1
+          END,
+          attendance_date + TIME '15:00', recorded_by, session_id,
+          'SUBJECT', submitted_by, submitted_by
+        FROM scored
+        ON CONFLICT (student_uuid, "AttendanceDate", "Period")
+          WHERE session_kind = 'SUBJECT'
+        DO UPDATE SET
+          "AttendanceStatus" = EXCLUDED."AttendanceStatus",
+          "RecordedAt" = EXCLUDED."RecordedAt",
+          "RecordedBy" = EXCLUDED."RecordedBy",
+          session_id = EXCLUDED.session_id,
+          created_by = EXCLUDED.created_by,
+          updated_by = EXCLUDED.updated_by
+        RETURNING "AttendanceID"
+      `).then((rows) => [{ records: rows.length }]);
+
+      return {
+        dailySessions: sessionStats.sessions,
+        dailyRecords: attendanceStats.records,
+        profileTermGpas: Number(gpaStats.term_profiles ?? 0),
+        profileCumulativeGpaxes: Number(gpaStats.cumulative_profiles ?? 0),
+        subjectSessions: subjectSessionStats.sessions,
+        subjectRecords: subjectAttendanceStats.records,
+      };
     });
 
     let profilesUpdated = null;

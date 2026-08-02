@@ -63,6 +63,9 @@ export class StudentTermEntity {
   @Column({ name: 'GPAX_Onec', type: 'real', nullable: true })
   gpaxOnec!: number | null;
 
+  @Column({ name: 'term_gpa', type: 'numeric', precision: 4, scale: 2, nullable: true })
+  termGpa!: string | null;
+
   @Column({ name: 'StudentStatusID_Onec', type: 'integer', nullable: true })
   studentStatusIdOnec!: number | null;
 

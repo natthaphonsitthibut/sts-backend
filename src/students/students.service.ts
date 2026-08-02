@@ -172,7 +172,12 @@ function buildPaginationMeta(page: number, limit: number, totalCount: number) {
 function isOwnOnlyStudentActor(
   actor?: AuthenticatedRequestUser,
 ): actor is AuthenticatedRequestUser {
-  return Boolean(actor?.roles.includes('STUDENT') && actor.data_scope?.own_only);
+  return Boolean(
+    actor?.auth_source === 'THAID_MOCK' &&
+    actor.virtual_login === true &&
+    actor.permissions.includes('student-self') &&
+    actor.data_scope?.own_only,
+  );
 }
 
 function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
@@ -555,6 +560,114 @@ export class StudentsService {
       this.logger.error(`findAttendanceByStudentId error: ${resolvedError.message}`);
       throw error;
     }
+  }
+
+  async getStudentProfileSummary(
+    id: string,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+  ) {
+    if (isRestrictedExecutive(actor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
+    }
+    await this.assertOwnStudentAccess(id, actor);
+    const student = await this.studentsRepository.findStudentById(id, userScope);
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    const [summary, calendarRows] = await Promise.all([
+      this.studentsRepository.findStudentProfileSummary(id),
+      this.studentsRepository.listStudentAttendanceCalendar(id),
+    ]);
+    if (!summary) {
+      throw new NotFoundException('Student profile summary not found');
+    }
+
+    const counts = {
+      present: Number(summary.present_count) || 0,
+      absent: Number(summary.absent_count) || 0,
+      late: Number(summary.late_count) || 0,
+      leave: Number(summary.leave_count) || 0,
+      total: Number(summary.total_count) || 0,
+    };
+    const measuredAttendanceTotal = Math.max(0, counts.total - counts.leave);
+    const attendanceRatePercent =
+      measuredAttendanceTotal > 0
+        ? Math.round(((counts.present + counts.late) / measuredAttendanceTotal) * 10_000) / 100
+        : null;
+
+    return {
+      success: true,
+      data: {
+        term: {
+          academicYear: Number(summary.academic_year),
+          semester: Number(summary.semester),
+          startsOn: summary.starts_on,
+          endsOn: summary.ends_on,
+        },
+        grades: {
+          termGpa: summary.term_gpa === null ? null : Number(summary.term_gpa),
+          cumulativeGpax: summary.cumulative_gpax === null ? null : Number(summary.cumulative_gpax),
+        },
+        attendance: {
+          ratePercent: attendanceRatePercent,
+          counts,
+          days: calendarRows.map((row) => ({
+            attendanceCategory: row.attendance_category,
+            attendanceCategoryLabel: row.attendance_category_label,
+            date: row.date,
+            statusCode: Number(row.status_code),
+            statusInternalCode: row.status_internal_code,
+            statusLabel: row.status_label,
+            statusBadgeVariant: row.status_badge_variant,
+          })),
+        },
+      },
+    };
+  }
+
+  async getStudentSubjectAttendance(
+    id: string,
+    date: string,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+  ) {
+    if (isRestrictedExecutive(actor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
+    }
+    await this.assertOwnStudentAccess(id, actor);
+    const student = await this.studentsRepository.findStudentById(id, userScope);
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    const summary = await this.studentsRepository.findStudentProfileSummary(id);
+    if (!summary) {
+      throw new NotFoundException('Student profile summary not found');
+    }
+    if (
+      (summary.starts_on && date < summary.starts_on) ||
+      (summary.ends_on && date > summary.ends_on)
+    ) {
+      throw new BadRequestException('วันที่เลือกอยู่นอกภาคเรียนของนักเรียน');
+    }
+
+    const rows = await this.studentsRepository.listStudentSubjectAttendanceByDate(id, date);
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        date: row.date,
+        period: Number(row.period),
+        subjectCode: row.subject_code,
+        subjectName: row.subject_name,
+        statusCode: Number(row.status_code),
+        statusInternalCode: row.status_internal_code,
+        statusLabel: row.status_label,
+        statusBadgeVariant: row.status_badge_variant,
+        recordedAt: row.recorded_at,
+        recordedBy: row.recorded_by,
+      })),
+    };
   }
 
   async update(

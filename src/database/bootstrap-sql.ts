@@ -1710,12 +1710,21 @@ export const DATABASE_BASELINE_SQL = `
     "GradeLevelID_Onec" INTEGER,
     "RoomID_Onec" INTEGER,
     "GPAX_Onec" REAL,
+    term_gpa NUMERIC(4,2),
     "StudentStatusID_Onec" INTEGER,
     "ProvinceNameThai_Onec" TEXT,
     "DistrictNameThai_Onec" TEXT,
     "SubDistrictNameThai_Onec" TEXT,
     "PostalCode_Onec" VARCHAR(5)
   );
+
+  ALTER TABLE student_term
+    ADD COLUMN IF NOT EXISTS term_gpa NUMERIC(4,2);
+
+  ALTER TABLE student_term DROP CONSTRAINT IF EXISTS chk_student_term_term_gpa;
+  ALTER TABLE student_term
+    ADD CONSTRAINT chk_student_term_term_gpa
+    CHECK (term_gpa IS NULL OR term_gpa BETWEEN 0.00 AND 4.00);
 
   CREATE TABLE IF NOT EXISTS student_exit_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

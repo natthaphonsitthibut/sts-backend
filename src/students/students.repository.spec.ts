@@ -90,6 +90,58 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain("AND a.session_kind = 'DAILY'");
   });
 
+  it('builds the profile summary from current-term subject attendance only', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.findStudentProfileSummary('00000000-0000-4000-8000-000000000001');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain('s.term_gpa');
+    expect(queries[0]).toContain('s."GPAX_Onec" AS cumulative_gpax');
+    expect(queries[0]).toContain('term.starts_on::text AS starts_on');
+    expect(queries[0]).toContain('term.ends_on::text AS ends_on');
+    expect(queries[0]).toContain("attendance.session_kind = 'SUBJECT'");
+    expect(queries[0]).not.toContain("attendance.session_kind = 'DAILY'");
+    expect(queries[0]).toContain('attendance."AcademicYear_Onec" = s."AcademicYear_Onec"');
+  });
+
+  it('classifies calendar days from subject-period attendance without a daily fallback', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.listStudentAttendanceCalendar('00000000-0000-4000-8000-000000000001');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("attendance.session_kind = 'SUBJECT'");
+    expect(queries[0]).not.toContain("attendance.session_kind = 'DAILY'");
+    expect(queries[0]).toContain('GROUP BY attendance."AttendanceDate"');
+    expect(queries[0]).toContain('attendance."AttendanceStatus" <> 4');
+    expect(queries[0]).toContain('WHERE measured_periods > 0');
+    expect(queries[0]).toContain('attendance."AttendanceDate"::text AS date');
+    expect(queries[0]).toContain("THEN 'ALL_PERIODS'");
+    expect(queries[0]).toContain("ELSE 'SOME_PERIODS'");
+    expect(queries[0]).toContain("THEN 'NO_PERIODS'");
+  });
+
+  it('lists subject attendance for one selected date with canonical subject and status data', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.listStudentSubjectAttendanceByDate(
+      '00000000-0000-4000-8000-000000000001',
+      '2026-08-02',
+    );
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("attendance.session_kind = 'SUBJECT'");
+    expect(queries[0]).toContain('attendance."AttendanceDate" = $2::date');
+    expect(queries[0]).toContain('JOIN attendance_record_statuses status');
+    expect(queries[0]).toContain('LEFT JOIN subjects subject');
+    expect(queries[0]).toContain('LEFT JOIN users recorder');
+    expect(queries[0]).toContain('AS recorded_by');
+  });
+
   it('derives the linked account lifecycle instead of exposing raw ACTIVE status', async () => {
     const queries: string[] = [];
     const repository = createRepositoryWithQueryCapture(queries);
@@ -112,6 +164,7 @@ describe('StudentsRepository roster queries', () => {
       'LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid',
     );
     expect(queries[0]).toContain("COALESCE(risk.risk_tier, 'NORMAL') as risk_tier");
+    expect(queries[0]).toContain("assignment.assignment_kind = 'HOMEROOM'");
   });
 
   it('scopes the legacy case-by-name lookup through the linked enrollment', async () => {

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
 import { STUDENT_ENROLLMENT_STATES, STUDENT_RISK_TIER_FILTERS } from '../students.types';
 
 /** Page sizes the student list UI offers; keep in sync with the frontend control. */
@@ -105,4 +105,10 @@ export class GetStudentFilterOptionsQueryDto {
   @IsOptional()
   @IsIn(STUDENT_ENROLLMENT_STATES)
   enrollmentState?: string;
+}
+
+export class GetStudentSubjectAttendanceQueryDto {
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsDateString({ strict: true })
+  date!: string;
 }

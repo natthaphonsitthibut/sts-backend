@@ -1,6 +1,6 @@
 import { hasPermission, type AuthenticatedRequestUser } from '../auth';
 
-export const IMPORT_CATALOG_VERSION = '2026-08-01' as const;
+export const IMPORT_CATALOG_VERSION = '2026-08-02' as const;
 
 export const IMPORT_CATALOG_TARGETS = [
   'school_teacher_membership',
@@ -212,6 +212,12 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
       field('SubDistrictID_Onec', 'รหัสตำบล', false, ['subDistrictId']),
       field('SchoolAdmissionYear_Onec', 'ปีที่เข้าเรียน', false, ['admissionYear'], 'integer'),
       field('GPAX_Onec', 'เกรดเฉลี่ย', false, ['gpax']),
+      field('term_gpa', 'เกรดเฉลี่ยภาคเรียน', false, [
+        'termGpa',
+        'gpa',
+        'เกรดเฉลี่ยเทอมนี้',
+        'เกรดเฉลี่ยภาคเรียน',
+      ]),
       field(
         'AcademicYear_Onec',
         'ปีการศึกษา',

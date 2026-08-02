@@ -14,6 +14,9 @@ describe('StudentsService', () => {
     findCasesByStudentName: jest.Mock;
     findCasesByStudentId: jest.Mock;
     listAttendanceByStudentId: jest.Mock;
+    findStudentProfileSummary: jest.Mock;
+    listStudentAttendanceCalendar: jest.Mock;
+    listStudentSubjectAttendanceByDate: jest.Mock;
     insertPiiAccessEvent: jest.Mock;
     listActiveRevealGroups: jest.Mock;
     updateStudentByUuid: jest.Mock;
@@ -38,6 +41,9 @@ describe('StudentsService', () => {
             findCasesByStudentName: jest.fn(),
             findCasesByStudentId: jest.fn(),
             listAttendanceByStudentId: jest.fn(),
+            findStudentProfileSummary: jest.fn(),
+            listStudentAttendanceCalendar: jest.fn(),
+            listStudentSubjectAttendanceByDate: jest.fn(),
             insertPiiAccessEvent: jest.fn(),
             listActiveRevealGroups: jest.fn(),
             updateStudentByUuid: jest.fn(),
@@ -286,9 +292,11 @@ describe('StudentsService', () => {
     const actor = {
       id: 50,
       username: 'student.self',
-      roles: ['STUDENT'],
+      roles: [],
       permissions: ['student-self'],
       data_scope: { own_only: true },
+      virtual_login: true,
+      auth_source: 'THAID_MOCK' as const,
       student_uuid: studentUuid,
       person_uuid: '10000000-0000-4000-8000-000000000001',
     };
@@ -301,15 +309,121 @@ describe('StudentsService', () => {
     );
   });
 
+  it('returns current-term GPA, cumulative GPAX, and attendance rate from persisted rows', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    studentsRepository.findStudentById.mockResolvedValue({ student_uuid: studentUuid });
+    studentsRepository.findStudentProfileSummary.mockResolvedValue({
+      academic_year: 2569,
+      semester: 1,
+      starts_on: '2026-05-16',
+      ends_on: '2026-10-10',
+      term_gpa: '3.21',
+      cumulative_gpax: 3.42,
+      present_count: 17,
+      absent_count: 1,
+      late_count: 1,
+      leave_count: 1,
+      total_count: 20,
+    });
+    studentsRepository.listStudentAttendanceCalendar.mockResolvedValue([
+      {
+        attendance_category: 'ALL_PERIODS',
+        attendance_category_label: 'เข้าทุกคาบ',
+        date: '2026-08-01',
+        status_code: 1,
+        status_internal_code: 'ALL_PERIODS',
+        status_label: 'เข้าทุกคาบ',
+        status_badge_variant: 'success',
+      },
+    ]);
+
+    await expect(service.getStudentProfileSummary(studentUuid)).resolves.toEqual({
+      success: true,
+      data: {
+        term: {
+          academicYear: 2569,
+          semester: 1,
+          startsOn: '2026-05-16',
+          endsOn: '2026-10-10',
+        },
+        grades: { termGpa: 3.21, cumulativeGpax: 3.42 },
+        attendance: {
+          ratePercent: 94.74,
+          counts: { present: 17, absent: 1, late: 1, leave: 1, total: 20 },
+          days: [
+            {
+              attendanceCategory: 'ALL_PERIODS',
+              attendanceCategoryLabel: 'เข้าทุกคาบ',
+              date: '2026-08-01',
+              statusCode: 1,
+              statusInternalCode: 'ALL_PERIODS',
+              statusLabel: 'เข้าทุกคาบ',
+              statusBadgeVariant: 'success',
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it('rejects a subject-attendance date outside the enrollment term', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    studentsRepository.findStudentById.mockResolvedValue({ student_uuid: studentUuid });
+    studentsRepository.findStudentProfileSummary.mockResolvedValue({
+      starts_on: '2026-05-16',
+      ends_on: '2026-10-10',
+    });
+
+    await expect(
+      service.getStudentSubjectAttendance(studentUuid, '2026-11-01'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(studentsRepository.listStudentSubjectAttendanceByDate).not.toHaveBeenCalled();
+  });
+
+  it('returns the recorded time and teacher for selected-date subject attendance', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    studentsRepository.findStudentById.mockResolvedValue({ student_uuid: studentUuid });
+    studentsRepository.findStudentProfileSummary.mockResolvedValue({
+      starts_on: '2026-05-16',
+      ends_on: '2026-10-10',
+    });
+    studentsRepository.listStudentSubjectAttendanceByDate.mockResolvedValue([
+      {
+        date: '2026-08-02',
+        period: 2,
+        subject_code: 'TH101',
+        subject_name: 'ภาษาไทย',
+        status_code: 1,
+        status_internal_code: 'PRESENT',
+        status_label: 'มาเรียน',
+        status_badge_variant: 'success',
+        recorded_at: '2026-08-02T08:30:00.000Z',
+        recorded_by: 'ครูสมใจ ใจดี',
+      },
+    ]);
+
+    await expect(service.getStudentSubjectAttendance(studentUuid, '2026-08-02')).resolves.toEqual({
+      success: true,
+      data: [
+        expect.objectContaining({
+          recordedAt: '2026-08-02T08:30:00.000Z',
+          recordedBy: 'ครูสมใจ ใจดี',
+        }),
+      ],
+    });
+  });
+
   it('lets a student self-edit contact and guardians but never enrollment fields', async () => {
     const studentUuid = '00000000-0000-4000-8000-000000000001';
     const personUuid = '10000000-0000-4000-8000-000000000001';
     const actor = {
       id: 50,
       username: 'student.self',
-      roles: ['STUDENT'],
+      roles: [],
       permissions: ['student-self'],
       data_scope: { own_only: true },
+      virtual_login: true,
+      auth_source: 'THAID_MOCK' as const,
       student_uuid: studentUuid,
       person_uuid: personUuid,
     };
@@ -350,7 +464,7 @@ describe('StudentsService', () => {
           is_primary: true,
         },
       ],
-      50,
+      null,
     );
     expect(studentsRepository.updateStudentByUuid).not.toHaveBeenCalled();
   });
@@ -418,9 +532,11 @@ describe('StudentsService', () => {
     const actor = {
       id: 50,
       username: 'student.self',
-      roles: ['STUDENT'],
+      roles: [],
       permissions: ['student-self'],
       data_scope: { own_only: true },
+      virtual_login: true,
+      auth_source: 'THAID_MOCK' as const,
       student_uuid: '00000000-0000-4000-8000-000000000001',
       person_uuid: '10000000-0000-4000-8000-000000000001',
     };

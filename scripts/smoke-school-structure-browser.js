@@ -762,6 +762,49 @@ async function main() {
         DIRECTOR_USERNAME,
       ],
     );
+    await dataSource.query(
+      `INSERT INTO attendance (
+         student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
+         "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
+         session_kind, "AttendanceStatus", "RecordedAt", "RecordedBy"
+       )
+       SELECT $1, $2, $3, $4, $5, 1, '2026-07-14', period,
+         'SUBJECT', 1, '2026-07-14T15:00:00+07:00', $6
+       FROM generate_series(1, 6) AS period`,
+      [
+        importedStudent.studentUuid,
+        schoolA.id,
+        grade.id,
+        ROOM_NUMBER,
+        ACADEMIC_YEAR,
+        DIRECTOR_USERNAME,
+      ],
+    );
+    const profileSummaryResponse = await browserRequest(
+      chrome.client,
+      'GET',
+      `/api/students/${importedStudent.studentUuid}/profile-summary`,
+    );
+    assert(
+      profileSummaryResponse.status === 200 &&
+        profileSummaryResponse.payload.data?.term?.startsOn === '2026-06-01' &&
+        profileSummaryResponse.payload.data?.term?.endsOn === '2027-03-31' &&
+        profileSummaryResponse.payload.data?.attendance?.days?.length === 1,
+      `Student profile summary contract drifted: ${profileSummaryResponse.status} ${JSON.stringify(profileSummaryResponse.payload)}`,
+    );
+    const subjectAttendanceResponse = await browserRequest(
+      chrome.client,
+      'GET',
+      `/api/students/${importedStudent.studentUuid}/attendance-subjects?date=2026-07-14`,
+    );
+    assert(
+      subjectAttendanceResponse.status === 200 &&
+        subjectAttendanceResponse.payload.data?.length === 6 &&
+        subjectAttendanceResponse.payload.data.every(
+          (record) => record.recordedAt && record.recordedBy,
+        ),
+      `Student subject-attendance metadata drifted: ${subjectAttendanceResponse.status} ${JSON.stringify(subjectAttendanceResponse.payload)}`,
+    );
 
     const classroomSummaryCases = [
       {
@@ -1230,8 +1273,105 @@ async function main() {
     );
     assert(openedStudentProfile, 'Classroom student profile button was not available');
     await waitFor(
-      async () => (await evaluate(chrome.client, 'location.pathname')).startsWith('/students/'),
-      'Classroom student profile button did not navigate to the student profile',
+      async () => {
+        if (!(await evaluate(chrome.client, 'location.pathname')).startsWith('/students/')) {
+          return false;
+        }
+        const body = await evaluate(chrome.client, 'document.body.innerText');
+        const requiredLabels = [
+          'ข้อมูลนักเรียน',
+          'อัตราการมาเรียน',
+          'เกรดเฉลี่ยเทอมนี้',
+          'เกรดเฉลี่ยรวม',
+          'ประวัติการเข้าเรียน',
+          'เข้าทุกคาบ',
+          'เข้าบางคาบ',
+          'ไม่เข้าเรียน',
+          'บันทึกเมื่อ',
+          'ผู้เช็คชื่อ',
+        ];
+        const missingLabels = requiredLabels.filter((label) => !body.includes(label));
+        if (missingLabels.length > 0) {
+          throw new Error(`missing ${missingLabels.join(', ')}; page=${body.slice(0, 500)}`);
+        }
+        return !body.includes('บัญชีนักเรียน') &&
+          !body.includes('ทบทวนสัญญาณความเสี่ยง');
+      },
+      'Classroom student profile did not render the redesigned profile sections',
+    );
+    const profileActions = await evaluate(
+      chrome.client,
+      `(() => {
+        const calendar = document.querySelector('[data-student-attendance-calendar]');
+        const recordedDay = Array.from(calendar?.querySelectorAll('button[aria-label]') ?? [])
+          .find((button) => button.textContent.trim() === '14');
+        return {
+          contacts: Boolean(document.querySelector('[aria-label="ดูเบอร์ติดต่อนักเรียนและผู้ปกครอง"]')),
+          location: Boolean(document.querySelector('[aria-label="ดูที่อยู่และแผนที่"]')),
+          inlineMap: Boolean(document.querySelector('[data-sts-map-surface]')),
+          recordedDayHasCategory: recordedDay?.getAttribute('aria-label')?.includes('เข้าทุกคาบ') === true,
+          selectedDayHasPrimaryBorder: calendar?.querySelector('[aria-pressed="true"]')?.classList.contains('border-primary') === true,
+        };
+      })()`,
+    );
+    assert(
+      profileActions.contacts &&
+        profileActions.location &&
+        !profileActions.inlineMap &&
+        profileActions.recordedDayHasCategory &&
+        profileActions.selectedDayHasPrimaryBorder,
+      `Student profile actions/calendar styling did not match the BA reference: ${JSON.stringify(profileActions)}`,
+    );
+    const changedCalendarSelection = await evaluate(
+      chrome.client,
+      `(() => {
+        const calendar = document.querySelector('[data-student-attendance-calendar]');
+        const unrecordedDay = Array.from(calendar?.querySelectorAll('button[aria-label]') ?? []).find(
+          (button) => !button.disabled && button.getAttribute('aria-label')?.includes('ไม่มีข้อมูลการเข้าเรียน'),
+        );
+        if (!unrecordedDay) return false;
+        unrecordedDay.click();
+        return true;
+      })()`,
+    );
+    assert(changedCalendarSelection, 'No unrecorded in-term calendar day was available for color verification');
+    await waitFor(
+      async () => evaluate(
+        chrome.client,
+        `Array.from(document.querySelectorAll('[data-student-attendance-calendar] button[aria-label]'))
+          .some((button) => button.textContent.trim() === '14' &&
+            button.classList.contains('bg-success-100') &&
+            button.classList.contains('text-success-700'))`,
+      ),
+      'Recorded subject-attendance day did not show its category color after selection changed',
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="ดูเบอร์ติดต่อนักเรียนและผู้ปกครอง"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'document.body.innerText')).includes(
+          'ช่องทางติดต่อนักเรียนและผู้ปกครอง',
+        ),
+      'Student contact dialog did not open',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('[role="dialog"] button[aria-label="Close dialog"]')).at(-1)?.click()`,
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="ดูที่อยู่และแผนที่"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ที่อยู่และแผนที่'),
+      'Student location dialog did not open',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('[role="dialog"] button[aria-label="Close dialog"]')).at(-1)?.click()`,
     );
     await navigate(chrome.client, `${FRONTEND_URL}/classrooms/${classroom.id}?smoke=${Date.now()}`);
     await waitFor(
@@ -1260,7 +1400,27 @@ async function main() {
         )),
       'Classroom roster sort direction did not change',
     );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('th button')).find((button) => button.textContent.includes('ชื่อ-นามสกุล'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        !(await evaluate(
+          chrome.client,
+          `Array.from(document.querySelectorAll('th')).some((header) => header.getAttribute('aria-sort') && header.textContent.includes('ชื่อ-นามสกุล'))`,
+        )),
+      'Classroom roster sort could not return to the unsorted state',
+    );
     const commentButtonLabel = `เพิ่มความคิดเห็นของ ${importedStudentName}`;
+    await waitFor(
+      async () =>
+        await evaluate(
+          chrome.client,
+          `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${commentButtonLabel}"]`)}))`,
+        ),
+      'Classroom roster did not settle after clearing sort',
+    );
     const openedComment = await evaluate(
       chrome.client,
       `(() => { const button = document.querySelector(${JSON.stringify(`[aria-label="${commentButtonLabel}"]`)}); if (!button) return false; button.click(); return true; })()`,
@@ -1319,6 +1479,31 @@ async function main() {
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('14/07/2569'),
       'Daily classroom attendance summary did not render',
     );
+    const openedExportDialog = await evaluate(
+      chrome.client,
+      `(() => { const button = Array.from(document.querySelectorAll('button')).find((item) => item.textContent.includes('ดาวน์โหลดข้อมูล')); if (!button) return false; button.click(); return true; })()`,
+    );
+    assert(openedExportDialog, 'Attendance export button was not available');
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('เลือกช่วงข้อมูล'),
+      'Attendance export date-range selector did not render',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('input[type="radio"]')).find((input) => input.value === 'CUSTOM')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          chrome.client,
+          `Boolean(document.querySelector('[aria-label="วันเริ่มสำหรับส่งออกข้อมูล"]') && document.querySelector('[aria-label="วันจบสำหรับส่งออกข้อมูล"]'))`,
+        ),
+      'Custom attendance export date pickers did not render',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button')).find((item) => item.textContent.trim() === 'ยกเลิก')?.click()`,
+    );
     const dailySortHeaders = await evaluate(
       chrome.client,
       `Array.from(document.querySelectorAll('th button')).map((button) => button.textContent.trim())`,
@@ -1335,11 +1520,32 @@ async function main() {
     );
     await waitFor(
       async () =>
-        (await evaluate(
+        !(await evaluate(
+          chrome.client,
+          `Array.from(document.querySelectorAll('th')).some((header) => header.getAttribute('aria-sort') && header.textContent.includes('วันที่'))`,
+        )),
+      'Daily attendance sort could not return to the unsorted state',
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          chrome.client,
+          `Array.from(document.querySelectorAll('th button')).some((button) => button.textContent.includes('วันที่'))`,
+        ),
+      'Daily attendance table did not settle after clearing sort',
+    );
+    const restartedDailySort = await evaluate(
+      chrome.client,
+      `(() => { const button = Array.from(document.querySelectorAll('th button')).find((item) => item.textContent.includes('วันที่')); if (!button) return false; button.click(); return true; })()`,
+    );
+    assert(restartedDailySort, 'Daily attendance date sort button was not available');
+    await waitFor(
+      async () =>
+        await evaluate(
           chrome.client,
           `Array.from(document.querySelectorAll('th')).some((header) => header.getAttribute('aria-sort') === 'ascending' && header.textContent.includes('วันที่'))`,
-        )),
-      'Daily attendance sort direction did not change',
+        ),
+      'Daily attendance sort did not start a new ascending cycle',
     );
     const openedDailyDetail = await evaluate(
       chrome.client,

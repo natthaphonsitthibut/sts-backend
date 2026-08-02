@@ -25,7 +25,11 @@ import {
 } from '../auth';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
-import { GetStudentFilterOptionsQueryDto, GetStudentsQueryDto } from './dto/students.dto';
+import {
+  GetStudentFilterOptionsQueryDto,
+  GetStudentsQueryDto,
+  GetStudentSubjectAttendanceQueryDto,
+} from './dto/students.dto';
 import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 
@@ -121,6 +125,30 @@ export class StudentsController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return this.studentsService.findAttendanceByStudentId(id, actor, resolveActorDataScope(actor));
+  }
+
+  @Get(':id/profile-summary')
+  @RequireAnyPermission('students', 'student-self')
+  getStudentProfileSummary(
+    @Param('id') id: string,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return this.studentsService.getStudentProfileSummary(id, actor, resolveActorDataScope(actor));
+  }
+
+  @Get(':id/attendance-subjects')
+  @RequireAnyPermission('students', 'student-self')
+  getStudentSubjectAttendance(
+    @Param('id') id: string,
+    @Query() query: GetStudentSubjectAttendanceQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return this.studentsService.getStudentSubjectAttendance(
+      id,
+      query.date,
+      actor,
+      resolveActorDataScope(actor),
+    );
   }
 
   @Get(':id')

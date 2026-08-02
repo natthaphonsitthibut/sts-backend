@@ -5,6 +5,9 @@ import { queryDataSource } from '../database/sql-query';
 import type {
   PiiAccessEventInput,
   StudentAttendanceRow,
+  StudentAttendanceCalendarRow,
+  StudentProfileSummaryRow,
+  StudentSubjectAttendanceRow,
   StudentCaseRow,
   StudentDetailRow,
   StudentAccountSummaryRow,
@@ -323,6 +326,7 @@ export class StudentsRepository {
         COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
         COALESCE(ss.category, 'UNMAPPED') as student_status_category,
         COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant,
+        homeroom.homeroom_teacher_name,
         -- Latest home-visit case pin wins (most recent on-the-ground
         -- observation); falls back to the student's own confirmed profile
         -- coordinate (student_term.address_latitude/longitude, set via the
@@ -335,6 +339,26 @@ export class StudentsRepository {
       LEFT JOIN student_status ss
         ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
       LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+          teacher.username
+        ) AS homeroom_teacher_name
+        FROM classroom_teacher_assignments assignment
+        JOIN school_teacher_memberships membership
+          ON membership.id = assignment.teacher_membership_id
+         AND membership.school_id = assignment.school_id
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        WHERE assignment.classroom_id = s.classroom_id
+          AND assignment.school_id = s."SchoolID_Onec"
+          AND assignment.assignment_kind = 'HOMEROOM'
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+        ORDER BY assignment.id DESC
+        LIMIT 1
+      ) homeroom ON true
       LEFT JOIN LATERAL (
         SELECT c.student_lat, c.student_lng
         FROM cases c
@@ -742,6 +766,156 @@ export class StudentsRepository {
     query += ' ORDER BY a."AttendanceDate" DESC';
     const result = await this.query<StudentAttendanceRow>(query, params);
 
+    return result.rows;
+  }
+
+  async findStudentProfileSummary(id: string): Promise<StudentProfileSummaryRow | null> {
+    const result = await this.query<StudentProfileSummaryRow>(
+      `
+        SELECT
+          s."AcademicYear_Onec" AS academic_year,
+          s."Semester_Onec" AS semester,
+          term.starts_on::text AS starts_on,
+          term.ends_on::text AS ends_on,
+          s.term_gpa,
+          s."GPAX_Onec" AS cumulative_gpax,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = 1)::int AS present_count,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = 2)::int AS absent_count,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = 3)::int AS late_count,
+          COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = 4)::int AS leave_count,
+          COUNT(attendance."AttendanceID")::int AS total_count
+        FROM student_term s
+        LEFT JOIN school_terms term
+          ON term.school_id = s."SchoolID_Onec"
+         AND term.academic_year = s."AcademicYear_Onec"
+         AND term.semester = s."Semester_Onec"
+         AND term.deleted_at IS NULL
+        LEFT JOIN attendance
+          ON attendance.student_uuid = s.student_uuid
+         AND attendance.session_kind = 'SUBJECT'
+         AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
+         AND attendance."Semester_Onec" = s."Semester_Onec"
+        WHERE s.student_uuid = $1
+        GROUP BY
+          s.student_uuid,
+          s."AcademicYear_Onec",
+          s."Semester_Onec",
+          term.starts_on,
+          term.ends_on,
+          s.term_gpa,
+          s."GPAX_Onec"
+      `,
+      [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listStudentAttendanceCalendar(id: string): Promise<StudentAttendanceCalendarRow[]> {
+    const result = await this.query<StudentAttendanceCalendarRow>(
+      `
+        WITH subject_days AS (
+          SELECT
+            attendance."AttendanceDate"::text AS date,
+            COUNT(*) FILTER (
+              WHERE attendance."AttendanceStatus" <> 4
+            )::int AS measured_periods,
+            COUNT(*) FILTER (
+              WHERE attendance."AttendanceStatus" IN (1, 3)
+            )::int AS attended_periods
+          FROM student_term s
+          JOIN attendance
+            ON attendance.student_uuid = s.student_uuid
+           AND attendance.session_kind = 'SUBJECT'
+           AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
+           AND attendance."Semester_Onec" = s."Semester_Onec"
+          WHERE s.student_uuid = $1
+          GROUP BY attendance."AttendanceDate"
+        )
+        SELECT
+          date,
+          CASE
+            WHEN attended_periods = measured_periods THEN 'ALL_PERIODS'
+            WHEN attended_periods = 0 THEN 'NO_PERIODS'
+            ELSE 'SOME_PERIODS'
+          END AS attendance_category,
+          CASE
+            WHEN attended_periods = measured_periods THEN 'เข้าทุกคาบ'
+            WHEN attended_periods = 0 THEN 'ไม่เข้าเรียน'
+            ELSE 'เข้าบางคาบ'
+          END AS attendance_category_label,
+          CASE
+            WHEN attended_periods = measured_periods THEN 1
+            WHEN attended_periods = 0 THEN 2
+            ELSE 3
+          END AS status_code,
+          CASE
+            WHEN attended_periods = measured_periods THEN 'ALL_PERIODS'
+            WHEN attended_periods = 0 THEN 'NO_PERIODS'
+            ELSE 'SOME_PERIODS'
+          END AS status_internal_code,
+          CASE
+            WHEN attended_periods = measured_periods THEN 'เข้าทุกคาบ'
+            WHEN attended_periods = 0 THEN 'ไม่เข้าเรียน'
+            ELSE 'เข้าบางคาบ'
+          END AS status_label,
+          CASE
+            WHEN attended_periods = measured_periods THEN 'success'
+            WHEN attended_periods = 0 THEN 'danger'
+            ELSE 'warning'
+          END AS status_badge_variant
+        FROM subject_days
+        WHERE measured_periods > 0
+        ORDER BY date ASC
+      `,
+      [id],
+    );
+    return result.rows;
+  }
+
+  async listStudentSubjectAttendanceByDate(
+    id: string,
+    date: string,
+  ): Promise<StudentSubjectAttendanceRow[]> {
+    const result = await this.query<StudentSubjectAttendanceRow>(
+      `
+        SELECT
+          attendance."AttendanceDate"::text AS date,
+          attendance."Period"::int AS period,
+          subject.code AS subject_code,
+          subject.name_th AS subject_name,
+          status.code AS status_code,
+          status.internal_code AS status_internal_code,
+          status.label_th AS status_label,
+          status.badge_variant AS status_badge_variant,
+          attendance."RecordedAt" AS recorded_at,
+          COALESCE(
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+            CASE
+              WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
+              ELSE NULLIF(attendance."RecordedBy", '')
+            END
+          ) AS recorded_by
+        FROM student_term s
+        JOIN attendance
+          ON attendance.student_uuid = s.student_uuid
+         AND attendance.session_kind = 'SUBJECT'
+         AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
+         AND attendance."Semester_Onec" = s."Semester_Onec"
+        JOIN attendance_record_statuses status
+          ON status.code = attendance."AttendanceStatus"
+        LEFT JOIN attendance_sessions session
+          ON session.id = attendance.session_id
+        LEFT JOIN timetable_slots slot
+          ON slot.id = session.timetable_slot_id
+        LEFT JOIN subjects subject
+          ON subject.id = COALESCE(session.subject_id, slot.subject_id)
+        LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
+        WHERE s.student_uuid = $1
+          AND attendance."AttendanceDate" = $2::date
+        ORDER BY attendance."Period" ASC, attendance."AttendanceID" ASC
+      `,
+      [id, date],
+    );
     return result.rows;
   }
 }
