@@ -355,13 +355,19 @@ export class TeacherWatchlistResponseDto {
   schoolName!: string;
   gradeLabel!: string | null;
   roomNo!: number | null;
-  latestObservationId!: string;
-  latestDimensionLabel!: string;
-  latestConcernLevel!: 'NOTE' | 'WATCH' | 'CONCERN';
-  latestComment!: string | null;
+  latestCommentId!: string;
+  latestComment!: string;
   latestAuthorDisplayName!: string;
-  latestObservedAt!: string;
-  observationCount!: number;
+  latestCommentedAt!: string;
+  commentCount!: number;
+}
+
+export class StudentClassroomCommentResponseDto {
+  id!: string;
+  studentTermId!: string;
+  comment!: string;
+  authorDisplayName!: string;
+  commentedAt!: string;
 }
 
 export class HomeVisitRequestReportResponseDto extends StudentFollowUpRequestResponseDto {

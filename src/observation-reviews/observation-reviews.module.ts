@@ -4,6 +4,7 @@ import { TaskModule } from '../task/task.module';
 import {
   HomeVisitRequestReportsController,
   StudentFollowUpRequestsController,
+  StudentClassroomCommentsController,
   StudentRiskReviewController,
   TeacherObservationReportsController,
   TeacherWatchlistController,
@@ -16,6 +17,7 @@ import { ObservationReviewsService } from './observation-reviews.service';
   controllers: [
     StudentRiskReviewController,
     StudentFollowUpRequestsController,
+    StudentClassroomCommentsController,
     TeacherObservationReportsController,
     TeacherWatchlistController,
     HomeVisitRequestReportsController,

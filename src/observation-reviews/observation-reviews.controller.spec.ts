@@ -5,6 +5,7 @@ import { IS_PUBLIC_KEY } from '../auth/public.decorator';
 import {
   HomeVisitRequestReportsController,
   PublicStudentFollowUpRequestsController,
+  StudentClassroomCommentsController,
   StudentFollowUpRequestsController,
   StudentRiskReviewController,
   TeacherObservationReportsController,
@@ -66,6 +67,16 @@ describe('Observation review controller security metadata', () => {
     ]);
     expect(Reflect.getMetadata(PERMISSIONS_KEY, TeacherWatchlistController)).toEqual([
       'review-cases',
+      'manage-student-observations',
+    ]);
+  });
+
+  it('protects classroom comment history with observation-manager permission', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, StudentClassroomCommentsController)).toEqual([
+      AuthGuard,
+      PermissionsGuard,
+    ]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, StudentClassroomCommentsController)).toEqual([
       'manage-student-observations',
     ]);
   });

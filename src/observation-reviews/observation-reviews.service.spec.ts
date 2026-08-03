@@ -124,6 +124,7 @@ describe('ObservationReviewsService', () => {
       reviewFollowUp: jest.fn().mockResolvedValue(true),
       listTeacherObservationReports: jest.fn().mockResolvedValue([]),
       listTeacherWatchlist: jest.fn().mockResolvedValue([]),
+      listStudentClassroomComments: jest.fn().mockResolvedValue([]),
       listHomeVisitRequests: jest.fn().mockResolvedValue([]),
     };
     const auditLog = {
@@ -462,7 +463,7 @@ describe('ObservationReviewsService', () => {
     );
   });
 
-  it('lists the teacher watchlist once per student and audits only aggregate metadata', async () => {
+  it('lists the classroom-comment watchlist once per student and audits only aggregate metadata', async () => {
     const { service, repository, auditLog } = buildService();
     repository.listTeacherWatchlist.mockResolvedValueOnce([
       {
@@ -472,13 +473,11 @@ describe('ObservationReviewsService', () => {
         school_name: 'โรงเรียนทดสอบ',
         grade_label: 'ป.1',
         room_no: 1,
-        latest_observation_id: '9',
-        latest_dimension_label: 'พฤติกรรม',
-        latest_concern_level: 'WATCH',
+        latest_comment_id: '9',
         latest_comment: 'ต้องเฝ้าระวัง',
         latest_author_display_name: 'ครู ทดสอบ',
-        latest_observed_at: '2026-07-15T01:00:00.000Z',
-        observation_count: 3,
+        latest_commented_at: '2026-07-15T01:00:00.000Z',
+        comment_count: 3,
         total_count: 1,
       },
     ]);
@@ -492,14 +491,59 @@ describe('ObservationReviewsService', () => {
     expect(result.data[0]).toMatchObject({
       studentTermId: STUDENT_UUID,
       latestComment: 'ต้องเฝ้าระวัง',
-      observationCount: 3,
+      commentCount: 3,
     });
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({
-        targetType: 'student_observation_watchlist',
+        targetType: 'classroom_student_comment_watchlist',
         metadata: {
           resultCount: 1,
-          operation: 'TEACHER_OBSERVATION_WATCHLIST_VIEW',
+          operation: 'CLASSROOM_STUDENT_COMMENT_WATCHLIST_VIEW',
+        },
+      }),
+    );
+  });
+
+  it('returns the latest classroom comments for a student from the same scoped source', async () => {
+    const { service, repository, auditLog } = buildService();
+    repository.listStudentClassroomComments.mockResolvedValueOnce([
+      {
+        id: '91',
+        student_uuid: STUDENT_UUID,
+        comment: 'ควรติดตามการส่งงาน',
+        author_display_name: 'ครู ทดสอบ',
+        commented_at: '2026-08-03T01:00:00.000Z',
+        total_count: 4,
+      },
+    ]);
+
+    const result = await service.listStudentClassroomComments(STUDENT_UUID, MANAGER);
+
+    expect(repository.listStudentClassroomComments).toHaveBeenCalledWith(
+      { school_ids: [101] },
+      STUDENT_UUID,
+      3,
+    );
+    expect(result).toEqual({
+      data: [
+        {
+          id: '91',
+          studentTermId: STUDENT_UUID,
+          comment: 'ควรติดตามการส่งงาน',
+          authorDisplayName: 'ครู ทดสอบ',
+          commentedAt: '2026-08-03T01:00:00.000Z',
+        },
+      ],
+      meta: { totalCount: 4 },
+    });
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'classroom_student_comments',
+        targetId: STUDENT_UUID,
+        metadata: {
+          resultCount: 1,
+          totalCount: 4,
+          operation: 'STUDENT_CLASSROOM_COMMENTS_VIEW',
         },
       }),
     );

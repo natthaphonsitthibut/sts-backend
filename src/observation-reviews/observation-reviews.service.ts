@@ -35,6 +35,7 @@ import type {
   ListTeacherObservationReportsQueryDto,
   ListTeacherWatchlistQueryDto,
   ReviewFollowUpRequestDto,
+  StudentClassroomCommentResponseDto,
   StudentFollowUpRequestResponseDto,
   TeacherObservationReportResponseDto,
   TeacherWatchlistResponseDto,
@@ -46,6 +47,7 @@ import type {
   ObservationReviewEnrollmentRow,
   ObservationSourceRef,
   RiskReviewRow,
+  StudentClassroomCommentRow,
   TeacherObservationReportRow,
   TeacherWatchlistRow,
   ValidatedObservationSourceRow,
@@ -273,13 +275,23 @@ export class ObservationReviewsService {
       schoolName: row.school_name,
       gradeLabel: row.grade_label,
       roomNo: row.room_no === null ? null : Number(row.room_no),
-      latestObservationId: row.latest_observation_id,
-      latestDimensionLabel: row.latest_dimension_label,
-      latestConcernLevel: row.latest_concern_level,
+      latestCommentId: row.latest_comment_id,
       latestComment: row.latest_comment,
       latestAuthorDisplayName: row.latest_author_display_name,
-      latestObservedAt: new Date(row.latest_observed_at).toISOString(),
-      observationCount: Number(row.observation_count),
+      latestCommentedAt: new Date(row.latest_commented_at).toISOString(),
+      commentCount: Number(row.comment_count),
+    };
+  }
+
+  private toStudentClassroomComment(
+    row: StudentClassroomCommentRow,
+  ): StudentClassroomCommentResponseDto {
+    return {
+      id: row.id,
+      studentTermId: row.student_uuid,
+      comment: row.comment,
+      authorDisplayName: row.author_display_name,
+      commentedAt: new Date(row.commented_at).toISOString(),
     };
   }
 
@@ -328,17 +340,40 @@ export class ObservationReviewsService {
       actorUserId: actor.id,
       actorLabel: actor.username,
       action: 'STUDENT_OBSERVATION_VIEW',
-      targetType: 'student_observation_watchlist',
-      targetId: 'teacher-watchlist',
+      targetType: 'classroom_student_comment_watchlist',
+      targetId: 'classroom-comments',
       metadata: {
         resultCount: data.length,
-        operation: 'TEACHER_OBSERVATION_WATCHLIST_VIEW',
+        operation: 'CLASSROOM_STUDENT_COMMENT_WATCHLIST_VIEW',
       },
       ip: null,
     });
     return {
       data,
       meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+    };
+  }
+
+  async listStudentClassroomComments(studentTermId: string, actor: AuthenticatedRequestUser) {
+    const scope = this.managerQueueScope(actor);
+    const rows = await this.repository.listStudentClassroomComments(scope, studentTermId, 3);
+    const data = rows.map((row) => this.toStudentClassroomComment(row));
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'classroom_student_comments',
+      targetId: studentTermId,
+      metadata: {
+        resultCount: data.length,
+        totalCount: Number(rows[0]?.total_count ?? 0),
+        operation: 'STUDENT_CLASSROOM_COMMENTS_VIEW',
+      },
+      ip: null,
+    });
+    return {
+      data,
+      meta: { totalCount: Number(rows[0]?.total_count ?? 0) },
     };
   }
 

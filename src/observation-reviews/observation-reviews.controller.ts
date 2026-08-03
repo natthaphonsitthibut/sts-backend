@@ -99,6 +99,21 @@ export class TeacherWatchlistController {
 
 @UseGuards(AuthGuard, PermissionsGuard)
 @RequirePermission('manage-student-observations')
+@Controller('api/students/:studentTermId/classroom-comments')
+export class StudentClassroomCommentsController {
+  constructor(private readonly service: ObservationReviewsService) {}
+
+  @Get()
+  list(
+    @Param('studentTermId', ParseUUIDPipe) studentTermId: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listStudentClassroomComments(studentTermId, actor);
+  }
+}
+
+@UseGuards(AuthGuard, PermissionsGuard)
+@RequirePermission('manage-student-observations')
 @Controller('api/student-risk-report/home-visit-requests')
 export class HomeVisitRequestReportsController {
   constructor(private readonly service: ObservationReviewsService) {}

@@ -62,7 +62,7 @@ describe('ObservationReviewsRepository', () => {
     expect(queries[0].sql).not.toContain('UPDATE student_risk_profiles');
   });
 
-  it('lists one latest observation per currently enrolled student within actor scope', async () => {
+  it('lists one latest classroom comment per currently enrolled student within actor scope', async () => {
     const { repository, queries } = buildRepository();
     await repository.listTeacherWatchlist(
       { school_ids: [101] },
@@ -70,10 +70,30 @@ describe('ObservationReviewsRepository', () => {
     );
 
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
-    expect(queries[0].sql).toContain('COUNT(*) OVER (PARTITION BY observation.student_uuid)');
+    expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('enrollment.classroom_id = comment.classroom_id');
+    expect(queries[0].sql).toContain('COUNT(*) OVER (PARTITION BY comment.person_uuid)');
     expect(queries[0].sql).toContain('ROW_NUMBER() OVER');
-    expect(queries[0].sql).toContain('WHERE observation_rank = 1');
+    expect(queries[0].sql).toContain('WHERE comment_rank = 1');
+    expect(queries[0].sql).not.toContain('FROM student_observations observation');
     expect(queries[0].sql).toContain('watchlist.school_id = ANY');
     expect(queries[0].params).toEqual(['%เด็ก%', 101, 'ป.1', '1', [101], 20, 20]);
+  });
+
+  it('lists the latest classroom comments for one current student within actor scope', async () => {
+    const { repository, queries } = buildRepository();
+
+    await repository.listStudentClassroomComments(
+      { school_ids: [101] },
+      '11111111-1111-4111-8111-111111111111',
+      3,
+    );
+
+    expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('enrollment.classroom_id = comment.classroom_id');
+    expect(queries[0].sql).toContain('student_current_enrollment_resolution');
+    expect(queries[0].sql).toContain('enrollment.student_uuid = $1');
+    expect(queries[0].sql).toContain('school.id = ANY');
+    expect(queries[0].params).toEqual(['11111111-1111-4111-8111-111111111111', [101], 3]);
   });
 });

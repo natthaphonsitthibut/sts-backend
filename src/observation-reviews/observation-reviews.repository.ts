@@ -12,6 +12,7 @@ import type {
   ObservationReviewEnrollmentRow,
   ObservationSourceRef,
   RiskReviewRow,
+  StudentClassroomCommentRow,
   TeacherObservationReportRow,
   TeacherWatchlistRow,
   ValidatedObservationSourceRow,
@@ -780,7 +781,7 @@ export class ObservationReviewsRepository {
 
     const result = await queryDataSource<TeacherWatchlistRow>(
       this.dataSource,
-      `WITH ranked_observations AS (
+      `WITH ranked_comments AS (
          SELECT
            enrollment.student_uuid::text,
            trim(concat_ws(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec"))
@@ -794,42 +795,93 @@ export class ObservationReviewsRepository {
            grade.label AS grade_label,
            enrollment.classroom_id::text,
            enrollment."RoomID_Onec" AS room_no,
-           observation.id::text AS latest_observation_id,
-           dimension.label_th AS latest_dimension_label,
-           observation.concern_level AS latest_concern_level,
-           observation.comment AS latest_comment,
+           comment.id::text AS latest_comment_id,
+           comment.comment_text AS latest_comment,
            COALESCE(
-             observation.observer_display_name,
              NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
              author.username
            ) AS latest_author_display_name,
-           observation.observed_at AS latest_observed_at,
-           COUNT(*) OVER (PARTITION BY observation.student_uuid)::int AS observation_count,
+           comment.created_at AS latest_commented_at,
+           COUNT(*) OVER (PARTITION BY comment.person_uuid)::int AS comment_count,
            ROW_NUMBER() OVER (
-             PARTITION BY observation.student_uuid
-             ORDER BY observation.observed_at DESC, observation.id DESC
-           ) AS observation_rank
-         FROM student_observations observation
-         JOIN student_term enrollment ON enrollment.student_uuid = observation.student_uuid
+             PARTITION BY comment.person_uuid
+             ORDER BY comment.created_at DESC, comment.id DESC
+           ) AS comment_rank
+         FROM classroom_student_comments comment
+         JOIN student_term enrollment
+           ON enrollment.person_uuid = comment.person_uuid
+          AND enrollment.classroom_id = comment.classroom_id
          JOIN student_current_enrollment_resolution current_enrollment
            ON current_enrollment.person_uuid = enrollment.person_uuid
           AND current_enrollment.selected_student_uuid = enrollment.student_uuid
           AND current_enrollment.resolution_state = 'ACTIVE'
          JOIN schools school ON school.id = enrollment."SchoolID_Onec"
          LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
-         JOIN users author ON author.id = observation.author_user_id
-         JOIN observation_dimensions dimension
-           ON dimension.id = observation.observation_dimension_id
-         WHERE observation.deleted_at IS NULL
-           AND enrollment.deleted_at IS NULL
+         JOIN users author ON author.id = comment.authored_by_user_id
+         WHERE enrollment.deleted_at IS NULL
        ), watchlist AS (
-         SELECT * FROM ranked_observations WHERE observation_rank = 1
+         SELECT * FROM ranked_comments WHERE comment_rank = 1
        )
        SELECT watchlist.*, COUNT(*) OVER()::int AS total_count
        FROM watchlist
        ${where}
-       ORDER BY watchlist.latest_observed_at DESC, watchlist.latest_observation_id DESC
+       ORDER BY watchlist.latest_commented_at DESC, watchlist.latest_comment_id DESC
        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      params,
+    );
+    return result.rows;
+  }
+
+  async listStudentClassroomComments(
+    scope: DataScope,
+    studentTermId: string,
+    limit: number,
+  ): Promise<StudentClassroomCommentRow[]> {
+    const params: unknown[] = [studentTermId];
+    const scoped = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+        grade: 'enrollment."GradeLevelID_Onec"',
+        room: 'enrollment.classroom_id',
+      },
+      2,
+    );
+    params.push(...scoped.params);
+    params.push(limit);
+    const limitIndex = params.length;
+    const scopeCondition = scoped.sql ? `AND (${scoped.sql})` : '';
+
+    const result = await queryDataSource<StudentClassroomCommentRow>(
+      this.dataSource,
+      `SELECT
+         comment.id::text,
+         enrollment.student_uuid::text,
+         comment.comment_text AS comment,
+         COALESCE(
+           NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
+           author.username
+         ) AS author_display_name,
+         comment.created_at AS commented_at,
+         COUNT(*) OVER()::int AS total_count
+       FROM classroom_student_comments comment
+       JOIN student_term enrollment
+         ON enrollment.person_uuid = comment.person_uuid
+        AND enrollment.classroom_id = comment.classroom_id
+       JOIN student_current_enrollment_resolution current_enrollment
+         ON current_enrollment.person_uuid = enrollment.person_uuid
+        AND current_enrollment.selected_student_uuid = enrollment.student_uuid
+        AND current_enrollment.resolution_state = 'ACTIVE'
+       JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+       JOIN users author ON author.id = comment.authored_by_user_id
+       WHERE enrollment.student_uuid = $1
+         AND enrollment.deleted_at IS NULL
+         ${scopeCondition}
+       ORDER BY comment.created_at DESC, comment.id DESC
+       LIMIT $${limitIndex}`,
       params,
     );
     return result.rows;
