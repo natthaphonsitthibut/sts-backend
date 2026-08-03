@@ -7,6 +7,18 @@ interface CountRow extends Record<string, unknown> {
   count: number | string;
 }
 
+interface UpsertCountRow extends Record<string, unknown> {
+  evaluated: number | string;
+  changed: number | string;
+}
+
+/** How many profiles a recalculation looked at vs actually had to rewrite. */
+export interface RiskRecalculationResult {
+  evaluated: number;
+  changed: number;
+  skipped: number;
+}
+
 const DEFAULT_RISK_PROFILE_THRESHOLDS: RiskDashboardThresholds = {
   lowConsecutiveAbsentDays: 3,
   mediumConsecutiveAbsentDays: 5,
@@ -24,50 +36,52 @@ const DEFAULT_RISK_PROFILE_THRESHOLDS: RiskDashboardThresholds = {
 export class RiskProfileRepository {
   constructor(private readonly dataSource: DataSource) {}
 
-  async getSystemSettingValue(settingKey: string): Promise<string | null> {
-    const result = await queryDataSource<{ setting_value: string }>(
+  /** Loads every risk threshold in one round trip instead of one query per key. */
+  private async getRiskSettingValues(keys: string[]): Promise<Map<string, string>> {
+    const result = await queryDataSource<{ setting_key: string; setting_value: string }>(
       this.dataSource,
-      `SELECT setting_value FROM system_settings WHERE setting_key = $1`,
-      [settingKey],
+      `SELECT setting_key, setting_value FROM system_settings WHERE setting_key = ANY($1::text[])`,
+      [keys],
     );
-    return result.rows[0]?.setting_value ?? null;
+    return new Map(result.rows.map((row) => [row.setting_key, row.setting_value]));
   }
 
   async getRiskThresholds(): Promise<RiskDashboardThresholds> {
-    const [low, medium, high, highAttendancePercent, subjectLateWindowDays, subjectLateWatchCount] =
-      await Promise.all([
-        this.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
-        this.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
-        this.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
-        this.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
-        this.getSystemSettingValue('SUBJECT_RISK_LATE_WINDOW_DAYS'),
-        this.getSystemSettingValue('SUBJECT_RISK_LATE_WATCH_COUNT'),
-      ]);
+    const values = await this.getRiskSettingValues([
+      'CASE_RISK_LOW_ABSENCE_DAYS',
+      'CASE_RISK_MEDIUM_ABSENCE_DAYS',
+      'CASE_RISK_HIGH_ABSENCE_DAYS',
+      'CASE_RISK_HIGH_ATTENDANCE_PERCENT',
+      'SUBJECT_RISK_LATE_WINDOW_DAYS',
+      'SUBJECT_RISK_LATE_WATCH_COUNT',
+    ]);
+    const read = (key: string, fallback: number): number =>
+      this.parsePositiveInteger(values.get(key) ?? null, fallback);
 
     return {
       ...DEFAULT_RISK_PROFILE_THRESHOLDS,
-      lowConsecutiveAbsentDays: this.parsePositiveInteger(
-        low,
+      lowConsecutiveAbsentDays: read(
+        'CASE_RISK_LOW_ABSENCE_DAYS',
         DEFAULT_RISK_PROFILE_THRESHOLDS.lowConsecutiveAbsentDays,
       ),
-      mediumConsecutiveAbsentDays: this.parsePositiveInteger(
-        medium,
+      mediumConsecutiveAbsentDays: read(
+        'CASE_RISK_MEDIUM_ABSENCE_DAYS',
         DEFAULT_RISK_PROFILE_THRESHOLDS.mediumConsecutiveAbsentDays,
       ),
-      highConsecutiveAbsentDays: this.parsePositiveInteger(
-        high,
+      highConsecutiveAbsentDays: read(
+        'CASE_RISK_HIGH_ABSENCE_DAYS',
         DEFAULT_RISK_PROFILE_THRESHOLDS.highConsecutiveAbsentDays,
       ),
-      highAttendancePercent: this.parsePositiveInteger(
-        highAttendancePercent,
+      highAttendancePercent: read(
+        'CASE_RISK_HIGH_ATTENDANCE_PERCENT',
         DEFAULT_RISK_PROFILE_THRESHOLDS.highAttendancePercent,
       ),
-      subjectLateWindowDays: this.parsePositiveInteger(
-        subjectLateWindowDays,
+      subjectLateWindowDays: read(
+        'SUBJECT_RISK_LATE_WINDOW_DAYS',
         DEFAULT_RISK_PROFILE_THRESHOLDS.subjectLateWindowDays,
       ),
-      subjectLateWatchCount: this.parsePositiveInteger(
-        subjectLateWatchCount,
+      subjectLateWatchCount: read(
+        'SUBJECT_RISK_LATE_WATCH_COUNT',
         DEFAULT_RISK_PROFILE_THRESHOLDS.subjectLateWatchCount,
       ),
     };
@@ -76,19 +90,19 @@ export class RiskProfileRepository {
   async recalculateStudents(
     studentUuids: string[],
     thresholds: RiskDashboardThresholds,
-  ): Promise<number> {
+  ): Promise<RiskRecalculationResult> {
     const uniqueStudentUuids = [
       ...new Set(studentUuids.map((value) => value.trim()).filter(Boolean)),
     ];
     if (uniqueStudentUuids.length === 0) {
-      return 0;
+      return { evaluated: 0, changed: 0, skipped: 0 };
     }
     return await this.upsertProfiles(thresholds, 'WHERE s.student_uuid = ANY($11::uuid[])', [
       uniqueStudentUuids,
     ]);
   }
 
-  async recalculateAll(thresholds: RiskDashboardThresholds): Promise<number> {
+  async recalculateAll(thresholds: RiskDashboardThresholds): Promise<RiskRecalculationResult> {
     return await this.upsertProfiles(thresholds, '', []);
   }
 
@@ -109,6 +123,30 @@ export class RiskProfileRepository {
     return Number.parseInt(String(result.rows[0]?.count ?? '0'), 10);
   }
 
+  /**
+   * Active enrollments that have no profile row yet, capped so startup repair and
+   * reconciliation stay bounded instead of scanning/rewriting the whole table.
+   */
+  async listMissingActiveProfileStudentUuids(limit: number): Promise<string[]> {
+    const result = await queryDataSource<{ student_uuid: string }>(
+      this.dataSource,
+      `
+        SELECT s.student_uuid::text
+        FROM student_term s
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = s.person_uuid
+         AND current_enrollment.selected_student_uuid = s.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
+        LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
+        WHERE profile.student_uuid IS NULL
+        ORDER BY s.student_uuid
+        LIMIT $1
+      `,
+      [limit],
+    );
+    return result.rows.map((row) => row.student_uuid);
+  }
+
   private parsePositiveInteger(value: string | null, fallback: number): number {
     const parsed = value ? Number.parseInt(value, 10) : fallback;
     return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -118,7 +156,7 @@ export class RiskProfileRepository {
     thresholds: RiskDashboardThresholds,
     selectedWhereSql: string,
     extraParams: unknown[],
-  ): Promise<number> {
+  ): Promise<RiskRecalculationResult> {
     const params: unknown[] = [
       thresholds.lowConsecutiveAbsentDays,
       thresholds.mediumConsecutiveAbsentDays,
@@ -132,7 +170,7 @@ export class RiskProfileRepository {
       thresholds.subjectLateWatchCount,
       ...extraParams,
     ];
-    const result = await queryDataSource<CountRow>(
+    const result = await queryDataSource<UpsertCountRow>(
       this.dataSource,
       `
         WITH selected_students AS (
@@ -440,12 +478,46 @@ export class RiskProfileRepository {
             profile_calculated_at = EXCLUDED.profile_calculated_at,
             source_updated_at = EXCLUDED.source_updated_at,
             updated_at = now()
+          -- Only rewrite the row when a domain metric or the source watermark
+          -- actually moved. Without this every recalculation rewrote all 5,980
+          -- rows (profile_calculated_at/updated_at = now()), which is what drove
+          -- the write amplification, table/index bloat and autovacuum churn.
+          WHERE
+            student_risk_profiles.school_id IS DISTINCT FROM EXCLUDED.school_id
+            OR student_risk_profiles.grade_level_id IS DISTINCT FROM EXCLUDED.grade_level_id
+            OR student_risk_profiles.room_id IS DISTINCT FROM EXCLUDED.room_id
+            OR student_risk_profiles.academic_year IS DISTINCT FROM EXCLUDED.academic_year
+            OR student_risk_profiles.semester IS DISTINCT FROM EXCLUDED.semester
+            OR student_risk_profiles.consecutive_absent_days
+                 IS DISTINCT FROM EXCLUDED.consecutive_absent_days
+            OR student_risk_profiles.absent_days IS DISTINCT FROM EXCLUDED.absent_days
+            OR student_risk_profiles.late_count IS DISTINCT FROM EXCLUDED.late_count
+            OR student_risk_profiles.subject_late_count
+                 IS DISTINCT FROM EXCLUDED.subject_late_count
+            OR student_risk_profiles.school_day_count IS DISTINCT FROM EXCLUDED.school_day_count
+            OR student_risk_profiles.weighted_absence_days
+                 IS DISTINCT FROM EXCLUDED.weighted_absence_days
+            OR student_risk_profiles.weighted_attendance_percent
+                 IS DISTINCT FROM EXCLUDED.weighted_attendance_percent
+            OR student_risk_profiles.risk_tier IS DISTINCT FROM EXCLUDED.risk_tier
+            OR student_risk_profiles.risk_severity IS DISTINCT FROM EXCLUDED.risk_severity
+            OR student_risk_profiles.risk_score IS DISTINCT FROM EXCLUDED.risk_score
+            OR student_risk_profiles.open_case_count IS DISTINCT FROM EXCLUDED.open_case_count
+            OR student_risk_profiles.latest_open_case_id
+                 IS DISTINCT FROM EXCLUDED.latest_open_case_id
+            OR student_risk_profiles.latest_open_task_id
+                 IS DISTINCT FROM EXCLUDED.latest_open_task_id
+            OR student_risk_profiles.source_updated_at IS DISTINCT FROM EXCLUDED.source_updated_at
           RETURNING student_uuid
         )
-        SELECT COUNT(*)::int AS count FROM upserted
+        SELECT
+          (SELECT COUNT(*) FROM scored)::int AS evaluated,
+          (SELECT COUNT(*) FROM upserted)::int AS changed
       `,
       params,
     );
-    return Number.parseInt(String(result.rows[0]?.count ?? '0'), 10);
+    const evaluated = Number.parseInt(String(result.rows[0]?.evaluated ?? '0'), 10);
+    const changed = Number.parseInt(String(result.rows[0]?.changed ?? '0'), 10);
+    return { evaluated, changed, skipped: Math.max(0, evaluated - changed) };
   }
 }
