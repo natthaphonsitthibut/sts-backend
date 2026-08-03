@@ -333,6 +333,14 @@ export class TaskLifecycleService {
     if (taskType === 'LOGIN' && !assignedEmail) {
       throw new Error('assigned_to_email is required for LOGIN');
     }
+    // Per-classroom attendance links are retired in favour of per-teacher links
+    // (teacher_access_grants). Existing ATTENDANCE tasks stay readable, but no
+    // new one may be created through this endpoint.
+    if (taskType === 'ATTENDANCE') {
+      throw new BadRequestException(
+        'ลิงก์เช็คชื่อรายห้องถูกยกเลิกแล้ว กรุณาใช้ลิงก์เช็คชื่อของครูที่หน้าจัดการลิงก์เช็คชื่อ',
+      );
+    }
 
     this.taskPolicyService.assertCanCreateTask(currentActor, taskType);
 

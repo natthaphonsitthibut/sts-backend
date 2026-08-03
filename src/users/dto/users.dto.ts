@@ -4,6 +4,7 @@ import {
   Allow,
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
@@ -41,6 +42,14 @@ export class GetUsersQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
   @IsString()
   excludeRole?: string;
+
+  @IsOptional()
+  @IsIn(['name', 'role', 'affiliation'])
+  sortBy?: 'name' | 'role' | 'affiliation';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
 
   @IsOptional()
   @IsString()
@@ -207,6 +216,15 @@ export class CreateUserDto {
 }
 
 export class UpdateUserDto extends PartialType(CreateUserDto) {}
+
+export class UpdateUserPhotoDto {
+  // Multipart form fields arrive as strings, so the flag needs coercing before
+  // @IsBoolean sees it.
+  @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  removePhoto?: boolean;
+}
 
 function trimOptionalText(value: unknown): unknown {
   if (typeof value !== 'string') {

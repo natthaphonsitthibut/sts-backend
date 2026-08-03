@@ -72,6 +72,25 @@ function isDocx(buffer: Buffer): boolean {
   return archiveText.includes('[Content_Types].xml') && archiveText.includes('word/');
 }
 
+/**
+ * Curriculum learning-content upload (`เนื้อหาสาระการเรียนรู้`). PDF only, and the
+ * magic bytes must agree with the declared MIME so a renamed executable cannot
+ * ride in on `application/pdf`.
+ */
+export async function processCurriculumPdf(
+  file: Express.Multer.File,
+  storage: FileStorageAdapter,
+  directory = 'curriculum-content',
+): Promise<string> {
+  if (file.mimetype !== 'application/pdf' || !startsWith(file.buffer, PDF_SIGNATURE)) {
+    throw new BadRequestException('รองรับเฉพาะไฟล์ PDF เท่านั้น');
+  }
+  const filename = `${randomBytes(16).toString('hex')}.pdf`;
+  const storageKey = `${directory.replace(/^\/+|\/+$/g, '')}/${filename}`;
+  await storage.save(file.buffer, storageKey);
+  return storageKey;
+}
+
 export async function processVisitAttachment(
   file: Express.Multer.File,
   storage: FileStorageAdapter,

@@ -69,6 +69,7 @@ export interface HydratableUserRow extends Record<string, unknown> {
   phone: string | null;
   email: string | null;
   affiliation: string | null;
+  photo_storage_key?: string | null;
   line_id?: string | null;
   address_line?: string | null;
   address_village_no?: string | null;

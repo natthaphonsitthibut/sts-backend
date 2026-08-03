@@ -1,11 +1,17 @@
+import * as crypto from 'crypto';
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   ConflictException,
   ForbiddenException,
   GoneException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 import {
@@ -24,12 +30,24 @@ import {
   resolvePage,
 } from '../common/pagination/pagination.util';
 import { generateToken, hashToken } from '../common/utils/helpers';
-import { getBangkokDateString } from '../common/utils/date.util';
+import { getBangkokDateString, getIsoDayOfWeekFromDateString } from '../common/utils/date.util';
 import { AutomationService } from '../automation/automation.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
+import { StudentsService } from '../students/students.service';
+import { StudentObservationsService } from '../student-observations/student-observations.service';
 import { createSqlQueryExecutor } from '../database/sql-query';
 import {
+  FILE_STORAGE_ADAPTER,
+  type FileServeResult,
+  type FileStorageAdapter,
+} from '../files/storage/file-storage.types';
+import { processImageUpload } from '../common/file-upload/visit-photo.util';
+import { EmailService } from '../common/email/email.service';
+import { MagicSessionStoreService } from '../auth/magic-session-store.service';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
+import {
+  TEACHER_ACCESS_ATTENDANCE_CAPABILITY,
   TEACHER_ACCESS_LINK_PATH,
   TEACHER_ACCESS_EXPIRY_POLICIES,
   TEACHER_ACCESS_SETTING_KEYS,
@@ -40,9 +58,12 @@ import {
 } from './teacher-access.constants';
 import type {
   IssueTeacherAccessGrantDto,
+  IssueTeacherAccessGrantsForTermDto,
   ListTeacherAccessGrantsDto,
+  ListTeacherLinkRosterDto,
   SaveTeacherAccessAttendanceDto,
 } from './dto/teacher-access.dto';
+import { TeacherAccessOtpStore } from './teacher-access-otp.store';
 import { TeacherAccessRepository } from './teacher-access.repository';
 import type {
   ActiveTeacherGrantContext,
@@ -56,6 +77,10 @@ interface ActiveGrantOperationOptions {
   assignmentId?: number;
   studentUuid?: string;
   operation: string;
+  /** Skip the success-side touch/audit for a read-only preflight that is immediately rechecked. */
+  recordSuccessfulUse?: boolean;
+  /** OTP-verified session presented by the caller, when the grant demands one. */
+  sessionToken?: string;
 }
 
 @Injectable()
@@ -68,6 +93,17 @@ export class TeacherAccessService {
     private readonly attendanceWriteService: AttendanceWriteService,
     private readonly automationService: AutomationService,
     private readonly riskProfileService: RiskProfileService,
+    private readonly tokenEncryption: TokenEncryptionService,
+    private readonly emailService: EmailService,
+    private readonly otpStore: TeacherAccessOtpStore,
+    private readonly magicSessionStore: MagicSessionStoreService,
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage: FileStorageAdapter,
+    private readonly studentsService: StudentsService,
+    // Observations depend on teacher-access for the link flows, so the two
+    // services reference each other — resolved lazily on this side.
+    @Inject(forwardRef(() => StudentObservationsService))
+    private readonly studentObservations: StudentObservationsService,
   ) {}
 
   private resolveIssuerScope(actor: AuthenticatedRequestUser): DataScope {
@@ -142,8 +178,9 @@ export class TeacherAccessService {
 
   private toAssignment(row: TeacherAccessAssignmentRow, capabilities: TeacherAccessCapability[]) {
     const allowedActions: TeacherAccessCapability[] = [];
-    if (row.assignment_kind === 'HOMEROOM' && capabilities.includes('HOMEROOM_ATTENDANCE')) {
-      allowedActions.push('HOMEROOM_ATTENDANCE');
+    const attendance = this.attendanceCapability(row.assignment_kind);
+    if (capabilities.includes(attendance)) {
+      allowedActions.push(attendance);
     }
     if (row.assignment_kind === 'SUBJECT' && capabilities.includes('TEACHER_OBSERVATION')) {
       allowedActions.push('TEACHER_OBSERVATION');
@@ -155,6 +192,11 @@ export class TeacherAccessService {
       gradeLabel: row.grade_label,
       roomCode: row.room_code,
       roomName: row.room_name,
+      cardCoverColor: row.card_cover_color,
+      hasCoverImage: Boolean(row.has_cover_image),
+      coverImagePositionX: Number(row.cover_image_position_x),
+      coverImagePositionY: Number(row.cover_image_position_y),
+      coverImageScale: Number(row.cover_image_scale),
       assignmentKind: row.assignment_kind,
       subjectId: row.subject_id,
       subjectCode: row.subject_code,
@@ -200,10 +242,35 @@ export class TeacherAccessService {
     if (!value || !TEACHER_ACCESS_STEP_UP_POLICIES.includes(value as TeacherAccessStepUpPolicy)) {
       throw new ConflictException('การตั้งค่านโยบายยืนยันตัวตนของลิงก์ครูไม่ถูกต้อง');
     }
-    if (value !== 'NONE') {
+    if (value === 'THAID') {
       throw new ConflictException('นโยบายยืนยันตัวตนที่ตั้งไว้ยังไม่รองรับการใช้งาน');
     }
-    return value;
+    return value as TeacherAccessStepUpPolicy;
+  }
+
+  /** Attendance capability implied by an assignment kind. */
+  private attendanceCapability(
+    kind: TeacherAccessAssignmentRow['assignment_kind'],
+  ): TeacherAccessCapability {
+    return TEACHER_ACCESS_ATTENDANCE_CAPABILITY[kind];
+  }
+
+  /**
+   * A teacher link covers everything that teacher is assigned this term — the
+   * admin screen does not pick capabilities per link any more, so they are
+   * derived from the assignments themselves.
+   */
+  private capabilitiesForAssignments(
+    assignments: TeacherAccessAssignmentRow[],
+  ): TeacherAccessCapability[] {
+    const capabilities = new Set<TeacherAccessCapability>();
+    for (const assignment of assignments) {
+      capabilities.add(this.attendanceCapability(assignment.assignment_kind));
+      if (assignment.assignment_kind === 'SUBJECT') {
+        capabilities.add('TEACHER_OBSERVATION');
+      }
+    }
+    return [...capabilities].sort();
   }
 
   private assignmentActiveToday(row: TeacherAccessAssignmentRow): boolean {
@@ -216,51 +283,135 @@ export class TeacherAccessService {
     );
   }
 
-  private assertIssueAssignments(
-    detail: { schoolId: number; termId: number; membershipId: number },
-    assignments: TeacherAccessAssignmentRow[],
-    capabilities: TeacherAccessCapability[],
-    expectedCount: number,
-  ): void {
-    if (assignments.length !== expectedCount) {
-      throw new BadRequestException('ไม่พบ assignment บางรายการ');
+  /** Term row every issue path validates before writing a grant. */
+  private async loadIssuableTerm(
+    schoolTermId: number,
+    actor: AuthenticatedRequestUser,
+    queryRunner: QueryRunner,
+  ) {
+    const term = await this.repository.findTermForIssue(schoolTermId, queryRunner);
+    if (!term) throw new NotFoundException('ไม่พบภาคเรียน');
+    await this.assertSchoolAccess(term.school_id, actor);
+    if (term.status !== 'ACTIVE') {
+      throw new ConflictException('ออกลิงก์ได้เฉพาะภาคเรียนที่เปิดใช้งาน');
     }
-    for (const assignment of assignments) {
-      if (
-        assignment.school_id !== detail.schoolId ||
-        Number(assignment.school_term_id) !== detail.termId ||
-        Number(assignment.teacher_membership_id) !== detail.membershipId
-      ) {
-        throw new BadRequestException('assignment ไม่ตรงกับครู โรงเรียน หรือภาคเรียนที่เลือก');
-      }
-      if (!this.assignmentActiveToday(assignment)) {
-        throw new BadRequestException('assignment บางรายการไม่ได้เปิดใช้งานในปัจจุบัน');
-      }
-      if (
-        assignment.assignment_kind === 'HOMEROOM' &&
-        !capabilities.includes('HOMEROOM_ATTENDANCE')
-      ) {
-        throw new BadRequestException('assignment ครูประจำห้องต้องมีสิทธิ์เช็คชื่อ');
-      }
-      if (
-        assignment.assignment_kind === 'SUBJECT' &&
-        !capabilities.includes('TEACHER_OBSERVATION')
-      ) {
-        throw new BadRequestException('assignment รายวิชาต้องมีสิทธิ์บันทึกข้อสังเกต');
-      }
+    if (!term.ends_on) {
+      throw new ConflictException('ภาคเรียนต้องกำหนดวันสิ้นสุดก่อนออกลิงก์');
     }
+    return { ...term, ends_on: term.ends_on };
+  }
+
+  /**
+   * Issues one grant. Capabilities and assignments are no longer chosen by the
+   * admin: a teacher link simply covers every class that teacher currently
+   * teaches in the term, and expires with the term.
+   */
+  private async createGrantForMembership(
+    input: {
+      teacherMembershipId: number;
+      schoolId: number;
+      schoolTermId: number;
+      termExpiry: Date;
+      expiresAt?: string;
+      assignments: TeacherAccessAssignmentRow[];
+      expiryPolicy: TeacherAccessExpiryPolicy;
+      stepUpPolicy: TeacherAccessStepUpPolicy;
+      actor: AuthenticatedRequestUser;
+      actorId: number;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<{ detail: TeacherAccessGrantDetail; rawToken: string }> {
+    const membership = await this.repository.findMembershipForIssue(
+      input.teacherMembershipId,
+      queryRunner,
+    );
     if (
-      capabilities.includes('HOMEROOM_ATTENDANCE') &&
-      !assignments.some((assignment) => assignment.assignment_kind === 'HOMEROOM')
+      !membership ||
+      membership.membership_status !== 'ACTIVE' ||
+      membership.teacher_status !== 'ACTIVE'
     ) {
-      throw new BadRequestException('สิทธิ์เช็คชื่อต้องมี assignment ครูประจำห้อง');
+      throw new BadRequestException('ครูไม่ได้อยู่ในรายชื่อครูที่เปิดใช้งาน');
     }
-    if (
-      capabilities.includes('TEACHER_OBSERVATION') &&
-      !assignments.some((assignment) => assignment.assignment_kind === 'SUBJECT')
-    ) {
-      throw new BadRequestException('สิทธิ์บันทึกข้อสังเกตต้องมี assignment รายวิชา');
+    if (membership.school_id !== input.schoolId) {
+      throw new BadRequestException('ครูและภาคเรียนต้องอยู่โรงเรียนเดียวกัน');
     }
+    if (input.assignments.length === 0) {
+      throw new BadRequestException('ครูคนนี้ยังไม่มีห้องหรือรายวิชาในภาคเรียนนี้');
+    }
+
+    const capabilities = this.capabilitiesForAssignments(input.assignments);
+    const assignmentIds = input.assignments.map((assignment) => Number(assignment.assignment_id));
+    const defaultExpiry = this.resolveDefaultExpiry(
+      input.expiryPolicy,
+      input.termExpiry,
+      input.assignments,
+    );
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : defaultExpiry;
+    if (expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('วันหมดอายุต้องอยู่ในอนาคต');
+    }
+    if (expiresAt.getTime() > input.termExpiry.getTime()) {
+      throw new BadRequestException('ลิงก์ต้องไม่หมดอายุหลังสิ้นสุดภาคเรียน');
+    }
+
+    const rawToken = generateToken();
+    const grantId = await this.repository.createGrant(
+      {
+        teacherMembershipId: input.teacherMembershipId,
+        schoolId: input.schoolId,
+        schoolTermId: input.schoolTermId,
+        tokenHash: hashToken(rawToken),
+        tokenEncrypted: this.tokenEncryption.encrypt(rawToken),
+        stepUpPolicy: input.stepUpPolicy,
+        issuedBy: input.actorId,
+        expiresAt,
+        capabilities,
+        assignmentIds,
+      },
+      queryRunner,
+    );
+    const detail = await this.repository.getGrantDetail(grantId, queryRunner);
+    if (!detail) throw new ConflictException('สร้างลิงก์ไม่สำเร็จ');
+    await this.auditLog.recordAtomic(
+      {
+        actorUserId: input.actorId,
+        actorLabel: input.actor.username,
+        action: 'TEACHER_ACCESS_GRANT_ISSUE',
+        targetType: 'teacher_access_grants',
+        targetId: grantId,
+        metadata: {
+          schoolId: input.schoolId,
+          schoolName: detail.grant.school_name,
+          teacherName: detail.grant.teacher_display_name,
+          teacherMembershipId: input.teacherMembershipId,
+          schoolTermId: input.schoolTermId,
+          assignmentIds,
+          capabilities,
+          stepUpPolicy: input.stepUpPolicy,
+          expiresAt: expiresAt.toISOString(),
+        },
+        ip: null,
+      },
+      queryRunner,
+    );
+    return { detail, rawToken };
+  }
+
+  private async loadIssuePolicies(queryRunner: QueryRunner) {
+    return {
+      expiryPolicy: this.parseExpiryPolicy(
+        await this.repository.getSystemSettingValue(
+          TEACHER_ACCESS_SETTING_KEYS.expiryPolicy,
+          queryRunner,
+        ),
+      ),
+      stepUpPolicy: this.parseStepUpPolicy(
+        await this.repository.getSystemSettingValue(
+          TEACHER_ACCESS_SETTING_KEYS.stepUpPolicy,
+          queryRunner,
+        ),
+      ),
+    };
   }
 
   async issueGrant(
@@ -268,119 +419,184 @@ export class TeacherAccessService {
     actor: AuthenticatedRequestUser,
     baseUrl: string,
   ) {
-    const rawToken = generateToken();
-    const tokenHash = hashToken(rawToken);
     const actorId = resolveAuditActorId(actor);
     if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ออกลิงก์');
 
     const result = await this.repository.withTransaction(async (queryRunner) => {
-      const term = await this.repository.findTermForIssue(dto.schoolTermId, queryRunner);
-      if (!term) throw new NotFoundException('ไม่พบภาคเรียน');
-      await this.assertSchoolAccess(term.school_id, actor);
-      if (term.status !== 'ACTIVE') {
-        throw new ConflictException('ออกลิงก์ได้เฉพาะภาคเรียนที่เปิดใช้งาน');
-      }
-      if (!term.ends_on) {
-        throw new ConflictException('ภาคเรียนต้องกำหนดวันสิ้นสุดก่อนออกลิงก์');
-      }
-      const termExpiry = this.resolveTermExpiry(term.ends_on);
-
-      const membership = await this.repository.findMembershipForIssue(
-        dto.teacherMembershipId,
-        queryRunner,
-      );
-      if (
-        !membership ||
-        membership.membership_status !== 'ACTIVE' ||
-        membership.teacher_status !== 'ACTIVE'
-      ) {
-        throw new BadRequestException('ครูไม่ได้อยู่ในรายชื่อครูที่เปิดใช้งาน');
-      }
-      if (membership.school_id !== term.school_id) {
-        throw new BadRequestException('ครูและภาคเรียนต้องอยู่โรงเรียนเดียวกัน');
-      }
-      const assignments = await this.repository.listAssignmentsForIssue(
-        dto.assignmentIds,
-        queryRunner,
-      );
-      this.assertIssueAssignments(
+      const term = await this.loadIssuableTerm(dto.schoolTermId, actor, queryRunner);
+      const policies = await this.loadIssuePolicies(queryRunner);
+      const assignments = await this.repository.listAssignmentOptions(
         {
           schoolId: term.school_id,
-          termId: dto.schoolTermId,
-          membershipId: dto.teacherMembershipId,
+          schoolTermId: dto.schoolTermId,
+          teacherMembershipIds: [dto.teacherMembershipId],
+          onDate: getBangkokDateString(),
         },
-        assignments,
-        dto.capabilities,
-        dto.assignmentIds.length,
+        queryRunner,
       );
-
-      const expiryPolicy = this.parseExpiryPolicy(
-        await this.repository.getSystemSettingValue(
-          TEACHER_ACCESS_SETTING_KEYS.expiryPolicy,
-          queryRunner,
-        ),
-      );
-      const stepUpPolicy = this.parseStepUpPolicy(
-        await this.repository.getSystemSettingValue(
-          TEACHER_ACCESS_SETTING_KEYS.stepUpPolicy,
-          queryRunner,
-        ),
-      );
-      const defaultExpiry = this.resolveDefaultExpiry(expiryPolicy, termExpiry, assignments);
-      const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : defaultExpiry;
-      if (expiresAt.getTime() <= Date.now()) {
-        throw new BadRequestException('วันหมดอายุต้องอยู่ในอนาคต');
-      }
-      if (expiresAt.getTime() > termExpiry.getTime()) {
-        throw new BadRequestException('ลิงก์ต้องไม่หมดอายุหลังสิ้นสุดภาคเรียน');
-      }
-
-      const grantId = await this.repository.createGrant(
+      return await this.createGrantForMembership(
         {
           teacherMembershipId: dto.teacherMembershipId,
           schoolId: term.school_id,
           schoolTermId: dto.schoolTermId,
-          tokenHash,
-          stepUpPolicy,
-          issuedBy: actorId,
-          expiresAt,
-          capabilities: dto.capabilities,
-          assignmentIds: dto.assignmentIds,
+          termExpiry: this.resolveTermExpiry(term.ends_on),
+          expiresAt: dto.expiresAt,
+          assignments,
+          ...policies,
+          actor,
+          actorId,
         },
         queryRunner,
       );
-      const detail = await this.repository.getGrantDetail(grantId, queryRunner);
-      if (!detail) throw new ConflictException('สร้างลิงก์ไม่สำเร็จ');
-      await this.auditLog.recordAtomic(
-        {
-          actorUserId: actorId,
-          actorLabel: actor.username,
-          action: 'TEACHER_ACCESS_GRANT_ISSUE',
-          targetType: 'teacher_access_grants',
-          targetId: grantId,
-          metadata: {
-            schoolId: term.school_id,
-            schoolName: detail.grant.school_name,
-            teacherName: detail.grant.teacher_display_name,
-            teacherMembershipId: dto.teacherMembershipId,
-            schoolTermId: dto.schoolTermId,
-            assignmentIds: dto.assignmentIds,
-            capabilities: dto.capabilities,
-            expiresAt: expiresAt.toISOString(),
-          },
-          ip: null,
-        },
-        queryRunner,
-      );
-      return detail;
     });
 
     return {
       data: {
-        ...this.toGrant(result.grant),
-        assignments: result.assignments.map((row) => this.toAssignment(row, result.capabilities)),
-        accessUrl: this.buildAccessUrl(baseUrl, rawToken),
+        ...this.toGrant(result.detail.grant),
+        assignments: result.detail.assignments.map((row) =>
+          this.toAssignment(row, result.detail.capabilities),
+        ),
+        accessUrl: this.buildAccessUrl(baseUrl, result.rawToken),
       },
+    };
+  }
+
+  /**
+   * Bulk action behind "สร้างลิงก์เช็คชื่อ": issues one link per active teacher
+   * who teaches this term and has no usable link yet. Teachers whose data blocks
+   * an issue (no assignment, inactive membership) are reported as skipped rather
+   * than failing the whole batch.
+   */
+  async issueGrantsForTerm(
+    dto: IssueTeacherAccessGrantsForTermDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ออกลิงก์');
+    const onDate = getBangkokDateString();
+
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const term = await this.loadIssuableTerm(dto.schoolTermId, actor, queryRunner);
+      const policies = await this.loadIssuePolicies(queryRunner);
+      const pending = await this.repository.listMembershipsNeedingGrant(
+        { schoolId: term.school_id, schoolTermId: dto.schoolTermId, onDate },
+        queryRunner,
+      );
+      const membershipIds = pending.map((row) => Number(row.teacher_membership_id));
+      const assignments = await this.repository.listAssignmentOptions(
+        {
+          schoolId: term.school_id,
+          schoolTermId: dto.schoolTermId,
+          teacherMembershipIds: membershipIds,
+          onDate,
+        },
+        queryRunner,
+      );
+      const byMembership = new Map<number, TeacherAccessAssignmentRow[]>();
+      for (const assignment of assignments) {
+        const key = Number(assignment.teacher_membership_id);
+        byMembership.set(key, [...(byMembership.get(key) ?? []), assignment]);
+      }
+
+      const termExpiry = this.resolveTermExpiry(term.ends_on);
+      let issued = 0;
+      const skipped: Array<{ teacherMembershipId: number; reason: string }> = [];
+      for (const teacherMembershipId of membershipIds) {
+        try {
+          await this.createGrantForMembership(
+            {
+              teacherMembershipId,
+              schoolId: term.school_id,
+              schoolTermId: dto.schoolTermId,
+              termExpiry,
+              assignments: byMembership.get(teacherMembershipId) ?? [],
+              ...policies,
+              actor,
+              actorId,
+            },
+            queryRunner,
+          );
+          issued += 1;
+        } catch (error) {
+          if (error instanceof BadRequestException) {
+            skipped.push({ teacherMembershipId, reason: error.message });
+            continue;
+          }
+          throw error;
+        }
+      }
+      return { data: { issued, skipped } };
+    });
+  }
+
+  /**
+   * Re-reads the link of an existing grant. Only possible for grants issued
+   * after `token_encrypted` existed — older ones must be rotated instead.
+   */
+  async getGrantLink(grantId: string, actor: AuthenticatedRequestUser, baseUrl: string) {
+    const grant = await this.repository.findGrantById(grantId);
+    if (!grant) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งานครู');
+    await this.assertSchoolAccess(grant.school_id, actor);
+    if (this.grantStatus(grant) !== 'ACTIVE') {
+      throw new ConflictException('คัดลอกได้เฉพาะลิงก์ที่ใช้งานอยู่');
+    }
+    if (!grant.token_encrypted) {
+      throw new ConflictException('ลิงก์นี้ออกก่อนระบบเก็บลิงก์แบบเรียกดูซ้ำได้ กรุณาออกลิงก์ใหม่');
+    }
+    const actorId = resolveAuditActorId(actor);
+    await this.auditLog.record({
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      action: 'TEACHER_ACCESS_GRANT_REVEAL',
+      targetType: 'teacher_access_grants',
+      targetId: grant.id,
+      metadata: {
+        schoolId: grant.school_id,
+        teacherName: grant.teacher_display_name,
+      },
+      ip: null,
+    });
+    return {
+      data: {
+        grantId: grant.id,
+        accessUrl: this.buildAccessUrl(
+          baseUrl,
+          this.tokenEncryption.decrypt(grant.token_encrypted),
+        ),
+      },
+    };
+  }
+
+  /** Teacher roster for the link-management screen (one row per teacher). */
+  async listTeacherLinkRoster(query: ListTeacherLinkRosterDto, actor: AuthenticatedRequestUser) {
+    await this.assertSchoolAccess(query.schoolId, actor);
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const rows = await this.repository.listTeacherLinkRoster({
+      schoolId: query.schoolId,
+      schoolTermId: query.schoolTermId,
+      onDate: getBangkokDateString(),
+      search: query.search,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
+      page,
+      limit,
+    });
+    return {
+      data: rows.map((row) => ({
+        teacherMembershipId: row.teacher_membership_id,
+        teacherId: row.teacher_id,
+        teacherDisplayName: row.teacher_display_name,
+        hasEmail: Boolean(row.teacher_email),
+        assignmentCount: Number(row.assignment_count),
+        grantId: row.grant_id,
+        linkStatus: row.grant_status ?? 'NOT_CREATED',
+        canCopyLink: row.grant_status === 'ACTIVE' && row.has_token_cipher === true,
+        issuedAt: row.issued_at ? new Date(row.issued_at).toISOString() : null,
+        expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+        lastUsedAt: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
+      })),
+      meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
     };
   }
 
@@ -408,13 +624,13 @@ export class TeacherAccessService {
   ) {
     await this.assertSchoolAccess(input.schoolId, actor);
     const rows = await this.repository.listAssignmentOptions({
-      ...input,
+      schoolId: input.schoolId,
+      schoolTermId: input.schoolTermId,
+      teacherMembershipIds: [input.teacherMembershipId],
       onDate: getBangkokDateString(),
     });
     return {
-      data: rows.map((row) =>
-        this.toAssignment(row, ['HOMEROOM_ATTENDANCE', 'TEACHER_OBSERVATION']),
-      ),
+      data: rows.map((row) => this.toAssignment(row, this.capabilitiesForAssignments(rows))),
     };
   }
 
@@ -473,7 +689,12 @@ export class TeacherAccessService {
       if (this.grantStatus(current.grant) !== 'ACTIVE') {
         throw new ConflictException('หมุนได้เฉพาะลิงก์ที่เปิดใช้งาน');
       }
-      await this.repository.rotateGrantToken(grantId, tokenHash, queryRunner);
+      await this.repository.rotateGrantToken(
+        grantId,
+        tokenHash,
+        this.tokenEncryption.encrypt(rawToken),
+        queryRunner,
+      );
       await this.auditLog.recordAtomic(
         {
           actorUserId: actorId,
@@ -526,8 +747,23 @@ export class TeacherAccessService {
     ) {
       throw new ForbiddenException('ลิงก์นี้อยู่นอกช่วงภาคเรียน');
     }
-    if (grant.step_up_policy !== 'NONE') {
+  }
+
+  /**
+   * Step-up gate. Thrown as 401 (not 403) so the guest page can tell "prove it
+   * is you" apart from "this link may not do that" and show the OTP form.
+   */
+  private async assertStepUpSatisfied(
+    grant: TeacherAccessGrantRow,
+    sessionToken: string | undefined,
+  ): Promise<void> {
+    if (grant.step_up_policy === 'NONE') return;
+    if (grant.step_up_policy !== 'EMAIL_OTP') {
       throw new ForbiddenException('ลิงก์นี้ต้องยืนยันตัวตนเพิ่มเติม');
+    }
+    const verified = await this.magicSessionStore.isVerified(grant.id, sessionToken);
+    if (!verified) {
+      throw new UnauthorizedException('OTP_REQUIRED');
     }
   }
 
@@ -546,7 +782,10 @@ export class TeacherAccessService {
     if (!this.assignmentActiveToday(assignment)) {
       throw new ForbiddenException('assignment นี้ไม่ได้เปิดใช้งาน');
     }
-    if (capability === 'HOMEROOM_ATTENDANCE' && assignment.assignment_kind !== 'HOMEROOM') {
+    if (
+      (capability === 'HOMEROOM_ATTENDANCE' || capability === 'SUBJECT_ATTENDANCE') &&
+      capability !== this.attendanceCapability(assignment.assignment_kind)
+    ) {
       throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
     }
     if (capability === 'TEACHER_OBSERVATION' && assignment.assignment_kind !== 'SUBJECT') {
@@ -600,6 +839,7 @@ export class TeacherAccessService {
         if (!grant) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งาน');
         deniedGrant = grant;
         this.assertGrantUsable(grant);
+        await this.assertStepUpSatisfied(grant, options.sessionToken);
         const capabilities = await this.repository.listCapabilities(grant.id, queryRunner);
         if (options.capability && !capabilities.includes(options.capability)) {
           throw new ForbiddenException('ลิงก์นี้ไม่มี capability ที่ร้องขอ');
@@ -623,24 +863,26 @@ export class TeacherAccessService {
         const detail: TeacherAccessGrantDetail = { grant, capabilities, assignments: [] };
         const context = this.toActiveContext(detail, assignment);
         const result = await operation(context, queryRunner);
-        await this.repository.touchGrant(grant.id, queryRunner);
-        await this.auditLog.recordAtomic(
-          {
-            actorUserId: grant.teacher_user_id,
-            actorLabel: grant.teacher_username,
-            action: 'TEACHER_ACCESS_GRANT_USE',
-            targetType: 'teacher_access_grants',
-            targetId: grant.id,
-            metadata: {
-              schoolId: grant.school_id,
-              teacherName: grant.teacher_display_name,
-              operation: options.operation,
-              assignmentId: assignment?.assignment_id ?? null,
+        if (options.recordSuccessfulUse !== false) {
+          await this.repository.touchGrant(grant.id, queryRunner);
+          await this.auditLog.recordAtomic(
+            {
+              actorUserId: grant.teacher_user_id,
+              actorLabel: grant.teacher_username,
+              action: 'TEACHER_ACCESS_GRANT_USE',
+              targetType: 'teacher_access_grants',
+              targetId: grant.id,
+              metadata: {
+                schoolId: grant.school_id,
+                teacherName: grant.teacher_display_name,
+                operation: options.operation,
+                assignmentId: assignment?.assignment_id ?? null,
+              },
+              ip: null,
             },
-            ip: null,
-          },
-          queryRunner,
-        );
+            queryRunner,
+          );
+        }
         return result;
       });
     } catch (error) {
@@ -665,23 +907,119 @@ export class TeacherAccessService {
     }
   }
 
+  /**
+   * Loads the grant a raw link token points at, for the step-up flow only — it
+   * deliberately runs before the OTP gate, so it must never expose anything but
+   * whether the link works and where the code will be sent.
+   */
+  private async findUsableGrantForStepUp(rawToken: string): Promise<TeacherAccessGrantRow> {
+    const token = rawToken.trim();
+    if (token.length < 32 || token.length > 256) {
+      throw new NotFoundException('ไม่พบลิงก์เข้าใช้งาน');
+    }
+    const grant = await this.repository.withTransaction(async (queryRunner) =>
+      this.repository.findGrantByTokenHashForUpdate(hashToken(token), queryRunner),
+    );
+    if (!grant) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งาน');
+    this.assertGrantUsable(grant);
+    if (grant.step_up_policy !== 'EMAIL_OTP') {
+      throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันด้วยรหัส OTP');
+    }
+    return grant;
+  }
+
+  /** Masks an address down to what a recipient needs to recognise their own. */
+  private maskEmail(email: string): string {
+    const [name, domain] = email.split('@');
+    if (!domain) return '***';
+    const visible = name.slice(0, 2);
+    return `${visible}${'*'.repeat(Math.max(name.length - visible.length, 1))}@${domain}`;
+  }
+
+  async requestOtp(rawToken: string) {
+    const grant = await this.findUsableGrantForStepUp(rawToken);
+    const email = grant.teacher_email?.trim() ?? '';
+    if (!email) {
+      throw new ConflictException(
+        'ครูคนนี้ยังไม่มีอีเมลสำหรับรับรหัส OTP กรุณาติดต่อผู้ดูแลโรงเรียน',
+      );
+    }
+
+    const code = crypto.randomInt(100000, 1000000).toString();
+    const expiresAt = await this.otpStore.issue(grant.id, code);
+    const ttlMinutes = Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 60_000));
+    await this.emailService.sendOTP(email, code, ttlMinutes);
+    await this.auditLog.record({
+      actorUserId: grant.teacher_user_id,
+      actorLabel: grant.teacher_username,
+      action: 'TEACHER_ACCESS_OTP_REQUEST',
+      targetType: 'teacher_access_grants',
+      targetId: grant.id,
+      metadata: { schoolId: grant.school_id, teacherName: grant.teacher_display_name },
+      ip: null,
+    });
+    return {
+      success: true,
+      data: {
+        method: 'EMAIL' as const,
+        maskedEmail: this.maskEmail(email),
+        expiresAt: expiresAt.toISOString(),
+      },
+    };
+  }
+
+  async verifyOtp(rawToken: string, code: string) {
+    const grant = await this.findUsableGrantForStepUp(rawToken);
+    const outcome = await this.otpStore.verify(grant.id, code.trim());
+    if (outcome !== 'ok') {
+      await this.auditLog.record({
+        actorUserId: grant.teacher_user_id,
+        actorLabel: grant.teacher_username,
+        action: 'TEACHER_ACCESS_OTP_FAILED',
+        targetType: 'teacher_access_grants',
+        targetId: grant.id,
+        metadata: {
+          schoolId: grant.school_id,
+          teacherName: grant.teacher_display_name,
+          outcome,
+        },
+        ip: null,
+      });
+    }
+    if (outcome === 'locked') {
+      throw new HttpException(
+        'ลองรหัส OTP ผิดหลายครั้งเกินไป กรุณาขอรหัสใหม่หรือลองอีกครั้งภายหลัง',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (outcome === 'missing' || outcome === 'expired') {
+      throw new BadRequestException('รหัส OTP หมดอายุ กรุณาขอรหัสใหม่');
+    }
+    if (outcome === 'wrong') {
+      throw new BadRequestException('รหัส OTP ไม่ถูกต้อง');
+    }
+    const sessionToken = await this.magicSessionStore.issue(grant.id);
+    return { success: true, data: { sessionToken } };
+  }
+
   async resolveActiveGrant(
     rawToken: string,
     capability: TeacherAccessCapability,
     assignmentId: number,
     studentUuid?: string,
+    sessionToken?: string,
   ): Promise<ActiveTeacherGrantContext> {
     return await this.withActiveGrantContext(
       rawToken,
-      { capability, assignmentId, studentUuid, operation: 'AUTHORIZE_DOMAIN_WRITE' },
+      { capability, assignmentId, studentUuid, sessionToken, operation: 'AUTHORIZE_DOMAIN_WRITE' },
       (context) => Promise.resolve(context),
     );
   }
 
-  async getPublicContext(rawToken: string) {
+  async getPublicContext(rawToken: string, sessionToken?: string) {
     return await this.withActiveGrantContext(
       rawToken,
-      { operation: 'VIEW_CONTEXT' },
+      { sessionToken, operation: 'VIEW_CONTEXT' },
       async (context, queryRunner) => {
         const assignments = await this.repository.listGrantAssignments(
           context.grantId,
@@ -716,12 +1054,13 @@ export class TeacherAccessService {
     searchTerm: string | undefined,
     pageInput?: number,
     limitInput?: number,
+    sessionToken?: string,
   ) {
     const page = resolvePage(pageInput);
     const limit = resolveLimit(limitInput);
     return await this.withActiveGrantContext(
       rawToken,
-      { assignmentId, operation: 'VIEW_ROSTER' },
+      { assignmentId, sessionToken, operation: 'VIEW_ROSTER' },
       async (context, queryRunner) => {
         const assignment = await this.repository.findGrantAssignment(
           context.grantId,
@@ -729,8 +1068,7 @@ export class TeacherAccessService {
           queryRunner,
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
-        const requiredCapability =
-          assignment.assignment_kind === 'HOMEROOM' ? 'HOMEROOM_ATTENDANCE' : 'TEACHER_OBSERVATION';
+        const requiredCapability = this.attendanceCapability(assignment.assignment_kind);
         if (!context.capabilities.includes(requiredCapability)) {
           throw new ForbiddenException('ลิงก์นี้ไม่มี capability สำหรับ roster นี้');
         }
@@ -745,10 +1083,13 @@ export class TeacherAccessService {
           data: rows.map((row) => ({
             studentUuid: row.student_uuid,
             studentTermId: row.student_uuid,
+            studentNumber: row.student_number,
             firstName: row.first_name,
             lastName: row.last_name,
             studentStatusCode: row.student_status_code,
             studentStatusLabel: row.student_status_label,
+            riskTier: row.risk_tier,
+            teacherComment: row.teacher_comment,
           })),
           meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
         };
@@ -756,7 +1097,409 @@ export class TeacherAccessService {
     );
   }
 
-  async savePublicAttendance(rawToken: string, dto: SaveTeacherAccessAttendanceDto) {
+  /**
+   * Subject attendance is recorded against a timetable period. The screen shows
+   * one roster per class, so the period is resolved from the timetable when the
+   * subject meets exactly once that day and only has to be chosen explicitly
+   * when the class has several periods of the same subject.
+   */
+  private async resolveAttendanceSlotId(
+    assignment: TeacherAccessAssignmentRow,
+    dto: SaveTeacherAccessAttendanceDto,
+    queryRunner: QueryRunner,
+  ): Promise<number | undefined> {
+    if (assignment.assignment_kind !== 'SUBJECT') return undefined;
+    if (!assignment.subject_id) {
+      throw new ConflictException('assignment รายวิชานี้ไม่มีรายวิชาที่ผูกไว้');
+    }
+    const slots = await this.repository.listAssignmentSlotsForDate(
+      {
+        classroomId: Number(assignment.classroom_id),
+        subjectId: assignment.subject_id,
+        isoDayOfWeek: getIsoDayOfWeekFromDateString(dto.date),
+      },
+      queryRunner,
+    );
+    if (dto.timetableSlotId) {
+      const chosen = slots.find((slot) => Number(slot.id) === dto.timetableSlotId);
+      if (!chosen) throw new BadRequestException('คาบเรียนที่เลือกไม่ตรงกับวิชาและวันที่');
+      return dto.timetableSlotId;
+    }
+    if (slots.length === 0) {
+      throw new BadRequestException('วิชานี้ไม่มีคาบสอนในวันที่เลือก');
+    }
+    if (slots.length > 1) {
+      throw new BadRequestException('วิชานี้มีหลายคาบในวันที่เลือก กรุณาระบุคาบที่ต้องการเช็คชื่อ');
+    }
+    return Number(slots[0].id);
+  }
+
+  /** Past attendance rounds of one class, for ประวัติการเช็คชื่อ. */
+  async listPublicAttendanceHistory(
+    rawToken: string,
+    query: {
+      assignmentId: number;
+      page?: number;
+      limit?: number;
+      search?: string;
+      attendanceDate?: string;
+      sortBy?: 'date' | 'recordedBy' | 'present' | 'late' | 'leave' | 'absent';
+      sortOrder?: 'asc' | 'desc';
+    },
+    sessionToken?: string,
+  ) {
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId: query.assignmentId, sessionToken, operation: 'VIEW_ATTENDANCE_HISTORY' },
+      async (context, queryRunner) => {
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          query.assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        if (!context.capabilities.includes(this.attendanceCapability(assignment.assignment_kind))) {
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์ดูประวัติการเช็คชื่อของห้องนี้');
+        }
+        const rows = await this.repository.listAttendanceHistory(
+          {
+            classroomId: Number(assignment.classroom_id),
+            sessionKind: assignment.assignment_kind === 'SUBJECT' ? 'SUBJECT' : 'DAILY',
+            subjectId: assignment.assignment_kind === 'SUBJECT' ? assignment.subject_id : null,
+            search: query.search?.trim() || undefined,
+            attendanceDate: query.attendanceDate,
+            sortBy: query.sortBy,
+            sortOrder: query.sortOrder,
+            page,
+            limit,
+          },
+          queryRunner,
+        );
+        return {
+          data: rows.map((row) => ({
+            sessionId: row.id,
+            attendanceDate: row.attendance_date,
+            period: row.period,
+            status: row.status,
+            recordedBy: row.recorded_by,
+            submittedAt: row.submitted_at ? new Date(row.submitted_at).toISOString() : null,
+            presentCount: row.present_count,
+            lateCount: row.late_count,
+            leaveCount: row.leave_count,
+            absentCount: row.absent_count,
+          })),
+          meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+        };
+      },
+    );
+  }
+
+  /**
+   * Same audit gate the staff export goes through, recorded against the class
+   * the link is scoped to instead of a permission-bearing account.
+   */
+  async recordPublicClassroomExport(
+    rawToken: string,
+    input: {
+      assignmentId: number;
+      exportScope: 'ROSTER' | 'ATTENDANCE';
+      format: string;
+      columns: string[];
+      dateFrom?: string;
+      dateTo?: string;
+    },
+    sessionToken?: string,
+  ) {
+    if (Boolean(input.dateFrom) !== Boolean(input.dateTo)) {
+      throw new BadRequestException('ต้องระบุวันเริ่มและวันจบพร้อมกัน');
+    }
+    if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) {
+      throw new BadRequestException('วันเริ่มต้องไม่เกินวันจบ');
+    }
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId: input.assignmentId, sessionToken, operation: 'EXPORT_CLASSROOM_DATA' },
+      async (context, queryRunner) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: context.teacherUserId,
+            actorLabel: context.teacherUsername,
+            action: 'CLASSROOM_DATA_EXPORT',
+            targetType: 'school_classrooms',
+            targetId: String(context.classroomId),
+            metadata: {
+              schoolId: context.schoolId,
+              teacherName: context.teacherDisplayName,
+              exportScope: input.exportScope,
+              format: input.format,
+              columns: input.columns,
+              dateFrom: input.dateFrom ?? null,
+              dateTo: input.dateTo ?? null,
+              via: 'TEACHER_LINK',
+            },
+            ip: null,
+          },
+          queryRunner,
+        );
+        return { success: true };
+      },
+    );
+  }
+
+  /** Writes the หมายเหตุ shown on both the teacher and the staff roster. */
+  async createPublicStudentComment(
+    rawToken: string,
+    input: { assignmentId: number; studentUuid: string; commentText: string },
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: input.assignmentId,
+        studentUuid: input.studentUuid,
+        sessionToken,
+        operation: 'CREATE_STUDENT_COMMENT',
+      },
+      async (context, queryRunner) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        const created = await this.repository.createStudentComment(
+          {
+            classroomId: Number(context.classroomId),
+            studentUuid: input.studentUuid,
+            commentText: input.commentText,
+            authoredByUserId: context.teacherUserId,
+          },
+          queryRunner,
+        );
+        if (!created) throw new NotFoundException('ไม่พบนักเรียนในห้องเรียนนี้');
+        return { data: { id: created.id, commentText: created.comment_text } };
+      },
+    );
+  }
+
+  /**
+   * Card personalisation from the teacher view — colour, cover image and its
+   * framing, exactly like the staff screen. The card lives on the shared
+   * classroom row, so it is limited to classes inside the link and audited.
+   */
+  async updatePublicClassroomPresentation(
+    rawToken: string,
+    input: {
+      assignmentId: number;
+      cardCoverColor?: string;
+      coverImagePositionX?: number;
+      coverImagePositionY?: number;
+      coverImageScale?: number;
+      removeCover?: boolean;
+    },
+    file: Express.Multer.File | undefined,
+    sessionToken?: string,
+  ) {
+    if (file && input.removeCover) {
+      throw new BadRequestException('ไม่สามารถอัปโหลดและนำรูปออกพร้อมกันได้');
+    }
+    let newStorageKey: string | undefined;
+    let replacedStorageKey: string | null = null;
+    let classroomIdForCleanup: number | null = null;
+    try {
+      const authorizedClassroomId = file
+        ? await this.withActiveGrantContext(
+            rawToken,
+            {
+              assignmentId: input.assignmentId,
+              sessionToken,
+              operation: 'AUTHORIZE_CLASSROOM_CARD_UPDATE',
+              recordSuccessfulUse: false,
+            },
+            (context) => {
+              if (!context.classroomId) {
+                throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+              }
+              return Promise.resolve(Number(context.classroomId));
+            },
+          )
+        : null;
+      classroomIdForCleanup = authorizedClassroomId;
+
+      // Image work is deliberately outside the grant-row transaction. The
+      // grant and assignment are rechecked below before the storage key is
+      // persisted, and a failed recheck deletes this otherwise-unused object.
+      newStorageKey = file
+        ? await processImageUpload(file, this.storage, 'classroom-covers')
+        : undefined;
+
+      const result = await this.withActiveGrantContext(
+        rawToken,
+        { assignmentId: input.assignmentId, sessionToken, operation: 'UPDATE_CLASSROOM_CARD' },
+        async (context, queryRunner) => {
+          if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+          const classroomId = Number(context.classroomId);
+          if (authorizedClassroomId !== null && classroomId !== authorizedClassroomId) {
+            throw new ForbiddenException('assignment เปลี่ยนแปลงระหว่างอัปเดตห้องเรียน');
+          }
+          classroomIdForCleanup = classroomId;
+          const current = await this.repository.findClassroomPresentation(classroomId, queryRunner);
+          if (!current) throw new NotFoundException('ไม่พบห้องเรียน');
+          replacedStorageKey = current.cover_image_storage_key;
+          const coverImageStorageKey =
+            newStorageKey !== undefined
+              ? newStorageKey
+              : input.removeCover
+                ? null
+                : current.cover_image_storage_key;
+          const cardCoverColor = input.cardCoverColor ?? current.card_cover_color;
+          const coverImagePositionX = input.coverImagePositionX ?? current.cover_image_position_x;
+          const coverImagePositionY = input.coverImagePositionY ?? current.cover_image_position_y;
+          const coverImageScale = input.coverImageScale ?? Number(current.cover_image_scale);
+          await this.repository.updateClassroomPresentation(
+            {
+              classroomId,
+              cardCoverColor,
+              coverImageStorageKey,
+              coverImagePositionX,
+              coverImagePositionY,
+              coverImageScale,
+              actorUserId: context.teacherUserId,
+            },
+            queryRunner,
+          );
+          return {
+            data: {
+              classroomId: context.classroomId,
+              cardCoverColor,
+              hasCoverImage: coverImageStorageKey !== null,
+              coverImagePositionX,
+              coverImagePositionY,
+              coverImageScale,
+            },
+          };
+        },
+      );
+      if ((newStorageKey || input.removeCover) && replacedStorageKey) {
+        await this.storage.delete(replacedStorageKey).catch(() => {
+          this.logger.warn(
+            `Unable to delete replaced teacher classroom cover for classroom ${classroomIdForCleanup ?? 'unknown'}`,
+          );
+        });
+      }
+      return result;
+    } catch (error) {
+      if (newStorageKey) {
+        await this.storage.delete(newStorageKey).catch(() => {
+          this.logger.warn(
+            `Unable to delete unused teacher classroom cover for classroom ${classroomIdForCleanup ?? 'unknown'}`,
+          );
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * The link already carries a real teacher identity (membership → account,
+   * school, term and the exact classes they teach), so student reads run through
+   * the ordinary student services with an actor built from the grant instead of
+   * a duplicated set of guest queries. The permission set is the read-only
+   * minimum those services check, and the scope is the link's own school — the
+   * roster check in `withActiveGrantContext` already proved the student sits in
+   * a class this link covers.
+   */
+  private grantActor(context: ActiveTeacherGrantContext): AuthenticatedRequestUser {
+    return {
+      id: context.teacherUserId,
+      username: context.teacherUsername,
+      roles: ['TEACHER'],
+      permissions: ['students', 'student-observations'],
+      data_scope: { school_ids: [context.schoolId] },
+    };
+  }
+
+  /** Everything the student profile screen renders, in one grant-scoped read. */
+  async getPublicStudentProfile(
+    rawToken: string,
+    input: { assignmentId: number; studentUuid: string },
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: input.assignmentId,
+        studentUuid: input.studentUuid,
+        sessionToken,
+        operation: 'VIEW_STUDENT_PROFILE',
+      },
+      async (context) => {
+        const actor = this.grantActor(context);
+        const scope = { school_ids: [context.schoolId] };
+        const [student, summary, cases, attendance, observations] = await Promise.all([
+          this.studentsService.findOne(input.studentUuid, actor, scope),
+          this.studentsService.getStudentProfileSummary(input.studentUuid, actor, scope),
+          this.studentsService.findCasesByStudentId(input.studentUuid, actor, scope),
+          this.studentsService.findAttendanceByStudentId(input.studentUuid, actor, scope),
+          this.studentObservations.list(input.studentUuid, { page: 1, limit: 20 }, actor),
+        ]);
+        return { data: { student, summary, cases, attendance, observations } };
+      },
+    );
+  }
+
+  /** Per-day subject breakdown behind the profile calendar. */
+  async getPublicStudentSubjectAttendance(
+    rawToken: string,
+    input: { assignmentId: number; studentUuid: string; date: string },
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: input.assignmentId,
+        studentUuid: input.studentUuid,
+        sessionToken,
+        operation: 'VIEW_STUDENT_SUBJECT_ATTENDANCE',
+      },
+      async (context) =>
+        await this.studentsService.getStudentSubjectAttendance(
+          input.studentUuid,
+          input.date,
+          this.grantActor(context),
+          { school_ids: [context.schoolId] },
+        ),
+    );
+  }
+
+  /** Serves the class cover to the teacher who holds the link. */
+  async resolvePublicClassroomCover(
+    rawToken: string,
+    assignmentId: number,
+    sessionToken?: string,
+  ): Promise<FileServeResult> {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId, sessionToken, operation: 'VIEW_CLASSROOM_COVER' },
+      async (context, queryRunner) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        const presentation = await this.repository.findClassroomPresentation(
+          Number(context.classroomId),
+          queryRunner,
+        );
+        if (!presentation?.cover_image_storage_key) {
+          throw new NotFoundException('ไม่พบรูปห้องเรียน');
+        }
+        const result = await this.storage.resolve(presentation.cover_image_storage_key);
+        if (!result) throw new NotFoundException('ไม่พบรูปห้องเรียน');
+        return result;
+      },
+    );
+  }
+
+  async savePublicAttendance(
+    rawToken: string,
+    dto: SaveTeacherAccessAttendanceDto,
+    sessionToken?: string,
+  ) {
     if (dto.date > getBangkokDateString()) {
       throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าได้');
     }
@@ -765,12 +1508,23 @@ export class TeacherAccessService {
     const data = await this.withActiveGrantContext(
       rawToken,
       {
-        capability: 'HOMEROOM_ATTENDANCE',
         assignmentId: dto.assignmentId,
+        sessionToken,
         operation: 'SUBMIT_ATTENDANCE',
       },
       async (context, queryRunner) => {
         if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          dto.assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        const capability = this.attendanceCapability(assignment.assignment_kind);
+        if (!context.capabilities.includes(capability)) {
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+        }
+        const timetableSlotId = await this.resolveAttendanceSlotId(assignment, dto, queryRunner);
         const allowedStudentIds = await this.repository.listRosterIds(
           Number(context.classroomId),
           queryRunner,
@@ -785,7 +1539,7 @@ export class TeacherAccessService {
           },
           createSqlQueryExecutor(queryRunner),
           undefined,
-          undefined,
+          timetableSlotId,
           dto.date,
         );
         affectedStudentIds = result.affectedStudentIds;

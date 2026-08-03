@@ -16,7 +16,7 @@ import { emailConfig } from '../config/email.config';
 import { clean, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { EmailService } from './email.service';
+import { EmailService } from '../common/email/email.service';
 import { TaskPolicyService } from './task-policy.service';
 import {
   TaskRepository,

@@ -8,7 +8,7 @@ import { StatsController } from './stats.controller';
 import { DelegationController } from './delegation.controller';
 import { DelegationService } from './delegation.service';
 import { SubmissionController } from './submission.controller';
-import { EmailService } from './email.service';
+import { EmailModule } from '../common/email/email.module';
 import { CaseController } from './case.controller';
 import { CaseService } from './case.service';
 import { AutomationModule } from '../automation/automation.module';
@@ -31,6 +31,7 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     NotificationsModule,
     RiskProfileModule,
     TokenEncryptionModule,
+    EmailModule,
   ],
   controllers: [
     TaskController,
@@ -51,14 +52,12 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     TaskStatsService,
     TaskService,
     DelegationService,
-    EmailService,
     CaseService,
     CaseTrackingOptionsService,
   ],
   exports: [
     TaskService,
     DelegationService,
-    EmailService,
     CaseService,
     TaskPolicyService,
     TaskAccessService,

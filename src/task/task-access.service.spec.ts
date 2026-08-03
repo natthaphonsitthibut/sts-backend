@@ -1,7 +1,7 @@
 import type { AuthRuntimeConfig } from '../config/auth.config';
 import type { EmailRuntimeConfig } from '../config/email.config';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { EmailService } from './email.service';
+import { EmailService } from '../common/email/email.service';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 import { TaskAccessService } from './task-access.service';
 import { TaskPolicyService } from './task-policy.service';

@@ -4,6 +4,7 @@ import { PasswordService } from '../auth/password.service';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
 import { UsersService } from './users.service';
+import type { FileStorageAdapter } from '../files/storage/file-storage.types';
 import type {
   ActorContext,
   QueryExecutor,
@@ -106,7 +107,8 @@ describe('UsersService student accounts', () => {
     >
   >;
   let passwordService: jest.Mocked<Pick<PasswordService, 'generateTempPassword' | 'hash'>>;
-  let auditLog: jest.Mocked<Pick<AuditLogService, 'recordAtomic'>>;
+  let auditLog: jest.Mocked<Pick<AuditLogService, 'recordAtomic' | 'record'>>;
+  let fileStorage: jest.Mocked<FileStorageAdapter>;
   let service: UsersService;
 
   beforeEach(() => {
@@ -214,6 +216,15 @@ describe('UsersService student accounts', () => {
     };
     auditLog = {
       recordAtomic: jest.fn().mockResolvedValue(undefined),
+      record: jest.fn().mockResolvedValue(undefined),
+    };
+    fileStorage = {
+      kind: 'local',
+      save: jest.fn().mockResolvedValue(undefined),
+      saveStream: jest.fn().mockResolvedValue(undefined),
+      resolve: jest.fn().mockResolvedValue(null),
+      open: jest.fn().mockResolvedValue(null),
+      delete: jest.fn().mockResolvedValue(undefined),
     };
     service = new UsersService(
       usersRepository as unknown as UsersRepository,
@@ -225,6 +236,7 @@ describe('UsersService student accounts', () => {
         hashKeyVersion: 1,
         revealTtlSeconds: 900,
       },
+      fileStorage,
     );
   });
 

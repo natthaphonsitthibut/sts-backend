@@ -3,6 +3,7 @@ const { ValidationPipe } = require('@nestjs/common');
 const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
+const { EmailService } = require('../dist/common/email/email.service');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
 const { AppExceptionFilter } = require('../dist/common/filters/app-exception.filter');
 const {
@@ -206,8 +207,8 @@ async function cleanup(dataSource) {
       adminId,
     ]);
     await dataSource.query(
-      `DELETE FROM school_classrooms WHERE created_by = $1 AND room_code LIKE $2`,
-      [adminId, `${FIXTURE_PREFIX}%`],
+      `DELETE FROM school_classrooms WHERE created_by = $1 AND room_name = 'Teacher access smoke'`,
+      [adminId],
     );
     await dataSource.query(
       `DELETE FROM school_calendar_days WHERE created_by = $1 AND reason = $2`,
@@ -300,7 +301,9 @@ async function createFixture(dataSource, actors) {
       term.school_id,
       grade.id,
       roomNumber,
-      `${FIXTURE_PREFIX}${suffix}`,
+      // room_code must equal legacy_room_number since the numeric-room-code
+      // migration; the fixture is identified by its room_name marker instead.
+      String(roomNumber),
       actors.admin.id,
     ],
   );
@@ -313,11 +316,23 @@ async function createFixture(dataSource, actors) {
           school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
         )
         VALUES ($1, $2, 'ACTIVE', CURRENT_DATE, $3, $3)
-        RETURNING id
+        RETURNING id, teacher_id
       `,
       [term.school_id, teacher.id, actors.admin.id],
     );
-    teacherMemberships.push({ id: Number(membership.id), teacher });
+    // The teacher identity row is created by the membership trigger. EMAIL_OTP
+    // needs an address on it (smoke accounts deliberately carry none), and a
+    // row left over from an earlier run is INACTIVE because cleanup disables
+    // the account it was copied from.
+    await dataSource.query(
+      `UPDATE teachers SET email = $2, teacher_status = 'ACTIVE', deleted_at = NULL WHERE id = $1`,
+      [membership.teacher_id, `${teacher.username}@sts-smoke.invalid`],
+    );
+    teacherMemberships.push({
+      id: Number(membership.id),
+      teacherId: Number(membership.teacher_id),
+      teacher,
+    });
   }
 
   const [homeroomAssignment] = await dataSource.query(
@@ -452,6 +467,60 @@ async function issueGrant(baseUrl, adminCookie, body) {
   return { id: issued.payload.data.id, token, data: issued.payload.data };
 }
 
+/**
+ * Captures the emailed OTP without ever sending mail: the smoke boots the app
+ * in-process, so it can wrap the shared EmailService the same way a test double
+ * would. There is no other way to read a code that is stored hashed.
+ */
+function captureOtpCodes(app) {
+  const emailService = app.get(EmailService);
+  const codes = [];
+  const original = emailService.sendOTP.bind(emailService);
+  emailService.sendOTP = async (email, code, minutes) => {
+    codes.push({ email, code });
+    return { success: true, provider: 'SMOKE_CAPTURE' };
+  };
+  return {
+    codes,
+    latestFor(email) {
+      for (let index = codes.length - 1; index >= 0; index -= 1) {
+        if (codes[index].email === email) return codes[index].code;
+      }
+      return null;
+    },
+    restore() {
+      emailService.sendOTP = original;
+    },
+  };
+}
+
+async function verifiedSession(baseUrl, token, otpCapture, email) {
+  const challenge = await request(baseUrl, 'POST', '/api/teacher-access/otp/request', 201, {
+    token,
+  });
+  assert(
+    challenge.payload?.data?.maskedEmail && !challenge.payload.data.maskedEmail.startsWith(email),
+    'OTP request did not mask the teacher email',
+  );
+  const code = otpCapture.latestFor(email);
+  assert(code && /^\d{6}$/.test(code), 'OTP code was not delivered to the teacher email');
+  assert(
+    !JSON.stringify(challenge.payload).includes(code),
+    'OTP request response leaked the code itself',
+  );
+  await request(baseUrl, 'POST', '/api/teacher-access/otp/verify', 400, {
+    token,
+    body: { otp: code === '000000' ? '111111' : '000000' },
+  });
+  const verified = await request(baseUrl, 'POST', '/api/teacher-access/otp/verify', 201, {
+    token,
+    body: { otp: code },
+  });
+  const sessionToken = verified.payload?.data?.sessionToken;
+  assert(sessionToken, 'OTP verify did not return a session token');
+  return sessionToken;
+}
+
 async function main() {
   const app = await NestFactory.create(AppModule, { logger: ['error', 'warn'] });
   app.useGlobalPipes(
@@ -471,6 +540,7 @@ async function main() {
   const sessionCookieService = app.get(SessionCookieService);
   const address = app.getHttpServer().address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  const otpCapture = captureOtpCodes(app);
   let lockRunner;
 
   try {
@@ -519,195 +589,238 @@ async function main() {
       );
     }
     const adminCookie = sessionCookieHeader(sessionCookieService, actors.admin.id);
+    const termId = Number(fixture.term.id);
+    // Narrowed to the fixture teachers: a demo school carries hundreds, and the
+    // roster is paginated like every other list.
+    const rosterUrl =
+      `/api/teacher-access-grants/teacher-roster` +
+      `?schoolId=${fixture.term.school_id}&schoolTermId=${termId}&page=1&limit=50&search=Smoke`;
 
-    const observationOne = await issueGrant(baseUrl, adminCookie, {
+    // 1. Every teacher of the term is listed, with no link yet.
+    const beforeIssue = await request(baseUrl, 'GET', rosterUrl, 200, {
+      headers: { cookie: adminCookie },
+    });
+    const rowFor = (payload, membershipId) =>
+      payload?.data?.find((row) => Number(row.teacherMembershipId) === membershipId);
+    const teacherOneRow = rowFor(beforeIssue.payload, fixture.teacherMemberships[0].id);
+    const teacherTwoRow = rowFor(beforeIssue.payload, fixture.teacherMemberships[1].id);
+    assert(teacherOneRow && teacherTwoRow, 'Teacher roster did not list both smoke teachers');
+    assert(
+      teacherOneRow.linkStatus === 'NOT_CREATED' && teacherTwoRow.linkStatus === 'NOT_CREATED',
+      'Teacher roster did not start from NOT_CREATED',
+    );
+    assert(
+      teacherOneRow.assignmentCount >= 2,
+      'Teacher one should carry both the homeroom and the subject assignment',
+    );
+
+    // 2. Issue one link per teacher: the link covers every assignment, no picking.
+    const grantOne = await issueGrant(baseUrl, adminCookie, {
       teacherMembershipId: fixture.teacherMemberships[0].id,
-      schoolTermId: Number(fixture.term.id),
-      capabilities: ['TEACHER_OBSERVATION'],
-      assignmentIds: [fixture.subjectAssignments[0].id],
-    });
-    const observationTwo = await issueGrant(baseUrl, adminCookie, {
-      teacherMembershipId: fixture.teacherMemberships[1].id,
-      schoolTermId: Number(fixture.term.id),
-      capabilities: ['TEACHER_OBSERVATION'],
-      assignmentIds: [fixture.subjectAssignments[1].id],
-    });
-    const attendanceGrant = await issueGrant(baseUrl, adminCookie, {
-      teacherMembershipId: fixture.teacherMemberships[0].id,
-      schoolTermId: Number(fixture.term.id),
-      capabilities: ['HOMEROOM_ATTENDANCE'],
-      assignmentIds: [fixture.homeroomAssignmentId],
+      schoolTermId: termId,
     });
     assert(
-      new Set([observationOne.token, observationTwo.token, attendanceGrant.token]).size === 3,
-      'Teacher grants did not receive distinct tokens',
+      grantOne.data.capabilities.includes('HOMEROOM_ATTENDANCE') &&
+        grantOne.data.capabilities.includes('SUBJECT_ATTENDANCE') &&
+        grantOne.data.capabilities.includes('TEACHER_OBSERVATION'),
+      'Derived capabilities did not cover the teacher assignments',
+    );
+    assert(
+      grantOne.data.stepUpPolicy === 'EMAIL_OTP',
+      'New links must default to email OTP step-up',
+    );
+    assert(
+      new Date(grantOne.data.expiresAt).toISOString().slice(0, 10) === fixture.term.ends_on,
+      'Link expiry is not the end of the term',
     );
 
-    const list = await request(
+    // 3. The bulk action covers the teachers that still have none, and skips the
+    //    one that already does instead of rotating it.
+    const bulk = await request(baseUrl, 'POST', '/api/teacher-access-grants/bulk', 201, {
+      headers: { cookie: adminCookie },
+      body: { schoolTermId: termId },
+    });
+    assert(Number(bulk.payload?.data?.issued) >= 1, 'Bulk issue did not create any link');
+    const afterIssue = await request(baseUrl, 'GET', rosterUrl, 200, {
+      headers: { cookie: adminCookie },
+    });
+    const teacherOneAfter = rowFor(afterIssue.payload, fixture.teacherMemberships[0].id);
+    const teacherTwoAfter = rowFor(afterIssue.payload, fixture.teacherMemberships[1].id);
+    assert(
+      teacherOneAfter.grantId === grantOne.id,
+      'Bulk issue replaced a link that already existed',
+    );
+    assert(
+      teacherOneAfter.linkStatus === 'ACTIVE' && teacherTwoAfter.linkStatus === 'ACTIVE',
+      'Teacher roster did not report both links as active',
+    );
+    assert(teacherOneAfter.canCopyLink === true, 'Newly issued link must be copyable again');
+
+    // 4. The stored ciphertext gives the same working link back, and nothing
+    //    persists the raw token.
+    const copied = await request(
       baseUrl,
       'GET',
-      `/api/teacher-access-grants?schoolId=${fixture.term.school_id}&page=1&limit=20`,
+      `/api/teacher-access-grants/${grantOne.id}/link`,
       200,
       { headers: { cookie: adminCookie } },
     );
-    const listedIds = new Set(list.payload?.data?.map((row) => row.id));
-    for (const grant of [observationOne, observationTwo, attendanceGrant]) {
-      assert(listedIds.has(grant.id), `Grant ${grant.id} was missing from admin list`);
-    }
-    const detail = await request(
-      baseUrl,
-      'GET',
-      `/api/teacher-access-grants/${observationOne.id}`,
-      200,
-      { headers: { cookie: adminCookie } },
-    );
-    assert(detail.payload?.data?.id === observationOne.id, 'Admin detail returned another grant');
-    assert(!JSON.stringify(detail.payload).includes(observationOne.token), 'Admin detail leaked token');
-    await request(
-      baseUrl,
-      'GET',
-      `/api/teacher-access-grants?schoolId=${fixture.schoolB.id}&page=1&limit=20`,
-      404,
-      { headers: { cookie: adminCookie } },
-    );
-
-    for (const grant of [observationOne, observationTwo, attendanceGrant]) {
-      const [stored] = await dataSource.query(
-        `
-          SELECT token_hash,
-                 POSITION($2 IN to_jsonb(grant_row)::text)::int AS raw_position
-          FROM teacher_access_grants grant_row
-          WHERE id = $1
-        `,
-        [grant.id, grant.token],
-      );
-      assert(stored?.token_hash === sha256(grant.token), 'Stored token hash did not match SHA-256');
-      assert(stored.raw_position === 0, 'Raw teacher token was persisted in grant storage');
-      const [{ audit_raw_count: auditRawCount }] = await dataSource.query(
-        `
-          SELECT COUNT(*)::int AS audit_raw_count
-          FROM audit_log
-          WHERE POSITION($1 IN COALESCE(metadata::text, '')) > 0
-        `,
-        [grant.token],
-      );
-      assert(auditRawCount === 0, 'Raw teacher token was persisted in audit metadata');
-    }
-
-    const contextOne = await request(baseUrl, 'GET', '/api/teacher-access/context', 200, {
-      token: observationOne.token,
-    });
     assert(
-      contextOne.payload?.data?.teacherDisplayName.includes('Teacher One'),
-      'Public context did not identify teacher one',
+      extractToken(copied.payload?.data?.accessUrl) === grantOne.token,
+      'Copy link did not return the issued token',
     );
-    assert(
-      contextOne.payload?.data?.schoolId === Number(fixture.term.school_id),
-      'Public context returned the wrong school',
-    );
-    const rosterOne = await request(
-      baseUrl,
-      'GET',
-      `/api/teacher-access/roster?assignmentId=${fixture.subjectAssignments[0].id}&page=1&limit=20`,
-      200,
-      { token: observationOne.token },
-    );
-    assert(rosterOne.payload?.data?.length === 2, 'Observation roster did not return two students');
-    await request(baseUrl, 'GET', '/api/teacher-access/context', 404, {
-      token: tamperToken(observationOne.token),
-    });
-    await request(
-      baseUrl,
-      'GET',
-      `/api/teacher-access/roster?assignmentId=${fixture.subjectAssignments[1].id}&page=1&limit=20`,
-      403,
-      { token: observationOne.token },
-    );
-    await request(baseUrl, 'POST', '/api/teacher-access/attendance', 403, {
-      token: observationOne.token,
-      body: {
-        assignmentId: fixture.subjectAssignments[0].id,
-        date: fixture.attendanceDate || new Date().toISOString().slice(0, 10),
-        records: [{ studentId: fixture.students[0].studentUuid, status: 'P_PRESENT' }],
-      },
-    });
-
-    await request(
-      baseUrl,
-      'GET',
-      `/api/teacher-access/roster?assignmentId=${fixture.subjectAssignments[1].id}&page=1&limit=20`,
-      200,
-      { token: observationTwo.token },
-    );
-    const attribution = await dataSource.query(
+    const [stored] = await dataSource.query(
       `
-        SELECT target_id, actor_user_id, metadata ->> 'operation' AS operation
-        FROM audit_log
-        WHERE action = 'TEACHER_ACCESS_GRANT_USE'
-          AND target_id = ANY($1::text[])
-        ORDER BY id
+        SELECT token_hash,
+               token_encrypted,
+               POSITION($2 IN COALESCE(token_encrypted, ''))::int AS cipher_leak,
+               POSITION($2 IN (to_jsonb(grant_row) - 'token_encrypted')::text)::int AS raw_position
+        FROM teacher_access_grants grant_row
+        WHERE id = $1
       `,
-      [[observationOne.id, observationTwo.id]],
+      [grantOne.id, grantOne.token],
+    );
+    assert(stored?.token_hash === sha256(grantOne.token), 'Stored token hash did not match SHA-256');
+    assert(stored.token_encrypted, 'Link was issued without a redisplayable ciphertext');
+    assert(stored.cipher_leak === 0, 'Ciphertext contains the raw token');
+    assert(stored.raw_position === 0, 'Raw teacher token was persisted in grant storage');
+    const [{ audit_raw_count: auditRawCount }] = await dataSource.query(
+      `
+        SELECT COUNT(*)::int AS audit_raw_count
+        FROM audit_log
+        WHERE POSITION($1 IN COALESCE(metadata::text, '')) > 0
+      `,
+      [grantOne.token],
+    );
+    assert(auditRawCount === 0, 'Raw teacher token was persisted in audit metadata');
+
+    // 5. Nothing is readable before the OTP is verified.
+    await request(baseUrl, 'GET', '/api/teacher-access/context', 401, { token: grantOne.token });
+    await request(baseUrl, 'GET', '/api/teacher-access/context', 404, {
+      token: tamperToken(grantOne.token),
+    });
+
+    const teacherOneEmail = `${USERNAMES.teacherOne}@sts-smoke.invalid`;
+    const sessionOne = await verifiedSession(baseUrl, grantOne.token, otpCapture, teacherOneEmail);
+    const sessionHeaders = { 'x-teacher-access-session': sessionOne };
+
+    // 6. With the session, the teacher sees their own classes and roster.
+    const context = await request(baseUrl, 'GET', '/api/teacher-access/context', 200, {
+      token: grantOne.token,
+      headers: sessionHeaders,
+    });
+    assert(
+      context.payload?.data?.teacherDisplayName.includes('Teacher One'),
+      'Verified context did not identify teacher one',
     );
     assert(
-      attribution.some(
-        (row) =>
-          row.target_id === observationOne.id &&
-          Number(row.actor_user_id) === actors.teacherOne.id &&
-          row.operation === 'VIEW_ROSTER',
-      ),
-      'Teacher one roster use was not audited to teacher one',
+      context.payload.data.assignments.length >= 2,
+      'Verified context did not return both classes of the teacher',
     );
     assert(
-      attribution.some(
-        (row) =>
-          row.target_id === observationTwo.id &&
-          Number(row.actor_user_id) === actors.teacherTwo.id &&
-          row.operation === 'VIEW_ROSTER',
-      ),
-      'Teacher two roster use was not audited to teacher two',
+      context.payload.data.assignments.every((assignment) => assignment.cardCoverColor),
+      'Classroom cards are missing their cover colour',
     );
+    const roster = await request(
+      baseUrl,
+      'GET',
+      `/api/teacher-access/roster?assignmentId=${fixture.homeroomAssignmentId}&page=1&limit=20`,
+      200,
+      { token: grantOne.token, headers: sessionHeaders },
+    );
+    assert(roster.payload?.data?.length === 2, 'Homeroom roster did not return two students');
     assert(
-      !attribution.some(
-        (row) =>
-          (row.target_id === observationOne.id &&
-            Number(row.actor_user_id) !== actors.teacherOne.id) ||
-          (row.target_id === observationTwo.id &&
-            Number(row.actor_user_id) !== actors.teacherTwo.id),
-      ),
-      'Observation grant audit attribution crossed teacher identities',
+      'studentNumber' in roster.payload.data[0] && 'riskTier' in roster.payload.data[0],
+      'Roster rows are missing the columns the classroom screen renders',
     );
 
+    // 7. Attendance write + the history the teacher reads back.
+    let attendanceChecked = false;
+    if (fixture.attendanceDate) {
+      const attendance = await request(baseUrl, 'POST', '/api/teacher-access/attendance', 201, {
+        token: grantOne.token,
+        headers: sessionHeaders,
+        body: {
+          assignmentId: fixture.homeroomAssignmentId,
+          date: fixture.attendanceDate,
+          records: fixture.students.map((student) => ({
+            studentId: student.studentUuid,
+            status: 'P_PRESENT',
+          })),
+        },
+      });
+      const sessionId = attendance.payload?.data?.session?.id;
+      assert(sessionId, 'Homeroom attendance response did not include a session');
+      const [attendanceSession] = await dataSource.query(
+        `SELECT status, submitted_by, recorded_count FROM attendance_sessions WHERE id = $1`,
+        [sessionId],
+      );
+      assert(attendanceSession?.status === 'SUBMITTED', 'Attendance session was not submitted');
+      assert(
+        Number(attendanceSession.submitted_by) === actors.teacherOne.id,
+        'Attendance was not attributed to teacher one',
+      );
+      const history = await request(
+        baseUrl,
+        'GET',
+        `/api/teacher-access/attendance-history?assignmentId=${fixture.homeroomAssignmentId}&page=1&limit=20`,
+        200,
+        { token: grantOne.token, headers: sessionHeaders },
+      );
+      const historyRow = history.payload?.data?.find(
+        (row) => row.attendanceDate === fixture.attendanceDate,
+      );
+      assert(historyRow, 'Attendance history did not include the round just recorded');
+      assert(
+        Number(historyRow.presentCount) === fixture.students.length,
+        'Attendance history counted the wrong number of present students',
+      );
+      attendanceChecked = true;
+    }
+
+    // 8. Rotation invalidates the old link; revocation closes the new one.
     const rotated = await request(
       baseUrl,
       'POST',
-      `/api/teacher-access-grants/${observationOne.id}/rotate`,
+      `/api/teacher-access-grants/${grantOne.id}/rotate`,
       201,
       { headers: { cookie: adminCookie } },
     );
     const rotatedToken = extractToken(rotated.payload?.data?.accessUrl);
-    assert(rotatedToken !== observationOne.token, 'Rotate returned the original token');
+    assert(rotatedToken !== grantOne.token, 'Rotate returned the original token');
     await request(baseUrl, 'GET', '/api/teacher-access/context', 404, {
-      token: observationOne.token,
+      token: grantOne.token,
+      headers: sessionHeaders,
     });
-    await request(baseUrl, 'GET', '/api/teacher-access/context', 200, { token: rotatedToken });
-    const [rotatedStored] = await dataSource.query(
-      `SELECT token_hash, rotation_count FROM teacher_access_grants WHERE id = $1`,
-      [observationOne.id],
-    );
-    assert(rotatedStored.token_hash === sha256(rotatedToken), 'Rotate did not persist new hash');
-    assert(Number(rotatedStored.rotation_count) === 1, 'Rotate did not increment rotation count');
+    await request(baseUrl, 'GET', '/api/teacher-access/context', 401, { token: rotatedToken });
 
+    // 9. The public read still waits on the real grant row lock.
+    const grantTwoId = teacherTwoAfter.grantId;
+    const copiedTwo = await request(
+      baseUrl,
+      'GET',
+      `/api/teacher-access-grants/${grantTwoId}/link`,
+      200,
+      { headers: { cookie: adminCookie } },
+    );
+    const tokenTwo = extractToken(copiedTwo.payload?.data?.accessUrl);
+    const sessionTwo = await verifiedSession(
+      baseUrl,
+      tokenTwo,
+      otpCapture,
+      `${USERNAMES.teacherTwo}@sts-smoke.invalid`,
+    );
     lockRunner = dataSource.createQueryRunner();
     await lockRunner.connect();
     await lockRunner.startTransaction();
     await lockRunner.query(`SELECT id FROM teacher_access_grants WHERE id = $1 FOR UPDATE`, [
-      observationTwo.id,
+      grantTwoId,
     ]);
     let contextSettled = false;
     let revokeSettled = false;
     const concurrentContext = rawRequest(baseUrl, 'GET', '/api/teacher-access/context', {
-      token: observationTwo.token,
+      token: tokenTwo,
+      headers: { 'x-teacher-access-session': sessionTwo },
     }).then((result) => {
       contextSettled = true;
       return result;
@@ -717,7 +830,7 @@ async function main() {
     const concurrentRevoke = rawRequest(
       baseUrl,
       'POST',
-      `/api/teacher-access-grants/${observationTwo.id}/revoke`,
+      `/api/teacher-access-grants/${grantTwoId}/revoke`,
       {
         headers: { cookie: adminCookie },
         body: { reason: 'Automated concurrent revoke smoke' },
@@ -741,62 +854,40 @@ async function main() {
     );
     assert(revokeRaceResult.response.status === 201, 'Concurrent revoke did not succeed');
     await request(baseUrl, 'GET', '/api/teacher-access/context', 410, {
-      token: observationTwo.token,
+      token: tokenTwo,
+      headers: { 'x-teacher-access-session': sessionTwo },
     });
-    await request(
-      baseUrl,
-      'GET',
-      `/api/teacher-access/roster?assignmentId=${fixture.subjectAssignments[1].id}&page=1&limit=20`,
-      410,
-      { token: observationTwo.token },
-    );
 
-    let attendanceChecked = false;
-    if (fixture.attendanceDate) {
-      const attendance = await request(baseUrl, 'POST', '/api/teacher-access/attendance', 201, {
-        token: attendanceGrant.token,
-        body: {
-          assignmentId: fixture.homeroomAssignmentId,
-          date: fixture.attendanceDate,
-          records: fixture.students.map((student) => ({
-            studentId: student.studentUuid,
-            status: 'P_PRESENT',
-          })),
-        },
-      });
-      assert(attendance.payload?.success === true, 'Homeroom attendance did not report success');
-      const sessionId = attendance.payload?.data?.session?.id;
-      assert(sessionId, 'Homeroom attendance response did not include a session');
-      const [session] = await dataSource.query(
-        `SELECT status, submitted_by, recorded_count FROM attendance_sessions WHERE id = $1`,
-        [sessionId],
-      );
-      assert(session?.status === 'SUBMITTED', 'Homeroom attendance session was not submitted');
-      assert(
-        Number(session.submitted_by) === actors.teacherOne.id,
-        'Homeroom attendance was not attributed to teacher one',
-      );
-      assert(Number(session.recorded_count) === 2, 'Homeroom attendance did not record full roster');
-      attendanceChecked = true;
-    }
+    // 10. Per-classroom attendance links can no longer be created at all.
+    await request(baseUrl, 'POST', '/api/tasks', 400, {
+      headers: { cookie: adminCookie },
+      body: {
+        task_type: 'ATTENDANCE',
+        assigned_to_name: 'ครูทดสอบ ระบบ',
+        target_school_id: Number(fixture.term.school_id),
+      },
+    });
 
     console.log(
       JSON.stringify({
         status: 'teacher_access_smoke_ok',
         attendanceChecked,
         checked: [
-          'admin issue/list/detail and school scope denial',
-          'hash-only token persistence and no raw token audit storage',
-          'public context and capability-scoped roster',
-          'tampered, capability, and assignment mismatch denial',
-          'rotate invalidates old token and activates new token',
-          'real row lock serializes context and revoke; later uses denied',
-          'two observation grants keep distinct token and audit attribution',
-          attendanceChecked ? 'homeroom attendance write and teacher attribution' : null,
+          'teacher roster lists every teacher with NOT_CREATED before issuing',
+          'per-teacher issue derives capabilities and expires at term end',
+          'bulk issue fills the gaps and leaves existing links alone',
+          'copy link returns the issued token from ciphertext, storage stays hash-only',
+          'guest reads are refused until the emailed OTP is verified',
+          'wrong OTP rejected; verified session unlocks context, roster and attendance',
+          attendanceChecked ? 'attendance write and history read back the same round' : null,
+          'rotate invalidates the old token; revoke closes the link',
+          'real row lock serializes context and revoke',
+          'legacy per-classroom attendance link creation is refused',
         ].filter(Boolean),
       }),
     );
   } finally {
+    otpCapture.restore();
     if (lockRunner) {
       if (lockRunner.isTransactionActive) await lockRunner.rollbackTransaction();
       await lockRunner.release();
@@ -806,7 +897,22 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error && error.message ? error.message : error);
-  process.exit(1);
-});
+module.exports = {
+  USERNAMES,
+  assert,
+  assertSchemaPrerequisites,
+  captureOtpCodes,
+  cleanup,
+  createFixture,
+  issueGrant,
+  sessionCookieHeader,
+  upsertUser,
+  verifiedSession,
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error && error.message ? error.message : error);
+    process.exit(1);
+  });
+}

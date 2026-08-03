@@ -90,9 +90,14 @@ export class SchoolStructureService {
     );
     const canUseRelatedRead =
       allowRelatedRead &&
-      ['manage-teacher-access', 'import-data', 'import-school-roster', 'manage-role-groups'].some(
-        (permission) => hasPermission(actor.roles, actor.permissions, permission),
-      );
+      [
+        'manage-teacher-access',
+        'import-data',
+        'import-school-roster',
+        'manage-role-groups',
+        // จัดการข้อมูลคุณครู reuses this endpoint for its school picker.
+        'manage-teachers',
+      ].some((permission) => hasPermission(actor.roles, actor.permissions, permission));
     if (!canManageStructure && !canUseRelatedRead) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการโครงสร้างโรงเรียน');
     }
@@ -730,6 +735,15 @@ export class SchoolStructureService {
         }
         if (membership.school_id !== classroom.school_id) {
           throw new BadRequestException('ครูและห้องเรียนต้องอยู่โรงเรียนเดียวกัน');
+        }
+        // Reassigning a homeroom replaces the previous teacher; the old row is
+        // retired first so the one-active-homeroom index still holds.
+        if (dto.assignmentKind === 'HOMEROOM') {
+          await this.repository.deactivateHomeroomAssignments(
+            dto.classroomId,
+            actorId,
+            queryRunner,
+          );
         }
         const created = await this.repository.createAssignment(
           {

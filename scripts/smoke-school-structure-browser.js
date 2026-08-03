@@ -21,6 +21,9 @@ const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9253);
 const DIRECTOR_USERNAME = 'school_structure_browser_director';
 const MULTI_DIRECTOR_USERNAME = 'classrooms_browser_multi_director';
 const TEACHER_USERNAME = 'school_structure_browser_teacher';
+const TEACHER_FIRST_NAME = 'ครูทดสอบ';
+const TEACHER_LAST_NAME = 'ครูประจำชั้นสโมค';
+const TEACHER_DISPLAY_NAME = `${TEACHER_FIRST_NAME} ${TEACHER_LAST_NAME}`;
 const ACADEMIC_YEAR = 2999;
 const ROOM_NUMBER = 991;
 const DIAGNOSTIC_PATH = process.env.SMOKE_DIAGNOSTIC_PATH || '';
@@ -304,29 +307,52 @@ async function chooseCombobox(client, ariaLabel, optionLabel, searchTerm = '') {
   );
 }
 
+/**
+ * Drives the design-system Select the way a user does: open the trigger, then
+ * mousedown the option. Assigning `.value` on the sr-only native select does not
+ * reach React, because the component keeps its own controlled state.
+ */
+async function chooseSelectOption(client, ariaLabel, optionLabel) {
+  const opened = await evaluate(
+    client,
+    `(() => {
+      const trigger = Array.from(document.querySelectorAll(${JSON.stringify(`[aria-label="${ariaLabel}"]`)}))
+        .find((node) => node.tagName === 'BUTTON');
+      if (!trigger || trigger.disabled) return false;
+      trigger.click();
+      return true;
+    })()`,
+  );
+  assert(opened, `Could not open select: ${ariaLabel}`);
+  const chosen = await evaluate(
+    client,
+    `(() => {
+      const option = Array.from(document.querySelectorAll('[role="option"]'))
+        .find((node) => node.textContent.trim() === ${JSON.stringify(optionLabel)});
+      if (!option) return false;
+      option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      return true;
+    })()`,
+  );
+  assert(chosen, `Could not choose select option: ${optionLabel}`);
+}
+
 async function changeNativeSelect(client, ariaLabel, value) {
   const changed = await evaluate(
     client,
     `(() => {
       const select = document.querySelector(${JSON.stringify(`[aria-label="${ariaLabel}"]`)});
       if (!select || select.disabled) return false;
-      select.value = ${JSON.stringify(String(value))};
+      // React keeps a value tracker on controlled inputs; assigning .value
+      // directly updates it too, so onChange never fires. Go through the
+      // prototype setter to leave the tracker stale and let React see a change.
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(select, ${JSON.stringify(String(value))});
       select.dispatchEvent(new Event('change', { bubbles: true }));
       return select.value === ${JSON.stringify(String(value))};
     })()`,
   );
   assert(changed, `Could not select ${value} from ${ariaLabel}`);
-}
-
-async function readSummaryMetric(client, label) {
-  return evaluate(
-    client,
-    `(() => {
-      const labelNode = Array.from(document.querySelectorAll('div'))
-        .find((node) => node.children.length === 0 && node.textContent.trim() === ${JSON.stringify(label)});
-      return labelNode?.parentElement?.children[1]?.textContent?.trim() ?? null;
-    })()`,
-  );
 }
 
 async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) {
@@ -459,8 +485,8 @@ async function main() {
     });
     await upsertUser(dataSource, hash, {
       username: TEACHER_USERNAME,
-      firstName: 'ครูทดสอบ',
-      lastName: 'โครงสร้างโรงเรียน',
+      firstName: TEACHER_FIRST_NAME,
+      lastName: TEACHER_LAST_NAME,
       role: 'TEACHER',
       permissions: ['attendance'],
       dataScope: { school_ids: [schoolA.id] },
@@ -517,7 +543,9 @@ async function main() {
     try {
       await waitFor(
         async () =>
-          (await evaluate(chrome.client, 'document.body.innerText')).includes('โครงสร้างโรงเรียน'),
+          (await evaluate(chrome.client, 'document.body.innerText')).includes(
+            'จัดการภาคเรียนและห้องเรียน',
+          ),
         'School structure page did not render',
       );
     } catch (error) {
@@ -527,36 +555,25 @@ async function main() {
       );
       throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
     }
-    try {
-      await waitFor(
-        async () =>
-          (await evaluate(
-            chrome.client,
-            `document.querySelector('[aria-label="เลือกโรงเรียน"]')?.value`,
-          )) === schoolA.name,
-        'Scoped school did not finish loading',
-      );
-    } catch (error) {
-      const diagnostic = await evaluate(
+    // A single-school scope selects itself and hides the school filter, matching
+    // /classrooms. Scope isolation is asserted through the API the page reads.
+    assert(
+      !(await evaluate(
         chrome.client,
-        `({ url: location.href, text: document.body.innerText.slice(0, 1200) })`,
-      );
-      throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
-    }
-    await evaluate(
-      chrome.client,
-      `document.querySelector('[aria-label="เลือกโรงเรียน"]')?.click()`,
+        `Boolean(document.querySelector('[aria-label="กรองตามโรงเรียน"]'))`,
+      )),
+      'School filter should stay hidden for a single-school scope',
     );
-    const visibleSchoolOptions = await evaluate(
+    const scopedSchoolsResponse = await browserRequest(
       chrome.client,
-      `Array.from(document.querySelectorAll('button')).map((button) => button.textContent.trim())`,
+      'GET',
+      '/api/school-structure/schools',
     );
-    assert(visibleSchoolOptions.includes(schoolA.name), 'Scoped school A was not visible');
-    assert(!visibleSchoolOptions.includes(schoolB.name), 'School B leaked into scoped browser page');
-    await evaluate(
-      chrome.client,
-      `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+    const scopedSchoolNames = (scopedSchoolsResponse.payload.data ?? []).map(
+      (item) => item.name,
     );
+    assert(scopedSchoolNames.includes(schoolA.name), 'Scoped school A was not visible');
+    assert(!scopedSchoolNames.includes(schoolB.name), 'School B leaked into scoped browser page');
 
     const crossSchool = await browserRequest(
       chrome.client,
@@ -964,100 +981,119 @@ async function main() {
       'Created classroom was not visible in the browser',
     );
     await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', term.id);
-    await waitFor(
-      async () =>
-        (await readSummaryMetric(chrome.client, 'ห้องในภาคเรียน')) === '1' &&
-        (await readSummaryMetric(chrome.client, 'ครูในภาคเรียน')) === '1' &&
-        (await readSummaryMetric(chrome.client, 'นักเรียนในภาคเรียน')) === '1',
-      'All-grade/all-classroom summary did not match the selected term',
-    );
     await chooseCombobox(chrome.client, 'กรองตามระดับชั้น', grade.label, grade.label);
     await waitFor(
-      async () =>
-        (await readSummaryMetric(chrome.client, 'ห้องในระดับชั้น')) === '1' &&
-        (await readSummaryMetric(chrome.client, 'ครูในระดับชั้น')) === '1' &&
-        (await readSummaryMetric(chrome.client, 'นักเรียนในระดับชั้น')) === '1',
-      'All-classroom summary did not match the selected grade',
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
+      'Classroom table did not reflect the term and grade filters',
     );
-    await chooseCombobox(
-      chrome.client,
-      'กรองตามห้องเรียน',
-      `ห้อง ${ROOM_NUMBER}`,
-      `ห้อง ${ROOM_NUMBER}`,
-    );
-    await waitFor(
-      async () =>
-        (await readSummaryMetric(chrome.client, 'ห้องที่เลือก')) === '1' &&
-        (await readSummaryMetric(chrome.client, 'ครูในห้อง')) === '1' &&
-        (await readSummaryMetric(chrome.client, 'นักเรียนในห้อง')) === '1',
-      'Selected-classroom summary did not match the room filter',
-    );
-    assert(
-      (await evaluate(
-        chrome.client,
-        `document.querySelector('[aria-label="เปิดแท็บห้องเรียน"]')?.getAttribute('aria-pressed')`,
-      )) === 'true',
-      'Classroom summary card did not reflect the active tab',
-    );
-    await evaluate(
-      chrome.client,
-      `document.querySelector('[aria-label="เปิดแท็บครู"]')?.click()`,
-    );
-    await waitFor(
-      async () =>
-        (await evaluate(
-          chrome.client,
-          `document.querySelector('[aria-label="เปิดแท็บครู"]')?.getAttribute('aria-pressed')`,
-        )) === 'true' &&
-        (await evaluate(chrome.client, 'document.body.innerText')).includes('จาก 1 ครู'),
-      'Teacher summary card did not open the matching tab and table',
-    );
-    const hasManualTeacherLinkButton = await evaluate(
-      chrome.client,
-      `Array.from(document.querySelectorAll('button'))
-        .some((button) => button.textContent.trim() === 'เชื่อมบัญชีครู')`,
-    );
-    assert(!hasManualTeacherLinkButton, 'Manual teacher-account linking button was still visible');
-    await evaluate(
-      chrome.client,
-      `document.querySelector('[aria-label="เปิดแท็บนักเรียน"]')?.click()`,
-    );
-    await waitFor(
-      async () =>
-        (await evaluate(
-          chrome.client,
-          `document.querySelector('[aria-label="เปิดแท็บนักเรียน"]')?.getAttribute('aria-pressed')`,
-        )) === 'true' &&
-        (await evaluate(chrome.client, 'document.body.innerText')).includes(importedStudentName),
-      'Student summary card did not open the matching tab and roster',
-    );
-    const rosterUi = await evaluate(
+
+    // The page now owns structure only: no summary cards, no teacher/student
+    // tabs and no import entry points — those live on their own pages.
+    const reducedPageUi = await evaluate(
       chrome.client,
       `({
-        hasPagination: document.body.innerText.includes('จาก 1 นักเรียน'),
-        sortableHeaders: Array.from(document.querySelectorAll('th button'))
-          .map((button) => button.textContent.trim())
+        buttons: Array.from(document.querySelectorAll('button'))
+          .filter((button) => !button.closest('th'))
+          .map((button) => button.textContent.trim()),
+        summaryCards: Boolean(
+          document.querySelector('[aria-label="เปิดแท็บห้องเรียน"]')
+          || document.querySelector('[aria-label="เปิดแท็บครู"]')
+          || document.querySelector('[aria-label="เปิดแท็บนักเรียน"]')
+        ),
+        headers: Array.from(document.querySelectorAll('th')).map((cell) => cell.textContent.trim())
       })`,
     );
-    assert(rosterUi.hasPagination, 'Roster pagination controls were not visible');
+    assert(!reducedPageUi.summaryCards, 'Summary metric cards were still rendered');
+    for (const removed of ['ครู', 'นักเรียน', 'นำเข้าครู', 'นำเข้านักเรียน']) {
+      assert(
+        !reducedPageUi.buttons.includes(removed),
+        `Removed control "${removed}" was still rendered on the structure page`,
+      );
+    }
     assert(
-      rosterUi.sortableHeaders.includes('ชื่อนักเรียน') &&
-        rosterUi.sortableHeaders.includes('สถานะ'),
-      `Roster sortable columns were not rendered: ${JSON.stringify(rosterUi.sortableHeaders)}`,
+      reducedPageUi.headers.some((header) => header.includes('ครูประจำชั้น')),
+      `Classroom table is missing the homeroom column: ${JSON.stringify(reducedPageUi.headers)}`,
+    );
+
+    // Homeroom assignment must be reachable straight from the room row.
+    const homeroomButtonLabel = await evaluate(
+      chrome.client,
+      `(() => {
+        const button = Array.from(document.querySelectorAll('button'))
+          .find((node) => ['กำหนดครู', 'เปลี่ยนครู'].includes(node.textContent.trim()));
+        return button ? button.textContent.trim() : null;
+      })()`,
+    );
+    assert(
+      homeroomButtonLabel,
+      'Row-level homeroom action was not rendered on the classroom table',
     );
     await evaluate(
       chrome.client,
-      `document.querySelector('[aria-label="เปิดแท็บห้องเรียน"]')?.click()`,
+      `(() => {
+        const button = Array.from(document.querySelectorAll('button'))
+          .find((node) => ['กำหนดครู', 'เปลี่ยนครู'].includes(node.textContent.trim()));
+        button?.click();
+        return true;
+      })()`,
     );
     await waitFor(
       async () =>
-        (await evaluate(
-          chrome.client,
-          `document.querySelector('[aria-label="เปิดแท็บห้องเรียน"]')?.getAttribute('aria-pressed')`,
-        )) === 'true' &&
-        (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
-      'Classroom summary card did not reopen the matching tab and table',
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ครูประจำชั้น')
+        && Boolean(await evaluate(chrome.client, `Boolean(document.querySelector('#homeroom-teacher'))`)),
+      'Homeroom dialog did not open from the room row',
     );
+    // The fixture already assigned TEACHER_DISPLAY_NAME through the API, so the
+    // UI save is proven by switching to a *different* teacher and seeing the row
+    // follow — that also exercises the "เปลี่ยนครู" replacement path.
+    const replacementTeacher = await evaluate(
+      chrome.client,
+      `(() => {
+        const select = Array.from(document.querySelectorAll('[aria-label="ครูประจำชั้น"]'))
+          .find((node) => node.tagName === 'SELECT');
+        if (!select) return null;
+        const option = Array.from(select.options).find(
+          (item) => item.value && item.textContent.trim() !== ${JSON.stringify(TEACHER_DISPLAY_NAME)},
+        );
+        return option ? { value: option.value, label: option.textContent.trim() } : null;
+      })()`,
+    );
+    assert(replacementTeacher, 'Homeroom dialog offered no alternative teacher to assign');
+    await chooseSelectOption(chrome.client, 'ครูประจำชั้น', replacementTeacher.label);
+    const submitted = await evaluate(
+      chrome.client,
+      `(() => {
+        const button = document.querySelector('[role="dialog"] button[type="submit"]');
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+      })()`,
+    );
+    assert(submitted, 'Could not submit the homeroom assignment dialog');
+    try {
+      await waitFor(
+        async () =>
+          !(await evaluate(
+            chrome.client,
+            `Boolean(document.querySelector('[aria-label="ครูประจำชั้น"]'))`,
+          ))
+          && (await evaluate(chrome.client, 'document.body.innerText')).includes(
+            replacementTeacher.label,
+          ),
+        'Homeroom teacher name was not shown in the row after saving',
+      );
+    } catch (error) {
+      const state = await evaluate(
+        chrome.client,
+        `({
+          dialogOpen: Boolean(document.querySelector('[aria-label="ครูประจำชั้น"]')),
+          text: document.body.innerText.slice(0, 1200)
+        })`,
+      );
+      throw new Error(
+        `${error.message}; expected=${replacementTeacher.label}; state=${JSON.stringify(state)}`,
+      );
+    }
 
     const pageTerms = await browserRequest(
       chrome.client,
@@ -1612,6 +1648,31 @@ async function main() {
       })()`,
     );
     assert(!mobileGeometry.overflow && mobileGeometry.cardRight <= mobileGeometry.viewport, 'Mobile classroom layout overflowed');
+
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure?mobile=${Date.now()}`);
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'document.body.innerText')).includes(
+          'จัดการภาคเรียนและห้องเรียน',
+        ),
+      'Structure page did not render on mobile',
+    );
+    const mobileStructure = await evaluate(
+      chrome.client,
+      `({
+        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        buttons: Array.from(document.querySelectorAll('button'))
+          .filter((button) => !button.closest('th'))
+          .map((button) => button.textContent.trim())
+      })`,
+    );
+    assert(!mobileStructure.overflow, 'Mobile structure layout overflowed horizontally');
+    for (const removed of ['ครู', 'นักเรียน', 'นำเข้าครู', 'นำเข้านักเรียน']) {
+      assert(
+        !mobileStructure.buttons.includes(removed),
+        `Removed control "${removed}" was still rendered on mobile`,
+      );
+    }
     await chrome.client.call('Emulation.clearDeviceMetricsOverride');
 
     const multiSession = await login(password, MULTI_DIRECTOR_USERNAME);

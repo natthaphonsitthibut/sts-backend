@@ -13,5 +13,8 @@ import { PiiExportService } from './pii-export.service';
   imports: [AuthModule, TaskModule, StudentGeocodeModule],
   controllers: [PiiExportController, PiiExportDownloadController, StudentsController],
   providers: [StudentsRepository, StudentsService, PiiExportRepository, PiiExportService],
+  // Teacher links render the same student profile as the staff screen, so the
+  // read service is shared instead of duplicated behind a guest-only query set.
+  exports: [StudentsService],
 })
 export class StudentsModule {}

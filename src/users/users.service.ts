@@ -10,6 +10,12 @@ import { Inject } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { randomInt } from 'crypto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { processImageUpload } from '../common/file-upload/visit-photo.util';
+import {
+  FILE_STORAGE_ADAPTER,
+  type FileServeResult,
+  type FileStorageAdapter,
+} from '../files/storage/file-storage.types';
 import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
 import { piiConfig } from '../config/pii.config';
 import {
@@ -107,8 +113,81 @@ export class UsersService {
     private readonly auditLog: AuditLogService,
     @Inject(piiConfig.KEY)
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage: FileStorageAdapter,
     private readonly notificationsService?: NotificationsService,
   ) {}
+
+  /**
+   * Profile photo read for จัดการผู้ใช้งาน. The scope check runs through the same
+   * `getUserById` path as the rest of the record, so a caller can never fetch a
+   * photo for an account outside their scope.
+   */
+  async resolveUserPhoto(id: number, actor: ActorContext | undefined): Promise<FileServeResult> {
+    const user = await this.usersRepository.findUserById(id);
+    if (!user?.photo_storage_key) {
+      throw new NotFoundException('ไม่พบรูปประจำตัวผู้ใช้งาน');
+    }
+    if (!(await this.getUserById(id, actor))) {
+      throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    }
+    const result = await this.storage.resolve(user.photo_storage_key);
+    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวผู้ใช้งาน');
+    return result;
+  }
+
+  /**
+   * Replaces or clears the profile photo. The upload is processed before the
+   * write and removed again if the write fails, so storage never keeps an
+   * orphan; the replaced object is deleted only once the row points at the new
+   * one.
+   */
+  async updateUserPhoto(
+    id: number,
+    actor: ActorContext | undefined,
+    file?: Express.Multer.File,
+    removePhoto?: boolean,
+  ) {
+    if (file && removePhoto) {
+      throw new BadRequestException('ไม่สามารถอัปโหลดและนำรูปออกพร้อมกันได้');
+    }
+    if (!file && !removePhoto) {
+      throw new BadRequestException('กรุณาเลือกรูปหรือระบุการนำรูปออก');
+    }
+    const existing = await this.getUserById(id, actor);
+    if (!existing) throw new NotFoundException('ไม่พบผู้ใช้งาน');
+
+    const current = await this.usersRepository.findUserById(id);
+    const replacedStorageKey = current?.photo_storage_key ?? null;
+    const newStorageKey = file ? await processImageUpload(file, this.storage, 'user-photos') : null;
+
+    try {
+      await this.usersRepository.updateUserPhoto(id, newStorageKey);
+      await this.auditLog.record({
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: actor?.username ?? null,
+        action: 'USER_UPDATE',
+        targetType: 'users',
+        targetId: String(id),
+        metadata: { op: newStorageKey ? 'update-photo' : 'remove-photo' },
+        ip: null,
+      });
+    } catch (error) {
+      if (newStorageKey) {
+        await this.storage.delete(newStorageKey).catch(() => {
+          this.logger.warn(`Unable to delete unused profile photo for user ${id}`);
+        });
+      }
+      throw error;
+    }
+
+    if (replacedStorageKey) {
+      await this.storage.delete(replacedStorageKey).catch(() => {
+        this.logger.warn(`Unable to delete replaced profile photo for user ${id}`);
+      });
+    }
+    return await this.getUserById(id, actor);
+  }
 
   private resolveTeacherSchoolIds(role: string, scope: DataScope): number[] {
     if (role !== 'TEACHER') {
@@ -290,6 +369,8 @@ export class UsersService {
         actorRank,
         actorScope: currentActor.data_scope,
         excludeRole: filters.excludeRole,
+        sortBy: filters.sortBy,
+        sortOrder: filters.sortOrder,
         searchTerm: filters.searchTerm,
         province: filters.province,
         district: filters.district,
@@ -381,6 +462,12 @@ export class UsersService {
       phone: user.phone ?? null,
       email: user.email ?? null,
       affiliation: user.affiliation ?? null,
+      // Cache-busted by the storage key, which is regenerated on every upload, so
+      // a replaced photo shows immediately. The endpoint itself redirects to a
+      // short-lived signed URL rather than exposing the object.
+      photo_url: user.photo_storage_key
+        ? `/api/users/${user.id}/photo?v=${encodeURIComponent(user.photo_storage_key)}`
+        : null,
       line_id: profile?.line_id ?? null,
       role: user.role ?? null,
       roles: user.roles ?? [],

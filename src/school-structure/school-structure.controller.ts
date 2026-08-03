@@ -59,6 +59,7 @@ export class SchoolStructureController {
     'import-data',
     'import-school-roster',
     'manage-role-groups',
+    'manage-teachers',
   )
   listSchools(@CurrentUser() actor: AuthenticatedRequestUser) {
     return this.service.listSchools(actor);

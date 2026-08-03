@@ -139,6 +139,8 @@ export interface UserListFilters {
   actorRank: number;
   actorScope?: DataScope;
   excludeRole?: string;
+  sortBy?: 'name' | 'role' | 'affiliation';
+  sortOrder?: 'asc' | 'desc';
   searchTerm?: string;
   province?: string;
   district?: string;
@@ -287,6 +289,7 @@ export class UsersRepository {
     u.phone,
     u.email,
     u.affiliation,
+    u.photo_storage_key,
     u.status,
     u.permissions,
     u.role,
@@ -588,8 +591,16 @@ export class UsersRepository {
       `);
     }
     if (filters.excludeRole) {
-      params.push(filters.excludeRole);
-      conditions.push(`(u.role IS NULL OR u.role <> $${params.length})`);
+      // Comma-separated so one page can exclude several roles at once — the staff
+      // list hides both TEACHER (own page) and STUDENT (retired).
+      const excludedRoles = filters.excludeRole
+        .split(',')
+        .map((role) => role.trim())
+        .filter((role) => role.length > 0);
+      if (excludedRoles.length > 0) {
+        params.push(excludedRoles);
+        conditions.push(`(u.role IS NULL OR NOT (u.role = ANY($${params.length}::text[])))`);
+      }
     }
 
     const addDataScopeFilter = (
@@ -688,12 +699,19 @@ export class UsersRepository {
     const selectParams = [...params, limit, offset];
     const limitPlaceholder = selectParams.length - 1;
     const offsetPlaceholder = selectParams.length;
+    const userSortExpressions = {
+      name: `COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', u."FirstName", u."LastName")), ''), u.username)`,
+      role: `COALESCE(r.label, u.role, '')`,
+      affiliation: `COALESCE(u.affiliation, '')`,
+    };
+    const sortExpression = filters.sortBy ? userSortExpressions[filters.sortBy] : 'u.created_at';
+    const sortOrder = filters.sortBy ? (filters.sortOrder === 'desc' ? 'DESC' : 'ASC') : 'DESC';
 
     const result = await this.query<HydratableUserRow>(
       `
         ${this.userSelectSql}
         ${whereSql}
-        ORDER BY u.created_at DESC, u.id DESC
+        ORDER BY ${sortExpression} ${sortOrder}, u.id ${sortOrder}
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
       `,
       selectParams,
@@ -712,6 +730,10 @@ export class UsersRepository {
     );
 
     return result.rows[0] || null;
+  }
+
+  async updateUserPhoto(id: number, storageKey: string | null): Promise<void> {
+    await this.query(`UPDATE users SET photo_storage_key = $2 WHERE id = $1`, [id, storageKey]);
   }
 
   async findOwnProfileById(id: number): Promise<HydratableUserRow | null> {

@@ -45,7 +45,8 @@ describe('SchoolStructureController access', () => {
         'manage-school-structure',
         'import-data',
         'import-school-roster',
-        ...(method === 'listSchools' ? ['manage-role-groups'] : []),
+        // The school picker is also reachable from จัดการกลุ่มเมนู and จัดการข้อมูลคุณครู.
+        ...(method === 'listSchools' ? ['manage-role-groups', 'manage-teachers'] : []),
       ]);
       expect(() => guard.canActivate(context(method))).toThrow();
     }

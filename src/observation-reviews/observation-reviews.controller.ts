@@ -21,7 +21,10 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import { ThrottleTeacherAccess } from '../config/throttle.decorators';
-import { TEACHER_ACCESS_TOKEN_HEADER } from '../teacher-access/teacher-access.constants';
+import {
+  TEACHER_ACCESS_SESSION_HEADER,
+  TEACHER_ACCESS_TOKEN_HEADER,
+} from '../teacher-access/teacher-access.constants';
 import {
   CreateFollowUpRequestDto,
   CreatePublicFollowUpRequestDto,
@@ -180,16 +183,22 @@ export class PublicStudentFollowUpRequestsController {
     return Array.isArray(value) ? value[0] || '' : value || '';
   }
 
+  private session(value: string | string[] | undefined): string | undefined {
+    return this.token(value) || undefined;
+  }
+
   @Post()
   @ThrottleTeacherAccess()
   create(
     @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
     @Body() body: CreatePublicFollowUpRequestDto,
   ) {
     return this.service.createFollowUpWithTeacherAccess(
       this.token(rawToken),
       body.studentTermId,
       body,
+      this.session(rawSession),
     );
   }
 
@@ -197,6 +206,7 @@ export class PublicStudentFollowUpRequestsController {
   @ThrottleTeacherAccess()
   list(
     @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
     @Query() query: PublicFollowUpRequestsQueryDto,
   ) {
     return this.service.listFollowUpsWithTeacherAccess(
@@ -204,6 +214,7 @@ export class PublicStudentFollowUpRequestsController {
       query.studentTermId,
       query.assignmentId,
       query,
+      this.session(rawSession),
     );
   }
 }

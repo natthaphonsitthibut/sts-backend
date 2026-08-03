@@ -237,6 +237,27 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'rotationCount', label: 'ครั้งที่' },
     ],
   },
+  TEACHER_ACCESS_GRANT_REVEAL: {
+    domain: 'tasks',
+    label: 'คัดลอกลิงก์เข้าใช้งานครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'schoolId', label: 'โรงเรียน' },
+    ],
+  },
+  TEACHER_ACCESS_OTP_REQUEST: {
+    domain: 'tasks',
+    label: 'ขอรหัส OTP ของลิงก์ครู',
+    detailKeys: [{ key: 'teacherName', label: 'ครู' }],
+  },
+  TEACHER_ACCESS_OTP_FAILED: {
+    domain: 'tasks',
+    label: 'ยืนยัน OTP ของลิงก์ครูไม่สำเร็จ',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'outcome', label: 'ผลลัพธ์' },
+    ],
+  },
   TEACHER_ACCESS_GRANT_USE: {
     domain: 'tasks',
     label: 'ใช้ลิงก์เข้าใช้งานครู',

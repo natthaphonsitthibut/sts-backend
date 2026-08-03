@@ -959,6 +959,30 @@ export class SchoolStructureRepository {
     return result.rows;
   }
 
+  /**
+   * Ends the classroom's current homeroom assignment so a replacement can be
+   * inserted. A classroom may hold only one ACTIVE homeroom assignment
+   * (`uq_classroom_teacher_assignments_homeroom`); the previous row is kept as
+   * history rather than deleted.
+   */
+  async deactivateHomeroomAssignments(
+    classroomId: number,
+    actorId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        UPDATE classroom_teacher_assignments
+        SET assignment_status = 'INACTIVE', updated_by = $2
+        WHERE classroom_id = $1
+          AND assignment_kind = 'HOMEROOM'
+          AND assignment_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [classroomId, actorId],
+    );
+  }
+
   async createAssignment(
     input: {
       schoolId: number;

@@ -526,7 +526,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     ),
     (
       'TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY',
-      'NONE',
+      'EMAIL_OTP',
       'นโยบายยืนยันตัวตนเพิ่มสำหรับลิงก์ครู'
     )
   ON CONFLICT (setting_key) DO NOTHING;
@@ -537,6 +537,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     school_id INTEGER NOT NULL,
     school_term_id BIGINT NOT NULL,
     token_hash CHAR(64) NOT NULL,
+    token_encrypted TEXT,
     step_up_policy VARCHAR(24) NOT NULL DEFAULT 'NONE',
     issued_by INTEGER NOT NULL,
     issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -596,7 +597,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
       FOREIGN KEY (grant_id) REFERENCES teacher_access_grants(id)
       ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT chk_teacher_access_grant_capability
-      CHECK (capability IN ('HOMEROOM_ATTENDANCE', 'TEACHER_OBSERVATION'))
+      CHECK (capability IN ('HOMEROOM_ATTENDANCE', 'SUBJECT_ATTENDANCE', 'TEACHER_OBSERVATION'))
   );
 
   CREATE TABLE IF NOT EXISTS teacher_access_grant_assignments (

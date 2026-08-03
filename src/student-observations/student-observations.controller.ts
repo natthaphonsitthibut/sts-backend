@@ -22,7 +22,10 @@ import {
 } from '../auth';
 import { ThrottleTeacherAccess } from '../config/throttle.decorators';
 import { PaginationQueryDto } from '../common/pagination/pagination.dto';
-import { TEACHER_ACCESS_TOKEN_HEADER } from '../teacher-access/teacher-access.constants';
+import {
+  TEACHER_ACCESS_SESSION_HEADER,
+  TEACHER_ACCESS_TOKEN_HEADER,
+} from '../teacher-access/teacher-access.constants';
 import {
   CreatePublicStudentObservationDto,
   CreateStudentObservationDto,
@@ -162,25 +165,39 @@ export class PublicStudentObservationsController {
     return Array.isArray(value) ? value[0] || '' : value || '';
   }
 
+  private session(value: string | string[] | undefined): string | undefined {
+    return this.token(value) || undefined;
+  }
+
   @Get('catalog')
   @ThrottleTeacherAccess()
-  catalog(@Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined) {
-    return this.service.getCatalogWithTeacherAccess(this.token(rawToken));
+  catalog(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+  ) {
+    return this.service.getCatalogWithTeacherAccess(this.token(rawToken), this.session(rawSession));
   }
 
   @Post()
   @ThrottleTeacherAccess()
   create(
     @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
     @Body() body: CreatePublicStudentObservationDto,
   ) {
-    return this.service.createWithTeacherAccess(this.token(rawToken), body.studentTermId, body);
+    return this.service.createWithTeacherAccess(
+      this.token(rawToken),
+      body.studentTermId,
+      body,
+      this.session(rawSession),
+    );
   }
 
   @Get()
   @ThrottleTeacherAccess()
   list(
     @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
     @Query() query: PublicStudentObservationQueryDto,
   ) {
     return this.service.listWithTeacherAccess(
@@ -188,6 +205,7 @@ export class PublicStudentObservationsController {
       query.studentTermId,
       query.assignmentId,
       query,
+      this.session(rawSession),
     );
   }
 
@@ -195,6 +213,7 @@ export class PublicStudentObservationsController {
   @ThrottleTeacherAccess()
   update(
     @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
     @Param('observationId', ParseIntPipe) observationId: number,
     @Body() body: UpdatePublicStudentObservationDto,
   ) {
@@ -204,6 +223,7 @@ export class PublicStudentObservationsController {
       String(observationId),
       body.assignmentId,
       body,
+      this.session(rawSession),
     );
   }
 
@@ -211,6 +231,7 @@ export class PublicStudentObservationsController {
   @ThrottleTeacherAccess()
   revisions(
     @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
     @Param('observationId', ParseIntPipe) observationId: number,
     @Query() query: PublicObservationRevisionsQueryDto,
   ) {
@@ -220,6 +241,7 @@ export class PublicStudentObservationsController {
       String(observationId),
       query.assignmentId,
       query,
+      this.session(rawSession),
     );
   }
 }

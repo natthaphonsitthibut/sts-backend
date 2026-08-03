@@ -20,7 +20,7 @@ describe('TeacherAccessRepository', () => {
     await repository.listAssignmentOptions({
       schoolId: 10,
       schoolTermId: 21,
-      teacherMembershipId: 12,
+      teacherMembershipIds: [12],
       onDate: '2026-07-15',
     });
 
@@ -28,7 +28,7 @@ describe('TeacherAccessRepository', () => {
       expect.stringMatching(
         /classroom\.classroom_status = 'ACTIVE'[\s\S]*effective_on <= \$4::date[\s\S]*effective_until >= \$4::date/,
       ),
-      [10, 21, 12, '2026-07-15'],
+      [10, 21, [12], '2026-07-15'],
       true,
     );
   });
@@ -48,7 +48,8 @@ describe('TeacherAccessRepository', () => {
         schoolId: 10,
         schoolTermId: 21,
         tokenHash: 'a'.repeat(64),
-        stepUpPolicy: 'NONE',
+        tokenEncrypted: 'v1:cipher',
+        stepUpPolicy: 'EMAIL_OTP',
         issuedBy: 1,
         expiresAt: new Date('2026-12-31T16:59:59.999Z'),
         capabilities: ['HOMEROOM_ATTENDANCE'],
@@ -75,9 +76,56 @@ describe('TeacherAccessRepository', () => {
 
     expect(runner.query).toHaveBeenCalledWith(
       expect.stringMatching(
-        /teacher\.status AS teacher_status[\s\S]*membership\.deleted_at AS membership_deleted_at[\s\S]*school\.school_status[\s\S]*term\.deleted_at AS term_deleted_at[\s\S]*FROM teacher_access_grants access_grant[\s\S]*FOR UPDATE OF access_grant/,
+        /teacher\.teacher_status AS teacher_status[\s\S]*membership\.deleted_at AS membership_deleted_at[\s\S]*school\.school_status[\s\S]*term\.deleted_at AS term_deleted_at[\s\S]*FROM teacher_access_grants access_grant[\s\S]*FOR UPDATE OF access_grant/,
       ),
       ['a'.repeat(64)],
+      true,
+    );
+  });
+
+  it('sorts the teacher-link roster before pagination', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listTeacherLinkRoster({
+      schoolId: 10,
+      schoolTermId: 21,
+      onDate: '2026-08-03',
+      sortBy: 'linkStatus',
+      sortOrder: 'desc',
+      page: 1,
+      limit: 20,
+    });
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(/ORDER BY[\s\S]*NOT_CREATED[\s\S]*DESC[\s\S]*LIMIT \$5 OFFSET \$6/),
+      [10, 21, '2026-08-03', null, 20, 0],
+      true,
+    );
+  });
+
+  it('filters and sorts attendance history before pagination', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listAttendanceHistory(
+      {
+        classroomId: 41,
+        sessionKind: 'DAILY',
+        subjectId: null,
+        search: 'ครูหนึ่ง',
+        attendanceDate: '2026-08-03',
+        sortBy: 'absent',
+        sortOrder: 'asc',
+        page: 2,
+        limit: 20,
+      },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /FROM history_rows[\s\S]*recorded_by[\s\S]*attendance_date::date[\s\S]*ORDER BY absent_count ASC[\s\S]*LIMIT \$6 OFFSET \$7/,
+      ),
+      [41, 'DAILY', null, '%ครูหนึ่ง%', '2026-08-03', 20, 20],
       true,
     );
   });

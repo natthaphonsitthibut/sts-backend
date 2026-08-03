@@ -11,6 +11,7 @@ export interface TeacherAccessGrantRow extends Record<string, unknown> {
   teacher_user_id: number;
   teacher_username: string;
   teacher_display_name: string;
+  teacher_email: string | null;
   teacher_status: string;
   membership_status: 'ACTIVE' | 'INACTIVE';
   membership_deleted_at: string | Date | null;
@@ -25,6 +26,7 @@ export interface TeacherAccessGrantRow extends Record<string, unknown> {
   term_starts_on: string | null;
   term_ends_on: string | null;
   token_hash: string;
+  token_encrypted: string | null;
   step_up_policy: TeacherAccessStepUpPolicy;
   issued_by: number;
   issuer_name: string;
@@ -53,6 +55,11 @@ export interface TeacherAccessAssignmentRow extends Record<string, unknown> {
   room_code: string;
   room_name: string | null;
   classroom_status: 'ACTIVE' | 'INACTIVE';
+  card_cover_color: string;
+  has_cover_image: boolean;
+  cover_image_position_x: number;
+  cover_image_position_y: number;
+  cover_image_scale: number;
   assignment_kind: 'HOMEROOM' | 'SUBJECT';
   assignment_status: 'ACTIVE' | 'INACTIVE';
   subject_id: number | null;
@@ -64,10 +71,27 @@ export interface TeacherAccessAssignmentRow extends Record<string, unknown> {
 
 export interface TeacherAccessRosterRow extends Record<string, unknown> {
   student_uuid: string;
+  student_number: string | null;
   first_name: string | null;
   last_name: string | null;
   student_status_code: number | null;
   student_status_label: string | null;
+  risk_tier: string | null;
+  teacher_comment: string | null;
+  total_count: number | string;
+}
+
+export interface TeacherAttendanceHistoryRow extends Record<string, unknown> {
+  id: string;
+  attendance_date: string;
+  period: number;
+  status: string;
+  submitted_at: string | Date | null;
+  recorded_by: string | null;
+  present_count: number;
+  late_count: number;
+  leave_count: number;
+  absent_count: number;
   total_count: number | string;
 }
 

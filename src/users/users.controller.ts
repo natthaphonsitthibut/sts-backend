@@ -14,9 +14,13 @@ import {
   Res,
   Logger,
   UnauthorizedException,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
+import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { ThrottleLogin } from '../config/throttle.decorators';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { UsersService } from './users.service';
@@ -43,6 +47,7 @@ import {
   UpdateRoleGroupDto,
   UpdateOwnProfileDto,
   UpdateUserDto,
+  UpdateUserPhotoDto,
 } from './dto/users.dto';
 import { RoleGroupsService } from './role-groups.service';
 import { UserAuthService } from './user-auth.service';
@@ -93,6 +98,8 @@ export class UsersController {
     return await this.usersService.getAllUsers(actor, {
       searchTerm: query.searchTerm?.trim() || undefined,
       excludeRole: query.excludeRole?.trim() || undefined,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
       province: query.province?.trim() || undefined,
       district: query.district?.trim() || undefined,
       subDistrict: query.subDistrict?.trim() || undefined,
@@ -259,6 +266,42 @@ export class UsersController {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
     }
     return user;
+  }
+
+  /**
+   * Profile photo read. Goes through the app rather than a public object URL so
+   * the permission check runs first; the adapter then hands back a short-lived
+   * signed URL that this redirects to.
+   */
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
+  @Get(':id/photo')
+  async getUserPhoto(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.usersService.resolveUserPhoto(id, actor);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-users-list')
+  @Patch(':id/photo')
+  @UseInterceptors(FileInterceptor('photo', multerConfig))
+  async updateUserPhoto(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: UpdateUserPhotoDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+    @UploadedFile() photo?: Express.Multer.File,
+  ) {
+    return await this.usersService.updateUserPhoto(id, actor, photo, data.removePhoto);
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

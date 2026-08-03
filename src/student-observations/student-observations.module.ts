@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TeacherAccessModule } from '../teacher-access/teacher-access.module';
 import { TaskModule } from '../task/task.module';
 import {
@@ -10,7 +10,7 @@ import { StudentObservationsRepository } from './student-observations.repository
 import { StudentObservationsService } from './student-observations.service';
 
 @Module({
-  imports: [TeacherAccessModule, TaskModule],
+  imports: [forwardRef(() => TeacherAccessModule), TaskModule],
   controllers: [
     StudentObservationsController,
     StudentObservationCatalogController,

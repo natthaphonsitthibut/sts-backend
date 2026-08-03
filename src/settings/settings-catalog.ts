@@ -42,11 +42,14 @@ export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
   {
     key: 'TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY',
     valueType: 'enum',
-    defaultValue: 'NONE',
+    defaultValue: 'EMAIL_OTP',
     group: GROUP_TEACHER_ACCESS,
-    enumOptions: [{ value: 'NONE', label: 'ไม่ยืนยันตัวตนเพิ่ม' }],
+    enumOptions: [
+      { value: 'EMAIL_OTP', label: 'ยืนยันด้วยรหัส OTP ทางอีเมล' },
+      { value: 'NONE', label: 'ไม่ยืนยันตัวตนเพิ่ม' },
+    ],
     description:
-      'นโยบายยืนยันตัวตนเพิ่มสำหรับลิงก์ครู (เปิดให้ใช้ NONE เท่านั้นจนกว่า OTP/ThaID production flow จะพร้อม)',
+      'นโยบายยืนยันตัวตนเพิ่มสำหรับลิงก์ครู (ThaID ยังไม่เปิดให้เลือกจนกว่า production flow จะพร้อม)',
   },
   {
     key: 'CASE_RISK_LOW_ABSENCE_DAYS',

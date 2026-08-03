@@ -91,6 +91,30 @@ describe('UsersRepository student account queries', () => {
 });
 
 describe('UsersRepository user list queries', () => {
+  it('applies requested user sorting before pagination', async () => {
+    const queries: string[] = [];
+    const repository = new UsersRepository({
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn().mockImplementation((sql: string) => {
+          queries.push(sql);
+          return Promise.resolve({ records: [], affected: 0 });
+        }),
+      }),
+    } as never);
+
+    await repository.listUsersPaginated({
+      actorId: 1,
+      actorRole: 'ADMIN',
+      actorRank: 5,
+      sortBy: 'affiliation',
+      sortOrder: 'asc',
+    });
+
+    expect(queries[2]).toContain("ORDER BY COALESCE(u.affiliation, '') ASC, u.id ASC");
+  });
+
   it('filters rows by lifecycle status without narrowing summary counts', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const repository = new UsersRepository({

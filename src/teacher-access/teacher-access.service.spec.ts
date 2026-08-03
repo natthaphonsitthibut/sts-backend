@@ -19,6 +19,7 @@ const GRANT: TeacherAccessGrantRow = {
   teacher_user_id: 44,
   teacher_username: 'teacher.one',
   teacher_display_name: 'ครู หนึ่ง',
+  teacher_email: 'teacher.one@sts-demo.ac.th',
   teacher_status: 'ACTIVE',
   membership_status: 'ACTIVE',
   membership_deleted_at: null,
@@ -33,6 +34,7 @@ const GRANT: TeacherAccessGrantRow = {
   term_starts_on: TODAY,
   term_ends_on: TODAY,
   token_hash: hashToken('valid-token-value-that-is-at-least-thirty-two-characters'),
+  token_encrypted: 'v1:cipher',
   step_up_policy: 'NONE',
   issued_by: 1,
   issuer_name: 'admin',
@@ -60,6 +62,11 @@ const ASSIGNMENT: TeacherAccessAssignmentRow = {
   room_code: '1',
   room_name: null,
   classroom_status: 'ACTIVE',
+  card_cover_color: 'BLUE',
+  has_cover_image: false,
+  cover_image_position_x: 50,
+  cover_image_position_y: 50,
+  cover_image_scale: 1,
   assignment_kind: 'HOMEROOM',
   assignment_status: 'ACTIVE',
   subject_id: null,
@@ -101,6 +108,11 @@ type RepositoryMock = jest.Mocked<
     | 'getAlertTriggerType'
     | 'getSystemSettingValue'
     | 'listAssignmentOptions'
+    | 'listMembershipsNeedingGrant'
+    | 'findGrantById'
+    | 'listAssignmentSlotsForDate'
+    | 'findClassroomPresentation'
+    | 'updateClassroomPresentation'
   >
 >;
 
@@ -136,6 +148,18 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
         Promise.resolve(key === 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY' ? 'TERM_END' : 'NONE'),
       ),
     listAssignmentOptions: jest.fn().mockResolvedValue([]),
+    listMembershipsNeedingGrant: jest.fn().mockResolvedValue([]),
+    findGrantById: jest.fn().mockResolvedValue(grant),
+    listAssignmentSlotsForDate: jest.fn().mockResolvedValue([]),
+    findClassroomPresentation: jest.fn().mockResolvedValue({
+      card_cover_color: '#4F86E8',
+      cover_image_storage_key: 'classroom-covers/old.png',
+      cover_image_position_x: 40,
+      cover_image_position_y: 60,
+      cover_image_scale: 1.2,
+      updated_at: NOW,
+    }),
+    updateClassroomPresentation: jest.fn().mockResolvedValue(true),
   };
   const auditLog = {
     recordAtomic: jest.fn().mockResolvedValue(undefined),
@@ -144,14 +168,54 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
   const attendance = { saveAttendanceWithinTransaction: jest.fn() };
   const automation = { checkConsecutiveAbsences: jest.fn() };
   const risk = { enqueueStudents: jest.fn().mockResolvedValue(undefined) };
+  const tokenEncryption = {
+    encrypt: jest.fn((value: string) => `v1:${value}`),
+    decrypt: jest.fn((value: string) => value.replace(/^v1:/, '')),
+  };
+  const emailService = { sendOTP: jest.fn().mockResolvedValue({ success: true }) };
+  const otpStore = {
+    issue: jest.fn().mockResolvedValue(new Date(Date.now() + 600_000)),
+    verify: jest.fn().mockResolvedValue('ok'),
+    clear: jest.fn().mockResolvedValue(undefined),
+  };
+  const magicSessionStore = {
+    issue: jest.fn().mockResolvedValue('ms_session'),
+    isVerified: jest.fn().mockResolvedValue(true),
+  };
+  const storage = {
+    kind: 'private-object',
+    save: jest.fn().mockResolvedValue(undefined),
+    saveStream: jest.fn().mockResolvedValue(undefined),
+    resolve: jest.fn(),
+    open: jest.fn(),
+    delete: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new TeacherAccessService(
     repository as unknown as TeacherAccessRepository,
     auditLog as never,
     attendance as never,
     automation as never,
     risk as never,
+    tokenEncryption as never,
+    emailService as never,
+    otpStore as never,
+    magicSessionStore as never,
+    storage as never,
+    {} as never,
+    {} as never,
   );
-  return { service, repository, auditLog, attendance, grant };
+  return {
+    service,
+    repository,
+    auditLog,
+    attendance,
+    grant,
+    tokenEncryption,
+    emailService,
+    otpStore,
+    magicSessionStore,
+    storage,
+  };
 }
 
 describe('TeacherAccessService', () => {
@@ -323,7 +387,7 @@ describe('TeacherAccessService', () => {
     expect(repository.listAssignmentOptions).toHaveBeenCalledWith({
       schoolId: 10,
       schoolTermId: 21,
-      teacherMembershipId: 12,
+      teacherMembershipIds: [12],
       onDate: getBangkokDateString(),
     });
   });
@@ -394,7 +458,7 @@ describe('TeacherAccessService', () => {
         membership_status: 'ACTIVE',
         teacher_status: 'ACTIVE',
       });
-      repository.listAssignmentsForIssue.mockResolvedValue([
+      repository.listAssignmentOptions.mockResolvedValue([
         { ...ASSIGNMENT, effective_until: assignmentEnd },
       ]);
       repository.createGrant.mockResolvedValue(GRANT.id);
@@ -403,12 +467,7 @@ describe('TeacherAccessService', () => {
       );
 
       await service.issueGrant(
-        {
-          teacherMembershipId: 12,
-          schoolTermId: 21,
-          capabilities: ['HOMEROOM_ATTENDANCE'],
-          assignmentIds: [31],
-        },
+        { teacherMembershipId: 12, schoolTermId: 21 },
         ACTOR,
         'https://sts.example',
       );
@@ -420,8 +479,7 @@ describe('TeacherAccessService', () => {
     },
   );
 
-  it('fails closed when a configured step-up policy is not implemented', async () => {
-    const { service, repository } = createHarness();
+  function stubIssuableTerm(repository: RepositoryMock): void {
     repository.findTermForIssue.mockResolvedValue({
       id: '21',
       school_id: 10,
@@ -438,24 +496,110 @@ describe('TeacherAccessService', () => {
       membership_status: 'ACTIVE',
       teacher_status: 'ACTIVE',
     });
-    repository.listAssignmentsForIssue.mockResolvedValue([ASSIGNMENT]);
+    repository.listAssignmentOptions.mockResolvedValue([ASSIGNMENT]);
+    repository.createGrant.mockResolvedValue(GRANT.id);
+  }
+
+  it('fails closed when a configured step-up policy is not implemented', async () => {
+    const { service, repository } = createHarness();
+    stubIssuableTerm(repository);
     repository.getSystemSettingValue.mockImplementation((key: string) =>
-      Promise.resolve(key === 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY' ? 'TERM_END' : 'EMAIL_OTP'),
+      Promise.resolve(key === 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY' ? 'TERM_END' : 'THAID'),
     );
 
     await expect(
       service.issueGrant(
-        {
-          teacherMembershipId: 12,
-          schoolTermId: 21,
-          capabilities: ['HOMEROOM_ATTENDANCE'],
-          assignmentIds: [31],
-        },
+        { teacherMembershipId: 12, schoolTermId: 21 },
         ACTOR,
         'https://sts.example',
       ),
     ).rejects.toThrow('ยังไม่รองรับ');
     expect(repository.createGrant).not.toHaveBeenCalled();
+  });
+
+  it('issues an email-OTP link that covers every assignment of the teacher', async () => {
+    const { service, repository, tokenEncryption } = createHarness();
+    stubIssuableTerm(repository);
+    repository.listAssignmentOptions.mockResolvedValue([
+      ASSIGNMENT,
+      { ...ASSIGNMENT, assignment_id: '32', assignment_kind: 'SUBJECT', subject_id: 7 },
+    ]);
+    repository.getSystemSettingValue.mockImplementation((key: string) =>
+      Promise.resolve(key === 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY' ? 'TERM_END' : 'EMAIL_OTP'),
+    );
+
+    await service.issueGrant(
+      { teacherMembershipId: 12, schoolTermId: 21 },
+      ACTOR,
+      'https://sts.example',
+    );
+
+    expect(repository.createGrant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepUpPolicy: 'EMAIL_OTP',
+        assignmentIds: [31, 32],
+        capabilities: ['HOMEROOM_ATTENDANCE', 'SUBJECT_ATTENDANCE', 'TEACHER_OBSERVATION'],
+      }),
+      expect.anything(),
+    );
+    expect(tokenEncryption.encrypt).toHaveBeenCalled();
+  });
+
+  it('refuses to issue a link for a teacher with no class this term', async () => {
+    const { service, repository } = createHarness();
+    stubIssuableTerm(repository);
+    repository.listAssignmentOptions.mockResolvedValue([]);
+
+    await expect(
+      service.issueGrant(
+        { teacherMembershipId: 12, schoolTermId: 21 },
+        ACTOR,
+        'https://sts.example',
+      ),
+    ).rejects.toThrow('ยังไม่มีห้องหรือรายวิชา');
+    expect(repository.createGrant).not.toHaveBeenCalled();
+  });
+
+  it('demands an OTP session before a step-up link may read anything', async () => {
+    const { service, magicSessionStore } = createHarness({ step_up_policy: 'EMAIL_OTP' });
+    magicSessionStore.isVerified.mockResolvedValue(false);
+
+    await expect(
+      service.getPublicContext('valid-token-value-that-is-at-least-thirty-two-characters'),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('issues a magic session only after the stored OTP matches', async () => {
+    const { service, otpStore, magicSessionStore } = createHarness({ step_up_policy: 'EMAIL_OTP' });
+    otpStore.verify.mockResolvedValue('wrong');
+
+    await expect(
+      service.verifyOtp('valid-token-value-that-is-at-least-thirty-two-characters', '123456'),
+    ).rejects.toThrow('ไม่ถูกต้อง');
+    expect(magicSessionStore.issue).not.toHaveBeenCalled();
+
+    otpStore.verify.mockResolvedValue('ok');
+    await expect(
+      service.verifyOtp('valid-token-value-that-is-at-least-thirty-two-characters', '123456'),
+    ).resolves.toMatchObject({ data: { sessionToken: 'ms_session' } });
+  });
+
+  it('sends the OTP to the teacher address and never returns it in full', async () => {
+    const { service, emailService } = createHarness({ step_up_policy: 'EMAIL_OTP' });
+
+    const result = await service.requestOtp(
+      'valid-token-value-that-is-at-least-thirty-two-characters',
+    );
+
+    expect(emailService.sendOTP).toHaveBeenCalledWith(
+      'teacher.one@sts-demo.ac.th',
+      expect.stringMatching(/^\d{6}$/),
+      expect.any(Number),
+    );
+    expect(result.data.maskedEmail).toBe('te*********@sts-demo.ac.th');
+    expect(JSON.stringify(result)).not.toContain(
+      (emailService.sendOTP.mock.calls[0] as string[])[1],
+    );
   });
 
   it('rotates the token so the old hash is denied and the new link resolves', async () => {
@@ -464,6 +608,11 @@ describe('TeacherAccessService', () => {
     repository.rotateGrantToken.mockImplementation((_id, nextHash) => {
       activeHash = nextHash;
       return Promise.resolve();
+    });
+    repository.getGrantDetail.mockResolvedValue({
+      grant: GRANT,
+      capabilities: GRANT.capabilities,
+      assignments: [ASSIGNMENT],
     });
     repository.findGrantByTokenHashForUpdate.mockImplementation((candidate) =>
       Promise.resolve(candidate === activeHash ? GRANT : null),
@@ -520,5 +669,43 @@ describe('TeacherAccessService', () => {
     releaseUse();
     await Promise.all([usePromise, revokePromise]);
     expect(repository.revokeGrant).toHaveBeenCalled();
+  });
+
+  it('rejects an invalid teacher link before persisting a classroom cover', async () => {
+    const { service, repository, storage } = createHarness();
+    repository.findGrantByTokenHashForUpdate.mockResolvedValue(null);
+
+    await expect(
+      service.updatePublicClassroomPresentation(
+        'invalid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31 },
+        {
+          buffer: Buffer.from('not-read-before-auth'),
+          mimetype: 'image/png',
+        } as Express.Multer.File,
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(storage.save).not.toHaveBeenCalled();
+  });
+
+  it('deletes a newly uploaded cover when the classroom update rolls back', async () => {
+    const { service, repository, storage } = createHarness();
+    repository.updateClassroomPresentation.mockRejectedValueOnce(new Error('database unavailable'));
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+
+    await expect(
+      service.updatePublicClassroomPresentation(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31 },
+        { buffer: png, mimetype: 'image/png' } as Express.Multer.File,
+      ),
+    ).rejects.toThrow('database unavailable');
+
+    expect(storage.save).toHaveBeenCalledTimes(1);
+    expect(storage.delete).toHaveBeenCalledWith(expect.stringMatching(/^classroom-covers\//));
   });
 });

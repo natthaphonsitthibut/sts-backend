@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   ConflictException,
   ForbiddenException,
   GoneException,
@@ -64,6 +66,9 @@ export class StudentObservationsService {
   constructor(
     private readonly repository: StudentObservationsRepository,
     private readonly auditLog: AuditLogService,
+    // Circular by design: teacher-access reads observations for the link's
+    // student profile, observations authorise through teacher-access.
+    @Inject(forwardRef(() => TeacherAccessService))
     private readonly teacherAccess: TeacherAccessService,
     private readonly taskAccess: TaskAccessService,
     private readonly taskRepository: TaskRepository,
@@ -588,6 +593,7 @@ export class StudentObservationsService {
     rawToken: string,
     studentUuid: string,
     dto: CreatePublicStudentObservationDto,
+    sessionToken?: string,
   ) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,
@@ -595,6 +601,7 @@ export class StudentObservationsService {
         capability: 'TEACHER_OBSERVATION',
         assignmentId: dto.assignmentId,
         studentUuid,
+        sessionToken,
         operation: 'CREATE_STUDENT_OBSERVATION',
       },
       async (grant, queryRunner) => {
@@ -648,6 +655,7 @@ export class StudentObservationsService {
     studentUuid: string,
     assignmentId: number,
     query: ListStudentObservationsQueryDto,
+    sessionToken?: string,
   ) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,
@@ -655,6 +663,7 @@ export class StudentObservationsService {
         capability: 'TEACHER_OBSERVATION',
         assignmentId,
         studentUuid,
+        sessionToken,
         operation: 'VIEW_STUDENT_OBSERVATIONS',
       },
       async (grant, queryRunner) => {
@@ -688,6 +697,7 @@ export class StudentObservationsService {
     observationId: string,
     assignmentId: number,
     dto: UpdateStudentObservationDto,
+    sessionToken?: string,
   ) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,
@@ -695,6 +705,7 @@ export class StudentObservationsService {
         capability: 'TEACHER_OBSERVATION',
         assignmentId,
         studentUuid,
+        sessionToken,
         operation: 'UPDATE_STUDENT_OBSERVATION',
       },
       async (grant, queryRunner) => {
@@ -769,6 +780,7 @@ export class StudentObservationsService {
     observationId: string,
     assignmentId: number,
     query: PaginationQueryDto,
+    sessionToken?: string,
   ) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,
@@ -776,6 +788,7 @@ export class StudentObservationsService {
         capability: 'TEACHER_OBSERVATION',
         assignmentId,
         studentUuid,
+        sessionToken,
         operation: 'VIEW_STUDENT_OBSERVATION_REVISIONS',
       },
       async (grant, queryRunner) => {
@@ -894,10 +907,10 @@ export class StudentObservationsService {
     };
   }
 
-  async getCatalogWithTeacherAccess(rawToken: string) {
+  async getCatalogWithTeacherAccess(rawToken: string, sessionToken?: string) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,
-      { capability: 'TEACHER_OBSERVATION', operation: 'VIEW_OBSERVATION_CATALOG' },
+      { capability: 'TEACHER_OBSERVATION', sessionToken, operation: 'VIEW_OBSERVATION_CATALOG' },
       async (_grant, queryRunner) => {
         const catalog = await this.repository.listCatalog(queryRunner);
         return {

@@ -42,6 +42,7 @@ describe('Observation review controller security metadata', () => {
     expect(Object.getOwnPropertyNames(PublicStudentFollowUpRequestsController.prototype)).toEqual([
       'constructor',
       'token',
+      'session',
       'create',
       'list',
     ]);

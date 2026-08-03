@@ -846,6 +846,7 @@ export class ObservationReviewsService {
     rawToken: string,
     studentUuid: string,
     dto: CreatePublicFollowUpRequestDto,
+    sessionToken?: string,
   ) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,
@@ -853,6 +854,7 @@ export class ObservationReviewsService {
         capability: 'TEACHER_OBSERVATION',
         assignmentId: dto.assignmentId,
         studentUuid,
+        sessionToken,
         operation: 'CREATE_STUDENT_FOLLOW_UP_REQUEST',
       },
       async (grant, queryRunner) => {
@@ -893,6 +895,7 @@ export class ObservationReviewsService {
     studentUuid: string,
     assignmentId: number,
     query: ListFollowUpRequestsQueryDto,
+    sessionToken?: string,
   ) {
     return await this.teacherAccess.withActiveGrantContext(
       rawToken,
@@ -900,6 +903,7 @@ export class ObservationReviewsService {
         capability: 'TEACHER_OBSERVATION',
         assignmentId,
         studentUuid,
+        sessionToken,
         operation: 'VIEW_STUDENT_FOLLOW_UP_REQUESTS',
       },
       async (grant, queryRunner) => {

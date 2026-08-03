@@ -37,3 +37,27 @@ export const multerConfig = {
     fieldSize: 1 * 1024 * 1024,
   },
 };
+
+/**
+ * Curriculum content is a single PDF up to 10 MB — larger than the shared
+ * attachment limit and deliberately narrower in type.
+ */
+export const curriculumPdfMulterConfig = {
+  storage: memoryStorage(),
+  fileFilter: (
+    _req: unknown,
+    file: Express.Multer.File,
+    callback: (error: Error | null, acceptFile: boolean) => void,
+  ) => {
+    if (file.mimetype !== 'application/pdf') {
+      return callback(new BadRequestException('รองรับเฉพาะไฟล์ PDF เท่านั้น'), false);
+    }
+    callback(null, true);
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1,
+    fields: 16,
+    fieldSize: 1 * 1024 * 1024,
+  },
+};
