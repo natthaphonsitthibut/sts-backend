@@ -6,6 +6,7 @@ import {
   StudentFollowUpRequestsController,
   StudentRiskReviewController,
   TeacherObservationReportsController,
+  TeacherWatchlistController,
 } from './observation-reviews.controller';
 import { ObservationReviewsRepository } from './observation-reviews.repository';
 import { ObservationReviewsService } from './observation-reviews.service';
@@ -16,6 +17,7 @@ import { ObservationReviewsService } from './observation-reviews.service';
     StudentRiskReviewController,
     StudentFollowUpRequestsController,
     TeacherObservationReportsController,
+    TeacherWatchlistController,
     HomeVisitRequestReportsController,
   ],
   providers: [ObservationReviewsRepository, ObservationReviewsService],

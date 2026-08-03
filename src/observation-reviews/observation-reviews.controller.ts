@@ -29,6 +29,7 @@ import {
   ListFollowUpRequestsQueryDto,
   ListHomeVisitRequestsQueryDto,
   ListTeacherObservationReportsQueryDto,
+  ListTeacherWatchlistQueryDto,
   PublicFollowUpRequestsQueryDto,
   ReviewFollowUpRequestDto,
 } from './dto/observation-reviews.dto';
@@ -78,6 +79,21 @@ export class TeacherObservationReportsController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.getTeacherObservationReport(String(observationId), actor);
+  }
+}
+
+@UseGuards(AuthGuard, PermissionsGuard)
+@RequirePermission('review-cases', 'manage-student-observations')
+@Controller('api/student-risk-report/teacher-watchlist')
+export class TeacherWatchlistController {
+  constructor(private readonly service: ObservationReviewsService) {}
+
+  @Get()
+  list(
+    @Query() query: ListTeacherWatchlistQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listTeacherWatchlist(query, actor);
   }
 }
 

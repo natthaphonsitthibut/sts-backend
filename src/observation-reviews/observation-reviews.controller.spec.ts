@@ -8,6 +8,7 @@ import {
   StudentFollowUpRequestsController,
   StudentRiskReviewController,
   TeacherObservationReportsController,
+  TeacherWatchlistController,
 } from './observation-reviews.controller';
 
 function handler<T>(controller: new (...args: never[]) => T, method: keyof T): () => unknown {
@@ -57,4 +58,15 @@ describe('Observation review controller security metadata', () => {
       ]);
     },
   );
+
+  it('requires both case-review and observation permissions for the teacher watchlist', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, TeacherWatchlistController)).toEqual([
+      AuthGuard,
+      PermissionsGuard,
+    ]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, TeacherWatchlistController)).toEqual([
+      'review-cases',
+      'manage-student-observations',
+    ]);
+  });
 });

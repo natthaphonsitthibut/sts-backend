@@ -123,6 +123,7 @@ describe('ObservationReviewsService', () => {
       listFollowUps: jest.fn().mockResolvedValue([FOLLOW_UP_ROW]),
       reviewFollowUp: jest.fn().mockResolvedValue(true),
       listTeacherObservationReports: jest.fn().mockResolvedValue([]),
+      listTeacherWatchlist: jest.fn().mockResolvedValue([]),
       listHomeVisitRequests: jest.fn().mockResolvedValue([]),
     };
     const auditLog = {
@@ -457,6 +458,49 @@ describe('ObservationReviewsService', () => {
         limit: 20,
         sortBy: 'studentName',
         sortDirection: 'asc',
+      }),
+    );
+  });
+
+  it('lists the teacher watchlist once per student and audits only aggregate metadata', async () => {
+    const { service, repository, auditLog } = buildService();
+    repository.listTeacherWatchlist.mockResolvedValueOnce([
+      {
+        student_uuid: STUDENT_UUID,
+        student_name: 'เด็ก ทดสอบ',
+        school_id: 101,
+        school_name: 'โรงเรียนทดสอบ',
+        grade_label: 'ป.1',
+        room_no: 1,
+        latest_observation_id: '9',
+        latest_dimension_label: 'พฤติกรรม',
+        latest_concern_level: 'WATCH',
+        latest_comment: 'ต้องเฝ้าระวัง',
+        latest_author_display_name: 'ครู ทดสอบ',
+        latest_observed_at: '2026-07-15T01:00:00.000Z',
+        observation_count: 3,
+        total_count: 1,
+      },
+    ]);
+
+    const result = await service.listTeacherWatchlist({ page: 1, limit: 20 }, MANAGER);
+
+    expect(repository.listTeacherWatchlist).toHaveBeenCalledWith(
+      { school_ids: [101] },
+      expect.objectContaining({ page: 1, limit: 20 }),
+    );
+    expect(result.data[0]).toMatchObject({
+      studentTermId: STUDENT_UUID,
+      latestComment: 'ต้องเฝ้าระวัง',
+      observationCount: 3,
+    });
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'student_observation_watchlist',
+        metadata: {
+          resultCount: 1,
+          operation: 'TEACHER_OBSERVATION_WATCHLIST_VIEW',
+        },
       }),
     );
   });

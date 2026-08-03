@@ -13,6 +13,7 @@ import type {
   ObservationSourceRef,
   RiskReviewRow,
   TeacherObservationReportRow,
+  TeacherWatchlistRow,
   ValidatedObservationSourceRow,
 } from './observation-reviews.types';
 
@@ -709,6 +710,125 @@ export class ObservationReviewsRepository {
        FROM reports report
        ${where}
        ORDER BY ${orderBy}
+       LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      params,
+    );
+    return result.rows;
+  }
+
+  async listTeacherWatchlist(
+    scope: DataScope,
+    filters: {
+      searchTerm?: string;
+      province?: string;
+      district?: string;
+      subDistrict?: string;
+      schoolId?: number;
+      grade?: string;
+      room?: string;
+      page: number;
+      limit: number;
+    },
+  ): Promise<TeacherWatchlistRow[]> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    const push = (value: unknown): number => {
+      params.push(value);
+      return params.length;
+    };
+
+    if (filters.searchTerm) {
+      conditions.push(`watchlist.student_name ILIKE $${push(`%${filters.searchTerm}%`)}`);
+    }
+    if (filters.province) {
+      conditions.push(`watchlist.province = $${push(filters.province)}`);
+    }
+    if (filters.district) {
+      conditions.push(`watchlist.district = $${push(filters.district)}`);
+    }
+    if (filters.subDistrict) {
+      conditions.push(`watchlist.sub_district = $${push(filters.subDistrict)}`);
+    }
+    if (filters.schoolId) {
+      conditions.push(`watchlist.school_id = $${push(filters.schoolId)}`);
+    }
+    if (filters.grade) {
+      conditions.push(`watchlist.grade_label = $${push(filters.grade)}`);
+    }
+    if (filters.room) {
+      conditions.push(`watchlist.room_no::text = $${push(filters.room)}`);
+    }
+
+    const scoped = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'watchlist.school_id',
+        province: 'watchlist.province',
+        district: 'watchlist.district',
+        sub_district: 'watchlist.sub_district',
+        grade: 'watchlist.grade_level_id',
+        room: 'watchlist.classroom_id',
+      },
+      params.length + 1,
+    );
+    if (scoped.sql) conditions.push(`(${scoped.sql})`);
+    params.push(...scoped.params);
+
+    const limitIndex = push(filters.limit);
+    const offsetIndex = push((filters.page - 1) * filters.limit);
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const result = await queryDataSource<TeacherWatchlistRow>(
+      this.dataSource,
+      `WITH ranked_observations AS (
+         SELECT
+           enrollment.student_uuid::text,
+           trim(concat_ws(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec"))
+             AS student_name,
+           enrollment."SchoolID_Onec" AS school_id,
+           school.name AS school_name,
+           school.province,
+           school.district,
+           school.sub_district,
+           enrollment."GradeLevelID_Onec" AS grade_level_id,
+           grade.label AS grade_label,
+           enrollment.classroom_id::text,
+           enrollment."RoomID_Onec" AS room_no,
+           observation.id::text AS latest_observation_id,
+           dimension.label_th AS latest_dimension_label,
+           observation.concern_level AS latest_concern_level,
+           observation.comment AS latest_comment,
+           COALESCE(
+             observation.observer_display_name,
+             NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
+             author.username
+           ) AS latest_author_display_name,
+           observation.observed_at AS latest_observed_at,
+           COUNT(*) OVER (PARTITION BY observation.student_uuid)::int AS observation_count,
+           ROW_NUMBER() OVER (
+             PARTITION BY observation.student_uuid
+             ORDER BY observation.observed_at DESC, observation.id DESC
+           ) AS observation_rank
+         FROM student_observations observation
+         JOIN student_term enrollment ON enrollment.student_uuid = observation.student_uuid
+         JOIN student_current_enrollment_resolution current_enrollment
+           ON current_enrollment.person_uuid = enrollment.person_uuid
+          AND current_enrollment.selected_student_uuid = enrollment.student_uuid
+          AND current_enrollment.resolution_state = 'ACTIVE'
+         JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+         LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
+         JOIN users author ON author.id = observation.author_user_id
+         JOIN observation_dimensions dimension
+           ON dimension.id = observation.observation_dimension_id
+         WHERE observation.deleted_at IS NULL
+           AND enrollment.deleted_at IS NULL
+       ), watchlist AS (
+         SELECT * FROM ranked_observations WHERE observation_rank = 1
+       )
+       SELECT watchlist.*, COUNT(*) OVER()::int AS total_count
+       FROM watchlist
+       ${where}
+       ORDER BY watchlist.latest_observed_at DESC, watchlist.latest_observation_id DESC
        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
       params,
     );

@@ -153,6 +153,50 @@ export class ListTeacherObservationReportsQueryDto extends PaginationQueryDto {
   sortDirection?: 'asc' | 'desc';
 }
 
+export class ListTeacherWatchlistQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(120)
+  searchTerm?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(120)
+  province?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(120)
+  district?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(120)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(50)
+  grade?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(50)
+  room?: string;
+}
+
 export class ListHomeVisitRequestsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['PENDING_REVIEW', 'APPROVED', 'REJECTED'])
@@ -302,6 +346,22 @@ export class TeacherObservationReportResponseDto {
   urgency!: FollowUpUrgency | null;
   openedCaseId!: number | null;
   openedCaseStatus!: string | null;
+}
+
+export class TeacherWatchlistResponseDto {
+  studentTermId!: string;
+  studentName!: string;
+  schoolId!: number;
+  schoolName!: string;
+  gradeLabel!: string | null;
+  roomNo!: number | null;
+  latestObservationId!: string;
+  latestDimensionLabel!: string;
+  latestConcernLevel!: 'NOTE' | 'WATCH' | 'CONCERN';
+  latestComment!: string | null;
+  latestAuthorDisplayName!: string;
+  latestObservedAt!: string;
+  observationCount!: number;
 }
 
 export class HomeVisitRequestReportResponseDto extends StudentFollowUpRequestResponseDto {

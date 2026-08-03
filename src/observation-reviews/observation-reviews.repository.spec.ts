@@ -61,4 +61,19 @@ describe('ObservationReviewsRepository', () => {
     expect(queries[0].sql).toContain("COALESCE(profile.risk_tier, 'UNKNOWN')");
     expect(queries[0].sql).not.toContain('UPDATE student_risk_profiles');
   });
+
+  it('lists one latest observation per currently enrolled student within actor scope', async () => {
+    const { repository, queries } = buildRepository();
+    await repository.listTeacherWatchlist(
+      { school_ids: [101] },
+      { searchTerm: 'เด็ก', schoolId: 101, grade: 'ป.1', room: '1', page: 2, limit: 20 },
+    );
+
+    expect(queries[0].sql).toContain('student_current_enrollment_resolution');
+    expect(queries[0].sql).toContain('COUNT(*) OVER (PARTITION BY observation.student_uuid)');
+    expect(queries[0].sql).toContain('ROW_NUMBER() OVER');
+    expect(queries[0].sql).toContain('WHERE observation_rank = 1');
+    expect(queries[0].sql).toContain('watchlist.school_id = ANY');
+    expect(queries[0].params).toEqual(['%เด็ก%', 101, 'ป.1', '1', [101], 20, 20]);
+  });
 });

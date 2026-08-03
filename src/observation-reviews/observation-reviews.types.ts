@@ -121,3 +121,20 @@ export interface TeacherObservationReportRow extends Record<string, unknown> {
   opened_case_status: string | null;
   total_count?: number | string;
 }
+
+export interface TeacherWatchlistRow extends Record<string, unknown> {
+  student_uuid: string;
+  student_name: string;
+  school_id: number | string;
+  school_name: string;
+  grade_label: string | null;
+  room_no: number | string | null;
+  latest_observation_id: string;
+  latest_dimension_label: string;
+  latest_concern_level: 'NOTE' | 'WATCH' | 'CONCERN';
+  latest_comment: string | null;
+  latest_author_display_name: string;
+  latest_observed_at: Date | string;
+  observation_count: number | string;
+  total_count?: number | string;
+}

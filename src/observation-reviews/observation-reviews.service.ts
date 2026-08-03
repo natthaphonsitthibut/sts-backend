@@ -33,9 +33,11 @@ import type {
   ListFollowUpRequestsQueryDto,
   ListHomeVisitRequestsQueryDto,
   ListTeacherObservationReportsQueryDto,
+  ListTeacherWatchlistQueryDto,
   ReviewFollowUpRequestDto,
   StudentFollowUpRequestResponseDto,
   TeacherObservationReportResponseDto,
+  TeacherWatchlistResponseDto,
 } from './dto/observation-reviews.dto';
 import { ObservationReviewsRepository } from './observation-reviews.repository';
 import type {
@@ -45,6 +47,7 @@ import type {
   ObservationSourceRef,
   RiskReviewRow,
   TeacherObservationReportRow,
+  TeacherWatchlistRow,
   ValidatedObservationSourceRow,
 } from './observation-reviews.types';
 
@@ -262,6 +265,24 @@ export class ObservationReviewsService {
     };
   }
 
+  private toTeacherWatchlist(row: TeacherWatchlistRow): TeacherWatchlistResponseDto {
+    return {
+      studentTermId: row.student_uuid,
+      studentName: row.student_name,
+      schoolId: Number(row.school_id),
+      schoolName: row.school_name,
+      gradeLabel: row.grade_label,
+      roomNo: row.room_no === null ? null : Number(row.room_no),
+      latestObservationId: row.latest_observation_id,
+      latestDimensionLabel: row.latest_dimension_label,
+      latestConcernLevel: row.latest_concern_level,
+      latestComment: row.latest_comment,
+      latestAuthorDisplayName: row.latest_author_display_name,
+      latestObservedAt: new Date(row.latest_observed_at).toISOString(),
+      observationCount: Number(row.observation_count),
+    };
+  }
+
   async listTeacherObservationReports(
     query: ListTeacherObservationReportsQueryDto,
     actor: AuthenticatedRequestUser,
@@ -284,6 +305,34 @@ export class ObservationReviewsService {
       metadata: {
         resultCount: data.length,
         operation: 'TEACHER_OBSERVATION_REPORT_QUEUE_VIEW',
+      },
+      ip: null,
+    });
+    return {
+      data,
+      meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+    };
+  }
+
+  async listTeacherWatchlist(query: ListTeacherWatchlistQueryDto, actor: AuthenticatedRequestUser) {
+    const scope = this.managerQueueScope(actor);
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const rows = await this.repository.listTeacherWatchlist(scope, {
+      ...query,
+      page,
+      limit,
+    });
+    const data = rows.map((row) => this.toTeacherWatchlist(row));
+    await this.auditLog.record({
+      actorUserId: actor.id,
+      actorLabel: actor.username,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'student_observation_watchlist',
+      targetId: 'teacher-watchlist',
+      metadata: {
+        resultCount: data.length,
+        operation: 'TEACHER_OBSERVATION_WATCHLIST_VIEW',
       },
       ip: null,
     });
