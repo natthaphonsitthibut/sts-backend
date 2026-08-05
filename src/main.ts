@@ -8,7 +8,11 @@ import { createValidationException } from './common/validation/validation-except
 import { appConfig } from './config/app.config';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    // LINE webhooks are authenticated by an HMAC over the exact bytes received,
+    // so the raw body has to survive JSON parsing.
+    rawBody: true,
+  });
   const runtimeConfig = app.get<ConfigType<typeof appConfig>>(appConfig.KEY);
 
   // Controls how the real client IP is derived from X-Forwarded-For for rate

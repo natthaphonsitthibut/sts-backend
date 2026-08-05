@@ -26,6 +26,9 @@ import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
 import { encryptionConfig } from './config/encryption.config';
 import { geoConfig } from './config/geo.config';
+import { lineConfig } from './config/line.config';
+import { MessagingModule } from './common/messaging/messaging.module';
+import { TeacherLineModule } from './teacher-line/teacher-line.module';
 import { piiConfig } from './config/pii.config';
 import { queueConfig } from './config/queue.config';
 import { storageConfig } from './config/storage.config';
@@ -59,6 +62,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
         emailConfig,
         encryptionConfig,
         geoConfig,
+        lineConfig,
         piiConfig,
         queueConfig,
         storageConfig,
@@ -66,6 +70,8 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
       ],
     }),
     FileStorageModule,
+    MessagingModule,
+    TeacherLineModule,
     ScheduleModule.forRoot(),
     // IP rate limiting (in-memory store). Limits come from the runtime config
     // (so .env overrides apply), exposed as named throttlers. The guard is

@@ -258,6 +258,38 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'outcome', label: 'ผลลัพธ์' },
     ],
   },
+  TEACHER_ACCESS_GRANT_SEND: {
+    domain: 'tasks',
+    label: 'ส่งลิงก์เข้าใช้งานครูทาง LINE',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'delivered', label: 'ส่งสำเร็จ' },
+    ],
+  },
+  TEACHER_MESSAGING_LINK: {
+    domain: 'tasks',
+    label: 'เชื่อมบัญชี LINE ของครู',
+    detailKeys: [
+      { key: 'provider', label: 'ช่องทาง' },
+      { key: 'outcome', label: 'ผลลัพธ์' },
+    ],
+  },
+  TEACHER_MESSAGING_LINK_DENIED: {
+    domain: 'tasks',
+    label: 'เชื่อมบัญชี LINE ของครูไม่สำเร็จ',
+    detailKeys: [
+      { key: 'provider', label: 'ช่องทาง' },
+      { key: 'outcome', label: 'ผลลัพธ์' },
+    ],
+  },
+  TEACHER_MESSAGING_UNLINK: {
+    domain: 'tasks',
+    label: 'ยกเลิกการเชื่อมบัญชี LINE ของครู',
+    detailKeys: [
+      { key: 'provider', label: 'ช่องทาง' },
+      { key: 'reason', label: 'เหตุผล' },
+    ],
+  },
   TEACHER_ACCESS_GRANT_USE: {
     domain: 'tasks',
     label: 'ใช้ลิงก์เข้าใช้งานครู',

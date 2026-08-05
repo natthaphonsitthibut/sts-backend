@@ -40,6 +40,21 @@ function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
+/**
+ * Teachers carry two unique identities, so the message has to name the one that
+ * actually clashed — telling someone their national id is taken when the email
+ * is the problem sends them looking in the wrong place.
+ */
+function uniqueViolationMessage(error: unknown): string {
+  const constraint =
+    typeof error === 'object' && error !== null && 'constraint' in error
+      ? String(error.constraint)
+      : '';
+  if (constraint === 'uq_teachers_email') return 'อีเมลนี้ถูกใช้กับครูคนอื่นแล้ว';
+  if (constraint === 'uq_teachers_citizen_id') return 'เลขบัตรประชาชนนี้มีอยู่ในระบบแล้ว';
+  return 'ข้อมูลนี้ซ้ำกับครูคนอื่นในระบบแล้ว';
+}
+
 @Injectable()
 export class TeachersService {
   private readonly logger = new Logger(TeachersService.name);
@@ -205,7 +220,7 @@ export class TeachersService {
       return { success: true, data: this.toResponse(created) };
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new ConflictException('เลขบัตรประชาชนนี้มีอยู่ในระบบแล้ว');
+        throw new ConflictException(uniqueViolationMessage(error));
       }
       throw error;
     }
@@ -263,7 +278,7 @@ export class TeachersService {
       return { success: true, data: this.toResponse(updated) };
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new ConflictException('เลขบัตรประชาชนนี้มีอยู่ในระบบแล้ว');
+        throw new ConflictException(uniqueViolationMessage(error));
       }
       throw error;
     }

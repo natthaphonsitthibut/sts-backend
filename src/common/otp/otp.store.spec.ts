@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { TeacherAccessOtpStore } from './teacher-access-otp.store';
+import { OtpStore } from './otp.store';
 
 interface FakeStoredOtp {
   codeHash: string;
@@ -52,7 +52,7 @@ class AtomicRedisFake {
   }
 }
 
-describe('TeacherAccessOtpStore', () => {
+describe('OtpStore', () => {
   const config = {
     sessionSecret: 'test-session-secret-not-production',
     otpTtlSeconds: 600,
@@ -60,8 +60,8 @@ describe('TeacherAccessOtpStore', () => {
     otpLockSeconds: 900,
   };
 
-  function createStore(redis?: AtomicRedisFake): TeacherAccessOtpStore {
-    return new TeacherAccessOtpStore({ getClient: () => redis } as never, config as never);
+  function createStore(redis?: AtomicRedisFake): OtpStore {
+    return new OtpStore({ getClient: () => redis } as never, config as never);
   }
 
   it('atomically caps concurrent wrong guesses at the configured limit', async () => {
@@ -75,7 +75,7 @@ describe('TeacherAccessOtpStore', () => {
 
     expect(outcomes.filter((outcome) => outcome === 'wrong')).toHaveLength(2);
     expect(outcomes.filter((outcome) => outcome === 'locked')).toHaveLength(6);
-    const stored = JSON.parse(redis.values.get('sts:teacher-access-otp:grant-1')!) as FakeStoredOtp;
+    const stored = JSON.parse(redis.values.get('sts:otp:grant-1')!) as FakeStoredOtp;
     expect(stored.attempts).toBe(3);
   });
 
@@ -102,7 +102,7 @@ describe('TeacherAccessOtpStore', () => {
     const store = createStore(redis);
     await store.issue('grant-1', '123456');
 
-    const stored = redis.values.get('sts:teacher-access-otp:grant-1') ?? '';
+    const stored = redis.values.get('sts:otp:grant-1') ?? '';
     expect(stored).not.toContain('123456');
     expect(stored).toContain(
       crypto.createHash('sha256').update(`${config.sessionSecret}:123456`).digest('hex'),
