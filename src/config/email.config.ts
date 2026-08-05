@@ -7,6 +7,9 @@ export interface EmailRuntimeConfig {
   user: string;
   pass: string;
   from: string;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthRefreshToken: string;
 }
 
 function parseBoolean(value: string | undefined, fallback = false): boolean {
@@ -31,6 +34,9 @@ export function getEmailConfigFromEnv(): EmailRuntimeConfig {
     user: process.env.EMAIL_USER || '',
     pass: process.env.EMAIL_PASS || '',
     from: process.env.EMAIL_FROM || '"STS System" <noreply@sts-app.com>',
+    oauthClientId: process.env.GMAIL_OAUTH_CLIENT_ID || '',
+    oauthClientSecret: process.env.GMAIL_OAUTH_CLIENT_SECRET || '',
+    oauthRefreshToken: process.env.GMAIL_OAUTH_REFRESH_TOKEN || '',
   };
 }
 
