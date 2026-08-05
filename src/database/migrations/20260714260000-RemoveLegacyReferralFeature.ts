@@ -179,7 +179,9 @@ export class RemoveLegacyReferralFeature20260714260000 implements MigrationInter
     `);
     await queryRunner.query(`DROP TABLE case_referrals`);
     await queryRunner.query(`DROP TABLE external_agencies`);
-    await queryRunner.query(`DROP TABLE case_referral_statuses`);
+    // Older bootstrap snapshots created this catalog, while a database built
+    // strictly from the migration chain did not. Both histories are valid.
+    await queryRunner.query(`DROP TABLE IF EXISTS case_referral_statuses`);
     await queryRunner.query(`DROP TABLE related_agencies`);
   }
 

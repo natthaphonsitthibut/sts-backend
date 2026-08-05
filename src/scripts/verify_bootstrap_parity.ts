@@ -8,9 +8,15 @@ function hashText(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function assertIncludes(source: string, expected: string, label: string): void {
+function assertIncludes(source: string, expected: string, message: string): void {
   if (!source.includes(expected)) {
-    throw new Error(`${label} is not using the shared bootstrap helper`);
+    throw new Error(message);
+  }
+}
+
+function assertExcludes(source: string, banned: string, message: string): void {
+  if (source.includes(banned)) {
+    throw new Error(message);
   }
 }
 
@@ -19,11 +25,28 @@ function main(): void {
     __dirname,
     '../database/migrations/20260328145500-CreateBaselineSchema.ts',
   );
+  const frozenBaselinePath = resolve(__dirname, '../database/migration-baseline-202603.ts');
   const legacyBootstrapPath = resolve(__dirname, '../database/database.service.ts');
 
   const migrationSource = readFileSync(migrationPath, 'utf8');
+  const frozenBaselineSource = readFileSync(frozenBaselinePath, 'utf8');
 
-  assertIncludes(migrationSource, 'runDatabaseBootstrap(queryRunner)', 'Baseline migration');
+  // The first migration must replay the frozen 2026-03 snapshot forever; the
+  // live bootstrap catalog keeps moving with HEAD and would corrupt fresh
+  // installs if the historical migration ever pointed back at it.
+  assertIncludes(
+    migrationSource,
+    'MIGRATION_BASELINE_202603_SQL',
+    'Baseline migration is not using the frozen 2026-03 schema snapshot',
+  );
+  assertExcludes(
+    migrationSource,
+    'bootstrap-sql',
+    'Baseline migration must not depend on the live bootstrap catalog',
+  );
+  if (/^import\s/m.test(frozenBaselineSource)) {
+    throw new Error('Frozen baseline snapshot must stay self-contained (no imports)');
+  }
 
   if (existsSync(legacyBootstrapPath)) {
     throw new Error(

@@ -36,7 +36,7 @@ describe('RemoveLegacyReferralFeature20260714260000', () => {
     expect(sql).toContain("permission <> 'forward-case'");
     expect(sql).toContain('DROP TABLE case_referrals');
     expect(sql).toContain('DROP TABLE external_agencies');
-    expect(sql).toContain('DROP TABLE case_referral_statuses');
+    expect(sql).toContain('DROP TABLE IF EXISTS case_referral_statuses');
     expect(sql).toContain('DROP TABLE related_agencies');
   });
 
