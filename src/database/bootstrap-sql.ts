@@ -911,11 +911,11 @@ export const CASE_TRACKING_DECISION_TABLES_SQL = `
         ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
   END $case_tracking_fks$;
+  -- chk_case_reviews_action_outcome (CONTINUE requires null / CLOSE requires
+  -- non-null resolution_outcome) was superseded by completion_outcome_code +
+  -- case_review_actions.requires_resolution_outcome; see migration
+  -- 20260806120000-DropStaleCaseReviewActionOutcomeCheck.
   ALTER TABLE case_reviews DROP CONSTRAINT IF EXISTS chk_case_reviews_action_outcome;
-  ALTER TABLE case_reviews ADD CONSTRAINT chk_case_reviews_action_outcome CHECK (
-    (review_action = 'CONTINUE' AND resolution_outcome IS NULL)
-    OR (review_action = 'CLOSE' AND resolution_outcome IS NOT NULL)
-  );
   ALTER TABLE task_submissions DROP CONSTRAINT IF EXISTS chk_task_submission_case_decision;
   ALTER TABLE task_submissions ADD CONSTRAINT chk_task_submission_case_decision CHECK (
     (case_follow_up_decision IS NULL AND case_resolution_outcome_code IS NULL)
