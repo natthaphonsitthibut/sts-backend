@@ -1,17 +1,6 @@
 import { RiskProfileRepository } from './risk-profile.repository';
 
-const THRESHOLDS = {
-  lowConsecutiveAbsentDays: 3,
-  mediumConsecutiveAbsentDays: 5,
-  highConsecutiveAbsentDays: 7,
-  watchProgressRatio: 0.7,
-  lowAttendancePercent: 95,
-  mediumAttendancePercent: 90,
-  highAttendancePercent: 80,
-  lateWeight: 0.25,
-  subjectLateWindowDays: 30,
-  subjectLateWatchCount: 5,
-};
+const THRESHOLDS = { highAbsentDays: 3 };
 
 function createRepository(records: Array<Record<string, unknown>>) {
   const queries: Array<{ sql: string; params?: unknown[] }> = [];
@@ -44,22 +33,17 @@ describe('RiskProfileRepository', () => {
     expect(queries).toHaveLength(1);
     expect(queries[0].params).toEqual([
       3,
-      5,
-      7,
-      0.7,
-      95,
-      90,
-      80,
-      0.25,
-      30,
-      5,
       ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'],
     ]);
     expect(queries[0].sql).toContain('INSERT INTO student_risk_profiles');
-    expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($11::uuid[])');
-    expect(queries[0].sql).toContain("AND a.session_kind = 'DAILY'");
-    expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
-    expect(queries[0].sql).toContain('subject_late_count');
+    expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($2::uuid[])');
+    // Day verdict mirrors ประวัติการเข้าเรียน: ลา is unmeasured, มา/สาย attend,
+    // and both DAILY and SUBJECT records feed the same day.
+    expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0');
+    expect(queries[0].sql).toContain("a.session_kind IN ('DAILY', 'SUBJECT')");
+    expect(queries[0].sql).toContain('teacher_signal_summary');
+    expect(queries[0].sql).toContain('FROM student_observations observation');
+    expect(queries[0].sql).toContain('WHERE observation.deleted_at IS NULL');
     expect(queries[0].sql).toContain('ON CONFLICT (student_uuid) DO UPDATE SET');
     expect(queries[0].sql).toContain('JOIN student_current_enrollment_resolution');
   });
@@ -69,8 +53,8 @@ describe('RiskProfileRepository', () => {
 
     await repository.recalculateAll(THRESHOLDS);
 
-    expect(queries[0].params).toEqual([3, 5, 7, 0.7, 95, 90, 80, 0.25, 30, 5]);
-    expect(queries[0].sql).not.toContain('ANY($11::uuid[])');
+    expect(queries[0].params).toEqual([3]);
+    expect(queries[0].sql).not.toContain('ANY($2::uuid[])');
   });
 
   it('only rewrites a profile when a domain metric or the source watermark moved', async () => {
@@ -111,20 +95,35 @@ describe('RiskProfileRepository', () => {
     expect(result).toEqual({ evaluated: 5980, changed: 3, skipped: 5977 });
   });
 
-  it('loads every risk threshold in a single settings query', async () => {
+  it('reads the single absence threshold that drives every tier', async () => {
     const { queries, repository } = createRepository([
-      { setting_key: 'CASE_RISK_LOW_ABSENCE_DAYS', setting_value: '4' },
-      { setting_key: 'SUBJECT_RISK_LATE_WATCH_COUNT', setting_value: '9' },
+      { setting_key: 'CASE_RISK_HIGH_ABSENCE_DAYS', setting_value: '4' },
     ]);
 
     const thresholds = await repository.getRiskThresholds();
 
     expect(queries).toHaveLength(1);
     expect(queries[0].sql).toContain('setting_key = ANY($1::text[])');
-    expect(thresholds.lowConsecutiveAbsentDays).toBe(4);
-    expect(thresholds.subjectLateWatchCount).toBe(9);
-    // Keys absent from system_settings keep their documented defaults.
-    expect(thresholds.highConsecutiveAbsentDays).toBe(7);
+    expect(thresholds.highAbsentDays).toBe(4);
+  });
+
+  it('falls back to the documented default when the threshold row is missing', async () => {
+    const { repository } = createRepository([]);
+
+    expect((await repository.getRiskThresholds()).highAbsentDays).toBe(3);
+  });
+
+  it('scores three tiers: absence for HIGH, any teacher comment for WATCH', async () => {
+    const { queries, repository } = createRepository([{ evaluated: 1, changed: 1 }]);
+
+    await repository.recalculateAll(THRESHOLDS);
+
+    const sql = queries[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toContain("WHEN metrics.absent_days >= $1::int THEN 'HIGH'");
+    expect(sql).toContain("WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'");
+    expect(sql).toContain("ELSE 'NORMAL'");
+    expect(sql).not.toContain("'MEDIUM'");
+    expect(sql).not.toContain("'LOW'");
   });
 
   it('caps the missing-profile lookup so repair stays bounded', async () => {

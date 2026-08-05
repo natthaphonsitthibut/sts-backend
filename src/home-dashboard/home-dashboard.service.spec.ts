@@ -108,7 +108,7 @@ describe('HomeDashboardService', () => {
         }),
         expect.objectContaining({
           key: 'watchStudents',
-          label: 'เสี่ยงสูง',
+          label: 'เสี่ยง',
           tone: 'danger',
           value: 5,
         }),

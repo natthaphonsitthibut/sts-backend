@@ -20,16 +20,7 @@ export interface RiskRecalculationResult {
 }
 
 const DEFAULT_RISK_PROFILE_THRESHOLDS: RiskDashboardThresholds = {
-  lowConsecutiveAbsentDays: 3,
-  mediumConsecutiveAbsentDays: 5,
-  highConsecutiveAbsentDays: 7,
-  watchProgressRatio: 0.7,
-  lowAttendancePercent: 95,
-  mediumAttendancePercent: 90,
-  highAttendancePercent: 80,
-  lateWeight: 0.25,
-  subjectLateWindowDays: 30,
-  subjectLateWatchCount: 5,
+  highAbsentDays: 3,
 };
 
 @Injectable()
@@ -47,42 +38,11 @@ export class RiskProfileRepository {
   }
 
   async getRiskThresholds(): Promise<RiskDashboardThresholds> {
-    const values = await this.getRiskSettingValues([
-      'CASE_RISK_LOW_ABSENCE_DAYS',
-      'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-      'CASE_RISK_HIGH_ABSENCE_DAYS',
-      'CASE_RISK_HIGH_ATTENDANCE_PERCENT',
-      'SUBJECT_RISK_LATE_WINDOW_DAYS',
-      'SUBJECT_RISK_LATE_WATCH_COUNT',
-    ]);
-    const read = (key: string, fallback: number): number =>
-      this.parsePositiveInteger(values.get(key) ?? null, fallback);
-
+    const values = await this.getRiskSettingValues(['CASE_RISK_HIGH_ABSENCE_DAYS']);
     return {
-      ...DEFAULT_RISK_PROFILE_THRESHOLDS,
-      lowConsecutiveAbsentDays: read(
-        'CASE_RISK_LOW_ABSENCE_DAYS',
-        DEFAULT_RISK_PROFILE_THRESHOLDS.lowConsecutiveAbsentDays,
-      ),
-      mediumConsecutiveAbsentDays: read(
-        'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-        DEFAULT_RISK_PROFILE_THRESHOLDS.mediumConsecutiveAbsentDays,
-      ),
-      highConsecutiveAbsentDays: read(
-        'CASE_RISK_HIGH_ABSENCE_DAYS',
-        DEFAULT_RISK_PROFILE_THRESHOLDS.highConsecutiveAbsentDays,
-      ),
-      highAttendancePercent: read(
-        'CASE_RISK_HIGH_ATTENDANCE_PERCENT',
-        DEFAULT_RISK_PROFILE_THRESHOLDS.highAttendancePercent,
-      ),
-      subjectLateWindowDays: read(
-        'SUBJECT_RISK_LATE_WINDOW_DAYS',
-        DEFAULT_RISK_PROFILE_THRESHOLDS.subjectLateWindowDays,
-      ),
-      subjectLateWatchCount: read(
-        'SUBJECT_RISK_LATE_WATCH_COUNT',
-        DEFAULT_RISK_PROFILE_THRESHOLDS.subjectLateWatchCount,
+      highAbsentDays: this.parsePositiveInteger(
+        values.get('CASE_RISK_HIGH_ABSENCE_DAYS') ?? null,
+        DEFAULT_RISK_PROFILE_THRESHOLDS.highAbsentDays,
       ),
     };
   }
@@ -97,7 +57,7 @@ export class RiskProfileRepository {
     if (uniqueStudentUuids.length === 0) {
       return { evaluated: 0, changed: 0, skipped: 0 };
     }
-    return await this.upsertProfiles(thresholds, 'WHERE s.student_uuid = ANY($11::uuid[])', [
+    return await this.upsertProfiles(thresholds, 'WHERE s.student_uuid = ANY($2::uuid[])', [
       uniqueStudentUuids,
     ]);
   }
@@ -157,25 +117,14 @@ export class RiskProfileRepository {
     selectedWhereSql: string,
     extraParams: unknown[],
   ): Promise<RiskRecalculationResult> {
-    const params: unknown[] = [
-      thresholds.lowConsecutiveAbsentDays,
-      thresholds.mediumConsecutiveAbsentDays,
-      thresholds.highConsecutiveAbsentDays,
-      thresholds.watchProgressRatio,
-      thresholds.lowAttendancePercent,
-      thresholds.mediumAttendancePercent,
-      thresholds.highAttendancePercent,
-      thresholds.lateWeight,
-      thresholds.subjectLateWindowDays,
-      thresholds.subjectLateWatchCount,
-      ...extraParams,
-    ];
+    const params: unknown[] = [thresholds.highAbsentDays, ...extraParams];
     const result = await queryDataSource<UpsertCountRow>(
       this.dataSource,
       `
         WITH selected_students AS (
           SELECT
             s.student_uuid,
+            s.person_uuid,
             s."AcademicYear_Onec" AS academic_year,
             s."Semester_Onec" AS semester,
             s."SchoolID_Onec" AS school_id,
@@ -188,18 +137,23 @@ export class RiskProfileRepository {
            AND current_enrollment.resolution_state = 'ACTIVE'
           ${selectedWhereSql}
         ),
-        attendance_daily AS (
+        -- DAILY and SUBJECT records contribute to one day verdict: ลา (status 4)
+        -- is not measured, มา/สาย both count as attended, and the day is ขาด
+        -- only when every measured record from both sources is unattended.
+        classified_days AS (
           SELECT
             a.student_uuid,
             a."AttendanceDate"::date AS attendance_date,
-            BOOL_AND(a."AttendanceStatus" = 2) AS is_absent_day,
-            COUNT(*) FILTER (WHERE a."AttendanceStatus" = 2)::int AS absent_records,
-            COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late_records
+            COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late_records,
+            (
+              COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4) > 0
+              AND COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0
+            ) AS is_absent_day
           FROM attendance a
           JOIN selected_students s ON s.student_uuid = a.student_uuid
           WHERE a."AcademicYear_Onec" = s.academic_year
             AND a."Semester_Onec" = s.semester
-            AND a.session_kind = 'DAILY'
+            AND a.session_kind IN ('DAILY', 'SUBJECT')
           GROUP BY a.student_uuid, a."AttendanceDate"
         ),
         ranked_attendance_days AS (
@@ -208,7 +162,7 @@ export class RiskProfileRepository {
             attendance_date,
             is_absent_day,
             ROW_NUMBER() OVER (PARTITION BY student_uuid ORDER BY attendance_date DESC) AS rn
-          FROM attendance_daily
+          FROM classified_days
         ),
         streak_boundaries AS (
           SELECT
@@ -233,9 +187,10 @@ export class RiskProfileRepository {
             COALESCE(SUM(late_records), 0)::int AS late_count,
             COUNT(*)::int AS recorded_day_count,
             MAX(attendance_date)::timestamptz AS latest_attendance_at
-          FROM attendance_daily
+          FROM classified_days
           GROUP BY student_uuid
         ),
+        -- Kept as a reported metric only; late periods no longer move the tier.
         subject_late_summary AS (
           SELECT
             a.student_uuid,
@@ -251,8 +206,27 @@ export class RiskProfileRepository {
             AND sess.session_kind = 'SUBJECT'
             AND sess.status = 'SUBMITTED'
             AND sess.deleted_at IS NULL
-            AND a."AttendanceDate"::date >= CURRENT_DATE - (($9::int - 1) * INTERVAL '1 day')
           GROUP BY a.student_uuid
+        ),
+        teacher_signal_events AS (
+          SELECT comment.person_uuid, comment.created_at
+          FROM classroom_student_comments comment
+          UNION ALL
+          SELECT enrollment.person_uuid, observation.created_at
+          FROM student_observations observation
+          JOIN student_term enrollment ON enrollment.student_uuid = observation.student_uuid
+          WHERE observation.deleted_at IS NULL
+        ),
+        -- เฝ้าระวัง comes from either classroom comments or the legacy teacher
+        -- observations that remain part of the student's cross-term history.
+        teacher_signal_summary AS (
+          SELECT
+            s.student_uuid,
+            COUNT(*)::int AS teacher_signal_count,
+            MAX(signal.created_at) AS latest_signal_at
+          FROM selected_students s
+          JOIN teacher_signal_events signal ON signal.person_uuid = s.person_uuid
+          GROUP BY s.student_uuid
         ),
         calendar_counts AS (
           SELECT
@@ -307,10 +281,10 @@ export class RiskProfileRepository {
             COALESCE(subject_late.subject_late_count, 0)::int AS subject_late_count,
             COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::int
               AS school_day_count,
-            (
-              COALESCE(attendance.absent_days, 0)::numeric
-              + (COALESCE(attendance.late_count, 0)::numeric * $8::numeric)
-            ) AS weighted_absence_days,
+            COALESCE(teacher_signal.teacher_signal_count, 0)::int AS teacher_signal_count,
+            -- Absence is counted in whole days now, so the weighted columns are
+            -- the plain day count and the plain attendance rate they imply.
+            COALESCE(attendance.absent_days, 0)::numeric AS weighted_absence_days,
             CASE
               WHEN COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0) > 0
                 THEN ROUND(
@@ -318,10 +292,7 @@ export class RiskProfileRepository {
                     0,
                     (
                       COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
-                      - (
-                        COALESCE(attendance.absent_days, 0)::numeric
-                        + (COALESCE(attendance.late_count, 0)::numeric * $8::numeric)
-                      )
+                      - COALESCE(attendance.absent_days, 0)::numeric
                     ) * 100
                     / COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
                   ),
@@ -335,76 +306,34 @@ export class RiskProfileRepository {
             GREATEST(
               COALESCE(attendance.latest_attendance_at, '-infinity'::timestamptz),
               COALESCE(subject_late.latest_subject_late_at, '-infinity'::timestamptz),
+              COALESCE(teacher_signal.latest_signal_at, '-infinity'::timestamptz),
               COALESCE(cases.latest_case_at, '-infinity'::timestamptz)
             ) AS source_updated_at
           FROM selected_students s
           LEFT JOIN absence_streak streak ON streak.student_uuid = s.student_uuid
           LEFT JOIN attendance_summary attendance ON attendance.student_uuid = s.student_uuid
           LEFT JOIN subject_late_summary subject_late ON subject_late.student_uuid = s.student_uuid
+          LEFT JOIN teacher_signal_summary teacher_signal
+            ON teacher_signal.student_uuid = s.student_uuid
           LEFT JOIN calendar_counts calendar ON calendar.student_uuid = s.student_uuid
           LEFT JOIN case_summary cases ON cases.student_uuid = s.student_uuid
         ),
+        -- Three tiers only: ขาดสะสมถึงเกณฑ์ = เสี่ยง, มีความคิดเห็นจากครู =
+        -- เฝ้าระวัง, นอกนั้นปกติ. Absent days are cumulative, not a streak.
         scored AS (
           SELECT
             metrics.*,
             CASE
-              WHEN metrics.consecutive_absent_days >= $3::int
-                OR (metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent < $7::numeric)
-                THEN 'HIGH'
-              WHEN metrics.consecutive_absent_days >= $2::int
-                OR (metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent < $6::numeric)
-                THEN 'MEDIUM'
-              WHEN metrics.consecutive_absent_days >= $1::int
-                OR (metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent < $5::numeric)
-                THEN 'LOW'
-              WHEN metrics.consecutive_absent_days >= CEIL($1::numeric * $4::numeric)
-                OR metrics.absent_days >= CEIL($3::numeric * $4::numeric)
-                OR (
-                  metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent
-                    <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
-                )
-                OR metrics.subject_late_count >= $10::int
-                THEN 'WATCH'
+              WHEN metrics.absent_days >= $1::int THEN 'HIGH'
+              WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'
               ELSE 'NORMAL'
             END AS risk_tier,
             CASE
-              WHEN metrics.consecutive_absent_days >= $3::int
-                OR (metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent < $7::numeric)
-                THEN 4
-              WHEN metrics.consecutive_absent_days >= $2::int
-                OR (metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent < $6::numeric)
-                THEN 3
-              WHEN metrics.consecutive_absent_days >= $1::int
-                OR (metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent < $5::numeric)
-                THEN 2
-              WHEN metrics.consecutive_absent_days >= CEIL($1::numeric * $4::numeric)
-                OR metrics.absent_days >= CEIL($3::numeric * $4::numeric)
-                OR (
-                  metrics.weighted_attendance_percent IS NOT NULL
-                  AND metrics.weighted_attendance_percent
-                    <= (100::numeric - ((100::numeric - $5::numeric) * $4::numeric))
-                )
-                OR metrics.subject_late_count >= $10::int
-                THEN 1
+              WHEN metrics.absent_days >= $1::int THEN 2
+              WHEN metrics.teacher_signal_count > 0 THEN 1
               ELSE 0
             END AS risk_severity,
-            GREATEST(
-              metrics.consecutive_absent_days::numeric / NULLIF($3::numeric, 0),
-              metrics.absent_days::numeric / NULLIF($3::numeric, 0),
-              metrics.subject_late_count::numeric / NULLIF($10::numeric, 0),
-              CASE
-                WHEN metrics.weighted_attendance_percent IS NULL THEN 0
-                ELSE (100::numeric - metrics.weighted_attendance_percent)
-                  / NULLIF(100::numeric - $7::numeric, 0)
-              END
-            ) AS risk_score
+            metrics.absent_days::numeric / NULLIF($1::numeric, 0) AS risk_score
           FROM metrics
         ),
         upserted AS (

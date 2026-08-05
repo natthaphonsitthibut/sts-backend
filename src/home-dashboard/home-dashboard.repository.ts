@@ -37,8 +37,6 @@ interface AttentionRow extends Record<string, unknown> {
 
 interface RiskSummaryRow extends Record<string, unknown> {
   HIGH: number | string;
-  MEDIUM: number | string;
-  LOW: number | string;
   WATCH: number | string;
   NORMAL: number | string;
 }
@@ -74,9 +72,8 @@ function trimOrUndefined(value?: string): string | undefined {
 }
 
 const DEFAULT_RISK_THRESHOLDS = {
-  lowConsecutiveAbsentDays: 3,
-  mediumConsecutiveAbsentDays: 5,
-  highConsecutiveAbsentDays: 7,
+  /** Cumulative absent days that open a case and mark a student เสี่ยง. */
+  highAbsentDays: 3,
 };
 
 @Injectable()
@@ -409,8 +406,6 @@ export class HomeDashboardRepository {
       `
         SELECT
           COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'HIGH')::int AS "HIGH",
-          COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'MEDIUM')::int AS "MEDIUM",
-          COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'LOW')::int AS "LOW",
           COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'WATCH')::int AS "WATCH",
           COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'NORMAL')::int AS "NORMAL"
         FROM student_term s
@@ -425,8 +420,6 @@ export class HomeDashboardRepository {
     const row = result.rows[0] || {};
     return {
       HIGH: toNumber(row.HIGH),
-      MEDIUM: toNumber(row.MEDIUM),
-      LOW: toNumber(row.LOW),
       WATCH: toNumber(row.WATCH),
       NORMAL: toNumber(row.NORMAL),
     };
@@ -437,34 +430,14 @@ export class HomeDashboardRepository {
       `
         SELECT setting_key, setting_value
         FROM system_settings
-        WHERE setting_key = ANY($1::text[])
+        WHERE setting_key = $1
       `,
-      [
-        [
-          'CASE_RISK_LOW_ABSENCE_DAYS',
-          'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-          'CASE_RISK_HIGH_ABSENCE_DAYS',
-        ],
-      ],
+      ['CASE_RISK_HIGH_ABSENCE_DAYS'],
     );
-    const values = new Map(result.rows.map((row) => [row.setting_key, Number(row.setting_value)]));
-    const positiveOr = (key: string, fallback: number): number => {
-      const value = values.get(key);
-      return Number.isInteger(value) && Number(value) > 0 ? Number(value) : fallback;
-    };
+    const raw = Number(result.rows[0]?.setting_value);
     return {
-      lowConsecutiveAbsentDays: positiveOr(
-        'CASE_RISK_LOW_ABSENCE_DAYS',
-        DEFAULT_RISK_THRESHOLDS.lowConsecutiveAbsentDays,
-      ),
-      mediumConsecutiveAbsentDays: positiveOr(
-        'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-        DEFAULT_RISK_THRESHOLDS.mediumConsecutiveAbsentDays,
-      ),
-      highConsecutiveAbsentDays: positiveOr(
-        'CASE_RISK_HIGH_ABSENCE_DAYS',
-        DEFAULT_RISK_THRESHOLDS.highConsecutiveAbsentDays,
-      ),
+      highAbsentDays:
+        Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_RISK_THRESHOLDS.highAbsentDays,
     };
   }
 

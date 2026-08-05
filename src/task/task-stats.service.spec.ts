@@ -104,11 +104,7 @@ describe('TaskStatsService', () => {
       data_scope: { school_ids: [101] },
     };
     const taskRepository = {
-      getSystemSettingValue: jest
-        .fn()
-        .mockResolvedValueOnce('4')
-        .mockResolvedValueOnce('6')
-        .mockResolvedValueOnce('9'),
+      getSystemSettingValue: jest.fn().mockResolvedValue('4'),
       listRiskDashboardStudents: jest.fn().mockResolvedValue({
         rows: [
           {
@@ -131,7 +127,7 @@ describe('TaskStatsService', () => {
           },
         ],
         totalCount: 1,
-        summary: { HIGH: 1, MEDIUM: 0, LOW: 0, WATCH: 0, NORMAL: 0 },
+        summary: { HIGH: 1, WATCH: 0, NORMAL: 0 },
       }),
     };
     const taskPolicyService = {
@@ -157,23 +153,14 @@ describe('TaskStatsService', () => {
         page: 1,
         limit: 20,
         totalCount: 1,
-        summary: { HIGH: 1, MEDIUM: 0, LOW: 0, WATCH: 0, NORMAL: 0 },
-        thresholds: {
-          lowConsecutiveAbsentDays: 4,
-          mediumConsecutiveAbsentDays: 6,
-          highConsecutiveAbsentDays: 9,
-        },
+        summary: { HIGH: 1, WATCH: 0, NORMAL: 0 },
+        thresholds: { highAbsentDays: 4 },
       },
     });
     expect(taskRepository.listRiskDashboardStudents).toHaveBeenCalledWith(
       actor,
       expect.objectContaining({ riskTier: 'HIGH', sortBy: 'risk', sortDirection: 'desc' }),
-      expect.objectContaining({
-        lowConsecutiveAbsentDays: 4,
-        mediumConsecutiveAbsentDays: 6,
-        highConsecutiveAbsentDays: 9,
-        watchProgressRatio: 0.7,
-      }),
+      expect.objectContaining({ highAbsentDays: 4 }),
     );
   });
 });

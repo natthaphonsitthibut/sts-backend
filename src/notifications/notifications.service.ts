@@ -5,7 +5,7 @@ import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import {
   STUDENT_RISK_WATCH_NOTIFICATION_TYPE,
   STUDENT_RISK_WATCH_REF_ENTITY,
-} from '../automation/subject-risk-monitor.constants';
+} from '../automation/automation.constants';
 import { NotificationsRepository } from './notifications.repository';
 import type { NotificationFanOutInput, NotificationListFilters } from './notifications.types';
 import type { DirectNotificationInput } from './notifications.types';

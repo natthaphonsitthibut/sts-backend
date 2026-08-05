@@ -17,12 +17,7 @@ import { SettingsRepository } from './settings.repository';
 import type { SystemSettingResponse, SystemSettingRow } from './settings.types';
 
 const CRON_REFRESH_KEYS = new Set(['ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME']);
-const RISK_PROFILE_REFRESH_KEYS = new Set([
-  'CASE_RISK_LOW_ABSENCE_DAYS',
-  'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-  'CASE_RISK_HIGH_ABSENCE_DAYS',
-  'CASE_RISK_HIGH_ATTENDANCE_PERCENT',
-]);
+const RISK_PROFILE_REFRESH_KEYS = new Set(['CASE_RISK_HIGH_ABSENCE_DAYS']);
 
 @Injectable()
 export class SettingsService implements OnModuleInit {

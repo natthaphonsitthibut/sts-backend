@@ -33,7 +33,7 @@ export interface QueryExecutor {
   ): Promise<QueryResultLike<T>>;
 }
 
-export type RiskDashboardTier = 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
+export type RiskDashboardTier = 'HIGH' | 'WATCH' | 'NORMAL';
 export type RiskDashboardSortBy =
   | 'risk'
   | 'name'
@@ -60,22 +60,12 @@ export interface RiskDashboardFilters {
 }
 
 export interface RiskDashboardThresholds {
-  lowConsecutiveAbsentDays: number;
-  mediumConsecutiveAbsentDays: number;
-  highConsecutiveAbsentDays: number;
-  watchProgressRatio: number;
-  lowAttendancePercent: number;
-  mediumAttendancePercent: number;
-  highAttendancePercent: number;
-  lateWeight: number;
-  subjectLateWindowDays: number;
-  subjectLateWatchCount: number;
+  /** Cumulative absent days (not a streak) that make a student เสี่ยง. */
+  highAbsentDays: number;
 }
 
 export interface RiskDashboardSummary {
   HIGH: number;
-  MEDIUM: number;
-  LOW: number;
   WATCH: number;
   NORMAL: number;
 }

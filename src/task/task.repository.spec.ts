@@ -272,7 +272,7 @@ describe('TaskRepository', () => {
         queries.push({ sql, params });
         if (queries.length === 1) {
           return {
-            records: [{ total_count: 3, HIGH: 1, MEDIUM: 1, LOW: 0, WATCH: 1, NORMAL: 0 }],
+            records: [{ total_count: 3, HIGH: 1, WATCH: 1, NORMAL: 1 }],
             affected: 1,
           };
         }
@@ -328,23 +328,11 @@ describe('TaskRepository', () => {
         sortBy: 'attendance',
         sortDirection: 'asc',
       },
-      {
-        lowConsecutiveAbsentDays: 3,
-        mediumConsecutiveAbsentDays: 5,
-        highConsecutiveAbsentDays: 7,
-        watchProgressRatio: 0.7,
-        lowAttendancePercent: 95,
-        mediumAttendancePercent: 90,
-        highAttendancePercent: 80,
-        lateWeight: 0.25,
-        subjectLateWindowDays: 30,
-        subjectLateWatchCount: 5,
-      },
+      { highAbsentDays: 3 },
     );
 
     expect(result.totalCount).toBe(1);
     expect(result.summary.HIGH).toBe(1);
-    expect(result.summary.MEDIUM).toBe(1);
     expect(result.summary.WATCH).toBe(1);
     expect(result.rows[0].student_uuid).toBe('00000000-0000-4000-8000-000000000001');
     expect(queries).toHaveLength(3);
@@ -387,23 +375,12 @@ describe('TaskRepository', () => {
           data_scope: { own_only: true },
         },
         {},
-        {
-          lowConsecutiveAbsentDays: 3,
-          mediumConsecutiveAbsentDays: 5,
-          highConsecutiveAbsentDays: 7,
-          watchProgressRatio: 0.7,
-          lowAttendancePercent: 95,
-          mediumAttendancePercent: 90,
-          highAttendancePercent: 80,
-          lateWeight: 0.25,
-          subjectLateWindowDays: 30,
-          subjectLateWatchCount: 5,
-        },
+        { highAbsentDays: 3 },
       ),
     ).resolves.toEqual({
       rows: [],
       totalCount: 0,
-      summary: { HIGH: 0, MEDIUM: 0, LOW: 0, WATCH: 0, NORMAL: 0 },
+      summary: { HIGH: 0, WATCH: 0, NORMAL: 0 },
     });
     expect(queryRunner.query).not.toHaveBeenCalled();
   });

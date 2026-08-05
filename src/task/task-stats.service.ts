@@ -16,16 +16,7 @@ import type {
 } from './task.types';
 
 const DEFAULT_RISK_DASHBOARD_THRESHOLDS: RiskDashboardThresholds = {
-  lowConsecutiveAbsentDays: 3,
-  mediumConsecutiveAbsentDays: 5,
-  highConsecutiveAbsentDays: 7,
-  watchProgressRatio: 0.7,
-  lowAttendancePercent: 95,
-  mediumAttendancePercent: 90,
-  highAttendancePercent: 80,
-  lateWeight: 0.25,
-  subjectLateWindowDays: 30,
-  subjectLateWatchCount: 5,
+  highAbsentDays: 3,
 };
 
 @Injectable()
@@ -125,53 +116,19 @@ export class TaskStatsService {
   }
 
   private async getRiskDashboardThresholds(): Promise<RiskDashboardThresholds> {
-    const [low, medium, high, highAttendancePercent, subjectLateWindowDays, subjectLateWatchCount] =
-      await Promise.all([
-        this.taskRepository.getSystemSettingValue('CASE_RISK_LOW_ABSENCE_DAYS'),
-        this.taskRepository.getSystemSettingValue('CASE_RISK_MEDIUM_ABSENCE_DAYS'),
-        this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
-        this.taskRepository.getSystemSettingValue('CASE_RISK_HIGH_ATTENDANCE_PERCENT'),
-        this.taskRepository.getSystemSettingValue('SUBJECT_RISK_LATE_WINDOW_DAYS'),
-        this.taskRepository.getSystemSettingValue('SUBJECT_RISK_LATE_WATCH_COUNT'),
-      ]);
-
+    const highAbsentDays = await this.taskRepository.getSystemSettingValue(
+      'CASE_RISK_HIGH_ABSENCE_DAYS',
+    );
     return {
-      ...DEFAULT_RISK_DASHBOARD_THRESHOLDS,
-      lowConsecutiveAbsentDays: this.parsePositiveInteger(
-        low,
-        DEFAULT_RISK_DASHBOARD_THRESHOLDS.lowConsecutiveAbsentDays,
-      ),
-      mediumConsecutiveAbsentDays: this.parsePositiveInteger(
-        medium,
-        DEFAULT_RISK_DASHBOARD_THRESHOLDS.mediumConsecutiveAbsentDays,
-      ),
-      highConsecutiveAbsentDays: this.parsePositiveInteger(
-        high,
-        DEFAULT_RISK_DASHBOARD_THRESHOLDS.highConsecutiveAbsentDays,
-      ),
-      highAttendancePercent: this.parsePositiveInteger(
-        highAttendancePercent,
-        DEFAULT_RISK_DASHBOARD_THRESHOLDS.highAttendancePercent,
-      ),
-      subjectLateWindowDays: this.parsePositiveInteger(
-        subjectLateWindowDays,
-        DEFAULT_RISK_DASHBOARD_THRESHOLDS.subjectLateWindowDays,
-      ),
-      subjectLateWatchCount: this.parsePositiveInteger(
-        subjectLateWatchCount,
-        DEFAULT_RISK_DASHBOARD_THRESHOLDS.subjectLateWatchCount,
+      highAbsentDays: this.parsePositiveInteger(
+        highAbsentDays,
+        DEFAULT_RISK_DASHBOARD_THRESHOLDS.highAbsentDays,
       ),
     };
   }
 
   private normalizeRiskTier(value?: string): RiskDashboardTier | undefined {
-    if (
-      value === 'HIGH' ||
-      value === 'MEDIUM' ||
-      value === 'LOW' ||
-      value === 'WATCH' ||
-      value === 'NORMAL'
-    ) {
+    if (value === 'HIGH' || value === 'WATCH' || value === 'NORMAL') {
       return value;
     }
     return undefined;

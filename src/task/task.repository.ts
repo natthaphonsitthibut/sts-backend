@@ -35,8 +35,6 @@ export interface CaseListFilters {
 
 const EMPTY_RISK_DASHBOARD_SUMMARY: RiskDashboardSummary = {
   HIGH: 0,
-  MEDIUM: 0,
-  LOW: 0,
   WATCH: 0,
   NORMAL: 0,
 };
@@ -3068,8 +3066,6 @@ export class TaskRepository {
         SELECT
           COUNT(*)::int AS total_count,
           COUNT(*) FILTER (WHERE risk_tier = 'HIGH')::int AS "HIGH",
-          COUNT(*) FILTER (WHERE risk_tier = 'MEDIUM')::int AS "MEDIUM",
-          COUNT(*) FILTER (WHERE risk_tier = 'LOW')::int AS "LOW",
           COUNT(*) FILTER (WHERE risk_tier = 'WATCH')::int AS "WATCH",
           COUNT(*) FILTER (WHERE risk_tier = 'NORMAL')::int AS "NORMAL",
           COUNT(*) FILTER (WHERE missing_profile)::int AS missing_profile_count
@@ -3089,8 +3085,6 @@ export class TaskRepository {
     const totalCount = Number.parseInt(String(totalCountResult.rows[0]?.count || '0'), 10);
     const summary: RiskDashboardSummary = {
       HIGH: Number.parseInt(String(summaryResult.rows[0]?.HIGH || '0'), 10),
-      MEDIUM: Number.parseInt(String(summaryResult.rows[0]?.MEDIUM || '0'), 10),
-      LOW: Number.parseInt(String(summaryResult.rows[0]?.LOW || '0'), 10),
       WATCH: Number.parseInt(String(summaryResult.rows[0]?.WATCH || '0'), 10),
       NORMAL: Number.parseInt(String(summaryResult.rows[0]?.NORMAL || '0'), 10),
     };

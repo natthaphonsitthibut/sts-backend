@@ -188,7 +188,7 @@ export class HomeDashboardService {
     if (sections.includes('riskDistribution')) {
       metrics.push({
         key: 'watchStudents',
-        label: 'เสี่ยงสูง',
+        label: 'เสี่ยง',
         value: watchStudents,
         targetPath: '/student-risk-report',
         targetQuery: { ...baseQuery, riskTier: 'HIGH' },

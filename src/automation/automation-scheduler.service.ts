@@ -4,7 +4,6 @@ import { CronJob } from 'cron';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { AbsenceMonitorService } from './absence-monitor.service';
 import { AutomationRepository } from './automation.repository';
-import { SubjectRiskMonitorService } from './subject-risk-monitor.service';
 
 // ALERT_SCHEDULE_TIME is wall-clock time for Thai schools; pin the cron to
 // Asia/Bangkok so it does not drift with the server's local timezone (e.g. UTC).
@@ -19,13 +18,11 @@ export class AutomationSchedulerService {
     private readonly automationRepository: AutomationRepository,
     private readonly schedulerRegistry: SchedulerRegistry,
     private readonly absenceMonitorService: AbsenceMonitorService,
-    private readonly subjectRiskMonitorService: SubjectRiskMonitorService,
   ) {}
 
   private async runScheduledAbsenceCheck(cronTime: string): Promise<void> {
     this.logger.log(`Executing Scheduled Job: ${cronTime}`);
     await this.absenceMonitorService.checkConsecutiveAbsences();
-    await this.subjectRiskMonitorService.checkSubjectRiskSignals();
   }
 
   async refreshDynamicCron(): Promise<void> {

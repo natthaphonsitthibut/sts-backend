@@ -81,7 +81,7 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
     }
     // Startup repairs only what is actually missing, in a bounded batch. A full
     // recalculation on every boot rewrote every profile for no domain reason.
-    void this.repairMissingProfiles('startup-repair').catch((error) => {
+    await this.repairMissingProfiles('startup-repair').catch((error) => {
       this.logger.error(`Risk profile startup repair failed: ${this.errorMessage(error)}`);
     });
   }
@@ -100,6 +100,37 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
     const redis = this.requireRedis();
     await redis.sadd(DIRTY_STUDENTS_KEY, ...uniqueStudentUuids);
     await this.scheduleDrain(reason);
+  }
+
+  /**
+   * Queue a recalculation, but never let a missing queue silently drop it: a
+   * deployment without Redis (or one whose queue has not come up yet) still has
+   * to reflect a change the user just made, so the fallback recalculates those
+   * students inline. Callers pass a handful of students, not the whole school.
+   */
+  async requestStudentRecalculation(studentUuids: string[], reason: string): Promise<void> {
+    const uniqueStudentUuids = [
+      ...new Set(studentUuids.map((value) => value.trim()).filter(Boolean)),
+    ];
+    if (uniqueStudentUuids.length === 0) {
+      return;
+    }
+    try {
+      await this.enqueueStudents(uniqueStudentUuids, reason);
+      return;
+    } catch (error) {
+      this.logger.warn(
+        `Risk profile queue unavailable (${this.errorMessage(error)}); recalculating ${uniqueStudentUuids.length} student(s) inline for ${reason}`,
+      );
+    }
+    const thresholds = await this.riskProfileRepository.getRiskThresholds();
+    const result = await this.riskProfileRepository.recalculateStudents(
+      uniqueStudentUuids,
+      thresholds,
+    );
+    this.logger.log(
+      `Risk profile inline recalculation: evaluated=${result.evaluated}, changed=${result.changed}, reason=${reason}`,
+    );
   }
 
   async enqueueFull(reason: string): Promise<void> {

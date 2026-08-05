@@ -302,104 +302,7 @@ describe('TaskLifecycleService', () => {
     ).rejects.toThrow('ไม่สามารถมอบหมายเคสนี้ได้');
   });
 
-  it('consumes an approved follow-up exactly when creating the visit task', async () => {
-    taskRepository.lockFollowUpTaskAssignment.mockResolvedValue({
-      id: followUpRequestId,
-      student_uuid: studentUuid,
-      school_id: 10010002,
-      status: 'APPROVED',
-      opened_case_id: 123,
-      assigned_task_id: null,
-      assigned_by: null,
-      assigned_at: null,
-      assigned_case_id: null,
-      assigned_link_token_encrypted: null,
-      assigned_link_expires_at: null,
-    });
-
-    const result = await service.createTask(
-      {
-        ...buildActor(),
-        permissions: ['create', 'assign-follow-up-cases'],
-      },
-      {
-        task_type: 'VISIT',
-        assigned_to_name: 'ครูผู้ติดตาม',
-        assigned_to_email: 'teacher@example.invalid',
-        student_id: studentUuid,
-        student_name: 'เด็กทดสอบ',
-        target_school_id: 10010002,
-        follow_up_request_id: followUpRequestId,
-      },
-      'https://app.example.invalid',
-    );
-
-    expect(taskRepository.markFollowUpTaskAssigned).toHaveBeenCalledWith(
-      followUpRequestId,
-      result.task_id,
-      7,
-      undefined,
-    );
-    const atomicEvent = auditLog.recordAtomic.mock.calls[0]?.[0];
-    expect(atomicEvent).toMatchObject({
-      action: 'STUDENT_OBSERVATION_UPDATE',
-      targetId: followUpRequestId,
-      metadata: {
-        operation: 'STUDENT_FOLLOW_UP_REQUEST_ASSIGN',
-        taskId: result.task_id,
-      },
-    });
-    expect(result).toMatchObject({
-      follow_up_request_id: followUpRequestId,
-      reused: false,
-    });
-  });
-
-  it('returns the existing task link when the approved follow-up was already consumed', async () => {
-    const assignedTaskId = '33333333-3333-4333-8333-333333333333';
-    taskRepository.lockFollowUpTaskAssignment.mockResolvedValue({
-      id: followUpRequestId,
-      student_uuid: studentUuid,
-      school_id: 10010002,
-      status: 'APPROVED',
-      opened_case_id: 123,
-      assigned_task_id: assignedTaskId,
-      assigned_by: 7,
-      assigned_at: '2026-07-15T04:00:00.000Z',
-      assigned_case_id: 123,
-      assigned_link_token_encrypted: tokenEncryption.encrypt('existing-token'),
-      assigned_link_expires_at: '2026-07-22T04:00:00.000Z',
-    });
-
-    const result = await service.createTask(
-      {
-        ...buildActor(),
-        permissions: ['create', 'assign-follow-up-cases'],
-      },
-      {
-        task_type: 'VISIT',
-        assigned_to_name: 'ครูผู้ติดตาม',
-        student_id: studentUuid,
-        student_name: 'เด็กทดสอบ',
-        target_school_id: 10010002,
-        follow_up_request_id: followUpRequestId,
-      },
-      'https://app.example.invalid',
-    );
-
-    expect(result).toMatchObject({
-      task_id: assignedTaskId,
-      magic_link: 'https://app.example.invalid/task/existing-token',
-      reused: true,
-    });
-    expect(taskRepository.createCase).not.toHaveBeenCalled();
-    expect(taskRepository.createTask).not.toHaveBeenCalled();
-    expect(taskRepository.createTaskLink).not.toHaveBeenCalled();
-    expect(taskRepository.markFollowUpTaskAssigned).not.toHaveBeenCalled();
-    expect(auditLog.record).not.toHaveBeenCalled();
-  });
-
-  it('requires the dedicated follow-up assignment permission', async () => {
+  it('rejects the retired follow-up request field instead of ignoring it', async () => {
     await expect(
       service.createTask(
         buildActor(),
@@ -413,7 +316,7 @@ describe('TaskLifecycleService', () => {
         },
         'https://app.example.invalid',
       ),
-    ).rejects.toThrow('ไม่มีสิทธิ์มอบหมายผู้ติดตามเคส');
-    expect(taskRepository.lockFollowUpTaskAssignment).not.toHaveBeenCalled();
+    ).rejects.toThrow('ระบบไม่รองรับคำขอติดตามแล้ว');
+    expect(taskRepository.createTask).not.toHaveBeenCalled();
   });
 });

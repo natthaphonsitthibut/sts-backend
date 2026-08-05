@@ -21,146 +21,20 @@ export interface SystemSettingCatalogEntry {
  * listed here cannot be created or updated through the settings endpoint, and
  * values are validated against the entry before they reach the database.
  */
-const GROUP_CASE_RISK = 'เกณฑ์เปิดเคสและระดับความเสี่ยง (นับวันเรียนที่ขาดติดต่อกัน)';
-const GROUP_SUBJECT_RISK = 'เกณฑ์ความเสี่ยงจากเช็คชื่อรายวิชา';
+const GROUP_CASE_RISK = 'เกณฑ์เปิดเคสและระดับความเสี่ยง';
 const GROUP_CASE_SLA = 'กำหนดเวลาดำเนินการเคส (SLA)';
 const GROUP_ABSENCE_MONITOR = 'รอบการตรวจขาดเรียนอัตโนมัติ';
-const GROUP_TEACHER_ACCESS = 'นโยบายลิงก์เข้าใช้งานครู';
 
 export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
   {
-    key: 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY',
-    valueType: 'enum',
-    defaultValue: 'TERM_END',
-    group: GROUP_TEACHER_ACCESS,
-    enumOptions: [
-      { value: 'TERM_END', label: 'สิ้นสุดภาคเรียน' },
-      { value: 'ASSIGNMENT_END', label: 'สิ้นสุด assignment หรือภาคเรียน (วันใดถึงก่อน)' },
-    ],
-    description: 'นโยบายวันหมดอายุเริ่มต้นของลิงก์ครูเมื่อผู้ดูแลไม่ระบุวันหมดอายุเอง',
-  },
-  {
-    key: 'TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY',
-    valueType: 'enum',
-    defaultValue: 'EMAIL_OTP',
-    group: GROUP_TEACHER_ACCESS,
-    enumOptions: [
-      { value: 'EMAIL_OTP', label: 'ยืนยันด้วยรหัส OTP ทางอีเมล' },
-      { value: 'NONE', label: 'ไม่ยืนยันตัวตนเพิ่ม' },
-    ],
-    description:
-      'นโยบายยืนยันตัวตนเพิ่มสำหรับลิงก์ครู (ThaID ยังไม่เปิดให้เลือกจนกว่า production flow จะพร้อม)',
-  },
-  {
-    key: 'CASE_RISK_LOW_ABSENCE_DAYS',
-    valueType: 'integer',
-    defaultValue: '3',
-    min: 1,
-    max: 365,
-    group: GROUP_CASE_RISK,
-    description:
-      'จำนวนวันขาดเรียนติดต่อกันที่ระบบเปิดเคสอัตโนมัติ โดยเริ่มที่ระดับความเสี่ยงต่ำ (ขั้นแรกของบันไดความเสี่ยงต่ำ → ปานกลาง → สูง)',
-  },
-  {
-    key: 'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-    valueType: 'integer',
-    defaultValue: '5',
-    min: 1,
-    max: 365,
-    group: GROUP_CASE_RISK,
-    description:
-      'จำนวนวันขาดเรียนติดต่อกันที่จัดเป็นความเสี่ยงปานกลาง — เคสที่เปิดอยู่จะถูกปรับระดับขึ้นอัตโนมัติเมื่อขาดถึงเกณฑ์นี้',
-  },
-  {
     key: 'CASE_RISK_HIGH_ABSENCE_DAYS',
     valueType: 'integer',
-    defaultValue: '7',
+    defaultValue: '3',
     min: 1,
     max: 365,
     group: GROUP_CASE_RISK,
     description:
-      'จำนวนวันขาดเรียนติดต่อกันที่จัดเป็นความเสี่ยงสูง — เคสที่เปิดอยู่จะถูกปรับระดับขึ้นอัตโนมัติเมื่อขาดถึงเกณฑ์นี้',
-  },
-  {
-    key: 'SUBJECT_RISK_MIXED_ABSENCE_WINDOW_DAYS',
-    valueType: 'integer',
-    defaultValue: '7',
-    min: 1,
-    max: 365,
-    group: GROUP_SUBJECT_RISK,
-    description: 'ช่วงวันย้อนหลังสำหรับตรวจโดดคาบแบบมาเรียนบางคาบและขาดบางคาบในวันเดียวกัน',
-  },
-  {
-    key: 'SUBJECT_RISK_MIXED_ABSENCE_DAYS',
-    valueType: 'integer',
-    defaultValue: '3',
-    min: 1,
-    max: 365,
-    group: GROUP_SUBJECT_RISK,
-    description: 'จำนวนวันที่พบการมาเรียนบางคาบแต่ขาดบางคาบในช่วงที่กำหนด ก่อนเปิดเคสระดับปานกลาง',
-  },
-  {
-    key: 'SUBJECT_RISK_AVOIDANCE_WINDOW_DAYS',
-    valueType: 'integer',
-    defaultValue: '30',
-    min: 1,
-    max: 365,
-    group: GROUP_SUBJECT_RISK,
-    description: 'ช่วงวันย้อนหลังสำหรับตรวจรูปแบบเลี่ยงวิชาเดิม',
-  },
-  {
-    key: 'SUBJECT_RISK_AVOIDANCE_CONSECUTIVE_PERIODS',
-    valueType: 'integer',
-    defaultValue: '3',
-    min: 1,
-    max: 365,
-    group: GROUP_SUBJECT_RISK,
-    description: 'จำนวนคาบติดกันของวิชาเดียวกันที่ขาด ก่อนเปิดเคสระดับปานกลาง',
-  },
-  {
-    key: 'SUBJECT_RISK_AVOIDANCE_ABSENT_PERCENT',
-    valueType: 'integer',
-    defaultValue: '30',
-    min: 1,
-    max: 100,
-    group: GROUP_SUBJECT_RISK,
-    description: 'เปอร์เซ็นต์คาบที่ขาดในวิชาเดียวกันภายในช่วงที่กำหนด ก่อนเปิดเคสระดับปานกลาง',
-  },
-  {
-    key: 'SUBJECT_RISK_LATE_WINDOW_DAYS',
-    valueType: 'integer',
-    defaultValue: '30',
-    min: 1,
-    max: 365,
-    group: GROUP_SUBJECT_RISK,
-    description: 'ช่วงวันย้อนหลังสำหรับตรวจการมาสายจากเช็คชื่อรายวิชา',
-  },
-  {
-    key: 'SUBJECT_RISK_LATE_WATCH_COUNT',
-    valueType: 'integer',
-    defaultValue: '5',
-    min: 1,
-    max: 365,
-    group: GROUP_SUBJECT_RISK,
-    description: 'จำนวนครั้งที่มาสายในช่วงที่กำหนด ก่อนแจ้งเตือนเฝ้าระวังโดยไม่เปิดเคส',
-  },
-  {
-    key: 'CASE_RISK_TERM_ABSENCE_DAYS',
-    valueType: 'integer',
-    defaultValue: '7',
-    min: 1,
-    max: 365,
-    group: GROUP_SUBJECT_RISK,
-    description: 'จำนวนวันขาดสะสมต่อเทอมที่เปิดเคสระดับปานกลาง',
-  },
-  {
-    key: 'CASE_RISK_HIGH_ATTENDANCE_PERCENT',
-    valueType: 'integer',
-    defaultValue: '80',
-    min: 1,
-    max: 100,
-    group: GROUP_SUBJECT_RISK,
-    description: 'เปอร์เซ็นต์เวลาเรียนต่ำกว่าเกณฑ์นี้ให้เปิดเคสระดับสูง',
+      'จำนวนวันขาดเรียนสะสม (ไม่ต้องติดต่อกัน) ที่ทำให้นักเรียนเป็นความเสี่ยงและเปิดเคสอัตโนมัติ — นับเป็นวันขาดเมื่อไม่เข้าเรียนทุกคาบที่บันทึกในวันนั้น',
   },
   {
     key: 'CASE_SLA_HIGH_DAYS',
@@ -170,27 +44,7 @@ export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
     max: 365,
     group: GROUP_CASE_SLA,
     description:
-      'เคสความเสี่ยงสูงต้องมีการดำเนินการครั้งแรกภายในกี่วันปฏิทินนับจากวันเปิดเคส (ระบบแจ้งเตือนเมื่อใช้เวลาไปแล้ว 80%)',
-  },
-  {
-    key: 'CASE_SLA_MEDIUM_DAYS',
-    valueType: 'integer',
-    defaultValue: '7',
-    min: 1,
-    max: 365,
-    group: GROUP_CASE_SLA,
-    description:
-      'เคสความเสี่ยงปานกลางต้องมีการดำเนินการครั้งแรกภายในกี่วันปฏิทินนับจากวันเปิดเคส (ระบบแจ้งเตือนเมื่อใช้เวลาไปแล้ว 80%)',
-  },
-  {
-    key: 'CASE_SLA_LOW_DAYS',
-    valueType: 'integer',
-    defaultValue: '14',
-    min: 1,
-    max: 365,
-    group: GROUP_CASE_SLA,
-    description:
-      'เคสความเสี่ยงต่ำต้องมีการดำเนินการครั้งแรกภายในกี่วันปฏิทินนับจากวันเปิดเคส (ระบบแจ้งเตือนเมื่อใช้เวลาไปแล้ว 80%)',
+      'เคสที่เปิดอัตโนมัติต้องมีการดำเนินการครั้งแรกภายในกี่วันปฏิทินนับจากวันเปิดเคส (ระบบแจ้งเตือนเมื่อใช้เวลาไปแล้ว 80%)',
   },
   {
     key: 'ALERT_TRIGGER_TYPE',
@@ -230,24 +84,9 @@ interface OrderedSettingLadder {
   buildError: (parts: string[]) => string;
 }
 
-const ORDERED_SETTING_LADDERS: readonly OrderedSettingLadder[] = [
-  {
-    keys: [
-      'CASE_RISK_LOW_ABSENCE_DAYS',
-      'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-      'CASE_RISK_HIGH_ABSENCE_DAYS',
-    ],
-    labels: ['ความเสี่ยงต่ำ', 'ความเสี่ยงปานกลาง', 'ความเสี่ยงสูง'],
-    buildError: (parts) =>
-      `เกณฑ์วันขาดเรียนต้องเรียงจากน้อยไปมากตามระดับความเสี่ยง: ${parts.join(' ≤ ')}`,
-  },
-  {
-    keys: ['CASE_SLA_HIGH_DAYS', 'CASE_SLA_MEDIUM_DAYS', 'CASE_SLA_LOW_DAYS'],
-    labels: ['ความเสี่ยงสูง', 'ความเสี่ยงปานกลาง', 'ความเสี่ยงต่ำ'],
-    buildError: (parts) =>
-      `เคสที่เสี่ยงกว่าต้องได้เวลาดำเนินการไม่มากกว่าเคสที่เสี่ยงน้อยกว่า: ${parts.join(' ≤ ')}`,
-  },
-];
+// No ordered ladder remains: the tier ladder collapsed to a single absence
+// threshold. The guard below stays so a future ladder can be declared here.
+const ORDERED_SETTING_LADDERS: readonly OrderedSettingLadder[] = [];
 
 /**
  * Cross-field guard for settings that form an ordered ladder. Returns a Thai

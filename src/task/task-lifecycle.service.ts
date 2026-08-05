@@ -1,11 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
@@ -399,10 +392,10 @@ export class TaskLifecycleService {
     const fallbackExpiresAt = new Date(Date.now() + expiresMs).toISOString();
     const expiresAt = this.resolveExpiresAt(data.expires_at, fallbackExpiresAt);
     const opensAt = this.resolveOpensAt(data.opens_at, expiresAt);
-    let responseToken = token;
-    let responseExpiresAt = expiresAt;
-    let responseTaskId: string = taskId;
-    let assignmentReused = false;
+    const responseToken = token;
+    const responseExpiresAt = expiresAt;
+    const responseTaskId: string = taskId;
+    const assignmentReused = false;
     const tokenEncrypted = this.tokenEncryption.encrypt(token);
     let auditCaseId: number | null = null;
     let auditTargetSchoolId: number | null = null;
@@ -416,17 +409,10 @@ export class TaskLifecycleService {
     const followUpRequestId = clean(data.follow_up_request_id) || null;
     const actorId = resolveAuditActorId(currentActor);
 
-    if (followUpRequestId && taskType !== 'VISIT') {
-      throw new BadRequestException('คำขอติดตามใช้สร้างได้เฉพาะงานเยี่ยมบ้าน');
-    }
-    if (
-      followUpRequestId &&
-      !this.taskPolicyService.hasPermission(currentActor, 'assign-follow-up-cases')
-    ) {
-      throw new ForbiddenException('ไม่มีสิทธิ์มอบหมายผู้ติดตามเคส');
-    }
-    if (followUpRequestId && actorId === null) {
-      throw new ForbiddenException('ไม่พบผู้ใช้งานที่มอบหมายเคส');
+    // คำขอเยี่ยมบ้าน was retired: a task is created directly now, so a caller
+    // still sending the old field is told rather than silently ignored.
+    if (followUpRequestId) {
+      throw new BadRequestException('ระบบไม่รองรับคำขอติดตามแล้ว กรุณาสร้างงานโดยตรง');
     }
 
     if ((sourceFieldFollowerId !== null || campaignTargetId !== null) && taskType !== 'VISIT') {
@@ -446,56 +432,9 @@ export class TaskLifecycleService {
     try {
       await this.taskRepository.withTransaction(async (executor) => {
         let caseId: number | null = null;
-        let approvedFollowUpCaseId: number | null = null;
+        const approvedFollowUpCaseId: number | null = null;
         const inputTargetSchoolId = this.normalizeNumber(data.target_school_id);
         let resolvedTargetSchoolId = inputTargetSchoolId;
-
-        if (followUpRequestId) {
-          const followUp = await this.taskRepository.lockFollowUpTaskAssignment(
-            followUpRequestId,
-            executor,
-          );
-          if (!followUp) {
-            throw new NotFoundException('ไม่พบคำขอติดตาม');
-          }
-          if (followUp.status !== 'APPROVED') {
-            throw new ConflictException('คำขอติดตามยังไม่ได้รับอนุมัติให้มอบหมาย');
-          }
-          const followUpSchoolId = this.normalizeNumber(followUp.school_id);
-          const requestedStudentUuid = clean(data.student_id);
-          if (!requestedStudentUuid || requestedStudentUuid !== followUp.student_uuid) {
-            throw new BadRequestException('นักเรียนไม่ตรงกับคำขอติดตาม');
-          }
-          if (
-            inputTargetSchoolId !== null &&
-            followUpSchoolId !== null &&
-            inputTargetSchoolId !== followUpSchoolId
-          ) {
-            throw new BadRequestException('โรงเรียนไม่ตรงกับคำขอติดตาม');
-          }
-          if (followUpSchoolId === null) {
-            throw new ConflictException('คำขอติดตามไม่มีโรงเรียนที่ใช้งานได้');
-          }
-          await this.assertSchoolWithinActorScope(currentActor, followUpSchoolId, executor);
-          resolvedTargetSchoolId = followUpSchoolId;
-          approvedFollowUpCaseId = this.normalizeNumber(followUp.opened_case_id);
-          if (approvedFollowUpCaseId === null) {
-            throw new ConflictException('คำขอติดตามที่อนุมัติแล้วยังไม่มีเคส');
-          }
-
-          if (followUp.assigned_task_id) {
-            if (!followUp.assigned_link_token_encrypted || !followUp.assigned_link_expires_at) {
-              throw new ConflictException('งานที่มอบหมายไว้ไม่มีลิงก์ที่ใช้งานได้');
-            }
-            responseToken = this.tokenEncryption.decrypt(followUp.assigned_link_token_encrypted);
-            responseExpiresAt = new Date(followUp.assigned_link_expires_at).toISOString();
-            responseTaskId = followUp.assigned_task_id;
-            auditCaseId = this.normalizeNumber(followUp.assigned_case_id);
-            auditTargetSchoolId = followUpSchoolId;
-            assignmentReused = true;
-            return;
-          }
-        }
 
         if (inputTargetSchoolId !== null) {
           await this.assertSchoolWithinActorScope(currentActor, inputTargetSchoolId, executor);
@@ -674,34 +613,6 @@ export class TaskLifecycleService {
           resolveAuditActorId(currentActor),
           executor,
         );
-        if (followUpRequestId) {
-          const assigned = await this.taskRepository.markFollowUpTaskAssigned(
-            followUpRequestId,
-            taskId,
-            actorId!,
-            executor,
-          );
-          if (!assigned) {
-            throw new ConflictException('คำขอติดตามถูกมอบหมายไปแล้ว กรุณาโหลดข้อมูลใหม่');
-          }
-          await this.auditLog.recordAtomic(
-            {
-              actorUserId: actorId,
-              actorLabel: currentActor.username,
-              action: 'STUDENT_OBSERVATION_UPDATE',
-              targetType: 'student_follow_up_requests',
-              targetId: followUpRequestId,
-              metadata: {
-                operation: 'STUDENT_FOLLOW_UP_REQUEST_ASSIGN',
-                taskId,
-                caseId,
-                schoolId: resolvedTargetSchoolId,
-              },
-              ip: null,
-            },
-            executor,
-          );
-        }
         if (campaignTargetId !== null && sourceFieldFollowerId !== null && caseId !== null) {
           const assigned = await this.taskRepository.assignFollowerCampaignTarget(
             {

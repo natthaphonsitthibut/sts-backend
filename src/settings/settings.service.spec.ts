@@ -7,12 +7,8 @@ import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import type { SystemSettingRow } from './settings.types';
 
 const STORED_VALUES: Record<string, string> = {
-  CASE_RISK_LOW_ABSENCE_DAYS: '3',
-  CASE_RISK_MEDIUM_ABSENCE_DAYS: '5',
-  CASE_RISK_HIGH_ABSENCE_DAYS: '7',
+  CASE_RISK_HIGH_ABSENCE_DAYS: '3',
   CASE_SLA_HIGH_DAYS: '3',
-  CASE_SLA_MEDIUM_DAYS: '7',
-  CASE_SLA_LOW_DAYS: '14',
   ALERT_TRIGGER_TYPE: 'SCHEDULED',
   ALERT_SCHEDULE_TIME: '18:00',
 };
@@ -36,9 +32,9 @@ describe('SettingsService catalog validation', () => {
   let service: SettingsService;
 
   const buildRow = (overrides: Partial<SystemSettingRow> = {}): SystemSettingRow => ({
-    setting_key: 'CASE_RISK_LOW_ABSENCE_DAYS',
+    setting_key: 'CASE_RISK_HIGH_ABSENCE_DAYS',
     setting_value: '3',
-    description: 'จำนวนวันขาดเรียนติดต่อกันที่ระบบเปิดเคสอัตโนมัติ',
+    description: 'จำนวนวันขาดเรียนสะสมที่ระบบเปิดเคสอัตโนมัติ',
     updated_at: null,
     ...overrides,
   });
@@ -90,9 +86,9 @@ describe('SettingsService catalog validation', () => {
   });
 
   it.each([
-    ['CASE_RISK_LOW_ABSENCE_DAYS', 'abc'],
-    ['CASE_RISK_LOW_ABSENCE_DAYS', '0'],
-    ['CASE_RISK_LOW_ABSENCE_DAYS', '9999'],
+    ['CASE_RISK_HIGH_ABSENCE_DAYS', 'abc'],
+    ['CASE_RISK_HIGH_ABSENCE_DAYS', '0'],
+    ['CASE_RISK_HIGH_ABSENCE_DAYS', '9999'],
     ['ALERT_SCHEDULE_TIME', '99:99'],
     ['ALERT_SCHEDULE_TIME', '18.00'],
     ['ALERT_TRIGGER_TYPE', 'SOMETIMES'],
@@ -104,39 +100,11 @@ describe('SettingsService catalog validation', () => {
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
   });
 
-  it.each([
-    // low (6) would exceed medium (5)
-    ['CASE_RISK_LOW_ABSENCE_DAYS', '6'],
-    // medium (8) would exceed high (7)
-    ['CASE_RISK_MEDIUM_ABSENCE_DAYS', '8'],
-    // high-risk SLA (20) would exceed the low-risk SLA (14)
-    ['CASE_SLA_HIGH_DAYS', '20'],
-    // low-risk SLA (2) would undercut the high-risk SLA (3)
-    ['CASE_SLA_LOW_DAYS', '2'],
-  ])('rejects %s = "%s" because it breaks the ladder ordering', async (key, value) => {
-    await expect(service.updateSetting(actor, key, value)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
-    expect(settingsRepository.upsertSetting).not.toHaveBeenCalled();
-    expect(auditLog.recordAtomic).not.toHaveBeenCalled();
-  });
-
-  it('accepts a ladder value that stays within its neighbors', async () => {
-    const result = await service.updateSetting(actor, 'CASE_RISK_MEDIUM_ABSENCE_DAYS', '6');
-    expect(result.success).toBe(true);
-    expect(settingsRepository.upsertSetting).toHaveBeenCalledWith(
-      'CASE_RISK_MEDIUM_ABSENCE_DAYS',
-      '6',
-      expect.any(String),
-      expect.anything(),
-    );
-  });
-
   it('persists a valid change with an atomic audit record', async () => {
-    const result = await service.updateSetting(actor, 'CASE_RISK_LOW_ABSENCE_DAYS', '5');
+    const result = await service.updateSetting(actor, 'CASE_RISK_HIGH_ABSENCE_DAYS', '5');
 
     expect(settingsRepository.upsertSetting).toHaveBeenCalledWith(
-      'CASE_RISK_LOW_ABSENCE_DAYS',
+      'CASE_RISK_HIGH_ABSENCE_DAYS',
       '5',
       expect.any(String),
       expect.anything(),
@@ -145,7 +113,7 @@ describe('SettingsService catalog validation', () => {
       expect.objectContaining({
         actorUserId: 7,
         action: 'SYSTEM_SETTING_EDIT',
-        targetId: 'CASE_RISK_LOW_ABSENCE_DAYS',
+        targetId: 'CASE_RISK_HIGH_ABSENCE_DAYS',
       }),
       expect.anything(),
     );
@@ -157,12 +125,12 @@ describe('SettingsService catalog validation', () => {
     expect(result.data.value_type).toBe('integer');
     expect(automationService.refreshDynamicCron).not.toHaveBeenCalled();
     expect(riskProfileService.enqueueFull).toHaveBeenCalledWith(
-      'setting-change:CASE_RISK_LOW_ABSENCE_DAYS',
+      'setting-change:CASE_RISK_HIGH_ABSENCE_DAYS',
     );
   });
 
   it('skips the audit record when the value is unchanged', async () => {
-    await service.updateSetting(actor, 'CASE_RISK_LOW_ABSENCE_DAYS', '3');
+    await service.updateSetting(actor, 'CASE_RISK_HIGH_ABSENCE_DAYS', '3');
 
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
     expect(automationService.refreshDynamicCron).not.toHaveBeenCalled();
@@ -211,7 +179,7 @@ describe('SettingsService catalog validation', () => {
     const rows = await service.getSettings();
 
     expect(rows.map((row) => row.setting_key)).toEqual([
-      'CASE_RISK_LOW_ABSENCE_DAYS',
+      'CASE_RISK_HIGH_ABSENCE_DAYS',
       'CASE_SLA_HIGH_DAYS',
       'ALERT_SCHEDULE_TIME',
       'LEGACY_KEY',

@@ -400,7 +400,7 @@ export class GetCasesQueryDto extends PaginationQueryDto {
   room?: string;
 }
 
-export const RISK_DASHBOARD_TIERS = ['ALL', 'HIGH', 'MEDIUM', 'LOW', 'WATCH', 'NORMAL'] as const;
+export const RISK_DASHBOARD_TIERS = ['ALL', 'HIGH', 'WATCH', 'NORMAL'] as const;
 export const RISK_DASHBOARD_SORT_FIELDS = [
   'risk',
   'name',

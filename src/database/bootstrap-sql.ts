@@ -2118,10 +2118,10 @@ export const DATABASE_BASELINE_SQL = `
     weighted_attendance_percent NUMERIC(5,2) NULL,
     risk_tier VARCHAR(16) NOT NULL
       CONSTRAINT chk_student_risk_profiles_tier
-      CHECK (risk_tier IN ('HIGH', 'MEDIUM', 'LOW', 'WATCH', 'NORMAL')),
+      CHECK (risk_tier IN ('HIGH', 'WATCH', 'NORMAL')),
     risk_severity SMALLINT NOT NULL
       CONSTRAINT chk_student_risk_profiles_severity
-      CHECK (risk_severity BETWEEN 0 AND 4),
+      CHECK (risk_severity BETWEEN 0 AND 2),
     risk_score NUMERIC(10,4) NOT NULL DEFAULT 0,
     open_case_count INTEGER NOT NULL DEFAULT 0,
     latest_open_case_id INTEGER NULL
