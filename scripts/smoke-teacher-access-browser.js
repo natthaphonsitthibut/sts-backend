@@ -495,6 +495,24 @@ async function main() {
       'Teacher-link roster sort did not reach the server before pagination',
     );
 
+    // The LINE verification page is one static URL shared with every teacher,
+    // so this copy button is the only place the product hands it out. Without
+    // it an admin can see "ยังไม่ยืนยัน" and have no way to act on it.
+    const lineActions = await evaluate(
+      client,
+      `(() => {
+        const labels = [...document.querySelectorAll('button')].map((button) => button.textContent);
+        return {
+          send: labels.some((text) => text.includes('ส่งลิงก์ทาง LINE') || text.includes('ส่งทาง LINE')),
+          copy: labels.some((text) => text.includes('คัดลอกลิงก์ยืนยัน LINE')),
+        };
+      })()`,
+    );
+    assert(
+      lineActions.send === lineActions.copy,
+      `LINE actions are out of step: send=${lineActions.send}, copy=${lineActions.copy}`,
+    );
+
     await navigate(
       client,
       `${FRONTEND_URL}/curriculum/${fixtureClassroom.grade_level_id}/subjects/new` +
@@ -585,6 +603,7 @@ async function main() {
           'teacher and director card hover transform and shadow are identical',
           'teacher card color updates every subject card for the shared classroom',
           'teacher-link roster sorting reaches the server',
+          'the LINE verification link is copyable wherever sending over LINE is offered',
           'curriculum MultiSelect supports ArrowDown, Enter and Escape with focus restoration',
         ],
       }),
