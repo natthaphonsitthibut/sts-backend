@@ -15,7 +15,10 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./data/backups/sts_backup.sql:/docker-entrypoint-initdb.d/01-sts_backup.sql:ro
+      # Gzipped so the full dump (237MB raw, every attendance row included)
+      # stays under GitHub's 100MB file limit. The postgres entrypoint runs
+      # *.sql.gz directly — no manual decompression step.
+      - ./data/backups/sts_backup.sql.gz:/docker-entrypoint-initdb.d/01-sts_backup.sql.gz:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d sts"]
       interval: 5s
