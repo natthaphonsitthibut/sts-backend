@@ -634,7 +634,35 @@ async function main() {
       'Link expiry is not the end of the term',
     );
 
-    // 3. The bulk action covers the teachers that still have none, and skips the
+    // 3. Issuing for picked rows only touches those rows: teacher one already has
+    //    a link so the batch issues nothing and says why, and teacher two — who was
+    //    not picked — is still without a link afterwards.
+    const pickedBulk = await request(baseUrl, 'POST', '/api/teacher-access-grants/bulk', 201, {
+      headers: { cookie: adminCookie },
+      body: {
+        schoolTermId: termId,
+        teacherMembershipIds: [fixture.teacherMemberships[0].id],
+      },
+    });
+    assert(
+      Number(pickedBulk.payload?.data?.issued) === 0,
+      'Picked bulk issue re-issued a link the teacher already had',
+    );
+    assert(
+      pickedBulk.payload?.data?.skipped?.[0]?.teacherMembershipId ===
+        fixture.teacherMemberships[0].id &&
+        pickedBulk.payload.data.skipped[0].reason.includes('มีลิงก์'),
+      'Picked bulk issue did not report why the teacher was skipped',
+    );
+    const afterPicked = await request(baseUrl, 'GET', rosterUrl, 200, {
+      headers: { cookie: adminCookie },
+    });
+    assert(
+      rowFor(afterPicked.payload, fixture.teacherMemberships[1].id).linkStatus === 'NOT_CREATED',
+      'Picked bulk issue created a link for a teacher that was not picked',
+    );
+
+    // 4. The bulk action covers the teachers that still have none, and skips the
     //    one that already does instead of rotating it.
     const bulk = await request(baseUrl, 'POST', '/api/teacher-access-grants/bulk', 201, {
       headers: { cookie: adminCookie },
@@ -875,6 +903,7 @@ async function main() {
         checked: [
           'teacher roster lists every teacher with NOT_CREATED before issuing',
           'per-teacher issue derives capabilities and expires at term end',
+          'issuing for picked rows only covers those rows and explains the skips',
           'bulk issue fills the gaps and leaves existing links alone',
           'copy link returns the issued token from ciphertext, storage stays hash-only',
           'guest reads are refused until the emailed OTP is verified',

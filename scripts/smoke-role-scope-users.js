@@ -59,7 +59,9 @@ function userPayload(targetUsername, targetPersonId, overrides = {}) {
     LastName: 'Scope Smoke',
     PersonID_Onec: targetPersonId,
     phone: '0990000001',
-    email: 'role.scope.smoke@example.invalid',
+    // One address per fixture user: creating a TEACHER account creates a teacher
+    // record, and teacher emails are unique since uq_teachers_email.
+    email: `${targetUsername}@example.invalid`,
     affiliation: 'Automated role scope smoke',
     role: 'TEACHER',
     permissions: ['home', 'attendance'],

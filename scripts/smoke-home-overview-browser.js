@@ -292,7 +292,7 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     await waitFor(
       async () => {
         const text = await bodyText(client);
-        return text.includes('หน้าหลัก') && text.includes('นักเรียนเสี่ยงสูง Top 10');
+        return text.includes('หน้าหลัก') && text.includes('นักเรียนเสี่ยง Top 10');
       },
       `${label} home dashboard did not render`,
     );
@@ -306,7 +306,7 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   assert(!text.includes('ทางลัดทำงานต่อ'), `${label} rendered the removed shortcut section`);
   assert(text.includes('ทั้งหมด'), `${label} student summary metric was missing`);
   assert(
-    text.includes('นักเรียนเสี่ยงสูง Top 10'),
+    text.includes('นักเรียนเสี่ยง Top 10'),
     `${label} high-risk area ranking was missing`,
   );
   const riskDimension = await evaluate(
@@ -315,10 +315,10 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   );
   assert(riskDimension === 'PROVINCE', `${label} default risk dimension was ${riskDimension}`);
   if (expectations.risk) {
-    assert(text.includes('เสี่ยงสูง'), `${label} risk metric was missing`);
+    assert(text.includes('เสี่ยง'), `${label} risk metric was missing`);
   }
   if (expectations.cases) {
-    assert(text.includes('กำลังติดตาม'), `${label} active case metric was missing`);
+    assert(text.includes('รอติดตาม'), `${label} active case metric was missing`);
     assert(text.includes('เคสที่ยังดำเนินการ'), `${label} case pipeline chart was missing`);
   } else {
     assert(!text.includes('เคสที่ยังดำเนินการ'), `${label} rendered case pipeline without permission`);
@@ -341,18 +341,19 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
       String(activeCaseCardText).includes(expectedActiveCases.toLocaleString()),
       `${label} did not render expected active case count ${expectedActiveCases}\n${String(activeCaseCardText)}`,
     );
+    // Address the cards by metric key: their labels are short Thai words that
+    // also appear in the sidebar, so matching on text picks up navigation links.
     const caseMetricLinks = await evaluate(
       client,
-      `Array.from(document.querySelectorAll('a[href]'))
-        .filter((link) => link.textContent?.includes('กำลังติดตาม') || link.textContent?.includes('รอตรวจผล'))
-        .map((link) => ({ text: link.textContent?.trim(), href: link.getAttribute('href') }))`,
+      `Object.fromEntries(Array.from(document.querySelectorAll('[data-home-metric]'))
+        .map((link) => [link.getAttribute('data-home-metric'), link.getAttribute('href')]))`,
     );
     assert(
-      caseMetricLinks.some((link) => link.text.includes('กำลังติดตาม') && link.href.includes('status=IN_PROGRESS')),
+      String(caseMetricLinks.activeCases).includes('status=IN_PROGRESS'),
       `${label} in-progress case metric did not retain its filter context`,
     );
     assert(
-      caseMetricLinks.some((link) => link.text.includes('รอตรวจผล') && link.href.includes('status=PENDING_REVIEW')),
+      String(caseMetricLinks.pendingReview).includes('status=PENDING_REVIEW'),
       `${label} pending-review case metric did not retain its filter context`,
     );
     const pipelineLinks = await evaluate(
@@ -369,9 +370,7 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   if (expectations.risk) {
     const riskMetricLink = await evaluate(
       client,
-      `Array.from(document.querySelectorAll('a[href]'))
-        .find((link) => link.textContent?.includes('เสี่ยงสูง'))
-        ?.getAttribute('href')`,
+      `document.querySelector('[data-home-metric="watchStudents"]')?.getAttribute('href')`,
     );
     assert(
       String(riskMetricLink).includes('riskTier=HIGH'),

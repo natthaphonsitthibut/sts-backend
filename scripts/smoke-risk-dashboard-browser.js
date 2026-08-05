@@ -22,6 +22,7 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9245);
 const USERNAME = 'risk_dashboard_browser_smoke';
+const MANUAL_CASE_REASON_PREFIX = 'Browser smoke manual case';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -46,6 +47,27 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   throw new Error(lastError ? `${message}: ${errorMessage(lastError)}` : message);
+}
+
+/**
+ * Risk profiles are recalculated off a queue, so a freshly opened case reaches
+ * the dashboard a beat after the API answers. Reload between attempts: polling
+ * a page that already rendered from stale data can never converge.
+ */
+async function waitForReload(client, url, check, message, attempts = 8) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await navigate(client, url);
+    try {
+      // Each attempt still needs its own settle window: the query has to land
+      // before the check can mean anything.
+      await waitFor(check, message, 4_000);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(lastError ? errorMessage(lastError) : message);
 }
 
 class CdpClient {
@@ -267,6 +289,7 @@ async function upsertActor(dataSource, passwordHash) {
     'home',
     'login-links',
     'manage-student-accounts',
+    'manage-student-observations',
     'manage-users-list',
     'review-cases',
     'students',
@@ -334,12 +357,15 @@ async function disableActor(dataSource) {
   );
 }
 
+// Mirror the page size the dashboard itself renders: the smoke picks the row
+// it will then look for in the UI, so reasoning about a shorter list than the
+// user sees makes candidates vanish for no visible reason.
 async function fetchRiskDashboard(client, sortDirection = 'desc') {
   return evaluate(
     client,
     `(async () => {
       const response = await fetch(${JSON.stringify(
-        `${BACKEND_URL}/api/dashboard/risk-watchlist?limit=10&sortBy=risk&sortDirection=${sortDirection}`,
+        `${BACKEND_URL}/api/dashboard/risk-watchlist?limit=20&sortBy=risk&sortDirection=${sortDirection}`,
       )}, { credentials: 'include' });
       const payload = await response.json();
       return { status: response.status, payload };
@@ -452,7 +478,7 @@ async function assertFullStudentSurfaceNavigation(client, label) {
   );
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
-    async () => (await bodyText(client)).includes('รายงานนักเรียน'),
+    async () => (await bodyText(client)).includes('ความเสี่ยงจากการมาเรียน'),
     `${label} dashboard did not render again after row/card navigation`,
   );
   await waitFor(
@@ -469,7 +495,7 @@ async function assertFullStudentSurfaceNavigation(client, label) {
 async function assertManualCaseFlow(client, row, createdCaseIds) {
   const studentId = String(row.studentId);
   const expectedRiskTier = String(row.riskTier);
-  const reason = `Browser smoke manual case ${Date.now()}`;
+  const reason = `${MANUAL_CASE_REASON_PREFIX} ${Date.now()}`;
 
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
@@ -587,8 +613,9 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   assert(duplicate.payload?.created === false, 'duplicate manual case request created another case');
   assert(Number(duplicate.payload?.data?.id) === caseId, 'duplicate request returned another case');
 
-  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
-  await waitFor(
+  await waitForReload(
+    client,
+    `${FRONTEND_URL}/student-risk-report`,
     async () =>
       evaluate(
         client,
@@ -632,6 +659,25 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   await capture(client, '/tmp/sts-manual-case-detail.png');
 }
 
+/**
+ * A run that dies mid-flow leaves its case behind, and that leftover occupies
+ * one of the few top-ranked students the next run needs to pick from — so the
+ * failure compounds into "no student without an active case". Sweep this
+ * actor's own debris before starting.
+ */
+async function purgeStaleManualCases(dataSource, actorId) {
+  if (!actorId) return;
+  const stale = await dataSource.query(
+    `SELECT id FROM cases WHERE created_by = $1 AND reason_flagged LIKE $2`,
+    [actorId, `${MANUAL_CASE_REASON_PREFIX}%`],
+  );
+  await cleanupManualCases(
+    dataSource,
+    stale.map((row) => Number(row.id)),
+    actorId,
+  );
+}
+
 async function cleanupManualCases(dataSource, caseIds, actorId) {
   if (caseIds.length === 0 || !actorId) return;
   const ids = caseIds.map(String);
@@ -639,13 +685,45 @@ async function cleanupManualCases(dataSource, caseIds, actorId) {
     `DELETE FROM notifications WHERE ref_entity = 'case' AND ref_id = ANY($1::text[])`,
     [ids],
   );
-  await dataSource.query(
-    `DELETE FROM audit_logs WHERE target_type = 'case' AND target_id = ANY($1::text[])`,
-    [ids],
-  );
-  await dataSource.query(
-    `DELETE FROM cases WHERE id = ANY($1::int[]) AND created_by = $2`,
+  // audit_log is append-only by design (a trigger rejects DELETE), so the
+  // CASE_CREATE entries stay. They carry this smoke's actor, which is the
+  // record we want anyway.
+  // Read the owners before the delete rather than through RETURNING: the row
+  // shape TypeORM hands back for a DELETE is not worth guessing, and guessing
+  // wrong makes the refresh below silently do nothing.
+  const owners = await dataSource.query(
+    `SELECT DISTINCT student_uuid FROM cases WHERE id = ANY($1::int[]) AND created_by = $2`,
     [caseIds, actorId],
+  );
+  await dataSource.query(`DELETE FROM cases WHERE id = ANY($1::int[]) AND created_by = $2`, [
+    caseIds,
+    actorId,
+  ]);
+
+  // student_risk_profiles caches the open-case columns, and deleting the row
+  // underneath it does not refresh that cache. Left stale, the next run sees a
+  // student who still "has" a case that no longer exists and can run out of
+  // candidates. Recompute the two columns the same way the recalculation does.
+  const studentUuids = [...new Set(owners.map((row) => row.student_uuid).filter(Boolean))];
+  if (studentUuids.length === 0) return;
+  await dataSource.query(
+    `UPDATE student_risk_profiles profile
+     SET open_case_count = COALESCE(summary.open_case_count, 0),
+         latest_open_case_id = summary.latest_open_case_id
+     FROM (
+       SELECT uuids.student_uuid,
+              COUNT(c.id)::int AS open_case_count,
+              (array_agg(c.id ORDER BY c.created_at DESC, c.id DESC)
+                FILTER (WHERE c.id IS NOT NULL))[1] AS latest_open_case_id
+       FROM UNNEST($1::uuid[]) AS uuids(student_uuid)
+       LEFT JOIN cases c
+         ON c.student_uuid = uuids.student_uuid
+        AND c.deleted_at IS NULL
+        AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
+       GROUP BY uuids.student_uuid
+     ) summary
+     WHERE profile.student_uuid = summary.student_uuid`,
+    [studentUuids],
   );
 }
 
@@ -704,15 +782,9 @@ async function assertCanonicalPageWidths(client) {
 }
 
 async function assertStatusSummaryCardFilters(client) {
-  const routes = [
-    '/cases',
-    '/login-links',
-    '/attendance-links',
-    '/visit-links',
-    '/field-followers',
-    '/manage-users',
-    '/manage-student-accounts',
-  ];
+  // /manage-users and /manage-student-accounts dropped their selectable
+  // summary cards in the roster redesign; only these routes keep the pattern.
+  const routes = ['/cases', '/visit-links', '/field-followers'];
 
   for (const route of routes) {
     await navigate(client, `${FRONTEND_URL}${route}`);
@@ -793,7 +865,7 @@ async function assertSummaryFilterToggle(client, label) {
   const selected = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('button[aria-label="กรองเสี่ยงสูง"]');
+      const button = document.querySelector('button[aria-label="กรองเสี่ยง"]');
       if (!button || button.getAttribute('aria-pressed') !== 'false') return false;
       button.click();
       return true;
@@ -804,7 +876,7 @@ async function assertSummaryFilterToggle(client, label) {
     async () =>
       evaluate(
         client,
-        `(() => document.querySelector('button[aria-label="ยกเลิกตัวกรองเสี่ยงสูง"]')
+        `(() => document.querySelector('button[aria-label="ยกเลิกตัวกรองเสี่ยง"]')
           ?.getAttribute('aria-pressed') === 'true')()`,
       ),
     `${label} high-risk summary did not expose its selected state`,
@@ -813,7 +885,7 @@ async function assertSummaryFilterToggle(client, label) {
   const cleared = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('button[aria-label="ยกเลิกตัวกรองเสี่ยงสูง"]');
+      const button = document.querySelector('button[aria-label="ยกเลิกตัวกรองเสี่ยง"]');
       if (!button) return false;
       button.click();
       return true;
@@ -824,7 +896,7 @@ async function assertSummaryFilterToggle(client, label) {
     async () =>
       evaluate(
         client,
-        `(() => document.querySelector('button[aria-label="กรองเสี่ยงสูง"]')
+        `(() => document.querySelector('button[aria-label="กรองเสี่ยง"]')
           ?.getAttribute('aria-pressed') === 'false')()`,
       ),
     `${label} high-risk summary did not clear its selected state`,
@@ -850,7 +922,7 @@ async function assertRiskCriteriaPopover(client) {
         client,
         `(() => {
           const note = document.querySelector('[role="note"]');
-          return Boolean(note && note.innerText.includes('ขาดติดกัน ต่ำ/กลาง/สูง'));
+          return Boolean(note && note.innerText.includes('ขาดสะสม'));
         })()`,
       ),
     'risk criteria popover did not expose the configured thresholds',
@@ -869,7 +941,7 @@ async function assertMobileFilterReset(client, expectedStudentName) {
   const selected = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('button[aria-label="กรองเสี่ยงสูง"]');
+      const button = document.querySelector('button[aria-label="กรองเสี่ยง"]');
       if (!button) return false;
       button.click();
       return true;
@@ -896,7 +968,7 @@ async function assertMobileFilterReset(client, expectedStudentName) {
     async () =>
       evaluate(
         client,
-        `(() => document.querySelector('button[aria-label="กรองเสี่ยงสูง"]')
+        `(() => document.querySelector('button[aria-label="กรองเสี่ยง"]')
           ?.getAttribute('aria-pressed') === 'false')()`,
       ),
     'mobile clear-all did not reset the risk summary selection',
@@ -1074,7 +1146,7 @@ async function setMobileSort(client, value) {
 async function assertRiskDashboard(client, expectedStudentName, expectedTotalCount, label) {
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
-    async () => (await bodyText(client)).includes('รายงานนักเรียน'),
+    async () => (await bodyText(client)).includes('ความเสี่ยงจากการมาเรียน'),
     `${label} risk dashboard title did not render`,
   );
   await waitFor(
@@ -1082,7 +1154,7 @@ async function assertRiskDashboard(client, expectedStudentName, expectedTotalCou
     `${label} risk criteria control did not render`,
   );
   const text = await bodyText(client);
-  assert(text.includes('เสี่ยงสูง'), `${label} high risk summary was missing`);
+  assert(text.includes('เสี่ยง'), `${label} high risk summary was missing`);
   assert(text.includes('เฝ้าระวัง'), `${label} watch summary was missing`);
   assert(text.includes('ปกติ'), `${label} normal summary was missing`);
   assert(!text.includes('ไม่สามารถโหลดรายงานนักเรียนได้'), `${label} rendered error state`);
@@ -1147,24 +1219,25 @@ async function assertSharedVisualSystem(client) {
     colors.pageBackground === 'rgb(250, 250, 250)',
     `Shared page background drifted: ${colors.pageBackground}`,
   );
+  // --color-breadcrumb-muted (#737373) from the shared token sheet.
   assert(
-    colors.previousPage === 'rgb(103, 103, 103)',
+    colors.previousPage === 'rgb(115, 115, 115)',
     `Previous breadcrumb ink drifted: ${colors.previousPage}`,
   );
   assert(colors.currentPage === 'rgb(17, 17, 17)', `Breadcrumb ink drifted: ${colors.currentPage}`);
-  assert(
-    colors.description === 'rgb(103, 103, 103)',
-    `Page description ink drifted: ${colors.description}`,
-  );
+  // PageToolbar no longer renders a description paragraph (descriptions live
+  // in page content), so there is no description ink to pin here.
   assert(
     colors.tableHeadingBackground === 'rgb(15, 73, 189)' &&
       colors.tableHeadingText === 'rgb(255, 255, 255)' &&
       Number.parseFloat(colors.tableHeadingHeight) >= 48,
     `Table heading colors drifted: ${JSON.stringify(colors)}`,
   );
+  // The profile trigger now renders the shared Avatar (photo or gradient
+  // initial) instead of a brand-soft tile, so only the notification tile
+  // keeps the brand surface.
   assert(
-    colors.notificationSurface === 'rgb(226, 233, 247)' &&
-      colors.profileSurface === 'rgb(226, 233, 247)',
+    colors.notificationSurface === 'rgb(226, 233, 247)',
     `Header brand surfaces drifted: ${JSON.stringify(colors)}`,
   );
   assert(
@@ -1178,10 +1251,12 @@ async function assertSharedVisualSystem(client) {
     `Refresh button colors drifted: ${JSON.stringify(colors)}`,
   );
 
-  await navigate(client, `${FRONTEND_URL}/manage-users`);
+  // Manage-users lost its tabs in the roster redesign; the risk report keeps
+  // the shared underline Tabs (ความเสี่ยงจากการมาเรียน / ความคิดเห็นจากคุณครู).
+  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
     async () => evaluate(client, `Boolean(document.querySelector('[role="tab"]'))`),
-    'Manage-users tabs did not render',
+    'Risk report tabs did not render',
   );
   const tabColors = await evaluate(
     client,
@@ -1229,7 +1304,7 @@ async function assertSharedVisualSystem(client) {
   );
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
-    async () => (await bodyText(client)).includes('รายงานนักเรียน'),
+    async () => (await bodyText(client)).includes('ความเสี่ยงจากการมาเรียน'),
     'Risk dashboard did not restore after visual-system checks',
   );
 }
@@ -1252,6 +1327,7 @@ async function main() {
   try {
     await disableActor(dataSource);
     actorId = await upsertActor(dataSource, passwordHash);
+    await purgeStaleManualCases(dataSource, actorId);
     const user = {
       id: actorId,
       username: USERNAME,
@@ -1265,6 +1341,7 @@ async function main() {
         'home',
         'login-links',
         'manage-student-accounts',
+        'manage-student-observations',
         'manage-users-list',
         'review-cases',
         'students',
@@ -1341,7 +1418,7 @@ async function main() {
     await capture(client, '/tmp/sts-risk-dashboard-mobile.png');
     await evaluate(
       client,
-      `document.querySelector('button[aria-label="กรองเสี่ยงสูง"]')?.scrollIntoView({ block: 'start' })`,
+      `document.querySelector('button[aria-label="กรองเสี่ยง"]')?.scrollIntoView({ block: 'start' })`,
     );
     await capture(client, '/tmp/sts-risk-dashboard-mobile-summary.png');
     await navigate(client, `${FRONTEND_URL}/login`);

@@ -237,7 +237,7 @@ async function pickComboboxOption(client, inputId, label) {
     `(() => {
       const option = [...document.querySelectorAll('button')]
         .find((button) => button.textContent.trim() === ${JSON.stringify(label)});
-      option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      option.click();
     })()`,
   );
 }
@@ -598,6 +598,7 @@ async function main() {
         async () =>
           (await evaluate(client, 'location.pathname')) === '/profile' &&
           String(await evaluate(client, 'document.body.innerText')).includes('โปรไฟล์ของฉัน') &&
+          String(await evaluate(client, 'document.body.innerText')).includes('แก้ไขข้อมูลส่วนตัว') &&
           !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
         'Profile page did not render',
       );
