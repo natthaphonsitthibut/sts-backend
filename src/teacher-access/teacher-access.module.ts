@@ -7,11 +7,14 @@ import { TokenEncryptionModule } from '../common/crypto/token-encryption.module'
 import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 import { StudentsModule } from '../students/students.module';
 import { StudentObservationsModule } from '../student-observations/student-observations.module';
+import { TimetableModule } from '../timetable/timetable.module';
+import { MessagingModule } from '../common/messaging/messaging.module';
+import { OtpModule } from '../common/otp/otp.module';
+import { TeacherLineModule } from '../teacher-line/teacher-line.module';
 import {
   PublicTeacherAccessController,
   TeacherAccessGrantController,
 } from './teacher-access.controller';
-import { TeacherAccessOtpStore } from './teacher-access-otp.store';
 import { TeacherAccessRepository } from './teacher-access.repository';
 import { TeacherAccessService } from './teacher-access.service';
 
@@ -23,11 +26,15 @@ import { TeacherAccessService } from './teacher-access.service';
     RiskProfileModule,
     TokenEncryptionModule,
     EmailModule,
+    OtpModule,
+    MessagingModule,
+    TeacherLineModule,
     StudentsModule,
+    TimetableModule,
     forwardRef(() => StudentObservationsModule),
   ],
   controllers: [TeacherAccessGrantController, PublicTeacherAccessController],
-  providers: [TeacherAccessRepository, TeacherAccessService, TeacherAccessOtpStore],
+  providers: [TeacherAccessRepository, TeacherAccessService],
   exports: [TeacherAccessService],
 })
 export class TeacherAccessModule {}

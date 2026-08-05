@@ -109,6 +109,8 @@ type RepositoryMock = jest.Mocked<
     | 'getSystemSettingValue'
     | 'listAssignmentOptions'
     | 'listMembershipsNeedingGrant'
+    | 'listGrantsForDelivery'
+    | 'describeMembershipsForGrant'
     | 'findGrantById'
     | 'listAssignmentSlotsForDate'
     | 'findClassroomPresentation'
@@ -149,6 +151,8 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
       ),
     listAssignmentOptions: jest.fn().mockResolvedValue([]),
     listMembershipsNeedingGrant: jest.fn().mockResolvedValue([]),
+    listGrantsForDelivery: jest.fn().mockResolvedValue([]),
+    describeMembershipsForGrant: jest.fn().mockResolvedValue([]),
     findGrantById: jest.fn().mockResolvedValue(grant),
     listAssignmentSlotsForDate: jest.fn().mockResolvedValue([]),
     findClassroomPresentation: jest.fn().mockResolvedValue({
@@ -190,6 +194,11 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     open: jest.fn(),
     delete: jest.fn().mockResolvedValue(undefined),
   };
+  const messaging = {
+    isEnabled: jest.fn().mockReturnValue(true),
+    sendMessages: jest.fn().mockResolvedValue([]),
+  };
+  const teacherMessaging = { markUnreachable: jest.fn().mockResolvedValue(undefined) };
   const service = new TeacherAccessService(
     repository as unknown as TeacherAccessRepository,
     auditLog as never,
@@ -200,12 +209,16 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     emailService as never,
     otpStore as never,
     magicSessionStore as never,
+    messaging as never,
+    teacherMessaging as never,
     storage as never,
     {} as never,
     {} as never,
   );
   return {
     service,
+    messaging,
+    teacherMessaging,
     repository,
     auditLog,
     attendance,
@@ -435,49 +448,45 @@ describe('TeacherAccessService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it.each([
-    ['TERM_END', null, '2099-12-31T16:59:59.999Z'],
-    ['ASSIGNMENT_END', '2099-06-30', '2099-06-30T16:59:59.999Z'],
-  ] as const)(
-    'resolves default expiry from the %s system setting',
-    async (expiryPolicy, assignmentEnd, expectedExpiry) => {
-      const { service, repository } = createHarness();
-      repository.findTermForIssue.mockResolvedValue({
-        id: '21',
-        school_id: 10,
-        academic_year: 2569,
-        semester: 1,
-        status: 'ACTIVE',
-        starts_on: '2099-01-01',
-        ends_on: '2099-12-31',
-      });
-      repository.findMembershipForIssue.mockResolvedValue({
-        id: '12',
-        school_id: 10,
-        teacher_user_id: 44,
-        membership_status: 'ACTIVE',
-        teacher_status: 'ACTIVE',
-      });
-      repository.listAssignmentOptions.mockResolvedValue([
-        { ...ASSIGNMENT, effective_until: assignmentEnd },
-      ]);
-      repository.createGrant.mockResolvedValue(GRANT.id);
-      repository.getSystemSettingValue.mockImplementation((key: string) =>
-        Promise.resolve(key === 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY' ? expiryPolicy : 'NONE'),
-      );
+  it('expires a link at the end of the term it was issued for', async () => {
+    const { service, repository } = createHarness();
+    repository.findTermForIssue.mockResolvedValue({
+      id: '21',
+      school_id: 10,
+      academic_year: 2569,
+      semester: 1,
+      status: 'ACTIVE',
+      starts_on: '2099-01-01',
+      ends_on: '2099-12-31',
+    });
+    repository.findMembershipForIssue.mockResolvedValue({
+      id: '12',
+      school_id: 10,
+      teacher_user_id: 44,
+      membership_status: 'ACTIVE',
+      teacher_status: 'ACTIVE',
+    });
+    repository.listAssignmentOptions.mockResolvedValue([
+      { ...ASSIGNMENT, effective_until: '2099-06-30' },
+    ]);
+    repository.createGrant.mockResolvedValue(GRANT.id);
 
-      await service.issueGrant(
-        { teacherMembershipId: 12, schoolTermId: 21 },
-        ACTOR,
-        'https://sts.example',
-      );
+    await service.issueGrant(
+      { teacherMembershipId: 12, schoolTermId: 21 },
+      ACTOR,
+      'https://sts.example',
+    );
 
-      expect(repository.createGrant).toHaveBeenCalledWith(
-        expect.objectContaining({ expiresAt: new Date(expectedExpiry), stepUpPolicy: 'NONE' }),
-        expect.anything(),
-      );
-    },
-  );
+    // One link per term with a fixed EMAIL_OTP step-up: no system setting is
+    // read, and an assignment ending earlier does not shorten the link.
+    expect(repository.createGrant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expiresAt: new Date('2099-12-31T16:59:59.999Z'),
+        stepUpPolicy: 'EMAIL_OTP',
+      }),
+      expect.anything(),
+    );
+  });
 
   function stubIssuableTerm(repository: RepositoryMock): void {
     repository.findTermForIssue.mockResolvedValue({
@@ -499,23 +508,6 @@ describe('TeacherAccessService', () => {
     repository.listAssignmentOptions.mockResolvedValue([ASSIGNMENT]);
     repository.createGrant.mockResolvedValue(GRANT.id);
   }
-
-  it('fails closed when a configured step-up policy is not implemented', async () => {
-    const { service, repository } = createHarness();
-    stubIssuableTerm(repository);
-    repository.getSystemSettingValue.mockImplementation((key: string) =>
-      Promise.resolve(key === 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY' ? 'TERM_END' : 'THAID'),
-    );
-
-    await expect(
-      service.issueGrant(
-        { teacherMembershipId: 12, schoolTermId: 21 },
-        ACTOR,
-        'https://sts.example',
-      ),
-    ).rejects.toThrow('ยังไม่รองรับ');
-    expect(repository.createGrant).not.toHaveBeenCalled();
-  });
 
   it('issues an email-OTP link that covers every assignment of the teacher', async () => {
     const { service, repository, tokenEncryption } = createHarness();
@@ -543,6 +535,179 @@ describe('TeacherAccessService', () => {
       expect.anything(),
     );
     expect(tokenEncryption.encrypt).toHaveBeenCalled();
+  });
+
+  it('issues only for the picked teachers and explains the ones it left out', async () => {
+    const { service, repository } = createHarness();
+    stubIssuableTerm(repository);
+    repository.listMembershipsNeedingGrant.mockResolvedValue([{ teacher_membership_id: '12' }]);
+    repository.describeMembershipsForGrant.mockResolvedValue([
+      {
+        teacher_membership_id: '13',
+        is_active: true,
+        assignment_count: '2',
+        has_active_grant: true,
+      },
+      {
+        teacher_membership_id: '14',
+        is_active: true,
+        assignment_count: '0',
+        has_active_grant: false,
+      },
+    ]);
+
+    const result = await service.issueGrantsForTerm(
+      { schoolTermId: 21, teacherMembershipIds: [12, 13, 14] },
+      ACTOR,
+    );
+
+    expect(repository.listMembershipsNeedingGrant).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherMembershipIds: [12, 13, 14] }),
+      expect.anything(),
+    );
+    expect(repository.createGrant).toHaveBeenCalledTimes(1);
+    expect(result.data).toEqual({
+      issued: 1,
+      skipped: [
+        { teacherMembershipId: 13, reason: 'มีลิงก์ที่ใช้งานได้อยู่แล้ว' },
+        { teacherMembershipId: 14, reason: 'ยังไม่มีห้องหรือรายวิชาในภาคเรียนนี้' },
+      ],
+    });
+  });
+
+  it('leaves the picks out of the query when the whole term is issued', async () => {
+    const { service, repository } = createHarness();
+    stubIssuableTerm(repository);
+
+    await service.issueGrantsForTerm({ schoolTermId: 21 }, ACTOR);
+
+    expect(repository.listMembershipsNeedingGrant).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherMembershipIds: undefined }),
+      expect.anything(),
+    );
+    expect(repository.describeMembershipsForGrant).not.toHaveBeenCalled();
+  });
+
+  const DELIVERABLE = {
+    teacher_membership_id: '12',
+    teacher_id: '7',
+    teacher_display_name: 'ครู หนึ่ง',
+    grant_id: GRANT.id,
+    grant_status: 'ACTIVE' as const,
+    token_encrypted: 'v1:token-value',
+    provider_user_id: 'U0000000000000000000000000000001',
+    friend_state: 'FRIEND',
+  };
+
+  it('sends each teacher their own link and explains everyone it could not reach', async () => {
+    const { service, repository, messaging } = createHarness();
+    stubIssuableTerm(repository);
+    repository.listGrantsForDelivery.mockResolvedValue([
+      DELIVERABLE,
+      { ...DELIVERABLE, teacher_membership_id: '13', provider_user_id: null },
+      { ...DELIVERABLE, teacher_membership_id: '14', friend_state: 'NOT_FRIEND' },
+      { ...DELIVERABLE, teacher_membership_id: '15', grant_status: 'REVOKED' },
+      { ...DELIVERABLE, teacher_membership_id: '16', token_encrypted: null },
+    ]);
+    messaging.sendMessages.mockResolvedValue([
+      { providerUserId: DELIVERABLE.provider_user_id, delivered: true },
+    ]);
+
+    const result = await service.sendGrantsOverMessaging(
+      { schoolTermId: 21, deliveryRequestId: 'f97fe25a-38da-4f5b-a710-81c8d90bace1' },
+      ACTOR,
+      'https://sts.test',
+    );
+
+    // Only the reachable teacher is messaged, and each message carries that
+    // teacher's own link rather than one shared body.
+    expect(messaging.sendMessages).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          providerUserId: DELIVERABLE.provider_user_id,
+          text: expect.stringContaining('https://sts.test') as string,
+        }),
+      ],
+      'teacher-access-21-f97fe25a-38da-4f5b-a710-81c8d90bace1',
+    );
+    expect(result.data.sent).toBe(1);
+    expect(result.data.skipped.map((entry) => entry.teacherMembershipId)).toEqual([13, 14, 15, 16]);
+  });
+
+  it('reports selected teachers outside the scoped term instead of dropping them silently', async () => {
+    const { service, repository } = createHarness();
+    stubIssuableTerm(repository);
+    repository.listGrantsForDelivery.mockResolvedValue([DELIVERABLE]);
+
+    const result = await service.sendGrantsOverMessaging(
+      {
+        schoolTermId: 21,
+        deliveryRequestId: '243d5340-ec1e-4a81-9916-995e16e0bc77',
+        teacherMembershipIds: [12, 999],
+      },
+      ACTOR,
+      'https://sts.test',
+    );
+
+    expect(result.data.skipped).toContainEqual({
+      teacherMembershipId: 999,
+      reason: 'ครูไม่ได้อยู่ในโรงเรียนของภาคเรียนนี้',
+    });
+  });
+
+  it('keeps the delivery result when its post-send audit cannot be written', async () => {
+    const { service, repository, messaging, auditLog } = createHarness();
+    stubIssuableTerm(repository);
+    repository.listGrantsForDelivery.mockResolvedValue([DELIVERABLE]);
+    messaging.sendMessages.mockResolvedValue([
+      { providerUserId: DELIVERABLE.provider_user_id, delivered: true },
+    ]);
+    auditLog.record.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(
+      service.sendGrantsOverMessaging(
+        { schoolTermId: 21, deliveryRequestId: 'ba646258-a9e7-4e82-9f71-c361fe068b06' },
+        ACTOR,
+        'https://sts.test',
+      ),
+    ).resolves.toMatchObject({ data: { sent: 1 } });
+  });
+
+  it('marks an account unreachable when the provider refuses the delivery', async () => {
+    const { service, repository, messaging, teacherMessaging } = createHarness();
+    stubIssuableTerm(repository);
+    repository.listGrantsForDelivery.mockResolvedValue([DELIVERABLE]);
+    messaging.sendMessages.mockResolvedValue([
+      {
+        providerUserId: DELIVERABLE.provider_user_id,
+        delivered: false,
+        errorMessage: 'ผู้รับไม่ได้เป็นเพื่อน',
+      },
+    ]);
+
+    const result = await service.sendGrantsOverMessaging(
+      { schoolTermId: 21, deliveryRequestId: '3f06a82a-f46a-4fe5-81a8-8d9e5ae1649e' },
+      ACTOR,
+      'https://sts.test',
+    );
+
+    expect(result.data.sent).toBe(0);
+    // The refusal is fresher than whatever the webhook last said, so it is
+    // written back rather than left for the next failed send to rediscover.
+    expect(teacherMessaging.markUnreachable).toHaveBeenCalledWith(DELIVERABLE.provider_user_id);
+  });
+
+  it('refuses to send while the messaging integration is off', async () => {
+    const { service, messaging } = createHarness();
+    messaging.isEnabled.mockReturnValue(false);
+
+    await expect(
+      service.sendGrantsOverMessaging(
+        { schoolTermId: 21, deliveryRequestId: 'e1d1047e-f963-4450-a0bb-a84b0356f733' },
+        ACTOR,
+        'https://sts.test',
+      ),
+    ).rejects.toThrow('ยังไม่เปิดใช้งาน');
   });
 
   it('refuses to issue a link for a teacher with no class this term', async () => {

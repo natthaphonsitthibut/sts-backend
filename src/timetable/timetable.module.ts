@@ -8,5 +8,6 @@ import { TimetableService } from './timetable.service';
   imports: [AuditLogModule],
   controllers: [TimetableController],
   providers: [TimetableRepository, TimetableService],
+  exports: [TimetableService],
 })
 export class TimetableModule {}

@@ -38,6 +38,7 @@ import {
   ListTeacherAccessGrantsDto,
   ListTeacherLinkRosterDto,
   RevokeTeacherAccessGrantDto,
+  SendTeacherAccessGrantsDto,
   SaveTeacherAccessAttendanceDto,
   TeacherAccessAssignmentOptionsDto,
   TeacherAccessAttendanceHistoryQueryDto,
@@ -80,6 +81,16 @@ export class TeacherAccessGrantController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.issueGrantsForTerm(body, actor);
+  }
+
+  @Post('send-line')
+  sendOverLine(
+    @Body() body: SendTeacherAccessGrantsDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.sendGrantsOverMessaging(body, actor, baseUrl);
   }
 
   @Get()
@@ -252,6 +263,15 @@ export class PublicTeacherAccessController {
       file,
       this.session(rawSession),
     );
+  }
+
+  @Get('my-schedule')
+  @ThrottleTeacherAccess()
+  mySchedule(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+  ) {
+    return this.service.getPublicTeacherSchedule(this.token(rawToken), this.session(rawSession));
   }
 
   @Get('student-profile')

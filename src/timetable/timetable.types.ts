@@ -3,6 +3,7 @@ export interface TimetableSlotRow extends Record<string, unknown> {
   school_term_id: string;
   school_id: number;
   grade_level_id: number;
+  grade_label: string | null;
   room_no: number;
   day_of_week: number;
   period: number;

@@ -15,13 +15,16 @@ export const TEACHER_ACCESS_ATTENDANCE_CAPABILITY = {
 export const TEACHER_ACCESS_STEP_UP_POLICIES = ['NONE', 'EMAIL_OTP', 'THAID'] as const;
 export type TeacherAccessStepUpPolicy = (typeof TEACHER_ACCESS_STEP_UP_POLICIES)[number];
 
-export const TEACHER_ACCESS_SETTING_KEYS = {
-  expiryPolicy: 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY',
-  stepUpPolicy: 'TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY',
-} as const;
-
 export const TEACHER_ACCESS_EXPIRY_POLICIES = ['TERM_END', 'ASSIGNMENT_END'] as const;
 export type TeacherAccessExpiryPolicy = (typeof TEACHER_ACCESS_EXPIRY_POLICIES)[number];
+
+/**
+ * A link is issued once per term and dies with it, and every link verifies by
+ * email OTP — there is nothing per-deployment to tune, so these are constants
+ * rather than system settings an admin has to understand and maintain.
+ */
+export const TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY: TeacherAccessExpiryPolicy = 'TERM_END';
+export const TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY: TeacherAccessStepUpPolicy = 'EMAIL_OTP';
 
 export const TEACHER_ACCESS_TOKEN_HEADER = 'x-teacher-access-token';
 export const TEACHER_ACCESS_SESSION_HEADER = 'x-teacher-access-session';

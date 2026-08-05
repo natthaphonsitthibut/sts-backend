@@ -20,6 +20,7 @@ const SELECT_COLUMNS = `
   ts.school_term_id,
   ts.school_id,
   ts.grade_level_id,
+  gl.label AS grade_label,
   ts.room_no,
   ts.day_of_week,
   ts.period,
@@ -35,6 +36,7 @@ const SELECT_COLUMNS = `
 const FROM_JOIN = `
   FROM timetable_slots ts
   JOIN subjects sub ON sub.id = ts.subject_id
+  LEFT JOIN grade_levels gl ON gl.id = ts.grade_level_id
   LEFT JOIN users teacher ON teacher.id = ts.teacher_user_id
 `;
 

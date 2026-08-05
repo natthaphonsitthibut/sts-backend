@@ -11,6 +11,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
@@ -36,6 +37,7 @@ import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { StudentsService } from '../students/students.service';
 import { StudentObservationsService } from '../student-observations/student-observations.service';
+import { TimetableService } from '../timetable/timetable.service';
 import { createSqlQueryExecutor } from '../database/sql-query';
 import {
   FILE_STORAGE_ADAPTER,
@@ -49,9 +51,8 @@ import { TokenEncryptionService } from '../common/crypto/token-encryption.servic
 import {
   TEACHER_ACCESS_ATTENDANCE_CAPABILITY,
   TEACHER_ACCESS_LINK_PATH,
-  TEACHER_ACCESS_EXPIRY_POLICIES,
-  TEACHER_ACCESS_SETTING_KEYS,
-  TEACHER_ACCESS_STEP_UP_POLICIES,
+  TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY,
+  TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY,
   type TeacherAccessExpiryPolicy,
   type TeacherAccessStepUpPolicy,
   type TeacherAccessCapability,
@@ -62,15 +63,43 @@ import type {
   ListTeacherAccessGrantsDto,
   ListTeacherLinkRosterDto,
   SaveTeacherAccessAttendanceDto,
+  SendTeacherAccessGrantsDto,
 } from './dto/teacher-access.dto';
-import { TeacherAccessOtpStore } from './teacher-access-otp.store';
-import { TeacherAccessRepository } from './teacher-access.repository';
+import { OtpStore } from '../common/otp/otp.store';
+import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
+import { TeacherLineService } from '../teacher-line/teacher-line.service';
+import { TeacherAccessRepository, type TeacherGrantDeliveryRow } from './teacher-access.repository';
 import type {
   ActiveTeacherGrantContext,
   TeacherAccessAssignmentRow,
   TeacherAccessGrantDetail,
   TeacherAccessGrantRow,
 } from './teacher-access.types';
+
+/** Namespaces this feature's codes in the shared OTP store. */
+function otpKey(grantId: string): string {
+  return `teacher-access:${grantId}`;
+}
+
+/** Why this teacher cannot be sent their link, or null when they can. */
+function undeliverableReason(row: TeacherGrantDeliveryRow): string | null {
+  if (row.grant_status !== 'ACTIVE') return 'ยังไม่มีลิงก์ที่ใช้งานอยู่';
+  if (!row.token_encrypted) return 'ลิงก์เดิมส่งซ้ำไม่ได้ ต้องออกลิงก์ใหม่';
+  if (!row.provider_user_id) return 'ยังไม่ได้ยืนยันบัญชี LINE';
+  if (row.friend_state !== 'FRIEND') return 'ยังไม่ได้เพิ่มเพื่อนกับบัญชีทางการ';
+  return null;
+}
+
+function messageBody(teacherDisplayName: string, accessUrl: string): string {
+  return [
+    `สวัสดีครับ/ค่ะ คุณครู${teacherDisplayName}`,
+    '',
+    'นี่คือลิงก์เช็คชื่อของคุณครูสำหรับภาคเรียนนี้',
+    accessUrl,
+    '',
+    'ลิงก์นี้เป็นของคุณครูคนเดียว กรุณาอย่าส่งต่อให้ผู้อื่น',
+  ].join('\n');
+}
 
 interface ActiveGrantOperationOptions {
   capability?: TeacherAccessCapability;
@@ -95,11 +124,15 @@ export class TeacherAccessService {
     private readonly riskProfileService: RiskProfileService,
     private readonly tokenEncryption: TokenEncryptionService,
     private readonly emailService: EmailService,
-    private readonly otpStore: TeacherAccessOtpStore,
+    private readonly otpStore: OtpStore,
     private readonly magicSessionStore: MagicSessionStoreService,
+    @Inject(MESSAGING_PROVIDER)
+    private readonly messaging: MessagingProvider,
+    private readonly teacherMessaging: TeacherLineService,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
     private readonly studentsService: StudentsService,
+    private readonly timetableService: TimetableService,
     // Observations depend on teacher-access for the link flows, so the two
     // services reference each other — resolved lazily on this side.
     @Inject(forwardRef(() => StudentObservationsService))
@@ -229,23 +262,6 @@ export class TeacherAccessService {
     return new Date(
       Math.min(termExpiry.getTime(), ...assignmentExpiries.map((date) => date.getTime())),
     );
-  }
-
-  private parseExpiryPolicy(value: string | null): TeacherAccessExpiryPolicy {
-    if (!value || !TEACHER_ACCESS_EXPIRY_POLICIES.includes(value as TeacherAccessExpiryPolicy)) {
-      throw new ConflictException('การตั้งค่านโยบายวันหมดอายุของลิงก์ครูไม่ถูกต้อง');
-    }
-    return value as TeacherAccessExpiryPolicy;
-  }
-
-  private parseStepUpPolicy(value: string | null): TeacherAccessStepUpPolicy {
-    if (!value || !TEACHER_ACCESS_STEP_UP_POLICIES.includes(value as TeacherAccessStepUpPolicy)) {
-      throw new ConflictException('การตั้งค่านโยบายยืนยันตัวตนของลิงก์ครูไม่ถูกต้อง');
-    }
-    if (value === 'THAID') {
-      throw new ConflictException('นโยบายยืนยันตัวตนที่ตั้งไว้ยังไม่รองรับการใช้งาน');
-    }
-    return value as TeacherAccessStepUpPolicy;
   }
 
   /** Attendance capability implied by an assignment kind. */
@@ -397,20 +413,10 @@ export class TeacherAccessService {
     return { detail, rawToken };
   }
 
-  private async loadIssuePolicies(queryRunner: QueryRunner) {
+  private loadIssuePolicies() {
     return {
-      expiryPolicy: this.parseExpiryPolicy(
-        await this.repository.getSystemSettingValue(
-          TEACHER_ACCESS_SETTING_KEYS.expiryPolicy,
-          queryRunner,
-        ),
-      ),
-      stepUpPolicy: this.parseStepUpPolicy(
-        await this.repository.getSystemSettingValue(
-          TEACHER_ACCESS_SETTING_KEYS.stepUpPolicy,
-          queryRunner,
-        ),
-      ),
+      expiryPolicy: TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY,
+      stepUpPolicy: TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY,
     };
   }
 
@@ -424,7 +430,7 @@ export class TeacherAccessService {
 
     const result = await this.repository.withTransaction(async (queryRunner) => {
       const term = await this.loadIssuableTerm(dto.schoolTermId, actor, queryRunner);
-      const policies = await this.loadIssuePolicies(queryRunner);
+      const policies = this.loadIssuePolicies();
       const assignments = await this.repository.listAssignmentOptions(
         {
           schoolId: term.school_id,
@@ -467,6 +473,156 @@ export class TeacherAccessService {
    * an issue (no assignment, inactive membership) are reported as skipped rather
    * than failing the whole batch.
    */
+  /**
+   * Explains every picked membership the issue query left out, so the admin who
+   * ticked those rows sees the reason instead of a bare count.
+   */
+  private async explainUnissuablePicks(
+    input: {
+      schoolId: number;
+      schoolTermId: number;
+      onDate: string;
+      picked: number[];
+      pending: number[];
+    },
+    queryRunner: QueryRunner,
+  ): Promise<Array<{ teacherMembershipId: number; reason: string }>> {
+    const pending = new Set(input.pending);
+    const leftOut = [...new Set(input.picked)].filter((id) => !pending.has(id));
+    if (leftOut.length === 0) return [];
+
+    const rows = await this.repository.describeMembershipsForGrant(
+      {
+        schoolId: input.schoolId,
+        schoolTermId: input.schoolTermId,
+        onDate: input.onDate,
+        teacherMembershipIds: leftOut,
+      },
+      queryRunner,
+    );
+    const byMembership = new Map(rows.map((row) => [Number(row.teacher_membership_id), row]));
+    return leftOut.map((teacherMembershipId) => {
+      const row = byMembership.get(teacherMembershipId);
+      if (!row) return { teacherMembershipId, reason: 'ครูไม่ได้อยู่ในโรงเรียนของภาคเรียนนี้' };
+      if (row.has_active_grant) {
+        return { teacherMembershipId, reason: 'มีลิงก์ที่ใช้งานได้อยู่แล้ว' };
+      }
+      if (!row.is_active) {
+        return { teacherMembershipId, reason: 'ครูไม่ได้อยู่ในรายชื่อครูที่เปิดใช้งาน' };
+      }
+      if (Number(row.assignment_count) === 0) {
+        return { teacherMembershipId, reason: 'ยังไม่มีห้องหรือรายวิชาในภาคเรียนนี้' };
+      }
+      return { teacherMembershipId, reason: 'สร้างลิงก์ให้ครูคนนี้ไม่ได้ในขณะนี้' };
+    });
+  }
+
+  /**
+   * Delivers each teacher their OWN link over the chat provider.
+   *
+   * Only teachers who verified their account AND still have it added can be
+   * reached, so everyone else is reported with a reason rather than silently
+   * dropped — an admin pressing "send to everyone" needs to know who was missed.
+   * A refusal from the provider is written back as the friendship state, because
+   * that answer is fresher than whatever the webhook last told us.
+   */
+  async sendGrantsOverMessaging(
+    dto: SendTeacherAccessGrantsDto,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    if (!this.messaging.isEnabled()) {
+      throw new ServiceUnavailableException('ระบบส่งข้อความ LINE ยังไม่เปิดใช้งาน');
+    }
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ที่ส่งลิงก์');
+
+    const term = await this.repository.withTransaction(
+      async (queryRunner) => await this.loadIssuableTerm(dto.schoolTermId, actor, queryRunner),
+    );
+    const rows = await this.repository.listGrantsForDelivery({
+      schoolId: term.school_id,
+      schoolTermId: dto.schoolTermId,
+      teacherMembershipIds: dto.teacherMembershipIds,
+    });
+
+    const skipped: Array<{ teacherMembershipId: number; reason: string }> = [];
+    if (dto.teacherMembershipIds) {
+      const returnedIds = new Set(rows.map((row) => Number(row.teacher_membership_id)));
+      for (const teacherMembershipId of new Set(dto.teacherMembershipIds)) {
+        if (!returnedIds.has(teacherMembershipId)) {
+          skipped.push({
+            teacherMembershipId,
+            reason: 'ครูไม่ได้อยู่ในโรงเรียนของภาคเรียนนี้',
+          });
+        }
+      }
+    }
+    const deliverable: Array<{ row: TeacherGrantDeliveryRow; accessUrl: string }> = [];
+    for (const row of rows) {
+      const reason = undeliverableReason(row);
+      if (reason) {
+        skipped.push({ teacherMembershipId: Number(row.teacher_membership_id), reason });
+        continue;
+      }
+      deliverable.push({
+        row,
+        accessUrl: this.buildAccessUrl(
+          baseUrl,
+          this.tokenEncryption.decrypt(row.token_encrypted as string),
+        ),
+      });
+    }
+
+    const results = await this.messaging.sendMessages(
+      deliverable.map(({ row, accessUrl }) => ({
+        providerUserId: row.provider_user_id as string,
+        text: messageBody(row.teacher_display_name, accessUrl),
+      })),
+      `teacher-access-${dto.schoolTermId}-${dto.deliveryRequestId}`,
+    );
+
+    let sent = 0;
+    for (const [index, result] of results.entries()) {
+      const { row } = deliverable[index];
+      if (result.delivered) {
+        sent += 1;
+      } else {
+        skipped.push({
+          teacherMembershipId: Number(row.teacher_membership_id),
+          reason: result.errorMessage ?? 'ส่งข้อความไม่สำเร็จ',
+        });
+        await this.teacherMessaging.markUnreachable(row.provider_user_id as string);
+      }
+      try {
+        await this.auditLog.record({
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'TEACHER_ACCESS_GRANT_SEND',
+          targetType: 'teacher_access_grants',
+          targetId: row.grant_id,
+          metadata: {
+            teacherName: row.teacher_display_name,
+            delivered: result.delivered,
+            provider: 'LINE',
+            deliveryRequestId: dto.deliveryRequestId,
+          },
+          ip: null,
+        });
+      } catch (error) {
+        // Delivery has already happened. Returning a server error here invites
+        // an operator retry and a duplicate message, so retain the delivery
+        // result and surface the audit outage through structured server logs.
+        this.logger.error(
+          `Could not audit LINE grant delivery ${row.grant_id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return { data: { sent, skipped } };
+  }
+
   async issueGrantsForTerm(
     dto: IssueTeacherAccessGrantsForTermDto,
     actor: AuthenticatedRequestUser,
@@ -477,9 +633,14 @@ export class TeacherAccessService {
 
     return await this.repository.withTransaction(async (queryRunner) => {
       const term = await this.loadIssuableTerm(dto.schoolTermId, actor, queryRunner);
-      const policies = await this.loadIssuePolicies(queryRunner);
+      const policies = this.loadIssuePolicies();
       const pending = await this.repository.listMembershipsNeedingGrant(
-        { schoolId: term.school_id, schoolTermId: dto.schoolTermId, onDate },
+        {
+          schoolId: term.school_id,
+          schoolTermId: dto.schoolTermId,
+          onDate,
+          teacherMembershipIds: dto.teacherMembershipIds,
+        },
         queryRunner,
       );
       const membershipIds = pending.map((row) => Number(row.teacher_membership_id));
@@ -501,6 +662,20 @@ export class TeacherAccessService {
       const termExpiry = this.resolveTermExpiry(term.ends_on);
       let issued = 0;
       const skipped: Array<{ teacherMembershipId: number; reason: string }> = [];
+      if (dto.teacherMembershipIds) {
+        skipped.push(
+          ...(await this.explainUnissuablePicks(
+            {
+              schoolId: term.school_id,
+              schoolTermId: dto.schoolTermId,
+              onDate,
+              picked: dto.teacherMembershipIds,
+              pending: membershipIds,
+            },
+            queryRunner,
+          )),
+        );
+      }
       for (const teacherMembershipId of membershipIds) {
         try {
           await this.createGrantForMembership(
@@ -577,6 +752,7 @@ export class TeacherAccessService {
       schoolTermId: query.schoolTermId,
       onDate: getBangkokDateString(),
       search: query.search,
+      lineStatus: query.lineStatus,
       sortBy: query.sortBy,
       sortOrder: query.sortOrder,
       page,
@@ -595,6 +771,13 @@ export class TeacherAccessService {
         issuedAt: row.issued_at ? new Date(row.issued_at).toISOString() : null,
         expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
         lastUsedAt: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
+        // Verified but unreachable is its own state: the teacher proved who they
+        // are, then removed or blocked the official account, so a send would fail.
+        lineStatus: !row.line_verified
+          ? ('NOT_VERIFIED' as const)
+          : row.line_friend_state === 'FRIEND'
+            ? ('VERIFIED' as const)
+            : ('VERIFIED_NOT_REACHABLE' as const),
       })),
       meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
     };
@@ -946,7 +1129,7 @@ export class TeacherAccessService {
     }
 
     const code = crypto.randomInt(100000, 1000000).toString();
-    const expiresAt = await this.otpStore.issue(grant.id, code);
+    const expiresAt = await this.otpStore.issue(otpKey(grant.id), code);
     const ttlMinutes = Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 60_000));
     await this.emailService.sendOTP(email, code, ttlMinutes);
     await this.auditLog.record({
@@ -970,7 +1153,7 @@ export class TeacherAccessService {
 
   async verifyOtp(rawToken: string, code: string) {
     const grant = await this.findUsableGrantForStepUp(rawToken);
-    const outcome = await this.otpStore.verify(grant.id, code.trim());
+    const outcome = await this.otpStore.verify(otpKey(grant.id), code.trim());
     if (outcome !== 'ok') {
       await this.auditLog.record({
         actorUserId: grant.teacher_user_id,
@@ -1275,6 +1458,13 @@ export class TeacherAccessService {
           queryRunner,
         );
         if (!created) throw new NotFoundException('ไม่พบนักเรียนในห้องเรียนนี้');
+        // Same trigger as the staff path: a teacher comment is what makes a
+        // student เฝ้าระวัง, so the profile is recalculated right away.
+        await this.riskProfileService
+          .requestStudentRecalculation([input.studentUuid], 'classroom-comment')
+          .catch(() => {
+            this.logger.warn(`Unable to refresh risk profile for student ${input.studentUuid}`);
+          });
         return { data: { id: created.id, commentText: created.comment_text } };
       },
     );
@@ -1441,7 +1631,32 @@ export class TeacherAccessService {
           this.studentsService.findAttendanceByStudentId(input.studentUuid, actor, scope),
           this.studentObservations.list(input.studentUuid, { page: 1, limit: 20 }, actor),
         ]);
-        return { data: { student, summary, cases, attendance, observations } };
+        // getStudentProfileSummary answers the staff endpoint, so it ships its
+        // own { success, data } envelope — unwrap it before nesting, otherwise
+        // the profile screen reads summary.attendance off the envelope.
+        return {
+          data: { student, summary: summary.data, cases, attendance, observations },
+        };
+      },
+    );
+  }
+
+  /**
+   * The link holder's own teaching periods, read-only. Slots and the school's
+   * bell schedule travel together because the grid needs both to place a period
+   * on a time row, and a link cannot call the two authenticated endpoints.
+   */
+  async getPublicTeacherSchedule(rawToken: string, sessionToken?: string) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { sessionToken, operation: 'VIEW_MY_TIMETABLE' },
+      async (context) => {
+        const actor = this.grantActor(context);
+        const [schedule, periodTimes] = await Promise.all([
+          this.timetableService.getMySchedule(actor, { mine: true }),
+          this.timetableService.listPeriodTimes(actor, context.schoolId),
+        ]);
+        return { data: { slots: schedule.data, periodTimes: periodTimes.data } };
       },
     );
   }

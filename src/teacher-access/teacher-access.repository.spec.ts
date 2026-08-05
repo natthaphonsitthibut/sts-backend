@@ -98,7 +98,26 @@ describe('TeacherAccessRepository', () => {
 
     expect(runner.query).toHaveBeenCalledWith(
       expect.stringMatching(/ORDER BY[\s\S]*NOT_CREATED[\s\S]*DESC[\s\S]*LIMIT \$5 OFFSET \$6/),
-      [10, 21, '2026-08-03', null, 20, 0],
+      [10, 21, '2026-08-03', null, 20, 0, null],
+      true,
+    );
+  });
+
+  it('narrows the teacher-link roster to teachers who verified LINE', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listTeacherLinkRoster({
+      schoolId: 10,
+      schoolTermId: 21,
+      onDate: '2026-08-03',
+      lineStatus: 'VERIFIED',
+      page: 1,
+      limit: 20,
+    });
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(/line_account.id IS NOT NULL/),
+      [10, 21, '2026-08-03', null, 20, 0, 'VERIFIED'],
       true,
     );
   });

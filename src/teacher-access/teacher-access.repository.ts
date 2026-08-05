@@ -31,6 +31,9 @@ interface MembershipIssueRow extends Record<string, unknown> {
   teacher_status: string;
 }
 
+/** How the จัดการลิงก์เช็คชื่อ table narrows by LINE verification. */
+export type TeacherLineFilter = 'VERIFIED' | 'NOT_VERIFIED' | 'REACHABLE';
+
 export interface TeacherLinkRosterRow extends Record<string, unknown> {
   teacher_membership_id: string;
   teacher_id: string;
@@ -43,7 +46,21 @@ export interface TeacherLinkRosterRow extends Record<string, unknown> {
   issued_at: string | Date | null;
   expires_at: string | Date | null;
   last_used_at: string | Date | null;
+  line_verified: boolean | null;
+  line_friend_state: string | null;
   total_count: number | string;
+}
+
+/** One teacher's link plus the chat account it can be delivered to. */
+export interface TeacherGrantDeliveryRow extends Record<string, unknown> {
+  teacher_membership_id: string;
+  teacher_id: string;
+  teacher_display_name: string;
+  grant_id: string | null;
+  grant_status: TeacherAccessGrantStatus | null;
+  token_encrypted: string | null;
+  provider_user_id: string | null;
+  friend_state: string | null;
 }
 
 interface QueryExecutor {
@@ -536,6 +553,7 @@ export class TeacherAccessRepository {
     schoolTermId: number;
     onDate: string;
     search?: string;
+    lineStatus?: TeacherLineFilter;
     sortBy?: 'name' | 'linkStatus';
     sortOrder?: 'asc' | 'desc';
     page: number;
@@ -583,6 +601,8 @@ export class TeacherAccessRepository {
           latest_grant.issued_at,
           latest_grant.expires_at,
           latest_grant.last_used_at,
+          (line_account.id IS NOT NULL) AS line_verified,
+          line_account.friend_state AS line_friend_state,
           COUNT(*) OVER()::int AS total_count
         FROM school_teacher_memberships membership
         JOIN teachers teacher ON teacher.id = membership.teacher_id
@@ -594,6 +614,11 @@ export class TeacherAccessRepository {
           ORDER BY access_grant.issued_at DESC, access_grant.id DESC
           LIMIT 1
         ) latest_grant ON TRUE
+        LEFT JOIN teacher_messaging_accounts line_account
+          ON line_account.teacher_id = teacher.id
+         AND line_account.provider = 'LINE'
+         AND line_account.unlinked_at IS NULL
+         AND line_account.deleted_at IS NULL
         WHERE membership.school_id = $1
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
@@ -602,6 +627,12 @@ export class TeacherAccessRepository {
           AND (
             $4::text IS NULL
             OR TRIM(teacher.first_name || ' ' || teacher.last_name) ILIKE $4
+          )
+          AND (
+            $7::text IS NULL
+            OR ($7 = 'VERIFIED' AND line_account.id IS NOT NULL)
+            OR ($7 = 'NOT_VERIFIED' AND line_account.id IS NULL)
+            OR ($7 = 'REACHABLE' AND line_account.friend_state = 'FRIEND')
           )
         ORDER BY ${sortExpression}${input.sortBy === 'linkStatus' ? ` ${sortOrder}` : ''},
                  membership.id ${sortOrder}
@@ -614,7 +645,61 @@ export class TeacherAccessRepository {
         search,
         input.limit,
         (input.page - 1) * input.limit,
+        input.lineStatus ?? null,
       ],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Everything the send action needs in one pass: the teacher, their current
+   * link, and the chat account it could go to. Reading the messaging table here
+   * rather than teacher by teacher keeps a 400-teacher school to one query.
+   */
+  async listGrantsForDelivery(input: {
+    schoolId: number;
+    schoolTermId: number;
+    teacherMembershipIds?: number[];
+  }): Promise<TeacherGrantDeliveryRow[]> {
+    const result = await queryDataSource<TeacherGrantDeliveryRow>(
+      this.dataSource,
+      `
+        SELECT
+          membership.id::text AS teacher_membership_id,
+          teacher.id::text AS teacher_id,
+          TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
+          latest_grant.id::text AS grant_id,
+          CASE
+            WHEN latest_grant.id IS NULL THEN NULL
+            ELSE (${this.grantStatusSql('latest_grant')})
+          END AS grant_status,
+          latest_grant.token_encrypted,
+          line_account.provider_user_id,
+          line_account.friend_state
+        FROM school_teacher_memberships membership
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        LEFT JOIN LATERAL (
+          SELECT access_grant.*
+          FROM teacher_access_grants access_grant
+          WHERE access_grant.teacher_membership_id = membership.id
+            AND access_grant.school_term_id = $2
+          ORDER BY access_grant.issued_at DESC, access_grant.id DESC
+          LIMIT 1
+        ) latest_grant ON TRUE
+        LEFT JOIN teacher_messaging_accounts line_account
+          ON line_account.teacher_id = teacher.id
+         AND line_account.provider = 'LINE'
+         AND line_account.unlinked_at IS NULL
+         AND line_account.deleted_at IS NULL
+        WHERE membership.school_id = $1
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+          AND teacher.deleted_at IS NULL
+          AND teacher.teacher_status = 'ACTIVE'
+          AND ($3::bigint[] IS NULL OR membership.id = ANY($3::bigint[]))
+        ORDER BY membership.id
+      `,
+      [input.schoolId, input.schoolTermId, input.teacherMembershipIds ?? null],
     );
     return result.rows;
   }
@@ -623,9 +708,17 @@ export class TeacherAccessRepository {
    * Memberships the bulk action should issue for: active teachers who actually
    * teach something this term and have no usable link yet. Locked for update so
    * two admins pressing the button together cannot double-issue.
+   *
+   * `teacherMembershipIds` narrows the batch to the rows an admin picked in the
+   * table; the scope, term and "needs a link" conditions still apply on top.
    */
   async listMembershipsNeedingGrant(
-    input: { schoolId: number; schoolTermId: number; onDate: string },
+    input: {
+      schoolId: number;
+      schoolTermId: number;
+      onDate: string;
+      teacherMembershipIds?: number[];
+    },
     queryRunner: QueryRunner,
   ): Promise<Array<{ teacher_membership_id: string }>> {
     const result = await this.executor(queryRunner).query<{ teacher_membership_id: string }>(
@@ -634,6 +727,7 @@ export class TeacherAccessRepository {
         FROM school_teacher_memberships membership
         JOIN teachers teacher ON teacher.id = membership.teacher_id
         WHERE membership.school_id = $1
+          AND ($4::bigint[] IS NULL OR membership.id = ANY($4::bigint[]))
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
           AND teacher.deleted_at IS NULL
@@ -662,7 +756,74 @@ export class TeacherAccessRepository {
         ORDER BY membership.id
         FOR UPDATE OF membership
       `,
-      [input.schoolId, input.schoolTermId, input.onDate],
+      [input.schoolId, input.schoolTermId, input.onDate, input.teacherMembershipIds ?? null],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Why a picked teacher was left out of a bulk issue. Only used when the admin
+   * chose the rows themselves — an unexplained "skipped 3" is useless there,
+   * while the issue-everyone button legitimately just skips silently.
+   */
+  async describeMembershipsForGrant(
+    input: {
+      schoolId: number;
+      schoolTermId: number;
+      onDate: string;
+      teacherMembershipIds: number[];
+    },
+    queryRunner: QueryRunner,
+  ): Promise<
+    Array<{
+      teacher_membership_id: string;
+      is_active: boolean;
+      assignment_count: string;
+      has_active_grant: boolean;
+    }>
+  > {
+    const result = await this.executor(queryRunner).query<{
+      teacher_membership_id: string;
+      is_active: boolean;
+      assignment_count: string;
+      has_active_grant: boolean;
+    }>(
+      `
+        SELECT
+          membership.id::text AS teacher_membership_id,
+          (
+            membership.membership_status = 'ACTIVE'
+            AND membership.deleted_at IS NULL
+            AND teacher.deleted_at IS NULL
+            AND teacher.teacher_status = 'ACTIVE'
+          ) AS is_active,
+          (
+            SELECT count(*)
+            FROM classroom_teacher_assignments assignment
+            JOIN school_classrooms classroom ON classroom.id = assignment.classroom_id
+            WHERE assignment.teacher_membership_id = membership.id
+              AND classroom.school_term_id = $2
+              AND assignment.assignment_status = 'ACTIVE'
+              AND assignment.deleted_at IS NULL
+              AND classroom.classroom_status = 'ACTIVE'
+              AND classroom.deleted_at IS NULL
+              AND (assignment.effective_on IS NULL OR assignment.effective_on <= $3::date)
+              AND (assignment.effective_until IS NULL OR assignment.effective_until >= $3::date)
+          )::text AS assignment_count,
+          EXISTS (
+            SELECT 1
+            FROM teacher_access_grants access_grant
+            WHERE access_grant.teacher_membership_id = membership.id
+              AND access_grant.school_term_id = $2
+              AND access_grant.revoked_at IS NULL
+              AND access_grant.expires_at > now()
+          ) AS has_active_grant
+        FROM school_teacher_memberships membership
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        WHERE membership.school_id = $1
+          AND membership.id = ANY($4::bigint[])
+      `,
+      [input.schoolId, input.schoolTermId, input.onDate, input.teacherMembershipIds],
     );
     return result.rows;
   }

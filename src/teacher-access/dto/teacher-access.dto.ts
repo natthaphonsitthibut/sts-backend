@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
   IsIn,
@@ -15,6 +16,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
+import type { TeacherLineFilter } from '../teacher-access.repository';
 import {
   ATTENDANCE_SELECTION_STATUS_VALUES,
   type AttendanceSelectionStatus,
@@ -44,11 +46,47 @@ export class IssueTeacherAccessGrantDto {
   expiresAt?: string;
 }
 
+/**
+ * Without `teacherMembershipIds` the term is issued in full: every teacher who
+ * still needs a link gets one. With it, only the picked teachers are considered —
+ * the picks are still filtered against the actor's scope and the term, so a
+ * client cannot widen the batch beyond what it may already issue one by one.
+ */
 export class IssueTeacherAccessGrantsForTermDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
   schoolTermId!: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  teacherMembershipIds?: number[];
+}
+
+/** Sending covers the whole term unless rows are picked, mirroring the issue action. */
+export class SendTeacherAccessGrantsDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolTermId!: number;
+
+  /** Stable across transport retries so LINE can deduplicate each recipient. */
+  @IsUUID('4')
+  deliveryRequestId!: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  teacherMembershipIds?: number[];
 }
 
 export class ListTeacherLinkRosterDto extends PaginationQueryDto {
@@ -67,6 +105,10 @@ export class ListTeacherLinkRosterDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(100)
   search?: string;
+
+  @IsOptional()
+  @IsIn(['VERIFIED', 'NOT_VERIFIED', 'REACHABLE'])
+  lineStatus?: TeacherLineFilter;
 
   @IsOptional()
   @IsIn(['name', 'linkStatus'])
