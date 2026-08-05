@@ -49,6 +49,21 @@ export class TimetableTeachersQueryDto {
   schoolId!: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  subjectId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  gradeLevelId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  roomNo?: number;
+
+  @IsOptional()
   @IsString()
   @MaxLength(100)
   searchTerm?: string;
@@ -91,6 +106,12 @@ export class CreateTimetableSlotDto {
   @Type(() => Number)
   @IsInt()
   teacherUserId?: number | null;
+
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  teacherMembershipIds?: number[];
 }
 
 export class UpdateTimetableSlotDto {
@@ -103,6 +124,12 @@ export class UpdateTimetableSlotDto {
   @Type(() => Number)
   @IsInt()
   teacherUserId?: number | null;
+
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  teacherMembershipIds?: number[];
 }
 
 export class ListPeriodTimesQueryDto {

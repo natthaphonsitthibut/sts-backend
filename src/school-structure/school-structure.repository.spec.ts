@@ -112,7 +112,7 @@ describe('SchoolStructureRepository scope', () => {
     );
   });
 
-  it('lists only active teacher-role membership options for the selected school', async () => {
+  it('lists active teachers of the school, including those without a login account', async () => {
     const runner = {
       connect: jest.fn(),
       release: jest.fn(),
@@ -125,8 +125,10 @@ describe('SchoolStructureRepository scope', () => {
     await repository.listTeacherOptions(1001, 'สมชาย');
 
     expect(runner.query).toHaveBeenCalledWith(
+      // Identity lives on `teachers` now: a teacher with no login account must
+      // still be offered, so the filter is the teacher's own status.
       expect.stringMatching(
-        /membership\.school_id = \$1[\s\S]*membership_status = 'ACTIVE'[\s\S]*teacher\.role = 'TEACHER'/,
+        /membership\.school_id = \$1[\s\S]*membership_status = 'ACTIVE'[\s\S]*teacher_person\.teacher_status = 'ACTIVE'/,
       ),
       [1001, '%สมชาย%'],
       true,

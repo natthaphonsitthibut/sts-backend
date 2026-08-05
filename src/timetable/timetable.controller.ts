@@ -108,6 +108,9 @@ export class TimetableController {
       actor,
       query.schoolId,
       query.searchTerm?.trim() || undefined,
+      query.subjectId,
+      query.gradeLevelId,
+      query.roomNo,
     );
   }
 

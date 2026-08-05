@@ -38,6 +38,9 @@ function createHarness() {
     findSubjectById: jest.fn().mockResolvedValue(SUBJECT),
     listTeachersForSubjects: jest.fn().mockResolvedValue([]),
     updateContent: jest.fn().mockResolvedValue(undefined),
+    upsertSubject: jest.fn().mockResolvedValue({ id: 'subject-1' }),
+    createSubjectOffering: jest.fn().mockResolvedValue({ id: 'offering-1' }),
+    replaceTeacherCoverage: jest.fn().mockResolvedValue(undefined),
   };
   const auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
   const storage = {
@@ -76,8 +79,57 @@ describe('CurriculumService', () => {
           subjectCode: 'ค101',
           subjectName: 'คณิตศาสตร์',
           teachers: [
-            { teacherMembershipId: 12, classroomIds: [41] },
-            { teacherMembershipId: 12, classroomIds: [41] },
+            { teacherMembershipIds: [12], classroomIds: [41] },
+            { teacherMembershipIds: [12], classroomIds: [41] },
+          ],
+        },
+        ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(repository.withTransaction).not.toHaveBeenCalled();
+  });
+
+  it('expands a block of several teachers into one coverage row per teacher and room', async () => {
+    const { service, repository } = createHarness();
+
+    await service.createSubject(
+      {
+        schoolId: 10,
+        termId: 21,
+        gradeLevelId: 4,
+        subjectCode: 'ค101',
+        subjectName: 'คณิตศาสตร์',
+        teachers: [{ teacherMembershipIds: [12, 13], classroomIds: [41, 42] }],
+      },
+      ACTOR,
+    );
+
+    const [input] = repository.replaceTeacherCoverage.mock.calls[0] as [
+      { coverage: Array<{ teacherMembershipId: number; classroomId: number }> },
+    ];
+    expect(input.coverage).toEqual([
+      { teacherMembershipId: 12, classroomId: 41 },
+      { teacherMembershipId: 12, classroomId: 42 },
+      { teacherMembershipId: 13, classroomId: 41 },
+      { teacherMembershipId: 13, classroomId: 42 },
+    ]);
+  });
+
+  it('rejects the same teacher and room arriving through two different blocks', async () => {
+    const { service, repository } = createHarness();
+
+    await expect(
+      service.createSubject(
+        {
+          schoolId: 10,
+          termId: 21,
+          gradeLevelId: 4,
+          subjectCode: 'ค101',
+          subjectName: 'คณิตศาสตร์',
+          teachers: [
+            { teacherMembershipIds: [12, 13], classroomIds: [41] },
+            { teacherMembershipIds: [13], classroomIds: [41] },
           ],
         },
         ACTOR,

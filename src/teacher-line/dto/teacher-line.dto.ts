@@ -32,9 +32,16 @@ export class StartTeacherLineAuthorizationDto {
 }
 
 /**
- * Query LINE puts on the callback. Both are optional at the DTO level because a
- * user who declines consent is redirected back with `error` and no `code`, and
- * that has to land on the result page rather than a validation error.
+ * Query LINE puts on the callback. Everything is optional at the DTO level
+ * because a user who declines consent is redirected back with `error` and no
+ * `code`, and that has to land on the result page rather than a validation
+ * error.
+ *
+ * The callback URL belongs to LINE, not to us: it decides what to append. When
+ * we ask for `bot_prompt` it adds `friendship_status_changed`, and rejecting
+ * the request over an undeclared property strands a teacher who signed in
+ * successfully on a raw JSON error. The route therefore whitelists instead of
+ * forbidding — unknown properties are dropped, never fatal.
  */
 export class TeacherLineCallbackDto {
   @IsOptional()
@@ -51,4 +58,10 @@ export class TeacherLineCallbackDto {
   @IsString()
   @MaxLength(256)
   error?: string;
+
+  /** 'true' when this sign-in changed the friendship with the OA. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  friendship_status_changed?: string;
 }

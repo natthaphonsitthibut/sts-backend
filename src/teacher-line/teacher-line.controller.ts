@@ -9,6 +9,7 @@ import {
   Req,
   type RawBodyRequest,
   Res,
+  ValidationPipe,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Public } from '../auth';
@@ -76,7 +77,11 @@ export class TeacherLineController {
   @Get('callback')
   @ThrottleTeacherAccess()
   async callback(
-    @Query() query: TeacherLineCallbackDto,
+    // LINE owns this URL and appends its own parameters, so an undeclared one
+    // must be dropped rather than rejected: a 400 here replaces the redirect
+    // with raw JSON for a teacher who already signed in successfully.
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: TeacherLineCallbackDto,
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {

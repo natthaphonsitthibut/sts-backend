@@ -8,7 +8,7 @@ export type TeacherAccessGrantStatus = 'ACTIVE' | 'REVOKED' | 'EXPIRED' | 'SUSPE
 export interface TeacherAccessGrantRow extends Record<string, unknown> {
   id: string;
   teacher_membership_id: string;
-  teacher_user_id: number;
+  teacher_user_id: number | null;
   teacher_username: string;
   teacher_display_name: string;
   teacher_email: string | null;
@@ -104,7 +104,7 @@ export interface TeacherAccessGrantDetail {
 export interface ActiveTeacherGrantContext {
   grantId: string;
   teacherMembershipId: string;
-  teacherUserId: number;
+  teacherUserId: number | null;
   teacherUsername: string;
   teacherDisplayName: string;
   schoolId: number;

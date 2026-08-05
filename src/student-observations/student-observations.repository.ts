@@ -492,7 +492,7 @@ export class StudentObservationsRepository {
     observationId: string,
     next: ObservationWriteInput,
     nextRevision: number,
-    changedByUserId: number,
+    changedByUserId: number | null,
     queryRunner: QueryRunner,
   ): Promise<StudentObservationRow> {
     await this.executor(queryRunner).query(
@@ -535,7 +535,8 @@ export class StudentObservationsRepository {
       await this.executor(queryRunner).query(
         `
           INSERT INTO student_observation_tags (observation_id, behavior_tag_id)
-          SELECT $1, unnest($2::bigint[])
+          SELECT $1, tag_id
+          FROM unnest($2::bigint[]) AS tag_id
         `,
         [observationId, tagIds],
       );
@@ -546,7 +547,7 @@ export class StudentObservationsRepository {
     observationId: string,
     revision: number,
     input: ObservationWriteInput,
-    changedByUserId: number,
+    changedByUserId: number | null,
     queryRunner: QueryRunner,
   ): Promise<void> {
     await this.executor(queryRunner).query(

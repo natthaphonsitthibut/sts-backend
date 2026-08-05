@@ -87,26 +87,39 @@ export class CurriculumService {
   }
 
   private toSubject(row: CurriculumSubjectRow, coverage: CurriculumSubjectTeacherRow[]) {
-    // Group flat coverage rows back into the form's "one teacher, many rooms"
-    // blocks, while keeping the flat list for the read-only table in the ref.
-    const byTeacher = new Map<
+    // Rebuild the form's blocks from the flat rows, keeping the flat list for
+    // the read-only table. Teachers who cover the exact same set of rooms are
+    // one block — that is how the form asks the question ("these teachers teach
+    // these rooms"), and a subject may well be taught by several teachers in
+    // the same room.
+    const roomsByTeacher = new Map<string, { name: string; rooms: Map<string, string> }>();
+    for (const item of coverage) {
+      const entry = roomsByTeacher.get(item.teacher_membership_id) ?? {
+        name: item.teacher_name,
+        rooms: new Map<string, string>(),
+      };
+      entry.rooms.set(item.classroom_id, item.classroom_label);
+      roomsByTeacher.set(item.teacher_membership_id, entry);
+    }
+
+    const blocks = new Map<
       string,
       {
-        teacherMembershipId: string;
-        teacherName: string;
+        teachers: Array<{ teacherMembershipId: string; teacherName: string }>;
         classrooms: Array<{ id: string; label: string }>;
       }
     >();
-    for (const item of coverage) {
-      const existing = byTeacher.get(item.teacher_membership_id);
-      const classroom = { id: item.classroom_id, label: item.classroom_label };
+    for (const [teacherMembershipId, entry] of roomsByTeacher) {
+      const roomIds = [...entry.rooms.keys()].sort();
+      const signature = roomIds.join(',');
+      const existing = blocks.get(signature);
+      const teacher = { teacherMembershipId, teacherName: entry.name };
       if (existing) {
-        existing.classrooms.push(classroom);
+        existing.teachers.push(teacher);
       } else {
-        byTeacher.set(item.teacher_membership_id, {
-          teacherMembershipId: item.teacher_membership_id,
-          teacherName: item.teacher_name,
-          classrooms: [classroom],
+        blocks.set(signature, {
+          teachers: [teacher],
+          classrooms: roomIds.map((id) => ({ id, label: entry.rooms.get(id) ?? id })),
         });
       }
     }
@@ -128,7 +141,7 @@ export class CurriculumService {
           )}`
         : null,
       curriculumStatus: row.curriculum_status,
-      teachers: [...byTeacher.values()],
+      teachers: [...blocks.values()],
       // Flat rows drive the ห้องเรียน / ครูผู้สอน table.
       coverage: coverage.map((item) => ({
         id: item.id,
@@ -195,15 +208,17 @@ export class CurriculumService {
     const seen = new Set<string>();
     const coverage: Array<{ teacherMembershipId: number; classroomId: number }> = [];
     for (const block of dto.teachers ?? []) {
-      for (const classroomId of block.classroomIds) {
-        const key = `${block.teacherMembershipId}:${classroomId}`;
-        // The form can repeat a teacher across blocks; the unique index would
-        // reject the duplicate, so collapse it here with a clear message instead.
-        if (seen.has(key)) {
-          throw new BadRequestException('มีครูและห้องเรียนซ้ำกันในรายวิชานี้');
+      for (const teacherMembershipId of block.teacherMembershipIds) {
+        for (const classroomId of block.classroomIds) {
+          const key = `${teacherMembershipId}:${classroomId}`;
+          // The form can repeat a teacher across blocks; the unique index would
+          // reject the duplicate, so collapse it here with a clear message instead.
+          if (seen.has(key)) {
+            throw new BadRequestException('มีครูและห้องเรียนซ้ำกันในรายวิชานี้');
+          }
+          seen.add(key);
+          coverage.push({ teacherMembershipId, classroomId });
         }
-        seen.add(key);
-        coverage.push({ teacherMembershipId: block.teacherMembershipId, classroomId });
       }
     }
     return coverage;
@@ -235,6 +250,7 @@ export class CurriculumService {
             schoolId: dto.schoolId,
             termId: dto.termId,
             gradeLevelId: dto.gradeLevelId,
+            subjectId: subject.id,
             coverage,
             actorId,
           },
@@ -310,6 +326,7 @@ export class CurriculumService {
             schoolId: existing.school_id,
             termId: Number(existing.school_term_id),
             gradeLevelId: existing.grade_level_id,
+            subjectId: subject.id,
             coverage,
             actorId,
           },

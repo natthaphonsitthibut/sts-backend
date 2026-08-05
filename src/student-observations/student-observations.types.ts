@@ -108,7 +108,7 @@ export interface ObservationWriteInput {
   studentUuid: string;
   schoolId: number;
   authorKind: ObservationAuthorKind;
-  authorUserId: number;
+  authorUserId: number | null;
   authorTeacherMembershipId: number | null;
   sourceTeacherAccessGrantId: string | null;
   sourceAssignmentId: number | null;

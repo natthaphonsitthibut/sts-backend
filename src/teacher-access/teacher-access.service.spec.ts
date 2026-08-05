@@ -1,3 +1,4 @@
+import { TEACHER_ACCESS_NO_ASSIGNMENT_REASON } from './teacher-access.constants';
 import { ForbiddenException, GoneException, NotFoundException } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 import type { AuthenticatedRequestUser } from '../auth';
@@ -570,7 +571,7 @@ describe('TeacherAccessService', () => {
       issued: 1,
       skipped: [
         { teacherMembershipId: 13, reason: 'มีลิงก์ที่ใช้งานได้อยู่แล้ว' },
-        { teacherMembershipId: 14, reason: 'ยังไม่มีห้องหรือรายวิชาในภาคเรียนนี้' },
+        { teacherMembershipId: 14, reason: TEACHER_ACCESS_NO_ASSIGNMENT_REASON },
       ],
     });
   });

@@ -36,6 +36,7 @@ describe('TimetableService', () => {
       school_term_id: '1',
       school_id: 10010002,
       grade_level_id: 423,
+      grade_label: null,
       room_no: 1,
       day_of_week: 1,
       period: 1,
@@ -100,7 +101,9 @@ describe('TimetableService', () => {
       create: jest.fn().mockResolvedValue({ id: '1' }),
       update: jest.fn().mockResolvedValue(undefined),
       softDelete: jest.fn().mockResolvedValue(undefined),
-      withTransaction: jest.fn((operation) => operation({} as never)),
+      withTransaction: jest.fn((operation: (queryRunner: unknown) => unknown) =>
+        operation({}),
+      ) as never,
       listPeriodTimesForSchool: jest.fn().mockResolvedValue([periodTimeRow()]),
       countSlotsOutsidePeriods: jest.fn().mockResolvedValue(0),
       listDaysWithPeriodTimes: jest.fn().mockResolvedValue([1, 2, 3, 4, 5]),
@@ -251,7 +254,7 @@ describe('TimetableService', () => {
 
     it('mine=true returns only the periods the actor teaches', async () => {
       const result = await service.getMySchedule(globalActor, { mine: true });
-      expect(repository.listForTeacher).toHaveBeenCalledWith(globalActor.id);
+      expect(repository.listForTeacher).toHaveBeenCalledWith(globalActor.id, null);
       expect(result.data).toHaveLength(1);
     });
 
@@ -277,7 +280,13 @@ describe('TimetableService', () => {
       const result = await service.listTeacherCandidates(globalActor, 10010002, 'สมชาย');
 
       expect(repository.isSchoolInScope).toHaveBeenCalledWith(10010002, globalActor.data_scope);
-      expect(repository.listTeacherCandidatesForSchool).toHaveBeenCalledWith(10010002, 'สมชาย');
+      expect(repository.listTeacherCandidatesForSchool).toHaveBeenCalledWith(
+        10010002,
+        'สมชาย',
+        undefined,
+        undefined,
+        undefined,
+      );
       expect(result).toEqual({
         success: true,
         data: [{ id: 8, display_name: 'ครูสมชาย ใจดี' }],

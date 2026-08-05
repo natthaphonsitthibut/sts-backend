@@ -264,8 +264,14 @@ function stubMessagingProvider(app) {
   provider.isEnabled = () => true;
   // Stands in for the LINE consent screen: the browser is bounced straight back
   // to our callback, which is the only part of the redirect we own.
+  //
+  // `friendship_status_changed` is appended by LINE itself whenever the sign-in
+  // asked for `bot_prompt`, which ours does. Leaving it out of the stub is what
+  // let a 400 on the real callback reach a teacher: the whole request was
+  // rejected before the handler for carrying a property we had not declared.
   provider.buildAuthorizationUrl = ({ state: value }) =>
-    `http://127.0.0.1:${BACKEND_PORT}/api/line/link/callback?code=smoke-code&state=${value}`;
+    `http://127.0.0.1:${BACKEND_PORT}/api/line/link/callback` +
+    `?code=smoke-code&state=${value}&friendship_status_changed=false`;
   provider.buildAddContactUrl = () => 'https://line.me/R/ti/p/@sts-smoke';
   provider.completeAuthorization = () =>
     Promise.resolve({ identity: state.identity, friendState: state.friendState });

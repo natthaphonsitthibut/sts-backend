@@ -3,7 +3,11 @@ import { DataSource, type QueryRunner } from 'typeorm';
 import type { DataScope } from '../auth';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { escapeLikePattern } from '../common/utils/helpers';
-import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
+import {
+  createSqlQueryExecutor,
+  queryDataSource,
+  type SqlQueryExecutor,
+} from '../database/sql-query';
 import type {
   CurriculumGradeRow,
   CurriculumSubjectRow,
@@ -331,6 +335,9 @@ export class CurriculumRepository {
       schoolId: number;
       termId: number;
       gradeLevelId: number;
+      /** Catalog subject (`subjects.id`) — the row `classroom_teacher_assignments`
+       * keys its SUBJECT-kind rows on, distinct from the offering id above. */
+      subjectId: number;
       coverage: Array<{ teacherMembershipId: number; classroomId: number }>;
       actorId: number | null;
     },
@@ -345,28 +352,120 @@ export class CurriculumRepository {
       `,
       [input.curriculumSubjectId, input.actorId],
     );
-    if (input.coverage.length === 0) return;
+    if (input.coverage.length > 0) {
+      const values: string[] = [];
+      const params: unknown[] = [
+        input.curriculumSubjectId,
+        input.schoolId,
+        input.termId,
+        input.gradeLevelId,
+        input.actorId,
+      ];
+      for (const item of input.coverage) {
+        const teacherIndex = params.push(item.teacherMembershipId);
+        const classroomIndex = params.push(item.classroomId);
+        values.push(`($1, $2, $3, $4, $${teacherIndex}, $${classroomIndex}, $5, $5)`);
+      }
+      await executor.query(
+        `
+          INSERT INTO curriculum_subject_teachers (
+            curriculum_subject_id, school_id, school_term_id, grade_level_id,
+            teacher_membership_id, classroom_id, created_by, updated_by
+          )
+          VALUES ${values.join(', ')}
+        `,
+        params,
+      );
+    }
+    await this.syncSubjectAssignments(input, executor);
+  }
 
-    const values: string[] = [];
+  /**
+   * `classroom_teacher_assignments` is what actually gates issuing an
+   * attendance link — the curriculum page's `curriculum_subject_teachers` row
+   * above is documentation of the teaching plan, never read outside this
+   * module. A teacher added here with no synced row here could open the
+   * subject in the curriculum yet still be refused a link, so every save
+   * keeps both in step. Reactivate-or-insert first, then deactivate whatever
+   * used to be active for this offering and is not in the new set — so an
+   * unrelated edit does not spin fresh rows for pairs that did not change,
+   * and dropped pairs still leave their history behind instead of vanishing.
+   */
+  private async syncSubjectAssignments(
+    input: {
+      schoolId: number;
+      termId: number;
+      gradeLevelId: number;
+      subjectId: number;
+      coverage: Array<{ teacherMembershipId: number; classroomId: number }>;
+      actorId: number | null;
+    },
+    executor: SqlQueryExecutor,
+  ): Promise<void> {
+    if (input.coverage.length > 0) {
+      const values: string[] = [];
+      const params: unknown[] = [input.schoolId, input.subjectId, input.actorId];
+      for (const item of input.coverage) {
+        const classroomIndex = params.push(item.classroomId);
+        const teacherIndex = params.push(item.teacherMembershipId);
+        values.push(`($1, $${classroomIndex}, $${teacherIndex}, $2, 'SUBJECT', 'ACTIVE', $3, $3)`);
+      }
+      await executor.query(
+        `
+          INSERT INTO classroom_teacher_assignments (
+            school_id, classroom_id, teacher_membership_id, subject_id,
+            assignment_kind, assignment_status, created_by, updated_by
+          )
+          VALUES ${values.join(', ')}
+          ON CONFLICT (classroom_id, teacher_membership_id, subject_id)
+            WHERE assignment_kind = 'SUBJECT'
+              AND assignment_status = 'ACTIVE'
+              AND deleted_at IS NULL
+          DO UPDATE SET updated_by = EXCLUDED.updated_by, updated_at = now()
+        `,
+        params,
+      );
+    }
+
     const params: unknown[] = [
-      input.curriculumSubjectId,
       input.schoolId,
       input.termId,
       input.gradeLevelId,
+      input.subjectId,
       input.actorId,
     ];
-    for (const item of input.coverage) {
-      const teacherIndex = params.push(item.teacherMembershipId);
-      const classroomIndex = params.push(item.classroomId);
-      values.push(`($1, $2, $3, $4, $${teacherIndex}, $${classroomIndex}, $5, $5)`);
+    let keepClause = '';
+    if (input.coverage.length > 0) {
+      const rows = input.coverage.map((item) => {
+        const classroomIndex = params.push(item.classroomId);
+        const teacherIndex = params.push(item.teacherMembershipId);
+        // A bare VALUES row has no column to infer a type from, so Postgres
+        // defaults each placeholder to `text` — which then fails to compare
+        // against the bigint columns it is joined against below.
+        return `($${classroomIndex}::bigint, $${teacherIndex}::bigint)`;
+      });
+      keepClause = `
+        AND NOT EXISTS (
+          SELECT 1 FROM (VALUES ${rows.join(', ')}) AS keep(classroom_id, teacher_membership_id)
+          WHERE keep.classroom_id = assignment.classroom_id
+            AND keep.teacher_membership_id = assignment.teacher_membership_id
+        )
+      `;
     }
     await executor.query(
       `
-        INSERT INTO curriculum_subject_teachers (
-          curriculum_subject_id, school_id, school_term_id, grade_level_id,
-          teacher_membership_id, classroom_id, created_by, updated_by
-        )
-        VALUES ${values.join(', ')}
+        UPDATE classroom_teacher_assignments assignment
+        SET assignment_status = 'INACTIVE', updated_by = $5, updated_at = now()
+        FROM school_classrooms classroom
+        WHERE assignment.classroom_id = classroom.id
+          AND assignment.assignment_kind = 'SUBJECT'
+          AND assignment.subject_id = $4
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+          AND classroom.school_id = $1
+          AND classroom.school_term_id = $2
+          AND classroom.grade_level_id = $3
+          ${keepClause}
       `,
       params,
     );

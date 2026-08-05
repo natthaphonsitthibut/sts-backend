@@ -48,18 +48,17 @@ describe('TimetableRepository', () => {
     expect(queries[0].params).toEqual([1, 2, 3]);
   });
 
-  it('listForTeacher filters by teacher_user_id', async () => {
+  it('listForTeacher filters by teacher_user_id and teacher_membership_id', async () => {
     const { repository, queries } = buildRepository([]);
-    await repository.listForTeacher(42);
-    expect(queries[0].sql).toContain('ts.teacher_user_id = $1');
-    expect(queries[0].params).toEqual([42]);
+    await repository.listForTeacher(42, 100);
+    expect(queries[0].sql).toContain('ts.teacher_membership_id = $1');
+    expect(queries[0].params).toEqual([100, 42]);
   });
 
   it('listTeacherCandidatesForSchool returns only active teacher memberships', async () => {
     const { repository, queries } = buildRepository([]);
     await repository.listTeacherCandidatesForSchool(10010002, 'สมชาย');
-    expect(queries[0].sql).toContain(`u.status = 'ACTIVE'`);
-    expect(queries[0].sql).toContain(`u.role = 'TEACHER'`);
+    expect(queries[0].sql).toContain(`t.deleted_at IS NULL`);
     expect(queries[0].sql).toContain(`membership.membership_status = 'ACTIVE'`);
     expect(queries[0].sql).toContain(`membership.school_id = $1`);
     expect(queries[0].sql).toContain('LIMIT 100');

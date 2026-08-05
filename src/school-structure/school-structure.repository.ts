@@ -180,12 +180,15 @@ export class SchoolStructureRepository {
             ON search_membership.id = search_assignment.teacher_membership_id
            AND search_membership.membership_status = 'ACTIVE'
            AND search_membership.deleted_at IS NULL
-          JOIN users search_teacher ON search_teacher.id = search_membership.teacher_user_id
+          JOIN teachers search_teacher_person
+            ON search_teacher_person.id = search_membership.teacher_id
+           AND search_teacher_person.deleted_at IS NULL
+          LEFT JOIN users search_teacher ON search_teacher.id = search_membership.teacher_user_id
           WHERE search_assignment.classroom_id = classroom.id
             AND search_assignment.assignment_kind = 'HOMEROOM'
             AND search_assignment.assignment_status = 'ACTIVE'
             AND search_assignment.deleted_at IS NULL
-            AND CONCAT_WS(' ', search_teacher."FirstName", search_teacher."LastName", search_teacher.username)
+            AND CONCAT_WS(' ', search_teacher_person.first_name, search_teacher_person.last_name, search_teacher.username)
                 ILIKE ${searchParam} ESCAPE '\\'
         )
       )`);
@@ -225,10 +228,10 @@ export class SchoolStructureRepository {
              AND membership.school_id = assignment.school_id
              AND membership.membership_status = 'ACTIVE'
              AND membership.deleted_at IS NULL
-            JOIN users teacher
-              ON teacher.id = membership.teacher_user_id
-             AND teacher.role = 'TEACHER'
-             AND teacher.status = 'ACTIVE'
+            JOIN teachers teacher
+              ON teacher.id = membership.teacher_id
+             AND teacher.teacher_status = 'ACTIVE'
+             AND teacher.deleted_at IS NULL
           ) AS teacher_count,
           (
             SELECT COUNT(DISTINCT enrollment.student_uuid)::int
@@ -277,7 +280,7 @@ export class SchoolStructureRepository {
           ON enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
         LEFT JOIN LATERAL (
           SELECT COALESCE(
-                   NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+                   NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
                    teacher.username
                  ) AS homeroom_teacher_name
           FROM classroom_teacher_assignments assignment
@@ -286,7 +289,9 @@ export class SchoolStructureRepository {
            AND membership.school_id = assignment.school_id
            AND membership.membership_status = 'ACTIVE'
            AND membership.deleted_at IS NULL
-          JOIN users teacher ON teacher.id = membership.teacher_user_id
+          JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
             AND assignment.assignment_kind = 'HOMEROOM'
@@ -376,7 +381,7 @@ export class SchoolStructureRepository {
         favorite.created_at AS favorited_at,
         (
           SELECT COALESCE(
-            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
             teacher.username
           )
           FROM classroom_teacher_assignments assignment
@@ -385,7 +390,9 @@ export class SchoolStructureRepository {
            AND membership.school_id = assignment.school_id
            AND membership.membership_status = 'ACTIVE'
            AND membership.deleted_at IS NULL
-          JOIN users teacher ON teacher.id = membership.teacher_user_id
+          JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
             AND assignment.assignment_kind = 'HOMEROOM'
@@ -628,14 +635,16 @@ export class SchoolStructureRepository {
             membership.teacher_user_id,
             teacher.username,
             COALESCE(
-              NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+              NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
               teacher.username
             ) AS display_name,
             membership.membership_status,
             membership.started_on::text,
             membership.ended_on::text
           FROM school_teacher_memberships membership
-          JOIN users teacher ON teacher.id = membership.teacher_user_id
+          JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
           WHERE membership.school_id = $1 AND membership.deleted_at IS NULL
           ORDER BY ${orderBy} ${direction}, membership.id ${direction}
           LIMIT $2 OFFSET $3
@@ -665,10 +674,11 @@ export class SchoolStructureRepository {
     const filteredMembershipsSql = `
       SELECT DISTINCT ON (membership.teacher_user_id) membership.id
       FROM school_teacher_memberships membership
-      JOIN users teacher
-        ON teacher.id = membership.teacher_user_id
-       AND teacher.role = 'TEACHER'
-       AND teacher.status = 'ACTIVE'
+      JOIN teachers teacher_person
+        ON teacher_person.id = membership.teacher_id
+       AND teacher_person.teacher_status = 'ACTIVE'
+       AND teacher_person.deleted_at IS NULL
+      LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
       JOIN classroom_teacher_assignments assignment
         ON assignment.teacher_membership_id = membership.id
        AND assignment.school_id = membership.school_id
@@ -705,7 +715,7 @@ export class SchoolStructureRepository {
           membership.teacher_user_id,
           teacher.username,
           COALESCE(
-            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
             teacher.username
           ) AS display_name,
           membership.membership_status,
@@ -713,7 +723,9 @@ export class SchoolStructureRepository {
           membership.ended_on::text
         FROM filtered_memberships filtered
         JOIN school_teacher_memberships membership ON membership.id = filtered.id
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         ORDER BY ${orderBy} ${direction}, membership.id ${direction}
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}
       `,
@@ -734,8 +746,8 @@ export class SchoolStructureRepository {
     const search = searchTerm?.trim();
     const searchClause = search
       ? `AND (
-          COALESCE(teacher."FirstName", '') ILIKE $${params.push(`%${search}%`)}
-          OR COALESCE(teacher."LastName", '') ILIKE $${params.length}
+          teacher_person.first_name ILIKE $${params.push(`%${search}%`)}
+          OR teacher_person.last_name ILIKE $${params.length}
           OR teacher.username ILIKE $${params.length}
         )`
       : '';
@@ -745,7 +757,7 @@ export class SchoolStructureRepository {
         SELECT
           teacher.id,
           COALESCE(
-            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
             teacher.username
           ) AS display_name
         FROM users teacher
@@ -783,8 +795,8 @@ export class SchoolStructureRepository {
     const search = searchTerm?.trim();
     const searchClause = search
       ? `AND (
-          COALESCE(teacher."FirstName", '') ILIKE $${params.push(`%${search}%`)}
-          OR COALESCE(teacher."LastName", '') ILIKE $${params.length}
+          teacher_person.first_name ILIKE $${params.push(`%${search}%`)}
+          OR teacher_person.last_name ILIKE $${params.length}
           OR teacher.username ILIKE $${params.length}
         )`
       : '';
@@ -797,19 +809,20 @@ export class SchoolStructureRepository {
           membership.teacher_user_id,
           teacher.username,
           COALESCE(
-            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
             teacher.username
           ) AS display_name,
           membership.membership_status,
           membership.started_on::text,
           membership.ended_on::text
         FROM school_teacher_memberships membership
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         WHERE membership.school_id = $1
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
-          AND teacher.status = 'ACTIVE'
-          AND teacher.role = 'TEACHER'
+          AND teacher_person.teacher_status = 'ACTIVE'
           ${searchClause}
         ORDER BY display_name, membership.id
         LIMIT 100
@@ -830,14 +843,16 @@ export class SchoolStructureRepository {
         membership.teacher_user_id,
         teacher.username,
         COALESCE(
-          NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+          NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
           teacher.username
         ) AS display_name,
         membership.membership_status,
         membership.started_on::text,
         membership.ended_on::text
       FROM school_teacher_memberships membership
-      JOIN users teacher ON teacher.id = membership.teacher_user_id
+      JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
       WHERE membership.id = $1 AND membership.deleted_at IS NULL
       ${queryRunner ? 'FOR UPDATE OF membership' : ''}
     `;
@@ -940,7 +955,7 @@ export class SchoolStructureRepository {
           assignment.teacher_membership_id::text,
           membership.teacher_user_id,
           COALESCE(
-            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
             teacher.username
           ) AS teacher_name,
           assignment.subject_id,
@@ -953,7 +968,9 @@ export class SchoolStructureRepository {
         FROM classroom_teacher_assignments assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         LEFT JOIN subjects subject ON subject.id = assignment.subject_id
         WHERE assignment.classroom_id = $1 AND assignment.deleted_at IS NULL
         ORDER BY assignment.assignment_kind, teacher_name, assignment.id
@@ -1031,7 +1048,7 @@ export class SchoolStructureRepository {
           assignment.teacher_membership_id::text,
           membership.teacher_user_id,
           COALESCE(
-            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
             teacher.username
           ) AS teacher_name,
           assignment.subject_id,
@@ -1044,7 +1061,9 @@ export class SchoolStructureRepository {
         FROM classroom_teacher_assignments assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.deleted_at IS NULL
+        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         LEFT JOIN subjects subject ON subject.id = assignment.subject_id
         WHERE assignment.id = $1
       `,

@@ -340,7 +340,7 @@ export class TeacherAccessRepository {
         access_grant.id::text,
         access_grant.teacher_membership_id::text,
         membership.teacher_user_id,
-        teacher_account.username AS teacher_username,
+        COALESCE(teacher_account.username, TRIM(teacher.first_name || ' ' || teacher.last_name)) AS teacher_username,
         TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
         teacher.email AS teacher_email,
         teacher.teacher_status AS teacher_status,
@@ -384,7 +384,8 @@ export class TeacherAccessRepository {
       JOIN school_teacher_memberships membership
         ON membership.id = access_grant.teacher_membership_id
       JOIN teachers teacher ON teacher.id = membership.teacher_id
-      JOIN users teacher_account ON teacher_account.id = membership.teacher_user_id
+      LEFT JOIN users teacher_account ON teacher_account.id = membership.teacher_user_id
+        -- teacher_user_id is nullable — a teacher created without a login account
       JOIN schools school ON school.id = access_grant.school_id
       JOIN school_terms term ON term.id = access_grant.school_term_id
       JOIN users issuer ON issuer.id = access_grant.issued_by
@@ -1095,7 +1096,7 @@ export class TeacherAccessRepository {
       classroomId: number;
       studentUuid: string;
       commentText: string;
-      authoredByUserId: number;
+      authoredByUserId: number | null;
     },
     queryRunner: QueryRunner,
   ): Promise<{ id: string; comment_text: string } | null> {
@@ -1157,7 +1158,7 @@ export class TeacherAccessRepository {
       coverImagePositionX: number;
       coverImagePositionY: number;
       coverImageScale: number;
-      actorUserId: number;
+      actorUserId: number | null;
     },
     queryRunner: QueryRunner,
   ): Promise<boolean> {

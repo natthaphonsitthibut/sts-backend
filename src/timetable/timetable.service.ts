@@ -80,6 +80,7 @@ export class TimetableService {
       subject_code: row.subject_code,
       subject_name_th: row.subject_name_th,
       teacher_user_id: row.teacher_user_id,
+      teacher_membership_ids: (row.teacher_membership_ids ?? []).map(Number),
       teacher_name: row.teacher_name,
     };
   }
@@ -145,7 +146,7 @@ export class TimetableService {
   ) {
     await this.assertSchoolAccess(schoolId, actor);
     this.assertClassScope(gradeLevelId, roomNo, actor);
-    const rows = await this.repository.listDistinctSubjectsForRoom(schoolId, gradeLevelId, roomNo);
+    const rows = await this.repository.listDistinctSubjectsForRoom(schoolId, gradeLevelId);
     return {
       success: true,
       data: rows.map((row) => ({
@@ -160,9 +161,18 @@ export class TimetableService {
     actor: AuthenticatedRequestUser,
     schoolId: number,
     searchTerm?: string,
+    subjectId?: number,
+    gradeLevelId?: number,
+    roomNo?: number,
   ) {
     await this.assertSchoolAccess(schoolId, actor);
-    const rows = await this.repository.listTeacherCandidatesForSchool(schoolId, searchTerm);
+    const rows = await this.repository.listTeacherCandidatesForSchool(
+      schoolId,
+      searchTerm,
+      subjectId,
+      gradeLevelId,
+      roomNo,
+    );
     return {
       success: true,
       data: rows.map((row) => ({
@@ -196,7 +206,9 @@ export class TimetableService {
     }
 
     if (filters.mine) {
-      const rows = await this.repository.listForTeacher(actor.id);
+      const teacherUserId = actor.id && actor.id > 0 ? actor.id : null;
+      const teacherMembershipId = actor.teacher_membership_id ?? null;
+      const rows = await this.repository.listForTeacher(teacherUserId, teacherMembershipId);
       return { success: true, data: rows.map((row) => this.toResponse(row)) };
     }
 
@@ -243,6 +255,13 @@ export class TimetableService {
         );
         if (!created?.id) {
           throw new BadRequestException('สร้างคาบสอนไม่สำเร็จ');
+        }
+        if (dto.teacherMembershipIds !== undefined) {
+          await this.repository.replaceSlotTeachers(
+            created.id,
+            dto.teacherMembershipIds,
+            queryRunner,
+          );
         }
         await this.auditLog.recordAtomic(
           {
@@ -299,6 +318,9 @@ export class TimetableService {
         actorId,
         queryRunner,
       );
+      if (dto.teacherMembershipIds !== undefined) {
+        await this.repository.replaceSlotTeachers(id, dto.teacherMembershipIds, queryRunner);
+      }
       await this.auditLog.recordAtomic(
         {
           actorUserId: actorId,

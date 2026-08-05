@@ -27,8 +27,15 @@ const SELECT_COLUMNS = `
   ts.subject_id,
   sub.code AS subject_code,
   sub.name_th AS subject_name_th,
-  ts.teacher_user_id,
-  NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), '') AS teacher_name,
+  COALESCE(ts.teacher_user_id, MAX(stm.teacher_user_id)) AS teacher_user_id,
+  ARRAY_REMOVE(ARRAY_AGG(DISTINCT stm.id), NULL) AS teacher_membership_ids,
+  COALESCE(
+    STRING_AGG(
+      DISTINCT NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
+      ', '
+    ),
+    NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), '')
+  ) AS teacher_name,
   ts.created_at,
   ts.updated_at
 `;
@@ -38,6 +45,20 @@ const FROM_JOIN = `
   JOIN subjects sub ON sub.id = ts.subject_id
   LEFT JOIN grade_levels gl ON gl.id = ts.grade_level_id
   LEFT JOIN users teacher ON teacher.id = ts.teacher_user_id
+  LEFT JOIN timetable_slot_teachers tst ON tst.timetable_slot_id = ts.id
+  LEFT JOIN classroom_teacher_assignments cta 
+    ON cta.classroom_id = ts.classroom_id 
+   AND cta.subject_id = ts.subject_id 
+   AND cta.assignment_kind = 'SUBJECT' 
+   AND cta.assignment_status = 'ACTIVE' 
+   AND cta.deleted_at IS NULL
+  LEFT JOIN school_teacher_memberships stm 
+    ON stm.id = tst.teacher_membership_id 
+    OR (
+         NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
+         AND (stm.id = cta.teacher_membership_id OR stm.id = ts.teacher_membership_id OR (stm.teacher_user_id = ts.teacher_user_id AND ts.teacher_user_id IS NOT NULL))
+       )
+  LEFT JOIN teachers t ON t.id = stm.teacher_id AND t.deleted_at IS NULL
 `;
 
 interface CreateSlotInput {
@@ -69,22 +90,27 @@ export class TimetableRepository {
     const params: unknown[] = [schoolId];
     const conditions = ['sc.id = $1'];
     const scopeConditions: string[] = [];
+
     if (scope?.school_ids?.length) {
       params.push(scope.school_ids);
       scopeConditions.push(`sc.id = ANY($${params.length}::int[])`);
     }
+
     if (scope?.provinces?.length) {
       params.push(scope.provinces);
       scopeConditions.push(`sc.province = ANY($${params.length}::text[])`);
     }
+
     if (scope?.districts?.length) {
       params.push(scope.districts);
       scopeConditions.push(`sc.district = ANY($${params.length}::text[])`);
     }
+
     if (scope?.sub_districts?.length) {
       params.push(scope.sub_districts);
       scopeConditions.push(`sc.sub_district = ANY($${params.length}::text[])`);
     }
+
     if (scopeConditions.length === 0) {
       // Non-global actor with no area/school scope at all — fail closed.
       return false;
@@ -119,6 +145,7 @@ export class TimetableRepository {
         SELECT ${SELECT_COLUMNS}
         ${FROM_JOIN}
         WHERE ts.school_id = $1 AND ts.grade_level_id = $2 AND ts.room_no = $3 AND ts.deleted_at IS NULL
+        GROUP BY ts.id, ts.school_term_id, ts.school_id, ts.grade_level_id, gl.label, ts.room_no, ts.day_of_week, ts.period, ts.subject_id, sub.code, sub.name_th, ts.teacher_user_id, teacher."FirstName", teacher."LastName", ts.created_at, ts.updated_at
         ORDER BY ts.day_of_week ASC, ts.period ASC
       `,
       [schoolId, gradeLevelId, roomNo],
@@ -126,16 +153,36 @@ export class TimetableRepository {
     return result.rows;
   }
 
-  async listForTeacher(teacherUserId: number): Promise<TimetableSlotRow[]> {
+  async listForTeacher(
+    teacherUserId: number | null,
+    teacherMembershipId?: number | null,
+  ): Promise<TimetableSlotRow[]> {
     const result = await queryDataSource<TimetableSlotRow>(
       this.dataSource,
       `
         SELECT ${SELECT_COLUMNS}
         ${FROM_JOIN}
-        WHERE ts.teacher_user_id = $1 AND ts.deleted_at IS NULL
+        WHERE (
+          ($1::bigint IS NOT NULL AND (
+            tst.teacher_membership_id = $1::bigint 
+            OR (
+              NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
+              AND (ts.teacher_membership_id = $1::bigint OR cta.teacher_membership_id = $1::bigint)
+            )
+          ))
+          OR ($2::integer IS NOT NULL AND $2::integer <> 0 AND (
+            ts.teacher_user_id = $2::integer
+            OR (
+              NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
+              AND cta.teacher_membership_id IN (SELECT id FROM school_teacher_memberships WHERE teacher_user_id = $2::integer AND deleted_at IS NULL)
+            )
+          ))
+        )
+          AND ts.deleted_at IS NULL
+        GROUP BY ts.id, ts.school_term_id, ts.school_id, ts.grade_level_id, gl.label, ts.room_no, ts.day_of_week, ts.period, ts.subject_id, sub.code, sub.name_th, ts.teacher_user_id, teacher."FirstName", teacher."LastName", ts.created_at, ts.updated_at
         ORDER BY ts.day_of_week ASC, ts.period ASC
       `,
-      [teacherUserId],
+      [teacherMembershipId ?? null, teacherUserId ?? null],
     );
     return result.rows;
   }
@@ -143,42 +190,84 @@ export class TimetableRepository {
   async listDistinctSubjectsForRoom(
     schoolId: number,
     gradeLevelId: number,
-    roomNo: number,
   ): Promise<RoomSubjectRow[]> {
     const result = await queryDataSource<RoomSubjectRow>(
       this.dataSource,
       `
         SELECT DISTINCT sub.id AS subject_id, sub.code, sub.name_th
-        FROM timetable_slots ts
-        JOIN subjects sub ON sub.id = ts.subject_id
-        WHERE ts.school_id = $1 AND ts.grade_level_id = $2 AND ts.room_no = $3
-          AND ts.deleted_at IS NULL AND sub.is_active = TRUE
+        FROM curriculum_subjects cs
+        JOIN subjects sub ON sub.id = cs.subject_id
+        WHERE cs.school_id = $1 AND cs.grade_level_id = $2
+          AND cs.deleted_at IS NULL AND sub.is_active = TRUE
         ORDER BY sub.name_th ASC
       `,
-      [schoolId, gradeLevelId, roomNo],
+      [schoolId, gradeLevelId],
     );
-    return result.rows;
+    if (result.rows.length > 0) {
+      return result.rows;
+    }
+    const fallback = await queryDataSource<RoomSubjectRow>(
+      this.dataSource,
+      `
+        SELECT sub.id AS subject_id, sub.code, sub.name_th
+        FROM subjects sub
+        WHERE sub.is_active = TRUE
+        ORDER BY sub.name_th ASC
+      `,
+    );
+    return fallback.rows;
   }
 
   async listTeacherCandidatesForSchool(
     schoolId: number,
     searchTerm?: string,
+    subjectId?: number,
+    gradeLevelId?: number,
+    roomNo?: number,
   ): Promise<TimetableTeacherCandidateRow[]> {
     const params: unknown[] = [schoolId];
-    const conditions = [
-      `u.status = 'ACTIVE'`,
-      `u.role = 'TEACHER'`,
+    const joins: string[] = [
+      `JOIN teachers t ON t.id = membership.teacher_id AND t.deleted_at IS NULL`,
+      `LEFT JOIN users u ON u.id = membership.teacher_user_id`,
+    ];
+    const conditions: string[] = [
+      `membership.school_id = $1`,
       `membership.membership_status = 'ACTIVE'`,
       `membership.deleted_at IS NULL`,
     ];
+
+    if (subjectId != null) {
+      params.push(subjectId);
+      const subjectParamIndex = params.length;
+      joins.push(`
+        JOIN classroom_teacher_assignments cta 
+          ON cta.teacher_membership_id = membership.id 
+         AND cta.subject_id = $${subjectParamIndex}
+         AND cta.assignment_kind = 'SUBJECT' 
+         AND cta.assignment_status = 'ACTIVE' 
+         AND cta.deleted_at IS NULL
+      `);
+      if (gradeLevelId != null && roomNo != null) {
+        params.push(gradeLevelId, roomNo);
+        joins.push(`
+          JOIN school_classrooms sc 
+            ON sc.id = cta.classroom_id 
+           AND sc.school_id = $1 
+           AND sc.grade_level_id = $${params.length - 1} 
+           AND sc.legacy_room_number = $${params.length}
+        `);
+      }
+    }
+
     const trimmedSearch = searchTerm?.trim();
     if (trimmedSearch) {
       params.push(`%${trimmedSearch}%`);
       conditions.push(`
         (
-          COALESCE(u."FirstName", '') ILIKE $${params.length}
+          COALESCE(t.first_name, '') ILIKE $${params.length}
+          OR COALESCE(t.last_name, '') ILIKE $${params.length}
+          OR COALESCE(u."FirstName", '') ILIKE $${params.length}
           OR COALESCE(u."LastName", '') ILIKE $${params.length}
-          OR COALESCE(u.username, '') ILIKE $${params.length}
         )
       `);
     }
@@ -186,14 +275,17 @@ export class TimetableRepository {
     const result = await queryDataSource<TimetableTeacherCandidateRow>(
       this.dataSource,
       `
-        SELECT
-          u.id,
-          COALESCE(NULLIF(TRIM(COALESCE(u."FirstName", '') || ' ' || COALESCE(u."LastName", '')), ''), u.username) AS display_name
+        SELECT DISTINCT
+          membership.id,
+          COALESCE(
+            NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
+            NULLIF(TRIM(COALESCE(u."FirstName", '') || ' ' || COALESCE(u."LastName", '')), ''),
+            u.username
+          ) AS display_name
         FROM school_teacher_memberships membership
-        JOIN users u ON u.id = membership.teacher_user_id
+        ${joins.join('\n')}
         WHERE ${conditions.join(' AND ')}
-          AND membership.school_id = $1
-        ORDER BY display_name ASC, u.id ASC
+        ORDER BY display_name ASC, membership.id ASC
         LIMIT 100
       `,
       params,
@@ -277,6 +369,39 @@ export class TimetableRepository {
       ],
     );
     return result.rows[0] ?? null;
+  }
+
+  async replaceSlotTeachers(
+    timetableSlotId: number | string,
+    teacherMembershipIds: number[],
+    queryRunner?: QueryRunner,
+  ): Promise<void> {
+    if (queryRunner) {
+      const executor = createSqlQueryExecutor(queryRunner);
+      await executor.query(`DELETE FROM timetable_slot_teachers WHERE timetable_slot_id = $1`, [
+        timetableSlotId,
+      ]);
+      for (const membershipId of teacherMembershipIds) {
+        await executor.query(
+          `INSERT INTO timetable_slot_teachers (timetable_slot_id, teacher_membership_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [timetableSlotId, membershipId],
+        );
+      }
+      return;
+    }
+
+    await queryDataSource(
+      this.dataSource,
+      `DELETE FROM timetable_slot_teachers WHERE timetable_slot_id = $1`,
+      [timetableSlotId],
+    );
+    for (const membershipId of teacherMembershipIds) {
+      await queryDataSource(
+        this.dataSource,
+        `INSERT INTO timetable_slot_teachers (timetable_slot_id, teacher_membership_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [timetableSlotId, membershipId],
+      );
+    }
   }
 
   async update(

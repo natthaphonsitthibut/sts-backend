@@ -523,13 +523,13 @@ async function main() {
         Boolean(
           await evaluate(
             client,
-            `document.querySelector('button[id^="classrooms-"]') &&
-             !document.querySelector('button[id^="classrooms-"]').disabled`,
+            `document.querySelector('input[id^="classrooms-"]') &&
+             !document.querySelector('input[id^="classrooms-"]').disabled`,
           ),
         ),
       'Curriculum classroom MultiSelect did not become ready',
     );
-    await evaluate(client, `document.querySelector('button[id^="classrooms-"]').focus()`);
+    await evaluate(client, `document.querySelector('input[id^="classrooms-"]').focus()`);
     await client.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown' });
     await client.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown' });
     await waitFor(
@@ -581,6 +581,38 @@ async function main() {
       );
       throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
     }
+    // Typing must narrow the list: a school's teacher list is far longer than
+    // the panel, so a picker that only scrolls is unusable in practice.
+    const searchNarrowed = await evaluate(
+      client,
+      `(async () => {
+        const input = document.querySelector('input[id^="classrooms-"]');
+        input.focus();
+        const before = document.querySelectorAll('[role="option"]').length;
+        const label = document.querySelector('[role="option"]')?.textContent?.trim() ?? '';
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(input, label);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const after = document.querySelectorAll('[role="option"]').length;
+        setter?.call(input, 'ไม่มีทางตรงกับอะไรเลย');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const none = document.querySelectorAll('[role="option"]').length;
+        setter?.call(input, '');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return { before, after, none, label };
+      })()`,
+    );
+    assert(
+      searchNarrowed.before > 0 &&
+        searchNarrowed.after > 0 &&
+        searchNarrowed.after <= searchNarrowed.before &&
+        searchNarrowed.none === 0,
+      `MultiSelect search did not filter its options: ${JSON.stringify(searchNarrowed)}`,
+    );
+
     await client.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape' });
     await client.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape' });
     await waitFor(
@@ -589,7 +621,7 @@ async function main() {
           await evaluate(
             client,
             `!document.querySelector('[role="listbox"]') &&
-             document.activeElement?.matches('button[id^="classrooms-"]')`,
+             document.activeElement?.matches('input[id^="classrooms-"]')`,
           ),
         ),
       'MultiSelect Escape did not close and return focus to its trigger',
@@ -604,7 +636,7 @@ async function main() {
           'teacher card color updates every subject card for the shared classroom',
           'teacher-link roster sorting reaches the server',
           'the LINE verification link is copyable wherever sending over LINE is offered',
-          'curriculum MultiSelect supports ArrowDown, Enter and Escape with focus restoration',
+          'curriculum MultiSelect filters as you type and supports ArrowDown, Enter and Escape',
         ],
       }),
     );

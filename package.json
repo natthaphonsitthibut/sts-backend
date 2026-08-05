@@ -24,6 +24,7 @@
     "roles:verify-migration-parity": "ts-node -r tsconfig-paths/register -r dotenv/config src/scripts/verify_role_scope_migration_parity.ts",
     "task-links:repair-token-encryption": "ts-node -r tsconfig-paths/register -r dotenv/config src/scripts/repair_task_link_token_encryption.ts",
     "demo:backfill-absences": "ts-node -r tsconfig-paths/register -r dotenv/config src/scripts/backfill_demo_absences.ts",
+    "curriculum:backfill-subject-assignments": "ts-node -r tsconfig-paths/register -r dotenv/config src/scripts/backfill_curriculum_subject_assignments.ts",
     "risk-profiles:recalculate": "ts-node -r tsconfig-paths/register -r dotenv/config src/scripts/recalculate_risk_profiles.ts",
     "task-links:repair-token-encryption:dry-run": "pnpm task-links:repair-token-encryption -- --dry-run",
     "smoke:attendance-operations": "DB_NAME=sts_smoke REDIS_URL= node scripts/smoke-attendance-operations.js",

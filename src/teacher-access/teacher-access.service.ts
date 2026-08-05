@@ -53,6 +53,7 @@ import {
   TEACHER_ACCESS_LINK_PATH,
   TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY,
   TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY,
+  TEACHER_ACCESS_NO_ASSIGNMENT_REASON,
   type TeacherAccessExpiryPolicy,
   type TeacherAccessStepUpPolicy,
   type TeacherAccessCapability,
@@ -352,7 +353,7 @@ export class TeacherAccessService {
       throw new BadRequestException('ครูและภาคเรียนต้องอยู่โรงเรียนเดียวกัน');
     }
     if (input.assignments.length === 0) {
-      throw new BadRequestException('ครูคนนี้ยังไม่มีห้องหรือรายวิชาในภาคเรียนนี้');
+      throw new BadRequestException(`ครูคนนี้${TEACHER_ACCESS_NO_ASSIGNMENT_REASON}`);
     }
 
     const capabilities = this.capabilitiesForAssignments(input.assignments);
@@ -511,7 +512,7 @@ export class TeacherAccessService {
         return { teacherMembershipId, reason: 'ครูไม่ได้อยู่ในรายชื่อครูที่เปิดใช้งาน' };
       }
       if (Number(row.assignment_count) === 0) {
-        return { teacherMembershipId, reason: 'ยังไม่มีห้องหรือรายวิชาในภาคเรียนนี้' };
+        return { teacherMembershipId, reason: TEACHER_ACCESS_NO_ASSIGNMENT_REASON };
       }
       return { teacherMembershipId, reason: 'สร้างลิงก์ให้ครูคนนี้ไม่ได้ในขณะนี้' };
     });
@@ -1599,7 +1600,10 @@ export class TeacherAccessService {
    */
   private grantActor(context: ActiveTeacherGrantContext): AuthenticatedRequestUser {
     return {
-      id: context.teacherUserId,
+      // Teachers created without a login account have no user_id; the real
+      // identity is the grant + teacherUsername captured in audit metadata.
+      id: context.teacherUserId ?? 0,
+      teacher_membership_id: Number(context.teacherMembershipId),
       username: context.teacherUsername,
       roles: ['TEACHER'],
       permissions: ['students', 'student-observations'],

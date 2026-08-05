@@ -53,11 +53,19 @@ export class ListCurriculumSubjectsQueryDto extends PaginatedSearchQueryDto {
  * One teacher and the classrooms they cover for this subject — the repeatable
  * "จัดสรรครูผู้สอน" block on the form.
  */
+/**
+ * One block of "these teachers cover these classrooms". A subject can be taught
+ * by more than one teacher in the same room, so both sides are lists; the rows
+ * stored underneath stay a flat teacher × classroom pairing either way.
+ */
 export class CurriculumTeacherAssignmentDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'กรุณาเลือกครูผู้สอนอย่างน้อย 1 คน' })
+  @ArrayMaxSize(200)
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  teacherMembershipId!: number;
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  teacherMembershipIds!: number[];
 
   @IsArray()
   @ArrayMinSize(1, { message: 'กรุณาเลือกห้องเรียนที่รับผิดชอบอย่างน้อย 1 ห้อง' })

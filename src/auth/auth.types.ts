@@ -13,6 +13,7 @@ export interface DataScope {
 
 export interface AuthenticatedRequestUser {
   id: number;
+  teacher_membership_id?: number | null;
   username: string;
   roles: string[];
   permissions: string[];

@@ -45,7 +45,7 @@ import type {
 
 interface WriteActorContext {
   kind: 'USER' | 'TEACHER_ACCESS';
-  userId: number;
+  userId: number | null;
   username: string;
   teacherMembershipId: number | null;
   grantId: string | null;
