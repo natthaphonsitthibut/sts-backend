@@ -25,7 +25,15 @@ export class UserAuthService {
     const roleMap = await this.usersPolicyService.getRoleMap();
     const user = await this.usersRepository.findUserByUsername(username.trim());
 
-    if (!user || typeof user.password !== 'string') {
+    if (!user || user.status !== 'ACTIVE' || typeof user.password !== 'string') {
+      return null;
+    }
+
+    if (user.role === 'STUDENT' || user.roles?.includes('STUDENT') === true) {
+      return null;
+    }
+
+    if (this.isTemporaryPasswordExpired(user)) {
       return null;
     }
 
@@ -37,5 +45,17 @@ export class UserAuthService {
     const { password: _password, ...safeUser } = user;
     void _password;
     return this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
+  }
+
+  private isTemporaryPasswordExpired(user: {
+    must_change_password?: boolean | null;
+    temporary_password_expires_at?: string | Date | null;
+  }): boolean {
+    if (user.must_change_password !== true || !user.temporary_password_expires_at) {
+      return false;
+    }
+
+    const expiresAt = new Date(user.temporary_password_expires_at);
+    return !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date();
   }
 }

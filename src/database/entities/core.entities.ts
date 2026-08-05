@@ -2,7 +2,7 @@ import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity({ name: 'schools' })
 export class SchoolEntity {
-  @PrimaryGeneratedColumn({ name: 'id' })
+  @PrimaryColumn({ name: 'id', type: 'integer' })
   id!: number;
 
   @Column({ name: 'name', type: 'text' })
@@ -16,6 +16,9 @@ export class SchoolEntity {
 
   @Column({ name: 'sub_district', type: 'text', nullable: true })
   subDistrict!: string | null;
+
+  @Column({ name: 'school_status', type: 'varchar', length: 16, default: 'ACTIVE' })
+  schoolStatus!: 'ACTIVE' | 'INACTIVE';
 }
 
 @Entity({ name: 'grade_levels' })

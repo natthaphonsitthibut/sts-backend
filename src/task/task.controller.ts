@@ -15,10 +15,17 @@ import {
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
 import type { Request } from 'express';
-import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
+import { AuthGuard, CurrentUser, PermissionsGuard, Public, RequirePermission } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
+import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
-import { CreateTaskDto, SaveTaskAttendanceDto, SaveTaskSubmissionDto } from './dto/task.dto';
+import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decorators';
+import {
+  CreateTaskDto,
+  GetVisitLinksQueryDto,
+  SaveTaskAttendanceDto,
+  SaveTaskSubmissionDto,
+} from './dto/task.dto';
 import {
   getHeaderValue,
   getTaskErrorMessage,
@@ -57,12 +64,24 @@ export class TaskController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('login-links')
-  @Get('login-links')
-  async getLoginLinks(@Req() req: RequestWithActor) {
-    return await this.taskService.getLoginLinks(req.user);
+  @RequirePermission('review-cases')
+  @Get('visit-links')
+  async getVisitLinks(@Req() req: RequestWithActor, @Query() query: GetVisitLinksQueryDto) {
+    return await this.taskService.getVisitLinks(req.user, {
+      status: query.status,
+      searchTerm: query.searchTerm?.trim() || undefined,
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
+      gradeLevelId: query.gradeLevelId,
+      room: query.room?.trim() || undefined,
+      page: query.page,
+      limit: query.limit,
+    });
   }
 
+  @Public()
   @Get(':token')
   async getTask(@Param('token') token: string, @Req() req: Request) {
     const sessionToken = getHeaderValue(req.headers['x-magic-session']);
@@ -76,51 +95,63 @@ export class TaskController {
     return task;
   }
 
+  @Public()
   @Get(':token/students')
   async getTaskStudents(@Param('token') token: string) {
     return await this.taskService.getTaskStudents(token);
   }
 
-  @Get(':token/login-verify')
-  async verifyMagicLogin(@Param('token') token: string, @Req() req: Request) {
-    try {
-      const sessionToken = getHeaderValue(req.headers['x-magic-session']);
-      return await this.taskService.verifyMagicLogin(token, sessionToken);
-    } catch (err) {
-      throw new HttpException(getTaskErrorMessage(err), HttpStatus.UNAUTHORIZED);
-    }
-  }
-
+  @Public()
   @Get(':token/history')
   async getTaskHistory(@Param('token') token: string, @Query('date') date: string) {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || getBangkokDateString();
     return await this.taskService.getTaskHistory(token, targetDate);
   }
 
   @Get(':taskId/chain')
-  async getTaskChain(@Param('taskId') taskId: string) {
-    const result = await this.taskService.getTaskChain(taskId);
+  @UseGuards(AuthGuard)
+  async getTaskChain(
+    @Param('taskId') taskId: string,
+    @CurrentUser() actor: RequestWithActor['user'],
+  ) {
+    const result = await this.taskService.getTaskChain(actor, taskId);
     if (!result) {
       throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
     }
     return result;
   }
 
+  @Public()
   @Post(':token/attendance')
-  async saveTaskAttendance(@Param('token') token: string, @Body() body: SaveTaskAttendanceDto) {
-    return await this.taskService.saveTaskAttendance(token, body.records);
+  async saveTaskAttendance(
+    @Param('token') token: string,
+    @Body() body: SaveTaskAttendanceDto,
+    @Req() req: Request,
+  ) {
+    const sessionToken = getHeaderValue(req.headers['x-magic-session']);
+    return await this.taskService.saveTaskAttendance(token, body, sessionToken);
   }
 
+  @Public()
   @Post(':token/submission')
-  async saveTaskSubmission(@Param('token') token: string, @Body() body: SaveTaskSubmissionDto) {
-    return await this.taskService.saveTaskSubmission(token, body);
+  async saveTaskSubmission(
+    @Param('token') token: string,
+    @Body() body: SaveTaskSubmissionDto,
+    @Req() req: Request,
+  ) {
+    const sessionToken = getHeaderValue(req.headers['x-magic-session']);
+    return await this.taskService.saveTaskSubmission(token, body, sessionToken);
   }
 
+  @Public()
+  @ThrottleOtpRequest()
   @Post(':token/otp')
   async requestOtp(@Param('token') token: string) {
     return await this.taskService.requestOtp(token);
   }
 
+  @Public()
+  @ThrottleOtpVerify()
   @Post(':token/verify')
   async verifyOtp(@Param('token') token: string, @Body('otp') otp: string) {
     return await this.taskService.verifyOtp(token, otp);
@@ -129,7 +160,8 @@ export class TaskController {
   @Post(':taskId/delete')
   @Post('delete/:taskId')
   @Delete(':taskId')
-  async deleteTask(@Param('taskId') taskId: string) {
-    return await this.taskService.deleteTask(taskId);
+  @UseGuards(AuthGuard)
+  async deleteTask(@Param('taskId') taskId: string, @Req() req: RequestWithActor) {
+    return await this.taskService.deleteTask(taskId, req.user, req.ip ?? null);
   }
 }

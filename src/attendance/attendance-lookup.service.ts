@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import type { DataScope } from '../common/utils/authorization';
 import { AttendanceRepository } from './attendance.repository';
 
 @Injectable()
@@ -10,12 +11,24 @@ export class AttendanceLookupService {
     return { success: true, data };
   }
 
-  async getSchools(province?: string, district?: string, subDistrict?: string) {
-    const data = await this.attendanceRepository.listSchools({
-      province,
-      district,
-      subDistrict,
-    });
+  async getSchools(
+    province?: string,
+    district?: string,
+    subDistrict?: string,
+    searchTerm?: string,
+    limit?: number,
+    userScope?: DataScope,
+  ) {
+    const data = await this.attendanceRepository.listSchools(
+      {
+        province,
+        district,
+        subDistrict,
+        searchTerm,
+        limit,
+      },
+      userScope,
+    );
 
     return { success: true, data };
   }
@@ -37,14 +50,18 @@ export class AttendanceLookupService {
     };
   }
 
-  async getRooms(gradeLabel: string, schoolId?: string) {
+  async getRooms(gradeLabel: string, schoolId?: string, userScope?: DataScope) {
     const normalizedGrade = gradeLabel.trim();
     if (!normalizedGrade) {
       throw new BadRequestException('Grade is required');
     }
 
     const normalizedSchoolId = this.parseOptionalInteger(schoolId, 'schoolId');
-    const rows = await this.attendanceRepository.listRooms(normalizedGrade, normalizedSchoolId);
+    const rows = await this.attendanceRepository.listRooms(
+      normalizedGrade,
+      normalizedSchoolId,
+      userScope,
+    );
 
     return {
       success: true,

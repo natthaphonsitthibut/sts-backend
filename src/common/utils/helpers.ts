@@ -21,6 +21,11 @@ export function maskName(name: string): string {
   return name.slice(0, 2) + '****';
 }
 
+/** Escape LIKE/ILIKE wildcards so user input matches literally (pair with ESCAPE '\\'). */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (wildcard) => `\\${wildcard}`);
+}
+
 export function sanitize(str: string): string {
   if (!str) return str;
   return String(str).replace(

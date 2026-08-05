@@ -7,7 +7,9 @@ import {
   VALID_PERMISSION_IDS,
   getRoleScopeValidationError,
   type RoleScopeMode,
+  type RoleScopePolicy,
 } from '../auth/permissions.constants';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import type {
   CreateRoleGroupDto,
   CreateUserDto,
@@ -57,6 +59,7 @@ export class UsersPolicyService {
     };
 
     return {
+      global: source.global === true,
       provinces: normalizeArray(source.provinces),
       districts: normalizeArray(source.districts),
       sub_districts: normalizeArray(source.sub_districts),
@@ -97,15 +100,21 @@ export class UsersPolicyService {
       rank: Number(row.rank) || 0,
       default_permissions: this.normalizePermissionList(row.default_permissions),
       scope_mode: this.normalizeScopeMode(row.scope_mode),
+      scope_policy: row.scope_policy === 'OWN_ONLY' ? 'OWN_ONLY' : 'ASSIGNABLE',
+      is_assignable: row.is_assignable !== false,
       is_system: row.is_system === true,
+      school_id: row.school_id == null ? null : Number(row.school_id),
       user_count: row.user_count !== undefined ? Number(row.user_count) || 0 : undefined,
       login_link_count:
         row.login_link_count !== undefined ? Number(row.login_link_count) || 0 : undefined,
     };
   }
 
-  async getRoleDefinitions(includeUsage = false): Promise<RoleDefinition[]> {
-    const rows = await this.usersRepository.listRoleRows(includeUsage);
+  async getRoleDefinitions(
+    includeUsage = false,
+    schoolId?: number | null,
+  ): Promise<RoleDefinition[]> {
+    const rows = await this.usersRepository.listRoleRows(includeUsage, schoolId);
     return rows.map((row) => this.mapRoleRow(row));
   }
 
@@ -124,7 +133,7 @@ export class UsersPolicyService {
       return dbRank;
     }
 
-    return ROLE_RANKS[role] || 0;
+    return roleMap ? 0 : ROLE_RANKS[role] || 0;
   }
 
   getRoleLabel(role?: string | null, roleMap?: Map<string, RoleDefinition>): string {
@@ -132,7 +141,7 @@ export class UsersPolicyService {
       return '';
     }
 
-    return roleMap?.get(role)?.label || ROLE_LABELS[role] || role;
+    return roleMap?.get(role)?.label || (roleMap ? role : ROLE_LABELS[role] || role);
   }
 
   getRoleDefaultPermissions(role?: string | null, roleMap?: Map<string, RoleDefinition>): string[] {
@@ -145,7 +154,7 @@ export class UsersPolicyService {
       return dbPermissions;
     }
 
-    return Array.from(new Set(ROLE_BASELINES[role] || []));
+    return roleMap ? [] : Array.from(new Set(ROLE_BASELINES[role] || []));
   }
 
   getRoleScopeMode(role?: string | null, roleMap?: Map<string, RoleDefinition>): RoleScopeMode {
@@ -154,6 +163,13 @@ export class UsersPolicyService {
     }
 
     return roleMap?.get(role)?.scope_mode || 'flexible';
+  }
+
+  getRoleScopePolicy(role?: string | null, roleMap?: Map<string, RoleDefinition>): RoleScopePolicy {
+    if (!role) {
+      return 'ASSIGNABLE';
+    }
+    return roleMap?.get(role)?.scope_policy || 'ASSIGNABLE';
   }
 
   getPrimaryRole(user?: { role?: string | null; roles?: string[] | null } | null): string | null {
@@ -191,15 +207,7 @@ export class UsersPolicyService {
 
   isScopeGlobal(scope: unknown): boolean {
     const normalized = this.normalizeScope(scope);
-    return (
-      normalized.provinces.length === 0 &&
-      normalized.districts.length === 0 &&
-      normalized.sub_districts.length === 0 &&
-      normalized.school_ids.length === 0 &&
-      normalized.grade_levels.length === 0 &&
-      normalized.room_ids.length === 0 &&
-      normalized.own_only !== true
-    );
+    return normalized.global === true;
   }
 
   isScopeSubsetOfActor(targetScope: unknown, actorScope: unknown): boolean {
@@ -207,9 +215,16 @@ export class UsersPolicyService {
       return true;
     }
 
+    if (isUnconfiguredDataScope(actorScope)) {
+      return false;
+    }
+
     const actor = this.normalizeScope(actorScope);
     const target = this.normalizeScope(targetScope);
-    const keys: Array<keyof Omit<DataScope, 'own_only'>> = [
+    if (target.global === true) {
+      return false;
+    }
+    const keys: Array<keyof Omit<DataScope, 'own_only' | 'global'>> = [
       'provinces',
       'districts',
       'sub_districts',
@@ -372,9 +387,26 @@ export class UsersPolicyService {
     const requestedRole = this.normalizeRole(data);
     const actorRank = this.getRoleRank(actorRole, currentRoleMap);
     const requestedRank = this.getRoleRank(requestedRole, currentRoleMap);
+    const requestedDefinition = currentRoleMap.get(requestedRole);
+
+    if (requestedDefinition?.is_assignable === false) {
+      throw new BadRequestException(`ตำแหน่ง ${requestedRole} ไม่เปิดให้กำหนดกับบัญชีผู้ใช้`);
+    }
 
     if (requestedRank === 0) {
       throw new ForbiddenException(`ไม่สามารถกำหนดตำแหน่ง ${requestedRole} ได้`);
+    }
+
+    if (requestedDefinition?.school_id != null) {
+      const targetScope = this.normalizeScope(data.data_scope);
+      const schoolIds = targetScope.school_ids.map(Number).filter(Number.isInteger);
+      if (
+        targetScope.global === true ||
+        schoolIds.length !== 1 ||
+        schoolIds[0] !== requestedDefinition.school_id
+      ) {
+        throw new ForbiddenException('กลุ่มเมนูนี้ใช้ได้เฉพาะผู้ใช้ในโรงเรียนเจ้าของกลุ่ม');
+      }
     }
 
     const exceedsRoleAuthority = options.allowEqualRole
@@ -405,6 +437,7 @@ export class UsersPolicyService {
 
     const roleScopeError = getRoleScopeValidationError(requestedRole, data.data_scope, {
       scopeMode: this.getRoleScopeMode(requestedRole, currentRoleMap),
+      scopePolicy: this.getRoleScopePolicy(requestedRole, currentRoleMap),
       roleLabel: this.getRoleLabel(requestedRole, currentRoleMap),
     });
     if (roleScopeError) {
@@ -421,6 +454,7 @@ export class UsersPolicyService {
     rank: number;
     default_permissions: string[];
     scope_mode: RoleScopeMode;
+    scope_policy: RoleScopePolicy;
   } {
     const name = existing?.name || this.normalizeRoleName(data.name);
     if (!name) {
@@ -457,6 +491,7 @@ export class UsersPolicyService {
       rank,
       default_permissions: defaultPermissions,
       scope_mode: this.normalizeScopeMode(data.scope_mode),
+      scope_policy: existing?.scope_policy || 'ASSIGNABLE',
     };
   }
 }

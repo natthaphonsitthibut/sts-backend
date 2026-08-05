@@ -1,11 +1,11 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
-import { runDatabaseBootstrap } from '../bootstrap-sql';
+import { MIGRATION_BASELINE_202603_SQL } from '../migration-baseline-202603';
 
 export class CreateBaselineSchema20260328145500 implements MigrationInterface {
   name = 'CreateBaselineSchema20260328145500';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await runDatabaseBootstrap(queryRunner);
+    await queryRunner.query(MIGRATION_BASELINE_202603_SQL);
   }
 
   public async down(): Promise<void> {

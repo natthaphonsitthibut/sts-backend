@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
-  ConsecutiveAbsentStudentRow,
+  ActiveAbsenceCaseRow,
+  CumulativeAbsentStudentRow,
   CreateAutomatedCaseInput,
   CreatedCaseRow,
   OpenAbsenceCaseRow,
@@ -10,6 +11,7 @@ import type {
   QueryResultLike,
   SettingValueRow,
 } from './automation.types';
+import { ACTIVE_CASE_STATUSES, ABSENCE_CASE_REASON_PREFIXES } from './automation.constants';
 
 @Injectable()
 export class AutomationRepository {
@@ -50,34 +52,59 @@ export class AutomationRepository {
     return result.rows[0]?.setting_value ?? null;
   }
 
-  async listConsecutiveAbsentStudents(
+  /**
+   * Students whose cumulative absent days reached the threshold, using the same
+   * day verdict as ประวัติการเข้าเรียน: ลา (status 4) is not measured, มา/สาย
+   * count as attended, and a day is ขาด only when every measured record that day
+   * is unattended. Days need not be consecutive.
+   */
+  async listCumulativeAbsentStudents(
     thresholdDays: number,
+    asOfDate: string,
     executor?: QueryExecutor,
-  ): Promise<ConsecutiveAbsentStudentRow[]> {
+  ): Promise<CumulativeAbsentStudentRow[]> {
     const queryExecutor = this.getExecutor(executor);
-    const result = await queryExecutor.query<ConsecutiveAbsentStudentRow>(
+    const result = await queryExecutor.query<CumulativeAbsentStudentRow>(
       `
-        WITH ranked_attendance AS (
+        WITH current_enrollments AS (
+          SELECT enrollment.student_uuid
+          FROM student_term enrollment
+          JOIN student_current_enrollment_resolution current_enrollment
+            ON current_enrollment.person_uuid = enrollment.person_uuid
+           AND current_enrollment.selected_student_uuid = enrollment.student_uuid
+           AND current_enrollment.resolution_state = 'ACTIVE'
+          WHERE enrollment.deleted_at IS NULL
+        ), classified_days AS (
           SELECT
-            "PersonID_Onec",
-            "AttendanceDate",
-            "AttendanceStatus",
-            ROW_NUMBER() OVER (
-              PARTITION BY "PersonID_Onec"
-              ORDER BY "AttendanceDate" DESC, "AttendanceID" DESC
-            ) AS rn
-          FROM attendance
+            a.student_uuid,
+            a."AttendanceDate"::date AS attendance_date,
+            (
+              COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4) > 0
+              AND COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0
+            ) AS is_absent_day
+          FROM attendance a
+          JOIN student_term enrollment
+            ON enrollment.student_uuid = a.student_uuid
+           AND enrollment."AcademicYear_Onec" = a."AcademicYear_Onec"
+           AND enrollment."Semester_Onec" = a."Semester_Onec"
+           AND enrollment.deleted_at IS NULL
+          JOIN current_enrollments current_enrollment
+            ON current_enrollment.student_uuid = enrollment.student_uuid
+          WHERE a.student_uuid IS NOT NULL
+            AND a.session_kind IN ('DAILY', 'SUBJECT')
+            AND a."AttendanceDate"::date <= $2::date
+          GROUP BY a.student_uuid, a."AttendanceDate"
         ),
-        recent_consecutive_absences AS (
-          SELECT "PersonID_Onec", COUNT(*) AS consecutive_days
-          FROM ranked_attendance
-          WHERE rn <= $1 AND "AttendanceStatus" = 2
-          GROUP BY "PersonID_Onec"
+        candidates AS (
+          SELECT student_uuid, COUNT(*)::int AS absent_days
+          FROM classified_days
+          WHERE is_absent_day
+          GROUP BY student_uuid
           HAVING COUNT(*) >= $1
         )
         SELECT
-          r."PersonID_Onec" AS person_id_onec,
-          r.consecutive_days::int AS consecutive_days,
+          r.student_uuid,
+          r.absent_days,
           s."FirstName_Onec" AS first_name_onec,
           s."LastName_Onec" AS last_name_onec,
           s."SchoolID_Onec" AS school_id_onec,
@@ -88,46 +115,110 @@ export class AutomationRepository {
           s."DistrictNameThai_Onec" AS district_name_thai_onec,
           s."ProvinceNameThai_Onec" AS province_name_thai_onec,
           sc.name AS school_name
-        FROM recent_consecutive_absences r
-        JOIN student_term s ON r."PersonID_Onec" = s."PersonID_Onec"
+        FROM candidates r
+        JOIN student_term s ON r.student_uuid = s.student_uuid
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       `,
-      [thresholdDays],
+      [thresholdDays, asOfDate],
     );
 
     return result.rows;
+  }
+
+  async listEvaluableStudentUuids(
+    studentUuids: string[],
+    asOfDate: string,
+    executor?: QueryExecutor,
+  ): Promise<string[]> {
+    if (studentUuids.length === 0) return [];
+    const result = await this.getExecutor(executor).query<{ student_uuid: string }>(
+      `
+        WITH requested AS (
+          SELECT UNNEST($1::uuid[]) AS student_uuid
+        ), current_enrollments AS (
+          SELECT s.student_uuid, s."AcademicYear_Onec" AS academic_year,
+                 s."Semester_Onec" AS semester
+          FROM student_term s
+          JOIN requested requested_student ON requested_student.student_uuid = s.student_uuid
+          JOIN student_current_enrollment_resolution current_enrollment
+            ON current_enrollment.person_uuid = s.person_uuid
+           AND current_enrollment.selected_student_uuid = s.student_uuid
+           AND current_enrollment.resolution_state = 'ACTIVE'
+          WHERE s.deleted_at IS NULL
+        )
+        SELECT DISTINCT attendance.student_uuid
+        FROM attendance
+        JOIN current_enrollments enrollment
+          ON enrollment.student_uuid = attendance.student_uuid
+         AND enrollment.academic_year = attendance."AcademicYear_Onec"
+         AND enrollment.semester = attendance."Semester_Onec"
+        WHERE attendance.session_kind IN ('DAILY', 'SUBJECT')
+          AND attendance."AttendanceDate"::date <= $2::date
+      `,
+      [studentUuids, asOfDate],
+    );
+    return result.rows.map((row) => row.student_uuid);
   }
 
   async listOpenAbsenceCases(executor?: QueryExecutor): Promise<OpenAbsenceCaseRow[]> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<OpenAbsenceCaseRow>(
       `
-        SELECT id, student_name
+        SELECT id, student_name, student_uuid, school_id
         FROM cases
         WHERE status = 'OPEN'
-          AND reason_flagged LIKE 'ขาดเรียนติดต่อกัน%'
+          AND deleted_at IS NULL
+          AND reason_flagged LIKE ANY($1::text[])
       `,
+      [[...ABSENCE_CASE_REASON_PREFIXES]],
     );
 
     return result.rows;
   }
 
-  async deleteOpenCaseById(id: number, executor?: QueryExecutor): Promise<void> {
+  async deleteOpenCaseById(id: number, executor?: QueryExecutor): Promise<boolean> {
     const queryExecutor = this.getExecutor(executor);
-    await queryExecutor.query('DELETE FROM cases WHERE id = $1 AND status = $2', [id, 'OPEN']);
+    // Soft-delete: a false-positive auto-case (attendance later corrected) is
+    // tombstoned, not hard-deleted, so the create/cancel trail survives for
+    // audit. deleted_by stays null — this is a system action, not a user.
+    const result = await queryExecutor.query(
+      `UPDATE cases SET deleted_at = now() WHERE id = $1 AND status = $2 AND deleted_at IS NULL`,
+      [id, 'OPEN'],
+    );
+    return result.rowCount > 0;
   }
 
-  async findOpenCaseByStudentName(
+  async findActiveAbsenceCaseByStudent(
+    studentUuid: string,
     studentName: string,
+    schoolId: number | null,
     executor?: QueryExecutor,
-  ): Promise<number | null> {
+  ): Promise<ActiveAbsenceCaseRow | null> {
     const queryExecutor = this.getExecutor(executor);
-    const result = await queryExecutor.query<CreatedCaseRow>(
-      'SELECT id FROM cases WHERE student_name = $1 AND status = $2',
-      [studentName, 'OPEN'],
+    // Match by stable student_uuid; fall back to name only for legacy rows
+    // created before student_uuid was populated (student_uuid IS NULL).
+    const result = await queryExecutor.query<ActiveAbsenceCaseRow>(
+      `
+        SELECT id, risk_tier FROM cases
+        WHERE status = ANY($1::text[])
+          AND deleted_at IS NULL
+          AND reason_flagged LIKE ANY($5::text[])
+          AND ($4::int IS NULL OR school_id = $4)
+          AND (
+            (student_uuid IS NOT NULL AND student_uuid = $2)
+            OR (student_uuid IS NULL AND student_name = $3)
+          )
+      `,
+      [
+        [...ACTIVE_CASE_STATUSES],
+        studentUuid,
+        studentName,
+        schoolId,
+        [...ABSENCE_CASE_REASON_PREFIXES],
+      ],
     );
 
-    return result.rows[0]?.id ?? null;
+    return result.rows[0] ?? null;
   }
 
   async createAutomatedCase(
@@ -139,15 +230,28 @@ export class AutomationRepository {
       `
         INSERT INTO cases (
           student_name,
+          student_uuid,
+          school_id,
           student_school,
           student_address,
           reason_flagged,
+          risk_tier,
+          sla_due_at,
           status
         )
-        VALUES ($1, $2, $3, $4, 'OPEN')
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')
         RETURNING id
       `,
-      [data.studentName, data.schoolName, data.studentAddress, data.reason],
+      [
+        data.studentName,
+        data.studentUuid,
+        data.schoolId,
+        data.schoolName,
+        data.studentAddress,
+        data.reason,
+        data.riskTier,
+        data.slaDueAt.toISOString(),
+      ],
     );
 
     return result.rows[0].id;

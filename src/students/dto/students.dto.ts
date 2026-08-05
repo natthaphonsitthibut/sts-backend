@@ -1,4 +1,19 @@
-import { IsOptional, IsString } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Min,
+} from 'class-validator';
+import { STUDENT_ENROLLMENT_STATES, STUDENT_RISK_TIER_FILTERS } from '../students.types';
+
+/** Page sizes the student list UI offers; keep in sync with the frontend control. */
+export const STUDENT_PAGE_SIZES = [10, 20, 50] as const;
+export const DEFAULT_STUDENT_PAGE_SIZE = 20;
 
 export class GetStudentsQueryDto {
   @IsOptional()
@@ -15,5 +30,103 @@ export class GetStudentsQueryDto {
 
   @IsOptional()
   @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
   searchTerm?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  student_status_code?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  studentStatusCode?: number;
+
+  @IsOptional()
+  @IsIn(STUDENT_ENROLLMENT_STATES)
+  enrollmentState?: string;
+
+  @IsOptional()
+  @IsIn(STUDENT_RISK_TIER_FILTERS)
+  riskTier?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsIn(STUDENT_PAGE_SIZES)
+  limit?: number;
+}
+
+/** Scoped distinct grade/room options for the student-list filter dropdowns. */
+export class GetStudentFilterOptionsQueryDto {
+  @IsOptional()
+  @IsString()
+  schoolId?: string;
+
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
+  grade?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  student_status_code?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  studentStatusCode?: number;
+
+  @IsOptional()
+  @IsIn(STUDENT_ENROLLMENT_STATES)
+  enrollmentState?: string;
+}
+
+export class GetStudentSubjectAttendanceQueryDto {
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsDateString({ strict: true })
+  date!: string;
+}
+
+export class UpdateStudentPhotoDto {
+  // Multipart form fields arrive as strings, so the flag needs coercing before
+  // @IsBoolean sees it.
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  removePhoto?: boolean;
 }

@@ -7,9 +7,10 @@ import { UsersPolicyService } from './users-policy.service';
 import { RoleGroupsService } from './role-groups.service';
 import { UserAuthService } from './user-auth.service';
 import { PasswordMigrationService } from './password-migration.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, NotificationsModule],
   controllers: [UsersController],
   providers: [
     UsersRepository,

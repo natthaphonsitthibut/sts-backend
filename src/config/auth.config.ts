@@ -1,0 +1,70 @@
+import { registerAs } from '@nestjs/config';
+
+export type CookieSameSite = 'lax' | 'strict' | 'none';
+
+export interface AuthRuntimeConfig {
+  /** Secret for signing the admin session JWT (httpOnly cookie). */
+  jwtSecret: string;
+  /** Secret for the magic-link / virtual-student signed tokens (HMAC). */
+  sessionSecret: string;
+  /** Lifetime of an OTP-verified magic session before re-verification is required. */
+  magicSessionTtlSeconds: number;
+  /** Validity window of a one-time OTP code itself (request → verify). */
+  otpTtlSeconds: number;
+  /** Failed OTP guesses allowed per link before it is locked (brute-force cap). */
+  otpMaxAttempts: number;
+  /** How long a link stays locked after hitting the OTP attempt cap. */
+  otpLockSeconds: number;
+  cookieName: string;
+  cookieSecure: boolean;
+  cookieSameSite: CookieSameSite;
+  tokenTtlSeconds: number;
+  thaidMode: string;
+}
+
+/**
+ * Required secret — no fallback on purpose. A missing/weak signing secret means
+ * anyone can forge a session, so the app must fail to start rather than run with
+ * a guessable default.
+ */
+function requireSecret(name: string, value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.length < 16) {
+    throw new Error(
+      `[config] ${name} must be set and at least 16 characters (no insecure default).`,
+    );
+  }
+  return trimmed;
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseSameSite(value: string | undefined): CookieSameSite {
+  const normalized = (value || 'lax').trim().toLowerCase();
+  return normalized === 'strict' || normalized === 'none' ? normalized : 'lax';
+}
+
+export function getAuthConfigFromEnv(): AuthRuntimeConfig {
+  return {
+    jwtSecret: requireSecret('JWT_SECRET', process.env.JWT_SECRET),
+    sessionSecret: requireSecret('AUTH_SESSION_SECRET', process.env.AUTH_SESSION_SECRET),
+    // OTP-verified magic session TTL — default 6h (re-OTP after, capped anyway by
+    // the link's own expiry). The instant is checked against the token's `ts`.
+    magicSessionTtlSeconds: parsePositiveInt(process.env.MAGIC_SESSION_TTL_SECONDS, 6 * 60 * 60),
+    otpTtlSeconds: parsePositiveInt(process.env.OTP_TTL_SECONDS, 10 * 60),
+    // Brute-force cap: lock a link after N wrong OTP guesses for a cool-down
+    // window. A fresh OTP request resets both (see TaskRepository.updateLinkOtp).
+    otpMaxAttempts: parsePositiveInt(process.env.OTP_MAX_ATTEMPTS, 5),
+    otpLockSeconds: parsePositiveInt(process.env.OTP_LOCK_SECONDS, 15 * 60),
+    cookieName: process.env.AUTH_COOKIE_NAME?.trim() || 'sts_session',
+    cookieSecure: (process.env.AUTH_COOKIE_SECURE || '').trim().toLowerCase() === 'true',
+    cookieSameSite: parseSameSite(process.env.AUTH_COOKIE_SAMESITE),
+    tokenTtlSeconds: parsePositiveInt(process.env.AUTH_TOKEN_TTL_SECONDS, 60 * 60 * 12),
+    thaidMode: (process.env.THAID_MODE || 'mock').trim().toLowerCase(),
+  };
+}
+
+export const authConfig = registerAs('auth', () => getAuthConfigFromEnv());

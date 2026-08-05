@@ -24,8 +24,17 @@ export class RoleEntity {
   @Column({ name: 'scope_mode', type: 'text', default: 'flexible' })
   scopeMode!: string;
 
+  @Column({ name: 'scope_policy', type: 'text', default: 'ASSIGNABLE' })
+  scopePolicy!: string;
+
+  @Column({ name: 'is_assignable', type: 'boolean', default: true })
+  isAssignable!: boolean;
+
   @Column({ name: 'is_system', type: 'boolean', default: false })
   isSystem!: boolean;
+
+  @Column({ name: 'school_id', type: 'integer', nullable: true })
+  schoolId!: number | null;
 }
 
 @Entity({ name: 'users' })
@@ -69,8 +78,29 @@ export class UserEntity {
   @Column({ name: 'data_scope', type: 'jsonb', default: () => "'{}'::jsonb" })
   dataScope!: Record<string, unknown>;
 
+  @Column({ name: 'person_uuid', type: 'uuid', nullable: true })
+  personUuid!: string | null;
+
   @Column({ name: 'must_change_password', type: 'boolean', default: false })
   mustChangePassword!: boolean;
+
+  @Column({ name: 'temporary_password_issued_at', type: 'timestamptz', nullable: true })
+  temporaryPasswordIssuedAt!: Date | null;
+
+  @Column({ name: 'temporary_password_expires_at', type: 'timestamptz', nullable: true })
+  temporaryPasswordExpiresAt!: Date | null;
+
+  @Column({ name: 'deactivated_at', type: 'timestamptz', nullable: true })
+  deactivatedAt!: Date | null;
+
+  @Column({ name: 'deactivated_by', type: 'integer', nullable: true })
+  deactivatedBy!: number | null;
+
+  @Column({ name: 'deactivation_reason_code', type: 'varchar', length: 32, nullable: true })
+  deactivationReasonCode!: string | null;
+
+  @Column({ name: 'deactivation_note', type: 'varchar', length: 255, nullable: true })
+  deactivationNote!: string | null;
 
   @Column({ name: 'created_at', type: 'timestamp', nullable: true })
   createdAt!: Date | null;

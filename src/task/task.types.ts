@@ -12,6 +12,8 @@ export interface RoleDefinition {
   rank: number;
   default_permissions: string[];
   scope_mode: string;
+  scope_policy: 'ASSIGNABLE' | 'OWN_ONLY';
+  is_assignable: boolean;
   is_system: boolean;
 }
 
@@ -29,6 +31,73 @@ export interface QueryExecutor {
     sql: string,
     params?: unknown[],
   ): Promise<QueryResultLike<T>>;
+}
+
+export type RiskDashboardTier = 'HIGH' | 'WATCH' | 'NORMAL';
+export type RiskDashboardSortBy =
+  | 'risk'
+  | 'name'
+  | 'school'
+  | 'grade'
+  | 'room'
+  | 'attendance'
+  | 'openCases';
+export type RiskDashboardSortDirection = 'asc' | 'desc';
+
+export interface RiskDashboardFilters {
+  riskTier?: RiskDashboardTier;
+  searchTerm?: string;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  schoolId?: number;
+  grade?: string;
+  room?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: RiskDashboardSortBy;
+  sortDirection?: RiskDashboardSortDirection;
+}
+
+export interface RiskDashboardThresholds {
+  /** Cumulative absent days (not a streak) that make a student เสี่ยง. */
+  highAbsentDays: number;
+}
+
+export interface RiskDashboardSummary {
+  HIGH: number;
+  WATCH: number;
+  NORMAL: number;
+}
+
+export interface RiskDashboardRow extends QueryResultRow {
+  student_uuid: string;
+  student_name: string;
+  school_id: number | null;
+  school_name: string | null;
+  grade: string | null;
+  room: string | null;
+  consecutive_absent_days: number | string;
+  absent_days: number | string;
+  late_count: number | string;
+  subject_late_count: number | string;
+  school_day_count: number | string;
+  weighted_absence_days: number | string;
+  weighted_attendance_percent: number | string | null;
+  risk_tier: RiskDashboardTier;
+  risk_score: number | string;
+  open_case_count: number | string;
+  latest_open_case_id: number | string | null;
+  latest_open_case_reason: string | null;
+  latest_open_task_id: string | null;
+  latest_case_at: string | null;
+}
+
+export interface RiskDashboardResult {
+  rows: RiskDashboardRow[];
+  totalCount: number;
+  summary: RiskDashboardSummary;
+  missingProfileCount?: number;
 }
 
 export function getTaskErrorMessage(error: unknown, fallback = 'เกิดข้อผิดพลาด'): string {

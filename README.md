@@ -15,7 +15,6 @@ Backend ของระบบติดตามนักเรียน พั�
 - Prettier
 - Nodemailer
 - @nestjs/schedule
-- better-sqlite3
 - xlsx
 
 ## Current Architecture

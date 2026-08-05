@@ -7,7 +7,9 @@ import {
   ROLE_RANKS,
   VALID_PERMISSION_IDS,
   type RoleScopeMode,
+  type RoleScopePolicy,
 } from '../auth/permissions.constants';
+import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { TaskRepository } from './task.repository';
 import type { ActorContext, DataScope, NormalizedDataScope, RoleDefinition } from './task.types';
 
@@ -43,6 +45,7 @@ export class TaskPolicyService {
     };
 
     return {
+      global: source.global === true,
       provinces: normalizeArray(source.provinces),
       districts: normalizeArray(source.districts),
       sub_districts: normalizeArray(source.sub_districts),
@@ -72,7 +75,7 @@ export class TaskPolicyService {
       return dbRank;
     }
 
-    return ROLE_RANKS[role] || 0;
+    return roleMap ? 0 : ROLE_RANKS[role] || 0;
   }
 
   getRoleLabel(role?: string | null, roleMap?: Map<string, RoleDefinition>): string {
@@ -80,7 +83,7 @@ export class TaskPolicyService {
       return '';
     }
 
-    return roleMap?.get(role)?.label || ROLE_LABELS[role] || role;
+    return roleMap?.get(role)?.label || (roleMap ? role : ROLE_LABELS[role] || role);
   }
 
   getRoleDefaultPermissions(role?: string | null, roleMap?: Map<string, RoleDefinition>): string[] {
@@ -93,7 +96,7 @@ export class TaskPolicyService {
       return dbPermissions;
     }
 
-    return Array.from(new Set(ROLE_BASELINES[role] || []));
+    return roleMap ? [] : Array.from(new Set(ROLE_BASELINES[role] || []));
   }
 
   getRoleScopeMode(role?: string | null, roleMap?: Map<string, RoleDefinition>): RoleScopeMode {
@@ -103,6 +106,13 @@ export class TaskPolicyService {
 
     const scopeMode = roleMap?.get(role)?.scope_mode;
     return (typeof scopeMode === 'string' ? scopeMode : 'flexible') as RoleScopeMode;
+  }
+
+  getRoleScopePolicy(role?: string | null, roleMap?: Map<string, RoleDefinition>): RoleScopePolicy {
+    if (!role) {
+      return 'ASSIGNABLE';
+    }
+    return roleMap?.get(role)?.scope_policy || 'ASSIGNABLE';
   }
 
   assertValidPermissionList(permissionIds: string[]): void {
@@ -166,15 +176,7 @@ export class TaskPolicyService {
 
   isScopeGlobal(scope: unknown): boolean {
     const normalized = this.normalizeScope(scope);
-    return (
-      normalized.provinces.length === 0 &&
-      normalized.districts.length === 0 &&
-      normalized.sub_districts.length === 0 &&
-      normalized.school_ids.length === 0 &&
-      normalized.grade_levels.length === 0 &&
-      normalized.room_ids.length === 0 &&
-      normalized.own_only !== true
-    );
+    return normalized.global === true;
   }
 
   isScopeSubsetOfActor(targetScope: unknown, actorScope: unknown): boolean {
@@ -182,9 +184,16 @@ export class TaskPolicyService {
       return true;
     }
 
+    if (isUnconfiguredDataScope(actorScope)) {
+      return false;
+    }
+
     const actor = this.normalizeScope(actorScope);
     const target = this.normalizeScope(targetScope);
-    const keys: Array<keyof Omit<DataScope, 'own_only'>> = [
+    if (target.global === true) {
+      return false;
+    }
+    const keys: Array<keyof Omit<DataScope, 'own_only' | 'global'>> = [
       'provinces',
       'districts',
       'sub_districts',
@@ -267,14 +276,7 @@ export class TaskPolicyService {
 
   assertCanCreateTask(actor: ActorContext, taskType: string): void {
     if (taskType === 'LOGIN') {
-      const canCreateLoginLink =
-        this.hasPermission(actor, 'login-links') && this.hasPermission(actor, 'create');
-
-      if (!canCreateLoginLink) {
-        throw new ForbiddenException('ไม่มีสิทธิ์สร้างลิงก์เข้าสู่ระบบ');
-      }
-
-      return;
+      throw new BadRequestException('ยกเลิกการสร้างลิงก์เข้าสู่ระบบแล้ว');
     }
 
     if (!this.hasPermission(actor, 'create')) {
@@ -324,6 +326,7 @@ export class TaskPolicyService {
 
     const roleScopeError = getRoleScopeValidationError(requestedRole, payload.data_scope, {
       scopeMode: this.getRoleScopeMode(requestedRole, currentRoleMap),
+      scopePolicy: this.getRoleScopePolicy(requestedRole, currentRoleMap),
       roleLabel: this.getRoleLabel(requestedRole, currentRoleMap),
     });
     if (roleScopeError) {
@@ -391,15 +394,13 @@ export class TaskPolicyService {
       login_data_scope?: unknown;
       target_school_id?: unknown;
       target_room?: unknown;
+      case_created_by?: unknown;
     },
-    roleMap?: Map<string, RoleDefinition>,
   ): boolean {
     const taskType = typeof link.task_type === 'string' ? link.task_type.trim() : '';
 
     if (taskType === 'LOGIN') {
-      return (
-        this.hasPermission(actor, 'login-links') && this.canManageLoginLink(actor, link, roleMap)
-      );
+      return false;
     }
 
     if (taskType === 'ATTENDANCE') {
@@ -412,8 +413,17 @@ export class TaskPolicyService {
     }
 
     if (taskType === 'VISIT') {
-      if (!this.hasPermission(actor, 'dashboard')) {
+      if (!this.hasPermission(actor, 'review-cases')) {
         return false;
+      }
+
+      const actorOwnOnly =
+        actor.data_scope &&
+        typeof actor.data_scope === 'object' &&
+        actor.data_scope.own_only === true;
+      if (actorOwnOnly) {
+        const caseCreatedBy = this.normalizeLinkScopeValue(link.case_created_by);
+        return caseCreatedBy !== undefined && String(caseCreatedBy) === String(actor.id);
       }
 
       const scope = this.buildManagedTaskLinkScope(link);

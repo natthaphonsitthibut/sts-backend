@@ -1,6 +1,7 @@
 import type { DataScope } from '../common/utils/authorization';
+import type { AttendanceSelectionStatus } from './attendance-status';
 
-export type AttendanceSelectionStatus = 'P_PRESENT' | 'P_ABSENT' | 'P_LATE';
+export type { AttendanceHistoryStatus, AttendanceSelectionStatus } from './attendance-status';
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
   rows: T[];
@@ -18,6 +19,8 @@ export interface SchoolFilters {
   province?: string;
   district?: string;
   subDistrict?: string;
+  searchTerm?: string;
+  limit?: number;
 }
 
 export interface StudentFilters {
@@ -93,10 +96,19 @@ export interface AttendanceTaskRow extends Record<string, unknown> {
   created_at?: string | Date;
   active_link_id?: string | null;
   active_link?: string | null;
+  active_link_created_at?: string | Date | null;
+  active_link_expires_at?: string | Date | null;
   link_assigned_to?: string | null;
+  link_assigned_to_email?: string | null;
   active_link_locked?: boolean | number | null;
   active_link_lock_reason?: string | null;
   active_link_lock_at?: string | Date | null;
+  link_state?: 'ACTIVE' | 'LOCKED' | 'EXPIRED' | null;
+  attendance_session_id?: string | null;
+  attendance_session_status?: string | null;
+  attendance_expected_roster_count?: number | string | null;
+  attendance_recorded_count?: number | string | null;
+  attendance_check_status?: 'COMPLETED' | 'NOT_CHECKED' | null;
 }
 
 export interface StudentAttendanceMetadataRow extends Record<string, unknown> {
@@ -122,12 +134,26 @@ export interface AttendanceSaveRecordInput {
 }
 
 export interface AttendanceInsertRecord {
-  studentId: string;
+  studentUuid: string;
   date: string;
   statusCode: number;
   recordedBy: string;
   period: number;
+  sessionId: string;
   metadata: StudentAttendanceMetadataRow;
+}
+
+export interface AttendanceWriteContext {
+  actorUserId: number | null;
+  actorLabel: string;
+  recorder: string;
+  allowedStudentIds?: string[];
+  session?: {
+    kind: 'DAILY' | 'SUBJECT';
+    period: number;
+    subjectId?: number | null;
+    timetableSlotId?: number | null;
+  };
 }
 
 export type AttendanceScope = DataScope | undefined;

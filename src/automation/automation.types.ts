@@ -17,11 +17,29 @@ export interface SettingValueRow extends Record<string, unknown> {
 export interface OpenAbsenceCaseRow extends Record<string, unknown> {
   id: number;
   student_name: string | null;
+  student_uuid: string | null;
+  school_id: number | string | null;
 }
 
-export interface ConsecutiveAbsentStudentRow extends Record<string, unknown> {
-  person_id_onec: string;
-  consecutive_days: number;
+export interface CaseAutoCancelAuditEvent {
+  caseId: number;
+  studentUuid: string | null;
+}
+
+/**
+ * Cases are opened by one rule now (cumulative absence), so every automated
+ * case is เสี่ยง; tiers below it no longer open or escalate a case.
+ */
+export type CaseRiskTier = 'HIGH';
+
+export interface ActiveAbsenceCaseRow extends Record<string, unknown> {
+  id: number;
+  risk_tier: string | null;
+}
+
+export interface CumulativeAbsentStudentRow extends Record<string, unknown> {
+  student_uuid: string;
+  absent_days: number;
   first_name_onec: string | null;
   last_name_onec: string | null;
   school_id_onec: number | null;
@@ -40,9 +58,13 @@ export interface CreatedCaseRow extends Record<string, unknown> {
 
 export interface CreateAutomatedCaseInput {
   studentName: string;
+  studentUuid: string | null;
+  schoolId: number | null;
   schoolName: string;
   studentAddress: string | null;
   reason: string;
+  riskTier: CaseRiskTier;
+  slaDueAt: Date;
 }
 
 export interface NewCase {
@@ -50,4 +72,5 @@ export interface NewCase {
   student_name: string;
   student_school: string;
   reason_flagged: string;
+  school_id?: number | null;
 }

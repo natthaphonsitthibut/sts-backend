@@ -1,115 +1,7 @@
 import type { DataScope } from '../../auth/auth.types';
-import { normalizeDataScope } from '../../auth/auth.types';
 
 export type { DataScope };
-
-export const ROLE_BASELINES: Record<string, string[]> = {
-  ADMIN: [
-    'home',
-    'dashboard',
-    'students',
-    'create',
-    'attendance',
-    'attendance-dashboard',
-    'manage-users-list',
-    'login-links',
-    'settings',
-    'import-data',
-  ],
-  ADMIN_PROVINCE: [
-    'home',
-    'dashboard',
-    'students',
-    'create',
-    'attendance',
-    'attendance-dashboard',
-    'manage-users-list',
-    'login-links',
-  ],
-  ADMIN_DISTRICT: [
-    'home',
-    'dashboard',
-    'students',
-    'create',
-    'attendance',
-    'attendance-dashboard',
-    'manage-users-list',
-    'login-links',
-  ],
-  ADMIN_SUBDISTRICT: [
-    'home',
-    'dashboard',
-    'students',
-    'create',
-    'attendance',
-    'attendance-dashboard',
-    'manage-users-list',
-    'login-links',
-  ],
-  ADMIN_SCHOOL: [
-    'home',
-    'dashboard',
-    'students',
-    'create',
-    'attendance',
-    'attendance-dashboard',
-    'manage-users-list',
-    'login-links',
-  ],
-  DIRECTOR: [
-    'home',
-    'dashboard',
-    'students',
-    'create',
-    'attendance',
-    'attendance-dashboard',
-    'manage-users-list',
-    'login-links',
-    'settings',
-  ],
-  EXECUTIVE: ['home', 'dashboard', 'students', 'attendance-dashboard'],
-  TEACHER: ['home', 'students', 'attendance'],
-  STUDENT: ['home', 'student-self'],
-};
-
-export function getEffectivePermissions(
-  roles: string[],
-  customPermissions: string[] = [],
-): string[] {
-  void roles;
-  return Array.from(new Set(customPermissions));
-}
-
-export function parseScopeHeader(scopeHeader?: string): DataScope | undefined {
-  if (!scopeHeader) {
-    return undefined;
-  }
-
-  const candidates: string[] = [];
-
-  if (scopeHeader.startsWith('uri:')) {
-    try {
-      candidates.push(decodeURIComponent(scopeHeader.slice(4)));
-    } catch {
-      // Fall back to raw parsing below.
-    }
-  }
-
-  candidates.push(scopeHeader);
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = normalizeDataScope(JSON.parse(candidate));
-      if (parsed) {
-        return parsed;
-      }
-    } catch {
-      // Try the next format.
-    }
-  }
-
-  return undefined;
-}
+export { ROLE_BASELINES } from '../../auth/permissions.constants';
 
 export function buildDataScopeQuery(
   scope: DataScope,
@@ -165,7 +57,14 @@ export function buildDataScopeQuery(
   }
 
   if (clauses.length === 0) {
-    return { sql: '', params: [] };
+    // No area clause. Nationwide must be an explicit intent (global:true), and
+    // own_only scopes are gated at the service layer — both keep the legacy
+    // "no filter" behaviour. Anything else is an unconfigured/corrupt scope:
+    // fail closed (0 rows) instead of silently exposing the whole country.
+    if (scope.global === true || scope.own_only === true) {
+      return { sql: '', params: [] };
+    }
+    return { sql: '1=0', params: [] };
   }
 
   return { sql: clauses.join(' AND '), params };

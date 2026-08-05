@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { DataScope } from '../common/utils/authorization';
 import { AttendanceRepository } from './attendance.repository';
+import { attendanceStatusFromCode } from './attendance-status';
 
 @Injectable()
 export class AttendanceReadService {
@@ -26,12 +27,24 @@ export class AttendanceReadService {
     return { success: true, data };
   }
 
-  async getHistory(date: string, userScope?: DataScope) {
-    const rows = await this.attendanceRepository.listAttendanceHistory(date, userScope);
+  async getHistory(
+    date: string,
+    userScope?: DataScope,
+    schoolId?: number | null,
+    sessionKind?: 'DAILY' | 'SUBJECT',
+    timetableSlotId?: number,
+  ) {
+    const rows = await this.attendanceRepository.listAttendanceHistory(
+      date,
+      userScope,
+      schoolId,
+      sessionKind,
+      timetableSlotId,
+    );
 
     const data = rows.map((row) => ({
       ...row,
-      status: this.mapHistoryStatus(row.status),
+      status: attendanceStatusFromCode(row.status),
     }));
 
     return { success: true, data };
@@ -39,6 +52,26 @@ export class AttendanceReadService {
 
   async getAttendanceTasks(userScope?: DataScope) {
     return await this.attendanceRepository.listAttendanceTasks(userScope);
+  }
+
+  async getAttendanceTasksPaginated(
+    userScope: DataScope | undefined,
+    filters: {
+      page: number;
+      limit: number;
+      searchTerm?: string;
+      status?: string;
+      province?: string;
+      district?: string;
+      subDistrict?: string;
+      schoolId?: number;
+      grade?: string;
+      room?: string;
+    },
+  ) {
+    const { rows, totalCount, summary } =
+      await this.attendanceRepository.listAttendanceTasksPaginated(userScope, filters);
+    return { rows, totalCount, page: filters.page, limit: filters.limit, summary };
   }
 
   private parseOptionalInteger(value: string | undefined, fieldName: string): number | undefined {
@@ -52,25 +85,5 @@ export class AttendanceReadService {
     }
 
     return parsed;
-  }
-
-  private mapHistoryStatus(status: unknown): string {
-    const code =
-      typeof status === 'number'
-        ? status
-        : typeof status === 'string'
-          ? Number.parseInt(status, 10)
-          : Number.NaN;
-
-    if (code === 1) {
-      return 'P_PRESENT';
-    }
-    if (code === 2) {
-      return 'P_ABSENT';
-    }
-    if (code === 3) {
-      return 'P_LATE';
-    }
-    return 'NONE';
   }
 }

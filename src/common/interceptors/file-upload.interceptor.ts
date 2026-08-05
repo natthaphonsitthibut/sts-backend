@@ -1,53 +1,63 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
+import { BadRequestException } from '@nestjs/common';
+import { memoryStorage } from 'multer';
+
+// Cheap first gate on the declared MIME. The authoritative checks happen after
+// upload in processVisitPhoto(): magic-byte validation, EXIF/GPS strip, and a
+// re-encode. Files are held in memory (never written raw to disk) so an untrusted
+// photo's EXIF GPS never touches the filesystem.
+const ALLOWED_VISIT_ATTACHMENT_MIME = new Set([
+  'image/jpeg',
+  'image/jpg', // non-standard alias some clients still send for JPEG
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
 
 const imageFileFilter = (
   _req: unknown,
   file: Express.Multer.File,
   callback: (error: Error | null, acceptFile: boolean) => void,
 ) => {
-  if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|webp)$/)) {
-    return callback(new Error('Only image files are allowed!'), false);
+  if (!ALLOWED_VISIT_ATTACHMENT_MIME.has(file.mimetype)) {
+    return callback(new BadRequestException('รองรับเฉพาะไฟล์รูปภาพ, PDF, DOC และ DOCX'), false);
   }
   callback(null, true);
 };
 
-const editFileName = (
-  _req: unknown,
-  file: Express.Multer.File,
-  callback: (error: Error | null, filename: string) => void,
-) => {
-  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-  const fileExtName = extname(file.originalname);
-  callback(null, `${uniqueSuffix}${fileExtName}`);
-};
-
-@Injectable()
-export class MulterConfigService {
-  private readonly logger = new Logger(MulterConfigService.name);
-
-  createMulterOptions() {
-    return {
-      storage: diskStorage({
-        destination: './uploads',
-        filename: editFileName,
-      }),
-      fileFilter: imageFileFilter,
-      limits: {
-        fileSize: 5 * 1024 * 1024,
-      },
-    };
-  }
-}
-
 export const multerConfig = {
-  storage: diskStorage({
-    destination: './uploads',
-    filename: editFileName,
-  }),
+  storage: memoryStorage(),
   fileFilter: imageFileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024,
+    files: 5,
+    fields: 32,
+    fieldSize: 1 * 1024 * 1024,
+  },
+};
+
+/**
+ * Curriculum content is a single PDF up to 10 MB — larger than the shared
+ * attachment limit and deliberately narrower in type.
+ */
+export const curriculumPdfMulterConfig = {
+  storage: memoryStorage(),
+  fileFilter: (
+    _req: unknown,
+    file: Express.Multer.File,
+    callback: (error: Error | null, acceptFile: boolean) => void,
+  ) => {
+    if (file.mimetype !== 'application/pdf') {
+      return callback(new BadRequestException('รองรับเฉพาะไฟล์ PDF เท่านั้น'), false);
+    }
+    callback(null, true);
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1,
+    fields: 16,
+    fieldSize: 1 * 1024 * 1024,
   },
 };

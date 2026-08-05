@@ -1,0 +1,243 @@
+import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import type { DataScope } from '../auth';
+import { queryDataSource } from '../database/sql-query';
+import type {
+  FieldFollowerSortDirection,
+  FieldFollowerSortKey,
+  FieldFollowerStatus,
+  FieldFollowerVerificationMethod,
+} from './dto/field-followers.dto';
+import type { FieldFollowerRow } from './field-followers.types';
+
+export interface CreateFieldFollowerInput {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  gender: string | null;
+  verificationMethod: FieldFollowerVerificationMethod;
+  thaidPersonRef: string | null;
+  idCardPhotoFilename: string | null;
+  subDistrict: string | null;
+  district: string | null;
+  province: string | null;
+  campaignId: string | null;
+}
+
+export interface ListFieldFollowersFilters {
+  status?: FieldFollowerStatus;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  searchTerm?: string;
+  campaignId?: string;
+  sortBy?: FieldFollowerSortKey;
+  sortDirection?: FieldFollowerSortDirection;
+  page: number;
+  limit: number;
+}
+
+const FIELD_FOLLOWER_SORT_COLUMNS: Record<FieldFollowerSortKey, readonly string[]> = {
+  applicant: ['field_followers.first_name', 'field_followers.last_name'],
+  phone: ['field_followers.phone'],
+  area: ['field_followers.province', 'field_followers.district', 'field_followers.sub_district'],
+  status: ['field_followers.status'],
+  createdAt: ['field_followers.created_at'],
+};
+
+@Injectable()
+export class FieldFollowersRepository {
+  constructor(private readonly dataSource: DataSource) {}
+
+  /**
+   * `field_followers` is scoped by free-text province/district/sub_district
+   * ("พื้นที่รับผิดชอบ" per task-field-monitor-map.md), not school_id. A
+   * province/district-scoped admin matches directly; a school-scoped admin
+   * (e.g. DIRECTOR, who is field-monitor's primary user) has no area arrays
+   * on their own data_scope, so their assigned school's province/district is
+   * resolved via `schools` as a fallback. Global actors see everything; a
+   * non-global actor with neither area arrays nor school_ids is fail-closed.
+   */
+  private buildActorScopeClause(
+    scope: DataScope,
+    startIndex: number,
+  ): { sql: string; params: unknown[] } {
+    if (scope.global === true) {
+      return { sql: '', params: [] };
+    }
+
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = startIndex;
+
+    if (scope.provinces && scope.provinces.length > 0) {
+      clauses.push(`province = ANY($${paramIndex++}::text[])`);
+      params.push(scope.provinces);
+    }
+    if (scope.districts && scope.districts.length > 0) {
+      clauses.push(`district = ANY($${paramIndex++}::text[])`);
+      params.push(scope.districts);
+    }
+    if (scope.sub_districts && scope.sub_districts.length > 0) {
+      clauses.push(`sub_district = ANY($${paramIndex++}::text[])`);
+      params.push(scope.sub_districts);
+    }
+    if (scope.school_ids && scope.school_ids.length > 0) {
+      clauses.push(
+        `EXISTS (
+          SELECT 1 FROM schools sc
+          WHERE sc.id = ANY($${paramIndex++}::int[])
+            AND sc.province = field_followers.province
+            AND sc.district = field_followers.district
+        )`,
+      );
+      params.push(scope.school_ids);
+    }
+
+    if (clauses.length === 0) {
+      return { sql: '1=0', params: [] };
+    }
+    return { sql: clauses.join(' OR '), params };
+  }
+
+  async createApplication(input: CreateFieldFollowerInput): Promise<FieldFollowerRow> {
+    const result = await queryDataSource<FieldFollowerRow>(
+      this.dataSource,
+      `
+        INSERT INTO field_followers (
+          first_name, last_name, phone, email, gender, verification_method, thaid_person_ref,
+          id_card_photo_filename, id_card_photo_uploaded_at, sub_district, district, province,
+          campaign_id, applied_via
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END, $9, $10, $11, $12, $13)
+        RETURNING *
+      `,
+      [
+        input.firstName,
+        input.lastName,
+        input.phone,
+        input.email,
+        input.gender,
+        input.verificationMethod,
+        input.thaidPersonRef,
+        input.idCardPhotoFilename,
+        input.subDistrict,
+        input.district,
+        input.province,
+        input.campaignId,
+        input.campaignId ? 'CAMPAIGN' : 'PUBLIC_FORM',
+      ],
+    );
+    return result.rows[0];
+  }
+
+  async listFollowers(
+    actorScope: DataScope,
+    filters: ListFieldFollowersFilters,
+  ): Promise<{ rows: FieldFollowerRow[]; totalCount: number }> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    const scopeResult = this.buildActorScopeClause(actorScope, params.length + 1);
+    if (scopeResult.sql) {
+      conditions.push(`(${scopeResult.sql})`);
+      params.push(...scopeResult.params);
+    }
+
+    if (filters.status) {
+      params.push(filters.status);
+      conditions.push(`status = $${params.length}`);
+    }
+    if (filters.province) {
+      params.push(filters.province);
+      conditions.push(`province = $${params.length}`);
+    }
+    if (filters.district) {
+      params.push(filters.district);
+      conditions.push(`district = $${params.length}`);
+    }
+    if (filters.subDistrict) {
+      params.push(filters.subDistrict);
+      conditions.push(`sub_district = $${params.length}`);
+    }
+    if (filters.searchTerm) {
+      params.push(`%${filters.searchTerm}%`);
+      const searchParam = params.length;
+      conditions.push(
+        `(first_name ILIKE $${searchParam} OR last_name ILIKE $${searchParam} OR phone ILIKE $${searchParam})`,
+      );
+    }
+    if (filters.campaignId) {
+      params.push(filters.campaignId);
+      conditions.push(`campaign_id = $${params.length}`);
+    }
+
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const sortColumns = FIELD_FOLLOWER_SORT_COLUMNS[filters.sortBy ?? 'createdAt'];
+    const sortDirection = filters.sortDirection === 'asc' ? 'ASC' : 'DESC';
+    const orderBySql = [
+      ...sortColumns.map((column) => `${column} ${sortDirection} NULLS LAST`),
+      `field_followers.id ${sortDirection}`,
+    ].join(', ');
+    const offset = (filters.page - 1) * filters.limit;
+    params.push(filters.limit, offset);
+
+    const result = await queryDataSource<FieldFollowerRow>(
+      this.dataSource,
+      `
+        SELECT field_followers.*, campaigns.name AS campaign_name,
+          COUNT(*) OVER ()::int AS total_count
+        FROM field_followers
+        LEFT JOIN follower_recruitment_campaigns campaigns
+          ON campaigns.id = field_followers.campaign_id
+        ${whereSql}
+        ORDER BY ${orderBySql}
+        LIMIT $${params.length - 1} OFFSET $${params.length}
+      `,
+      params,
+    );
+
+    const totalCount = Number.parseInt(String(result.rows[0]?.total_count ?? '0'), 10);
+    return { rows: result.rows, totalCount };
+  }
+
+  async findByIdInScope(id: string, actorScope: DataScope): Promise<FieldFollowerRow | null> {
+    const scopeResult = this.buildActorScopeClause(actorScope, 2);
+    const whereScope = scopeResult.sql ? ` AND (${scopeResult.sql})` : '';
+    const result = await queryDataSource<FieldFollowerRow>(
+      this.dataSource,
+      `
+        SELECT field_followers.*, campaigns.name AS campaign_name
+        FROM field_followers
+        LEFT JOIN follower_recruitment_campaigns campaigns
+          ON campaigns.id = field_followers.campaign_id
+        WHERE field_followers.id = $1${whereScope}
+      `,
+      [id, ...scopeResult.params],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async updateStatus(
+    id: string,
+    nextStatus: FieldFollowerStatus,
+    reviewerUserId: number,
+    options: { markVerified?: boolean } = {},
+  ): Promise<FieldFollowerRow | null> {
+    const reviewSetSql = options.markVerified
+      ? `verified_by_user_id = $3, verified_at = now()`
+      : `reviewed_by_user_id = $3, reviewed_at = now()`;
+    const result = await queryDataSource<FieldFollowerRow>(
+      this.dataSource,
+      `
+        UPDATE field_followers
+        SET status = $2, ${reviewSetSql}, updated_at = now()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [id, nextStatus, reviewerUserId],
+    );
+    return result.rows[0] ?? null;
+  }
+}

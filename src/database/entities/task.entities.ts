@@ -11,13 +11,16 @@ export class CaseEntity {
   @Column({ name: 'student_school', type: 'text', nullable: true })
   studentSchool!: string | null;
 
+  @Column({ name: 'school_id', type: 'integer', nullable: true })
+  schoolId!: number | null;
+
   @Column({ name: 'student_address', type: 'text', nullable: true })
   studentAddress!: string | null;
 
-  @Column({ name: 'student_lat', type: 'real', nullable: true })
+  @Column({ name: 'student_lat', type: 'double precision', nullable: true })
   studentLat!: number | null;
 
-  @Column({ name: 'student_lng', type: 'real', nullable: true })
+  @Column({ name: 'student_lng', type: 'double precision', nullable: true })
   studentLng!: number | null;
 
   @Column({ name: 'reason_flagged', type: 'text', nullable: true })
@@ -35,13 +38,13 @@ export class CaseEntity {
 
 @Entity({ name: 'tasks' })
 export class TaskEntity {
-  @PrimaryColumn({ name: 'id', type: 'text' })
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
   id!: string;
 
   @Column({ name: 'case_id', type: 'integer', nullable: true })
   caseId!: number | null;
 
-  @Column({ name: 'status', type: 'text', default: 'PENDING' })
+  @Column({ name: 'status', type: 'text', default: 'IN_PROGRESS' })
   status!: string;
 
   @Column({ name: 'max_delegation_depth', type: 'integer', default: 3 })
@@ -65,13 +68,13 @@ export class TaskEntity {
 
 @Entity({ name: 'task_links' })
 export class TaskLinkEntity {
-  @PrimaryColumn({ name: 'id', type: 'text' })
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
   id!: string;
 
-  @Column({ name: 'task_id', type: 'text' })
+  @Column({ name: 'task_id', type: 'uuid' })
   taskId!: string;
 
-  @Column({ name: 'parent_link_id', type: 'text', nullable: true })
+  @Column({ name: 'parent_link_id', type: 'uuid', nullable: true })
   parentLinkId!: string | null;
 
   @Column({ name: 'token_hash', type: 'text', unique: true })
@@ -85,6 +88,12 @@ export class TaskLinkEntity {
 
   @Column({ name: 'assigned_to_name', type: 'text', nullable: true })
   assignedToName!: string | null;
+
+  @Column({ name: 'assigned_to_first_name', type: 'varchar', length: 150, nullable: true })
+  assignedToFirstName!: string | null;
+
+  @Column({ name: 'assigned_to_last_name', type: 'varchar', length: 150, nullable: true })
+  assignedToLastName!: string | null;
 
   @Column({ name: 'assigned_to_phone', type: 'text', nullable: true })
   assignedToPhone!: string | null;
@@ -105,8 +114,17 @@ export class TaskLinkEntity {
   @Column({ name: 'otp_verified', type: 'integer', default: 0 })
   otpVerified!: number;
 
+  @Column({ name: 'otp_attempts', type: 'integer', default: 0 })
+  otpAttempts!: number;
+
+  @Column({ name: 'otp_locked_until', type: 'timestamptz', nullable: true })
+  otpLockedUntil!: Date | null;
+
   @Column({ name: 'subject', type: 'text', nullable: true })
   subject!: string | null;
+
+  @Column({ name: 'delegation_note', type: 'text', nullable: true })
+  delegationNote!: string | null;
 
   @Column({ name: 'status', type: 'text', default: 'ACTIVE' })
   status!: string;
@@ -126,8 +144,8 @@ export class TaskLinkEntity {
   @Column({ name: 'created_at', type: 'timestamptz', nullable: true })
   createdAt!: Date | null;
 
-  @Column({ name: 'created_by_user_id', type: 'integer', nullable: true })
-  createdByUserId!: number | null;
+  @Column({ name: 'created_by', type: 'integer', nullable: true })
+  createdBy!: number | null;
 
   @Column({ name: 'login_role', type: 'text', nullable: true })
   loginRole!: string | null;
@@ -145,6 +163,9 @@ export class TaskLinkEntity {
     default: () => "'{}'::jsonb",
   })
   loginDataScope!: Record<string, unknown>;
+
+  @Column({ name: 'first_used_at', type: 'timestamptz', nullable: true })
+  firstUsedAt!: Date | null;
 }
 
 @Entity({ name: 'task_submissions' })
@@ -152,7 +173,7 @@ export class TaskSubmissionEntity {
   @PrimaryGeneratedColumn({ name: 'id' })
   id!: number;
 
-  @Column({ name: 'task_link_id', type: 'text', nullable: true })
+  @Column({ name: 'task_link_id', type: 'uuid', nullable: true })
   taskLinkId!: string | null;
 
   @Column({ name: 'visit_lat', type: 'real', nullable: true })
@@ -161,8 +182,14 @@ export class TaskSubmissionEntity {
   @Column({ name: 'visit_lng', type: 'real', nullable: true })
   visitLng!: number | null;
 
+  @Column({ name: 'visited_at', type: 'timestamptz', nullable: true })
+  visitedAt!: Date | null;
+
   @Column({ name: 'cause_category', type: 'text', nullable: true })
   causeCategory!: string | null;
+
+  @Column({ name: 'follow_up_assessment_code', type: 'varchar', length: 40, nullable: true })
+  followUpAssessmentCode!: string | null;
 
   @Column({ name: 'cause_detail', type: 'text', nullable: true })
   causeDetail!: string | null;
@@ -176,8 +203,26 @@ export class TaskSubmissionEntity {
   @Column({ name: 'address_changed', type: 'boolean', default: false })
   addressChanged!: boolean;
 
+  @Column({ name: 'home_visit_exception_code', type: 'varchar', length: 40, nullable: true })
+  homeVisitExceptionCode!: string | null;
+
   @Column({ name: 'updated_student_address', type: 'text', nullable: true })
   updatedStudentAddress!: string | null;
+
+  @Column({ name: 'updated_address_line', type: 'text', nullable: true })
+  updatedAddressLine!: string | null;
+
+  @Column({ name: 'updated_address_province', type: 'text', nullable: true })
+  updatedAddressProvince!: string | null;
+
+  @Column({ name: 'updated_address_district', type: 'text', nullable: true })
+  updatedAddressDistrict!: string | null;
+
+  @Column({ name: 'updated_address_sub_district', type: 'text', nullable: true })
+  updatedAddressSubDistrict!: string | null;
+
+  @Column({ name: 'updated_postal_code', type: 'varchar', length: 5, nullable: true })
+  updatedPostalCode!: string | null;
 
   @Column({ name: 'updated_lat', type: 'real', nullable: true })
   updatedLat!: number | null;
@@ -185,13 +230,13 @@ export class TaskSubmissionEntity {
   @Column({ name: 'updated_lng', type: 'real', nullable: true })
   updatedLng!: number | null;
 
-  @Column({ name: 'submitted_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'submitted_at', type: 'timestamptz', nullable: true })
   submittedAt!: Date | null;
 }
 
 @Entity({ name: 'case_reviews' })
 export class CaseReviewEntity {
-  @PrimaryColumn({ name: 'id', type: 'text' })
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
   id!: string;
 
   @Column({ name: 'case_id', type: 'integer' })
@@ -203,9 +248,33 @@ export class CaseReviewEntity {
   @Column({ name: 'review_note', type: 'text', nullable: true })
   reviewNote!: string | null;
 
+  @Column({ name: 'resolution_outcome', type: 'varchar', length: 40, nullable: true })
+  resolutionOutcome!: string | null;
+
   @Column({ name: 'reviewed_by', type: 'text', nullable: true })
   reviewedBy!: string | null;
 
-  @Column({ name: 'reviewed_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'reviewed_at', type: 'timestamptz', nullable: true })
   reviewedAt!: Date | null;
+}
+
+@Entity({ name: 'case_risk_signals' })
+export class CaseRiskSignalEntity {
+  @PrimaryColumn({ name: 'id', type: 'uuid', default: () => 'gen_random_uuid()' })
+  id!: string;
+
+  @Column({ name: 'case_id', type: 'integer' })
+  caseId!: number;
+
+  @Column({ name: 'signal_source_code', type: 'varchar', length: 40 })
+  signalSourceCode!: string;
+
+  @Column({ name: 'signal_rule_code', type: 'varchar', length: 40, nullable: true })
+  signalRuleCode!: string | null;
+
+  @Column({ name: 'signal_reason', type: 'varchar', length: 1000 })
+  signalReason!: string;
+
+  @Column({ name: 'detected_at', type: 'timestamptz' })
+  detectedAt!: Date;
 }

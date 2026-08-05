@@ -1,32 +1,166 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import type { OnModuleInit } from '@nestjs/common';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import { AutomationService } from '../automation/automation.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import {
+  findSystemSettingCatalogEntry,
+  getSystemSettingSortIndex,
+  normalizeSystemSettingValue,
+  validateSystemSettingLadder,
+  validateSystemSettingValue,
+  type SystemSettingCatalogEntry,
+} from './settings-catalog';
 import { SettingsRepository } from './settings.repository';
+import type { SystemSettingResponse, SystemSettingRow } from './settings.types';
+
+const CRON_REFRESH_KEYS = new Set(['ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME']);
+const RISK_PROFILE_REFRESH_KEYS = new Set(['CASE_RISK_HIGH_ABSENCE_DAYS']);
 
 @Injectable()
-export class SettingsService {
+export class SettingsService implements OnModuleInit {
   private readonly logger = new Logger(SettingsService.name);
 
   constructor(
     private readonly settingsRepository: SettingsRepository,
     private readonly automationService: AutomationService,
+    private readonly auditLog: AuditLogService,
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
 
-  async getSettings() {
-    return await this.settingsRepository.listSettings();
+  /**
+   * Values written before catalog validation existed (or edited directly in
+   * the database) can be invalid; surface them at startup instead of letting
+   * consumers silently skip work at runtime.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const rows = await this.settingsRepository.listSettings();
+      for (const row of rows) {
+        const entry = findSystemSettingCatalogEntry(row.setting_key);
+        if (!entry) {
+          this.logger.warn(
+            `System setting "${row.setting_key}" is not in the settings catalog and cannot be edited via the API.`,
+          );
+          continue;
+        }
+        const error = validateSystemSettingValue(entry, row.setting_value);
+        if (error) {
+          this.logger.warn(
+            `System setting "${row.setting_key}" has invalid value "${row.setting_value}": ${error}`,
+          );
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Skipping system settings startup validation: ${message}`);
+    }
   }
 
-  async getSettingByKey(key: string) {
-    return await this.settingsRepository.findSettingByKey(key);
+  private toResponse(row: SystemSettingRow): SystemSettingResponse {
+    const entry = findSystemSettingCatalogEntry(row.setting_key);
+    return {
+      ...row,
+      description: entry?.description ?? row.description,
+      value_type: entry?.valueType ?? null,
+      enum_options: entry?.enumOptions ?? null,
+      min: entry?.min ?? null,
+      max: entry?.max ?? null,
+      editable: entry !== null,
+      group: entry?.group ?? null,
+    };
   }
 
-  async updateSetting(key: string, value: string, description?: string) {
-    const setting = await this.settingsRepository.upsertSetting(key, String(value), description);
+  async getSettings(): Promise<SystemSettingResponse[]> {
+    const rows = await this.settingsRepository.listSettings();
+    // Catalog order groups related settings (risk ladder, SLA, monitor cadence)
+    // instead of the alphabetical order the table would give us.
+    const sorted = [...rows].sort(
+      (a, b) =>
+        getSystemSettingSortIndex(a.setting_key) - getSystemSettingSortIndex(b.setting_key) ||
+        a.setting_key.localeCompare(b.setting_key),
+    );
+    return sorted.map((row) => this.toResponse(row));
+  }
 
-    if (key === 'ALERT_TRIGGER_TYPE' || key === 'ALERT_SCHEDULE_TIME') {
+  async getSettingByKey(key: string): Promise<SystemSettingResponse | null> {
+    const row = await this.settingsRepository.findSettingByKey(key);
+    return row ? this.toResponse(row) : null;
+  }
+
+  private resolveCatalogEntry(key: string): SystemSettingCatalogEntry {
+    const entry = findSystemSettingCatalogEntry(key);
+    if (!entry) {
+      throw new NotFoundException('ไม่รู้จักการตั้งค่านี้');
+    }
+    return entry;
+  }
+
+  async updateSetting(actor: AuthenticatedRequestUser, key: string, value: string) {
+    const entry = this.resolveCatalogEntry(key);
+    const normalizedValue = normalizeSystemSettingValue(value);
+    const validationError = validateSystemSettingValue(entry, normalizedValue);
+    if (validationError) {
+      throw new BadRequestException(validationError);
+    }
+
+    const actorId = resolveAuditActorId(actor);
+    const { setting, changed } = await this.settingsRepository.withTransaction(
+      async (queryRunner) => {
+        const ladderError = await validateSystemSettingLadder(key, normalizedValue, async (k) => {
+          const sibling = await this.settingsRepository.findSettingByKey(k, queryRunner);
+          return sibling?.setting_value ?? null;
+        });
+        if (ladderError) {
+          throw new BadRequestException(ladderError);
+        }
+
+        const existing = await this.settingsRepository.findSettingByKey(key, queryRunner);
+        const previousValue = existing?.setting_value ?? null;
+        const row = await this.settingsRepository.upsertSetting(
+          key,
+          normalizedValue,
+          entry.description,
+          queryRunner,
+        );
+        const valueChanged = previousValue !== normalizedValue;
+        if (valueChanged) {
+          await this.auditLog.recordAtomic(
+            {
+              actorUserId: actorId,
+              actorLabel: actor.username,
+              action: 'SYSTEM_SETTING_EDIT',
+              targetType: 'system_settings',
+              targetId: key,
+              metadata: {
+                op: 'update',
+                previousValue,
+                newValue: normalizedValue,
+              },
+              ip: null,
+            },
+            queryRunner,
+          );
+        }
+        return { setting: row, changed: valueChanged };
+      },
+    );
+
+    if (changed && CRON_REFRESH_KEYS.has(key)) {
       this.logger.log(`Setting ${key} changed. Triggering dynamic cron refresh.`);
       await this.automationService.refreshDynamicCron();
     }
+    if (changed && RISK_PROFILE_REFRESH_KEYS.has(key)) {
+      await this.riskProfileService?.enqueueFull(`setting-change:${key}`).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Failed to enqueue risk profile recalculation after setting edit: ${message}`,
+        );
+      });
+    }
 
-    return { success: true, data: setting };
+    return { success: true, data: this.toResponse(setting) };
   }
 }

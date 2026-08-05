@@ -12,10 +12,12 @@ import type { ConfigType } from '@nestjs/config';
 import { DelegationService } from './delegation.service';
 import type { Request } from 'express';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
+import { Public } from '../auth';
 import { appConfig } from '../config/app.config';
 import { DelegateTaskDto } from './dto/task.dto';
-import { getTaskErrorMessage } from './task.types';
+import { getHeaderValue, getTaskErrorMessage } from './task.types';
 
+@Public()
 @Controller('api/tasks')
 export class DelegationController {
   constructor(
@@ -32,8 +34,12 @@ export class DelegationController {
   ) {
     try {
       const baseUrl = resolveExternalBaseUrl(req, this.runtimeConfig.frontendBaseUrl);
-      return await this.delegationService.delegateTask(token, body, baseUrl);
+      const sessionToken = getHeaderValue(req.headers['x-magic-session']);
+      return await this.delegationService.delegateTask(token, body, baseUrl, sessionToken);
     } catch (err) {
+      if (err instanceof HttpException) {
+        throw err;
+      }
       const message = getTaskErrorMessage(err);
       if (message.includes('not found')) {
         throw new HttpException(message, HttpStatus.NOT_FOUND);
