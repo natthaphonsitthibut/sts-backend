@@ -54,8 +54,8 @@ export class ListSchoolClassroomsDto extends PaginationQueryDto {
   search?: string;
 
   @IsOptional()
-  @IsIn(['room', 'grade', 'students'])
-  sortBy?: 'room' | 'grade' | 'students';
+  @IsIn(['room', 'grade', 'students', 'homeroomTeacher'])
+  sortBy?: 'room' | 'grade' | 'students' | 'homeroomTeacher';
 
   @IsOptional()
   @IsIn(['asc', 'desc'])
@@ -332,8 +332,8 @@ export class ListClassroomRosterDto extends PaginationQueryDto {
   search?: string;
 
   @IsOptional()
-  @IsIn(['HIGH', 'MEDIUM', 'LOW', 'WATCH', 'NORMAL'])
-  riskTier?: 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
+  @IsIn(['HIGH', 'WATCH', 'NORMAL'])
+  riskTier?: 'HIGH' | 'WATCH' | 'NORMAL';
 
   @IsOptional()
   @Type(() => Number)

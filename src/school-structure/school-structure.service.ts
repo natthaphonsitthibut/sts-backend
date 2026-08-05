@@ -17,6 +17,7 @@ import {
 import { hasPermission } from '../auth/permissions.constants';
 import { attendanceStatusFromCode } from '../attendance/attendance-status';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { processImageUpload } from '../common/file-upload/visit-photo.util';
 import {
@@ -80,6 +81,7 @@ export class SchoolStructureService {
     private readonly auditLog: AuditLogService,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
+    private readonly riskProfileService: RiskProfileService,
   ) {}
 
   private resolveScope(actor: AuthenticatedRequestUser, allowRelatedRead = false): DataScope {
@@ -878,6 +880,14 @@ export class SchoolStructureService {
       );
       return comment;
     });
+
+    // A teacher comment is what puts a student on เฝ้าระวัง, so the profile has
+    // to be recalculated now rather than at the next nightly pass.
+    await this.riskProfileService
+      .requestStudentRecalculation([studentUuid], 'classroom-comment')
+      .catch(() => {
+        this.logger.warn(`Unable to refresh risk profile for student ${studentUuid}`);
+      });
 
     return {
       data: {

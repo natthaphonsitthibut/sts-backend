@@ -138,7 +138,7 @@ export class SchoolStructureRepository {
     gradeLevelId?: number;
     classroomId?: number;
     search?: string;
-    sortBy: 'room' | 'grade' | 'students';
+    sortBy: 'room' | 'grade' | 'students' | 'homeroomTeacher';
     sortDirection: 'asc' | 'desc';
     page: number;
     limit: number;
@@ -195,7 +195,11 @@ export class SchoolStructureRepository {
         ? 'classroom.room_code'
         : input.sortBy === 'students'
           ? 'student_count'
-          : 'classroom.grade_level_id';
+          : input.sortBy === 'homeroomTeacher'
+            ? // Rooms with no homeroom teacher sort last in both directions —
+              // "ยังไม่กำหนด" is an empty cell, not a name at either end.
+              'homeroom.homeroom_teacher_name COLLATE "th-x-icu" NULLS LAST'
+            : 'classroom.grade_level_id';
     const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
     const offset = (input.page - 1) * input.limit;
     const summaryResult = await queryDataSource<SchoolClassroomSummaryRow>(
@@ -1051,7 +1055,7 @@ export class SchoolStructureRepository {
 
   async listRoster(input: {
     search?: string;
-    riskTier?: 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
+    riskTier?: 'HIGH' | 'WATCH' | 'NORMAL';
     schoolId?: number;
     termId?: number;
     gradeLevelId?: number;

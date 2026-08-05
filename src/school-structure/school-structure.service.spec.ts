@@ -104,11 +104,20 @@ describe('SchoolStructureService', () => {
       open: jest.fn().mockResolvedValue(null),
       delete: jest.fn().mockResolvedValue(undefined),
     };
+    const riskProfileService = {
+      requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
+    };
     return {
-      service: new SchoolStructureService(repository as never, auditLog as never, storage as never),
+      service: new SchoolStructureService(
+        repository as never,
+        auditLog as never,
+        storage as never,
+        riskProfileService as never,
+      ),
       repository,
       auditLog,
       storage,
+      riskProfileService,
     };
   }
 
