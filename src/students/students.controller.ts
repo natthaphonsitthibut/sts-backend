@@ -9,9 +9,14 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Request, Response } from 'express';
+import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
@@ -29,6 +34,7 @@ import {
   GetStudentFilterOptionsQueryDto,
   GetStudentsQueryDto,
   GetStudentSubjectAttendanceQueryDto,
+  UpdateStudentPhotoDto,
 } from './dto/students.dto';
 import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
@@ -155,6 +161,56 @@ export class StudentsController {
   @RequireAnyPermission('students', 'student-self')
   findOne(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findOne(id, actor, resolveActorDataScope(actor));
+  }
+
+  /**
+   * Profile photo read. Served through the app so the student scope check runs
+   * before the bytes do; the adapter hands back a short-lived signed URL.
+   */
+  @Get(':id/photo')
+  @RequireAnyPermission('students', 'student-self')
+  async getStudentPhoto(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ): Promise<void> {
+    const result = await this.studentsService.resolveStudentPhoto(
+      id,
+      actor,
+      resolveActorDataScope(actor),
+    );
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
+  // Students may replace their own photo; staff need the edit permission. The
+  // service still runs assertOwnStudentAccess for a student actor.
+  @RequireAnyPermission('edit-students', 'student-self')
+  @Patch(':id/photo')
+  @UseInterceptors(FileInterceptor('photo', multerConfig))
+  async updateStudentPhoto(
+    @Param('id') id: string,
+    @Body() data: UpdateStudentPhotoDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+    @UploadedFile() photo?: Express.Multer.File,
+  ) {
+    const result = await this.studentsService.updateStudentPhoto(
+      id,
+      actor,
+      resolveActorDataScope(actor),
+      photo,
+      data.removePhoto,
+    );
+    await this.recordStudentWriteAudit('STUDENT_UPDATE', actor, req, id, {
+      op: photo ? 'update-photo' : 'remove-photo',
+    });
+    return result;
   }
 
   // Reveal a masked PII group (national id / passport) for one student. Staff

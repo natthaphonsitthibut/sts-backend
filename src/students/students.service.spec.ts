@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { StudentsService } from './students.service';
 import { StudentsRepository } from './students.repository';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
+import { FILE_STORAGE_ADAPTER } from '../files/storage/file-storage.types';
 import { piiConfig } from '../config/pii.config';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
@@ -52,12 +53,22 @@ describe('StudentsService', () => {
             findStudentAccountByPersonUuid: jest.fn().mockResolvedValue(null),
             listGuardiansByPersonUuid: jest.fn().mockResolvedValue([]),
             updateStudentPersonContacts: jest.fn(),
+            findPersonPhotoStorageKey: jest.fn().mockResolvedValue(null),
+            updatePersonPhotoStorageKey: jest.fn(),
           },
         },
         {
           provide: StudentGeocodeCacheService,
           useValue: {
             resolve: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: FILE_STORAGE_ADAPTER,
+          useValue: {
+            save: jest.fn(),
+            resolve: jest.fn().mockResolvedValue(null),
+            delete: jest.fn(),
           },
         },
         {

@@ -4,14 +4,7 @@ export const STUDENT_ENROLLMENT_STATES = ['current-active', 'all'] as const;
 export type StudentEnrollmentState = (typeof STUDENT_ENROLLMENT_STATES)[number];
 
 /** `AT_RISK` = every tier except NORMAL; mirrors `student_risk_profiles.risk_tier`. */
-export const STUDENT_RISK_TIER_FILTERS = [
-  'AT_RISK',
-  'HIGH',
-  'MEDIUM',
-  'LOW',
-  'WATCH',
-  'NORMAL',
-] as const;
+export const STUDENT_RISK_TIER_FILTERS = ['AT_RISK', 'HIGH', 'WATCH', 'NORMAL'] as const;
 export type StudentRiskTierFilter = (typeof STUDENT_RISK_TIER_FILTERS)[number];
 
 export interface StudentListFilters {
@@ -41,6 +34,7 @@ export interface StudentFilterOptions {
 
 export interface StudentListRow extends Record<string, unknown> {
   id: string;
+  photo_storage_key?: string | null;
   name: string;
   grade: string;
   room: string;
@@ -57,7 +51,7 @@ export interface StudentDetailRow extends Record<string, unknown> {
   grade?: string | null;
   room?: string | null;
   school_name?: string | null;
-  risk_tier?: 'HIGH' | 'MEDIUM' | 'LOW' | 'WATCH' | 'NORMAL';
+  risk_tier?: 'HIGH' | 'WATCH' | 'NORMAL';
   homeroom_teacher_name?: string | null;
   student_status_label?: string | null;
   student_status_category?: string | null;

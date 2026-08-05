@@ -24,6 +24,12 @@ import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { piiConfig } from '../config/pii.config';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
+import { processImageUpload } from '../common/file-upload/visit-photo.util';
+import {
+  FILE_STORAGE_ADAPTER,
+  type FileServeResult,
+  type FileStorageAdapter,
+} from '../files/storage/file-storage.types';
 import {
   PHASE1_MASKED_GROUPS,
   PII_FIELD_GROUPS,
@@ -235,7 +241,78 @@ export class StudentsService {
     private readonly geocodeCache: StudentGeocodeCacheService,
     @Inject(piiConfig.KEY)
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage: FileStorageAdapter,
   ) {}
+
+  /**
+   * Profile photo read. Goes through the app so the same scope check as the
+   * rest of the record runs first; the adapter then returns a short-lived
+   * signed URL (Supabase) or a file path (local disk).
+   */
+  async resolveStudentPhoto(
+    id: string,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+  ): Promise<FileServeResult> {
+    await this.findOne(id, actor, userScope);
+    const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
+    const storageKey = personUuid
+      ? await this.studentsRepository.findPersonPhotoStorageKey(personUuid)
+      : null;
+    if (!storageKey) throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+    const result = await this.storage.resolve(storageKey);
+    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+    return result;
+  }
+
+  /**
+   * Replaces or clears the profile photo. Upload first, write second, and the
+   * replaced object is deleted only after the row points at the new one — so a
+   * failed write never leaves an orphan and never loses the old photo.
+   */
+  async updateStudentPhoto(
+    id: string,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+    file?: Express.Multer.File,
+    removePhoto?: boolean,
+  ) {
+    if (file && removePhoto) {
+      throw new BadRequestException('ไม่สามารถอัปโหลดและนำรูปออกพร้อมกันได้');
+    }
+    if (!file && !removePhoto) {
+      throw new BadRequestException('กรุณาเลือกรูปหรือระบุการนำรูปออก');
+    }
+    await this.findOne(id, actor, userScope);
+    const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
+    if (!personUuid) {
+      throw new BadRequestException('นักเรียนคนนี้ยังไม่ได้เชื่อมกับข้อมูลบุคคลกลาง');
+    }
+
+    const replacedStorageKey = await this.studentsRepository.findPersonPhotoStorageKey(personUuid);
+    const newStorageKey = file
+      ? await processImageUpload(file, this.storage, 'student-photos')
+      : null;
+
+    try {
+      await this.studentsRepository.updatePersonPhotoStorageKey(personUuid, newStorageKey);
+    } catch (error) {
+      if (newStorageKey) {
+        await this.storage.delete(newStorageKey).catch(() => {
+          this.logger.warn(`Unable to delete unused student photo for ${id}`);
+        });
+      }
+      throw error;
+    }
+
+    if (replacedStorageKey) {
+      await this.storage.delete(replacedStorageKey).catch(() => {
+        this.logger.warn(`Unable to delete replaced student photo for ${id}`);
+      });
+    }
+    return await this.findOne(id, actor, userScope);
+  }
 
   create(createStudentDto: CreateStudentDto) {
     void createStudentDto;
@@ -273,7 +350,12 @@ export class StudentsService {
 
       return {
         success: true,
-        data: rows,
+        data: rows.map(({ photo_storage_key: photoStorageKey, ...row }) => ({
+          ...row,
+          photo_url: photoStorageKey
+            ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeURIComponent(String(photoStorageKey))}`
+            : null,
+        })),
         meta: buildPaginationMeta(page, limit, totalCount),
       };
     } catch (error) {
@@ -371,9 +453,17 @@ export class StudentsService {
           ])
         : [null, [], null];
 
+      const { photo_storage_key: photoStorageKey, ...studentRow } = student as typeof student & {
+        photo_storage_key?: string | null;
+      };
       return maskStudentDetail(
         {
-          ...student,
+          ...studentRow,
+          // Cache-busted by the storage key so a replaced photo shows at once;
+          // the endpoint redirects to a short-lived signed URL, never the object.
+          photo_url: photoStorageKey
+            ? `/api/students/${encodeURIComponent(id)}/photo?v=${encodeURIComponent(photoStorageKey)}`
+            : null,
           contact: personContact
             ? {
                 phone: personContact.phone,

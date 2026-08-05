@@ -163,6 +163,16 @@ export class UsersService {
 
     try {
       await this.usersRepository.updateUserPhoto(id, newStorageKey);
+    } catch (error) {
+      if (newStorageKey) {
+        await this.storage.delete(newStorageKey).catch(() => {
+          this.logger.warn(`Unable to delete unused profile photo for user ${id}`);
+        });
+      }
+      throw error;
+    }
+
+    try {
       await this.auditLog.record({
         actorUserId: resolveAuditActorId(actor),
         actorLabel: actor?.username ?? null,
@@ -173,12 +183,11 @@ export class UsersService {
         ip: null,
       });
     } catch (error) {
-      if (newStorageKey) {
-        await this.storage.delete(newStorageKey).catch(() => {
-          this.logger.warn(`Unable to delete unused profile photo for user ${id}`);
-        });
-      }
-      throw error;
+      // The database already points to the new object. Deleting it here would
+      // leave a broken profile photo; surface the audit outage in logs instead.
+      this.logger.error(
+        `Unable to audit profile photo update for user ${id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     if (replacedStorageKey) {
@@ -492,6 +501,72 @@ export class UsersService {
     };
   }
 
+  /** Own profile photo read — no manage-users permission, only being signed in. */
+  async resolveOwnPhoto(actor: ActorContext | undefined): Promise<FileServeResult> {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    const user = await this.usersRepository.findUserById(currentActor.id);
+    if (!user?.photo_storage_key) {
+      throw new NotFoundException('ไม่พบรูปประจำตัวผู้ใช้งาน');
+    }
+    const result = await this.storage.resolve(user.photo_storage_key);
+    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวผู้ใช้งาน');
+    return result;
+  }
+
+  /** Same upload/replace/cleanup contract as the admin path, scoped to self. */
+  async updateOwnPhoto(
+    actor: ActorContext | undefined,
+    file?: Express.Multer.File,
+    removePhoto?: boolean,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    if (file && removePhoto) {
+      throw new BadRequestException('ไม่สามารถอัปโหลดและนำรูปออกพร้อมกันได้');
+    }
+    if (!file && !removePhoto) {
+      throw new BadRequestException('กรุณาเลือกรูปหรือระบุการนำรูปออก');
+    }
+
+    const current = await this.usersRepository.findUserById(currentActor.id);
+    if (!current) throw new NotFoundException('ไม่พบผู้ใช้งาน');
+    const replacedStorageKey = current.photo_storage_key ?? null;
+    const newStorageKey = file ? await processImageUpload(file, this.storage, 'user-photos') : null;
+
+    try {
+      await this.usersRepository.updateUserPhoto(currentActor.id, newStorageKey);
+    } catch (error) {
+      if (newStorageKey) {
+        await this.storage.delete(newStorageKey).catch(() => {
+          this.logger.warn(`Unable to delete unused profile photo for user ${currentActor.id}`);
+        });
+      }
+      throw error;
+    }
+
+    try {
+      await this.auditLog.record({
+        actorUserId: resolveAuditActorId(actor),
+        actorLabel: actor?.username ?? null,
+        action: 'USER_PROFILE_UPDATE',
+        targetType: 'user',
+        targetId: String(currentActor.id),
+        metadata: { op: newStorageKey ? 'update-photo' : 'remove-photo' },
+        ip: null,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Unable to audit own profile photo update for user ${currentActor.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    if (replacedStorageKey) {
+      await this.storage.delete(replacedStorageKey).catch(() => {
+        this.logger.warn(`Unable to delete replaced profile photo for user ${currentActor.id}`);
+      });
+    }
+    return await this.getOwnProfile(actor);
+  }
+
   async getOwnProfile(actor: ActorContext | undefined) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     const roleMap = await this.usersPolicyService.getRoleMap();
@@ -518,6 +593,11 @@ export class UsersService {
     ]);
     return {
       ...user,
+      // Same cache-busting contract as the admin list; the self route needs no
+      // manage-users permission.
+      photo_url: user.photo_storage_key
+        ? `/api/users/me/photo?v=${encodeURIComponent(user.photo_storage_key)}`
+        : null,
       PersonID_Onec: normalizeNationalIdValue(resolvedNationalId) || null,
       phone: studentContact?.has_canonical_contact ? studentContact.phone : (user.phone ?? null),
       email: studentContact?.has_canonical_contact ? studentContact.email : (user.email ?? null),

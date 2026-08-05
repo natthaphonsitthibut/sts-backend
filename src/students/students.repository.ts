@@ -142,6 +142,7 @@ export class StudentsRepository {
     const fromWhere = `
       FROM student_term s
       ${currentEnrollmentJoin}
+      LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       LEFT JOIN student_status ss
@@ -186,7 +187,8 @@ export class StudentsRepository {
           sc.id as school_id,
           COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
           COALESCE(ss.category, 'UNMAPPED') as student_status_category,
-          COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant
+          COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant,
+          person.photo_storage_key
         ${fromWhere}
         ORDER BY s."SchoolID_Onec" ASC, s."GradeLevelID_Onec" ASC, s."RoomID_Onec" ASC, s."PersonID_Onec" ASC
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
@@ -319,6 +321,7 @@ export class StudentsRepository {
     let query = `
       SELECT
         s.*,
+        person.photo_storage_key,
         gl.label as grade,
         s."RoomID_Onec"::text as room,
         sc.name as school_name,
@@ -334,6 +337,7 @@ export class StudentsRepository {
         COALESCE(latest_case.student_lat, s.address_latitude) AS resolved_home_lat,
         COALESCE(latest_case.student_lng, s.address_longitude) AS resolved_home_lng
       FROM student_term s
+      LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       LEFT JOIN student_status ss
@@ -414,6 +418,22 @@ export class StudentsRepository {
    * snapshot is unknown or not yet linked (person_uuid is nullable until B2
    * CONTRACT).
    */
+  /** Photo lives on the person, so it survives re-imports of `student_term`. */
+  async findPersonPhotoStorageKey(personUuid: string): Promise<string | null> {
+    const result = await this.query<{ photo_storage_key: string | null }>(
+      `SELECT photo_storage_key FROM student_person WHERE person_uuid = $1 LIMIT 1`,
+      [personUuid],
+    );
+    return result.rows[0]?.photo_storage_key ?? null;
+  }
+
+  async updatePersonPhotoStorageKey(personUuid: string, storageKey: string | null): Promise<void> {
+    await this.query(`UPDATE student_person SET photo_storage_key = $2 WHERE person_uuid = $1`, [
+      personUuid,
+      storageKey,
+    ]);
+  }
+
   async findPersonUuidByStudentUuid(studentUuid: string): Promise<string | null> {
     const result = await this.query<{ person_uuid: string | null }>(
       `SELECT person_uuid FROM student_term WHERE student_uuid = $1 LIMIT 1`,

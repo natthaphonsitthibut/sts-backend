@@ -221,6 +221,33 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard)
+  @Get('me/photo')
+  async getOwnPhoto(
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.usersService.resolveOwnPhoto(actor);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
+  @UseGuards(AuthGuard)
+  @Patch('me/photo')
+  @UseInterceptors(FileInterceptor('photo', multerConfig))
+  async updateOwnPhoto(
+    @Body() data: UpdateUserPhotoDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+    @UploadedFile() photo?: Express.Multer.File,
+  ) {
+    return await this.usersService.updateOwnPhoto(actor, photo, data.removePhoto);
+  }
+
+  @UseGuards(AuthGuard)
   @Patch('me')
   async updateOwnProfile(
     @Body() data: UpdateOwnProfileDto,

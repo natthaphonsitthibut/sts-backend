@@ -1,5 +1,14 @@
-import { Type } from 'class-transformer';
-import { IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Min,
+} from 'class-validator';
 import { STUDENT_ENROLLMENT_STATES, STUDENT_RISK_TIER_FILTERS } from '../students.types';
 
 /** Page sizes the student list UI offers; keep in sync with the frontend control. */
@@ -111,4 +120,13 @@ export class GetStudentSubjectAttendanceQueryDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   @IsDateString({ strict: true })
   date!: string;
+}
+
+export class UpdateStudentPhotoDto {
+  // Multipart form fields arrive as strings, so the flag needs coercing before
+  // @IsBoolean sees it.
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  removePhoto?: boolean;
 }
