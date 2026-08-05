@@ -137,6 +137,19 @@ export interface TeacherWatchlistRow extends Record<string, unknown> {
   total_count?: number | string;
 }
 
+export interface ClassroomCommentListRow extends Record<string, unknown> {
+  id: string;
+  student_uuid: string;
+  student_name: string;
+  school_name: string | null;
+  grade_label: string | null;
+  room_no: string | null;
+  comment: string;
+  author_display_name: string;
+  commented_at: Date | string;
+  total_count?: number | string;
+}
+
 export interface StudentClassroomCommentRow extends Record<string, unknown> {
   id: string;
   student_uuid: string;

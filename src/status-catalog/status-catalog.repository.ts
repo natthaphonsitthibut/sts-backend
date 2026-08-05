@@ -26,11 +26,6 @@ export class StatusCatalogRepository {
                sort_order
         FROM case_workflow_statuses WHERE is_active = TRUE AND deleted_at IS NULL
         UNION ALL
-        SELECT 'STUDENT_FOLLOW_UP_REQUEST', code::text, NULL, NULL, label_th,
-               badge_variant, NULL, sort_order
-        FROM student_follow_up_request_statuses
-        WHERE is_active = TRUE AND deleted_at IS NULL
-        UNION ALL
         SELECT 'USER_ACCOUNT_STATUS', code::text, NULL, NULL, label_th, badge_variant, NULL,
                sort_order
         FROM user_account_statuses WHERE is_active = TRUE AND deleted_at IS NULL

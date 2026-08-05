@@ -4,9 +4,7 @@ import {
   Get,
   Headers,
   Param,
-  ParseIntPipe,
   ParseUUIDPipe,
-  Patch,
   Post,
   Query,
   UseGuards,
@@ -15,27 +13,12 @@ import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
-  Public,
-  RequireAnyPermission,
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
-import { ThrottleTeacherAccess } from '../config/throttle.decorators';
-import {
-  TEACHER_ACCESS_SESSION_HEADER,
-  TEACHER_ACCESS_TOKEN_HEADER,
-} from '../teacher-access/teacher-access.constants';
-import {
-  CreateFollowUpRequestDto,
-  CreatePublicFollowUpRequestDto,
-  CreateRiskReviewDto,
-  ListFollowUpRequestsQueryDto,
-  ListHomeVisitRequestsQueryDto,
-  ListTeacherObservationReportsQueryDto,
-  ListTeacherWatchlistQueryDto,
-  PublicFollowUpRequestsQueryDto,
-  ReviewFollowUpRequestDto,
-} from './dto/observation-reviews.dto';
+import {} from '../teacher-access/teacher-access.constants';
+import { CreateRiskReviewDto, ListTeacherWatchlistQueryDto } from './dto/observation-reviews.dto';
+import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
 import { ObservationReviewsService } from './observation-reviews.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -64,24 +47,13 @@ export class StudentRiskReviewController {
 
 @UseGuards(AuthGuard, PermissionsGuard)
 @RequirePermission('manage-student-observations')
-@Controller('api/student-risk-report/teacher-reports')
-export class TeacherObservationReportsController {
+@Controller('api/student-risk-report/teacher-comments')
+export class TeacherCommentReportsController {
   constructor(private readonly service: ObservationReviewsService) {}
 
   @Get()
-  list(
-    @Query() query: ListTeacherObservationReportsQueryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.listTeacherObservationReports(query, actor);
-  }
-
-  @Get(':observationId')
-  detail(
-    @Param('observationId', ParseIntPipe) observationId: number,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.getTeacherObservationReport(String(observationId), actor);
+  list(@Query() query: PaginatedSearchQueryDto, @CurrentUser() actor: AuthenticatedRequestUser) {
+    return this.service.listClassroomComments(query, actor);
   }
 }
 
@@ -112,109 +84,5 @@ export class StudentClassroomCommentsController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listStudentClassroomComments(studentTermId, actor);
-  }
-}
-
-@UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('manage-student-observations')
-@Controller('api/student-risk-report/home-visit-requests')
-export class HomeVisitRequestReportsController {
-  constructor(private readonly service: ObservationReviewsService) {}
-
-  @Get()
-  list(
-    @Query() query: ListHomeVisitRequestsQueryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.listHomeVisitRequests(query, actor);
-  }
-
-  @Get(':requestId')
-  detail(
-    @Param('requestId', ParseUUIDPipe) requestId: string,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.getHomeVisitRequest(requestId, actor);
-  }
-}
-
-@UseGuards(AuthGuard, PermissionsGuard)
-@RequireAnyPermission('student-observations', 'manage-student-observations')
-@Controller('api/students/:studentTermId/follow-up-requests')
-export class StudentFollowUpRequestsController {
-  constructor(private readonly service: ObservationReviewsService) {}
-
-  @Post()
-  create(
-    @Param('studentTermId', ParseUUIDPipe) studentTermId: string,
-    @Body() body: CreateFollowUpRequestDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.createFollowUp(studentTermId, body, actor);
-  }
-
-  @Get()
-  list(
-    @Param('studentTermId', ParseUUIDPipe) studentTermId: string,
-    @Query() query: ListFollowUpRequestsQueryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.listFollowUps(studentTermId, query, actor);
-  }
-
-  @Patch(':requestId')
-  @RequirePermission('manage-student-observations')
-  review(
-    @Param('studentTermId', ParseUUIDPipe) studentTermId: string,
-    @Param('requestId', ParseUUIDPipe) requestId: string,
-    @Body() body: ReviewFollowUpRequestDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.reviewFollowUp(studentTermId, requestId, body, actor);
-  }
-}
-
-@Public()
-@Controller('api/teacher-access/follow-up-requests')
-export class PublicStudentFollowUpRequestsController {
-  constructor(private readonly service: ObservationReviewsService) {}
-
-  private token(value: string | string[] | undefined): string {
-    return Array.isArray(value) ? value[0] || '' : value || '';
-  }
-
-  private session(value: string | string[] | undefined): string | undefined {
-    return this.token(value) || undefined;
-  }
-
-  @Post()
-  @ThrottleTeacherAccess()
-  create(
-    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
-    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
-    @Body() body: CreatePublicFollowUpRequestDto,
-  ) {
-    return this.service.createFollowUpWithTeacherAccess(
-      this.token(rawToken),
-      body.studentTermId,
-      body,
-      this.session(rawSession),
-    );
-  }
-
-  @Get()
-  @ThrottleTeacherAccess()
-  list(
-    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
-    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
-    @Query() query: PublicFollowUpRequestsQueryDto,
-  ) {
-    return this.service.listFollowUpsWithTeacherAccess(
-      this.token(rawToken),
-      query.studentTermId,
-      query.assignmentId,
-      query,
-      this.session(rawSession),
-    );
   }
 }

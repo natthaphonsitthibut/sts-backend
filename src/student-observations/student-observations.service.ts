@@ -7,6 +7,7 @@ import {
   GoneException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 import { hasPermission, resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
@@ -22,6 +23,7 @@ import { TeacherAccessService } from '../teacher-access/teacher-access.service';
 import type { ActiveTeacherGrantContext } from '../teacher-access/teacher-access.types';
 import { TaskAccessService } from '../task/task-access.service';
 import { TaskRepository } from '../task/task.repository';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import type {
   CreatePublicStudentObservationDto,
   CreateTaskLinkStudentObservationDto,
@@ -72,7 +74,13 @@ export class StudentObservationsService {
     private readonly teacherAccess: TeacherAccessService,
     private readonly taskAccess: TaskAccessService,
     private readonly taskRepository: TaskRepository,
+    @Optional()
+    private readonly riskProfileService?: RiskProfileService,
   ) {}
+
+  private async recalculateStudentRisk(studentUuid: string, reason: string): Promise<void> {
+    await this.riskProfileService?.requestStudentRecalculation([studentUuid], reason);
+  }
 
   private denyExecutiveRaw(actor: AuthenticatedRequestUser): void {
     if (
@@ -385,7 +393,7 @@ export class StudentObservationsService {
     dto: CreateStudentObservationDto,
     actor: AuthenticatedRequestUser,
   ) {
-    return await this.repository.withTransaction(async (queryRunner) => {
+    const result = await this.repository.withTransaction(async (queryRunner) => {
       const access = await this.resolveLoggedWriteAccess(
         actor,
         studentUuid,
@@ -414,6 +422,8 @@ export class StudentObservationsService {
       );
       return { data: this.toObservation(row) };
     });
+    await this.recalculateStudentRisk(studentUuid, 'student-observation-created');
+    return result;
   }
 
   async list(
@@ -490,7 +500,7 @@ export class StudentObservationsService {
     dto: UpdateStudentObservationDto,
     actor: AuthenticatedRequestUser,
   ) {
-    return await this.repository.withTransaction(async (queryRunner) => {
+    const result = await this.repository.withTransaction(async (queryRunner) => {
       const current = await this.repository.findObservationById(
         studentUuid,
         observationId,
@@ -551,6 +561,8 @@ export class StudentObservationsService {
       );
       return { data: this.toObservation(row) };
     });
+    await this.recalculateStudentRisk(studentUuid, 'student-observation-updated');
+    return result;
   }
 
   async listRevisions(
@@ -595,7 +607,7 @@ export class StudentObservationsService {
     dto: CreatePublicStudentObservationDto,
     sessionToken?: string,
   ) {
-    return await this.teacherAccess.withActiveGrantContext(
+    const result = await this.teacherAccess.withActiveGrantContext(
       rawToken,
       {
         capability: 'TEACHER_OBSERVATION',
@@ -648,6 +660,8 @@ export class StudentObservationsService {
         return { data: this.toObservation(row) };
       },
     );
+    await this.recalculateStudentRisk(studentUuid, 'teacher-observation-created');
+    return result;
   }
 
   async listWithTeacherAccess(
@@ -699,7 +713,7 @@ export class StudentObservationsService {
     dto: UpdateStudentObservationDto,
     sessionToken?: string,
   ) {
-    return await this.teacherAccess.withActiveGrantContext(
+    const result = await this.teacherAccess.withActiveGrantContext(
       rawToken,
       {
         capability: 'TEACHER_OBSERVATION',
@@ -772,6 +786,8 @@ export class StudentObservationsService {
         return { data: this.toObservation(row) };
       },
     );
+    await this.recalculateStudentRisk(studentUuid, 'teacher-observation-updated');
+    return result;
   }
 
   async listRevisionsWithTeacherAccess(
@@ -837,7 +853,7 @@ export class StudentObservationsService {
     sessionToken: string,
     dto: CreateTaskLinkStudentObservationDto,
   ) {
-    return await this.repository.withTransaction(async (queryRunner) => {
+    const result = await this.repository.withTransaction(async (queryRunner) => {
       const context = await this.resolveTaskLinkObservationContext(
         rawToken,
         sessionToken,
@@ -879,6 +895,8 @@ export class StudentObservationsService {
       );
       return { data: this.toObservation(row) };
     });
+    await this.recalculateStudentRisk(dto.studentTermId, 'task-link-observation-created');
+    return result;
   }
 
   async listWithTaskLink(

@@ -179,19 +179,31 @@ function createHarness() {
     listLinkedTimetableSlots: jest.fn().mockResolvedValue([{ id: 901 }]),
     listTaskStudents: jest.fn().mockResolvedValue([{ id: STUDENT_UUID }]),
   };
+  const riskProfileService = {
+    requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new StudentObservationsService(
     repository as unknown as StudentObservationsRepository,
     auditLog as never,
     teacherAccess as never,
     taskAccess as never,
     taskRepository as never,
+    riskProfileService as never,
   );
-  return { service, repository, auditLog, teacherAccess, taskAccess, taskRepository };
+  return {
+    service,
+    repository,
+    auditLog,
+    teacherAccess,
+    taskAccess,
+    taskRepository,
+    riskProfileService,
+  };
 }
 
 describe('StudentObservationsService', () => {
   it('creates a NOTE without a comment and persists first-class tags/revision input', async () => {
-    const { service, repository, auditLog } = createHarness();
+    const { service, repository, auditLog, riskProfileService } = createHarness();
 
     await expect(
       service.create(
@@ -215,6 +227,10 @@ describe('StudentObservationsService', () => {
         behaviorTagIds: [1],
       }),
       RUNNER,
+    );
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
+      [STUDENT_UUID],
+      'student-observation-created',
     );
     expect(auditLog.recordAtomic).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'STUDENT_OBSERVATION_CREATE' }),

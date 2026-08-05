@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import type { DataScope } from '../auth';
 import { buildDataScopeQuery } from '../common/utils/authorization';
+import { escapeLikePattern } from '../common/utils/helpers';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import type {
+  ClassroomCommentListRow,
   FollowUpRequestRow,
   FollowUpReviewDecision,
   FollowUpUrgency,
@@ -882,6 +884,78 @@ export class ObservationReviewsRepository {
          ${scopeCondition}
        ORDER BY comment.created_at DESC, comment.id DESC
        LIMIT $${limitIndex}`,
+      params,
+    );
+    return result.rows;
+  }
+
+  /**
+   * All teacher comments the actor may see — the list behind หน้าความคิดเห็นจาก
+   * คุณครู. Same scope columns as the per-student read, one row per comment.
+   */
+  async listClassroomComments(
+    scope: DataScope,
+    filters: { page: number; limit: number; searchTerm?: string },
+  ): Promise<ClassroomCommentListRow[]> {
+    const params: unknown[] = [];
+    const scoped = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+        grade: 'enrollment."GradeLevelID_Onec"',
+        room: 'enrollment.classroom_id',
+      },
+      1,
+    );
+    params.push(...scoped.params);
+    const conditions = ['enrollment.deleted_at IS NULL'];
+    if (scoped.sql) conditions.push(`(${scoped.sql})`);
+    if (filters.searchTerm) {
+      params.push(`%${escapeLikePattern(filters.searchTerm)}%`);
+      const searchIndex = params.length;
+      conditions.push(
+        `(CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec") ILIKE $${searchIndex} ESCAPE '\\'
+          OR comment.comment_text ILIKE $${searchIndex} ESCAPE '\\')`,
+      );
+    }
+    params.push(filters.limit);
+    const limitIndex = params.length;
+    params.push((filters.page - 1) * filters.limit);
+    const offsetIndex = params.length;
+
+    const result = await queryDataSource<ClassroomCommentListRow>(
+      this.dataSource,
+      `SELECT
+         comment.id::text,
+         enrollment.student_uuid::text,
+         TRIM(CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec")) AS student_name,
+         school.name AS school_name,
+         grade.label AS grade_label,
+         enrollment."RoomID_Onec"::text AS room_no,
+         comment.comment_text AS comment,
+         COALESCE(
+           NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
+           author.username
+         ) AS author_display_name,
+         comment.created_at AS commented_at,
+         COUNT(*) OVER()::int AS total_count
+       FROM classroom_student_comments comment
+       JOIN student_term enrollment
+         ON enrollment.person_uuid = comment.person_uuid
+        AND enrollment.classroom_id = comment.classroom_id
+       JOIN student_current_enrollment_resolution current_enrollment
+         ON current_enrollment.person_uuid = enrollment.person_uuid
+        AND current_enrollment.selected_student_uuid = enrollment.student_uuid
+        AND current_enrollment.resolution_state = 'ACTIVE'
+       JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+       LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
+       JOIN users author ON author.id = comment.authored_by_user_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY comment.created_at DESC, comment.id DESC
+       LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
       params,
     );
     return result.rows;
