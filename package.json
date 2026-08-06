@@ -96,6 +96,8 @@
     "audit:demo-school-structure": "node scripts/seed-demo-school-structure.js --audit-only",
     "seed:demo-case-scenarios": "node scripts/seed-demo-case-scenarios.js",
     "seed:demo-attendance-history": "node scripts/seed-demo-attendance-history.js",
+    "seed:missing-student-addresses": "node -r dotenv/config scripts/seed-missing-student-addresses.js",
+    "seed:demo-teacher-assignments": "node -r dotenv/config scripts/seed-demo-teacher-assignments.js",
     "audit:demo-data-provenance": "node scripts/audit-demo-data-provenance.js --strict",
     "commitlint": "commitlint --edit",
     "prepare": "husky",
