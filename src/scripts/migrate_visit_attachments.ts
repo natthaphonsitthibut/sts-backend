@@ -138,8 +138,11 @@ async function migrate(apply: boolean): Promise<void> {
 }
 
 void migrate(process.argv.includes('--apply')).catch((error: unknown) => {
-  const message =
-    error instanceof Error ? error.message : 'Unknown visit attachment migration error';
-  console.error(`Visit attachment migration failed: ${message}`);
+  const message = error instanceof Error ? error.message.trim() : '';
+  const errorName = error instanceof Error ? error.name : 'UnknownError';
+  const errorCode =
+    typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined;
+  const safeDetail = [errorName, errorCode, message].filter(Boolean).join(': ');
+  console.error(`Visit attachment migration failed: ${safeDetail}`);
   process.exitCode = 1;
 });
