@@ -1175,7 +1175,6 @@ export class TeacherAccessRepository {
             JOIN attendance record ON record.session_id = session.id
             WHERE session.session_kind = 'SUBJECT'
               AND session.attendance_date = classroom_day.calendar_date
-              AND slot.classroom_id = $1
               AND record."RecordedBy" IS DISTINCT FROM $4
           )
         ORDER BY classroom_day.calendar_date DESC

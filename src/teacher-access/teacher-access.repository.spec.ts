@@ -222,10 +222,17 @@ describe('TeacherAccessRepository', () => {
       runner as never,
     );
 
+    const calls = runner.query.mock.calls as unknown as Array<[string, unknown[], boolean]>;
+    const sql = calls[0]?.[0] ?? '';
+    expect(sql).toMatch(
+      /classroom_slots AS \([\s\S]*JOIN classroom ON classroom\.id = slot\.classroom_id/,
+    );
+    expect(sql).toMatch(
+      /JOIN classroom_slots slot ON slot\.id = session\.timetable_slot_id[\s\S]*record\."RecordedBy" IS DISTINCT FROM \$4/,
+    );
+    expect(sql.match(/slot\.classroom_id/g)).toHaveLength(1);
     expect(runner.query).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /NOT EXISTS[\s\S]*slot\.classroom_id = \$1[\s\S]*record\."RecordedBy" IS DISTINCT FROM \$4[\s\S]*LIMIT \$3/,
-      ),
+      expect.any(String),
       [41, '2026-08-07', 3, 'TEACHER_ACCESS_DEMO:grant-1'],
       true,
     );
