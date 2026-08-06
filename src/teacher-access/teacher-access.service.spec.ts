@@ -113,6 +113,7 @@ type RepositoryMock = jest.Mocked<
     | 'listGrantsForDelivery'
     | 'describeMembershipsForGrant'
     | 'findGrantById'
+    | 'syncGrantScopeFromAssignments'
     | 'listAssignmentSlotsForDate'
     | 'listRecentClassroomSchoolDays'
     | 'ensureDemoSchoolDays'
@@ -160,6 +161,7 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     listGrantsForDelivery: jest.fn().mockResolvedValue([]),
     describeMembershipsForGrant: jest.fn().mockResolvedValue([]),
     findGrantById: jest.fn().mockResolvedValue(grant),
+    syncGrantScopeFromAssignments: jest.fn().mockResolvedValue(undefined),
     listAssignmentSlotsForDate: jest.fn().mockResolvedValue([]),
     listRecentClassroomSchoolDays: jest
       .fn()
@@ -241,7 +243,6 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     otpStore,
     magicSessionStore,
     storage,
-    attendance,
     automation,
     risk,
   };
@@ -263,6 +264,11 @@ describe('TeacherAccessService', () => {
     });
     expect(result.data).not.toHaveProperty('token');
     expect(repository.findGrantByTokenHashForUpdate).toHaveBeenCalled();
+    expect(repository.syncGrantScopeFromAssignments).toHaveBeenCalledWith(
+      GRANT.id,
+      TODAY,
+      expect.anything(),
+    );
     expect(repository.touchGrant).toHaveBeenCalledWith(GRANT.id, expect.anything());
   });
 

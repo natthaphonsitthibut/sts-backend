@@ -1024,6 +1024,11 @@ export class TeacherAccessService {
         deniedGrant = grant;
         this.assertGrantUsable(grant);
         await this.assertStepUpSatisfied(grant, options.sessionToken);
+        await this.repository.syncGrantScopeFromAssignments(
+          grant.id,
+          getBangkokDateString(),
+          queryRunner,
+        );
         const capabilities = await this.repository.listCapabilities(grant.id, queryRunner);
         if (options.capability && !capabilities.includes(options.capability)) {
           throw new ForbiddenException('ลิงก์นี้ไม่มี capability ที่ร้องขอ');
@@ -1844,10 +1849,12 @@ export class TeacherAccessService {
         const students = rosterIds.slice(0, 3);
         if (students.length < 3)
           throw new BadRequestException('ห้องนี้มีนักเรียนไม่ครบ 3 คนสำหรับข้อมูลสาธิต');
+        const recorderMarker = this.demoAttendanceRecorder(context.grantId);
         const dates = await this.repository.listRecentClassroomSchoolDays(
           Number(context.classroomId),
           getBangkokDateString(),
           3,
+          recorderMarker,
           queryRunner,
         );
         if (dates.length < 3) {
@@ -1859,7 +1866,6 @@ export class TeacherAccessService {
           context.teacherUserId,
           queryRunner,
         );
-        const recorderMarker = this.demoAttendanceRecorder(context.grantId);
         if (
           await this.repository.hasNonDemoAttendanceSessions(
             Number(context.classroomId),
@@ -1933,10 +1939,12 @@ export class TeacherAccessService {
           queryRunner,
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        const recorderMarker = this.demoAttendanceRecorder(context.grantId);
         const dates = await this.repository.listRecentClassroomSchoolDays(
           Number(context.classroomId),
           getBangkokDateString(),
           3,
+          recorderMarker,
           queryRunner,
         );
         if (dates.length < 3) {
@@ -1945,7 +1953,7 @@ export class TeacherAccessService {
         const deletedSessionCount = await this.repository.deleteClassroomRecentAttendance(
           Number(context.classroomId),
           dates,
-          this.demoAttendanceRecorder(context.grantId),
+          recorderMarker,
           queryRunner,
         );
         return { dates, deletedSessionCount };
