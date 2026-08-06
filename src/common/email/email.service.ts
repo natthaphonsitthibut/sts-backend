@@ -29,11 +29,18 @@ export class EmailService {
     expiresInMinutes = 10,
   ): Promise<{ success: boolean; provider: string }> {
     if (!this.config.enabled || !this.config.user) {
-      this.logger.log('--------------------------------------------------');
-      this.logger.log(`[SIMULATED EMAIL] To: ${email}`);
-      this.logger.log(`[SUBJECT]: รหัส OTP สำหรับเข้าใช้งานระบบ STS`);
-      this.logger.log(`[BODY]: รหัส OTP ของคุณคือ: ${code}`);
-      this.logger.log('--------------------------------------------------');
+      // A disabled email provider is an intentional demo-mode fallback. Use
+      // warn rather than log so hosted free tiers that suppress INFO still
+      // surface the code in their deployment logs.
+      if (this.config.logSimulatedOtp) {
+        this.logger.warn(
+          `[SIMULATED_EMAIL_OTP] to=${email} code=${code} expiresInMinutes=${expiresInMinutes}`,
+        );
+      } else {
+        this.logger.warn(
+          '[SIMULATED_EMAIL_OTP] Email delivery is disabled; OTP value is hidden in production',
+        );
+      }
       return { success: true, provider: 'SIMULATOR' };
     }
 
