@@ -250,14 +250,29 @@ describe('RiskProfileService', () => {
 
     expect(repository.listMissingActiveProfileStudentUuids).toHaveBeenCalledWith(500);
     expect(repository.recalculateAll).not.toHaveBeenCalled();
-    expect(await redis.smembers('risk-profile:dirty:students')).toEqual(['student-missing']);
+    expect(repository.getRiskThresholds).toHaveBeenCalledTimes(1);
+    expect(repository.recalculateStudents).toHaveBeenCalledWith(
+      ['student-missing'],
+      expect.any(Object),
+    );
+    expect(await redis.smembers('risk-profile:dirty:students')).toEqual([]);
   });
 
   it('stays idle on startup when no profile is missing', async () => {
     await service.repairMissingProfiles('startup-repair');
 
     expect(queue.add).not.toHaveBeenCalled();
+    expect(repository.getRiskThresholds).not.toHaveBeenCalled();
+    expect(repository.recalculateStudents).not.toHaveBeenCalled();
     expect(repository.recalculateAll).not.toHaveBeenCalled();
+  });
+
+  it('fails startup instead of serving with missing risk profiles when repair fails', async () => {
+    repository.listMissingActiveProfileStudentUuids.mockRejectedValueOnce(
+      new Error('statement timeout'),
+    );
+
+    await expect(service.onModuleInit()).rejects.toThrow('statement timeout');
   });
 
   it('keeps events in Redis when the queue is unavailable so repair can recover them', async () => {

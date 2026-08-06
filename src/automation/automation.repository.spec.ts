@@ -29,6 +29,9 @@ describe('AutomationRepository', () => {
     expect(queries[0].sql).toContain('WITH current_enrollments AS');
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('HAVING COUNT(*) >= $1');
+    expect(queries[0].sql).toContain(
+      `demo_distribution."RecordedBy" = 'SYSTEM:DEMO_RISK_DISTRIBUTION'`,
+    );
     // Days no longer have to be consecutive.
     expect(queries[0].sql).not.toContain('streak');
   });
