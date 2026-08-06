@@ -2659,6 +2659,7 @@ export class TaskRepository {
         case_status.summary_tone AS status_summary_tone,
         c.created_at,
         student_match.student_id,
+        student_match.photo_storage_key AS student_photo_storage_key,
         t.id AS task_id,
         tl.id AS active_link_id,
         tl.token_encrypted AS active_link_token_encrypted,
@@ -2681,10 +2682,15 @@ export class TaskRepository {
           CASE
             WHEN COUNT(*) = 1 THEN (array_agg(candidate.student_uuid))[1]
             ELSE NULL
-          END AS student_id
+          END AS student_id,
+          CASE
+            WHEN COUNT(*) = 1 THEN (array_agg(candidate.photo_storage_key))[1]
+            ELSE NULL
+          END AS photo_storage_key
         FROM (
-          SELECT DISTINCT s.student_uuid
+          SELECT DISTINCT s.student_uuid, person.photo_storage_key
           FROM student_term s
+          LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
           LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
           WHERE norm_full_name(s."FirstName_Onec", s."LastName_Onec") = LOWER(TRIM(c.student_name))
             AND (
@@ -2737,10 +2743,22 @@ export class TaskRepository {
     const statusCounts = await this.countCaseStatuses(actor, { ...filters, status: undefined });
 
     return {
-      rows: result.rows.map(({ active_link_token_encrypted, ...row }) => ({
-        ...row,
-        active_link: this.resolveMagicLink(active_link_token_encrypted as string | null),
-      })),
+      rows: result.rows.map(
+        ({ active_link_token_encrypted, student_photo_storage_key, ...row }) => {
+          const studentId = typeof row.student_id === 'string' ? row.student_id : null;
+          const photoStorageKey =
+            typeof student_photo_storage_key === 'string' ? student_photo_storage_key : null;
+
+          return {
+            ...row,
+            student_photo_url:
+              studentId && photoStorageKey
+                ? `/api/students/${encodeURIComponent(studentId)}/photo?v=${encodeURIComponent(photoStorageKey)}`
+                : null,
+            active_link: this.resolveMagicLink(active_link_token_encrypted as string | null),
+          };
+        },
+      ),
       totalCount,
       statusCounts,
     };

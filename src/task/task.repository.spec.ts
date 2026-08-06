@@ -294,6 +294,52 @@ describe('TaskRepository', () => {
     expect(listQuery).not.toContain("latest_assignee_link.status = 'ACTIVE'");
   });
 
+  it('returns a scoped student photo URL without exposing its storage key', async () => {
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string) => {
+        if (sql.includes('SELECT count(*)')) {
+          return { records: [{ count: '1' }], affected: 1 };
+        }
+        if (sql.includes('student_match.photo_storage_key')) {
+          return {
+            records: [
+              {
+                id: 41,
+                student_id: '00000000-0000-4000-8000-000000000041',
+                student_photo_storage_key: 'student-photos/person/profile.webp',
+                active_link_token_encrypted: null,
+              },
+            ],
+            affected: 1,
+          };
+        }
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    const result = await repository.listCasesWithActiveLinks(undefined, { page: 1, limit: 20 });
+
+    expect(result.rows[0]).toMatchObject({
+      student_photo_url:
+        '/api/students/00000000-0000-4000-8000-000000000041/photo?v=student-photos%2Fperson%2Fprofile.webp',
+    });
+    expect(result.rows[0]).not.toHaveProperty('student_photo_storage_key');
+    expect(queryRunner.query).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'LEFT JOIN student_person person ON person.person_uuid = s.person_uuid',
+      ),
+      expect.any(Array),
+      true,
+    );
+  });
+
   it('lists risk dashboard students with actor scope, risk filter, and server sorting', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
