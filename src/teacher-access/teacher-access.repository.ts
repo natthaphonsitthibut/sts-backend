@@ -972,7 +972,12 @@ export class TeacherAccessRepository {
    * `timetable_slots` stores.
    */
   async listAssignmentSlotsForDate(
-    input: { classroomId: number; subjectId: number; isoDayOfWeek: number },
+    input: {
+      classroomId: number;
+      subjectId: number;
+      teacherMembershipId: number;
+      isoDayOfWeek: number;
+    },
     queryRunner: QueryRunner,
   ): Promise<Array<{ id: string; period: number }>> {
     const result = await this.executor(queryRunner).query<{ id: string; period: number }>(
@@ -984,14 +989,17 @@ export class TeacherAccessRepository {
          AND slot.school_id = classroom.school_id
          AND slot.grade_level_id = classroom.grade_level_id
          AND slot.room_no = classroom.legacy_room_number
+        JOIN timetable_slot_teachers slot_teacher
+          ON slot_teacher.timetable_slot_id = slot.id
+         AND slot_teacher.teacher_membership_id = $3
         WHERE classroom.id = $1
           AND classroom.deleted_at IS NULL
           AND slot.subject_id = $2
-          AND slot.day_of_week = $3
+          AND slot.day_of_week = $4
           AND slot.deleted_at IS NULL
         ORDER BY slot.period
       `,
-      [input.classroomId, input.subjectId, input.isoDayOfWeek],
+      [input.classroomId, input.subjectId, input.teacherMembershipId, input.isoDayOfWeek],
     );
     return result.rows;
   }

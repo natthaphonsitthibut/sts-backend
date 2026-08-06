@@ -40,6 +40,7 @@ import {
   RevokeTeacherAccessGrantDto,
   SendTeacherAccessGrantsDto,
   SaveTeacherAccessAttendanceDto,
+  TeacherAccessAttendanceSlotsQueryDto,
   TeacherAccessAssignmentOptionsDto,
   TeacherAccessAttendanceHistoryQueryDto,
   TeacherAccessRosterQueryDto,
@@ -187,6 +188,20 @@ export class PublicTeacherAccessController {
     @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession?: string | string[],
   ) {
     return this.service.getPublicContext(this.token(rawToken), this.session(rawSession));
+  }
+
+  @Get('attendance-slots')
+  @ThrottleTeacherAccess()
+  attendanceSlots(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Query() query: TeacherAccessAttendanceSlotsQueryDto,
+  ) {
+    return this.service.listPublicAttendanceSlots(
+      this.token(rawToken),
+      query,
+      this.session(rawSession),
+    );
   }
 
   @Get('roster')

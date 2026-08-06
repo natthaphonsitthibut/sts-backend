@@ -441,6 +441,27 @@ describe('TeacherAccessService', () => {
     expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it("lists only the signed-in teacher's scheduled subject periods", async () => {
+    const { service, repository } = createHarness({ capabilities: ['SUBJECT_ATTENDANCE'] });
+    repository.findGrantAssignment.mockResolvedValue({
+      ...ASSIGNMENT,
+      assignment_kind: 'SUBJECT',
+      subject_id: 7,
+    });
+    repository.listAssignmentSlotsForDate.mockResolvedValue([{ id: '12', period: 6 }]);
+
+    await expect(
+      service.listPublicAttendanceSlots(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31, date: '2026-08-04' },
+      ),
+    ).resolves.toEqual({ data: [{ id: 12, period: 6 }] });
+    expect(repository.listAssignmentSlotsForDate).toHaveBeenCalledWith(
+      { classroomId: 41, subjectId: 7, teacherMembershipId: 12, isoDayOfWeek: 2 },
+      expect.anything(),
+    );
+  });
+
   it('requires the dedicated issuer permission instead of school-structure authority', async () => {
     const { service } = createHarness();
 

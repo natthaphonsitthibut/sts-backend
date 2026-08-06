@@ -343,3 +343,13 @@ export class SaveTeacherAccessAttendanceDto {
   @Type(() => TeacherAccessAttendanceRecordDto)
   records!: TeacherAccessAttendanceRecordDto[];
 }
+
+export class TeacherAccessAttendanceSlotsQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId!: number;
+
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  date!: string;
+}

@@ -1232,6 +1232,43 @@ export class TeacherAccessService {
     );
   }
 
+  async listPublicAttendanceSlots(
+    rawToken: string,
+    input: { assignmentId: number; date: string },
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId: input.assignmentId, sessionToken, operation: 'VIEW_ATTENDANCE_SLOTS' },
+      async (context, queryRunner) => {
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          input.assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        const capability = this.attendanceCapability(assignment.assignment_kind);
+        if (!context.capabilities.includes(capability)) {
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+        }
+        if (assignment.assignment_kind !== 'SUBJECT') return { data: [] };
+        if (!assignment.subject_id) {
+          throw new ConflictException('assignment รายวิชานี้ไม่มีรายวิชาที่ผูกไว้');
+        }
+        const slots = await this.repository.listAssignmentSlotsForDate(
+          {
+            classroomId: Number(assignment.classroom_id),
+            subjectId: assignment.subject_id,
+            teacherMembershipId: Number(assignment.teacher_membership_id),
+            isoDayOfWeek: getIsoDayOfWeekFromDateString(input.date),
+          },
+          queryRunner,
+        );
+        return { data: slots.map((slot) => ({ id: Number(slot.id), period: slot.period })) };
+      },
+    );
+  }
+
   async listPublicRoster(
     rawToken: string,
     assignmentId: number,
@@ -1300,6 +1337,7 @@ export class TeacherAccessService {
       {
         classroomId: Number(assignment.classroom_id),
         subjectId: assignment.subject_id,
+        teacherMembershipId: Number(assignment.teacher_membership_id),
         isoDayOfWeek: getIsoDayOfWeekFromDateString(dto.date),
       },
       queryRunner,
