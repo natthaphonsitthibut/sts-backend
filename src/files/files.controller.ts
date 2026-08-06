@@ -27,7 +27,10 @@ import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from './storage/file-st
 // with the case->school mapping follow-up (cases currently carry no school_id).
 @UseGuards(AuthGuard, PermissionsGuard)
 @RequirePermission('students')
-@Controller('uploads')
+// Keep the legacy direct prefix for old clients, while `/api/uploads` is the
+// canonical route used by the Vercel API rewrite and every protected-media URL
+// returned to the current frontend.
+@Controller(['api/uploads', 'uploads'])
 export class FilesController {
   constructor(
     @Inject(FILE_STORAGE_ADAPTER)

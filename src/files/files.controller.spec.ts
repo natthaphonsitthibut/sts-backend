@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { PATH_METADATA } from '@nestjs/common/constants';
 import { FilesController } from './files.controller';
 import type { FileStorageAdapter } from './storage/file-storage.types';
 
@@ -19,6 +20,12 @@ describe('FilesController', () => {
       sendFile: jest.fn(),
       setHeader: jest.fn(),
     }) as never;
+
+  it('exposes the protected upload route behind the canonical API prefix', () => {
+    expect(Reflect.getMetadata(PATH_METADATA, FilesController)).toEqual(
+      expect.arrayContaining(['api/uploads', 'uploads']),
+    );
+  });
 
   it('serves visit attachments through a fresh signed redirect', async () => {
     const storage = {

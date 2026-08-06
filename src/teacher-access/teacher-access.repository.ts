@@ -431,6 +431,99 @@ export class TeacherAccessRepository {
     return result.rows.map((row) => row.capability);
   }
 
+  /**
+   * Keep an issued link aligned with the teacher's current assignments in the
+   * same school and term. The grant identity remains fixed; only server-owned
+   * assignment/capability rows are refreshed, so client input cannot widen it.
+   */
+  async syncGrantScopeFromAssignments(
+    grantId: string,
+    onDate: string,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await this.executor(queryRunner).query(
+      `
+        DELETE FROM teacher_access_grant_assignments scope
+        USING teacher_access_grants access_grant
+        WHERE scope.grant_id = access_grant.id
+          AND access_grant.id = $1::uuid
+          AND NOT EXISTS (
+            SELECT 1
+            FROM classroom_teacher_assignments assignment
+            JOIN school_classrooms classroom ON classroom.id = assignment.classroom_id
+            WHERE assignment.id = scope.assignment_id
+              AND assignment.teacher_membership_id = access_grant.teacher_membership_id
+              AND assignment.school_id = access_grant.school_id
+              AND classroom.school_term_id = access_grant.school_term_id
+              AND assignment.assignment_status = 'ACTIVE'
+              AND assignment.deleted_at IS NULL
+              AND classroom.classroom_status = 'ACTIVE'
+              AND classroom.deleted_at IS NULL
+              AND (assignment.effective_on IS NULL OR assignment.effective_on <= $2::date)
+              AND (assignment.effective_until IS NULL OR assignment.effective_until >= $2::date)
+          )
+      `,
+      [grantId, onDate],
+    );
+    await this.executor(queryRunner).query(
+      `
+        INSERT INTO teacher_access_grant_assignments (
+          grant_id, assignment_id, teacher_membership_id,
+          school_id, school_term_id, classroom_id
+        )
+        SELECT
+          access_grant.id,
+          assignment.id,
+          assignment.teacher_membership_id,
+          assignment.school_id,
+          classroom.school_term_id,
+          classroom.id
+        FROM teacher_access_grants access_grant
+        JOIN classroom_teacher_assignments assignment
+          ON assignment.teacher_membership_id = access_grant.teacher_membership_id
+         AND assignment.school_id = access_grant.school_id
+        JOIN school_classrooms classroom
+          ON classroom.id = assignment.classroom_id
+         AND classroom.school_term_id = access_grant.school_term_id
+        WHERE access_grant.id = $1::uuid
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+          AND (assignment.effective_on IS NULL OR assignment.effective_on <= $2::date)
+          AND (assignment.effective_until IS NULL OR assignment.effective_until >= $2::date)
+        ON CONFLICT (grant_id, assignment_id) DO NOTHING
+      `,
+      [grantId, onDate],
+    );
+    await this.executor(queryRunner).query(
+      `DELETE FROM teacher_access_grant_capabilities WHERE grant_id = $1::uuid`,
+      [grantId],
+    );
+    await this.executor(queryRunner).query(
+      `
+        INSERT INTO teacher_access_grant_capabilities (grant_id, capability)
+        SELECT DISTINCT $1::uuid, capability
+        FROM (
+          SELECT CASE assignment.assignment_kind
+                   WHEN 'HOMEROOM' THEN 'HOMEROOM_ATTENDANCE'
+                   WHEN 'SUBJECT' THEN 'SUBJECT_ATTENDANCE'
+                 END AS capability
+          FROM teacher_access_grant_assignments scope
+          JOIN classroom_teacher_assignments assignment ON assignment.id = scope.assignment_id
+          WHERE scope.grant_id = $1::uuid
+          UNION ALL
+          SELECT 'TEACHER_OBSERVATION'
+          FROM teacher_access_grant_assignments scope
+          JOIN classroom_teacher_assignments assignment ON assignment.id = scope.assignment_id
+          WHERE scope.grant_id = $1::uuid AND assignment.assignment_kind = 'SUBJECT'
+        ) derived
+        WHERE capability IS NOT NULL
+      `,
+      [grantId],
+    );
+  }
+
   async listGrantAssignments(
     grantId: string,
     queryRunner?: QueryRunner,
@@ -1035,6 +1128,7 @@ export class TeacherAccessRepository {
     classroomId: number,
     asOfDate: string,
     limit: number,
+    recorderMarker: string,
     queryRunner: QueryRunner,
   ): Promise<string[]> {
     const result = await this.executor(queryRunner).query<{ attendance_date: string }>(
@@ -1074,10 +1168,20 @@ export class TeacherAccessRepository {
             FROM classroom_slots slot
             WHERE slot.day_of_week = EXTRACT(ISODOW FROM classroom_day.calendar_date)::int
           )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM attendance_sessions session
+            JOIN classroom_slots slot ON slot.id = session.timetable_slot_id
+            JOIN attendance record ON record.session_id = session.id
+            WHERE session.session_kind = 'SUBJECT'
+              AND session.attendance_date = classroom_day.calendar_date
+              AND slot.classroom_id = $1
+              AND record."RecordedBy" IS DISTINCT FROM $4
+          )
         ORDER BY classroom_day.calendar_date DESC
         LIMIT $3
       `,
-      [classroomId, asOfDate, limit],
+      [classroomId, asOfDate, limit, recorderMarker],
     );
     return result.rows.map((row) => row.attendance_date).reverse();
   }

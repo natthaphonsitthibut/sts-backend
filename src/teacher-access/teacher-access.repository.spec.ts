@@ -83,6 +83,35 @@ describe('TeacherAccessRepository', () => {
     );
   });
 
+  it('synchronizes an issued grant with current assignments and derived capabilities', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.syncGrantScopeFromAssignments(
+      '11111111-1111-4111-8111-111111111111',
+      '2026-08-07',
+      runner as never,
+    );
+
+    const calls = runner.query.mock.calls as unknown as Array<[string, unknown[], boolean]>;
+    expect(calls).toHaveLength(4);
+    expect(calls[0][0]).toMatch(
+      /DELETE FROM teacher_access_grant_assignments[\s\S]*assignment\.teacher_membership_id = access_grant\.teacher_membership_id/,
+    );
+    expect(calls[1][0]).toMatch(
+      /INSERT INTO teacher_access_grant_assignments[\s\S]*ON CONFLICT \(grant_id, assignment_id\) DO NOTHING/,
+    );
+    expect(calls[2][0]).toContain('DELETE FROM teacher_access_grant_capabilities');
+    expect(calls[3][0]).toMatch(
+      /HOMEROOM_ATTENDANCE[\s\S]*SUBJECT_ATTENDANCE[\s\S]*TEACHER_OBSERVATION/,
+    );
+    expect(calls.map((call) => call[1])).toEqual([
+      ['11111111-1111-4111-8111-111111111111', '2026-08-07'],
+      ['11111111-1111-4111-8111-111111111111', '2026-08-07'],
+      ['11111111-1111-4111-8111-111111111111'],
+      ['11111111-1111-4111-8111-111111111111'],
+    ]);
+  });
+
   it('sorts the teacher-link roster before pagination', async () => {
     const { repository, runner } = createRepository();
 
@@ -174,6 +203,30 @@ describe('TeacherAccessRepository', () => {
     expect(runner.query).toHaveBeenCalledWith(
       expect.stringMatching(/slot\.classroom_id = classroom\.id[\s\S]*slot\.day_of_week = \$2/),
       [41, 2],
+      true,
+    );
+  });
+
+  it('selects demo days without attendance recorded outside the same demo grant', async () => {
+    const { repository, runner } = createRepository();
+    runner.query.mockResolvedValueOnce({
+      records: [{ attendance_date: '2026-08-03' }],
+      affected: 1,
+    });
+
+    await repository.listRecentClassroomSchoolDays(
+      41,
+      '2026-08-07',
+      3,
+      'TEACHER_ACCESS_DEMO:grant-1',
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /NOT EXISTS[\s\S]*slot\.classroom_id = \$1[\s\S]*record\."RecordedBy" IS DISTINCT FROM \$4[\s\S]*LIMIT \$3/,
+      ),
+      [41, '2026-08-07', 3, 'TEACHER_ACCESS_DEMO:grant-1'],
       true,
     );
   });
