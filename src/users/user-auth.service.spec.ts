@@ -79,6 +79,23 @@ describe('UserAuthService login policy', () => {
     expect(usersPolicyService.hydrateUserPermissions).toHaveBeenCalled();
   });
 
+  it('returns a guarded photo URL without exposing the storage key', async () => {
+    usersRepository.findUserByUsername.mockResolvedValue(
+      buildUser({
+        must_change_password: false,
+        temporary_password_expires_at: null,
+        photo_storage_key: 'user-photos/77/profile.webp',
+      }),
+    );
+
+    const result = await service.validateUser('student-temp', 'PASSWORD');
+
+    expect(result).toMatchObject({
+      photo_url: '/api/users/me/photo?v=user-photos%2F77%2Fprofile.webp',
+    });
+    expect(result).not.toHaveProperty('photo_storage_key');
+  });
+
   it('rejects a disabled account before checking its password', async () => {
     usersRepository.findUserByUsername.mockResolvedValue(buildUser({ status: 'DISABLED' }));
 

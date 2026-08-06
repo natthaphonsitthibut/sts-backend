@@ -42,9 +42,20 @@ export class UserAuthService {
       return null;
     }
 
-    const { password: _password, ...safeUser } = user;
+    const { password: _password, photo_storage_key, ...safeUser } = user;
     void _password;
-    return this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
+    const hydratedUser = this.usersPolicyService.hydrateUserPermissions(safeUser, roleMap);
+
+    return {
+      ...hydratedUser,
+      // Keep the login payload aligned with GET /api/users/me so the header can
+      // show the current user's private photo immediately after a fresh login.
+      // The storage key stays server-internal; this guarded route redirects to
+      // a short-lived signed URL when the browser loads it.
+      photo_url: photo_storage_key
+        ? `/api/users/me/photo?v=${encodeURIComponent(photo_storage_key)}`
+        : null,
+    };
   }
 
   private isTemporaryPasswordExpired(user: {

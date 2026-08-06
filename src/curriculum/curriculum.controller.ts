@@ -69,7 +69,8 @@ export class CurriculumController {
     @Res() res: Response,
   ): Promise<void> {
     const { result, fileName } = await this.service.resolveContent(String(id), actor);
-    res.setHeader('Cache-Control', 'private, max-age=300');
+    // Do not cache a redirect to a short-lived Supabase signed URL.
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);

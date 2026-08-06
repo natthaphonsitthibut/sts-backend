@@ -145,7 +145,8 @@ export class SchoolStructureController {
     @Res() res: Response,
   ): Promise<void> {
     const result = await this.service.resolveClassroomCover(classroomId, actor);
-    res.setHeader('Cache-Control', 'private, max-age=300');
+    // Do not cache a redirect to a short-lived Supabase signed URL.
+    res.setHeader('Cache-Control', 'private, no-store');
     if (result.kind === 'redirect') {
       res.redirect(302, result.url);
       return;
