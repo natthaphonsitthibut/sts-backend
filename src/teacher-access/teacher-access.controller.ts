@@ -40,6 +40,7 @@ import {
   RevokeTeacherAccessGrantDto,
   SendTeacherAccessGrantsDto,
   SaveTeacherAccessAttendanceDto,
+  SeedTeacherAccessAbsenceDemoDto,
   TeacherAccessAttendanceSlotsQueryDto,
   TeacherAccessAssignmentOptionsDto,
   TeacherAccessAttendanceHistoryQueryDto,
@@ -347,5 +348,33 @@ export class PublicTeacherAccessController {
     @Body() body: SaveTeacherAccessAttendanceDto,
   ) {
     return this.service.savePublicAttendance(this.token(rawToken), body, this.session(rawSession));
+  }
+
+  @Post('attendance-demo-absences')
+  @ThrottleTeacherAccess()
+  seedDemoAbsences(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Body() body: SeedTeacherAccessAbsenceDemoDto,
+  ) {
+    return this.service.seedPublicAttendanceDemo(
+      this.token(rawToken),
+      body.assignmentId,
+      this.session(rawSession),
+    );
+  }
+
+  @Post('attendance-demo-absences/clear')
+  @ThrottleTeacherAccess()
+  clearAttendanceDemo(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) sessionToken: string | string[] | undefined,
+    @Body() body: SeedTeacherAccessAbsenceDemoDto,
+  ) {
+    return this.service.clearPublicAttendanceDemo(
+      this.token(rawToken),
+      body.assignmentId,
+      this.session(sessionToken),
+    );
   }
 }

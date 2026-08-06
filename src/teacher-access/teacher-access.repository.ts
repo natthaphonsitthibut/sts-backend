@@ -1004,6 +1004,173 @@ export class TeacherAccessRepository {
     return result.rows;
   }
 
+  async listClassroomSlotsForDate(
+    classroomId: number,
+    isoDayOfWeek: number,
+    queryRunner: QueryRunner,
+  ): Promise<Array<{ id: string }>> {
+    const result = await this.executor(queryRunner).query<{ id: string }>(
+      `
+        SELECT slot.id::text
+        FROM school_classrooms classroom
+        JOIN timetable_slots slot
+          ON slot.classroom_id = classroom.id
+        WHERE classroom.id = $1
+          AND classroom.deleted_at IS NULL
+          AND slot.day_of_week = $2
+          AND slot.deleted_at IS NULL
+        ORDER BY slot.period
+      `,
+      [classroomId, isoDayOfWeek],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Returns recent school days that have scheduled subject periods for the
+   * classroom but no submitted subject-attendance session yet.  Demo writes
+   * must never overwrite a teacher's existing attendance record.
+   */
+  async listRecentClassroomSchoolDays(
+    classroomId: number,
+    asOfDate: string,
+    limit: number,
+    queryRunner: QueryRunner,
+  ): Promise<string[]> {
+    const result = await this.executor(queryRunner).query<{ attendance_date: string }>(
+      `
+        WITH classroom AS (
+          SELECT id, school_term_id
+          FROM school_classrooms
+          WHERE id = $1 AND deleted_at IS NULL
+        ), classroom_slots AS (
+          SELECT slot.id, slot.day_of_week
+          FROM timetable_slots slot
+          JOIN classroom ON classroom.id = slot.classroom_id
+          WHERE slot.deleted_at IS NULL
+        ), classroom_days AS (
+          SELECT term.id AS school_term_id, day_value::date AS calendar_date
+          FROM school_terms term
+          JOIN classroom ON classroom.school_term_id = term.id
+          CROSS JOIN LATERAL generate_series(
+            term.starts_on,
+            LEAST(term.ends_on, $2::date),
+            interval '1 day'
+          ) day_value
+          WHERE term.starts_on IS NOT NULL AND term.ends_on IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM school_calendar_days blocked_day
+              WHERE blocked_day.school_term_id = term.id
+                AND blocked_day.calendar_date = day_value::date
+                AND blocked_day.day_type <> 'SCHOOL_DAY'
+                AND blocked_day.deleted_at IS NULL
+            )
+        )
+        SELECT classroom_day.calendar_date::text AS attendance_date
+        FROM classroom_days classroom_day
+        WHERE classroom_day.calendar_date <= $2::date
+          AND EXISTS (
+            SELECT 1
+            FROM classroom_slots slot
+            WHERE slot.day_of_week = EXTRACT(ISODOW FROM classroom_day.calendar_date)::int
+          )
+        ORDER BY classroom_day.calendar_date DESC
+        LIMIT $3
+      `,
+      [classroomId, asOfDate, limit],
+    );
+    return result.rows.map((row) => row.attendance_date).reverse();
+  }
+
+  async ensureDemoSchoolDays(
+    classroomId: number,
+    dates: string[],
+    actorUserId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await this.executor(queryRunner).query(
+      `
+        INSERT INTO school_calendar_days (
+          school_term_id, calendar_date, day_type, reason, source, created_by, updated_by
+        )
+        SELECT classroom.school_term_id, day_value, 'SCHOOL_DAY',
+               'ข้อมูลสาธิตการเช็คชื่อย้อนหลัง', 'MANUAL', $3, $3
+        FROM school_classrooms classroom
+        CROSS JOIN UNNEST($2::date[]) AS day_value
+        WHERE classroom.id = $1 AND classroom.deleted_at IS NULL
+        ON CONFLICT (school_term_id, calendar_date) DO NOTHING
+      `,
+      [classroomId, dates, actorUserId],
+    );
+  }
+
+  async hasNonDemoAttendanceSessions(
+    classroomId: number,
+    dates: string[],
+    recorderMarker: string,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    const result = await this.executor(queryRunner).query<{ exists: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM attendance_sessions session
+          JOIN timetable_slots slot ON slot.id = session.timetable_slot_id
+          WHERE slot.classroom_id = $1
+            AND session.session_kind = 'SUBJECT'
+            AND session.attendance_date = ANY($2::date[])
+            AND EXISTS (
+              SELECT 1
+              FROM attendance record
+              WHERE record.session_id = session.id
+                AND record."RecordedBy" IS DISTINCT FROM $3
+            )
+        ) AS exists
+      `,
+      [classroomId, dates, recorderMarker],
+    );
+    return result.rows[0]?.exists === true;
+  }
+
+  /** Deletes only subject sessions wholly created by the temporary demo action. */
+  async deleteClassroomRecentAttendance(
+    classroomId: number,
+    dates: string[],
+    recorderMarker: string,
+    queryRunner: QueryRunner,
+  ): Promise<number> {
+    const result = await this.executor(queryRunner).query<{ id: string }>(
+      `
+        WITH recent_sessions AS (
+          SELECT session.id
+          FROM attendance_sessions session
+          JOIN timetable_slots slot ON slot.id = session.timetable_slot_id
+          WHERE slot.classroom_id = $1
+            AND session.session_kind = 'SUBJECT'
+            AND session.attendance_date = ANY($2::date[])
+            AND EXISTS (
+              SELECT 1 FROM attendance demo_record
+              WHERE demo_record.session_id = session.id
+                AND demo_record."RecordedBy" = $3
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM attendance real_record
+              WHERE real_record.session_id = session.id
+                AND real_record."RecordedBy" IS DISTINCT FROM $3
+            )
+        ), deleted_records AS (
+          DELETE FROM attendance
+          WHERE session_id IN (SELECT id FROM recent_sessions)
+        )
+        DELETE FROM attendance_sessions
+        WHERE id IN (SELECT id FROM recent_sessions)
+        RETURNING id::text
+      `,
+      [classroomId, dates, recorderMarker],
+    );
+    return result.rows.length;
+  }
+
   /**
    * Attendance sessions already recorded for a class, newest first, with the
    * per-status tally the history screen shows. Subject assignments only count
