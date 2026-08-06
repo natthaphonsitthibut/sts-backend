@@ -460,26 +460,48 @@ async function assertVisibleStudentProfileLink(client, label) {
   assert(linkFound, `${label} did not expose a visible student profile link`);
 }
 
-async function assertFullStudentSurfaceNavigation(client, label) {
+async function assertAvatarOnlyStudentNavigation(client, label) {
+  // Only the avatar link inside a row/card should navigate — clicking the
+  // row/card surface itself must NOT trigger navigation anymore.
+  const surfaceClickNavigated = await evaluate(
+    client,
+    `(() => {
+      const before = window.location.pathname;
+      const surface = Array.from(document.querySelectorAll('[data-student-navigation]'))
+        .find((candidate) => candidate.offsetParent !== null);
+      if (!surface) return null;
+      // Clicking the surface element directly (not a descendant) cannot
+      // trigger the nested avatar <a>'s navigation, so this isolates
+      // "does the row/card itself still have its own click handler".
+      surface.click();
+      return window.location.pathname !== before;
+    })()`,
+  );
+  assert(
+    surfaceClickNavigated === false,
+    `${label} student row/card surface still navigates on click outside the avatar`,
+  );
+
   const clicked = await evaluate(
     client,
     `(() => {
       const surface = Array.from(document.querySelectorAll('[data-student-navigation]'))
         .find((candidate) => candidate.offsetParent !== null);
-      if (!surface) return false;
-      surface.click();
+      const avatarLink = surface?.querySelector('a[href^="/students/"]');
+      if (!avatarLink) return false;
+      avatarLink.click();
       return true;
     })()`,
   );
-  assert(clicked, `${label} did not expose a clickable student row/card`);
+  assert(clicked, `${label} did not expose a clickable student avatar`);
   await waitFor(
     async () => evaluate(client, `window.location.pathname.startsWith('/students/')`),
-    `${label} student row/card did not navigate to the student detail page`,
+    `${label} student avatar did not navigate to the student detail page`,
   );
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
     async () => (await bodyText(client)).includes('ความเสี่ยงจากการมาเรียน'),
-    `${label} dashboard did not render again after row/card navigation`,
+    `${label} dashboard did not render again after avatar navigation`,
   );
   await waitFor(
     async () =>
@@ -488,7 +510,7 @@ async function assertFullStudentSurfaceNavigation(client, label) {
         `(() => Array.from(document.querySelectorAll('[data-student-navigation]'))
           .some((candidate) => candidate.offsetParent !== null))()`,
       ),
-    `${label} dashboard rows did not render again after row/card navigation`,
+    `${label} dashboard rows did not render again after avatar navigation`,
   );
 }
 
@@ -1388,7 +1410,7 @@ async function main() {
     await assertManualCaseFlow(client, manualCaseRow, createdCaseIds);
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop after case flow');
     await assertVisibleStudentProfileLink(client, 'desktop');
-    await assertFullStudentSurfaceNavigation(client, 'desktop');
+    await assertAvatarOnlyStudentNavigation(client, 'desktop');
     await assertRiskSortDirection(client, 'descending', 'desktop default');
     await clickRiskSortHeader(client);
     await assertRiskSortCleared(client, 'desktop first toggle');
@@ -1410,7 +1432,7 @@ async function main() {
     });
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'mobile');
     await assertVisibleStudentProfileLink(client, 'mobile');
-    await assertFullStudentSurfaceNavigation(client, 'mobile');
+    await assertAvatarOnlyStudentNavigation(client, 'mobile');
     assert((await bodyText(client)).includes('เรียงตาม'), 'mobile sort label was missing');
     await setMobileSort(client, 'risk:asc');
     await setMobileSort(client, 'default');
