@@ -27,6 +27,7 @@ function createRepositoryMock(): jest.Mocked<
     | 'getCurrentTermStart'
     | 'getCaseMovement'
     | 'getFilterOptions'
+    | 'getSchoolName'
   >
 > {
   return {
@@ -79,6 +80,7 @@ function createRepositoryMock(): jest.Mocked<
       grades: [],
       rooms: [],
     }),
+    getSchoolName: jest.fn().mockResolvedValue(null),
   };
 }
 
@@ -145,6 +147,17 @@ describe('HomeDashboardService', () => {
       PENDING_REVIEW: 3,
       RESOLVED: 4,
     });
+  });
+
+  it('uses the school name instead of its id in the scope label', async () => {
+    const repository = createRepositoryMock();
+    repository.getSchoolName.mockResolvedValue('โรงเรียนตัวอย่าง');
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+
+    const result = await service.getSummary(baseActor, { schoolId: 10010004 });
+
+    expect(result.data.scopeLabel).toBe('โรงเรียนตัวอย่าง');
+    expect(repository.getSchoolName).toHaveBeenCalledWith(10010004);
   });
 
   it('hides dashboard/case sections when actor only has attendance permissions', async () => {

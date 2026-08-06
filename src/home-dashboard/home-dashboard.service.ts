@@ -127,12 +127,15 @@ export class HomeDashboardService {
     return date.toISOString().slice(0, 10);
   }
 
-  private getScopeLabel(filters: NormalizedHomeDashboardFilters): string {
+  private async getScopeLabel(filters: NormalizedHomeDashboardFilters): Promise<string> {
+    const schoolName = filters.schoolId
+      ? await this.repository.getSchoolName(filters.schoolId)
+      : undefined;
     const parts = [
       filters.province,
       filters.district,
       filters.subDistrict,
-      filters.schoolId ? `โรงเรียน ${filters.schoolId}` : undefined,
+      schoolName ?? (filters.schoolId ? `โรงเรียน ${filters.schoolId}` : undefined),
       filters.grade,
       filters.room ? `ห้อง ${filters.room}` : undefined,
     ].filter((part): part is string => Boolean(part));
@@ -218,7 +221,7 @@ export class HomeDashboardService {
       success: true,
       data: {
         generatedAt: new Date().toISOString(),
-        scopeLabel: this.getScopeLabel(filters),
+        scopeLabel: await this.getScopeLabel(filters),
         period: filters.period,
         availableSections: sections,
         metrics,
@@ -275,7 +278,7 @@ export class HomeDashboardService {
       success: true,
       data: {
         generatedAt: new Date().toISOString(),
-        scopeLabel: this.getScopeLabel(filters),
+        scopeLabel: await this.getScopeLabel(filters),
         period: filters.period,
         availableSections: sections,
         attendanceTrend,
@@ -303,7 +306,7 @@ export class HomeDashboardService {
       success: true,
       data: {
         generatedAt: new Date().toISOString(),
-        scopeLabel: this.getScopeLabel(filters),
+        scopeLabel: await this.getScopeLabel(filters),
         options: await this.repository.getFilterOptions(actor, filters),
       },
     };

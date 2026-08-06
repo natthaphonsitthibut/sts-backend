@@ -10,7 +10,14 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { basename } from 'path';
-import { AuthGuard, PermissionsGuard, RequirePermission } from '../auth';
+import {
+  AuthGuard,
+  CurrentUser,
+  PermissionsGuard,
+  RequirePermission,
+  type AuthenticatedRequestUser,
+} from '../auth';
+import { TaskRepository } from '../task/task.repository';
 import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from './storage/file-storage.types';
 
 // Visit-report uploads are sensitive minor PII (home-visit photos). They used to
@@ -25,6 +32,7 @@ export class FilesController {
   constructor(
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
+    private readonly taskRepository: TaskRepository,
   ) {}
 
   @RequirePermission('field-monitor')
@@ -36,26 +44,57 @@ export class FilesController {
     await this.sendStoredFile(filename, res);
   }
 
+  @Get('visit-attachments/:filename')
+  async getVisitAttachment(
+    @Param('filename') filename: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.assertVisitAttachmentAccess(`/uploads/visit-attachments/${filename}`, actor);
+    await this.sendStoredFile(`visit-attachments/${filename}`, res);
+  }
+
   @Get(':filename')
-  async getUpload(@Param('filename') filename: string, @Res() res: Response): Promise<void> {
+  async getUpload(
+    @Param('filename') filename: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.assertVisitAttachmentAccess(`/uploads/${filename}`, actor);
     await this.sendStoredFile(filename, res);
   }
 
-  private async sendStoredFile(filename: string, res: Response): Promise<void> {
-    // Reject anything that is not a bare, safe filename (path-traversal defense).
-    // Done here, before the adapter, since the local-disk adapter's own check
-    // still relies on the caller having already ruled out traversal attempts.
-    const safeName = basename(filename);
-    if (safeName !== filename || !/^[A-Za-z0-9._-]+$/.test(safeName) || safeName.includes('..')) {
+  private async assertVisitAttachmentAccess(
+    storagePath: string,
+    actor: AuthenticatedRequestUser,
+  ): Promise<void> {
+    if (!(await this.taskRepository.canAccessVisitAttachment(storagePath, actor))) {
+      throw new NotFoundException('File not found');
+    }
+  }
+
+  private async sendStoredFile(storageKey: string, res: Response): Promise<void> {
+    const pathSegments = storageKey.split('/');
+    if (
+      pathSegments.length === 0 ||
+      pathSegments.some(
+        (segment) =>
+          !segment ||
+          segment !== basename(segment) ||
+          !/^[A-Za-z0-9._-]+$/.test(segment) ||
+          segment.includes('..'),
+      )
+    ) {
       throw new BadRequestException('Invalid file name');
     }
 
-    const result = await this.storage.resolve(safeName);
+    const result = await this.storage.resolve(storageKey);
     if (!result) {
       throw new NotFoundException('File not found');
     }
 
-    const extension = safeName.slice(safeName.lastIndexOf('.')).toLowerCase();
+    const filename = pathSegments.at(-1)!;
+    const extension = filename.slice(filename.lastIndexOf('.')).toLowerCase();
     const contentType: Record<string, string> = {
       '.jpg': 'image/jpeg',
       '.jpeg': 'image/jpeg',
@@ -66,11 +105,14 @@ export class FilesController {
       '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     };
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Do not cache the redirect: the private Supabase signed URL it contains
+    // would expire and make a valid attachment appear broken after its TTL.
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Type', contentType[extension] ?? 'application/octet-stream');
     if (extension === '.doc' || extension === '.docx') {
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     } else {
-      res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     }
 
     if (result.kind === 'redirect') {

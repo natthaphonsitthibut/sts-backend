@@ -148,4 +148,53 @@ describe('TeacherAccessRepository', () => {
       true,
     );
   });
+
+  it('limits subject attendance slots to the assigned teacher', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listAssignmentSlotsForDate(
+      { classroomId: 41, subjectId: 7, teacherMembershipId: 12, isoDayOfWeek: 2 },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /JOIN timetable_slot_teachers slot_teacher[\s\S]*slot_teacher\.teacher_membership_id = \$3[\s\S]*slot\.day_of_week = \$4/,
+      ),
+      [41, 7, 12, 2],
+      true,
+    );
+  });
+
+  it('loads demo timetable slots through the canonical classroom foreign key', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listClassroomSlotsForDate(41, 2, runner as never);
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(/slot\.classroom_id = classroom\.id[\s\S]*slot\.day_of_week = \$2/),
+      [41, 2],
+      true,
+    );
+  });
+
+  it('deletes only attendance sessions containing no non-demo records', async () => {
+    const { repository, runner } = createRepository();
+    runner.query.mockResolvedValueOnce({ records: [{ id: 'session-1' }], affected: 1 });
+
+    await repository.deleteClassroomRecentAttendance(
+      41,
+      ['2026-08-03', '2026-08-04', '2026-08-05'],
+      'TEACHER_ACCESS_DEMO:grant-1',
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /demo_record\."RecordedBy" = \$3[\s\S]*real_record\."RecordedBy" IS DISTINCT FROM \$3/,
+      ),
+      [41, ['2026-08-03', '2026-08-04', '2026-08-05'], 'TEACHER_ACCESS_DEMO:grant-1'],
+      true,
+    );
+  });
 });

@@ -1232,6 +1232,43 @@ export class TeacherAccessService {
     );
   }
 
+  async listPublicAttendanceSlots(
+    rawToken: string,
+    input: { assignmentId: number; date: string },
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId: input.assignmentId, sessionToken, operation: 'VIEW_ATTENDANCE_SLOTS' },
+      async (context, queryRunner) => {
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          input.assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        const capability = this.attendanceCapability(assignment.assignment_kind);
+        if (!context.capabilities.includes(capability)) {
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+        }
+        if (assignment.assignment_kind !== 'SUBJECT') return { data: [] };
+        if (!assignment.subject_id) {
+          throw new ConflictException('assignment รายวิชานี้ไม่มีรายวิชาที่ผูกไว้');
+        }
+        const slots = await this.repository.listAssignmentSlotsForDate(
+          {
+            classroomId: Number(assignment.classroom_id),
+            subjectId: assignment.subject_id,
+            teacherMembershipId: Number(assignment.teacher_membership_id),
+            isoDayOfWeek: getIsoDayOfWeekFromDateString(input.date),
+          },
+          queryRunner,
+        );
+        return { data: slots.map((slot) => ({ id: Number(slot.id), period: slot.period })) };
+      },
+    );
+  }
+
   async listPublicRoster(
     rawToken: string,
     assignmentId: number,
@@ -1300,6 +1337,7 @@ export class TeacherAccessService {
       {
         classroomId: Number(assignment.classroom_id),
         subjectId: assignment.subject_id,
+        teacherMembershipId: Number(assignment.teacher_membership_id),
         isoDayOfWeek: getIsoDayOfWeekFromDateString(dto.date),
       },
       queryRunner,
@@ -1783,5 +1821,140 @@ export class TeacherAccessService {
       });
     }
     return { success: true, data };
+  }
+
+  async seedPublicAttendanceDemo(rawToken: string, assignmentId: number, sessionToken?: string) {
+    let affectedStudentIds: string[] = [];
+    let calendarConfigured = false;
+    const data = await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId, sessionToken, operation: 'SUBMIT_ATTENDANCE' },
+      async (context, queryRunner) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        const rosterIds = await this.repository.listRosterIds(
+          Number(context.classroomId),
+          queryRunner,
+        );
+        const students = rosterIds.slice(0, 3);
+        if (students.length < 3)
+          throw new BadRequestException('ห้องนี้มีนักเรียนไม่ครบ 3 คนสำหรับข้อมูลสาธิต');
+        const dates = await this.repository.listRecentClassroomSchoolDays(
+          Number(context.classroomId),
+          getBangkokDateString(),
+          3,
+          queryRunner,
+        );
+        if (dates.length < 3) {
+          throw new BadRequestException('ไม่พบวันเรียนย้อนหลังครบ 3 วันสำหรับห้องนี้');
+        }
+        await this.repository.ensureDemoSchoolDays(
+          Number(context.classroomId),
+          dates,
+          context.teacherUserId,
+          queryRunner,
+        );
+        const recorderMarker = this.demoAttendanceRecorder(context.grantId);
+        if (
+          await this.repository.hasNonDemoAttendanceSessions(
+            Number(context.classroomId),
+            dates,
+            recorderMarker,
+            queryRunner,
+          )
+        ) {
+          throw new BadRequestException(
+            '3 วันล่าสุดมีประวัติเช็กชื่อจริงอยู่แล้ว กรุณาใช้ห้องหรือช่วงวันที่สำหรับสาธิต',
+          );
+        }
+
+        let savedSessions = 0;
+        for (const date of dates) {
+          const slots = await this.repository.listClassroomSlotsForDate(
+            Number(context.classroomId),
+            getIsoDayOfWeekFromDateString(date),
+            queryRunner,
+          );
+          for (const slot of slots) {
+            const result = await this.attendanceWriteService.saveAttendanceWithinTransaction(
+              rosterIds.map((studentId) => ({
+                student_id: studentId,
+                status: students.includes(studentId)
+                  ? ('P_ABSENT' as const)
+                  : ('P_PRESENT' as const),
+              })),
+              {
+                actorUserId: context.teacherUserId,
+                actorLabel: context.teacherUsername,
+                recorder: recorderMarker,
+                allowedStudentIds: rosterIds,
+              },
+              createSqlQueryExecutor(queryRunner),
+              undefined,
+              Number(slot.id),
+              date,
+            );
+            affectedStudentIds = [
+              ...new Set([...affectedStudentIds, ...result.affectedStudentIds]),
+            ];
+            calendarConfigured = calendarConfigured || result.calendarConfigured;
+            savedSessions += 1;
+          }
+        }
+        if (savedSessions === 0)
+          throw new BadRequestException('ไม่พบคาบสอนใน 3 วันย้อนหลังสำหรับห้องนี้');
+        return { dates, studentCount: students.length, sessionCount: savedSessions };
+      },
+    );
+    await this.riskProfileService?.enqueueStudents(
+      affectedStudentIds,
+      'teacher-access-demo-absences',
+    );
+    if ((await this.repository.getAlertTriggerType()) === 'IMMEDIATE' && calendarConfigured) {
+      await this.automationService.checkConsecutiveAbsences();
+    }
+    return { success: true, data };
+  }
+
+  async clearPublicAttendanceDemo(rawToken: string, assignmentId: number, sessionToken?: string) {
+    const data = await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId, sessionToken, operation: 'SUBMIT_ATTENDANCE' },
+      async (context, queryRunner) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        const dates = await this.repository.listRecentClassroomSchoolDays(
+          Number(context.classroomId),
+          getBangkokDateString(),
+          3,
+          queryRunner,
+        );
+        if (dates.length < 3) {
+          throw new BadRequestException('ไม่พบวันเรียนย้อนหลังครบ 3 วันสำหรับห้องนี้');
+        }
+        const deletedSessionCount = await this.repository.deleteClassroomRecentAttendance(
+          Number(context.classroomId),
+          dates,
+          this.demoAttendanceRecorder(context.grantId),
+          queryRunner,
+        );
+        return { dates, deletedSessionCount };
+      },
+    );
+    return { success: true, data };
+  }
+
+  private demoAttendanceRecorder(grantId: string): string {
+    return `TEACHER_ACCESS_DEMO:${grantId}`;
   }
 }

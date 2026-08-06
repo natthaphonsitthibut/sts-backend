@@ -114,6 +114,11 @@ type RepositoryMock = jest.Mocked<
     | 'describeMembershipsForGrant'
     | 'findGrantById'
     | 'listAssignmentSlotsForDate'
+    | 'listRecentClassroomSchoolDays'
+    | 'ensureDemoSchoolDays'
+    | 'hasNonDemoAttendanceSessions'
+    | 'listClassroomSlotsForDate'
+    | 'deleteClassroomRecentAttendance'
     | 'findClassroomPresentation'
     | 'updateClassroomPresentation'
   >
@@ -156,6 +161,13 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     describeMembershipsForGrant: jest.fn().mockResolvedValue([]),
     findGrantById: jest.fn().mockResolvedValue(grant),
     listAssignmentSlotsForDate: jest.fn().mockResolvedValue([]),
+    listRecentClassroomSchoolDays: jest
+      .fn()
+      .mockResolvedValue(['2026-08-03', '2026-08-04', '2026-08-05']),
+    ensureDemoSchoolDays: jest.fn().mockResolvedValue(undefined),
+    hasNonDemoAttendanceSessions: jest.fn().mockResolvedValue(false),
+    listClassroomSlotsForDate: jest.fn().mockResolvedValue([{ id: '71' }]),
+    deleteClassroomRecentAttendance: jest.fn().mockResolvedValue(3),
     findClassroomPresentation: jest.fn().mockResolvedValue({
       card_cover_color: '#4F86E8',
       cover_image_storage_key: 'classroom-covers/old.png',
@@ -229,6 +241,9 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     otpStore,
     magicSessionStore,
     storage,
+    attendance,
+    automation,
+    risk,
   };
 }
 
@@ -439,6 +454,27 @@ describe('TeacherAccessService', () => {
     });
     expect(rawQuery).toHaveBeenCalledWith('SELECT 1', undefined, true);
     expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists only the signed-in teacher's scheduled subject periods", async () => {
+    const { service, repository } = createHarness({ capabilities: ['SUBJECT_ATTENDANCE'] });
+    repository.findGrantAssignment.mockResolvedValue({
+      ...ASSIGNMENT,
+      assignment_kind: 'SUBJECT',
+      subject_id: 7,
+    });
+    repository.listAssignmentSlotsForDate.mockResolvedValue([{ id: '12', period: 6 }]);
+
+    await expect(
+      service.listPublicAttendanceSlots(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31, date: '2026-08-04' },
+      ),
+    ).resolves.toEqual({ data: [{ id: 12, period: 6 }] });
+    expect(repository.listAssignmentSlotsForDate).toHaveBeenCalledWith(
+      { classroomId: 41, subjectId: 7, teacherMembershipId: 12, isoDayOfWeek: 2 },
+      expect.anything(),
+    );
   });
 
   it('requires the dedicated issuer permission instead of school-structure authority', async () => {
@@ -853,6 +889,76 @@ describe('TeacherAccessService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
 
     expect(storage.save).not.toHaveBeenCalled();
+  });
+
+  it('creates demo attendance for the same three classroom days without overwriting real data', async () => {
+    const { service, repository, attendance, risk } = createHarness();
+    repository.listRosterIds.mockResolvedValue([
+      'student-1',
+      'student-2',
+      'student-3',
+      'student-4',
+    ]);
+    attendance.saveAttendanceWithinTransaction.mockResolvedValue({
+      affectedStudentIds: ['student-1', 'student-2', 'student-3', 'student-4'],
+      calendarConfigured: true,
+      session: { id: 'session-1', status: 'SUBMITTED', revision: 1 },
+    });
+
+    const result = await service.seedPublicAttendanceDemo(
+      'valid-token-value-that-is-at-least-thirty-two-characters',
+      31,
+    );
+
+    expect(repository.hasNonDemoAttendanceSessions).toHaveBeenCalledWith(
+      41,
+      ['2026-08-03', '2026-08-04', '2026-08-05'],
+      `TEACHER_ACCESS_DEMO:${GRANT.id}`,
+      expect.anything(),
+    );
+    expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledTimes(3);
+    expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledWith(
+      [
+        { student_id: 'student-1', status: 'P_ABSENT' },
+        { student_id: 'student-2', status: 'P_ABSENT' },
+        { student_id: 'student-3', status: 'P_ABSENT' },
+        { student_id: 'student-4', status: 'P_PRESENT' },
+      ],
+      expect.objectContaining({ recorder: `TEACHER_ACCESS_DEMO:${GRANT.id}` }),
+      expect.anything(),
+      undefined,
+      71,
+      '2026-08-03',
+    );
+    expect(risk.enqueueStudents).toHaveBeenCalledWith(
+      ['student-1', 'student-2', 'student-3', 'student-4'],
+      'teacher-access-demo-absences',
+    );
+    expect(result.data).toEqual({
+      dates: ['2026-08-03', '2026-08-04', '2026-08-05'],
+      studentCount: 3,
+      sessionCount: 3,
+    });
+  });
+
+  it('clears only demo-marked sessions from the same three classroom days', async () => {
+    const { service, repository } = createHarness();
+
+    const result = await service.clearPublicAttendanceDemo(
+      'valid-token-value-that-is-at-least-thirty-two-characters',
+      31,
+    );
+
+    expect(repository.deleteClassroomRecentAttendance).toHaveBeenCalledWith(
+      41,
+      ['2026-08-03', '2026-08-04', '2026-08-05'],
+      `TEACHER_ACCESS_DEMO:${GRANT.id}`,
+      expect.anything(),
+    );
+    expect(result.data).toEqual({
+      dates: ['2026-08-03', '2026-08-04', '2026-08-05'],
+      deletedSessionCount: 3,
+    });
   });
 
   it('deletes a newly uploaded cover when the classroom update rolls back', async () => {

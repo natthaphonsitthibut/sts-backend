@@ -343,3 +343,21 @@ export class SaveTeacherAccessAttendanceDto {
   @Type(() => TeacherAccessAttendanceRecordDto)
   records!: TeacherAccessAttendanceRecordDto[];
 }
+
+/** Temporary production-demo action; remove with the demo data after presentation. */
+export class SeedTeacherAccessAbsenceDemoDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId!: number;
+}
+
+export class TeacherAccessAttendanceSlotsQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId!: number;
+
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  date!: string;
+}
