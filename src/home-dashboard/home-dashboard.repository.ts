@@ -839,4 +839,17 @@ export class HomeDashboardRepository {
       rooms: row.rooms || [],
     };
   }
+
+  async getSchoolName(schoolId: number): Promise<string | null> {
+    const result = await this.query<{ name: string | null }>(
+      `
+        SELECT NULLIF(BTRIM(name), '') AS name
+        FROM schools
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [schoolId],
+    );
+    return result.rows[0]?.name ?? null;
+  }
 }
