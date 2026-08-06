@@ -1917,12 +1917,17 @@ export class TeacherAccessService {
         return { dates, studentCount: students.length, sessionCount: savedSessions };
       },
     );
-    await this.riskProfileService?.enqueueStudents(
-      affectedStudentIds,
-      'teacher-access-demo-absences',
-    );
+    this.riskProfileService
+      ?.enqueueStudents(affectedStudentIds, 'teacher-access-demo-absences')
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to enqueue demo attendance risk recalculation: ${message}`);
+      });
     if ((await this.repository.getAlertTriggerType()) === 'IMMEDIATE' && calendarConfigured) {
-      await this.automationService.checkConsecutiveAbsences();
+      this.automationService.checkConsecutiveAbsences().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Demo attendance immediate absence check failed: ${message}`);
+      });
     }
     return { success: true, data };
   }
