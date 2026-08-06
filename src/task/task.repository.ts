@@ -2561,7 +2561,7 @@ export class TaskRepository {
 
     if (filters.grade || filters.room) {
       const classConditions = [
-        `LOWER(TRIM(CONCAT_WS(' ', case_student."FirstName_Onec", case_student."LastName_Onec"))) = LOWER(TRIM(c.student_name))`,
+        `norm_full_name(case_student."FirstName_Onec", case_student."LastName_Onec") = LOWER(TRIM(c.student_name))`,
         `(
           NULLIF(TRIM(COALESCE(c.student_school, '')), '') IS NULL
           OR LOWER(COALESCE(case_school.name, '')) = LOWER(COALESCE(c.student_school, ''))
@@ -2667,7 +2667,7 @@ export class TaskRepository {
           SELECT DISTINCT s.student_uuid
           FROM student_term s
           LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
-          WHERE LOWER(TRIM(CONCAT_WS(' ', s."FirstName_Onec", s."LastName_Onec"))) = LOWER(TRIM(c.student_name))
+          WHERE norm_full_name(s."FirstName_Onec", s."LastName_Onec") = LOWER(TRIM(c.student_name))
             AND (
               NULLIF(TRIM(COALESCE(c.student_school, '')), '') IS NULL
               OR LOWER(COALESCE(sc.name, '')) = LOWER(COALESCE(c.student_school, ''))
@@ -2765,7 +2765,7 @@ export class TaskRepository {
 
     if (filters.grade || filters.room) {
       const classConditions = [
-        `LOWER(TRIM(CONCAT_WS(' ', case_student."FirstName_Onec", case_student."LastName_Onec"))) = LOWER(TRIM(c.student_name))`,
+        `norm_full_name(case_student."FirstName_Onec", case_student."LastName_Onec") = LOWER(TRIM(c.student_name))`,
         `(
           NULLIF(TRIM(COALESCE(c.student_school, '')), '') IS NULL
           OR LOWER(COALESCE(case_school.name, '')) = LOWER(COALESCE(c.student_school, ''))
