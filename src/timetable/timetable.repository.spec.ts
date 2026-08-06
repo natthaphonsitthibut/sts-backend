@@ -55,6 +55,35 @@ describe('TimetableRepository', () => {
     expect(queries[0].params).toEqual([100, 42]);
   });
 
+  it('findById groups the teacher aggregates before returning a slot', async () => {
+    const { repository, queries } = buildRepository([]);
+    await repository.findById('25716');
+    expect(queries[0].sql).toContain('GROUP BY ts.id');
+    expect(queries[0].params).toEqual(['25716']);
+  });
+
+  it('omits inactive teachers from timetable slot aggregates', async () => {
+    const { repository, queries } = buildRepository([]);
+    await repository.listForRoom(1, 2, 3);
+    expect(queries[0].sql).toContain("stm.membership_status = 'ACTIVE'");
+    expect(queries[0].sql).toContain("t.teacher_status = 'ACTIVE'");
+  });
+
+  it('checks selected teachers are active and assigned to the room subject', async () => {
+    const { repository, queries } = buildRepository([]);
+    await repository.listEligibleTeacherMembershipIds({
+      schoolId: 1,
+      gradeLevelId: 2,
+      roomNo: 3,
+      subjectId: 4,
+      teacherMembershipIds: [5],
+    });
+    expect(queries[0].sql).toContain('assignment.subject_id = $4');
+    expect(queries[0].sql).toContain('classroom.legacy_room_number = $3');
+    expect(queries[0].sql).toContain("membership.membership_status = 'ACTIVE'");
+    expect(queries[0].params).toEqual([1, 2, 3, 4, [5]]);
+  });
+
   it('listTeacherCandidatesForSchool returns only active teacher memberships', async () => {
     const { repository, queries } = buildRepository([]);
     await repository.listTeacherCandidatesForSchool(10010002, 'สมชาย');

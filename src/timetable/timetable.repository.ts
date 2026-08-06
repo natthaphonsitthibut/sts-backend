@@ -27,14 +27,11 @@ const SELECT_COLUMNS = `
   ts.subject_id,
   sub.code AS subject_code,
   sub.name_th AS subject_name_th,
-  COALESCE(ts.teacher_user_id, MAX(stm.teacher_user_id)) AS teacher_user_id,
+  MAX(stm.teacher_user_id) AS teacher_user_id,
   ARRAY_REMOVE(ARRAY_AGG(DISTINCT stm.id), NULL) AS teacher_membership_ids,
-  COALESCE(
-    STRING_AGG(
-      DISTINCT NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
-      ', '
-    ),
-    NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), '')
+  STRING_AGG(
+    DISTINCT NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
+    ', '
   ) AS teacher_name,
   ts.created_at,
   ts.updated_at
@@ -44,7 +41,6 @@ const FROM_JOIN = `
   FROM timetable_slots ts
   JOIN subjects sub ON sub.id = ts.subject_id
   LEFT JOIN grade_levels gl ON gl.id = ts.grade_level_id
-  LEFT JOIN users teacher ON teacher.id = ts.teacher_user_id
   LEFT JOIN timetable_slot_teachers tst ON tst.timetable_slot_id = ts.id
   LEFT JOIN classroom_teacher_assignments cta 
     ON cta.classroom_id = ts.classroom_id 
@@ -53,12 +49,20 @@ const FROM_JOIN = `
    AND cta.assignment_status = 'ACTIVE' 
    AND cta.deleted_at IS NULL
   LEFT JOIN school_teacher_memberships stm 
-    ON stm.id = tst.teacher_membership_id 
-    OR (
-         NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
-         AND (stm.id = cta.teacher_membership_id OR stm.id = ts.teacher_membership_id OR (stm.teacher_user_id = ts.teacher_user_id AND ts.teacher_user_id IS NOT NULL))
-       )
-  LEFT JOIN teachers t ON t.id = stm.teacher_id AND t.deleted_at IS NULL
+    ON (
+      stm.id = tst.teacher_membership_id
+      OR (
+           NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
+           AND (stm.id = cta.teacher_membership_id OR stm.id = ts.teacher_membership_id OR (stm.teacher_user_id = ts.teacher_user_id AND ts.teacher_user_id IS NOT NULL))
+         )
+    )
+   AND stm.membership_status = 'ACTIVE'
+   AND stm.deleted_at IS NULL
+  LEFT JOIN teachers t ON t.id = stm.teacher_id AND t.teacher_status = 'ACTIVE' AND t.deleted_at IS NULL
+`;
+
+const GROUP_BY_SLOT_COLUMNS = `
+  GROUP BY ts.id, ts.school_term_id, ts.school_id, ts.grade_level_id, gl.label, ts.room_no, ts.day_of_week, ts.period, ts.subject_id, sub.code, sub.name_th, ts.created_at, ts.updated_at
 `;
 
 interface CreateSlotInput {
@@ -145,7 +149,7 @@ export class TimetableRepository {
         SELECT ${SELECT_COLUMNS}
         ${FROM_JOIN}
         WHERE ts.school_id = $1 AND ts.grade_level_id = $2 AND ts.room_no = $3 AND ts.deleted_at IS NULL
-        GROUP BY ts.id, ts.school_term_id, ts.school_id, ts.grade_level_id, gl.label, ts.room_no, ts.day_of_week, ts.period, ts.subject_id, sub.code, sub.name_th, ts.teacher_user_id, teacher."FirstName", teacher."LastName", ts.created_at, ts.updated_at
+        ${GROUP_BY_SLOT_COLUMNS}
         ORDER BY ts.day_of_week ASC, ts.period ASC
       `,
       [schoolId, gradeLevelId, roomNo],
@@ -179,7 +183,7 @@ export class TimetableRepository {
           ))
         )
           AND ts.deleted_at IS NULL
-        GROUP BY ts.id, ts.school_term_id, ts.school_id, ts.grade_level_id, gl.label, ts.room_no, ts.day_of_week, ts.period, ts.subject_id, sub.code, sub.name_th, ts.teacher_user_id, teacher."FirstName", teacher."LastName", ts.created_at, ts.updated_at
+        ${GROUP_BY_SLOT_COLUMNS}
         ORDER BY ts.day_of_week ASC, ts.period ASC
       `,
       [teacherMembershipId ?? null, teacherUserId ?? null],
@@ -336,7 +340,12 @@ export class TimetableRepository {
   }
 
   async findById(id: string, queryRunner?: QueryRunner): Promise<TimetableSlotRow | null> {
-    const sql = `SELECT ${SELECT_COLUMNS} ${FROM_JOIN} WHERE ts.id = $1 AND ts.deleted_at IS NULL`;
+    const sql = `
+      SELECT ${SELECT_COLUMNS}
+      ${FROM_JOIN}
+      WHERE ts.id = $1 AND ts.deleted_at IS NULL
+      ${GROUP_BY_SLOT_COLUMNS}
+    `;
     if (queryRunner) {
       const result = await createSqlQueryExecutor(queryRunner).query<TimetableSlotRow>(sql, [id]);
       return result.rows[0] ?? null;
@@ -402,6 +411,53 @@ export class TimetableRepository {
         [timetableSlotId, membershipId],
       );
     }
+  }
+
+  async listEligibleTeacherMembershipIds(
+    input: {
+      schoolId: number;
+      gradeLevelId: number;
+      roomNo: number;
+      subjectId: number;
+      teacherMembershipIds: number[];
+    },
+    queryRunner?: QueryRunner,
+  ): Promise<number[]> {
+    if (input.teacherMembershipIds.length === 0) return [];
+    const sql = `
+      SELECT DISTINCT membership.id
+      FROM school_teacher_memberships membership
+      JOIN teachers teacher
+        ON teacher.id = membership.teacher_id
+       AND teacher.teacher_status = 'ACTIVE'
+       AND teacher.deleted_at IS NULL
+      JOIN classroom_teacher_assignments assignment
+        ON assignment.teacher_membership_id = membership.id
+       AND assignment.subject_id = $4
+       AND assignment.assignment_kind = 'SUBJECT'
+       AND assignment.assignment_status = 'ACTIVE'
+       AND assignment.deleted_at IS NULL
+      JOIN school_classrooms classroom
+        ON classroom.id = assignment.classroom_id
+       AND classroom.school_id = $1
+       AND classroom.grade_level_id = $2
+       AND classroom.legacy_room_number = $3
+      WHERE membership.id = ANY($5::bigint[])
+        AND membership.school_id = $1
+        AND membership.membership_status = 'ACTIVE'
+        AND membership.deleted_at IS NULL
+    `;
+    const params = [
+      input.schoolId,
+      input.gradeLevelId,
+      input.roomNo,
+      input.subjectId,
+      input.teacherMembershipIds,
+    ];
+    const result = queryRunner
+      ? await createSqlQueryExecutor(queryRunner).query<{ id: number }>(sql, params)
+      : await queryDataSource<{ id: number }>(this.dataSource, sql, params);
+    return result.rows.map((row) => Number(row.id));
   }
 
   async update(
