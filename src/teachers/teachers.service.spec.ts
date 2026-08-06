@@ -32,6 +32,7 @@ function createHarness() {
     createMembership: jest.fn().mockResolvedValue({ id: '5' }),
     findTeacherById: jest.fn(),
     updateTeacher: jest.fn(),
+    deactivateTeacher: jest.fn(),
   };
   const auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
   const storage = { save: jest.fn(), delete: jest.fn(), resolve: jest.fn(), open: jest.fn() };
@@ -75,6 +76,25 @@ describe('TeachersService duplicate identity messages', () => {
 
     await expect(service.update('7', { email: 'taken@example.com' }, ACTOR)).rejects.toThrow(
       new ConflictException('อีเมลนี้ถูกใช้กับครูคนอื่นแล้ว'),
+    );
+  });
+});
+
+describe('TeachersService deactivate', () => {
+  it('deactivates a teacher membership and its active teaching coverage', async () => {
+    const { service, repository } = createHarness();
+    repository.findTeacherById.mockResolvedValue({
+      id: '7',
+      school_id: 10,
+      membership_id: '5',
+      membership_status: 'ACTIVE',
+    });
+
+    await expect(service.deactivate('7', {}, ACTOR)).resolves.toEqual({ success: true });
+
+    expect(repository.deactivateTeacher).toHaveBeenCalledWith(
+      { teacherId: '7', membershipId: '5', actorId: 1 },
+      expect.anything(),
     );
   });
 });

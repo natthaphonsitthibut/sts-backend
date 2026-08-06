@@ -221,7 +221,12 @@ export class CurriculumRepository {
         FROM curriculum_subject_teachers coverage
         JOIN school_teacher_memberships membership
           ON membership.id = coverage.teacher_membership_id
-        JOIN teachers teacher ON teacher.id = membership.teacher_id
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+        JOIN teachers teacher
+          ON teacher.id = membership.teacher_id
+         AND teacher.teacher_status = 'ACTIVE'
+         AND teacher.deleted_at IS NULL
         JOIN school_classrooms classroom ON classroom.id = coverage.classroom_id
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
         WHERE coverage.curriculum_subject_id = ANY($1::bigint[])

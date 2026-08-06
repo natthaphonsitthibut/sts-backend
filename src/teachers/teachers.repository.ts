@@ -323,6 +323,29 @@ export class TeachersRepository {
     );
     await executor.query(
       `
+        UPDATE curriculum_subject_teachers
+        SET deleted_at = now(),
+            deleted_by = $2,
+            updated_by = $2
+        WHERE teacher_membership_id = $1
+          AND deleted_at IS NULL
+      `,
+      [input.membershipId, input.actorId],
+    );
+    await executor.query(
+      `
+        UPDATE classroom_teacher_assignments
+        SET assignment_status = 'INACTIVE',
+            updated_by = $2,
+            updated_at = now()
+        WHERE teacher_membership_id = $1
+          AND assignment_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [input.membershipId, input.actorId],
+    );
+    await executor.query(
+      `
         UPDATE teachers
         SET teacher_status = 'INACTIVE', updated_by = $2
         WHERE id = $1

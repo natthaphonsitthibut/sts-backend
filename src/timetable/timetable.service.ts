@@ -126,6 +126,26 @@ export class TimetableService {
     }
   }
 
+  private async assertTeacherMembershipsEligible(
+    input: {
+      schoolId: number;
+      gradeLevelId: number;
+      roomNo: number;
+      subjectId: number;
+      teacherMembershipIds: number[];
+    },
+    queryRunner: Parameters<TimetableRepository['replaceSlotTeachers']>[2],
+  ): Promise<void> {
+    const selectedIds = [...new Set(input.teacherMembershipIds)];
+    const eligibleIds = await this.repository.listEligibleTeacherMembershipIds(
+      { ...input, teacherMembershipIds: selectedIds },
+      queryRunner,
+    );
+    if (eligibleIds.length !== selectedIds.length) {
+      throw new BadRequestException('ผู้สอนที่เลือกไม่อยู่ในรายชื่อครูผู้สอนที่ใช้งานของวิชานี้');
+    }
+  }
+
   async listForRoom(
     actor: AuthenticatedRequestUser,
     schoolId: number,
@@ -257,6 +277,16 @@ export class TimetableService {
           throw new BadRequestException('สร้างคาบสอนไม่สำเร็จ');
         }
         if (dto.teacherMembershipIds !== undefined) {
+          await this.assertTeacherMembershipsEligible(
+            {
+              schoolId: dto.schoolId,
+              gradeLevelId: dto.gradeLevelId,
+              roomNo: dto.roomNo,
+              subjectId: dto.subjectId,
+              teacherMembershipIds: dto.teacherMembershipIds,
+            },
+            queryRunner,
+          );
           await this.repository.replaceSlotTeachers(
             created.id,
             dto.teacherMembershipIds,
@@ -319,6 +349,16 @@ export class TimetableService {
         queryRunner,
       );
       if (dto.teacherMembershipIds !== undefined) {
+        await this.assertTeacherMembershipsEligible(
+          {
+            schoolId: existing.school_id,
+            gradeLevelId: existing.grade_level_id,
+            roomNo: existing.room_no,
+            subjectId: dto.subjectId ?? existing.subject_id,
+            teacherMembershipIds: dto.teacherMembershipIds,
+          },
+          queryRunner,
+        );
         await this.repository.replaceSlotTeachers(id, dto.teacherMembershipIds, queryRunner);
       }
       await this.auditLog.recordAtomic(

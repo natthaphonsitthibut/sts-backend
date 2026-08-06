@@ -15,10 +15,12 @@ describe('TimetableService', () => {
       | 'listDistinctSubjectsForRoom'
       | 'listTeacherCandidatesForSchool'
       | 'isActiveTeacherForSchool'
+      | 'listEligibleTeacherMembershipIds'
       | 'resolveStudentRoom'
       | 'findById'
       | 'create'
       | 'update'
+      | 'replaceSlotTeachers'
       | 'softDelete'
       | 'withTransaction'
       | 'listPeriodTimesForSchool'
@@ -94,12 +96,14 @@ describe('TimetableService', () => {
         .fn()
         .mockResolvedValue([{ id: 8, display_name: 'ครูสมชาย ใจดี' }]),
       isActiveTeacherForSchool: jest.fn().mockResolvedValue(true),
+      listEligibleTeacherMembershipIds: jest.fn().mockResolvedValue([]),
       resolveStudentRoom: jest
         .fn()
         .mockResolvedValue({ school_id: 10010002, grade_level_id: 423, room_no: 1 }),
       findById: jest.fn().mockResolvedValue(slotRow()),
       create: jest.fn().mockResolvedValue({ id: '1' }),
       update: jest.fn().mockResolvedValue(undefined),
+      replaceSlotTeachers: jest.fn().mockResolvedValue(undefined),
       softDelete: jest.fn().mockResolvedValue(undefined),
       withTransaction: jest.fn((operation: (queryRunner: unknown) => unknown) =>
         operation({}),
@@ -169,6 +173,22 @@ describe('TimetableService', () => {
       );
     });
 
+    it('rejects an inactive or unassigned selected teacher membership', async () => {
+      await expect(
+        service.create(globalActor, {
+          schoolTermId: 1,
+          schoolId: 10010002,
+          gradeLevelId: 423,
+          roomNo: 1,
+          dayOfWeek: 1,
+          period: 1,
+          subjectId: 5,
+          teacherMembershipIds: [8],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.replaceSlotTeachers).not.toHaveBeenCalled();
+    });
+
     it('maps a duplicate day/period violation to ConflictException', async () => {
       repository.create.mockRejectedValue({ code: '23505' });
       await expect(
@@ -204,6 +224,13 @@ describe('TimetableService', () => {
   });
 
   describe('update', () => {
+    it('rejects a stale teacher membership instead of saving it', async () => {
+      await expect(
+        service.update(globalActor, '1', { teacherMembershipIds: [8] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.replaceSlotTeachers).not.toHaveBeenCalled();
+    });
+
     it('rejects a teacher who is not an active member of the slot school', async () => {
       repository.isActiveTeacherForSchool.mockResolvedValue(false);
 
