@@ -185,7 +185,7 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     record: jest.fn().mockResolvedValue(undefined),
   };
   const attendance = { saveAttendanceWithinTransaction: jest.fn() };
-  const automation = { checkConsecutiveAbsences: jest.fn() };
+  const automation = { checkConsecutiveAbsences: jest.fn().mockResolvedValue([]) };
   const risk = { enqueueStudents: jest.fn().mockResolvedValue(undefined) };
   const tokenEncryption = {
     encrypt: jest.fn((value: string) => `v1:${value}`),
@@ -945,6 +945,38 @@ describe('TeacherAccessService', () => {
       studentCount: 3,
       sessionCount: 3,
     });
+  });
+
+  it('returns demo attendance before immediate case automation finishes', async () => {
+    const { service, repository, attendance, automation } = createHarness();
+    repository.listRosterIds.mockResolvedValue([
+      'student-1',
+      'student-2',
+      'student-3',
+      'student-4',
+    ]);
+    repository.getAlertTriggerType.mockResolvedValue('IMMEDIATE');
+    attendance.saveAttendanceWithinTransaction.mockResolvedValue({
+      affectedStudentIds: ['student-1', 'student-2', 'student-3', 'student-4'],
+      calendarConfigured: true,
+      session: { id: 'session-1', status: 'SUBMITTED', revision: 1 },
+    });
+    let finishAutomation!: (value: unknown[]) => void;
+    automation.checkConsecutiveAbsences.mockReturnValue(
+      new Promise((resolve) => {
+        finishAutomation = resolve;
+      }),
+    );
+
+    await expect(
+      service.seedPublicAttendanceDemo(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        31,
+      ),
+    ).resolves.toMatchObject({ success: true, data: { studentCount: 3, sessionCount: 3 } });
+    expect(automation.checkConsecutiveAbsences).toHaveBeenCalledTimes(1);
+
+    finishAutomation([]);
   });
 
   it('clears only demo-marked sessions from the same three classroom days', async () => {

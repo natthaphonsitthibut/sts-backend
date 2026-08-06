@@ -81,9 +81,12 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
     }
     // Startup repairs only what is actually missing, in a bounded batch. A full
     // recalculation on every boot rewrote every profile for no domain reason.
-    await this.repairMissingProfiles('startup-repair').catch((error) => {
+    try {
+      await this.repairMissingProfiles('startup-repair');
+    } catch (error) {
       this.logger.error(`Risk profile startup repair failed: ${this.errorMessage(error)}`);
-    });
+      throw error;
+    }
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -158,9 +161,13 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
       return;
     }
     this.logger.log(
-      `Risk profile repair queued: missing=${missing.length}, reason=${reason}, batchSize=${REPAIR_BATCH_SIZE}`,
+      `Risk profile startup repair: missing=${missing.length}, reason=${reason}, batchSize=${REPAIR_BATCH_SIZE}`,
     );
-    await this.enqueueStudents(missing, reason);
+    const thresholds = await this.riskProfileRepository.getRiskThresholds();
+    const result = await this.riskProfileRepository.recalculateStudents(missing, thresholds);
+    this.logger.log(
+      `Risk profile startup repair completed: evaluated=${result.evaluated}, changed=${result.changed}, reason=${reason}`,
+    );
   }
 
   private requireRedis(): Redis {

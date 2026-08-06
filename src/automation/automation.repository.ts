@@ -99,6 +99,12 @@ export class AutomationRepository {
           SELECT student_uuid, COUNT(*)::int AS absent_days
           FROM classified_days
           WHERE is_absent_day
+            AND NOT EXISTS (
+              SELECT 1
+              FROM attendance demo_distribution
+              WHERE demo_distribution.student_uuid = classified_days.student_uuid
+                AND demo_distribution."RecordedBy" = 'SYSTEM:DEMO_RISK_DISTRIBUTION'
+            )
           GROUP BY student_uuid
           HAVING COUNT(*) >= $1
         )
