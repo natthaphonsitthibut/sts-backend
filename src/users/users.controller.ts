@@ -227,7 +227,9 @@ export class UsersController {
     @Res() res: Response,
   ): Promise<void> {
     const result = await this.usersService.resolveOwnPhoto(actor);
-    res.setHeader('Cache-Control', 'private, max-age=300');
+    // Supabase URLs minted below expire quickly; caching this redirect would
+    // make the browser retry an expired token and render a broken image.
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (result.kind === 'redirect') {
       res.redirect(302, result.url);
@@ -309,7 +311,7 @@ export class UsersController {
     @Res() res: Response,
   ): Promise<void> {
     const result = await this.usersService.resolveUserPhoto(id, actor);
-    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (result.kind === 'redirect') {
       res.redirect(302, result.url);
