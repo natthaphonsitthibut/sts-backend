@@ -95,6 +95,7 @@ export async function processVisitAttachment(
   file: Express.Multer.File,
   storage: FileStorageAdapter,
 ): Promise<string> {
+  const directory = 'visit-attachments';
   const detectedImage = detectImageType(file.buffer);
   if (detectedImage) {
     const expectedMimeTypes: Record<typeof detectedImage, string[]> = {
@@ -106,7 +107,7 @@ export async function processVisitAttachment(
     if (!expectedMimeTypes[detectedImage].includes(file.mimetype)) {
       throw new BadRequestException('ชนิดไฟล์หรือเนื้อหาไฟล์ไม่ถูกต้อง');
     }
-    return processVisitPhoto(file, storage);
+    return processImageUpload(file, storage, directory);
   }
 
   let extension: '.pdf' | '.doc' | '.docx' | null = null;
@@ -126,6 +127,7 @@ export async function processVisitAttachment(
   }
 
   const filename = `${randomBytes(16).toString('hex')}${extension}`;
-  await storage.save(file.buffer, filename);
-  return filename;
+  const storageKey = `${directory}/${filename}`;
+  await storage.save(file.buffer, storageKey);
+  return storageKey;
 }

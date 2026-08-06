@@ -1,6 +1,37 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('checks visit attachments against the authenticated case scope', async () => {
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue({ records: [{ allowed: true }], affected: 1 }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await expect(
+      repository.canAccessVisitAttachment('/uploads/visit-attachments/report.jpg', {
+        id: 7,
+        username: 'reviewer',
+        roles: ['ADMIN'],
+        permissions: ['students'],
+        data_scope: { school_ids: [10010004] },
+      }),
+    ).resolves.toBe(true);
+
+    expect(queryRunner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /submission\.photo_paths::jsonb[\s\S]*c\.school_id = ANY\(\$2::int\[\]\)/,
+      ),
+      ['/uploads/visit-attachments/report.jpg', [10010004]],
+      true,
+    );
+  });
+
   it('falls back to the case enrollment for missing task grade and room', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {

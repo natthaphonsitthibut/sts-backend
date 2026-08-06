@@ -82,6 +82,20 @@ describe('processVisitPhoto', () => {
 });
 
 describe('processVisitAttachment', () => {
+  it('stores a signature-validated image under the visit-attachments directory', async () => {
+    const storage = fakeStorage();
+    const source = await sharp({
+      create: { width: 4, height: 4, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const storageKey = await processVisitAttachment(attachmentFile(source, 'image/jpeg'), storage);
+
+    expect(storageKey).toMatch(/^visit-attachments\/[0-9a-f]{32}\.jpg$/);
+    expect(storage.save).toHaveBeenCalledWith(expect.any(Buffer), storageKey);
+  });
+
   it.each([
     ['pdf', 'application/pdf', Buffer.from('%PDF-1.7\nbody')],
     [
@@ -101,13 +115,13 @@ describe('processVisitAttachment', () => {
       ]),
     ],
   ])(
-    'stores a signature-validated %s document under a random name',
+    'stores a signature-validated %s document under the visit-attachments directory',
     async (extension, mimetype, buffer) => {
       const storage = fakeStorage();
 
       const filename = await processVisitAttachment(attachmentFile(buffer, mimetype), storage);
 
-      expect(filename).toMatch(new RegExp(`^[0-9a-f]{32}\\.${extension}$`));
+      expect(filename).toMatch(new RegExp(`^visit-attachments/[0-9a-f]{32}\\.${extension}$`));
       expect(storage.save).toHaveBeenCalledWith(buffer, filename);
     },
   );

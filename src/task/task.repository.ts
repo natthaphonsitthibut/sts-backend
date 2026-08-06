@@ -701,6 +701,25 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
+  async canAccessVisitAttachment(storagePath: string, actor: ActorContext): Promise<boolean> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await this.query<{ allowed: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM task_submissions submission
+          JOIN task_links link ON link.id = submission.task_link_id
+          JOIN tasks task ON task.id = link.task_id AND task.deleted_at IS NULL
+          JOIN cases c ON c.id = task.case_id AND c.deleted_at IS NULL
+          WHERE submission.photo_paths::jsonb @> jsonb_build_array($1::text)${scopeSql}
+        ) AS allowed
+      `,
+      [storagePath, ...scopeQuery.params],
+    );
+    return result.rows[0]?.allowed === true;
+  }
+
   async findCaseDetailById(caseId: number, actor?: ActorContext): Promise<QueryResultRow | null> {
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
