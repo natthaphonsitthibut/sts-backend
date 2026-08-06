@@ -6,6 +6,8 @@ import { storageConfig } from '../config/storage.config';
 import { FileStorageModule } from '../files/storage/file-storage.module';
 import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
 import appDataSource from '../database/typeorm.datasource';
+import { withDataSourceTransaction } from '../database/sql-query';
+import { assertSingleSubmissionUpdate } from './migrate-visit-attachments.util';
 
 const VISIT_ATTACHMENTS_DIRECTORY = 'visit-attachments';
 const LEGACY_VISIT_FILENAME = /^[0-9a-f]{32}\.(?:jpe?g|png|gif|webp|pdf|docx?)$/i;
@@ -108,9 +110,9 @@ async function migrate(apply: boolean): Promise<void> {
       await copyObject(storage, sourceKey, `${VISIT_ATTACHMENTS_DIRECTORY}/${sourceKey}`);
     }
 
-    await appDataSource.transaction(async (manager) => {
+    await withDataSourceTransaction(appDataSource, async (executor) => {
       for (const item of pending) {
-        const updated = await manager.query<Array<{ id: string }>>(
+        const updated = await executor.query<{ id: string }>(
           `
             UPDATE task_submissions
             SET photo_paths = $1
@@ -119,11 +121,7 @@ async function migrate(apply: boolean): Promise<void> {
           `,
           [item.nextPaths, item.id, item.previousPaths],
         );
-        if (updated.length !== 1) {
-          throw new Error(
-            `Submission ${item.id} changed while migrating; no legacy file was deleted`,
-          );
-        }
+        assertSingleSubmissionUpdate(item.id, updated);
       }
     });
 
@@ -137,12 +135,16 @@ async function migrate(apply: boolean): Promise<void> {
   }
 }
 
-void migrate(process.argv.includes('--apply')).catch((error: unknown) => {
-  const message = error instanceof Error ? error.message.trim() : '';
-  const errorName = error instanceof Error ? error.name : 'UnknownError';
-  const errorCode =
-    typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined;
-  const safeDetail = [errorName, errorCode, message].filter(Boolean).join(': ');
-  console.error(`Visit attachment migration failed: ${safeDetail}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  void migrate(process.argv.includes('--apply')).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message.trim() : '';
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    const errorCode =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String(error.code)
+        : undefined;
+    const safeDetail = [errorName, errorCode, message].filter(Boolean).join(': ');
+    console.error(`Visit attachment migration failed: ${safeDetail}`);
+    process.exitCode = 1;
+  });
+}
