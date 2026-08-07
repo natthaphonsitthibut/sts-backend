@@ -20,7 +20,9 @@ function createHarness() {
     findActiveTeacherByEmail: jest.fn().mockResolvedValue(TEACHER),
     findActiveAccountForTeacher: jest.fn().mockResolvedValue(null),
     findActiveAccountByProviderUser: jest.fn().mockResolvedValue(null),
+    hasActiveTeacherMembership: jest.fn().mockResolvedValue(true),
     unlinkAccount: jest.fn().mockResolvedValue(undefined),
+    unlinkActiveAccountForTeacher: jest.fn().mockResolvedValue(true),
     insertAccount: jest.fn().mockResolvedValue('1'),
     updateFriendState: jest.fn().mockResolvedValue(undefined),
   };
@@ -178,6 +180,29 @@ describe('TeacherLineService', () => {
     expect(result.outcome).toBe('ALREADY_LINKED_TO_ANOTHER_TEACHER');
     expect(repository.insertAccount).not.toHaveBeenCalled();
     expect(repository.unlinkAccount).not.toHaveBeenCalled();
+  });
+
+  it('reclaims a chat account left behind by an inactive teacher', async () => {
+    const { service, repository } = createHarness();
+    repository.findActiveAccountByProviderUser.mockResolvedValue({
+      id: '9',
+      teacher_id: '99',
+      provider_user_id: IDENTITY.providerUserId,
+    });
+    repository.hasActiveTeacherMembership.mockResolvedValue(false);
+
+    const result = await service.completeAuthorization('code', 'state-value', null);
+
+    expect(result.outcome).toBe('SUCCESS');
+    expect(repository.unlinkAccount).toHaveBeenCalledWith(
+      '9',
+      'STALE_INACTIVE_TEACHER_BINDING',
+      expect.anything(),
+    );
+    expect(repository.insertAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherId: TEACHER.teacher_id }),
+      expect.anything(),
+    );
   });
 
   it('keeps the previous binding as history when a teacher links a new account', async () => {

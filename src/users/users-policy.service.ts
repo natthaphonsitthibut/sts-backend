@@ -263,9 +263,9 @@ export class UsersPolicyService {
     actorRole?: string | null,
     roleMap?: Map<string, RoleDefinition>,
   ): boolean {
-    const grantablePermissions = Array.from(
-      new Set([...actorPermissions, ...this.getRoleDefaultPermissions(actorRole, roleMap)]),
-    );
+    void actorRole;
+    void roleMap;
+    const grantablePermissions = Array.from(new Set(actorPermissions));
 
     if (grantablePermissions.includes('*') || grantablePermissions.includes('ALL')) {
       return true;
@@ -282,9 +282,8 @@ export class UsersPolicyService {
     fallbackRole?: string | null,
     roleMap?: Map<string, RoleDefinition>,
   ): string[] {
-    const storedPermissions = this.normalizePermissionList(permissions);
-    if (storedPermissions.length > 0) {
-      return storedPermissions;
+    if (Array.isArray(permissions)) {
+      return this.normalizePermissionList(permissions);
     }
 
     const fallbackDefaults = this.normalizePermissionList(roleDefaultPermissions);

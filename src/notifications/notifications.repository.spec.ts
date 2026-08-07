@@ -30,6 +30,7 @@ describe('NotificationsRepository direct recipient eligibility', () => {
     expect(sql).toContain("u.data_origin_code <> 'AUTOMATED_TEST'");
     expect(sql).toContain('u.permissions ? nt.required_permission');
     expect(sql).toContain('r.default_permissions ? nt.required_permission');
+    expect(sql).not.toContain('jsonb_array_length(u.permissions) > 0');
     expect(params).toEqual([
       42,
       'IMPORT_COMPLETED',

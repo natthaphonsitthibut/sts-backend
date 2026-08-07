@@ -52,8 +52,8 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
     id: 'attendance-system',
     label: 'ระบบเช็คชื่อ',
     children: [
-      { id: 'attendance-dashboard', label: 'ลิงก์เช็คชื่อ' },
-      { id: 'attendance', label: 'เช็คชื่อ' },
+      { id: 'attendance-dashboard', label: 'ดูภาพรวมและความครบถ้วนการเช็คชื่อ' },
+      { id: 'attendance', label: 'เช็คชื่อและดูข้อมูลการเข้าเรียน' },
       { id: 'manage-attendance-calendar', label: 'จัดการปฏิทินเช็คชื่อ' },
       { id: 'manage-timetable', label: 'จัดการตารางสอน' },
     ],
@@ -77,7 +77,7 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
   { id: 'import-school-roster', label: 'นำเข้าครูและนักเรียนของโรงเรียน' },
   { id: 'settings', label: 'ตั้งค่าระบบ' },
   { id: 'audit-log', label: 'บันทึกการใช้งาน' },
-  { id: 'field-monitor', label: 'ติดตามภาคสนาม' },
+  { id: 'field-monitor', label: 'จัดการผู้ติดตามและแผนที่ภาคสนาม' },
 ];
 
 function collectLeafPermissions(items: PermissionMenuItem[]): Array<{ id: string; label: string }> {

@@ -22,6 +22,7 @@ const BROWSER_BACKEND_URL =
 const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9232);
+const NAVIGATION_ONLY = process.env.SMOKE_PROFILE_NAVIGATION_ONLY === 'true';
 const USERNAME = 'profile_self_edit_browser_smoke';
 const PROFILE_AUDIT_ACTION = 'USER_PROFILE_UPDATE';
 const PROFILE_AUDIT_ACTION_LABEL = 'แก้ไขข้อมูลส่วนตัว';
@@ -607,27 +608,50 @@ async function main() {
       const pageText = String(await evaluate(client, 'document.body.innerText')).slice(0, 500);
       throw new Error(`${error.message}; path=${pathname}; page=${pageText}`);
     }
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('a[href^="/manage-users/${user.id}/edit"]'))`,
+          ),
+        ),
+      'Manage-users profile edit link did not render for an authorized user',
+    );
     assert(
       Boolean(
         await evaluate(
           client,
-          `[...document.querySelectorAll('div')].some((element) => {
-            const label = element.firstElementChild?.textContent?.trim();
-            return label === 'เลขบัตรประชาชน' && element.textContent.includes('-');
-          })`,
+          `[...document.querySelectorAll('div.text-xs')].some((label) =>
+            label.textContent.trim() === 'เลขบัตรประชาชน'
+              && label.nextElementSibling?.textContent.trim() === '-'
+          )`,
         ),
       ),
       'Missing national id did not render as an empty profile detail',
     );
-    assert(
-      Boolean(
-        await evaluate(
-          client,
-          `Boolean(document.querySelector('a[href="/manage-users/${user.id}/edit"]'))`,
-        ),
-      ),
-      'Manage-users national-id edit link did not render for an authorized user',
+    await click(
+      client,
+      `document.querySelector('a[href^="/manage-users/${user.id}/edit"]')`,
+      'Manage-users profile edit link was not clickable',
     );
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')).endsWith('/edit'),
+      'Manage-users profile edit form did not open',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('a,button')].find((element) => element.textContent.trim() === 'ย้อนกลับ')`,
+      'Manage-users profile edit back action was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === '/profile',
+      'Profile-origin edit did not navigate back to profile',
+    );
+    if (NAVIGATION_ONLY) {
+      console.log('profile back-navigation browser smoke passed');
+      return;
+    }
     assert(
       !Boolean(await evaluate(client, `document.querySelector('#FirstName')`)),
       'Profile view mode rendered editable form controls',
@@ -1023,7 +1047,7 @@ async function main() {
     );
 
     console.log(
-      'profile browser smoke passed (profile/password, map search/shortcut/coordinates, save/mobile/audit)',
+      'profile browser smoke passed (profile-origin back navigation, profile/password, map search/shortcut/coordinates, save/mobile/audit)',
     );
   } finally {
     await closeChrome(chrome);

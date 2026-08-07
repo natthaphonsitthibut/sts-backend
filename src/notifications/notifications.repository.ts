@@ -132,7 +132,7 @@ export class NotificationsRepository {
           AND ($6::int IS NULL OR u.id <> $6::int)
           AND NOT (u.id = ANY($14::int[]))
           AND CASE
-            WHEN jsonb_typeof(u.permissions) = 'array' AND jsonb_array_length(u.permissions) > 0
+            WHEN jsonb_typeof(u.permissions) = 'array'
               THEN u.permissions ? nt.required_permission
             ELSE COALESCE(r.default_permissions ? nt.required_permission, FALSE)
           END
@@ -176,7 +176,7 @@ export class NotificationsRepository {
           AND u.role IS DISTINCT FROM 'STUDENT'
           AND u.data_origin_code <> 'AUTOMATED_TEST'
           AND CASE
-            WHEN jsonb_typeof(u.permissions) = 'array' AND jsonb_array_length(u.permissions) > 0
+            WHEN jsonb_typeof(u.permissions) = 'array'
               THEN u.permissions ? nt.required_permission
             ELSE COALESCE(r.default_permissions ? nt.required_permission, FALSE)
           END

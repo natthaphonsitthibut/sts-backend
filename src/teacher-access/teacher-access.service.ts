@@ -784,6 +784,56 @@ export class TeacherAccessService {
     };
   }
 
+  async unlinkTeacherLineAccount(teacherMembershipId: number, actor: AuthenticatedRequestUser) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ที่ปลดการเชื่อมต่อ LINE');
+
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const membership = await this.repository.findMembershipForIssue(
+        teacherMembershipId,
+        queryRunner,
+      );
+      if (
+        !membership ||
+        membership.membership_status !== 'ACTIVE' ||
+        membership.teacher_status !== 'ACTIVE'
+      ) {
+        throw new NotFoundException('ไม่พบครูที่เปิดใช้งานในโรงเรียนนี้');
+      }
+      await this.assertSchoolAccess(membership.school_id, actor);
+
+      const unlinked = await this.teacherMessaging.unlinkActiveAccountForTeacher(
+        membership.teacher_id,
+        'UNLINKED_BY_SCHOOL_ADMIN',
+        actorId,
+        queryRunner,
+      );
+      if (!unlinked) {
+        throw new ConflictException('ครูคนนี้ยังไม่ได้ยืนยันบัญชี LINE');
+      }
+
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'TEACHER_MESSAGING_UNLINK',
+          targetType: 'teachers',
+          targetId: membership.teacher_id,
+          metadata: {
+            provider: 'LINE',
+            schoolId: membership.school_id,
+            teacherMembershipId: membership.id,
+            teacherName: membership.teacher_display_name,
+            reason: 'UNLINKED_BY_SCHOOL_ADMIN',
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return { data: { success: true } };
+    });
+  }
+
   async listGrants(query: ListTeacherAccessGrantsDto, actor: AuthenticatedRequestUser) {
     await this.assertSchoolAccess(query.schoolId, actor);
     const page = resolvePage(query.page);

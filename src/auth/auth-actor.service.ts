@@ -26,15 +26,15 @@ interface UserActorRow extends Record<string, unknown> {
 }
 
 function resolvePermissions(permissions: unknown, defaultPermissions: unknown): string[] {
-  const storedPermissions = Array.isArray(permissions)
-    ? permissions.filter(
-        (permission): permission is string =>
-          typeof permission === 'string' && permission.trim().length > 0,
-      )
-    : [];
-
-  if (storedPermissions.length > 0) {
-    return Array.from(new Set(storedPermissions));
+  if (Array.isArray(permissions)) {
+    return Array.from(
+      new Set(
+        permissions.filter(
+          (permission): permission is string =>
+            typeof permission === 'string' && permission.trim().length > 0,
+        ),
+      ),
+    );
   }
 
   return Array.from(

@@ -313,7 +313,10 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     client,
     `document.querySelector('[data-risk-area-dimension]')?.getAttribute('data-risk-area-dimension')`,
   );
-  assert(riskDimension === 'PROVINCE', `${label} default risk dimension was ${riskDimension}`);
+  assert(
+    riskDimension === (expectations.riskDimension || 'PROVINCE'),
+    `${label} default risk dimension was ${riskDimension}`,
+  );
   if (expectations.risk) {
     assert(text.includes('เสี่ยง'), `${label} risk metric was missing`);
   }
@@ -334,6 +337,32 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     assert(hasExportNavigation, `${label} export navigation was missing`);
   } else {
     assert(!hasExportNavigation, `${label} rendered export navigation without permission`);
+  }
+  const attendanceNavigation = await evaluate(
+    client,
+    `({
+      attendance: Boolean(document.querySelector('a[href="/attendance"]')),
+      operations: Boolean(document.querySelector('a[href="/attendance-operations"]')),
+      operationsGroup: (() => {
+        const link = document.querySelector('a[href="/attendance-operations"]');
+        return link?.parentElement?.parentElement?.parentElement?.parentElement
+          ?.querySelector(':scope > button')?.textContent?.trim() || null;
+      })()
+    })`,
+  );
+  assert(
+    attendanceNavigation.attendance === expectations.attendanceNavigation,
+    `${label} attendance navigation did not match the stored permission`,
+  );
+  assert(
+    attendanceNavigation.operations === expectations.operationsNavigation,
+    `${label} attendance completeness navigation did not match the stored permission`,
+  );
+  if (expectations.operationsNavigation) {
+    assert(
+      attendanceNavigation.operationsGroup?.includes('จัดการข้อมูล'),
+      `${label} attendance completeness navigation was not grouped under data management`,
+    );
   }
   if (expectations.cases) {
     const activeCaseCardText = await evaluate(client, `(() => document.body.innerText)()`);
@@ -400,9 +429,23 @@ async function main() {
         username: `${USERNAME_PREFIX}_admin`,
         firstName: 'Home Admin',
         role: 'ADMIN',
-        permissions: ['home', 'dashboard', 'attendance-dashboard', 'review-cases', 'students'],
+        permissions: [
+          'home',
+          'dashboard',
+          'attendance-dashboard',
+          'review-cases',
+          'students',
+          'export-data',
+        ],
         dataScope: { global: true },
-        expectations: { attendance: true, risk: true, cases: true, exports: true },
+        expectations: {
+          attendance: true,
+          risk: true,
+          cases: true,
+          exports: true,
+          attendanceNavigation: false,
+          operationsNavigation: true,
+        },
       },
       {
         label: 'attendance-only',
@@ -411,7 +454,14 @@ async function main() {
         role: 'TEACHER',
         permissions: ['home', 'attendance-dashboard'],
         dataScope: { global: true },
-        expectations: { attendance: true, risk: false, cases: false, exports: false },
+        expectations: {
+          attendance: true,
+          risk: false,
+          cases: false,
+          exports: false,
+          attendanceNavigation: false,
+          operationsNavigation: true,
+        },
       },
       {
         label: 'reviewer',
@@ -420,7 +470,14 @@ async function main() {
         role: 'ADMIN',
         permissions: ['home', 'review-cases'],
         dataScope: { global: true },
-        expectations: { attendance: false, risk: false, cases: true, exports: true },
+        expectations: {
+          attendance: false,
+          risk: false,
+          cases: true,
+          exports: false,
+          attendanceNavigation: false,
+          operationsNavigation: false,
+        },
       },
       {
         label: 'dashboard',
@@ -429,7 +486,14 @@ async function main() {
         role: 'ADMIN',
         permissions: ['home', 'dashboard'],
         dataScope: { global: true },
-        expectations: { attendance: false, risk: true, cases: false, exports: true },
+        expectations: {
+          attendance: false,
+          risk: true,
+          cases: false,
+          exports: false,
+          attendanceNavigation: false,
+          operationsNavigation: false,
+        },
       },
     ];
     const scopeSchools = await dataSource.query(
@@ -443,7 +507,15 @@ async function main() {
       role: 'TEACHER',
       permissions: ['home'],
       dataScope: { school_ids: [Number(scopeSchools[0].id)] },
-      expectations: { attendance: false, risk: false, cases: false, exports: false },
+      expectations: {
+        attendance: false,
+        risk: false,
+        cases: false,
+        exports: false,
+        attendanceNavigation: false,
+        operationsNavigation: false,
+        riskDimension: 'SCHOOL',
+      },
     });
     const actorIds = new Map();
     for (const actor of actors) {
@@ -608,7 +680,7 @@ async function main() {
     await capture(client, '/tmp/sts-home-overview-trends-mobile.png');
 
     console.log(
-      'home dashboard browser smoke passed (risk drill-down/back, scoped denial, case permissions, desktop/mobile render)',
+      'home dashboard browser smoke passed (permission-driven navigation/grouping, risk drill-down/back, scoped denial, case permissions, desktop/mobile render)',
     );
   } finally {
     await closeChrome(chrome);

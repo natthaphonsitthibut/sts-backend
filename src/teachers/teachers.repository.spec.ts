@@ -26,4 +26,26 @@ describe('TeachersRepository', () => {
 
     expect(queries[1]).toContain('ORDER BY teacher.email DESC NULLS LAST, teacher.id DESC');
   });
+
+  it('unlinks LINE only after the teacher has no active school membership', async () => {
+    const queries: string[] = [];
+    const runner = {
+      query: jest.fn().mockImplementation((sql: string) => {
+        queries.push(sql.replace(/\s+/g, ' ').trim());
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+    };
+    const repository = new TeachersRepository({} as never);
+
+    await repository.deactivateTeacher(
+      { teacherId: '7', membershipId: '5', actorId: 1 },
+      runner as never,
+    );
+
+    const unlinkSql = queries.find((sql) => sql.includes('UPDATE teacher_messaging_accounts'));
+    expect(unlinkSql).toContain("unlinked_reason = 'TEACHER_DEACTIVATED'");
+    expect(unlinkSql).toContain("active_membership.membership_status = 'ACTIVE'");
+    expect(unlinkSql).toContain('NOT EXISTS');
+    expect(runner.query).toHaveBeenLastCalledWith(expect.any(String), ['7', 1], true);
+  });
 });

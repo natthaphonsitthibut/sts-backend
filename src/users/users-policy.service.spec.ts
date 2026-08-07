@@ -97,6 +97,18 @@ const scopedTeacher = {
 describe('UsersPolicyService functional roles and data scope', () => {
   const service = new UsersPolicyService({} as UsersRepository);
 
+  it('keeps an explicitly empty stored permission list empty for management views', () => {
+    expect(service.resolveDisplayPermissions([], ['home'], 'ADMIN', roleMap)).toEqual([]);
+  });
+
+  it('uses role defaults only when stored permissions are not an array', () => {
+    expect(service.resolveDisplayPermissions(null, ['home'], 'ADMIN', roleMap)).toEqual(['home']);
+  });
+
+  it('does not let a role baseline restore grant authority removed from an actor', () => {
+    expect(service.canGrantPermissions(['home'], ['export-data'], 'ADMIN', roleMap)).toBe(false);
+  });
+
   it('allows one ADMIN role to be assigned with a school scope', async () => {
     await expect(
       service.assertAssignablePayload(

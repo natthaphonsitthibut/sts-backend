@@ -10,6 +10,14 @@ describe('TaskPolicyService data scope policy', () => {
     school_ids: [10010002],
   };
 
+  it('keeps an explicitly empty login permission snapshot empty', () => {
+    expect(service.resolveEffectivePermissions('TEACHER', [], new Map())).toEqual([]);
+  });
+
+  it('does not restore removed grant authority from the actor role baseline', () => {
+    expect(service.canGrantPermissions(['home'], ['attendance'], 'ADMIN', new Map())).toBe(false);
+  });
+
   it.each([
     ['empty actor scope', {}, schoolScope, false],
     ['global actor scope', { global: true }, schoolScope, true],
