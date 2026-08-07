@@ -137,6 +137,45 @@ export class TeacherLineRepository {
     );
   }
 
+  async unlinkActiveAccountForTeacher(
+    teacherId: string,
+    reason: string,
+    updatedBy: number,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    const result = await this.executor(queryRunner).query(
+      `
+        UPDATE teacher_messaging_accounts
+        SET unlinked_at = now(), unlinked_reason = $2, updated_by = $3
+        WHERE teacher_id = $1::bigint
+          AND provider = 'LINE'
+          AND unlinked_at IS NULL
+          AND deleted_at IS NULL
+      `,
+      [teacherId, reason, updatedBy],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async hasActiveTeacherMembership(teacherId: string, queryRunner: QueryRunner): Promise<boolean> {
+    const result = await this.executor(queryRunner).query(
+      `
+        SELECT 1
+        FROM teachers teacher
+        JOIN school_teacher_memberships membership
+          ON membership.teacher_id = teacher.id
+        WHERE teacher.id = $1::bigint
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [teacherId],
+    );
+    return result.rows.length > 0;
+  }
+
   async insertAccount(
     input: {
       teacherId: string;

@@ -238,6 +238,7 @@ async function main() {
   const backendUrl = `http://127.0.0.1:${address.port}`;
   const otpCapture = captureOtpCodes(app);
   let chrome;
+  let lineAccountId = null;
 
   try {
     await assertSchemaPrerequisites(dataSource);
@@ -273,6 +274,33 @@ async function main() {
     };
     await cleanup(dataSource);
     const fixture = await createFixture(dataSource, actors);
+    await dataSource.query(
+      `
+        UPDATE teacher_messaging_accounts
+        SET unlinked_at = now(), unlinked_reason = 'AUTOMATED_TEST_REPLACED'
+        WHERE teacher_id = $1
+          AND provider = 'LINE'
+          AND unlinked_at IS NULL
+          AND deleted_at IS NULL
+      `,
+      [fixture.teacherMemberships[0].teacherId],
+    );
+    const [lineAccount] = await dataSource.query(
+      `
+        INSERT INTO teacher_messaging_accounts (
+          teacher_id, provider, provider_channel_id, provider_user_id,
+          friend_state, verified_via, created_by, updated_by
+        )
+        VALUES ($1, 'LINE', 'TEACHER_ACCESS_BROWSER_SMOKE', $2, 'FRIEND', 'EMAIL_OTP', $3, $3)
+        RETURNING id
+      `,
+      [
+        fixture.teacherMemberships[0].teacherId,
+        `U_TEACHER_ACCESS_BROWSER_${Date.now()}`,
+        actors.admin.id,
+      ],
+    );
+    lineAccountId = Number(lineAccount.id);
     const schoolId = Number(fixture.term.school_id);
     const [fixtureClassroom] = await dataSource.query(
       `SELECT grade_level_id FROM school_classrooms WHERE id = $1`,
@@ -513,6 +541,76 @@ async function main() {
       `LINE actions are out of step: send=${lineActions.send}, copy=${lineActions.copy}`,
     );
 
+    const unlinkSnapshot = await evaluate(
+      client,
+      `(() => ({
+        rowCount: [...document.querySelectorAll('tbody tr')]
+          .filter((row) => row.getClientRects().length > 0).length,
+        actions: [...document.querySelectorAll('button[aria-label^="ปลดการเชื่อมต่อ LINE ของ"]')]
+          .filter((button) => button.getClientRects().length > 0)
+          .map((button) => ({
+            label: button.getAttribute('aria-label'),
+            disabled: button.disabled,
+            title: button.getAttribute('title'),
+          })),
+      }))()`,
+    );
+    const unlinkActions = unlinkSnapshot.actions;
+    assert(
+      unlinkSnapshot.rowCount > 0 && unlinkActions.length === unlinkSnapshot.rowCount,
+      `Every visible teacher row must render a LINE unlink icon: ${JSON.stringify(unlinkSnapshot)}`,
+    );
+    assert(
+      unlinkActions.some((action) => action.disabled) &&
+        unlinkActions.some((action) => !action.disabled),
+      `LINE unlink enablement did not match verification state: ${JSON.stringify(unlinkActions)}`,
+    );
+    assert(
+      unlinkActions.every((action) => action.title),
+      'LINE unlink icons did not expose hover text',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button[aria-label^="ปลดการเชื่อมต่อ LINE ของ"]')]
+        .find((button) => button.getClientRects().length > 0 && !button.disabled)?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) =>
+              button.getClientRects().length > 0 && button.textContent.trim() === 'ปลดการเชื่อมต่อ')`,
+          ),
+        ),
+      'LINE unlink confirmation did not open',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.getClientRects().length > 0 &&
+          button.textContent.trim() === 'ปลดการเชื่อมต่อ')?.click()`,
+    );
+    await waitFor(async () => {
+      const [account] = await dataSource.query(
+        `SELECT unlinked_reason FROM teacher_messaging_accounts WHERE id = $1`,
+        [lineAccountId],
+      );
+      return account?.unlinked_reason === 'UNLINKED_BY_SCHOOL_ADMIN';
+    }, 'LINE account was not unlinked by the scoped admin action');
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button[aria-label^="ปลดการเชื่อมต่อ LINE ของ"]')]
+              .filter((button) => button.getClientRects().length > 0)
+              .every((button) => button.disabled)`,
+          ),
+        ),
+      'Teacher roster did not refresh the LINE unlink state',
+    );
+
     await navigate(
       client,
       `${FRONTEND_URL}/curriculum/${fixtureClassroom.grade_level_id}/subjects/new` +
@@ -636,6 +734,7 @@ async function main() {
           'teacher card color updates every subject card for the shared classroom',
           'teacher-link roster sorting reaches the server',
           'the LINE verification link is copyable wherever sending over LINE is offered',
+          'LINE unlink icons stay visible, disable by verification state and refresh after unlink',
           'curriculum MultiSelect filters as you type and supports ArrowDown, Enter and Escape',
         ],
       }),
@@ -643,6 +742,9 @@ async function main() {
   } finally {
     otpCapture.restore();
     await closeChrome(chrome);
+    if (lineAccountId) {
+      await dataSource.query(`DELETE FROM teacher_messaging_accounts WHERE id = $1`, [lineAccountId]);
+    }
     await cleanup(dataSource);
     await app.close();
   }

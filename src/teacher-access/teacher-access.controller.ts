@@ -5,6 +5,7 @@ import {
   Headers,
   Inject,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -114,6 +115,14 @@ export class TeacherAccessGrantController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listAssignmentOptions(query, actor);
+  }
+
+  @Post('teacher-memberships/:teacherMembershipId/unlink-line')
+  unlinkLine(
+    @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.unlinkTeacherLineAccount(teacherMembershipId, actor);
   }
 
   @Get(':grantId')

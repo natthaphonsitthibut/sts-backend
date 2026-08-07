@@ -213,7 +213,10 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     isEnabled: jest.fn().mockReturnValue(true),
     sendMessages: jest.fn().mockResolvedValue([]),
   };
-  const teacherMessaging = { markUnreachable: jest.fn().mockResolvedValue(undefined) };
+  const teacherMessaging = {
+    markUnreachable: jest.fn().mockResolvedValue(undefined),
+    unlinkActiveAccountForTeacher: jest.fn().mockResolvedValue(true),
+  };
   const service = new TeacherAccessService(
     repository as unknown as TeacherAccessRepository,
     auditLog as never,
@@ -751,6 +754,56 @@ describe('TeacherAccessService', () => {
         'https://sts.test',
       ),
     ).rejects.toThrow('ยังไม่เปิดใช้งาน');
+  });
+
+  it('unlinks a verified LINE account only for a scoped active membership', async () => {
+    const { service, repository, teacherMessaging, auditLog } = createHarness();
+    repository.findMembershipForIssue.mockResolvedValue({
+      id: '12',
+      school_id: 10,
+      teacher_id: '7',
+      teacher_user_id: 44,
+      teacher_display_name: 'ครู หนึ่ง',
+      membership_status: 'ACTIVE',
+      teacher_status: 'ACTIVE',
+    });
+
+    await expect(service.unlinkTeacherLineAccount(12, ACTOR)).resolves.toEqual({
+      data: { success: true },
+    });
+
+    expect(teacherMessaging.unlinkActiveAccountForTeacher).toHaveBeenCalledWith(
+      '7',
+      'UNLINKED_BY_SCHOOL_ADMIN',
+      ACTOR.id,
+      expect.anything(),
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'TEACHER_MESSAGING_UNLINK',
+        targetId: '7',
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('does not unlink LINE when the membership school is outside the actor scope', async () => {
+    const { service, repository, teacherMessaging } = createHarness();
+    repository.findMembershipForIssue.mockResolvedValue({
+      id: '12',
+      school_id: 99,
+      teacher_id: '7',
+      teacher_user_id: 44,
+      teacher_display_name: 'ครู หนึ่ง',
+      membership_status: 'ACTIVE',
+      teacher_status: 'ACTIVE',
+    });
+    repository.isSchoolInScope.mockResolvedValue(false);
+
+    await expect(service.unlinkTeacherLineAccount(12, ACTOR)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(teacherMessaging.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
   });
 
   it('refuses to issue a link for a teacher with no class this term', async () => {

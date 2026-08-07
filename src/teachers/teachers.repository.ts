@@ -359,5 +359,25 @@ export class TeachersRepository {
       `,
       [input.teacherId, input.actorId],
     );
+    await executor.query(
+      `
+        UPDATE teacher_messaging_accounts account
+        SET unlinked_at = now(),
+            unlinked_reason = 'TEACHER_DEACTIVATED',
+            updated_by = $2
+        WHERE account.teacher_id = $1
+          AND account.provider = 'LINE'
+          AND account.unlinked_at IS NULL
+          AND account.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships active_membership
+            WHERE active_membership.teacher_id = account.teacher_id
+              AND active_membership.membership_status = 'ACTIVE'
+              AND active_membership.deleted_at IS NULL
+          )
+      `,
+      [input.teacherId, input.actorId],
+    );
   }
 }

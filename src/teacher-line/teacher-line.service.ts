@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
+import type { QueryRunner } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
@@ -210,15 +211,33 @@ export class TeacherLineService {
 
     const channelId = this.line.messagingChannelId;
     const outcome = await this.repository.withTransaction(async (queryRunner) => {
-      const heldByOther = await this.repository.findActiveAccountByProviderUser(
+      let heldByOther = await this.repository.findActiveAccountByProviderUser(
         channelId,
         identity.providerUserId,
         queryRunner,
       );
       let linkOutcome: 'SUCCESS' | 'ALREADY_LINKED_TO_ANOTHER_TEACHER';
       if (heldByOther && heldByOther.teacher_id !== session.teacherId) {
-        linkOutcome = 'ALREADY_LINKED_TO_ANOTHER_TEACHER';
+        const ownerStillActive = await this.repository.hasActiveTeacherMembership(
+          heldByOther.teacher_id,
+          queryRunner,
+        );
+        if (ownerStillActive) {
+          linkOutcome = 'ALREADY_LINKED_TO_ANOTHER_TEACHER';
+        } else {
+          await this.repository.unlinkAccount(
+            heldByOther.id,
+            'STALE_INACTIVE_TEACHER_BINDING',
+            queryRunner,
+          );
+          heldByOther = null;
+          linkOutcome = 'SUCCESS';
+        }
       } else {
+        linkOutcome = 'SUCCESS';
+      }
+
+      if (linkOutcome === 'SUCCESS') {
         const current = await this.repository.findActiveAccountForTeacher(
           session.teacherId,
           channelId,
@@ -253,7 +272,6 @@ export class TeacherLineService {
             queryRunner,
           );
         }
-        linkOutcome = 'SUCCESS';
       }
 
       // Binding and its audit record commit or roll back together. Otherwise an
@@ -322,6 +340,20 @@ export class TeacherLineService {
       this.line.messagingChannelId,
       providerUserId,
       'NOT_FRIEND',
+    );
+  }
+
+  async unlinkActiveAccountForTeacher(
+    teacherId: string,
+    reason: string,
+    updatedBy: number,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    return await this.repository.unlinkActiveAccountForTeacher(
+      teacherId,
+      reason,
+      updatedBy,
+      queryRunner,
     );
   }
 

@@ -26,7 +26,9 @@ interface TermIssueRow extends Record<string, unknown> {
 interface MembershipIssueRow extends Record<string, unknown> {
   id: string;
   school_id: number;
+  teacher_id: string;
   teacher_user_id: number;
+  teacher_display_name: string;
   membership_status: 'ACTIVE' | 'INACTIVE';
   teacher_status: string;
 }
@@ -147,7 +149,10 @@ export class TeacherAccessRepository {
   ): Promise<MembershipIssueRow | null> {
     const result = await this.executor(queryRunner).query<MembershipIssueRow>(
       `
-        SELECT membership.id::text, membership.school_id, membership.teacher_user_id,
+        SELECT membership.id::text, membership.school_id,
+               membership.teacher_id::text AS teacher_id,
+               membership.teacher_user_id,
+               TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
                membership.membership_status, teacher.teacher_status
         FROM school_teacher_memberships membership
         JOIN teachers teacher ON teacher.id = membership.teacher_id
