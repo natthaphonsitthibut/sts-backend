@@ -80,6 +80,52 @@ describe('AuthActorService', () => {
     expect(studentAuthService.loadVirtualStudentActor).not.toHaveBeenCalled();
   });
 
+  it('keeps an explicitly empty stored permission list empty', async () => {
+    sessionCookieService.readUserId.mockReturnValue(42);
+    queryRunner.query.mockResolvedValue({
+      records: [
+        {
+          id: 42,
+          username: 'restricted-admin',
+          roles: ['ADMIN'],
+          permissions: [],
+          data_scope: {},
+          role_default_permissions: ['home', 'export-data'],
+        },
+      ],
+    });
+
+    const actor = await service.loadRequiredUser({
+      headers: { cookie: 'sts_session=signed-token' },
+      session: {},
+    });
+
+    expect(actor?.permissions).toEqual([]);
+  });
+
+  it('uses role defaults only for legacy non-array permission values', async () => {
+    sessionCookieService.readUserId.mockReturnValue(42);
+    queryRunner.query.mockResolvedValue({
+      records: [
+        {
+          id: 42,
+          username: 'legacy-admin',
+          roles: ['ADMIN'],
+          permissions: null,
+          data_scope: {},
+          role_default_permissions: ['home', 'export-data'],
+        },
+      ],
+    });
+
+    const actor = await service.loadRequiredUser({
+      headers: { cookie: 'sts_session=signed-token' },
+      session: {},
+    });
+
+    expect(actor?.permissions).toEqual(['home', 'export-data']);
+  });
+
   it('prefers virtual student auth when no local user exists', async () => {
     const virtualActor = buildActor({
       id: -77,

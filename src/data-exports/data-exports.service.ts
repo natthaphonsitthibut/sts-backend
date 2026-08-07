@@ -512,7 +512,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       id: Number(row.id),
       username: row.username,
       roles: row.role ? [row.role] : [],
-      permissions: storedPermissions.length > 0 ? storedPermissions : roleDefaults,
+      permissions: Array.isArray(row.permissions) ? storedPermissions : roleDefaults,
       data_scope: normalizeDataScope(row.data_scope) ?? {},
     };
   }

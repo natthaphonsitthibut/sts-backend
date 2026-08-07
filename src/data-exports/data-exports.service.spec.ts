@@ -420,6 +420,26 @@ describe('DataExportsService', () => {
     expect(storage.saveStream).not.toHaveBeenCalled();
   });
 
+  it('does not restore export permission from role defaults when stored permissions are empty', async () => {
+    repository.findActiveRequester.mockResolvedValueOnce({
+      id: 1,
+      username: 'restricted-exporter',
+      role: 'ADMIN',
+      permissions: [],
+      data_scope: { global: true },
+      role_default_permissions: ['export-data', 'students'],
+    });
+
+    await (service as unknown as { processJob(jobId: string): Promise<void> }).processJob('job-1');
+
+    expect(repository.failJob).toHaveBeenCalledWith(
+      'job-1',
+      'EXPORT_ACCESS_REVOKED',
+      expect.stringContaining('สิทธิ์'),
+    );
+    expect(storage.saveStream).not.toHaveBeenCalled();
+  });
+
   it('streams bounded CSV chunks and records checksum metrics after upload', async () => {
     const firstBatch = Array.from({ length: 1_000 }, (_, index) => ({
       student_uuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
