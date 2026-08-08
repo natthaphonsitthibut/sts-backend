@@ -5,6 +5,7 @@ import { appConfig } from '../config/app.config';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import { isUnconfiguredDataScope, normalizeScopeArray } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
+import { normalizeScalar } from '../common/utils/helpers';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import type {
   ActorContext,
@@ -295,14 +296,6 @@ export class TaskRepository {
     return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/task/${token}`;
   }
 
-  private normalizeScalar(value: unknown): string {
-    if (typeof value === 'string' || typeof value === 'number') {
-      return String(value);
-    }
-
-    return '';
-  }
-
   private async query<T extends QueryResultRow = QueryResultRow>(
     sql: string,
     params?: unknown[],
@@ -484,8 +477,8 @@ export class TaskRepository {
 
     return result.rows.map((row: QueryResultRow) => ({
       id: Number(row.id),
-      name: this.normalizeScalar(row.name),
-      label: this.normalizeScalar(row.label),
+      name: normalizeScalar(row.name),
+      label: normalizeScalar(row.label),
       rank: Number(row.rank) || 0,
       default_permissions: Array.isArray(row.default_permissions)
         ? row.default_permissions.filter(
@@ -2301,7 +2294,7 @@ export class TaskRepository {
     }
 
     const value = result.rows[0]?.setting_value;
-    return this.normalizeScalar(value) || null;
+    return normalizeScalar(value) || null;
   }
 
   async findOtpLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {

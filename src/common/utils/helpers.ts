@@ -43,6 +43,15 @@ export function sanitize(str: string): string {
   );
 }
 
+/** Coerce a string/number to a trimmed string; anything else becomes ''. */
+export function normalizeScalar(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value).trim();
+  }
+
+  return '';
+}
+
 export function clean(str: any): string | null {
   if (!str) return null;
   const s = String(str).trim();
