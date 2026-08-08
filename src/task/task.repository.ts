@@ -3,7 +3,7 @@ import type { ConfigType } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { appConfig } from '../config/app.config';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
-import { isUnconfiguredDataScope } from '../auth/auth.types';
+import { isUnconfiguredDataScope, normalizeScopeArray } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import type {
@@ -310,18 +310,8 @@ export class TaskRepository {
     return await queryDataSource<T>(this.dataSource, sql, params);
   }
 
-  private normalizeScopeArray(value: unknown): string[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    return Array.from(
-      new Set(value.map((item) => String(item).trim()).filter((item) => item.length > 0)),
-    );
-  }
-
   private normalizeScopeIntArray(value: unknown): number[] {
-    return this.normalizeScopeArray(value)
+    return normalizeScopeArray(value)
       .map((item) => Number(item))
       .filter((item) => Number.isInteger(item));
   }
@@ -349,19 +339,19 @@ export class TaskRepository {
     }
 
     const schoolConditions: string[] = [];
-    const provinces = this.normalizeScopeArray(scope.provinces);
+    const provinces = normalizeScopeArray(scope.provinces);
     if (provinces.length > 0) {
       schoolConditions.push(`case_scope_school.province = ANY($${paramIndex++}::text[])`);
       params.push(provinces);
     }
 
-    const districts = this.normalizeScopeArray(scope.districts);
+    const districts = normalizeScopeArray(scope.districts);
     if (districts.length > 0) {
       schoolConditions.push(`case_scope_school.district = ANY($${paramIndex++}::text[])`);
       params.push(districts);
     }
 
-    const subDistricts = this.normalizeScopeArray(scope.sub_districts);
+    const subDistricts = normalizeScopeArray(scope.sub_districts);
     if (subDistricts.length > 0) {
       schoolConditions.push(`case_scope_school.sub_district = ANY($${paramIndex++}::text[])`);
       params.push(subDistricts);
@@ -431,7 +421,7 @@ export class TaskRepository {
     let paramIndex = startIndex;
 
     const addScopeCondition = (key: keyof Omit<DataScope, 'own_only'>): void => {
-      const actorValues = this.normalizeScopeArray(scope[key]);
+      const actorValues = normalizeScopeArray(scope[key]);
       if (actorValues.length === 0) {
         return;
       }

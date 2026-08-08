@@ -47,6 +47,21 @@ export type AuthenticatedRequest = Request & {
 export type RequestWithUser = AuthenticatedRequest;
 export type RequestWithActor = AuthenticatedRequest;
 
+/**
+ * Trim, dedupe, and stringify a raw scope array (e.g. an actor's `provinces`
+ * or `school_ids`). Shared by permissions validation and the repositories
+ * that build scope-filtered SQL — was previously copy-pasted in four places.
+ */
+export function normalizeScopeArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(value.map((item) => String(item).trim()).filter((item) => item.length > 0)),
+  );
+}
+
 function normalizeScopeList(value: unknown): Array<string | number> | undefined {
   if (!Array.isArray(value)) {
     return undefined;

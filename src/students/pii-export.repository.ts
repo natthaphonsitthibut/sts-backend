@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { normalizeScopeArray } from '../auth/auth.types';
 import { buildDataScopeQuery, type DataScope } from '../common/utils/authorization';
 import {
   queryDataSource,
@@ -20,15 +21,6 @@ const STUDENT_SCOPE_ALIASES = {
 interface QueryResultLike<T extends Record<string, unknown>> {
   rows: T[];
   rowCount: number;
-}
-
-function normalizeScopeArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return Array.from(
-    new Set(value.map((item) => String(item).trim()).filter((item) => item.length > 0)),
-  );
 }
 
 @Injectable()

@@ -1,4 +1,4 @@
-import type { DataScope } from './auth.types';
+import { normalizeScopeArray, type DataScope } from './auth.types';
 
 export type RoleScopeMode =
   | 'flexible'
@@ -180,16 +180,6 @@ export const ROLE_LABELS: Record<string, string> = Object.fromEntries(
 export const ROLE_SCOPE_MODES: Record<string, RoleScopeMode> = Object.fromEntries(
   SYSTEM_ROLE_DEFINITIONS.map((role) => [role.name, role.scope_mode]),
 );
-
-function normalizeScopeArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(value.map((item) => String(item).trim()).filter((item) => item.length > 0)),
-  );
-}
 
 export function getRoleScopeValidationError(
   role: string,

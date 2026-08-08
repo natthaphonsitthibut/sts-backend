@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { PII_FIELD_GROUP_CODES } from '../students/pii-fields.config';
-import { isUnconfiguredDataScope } from '../auth/auth.types';
+import { isUnconfiguredDataScope, normalizeScopeArray } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { escapeLikePattern } from '../common/utils/helpers';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
@@ -360,16 +360,6 @@ export class UsersRepository {
     };
   }
 
-  private normalizeScopeArray(value: unknown): string[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    return Array.from(
-      new Set(value.map((item) => String(item).trim()).filter((item) => item.length > 0)),
-    );
-  }
-
   private buildJsonScopeSubsetQuery(
     scopeSql: string,
     actorScope: DataScope | undefined,
@@ -386,7 +376,7 @@ export class UsersRepository {
     let paramIndex = startIndex;
 
     const addScopeCondition = (key: keyof Omit<DataScope, 'own_only'>): void => {
-      const actorValues = this.normalizeScopeArray(scope[key]);
+      const actorValues = normalizeScopeArray(scope[key]);
       if (actorValues.length === 0) {
         return;
       }
