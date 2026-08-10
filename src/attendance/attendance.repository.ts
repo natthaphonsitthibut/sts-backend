@@ -205,6 +205,9 @@ export class AttendanceRepository {
         s."RoomID_Onec"::text as room,
         s."SchoolID_Onec" as school_id,
         sc.name as school_name,
+        s.student_number,
+        person.photo_storage_key,
+        person.updated_at AS photo_updated_at,
         (
           SELECT COUNT(*)
           FROM attendance a
@@ -219,6 +222,7 @@ export class AttendanceRepository {
         ) as total_absent
       FROM student_term s
       ${CURRENT_ENROLLMENT_JOIN}
+      LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
     `;

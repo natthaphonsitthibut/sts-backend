@@ -41,6 +41,8 @@ export interface TeacherLinkRosterRow extends Record<string, unknown> {
   teacher_id: string;
   teacher_display_name: string;
   teacher_email: string | null;
+  teacher_photo_storage_key: string | null;
+  teacher_photo_updated_at: string | Date;
   assignment_count: number;
   grant_id: string | null;
   grant_status: TeacherAccessGrantStatus | null;
@@ -678,6 +680,8 @@ export class TeacherAccessRepository {
           teacher.id::text AS teacher_id,
           TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
           teacher.email AS teacher_email,
+          teacher.photo_storage_key AS teacher_photo_storage_key,
+          teacher.updated_at AS teacher_photo_updated_at,
           (
             SELECT COUNT(*)::int
             FROM classroom_teacher_assignments assignment
@@ -748,6 +752,29 @@ export class TeacherAccessRepository {
       ],
     );
     return result.rows;
+  }
+
+  async findTeacherMembershipPhoto(
+    teacherMembershipId: number,
+  ): Promise<{ school_id: number; photo_storage_key: string | null } | null> {
+    const result = await queryDataSource<{
+      school_id: number;
+      photo_storage_key: string | null;
+    }>(
+      this.dataSource,
+      `
+        SELECT membership.school_id, teacher.photo_storage_key
+        FROM school_teacher_memberships membership
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        WHERE membership.id = $1
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
+      `,
+      [teacherMembershipId],
+    );
+    return result.rows[0] ?? null;
   }
 
   /**
@@ -1030,6 +1057,7 @@ export class TeacherAccessRepository {
         SELECT
           enrollment.student_uuid::text,
           enrollment.student_number,
+          (person.photo_storage_key IS NOT NULL) AS has_photo,
           enrollment."FirstName_Onec" AS first_name,
           enrollment."LastName_Onec" AS last_name,
           enrollment.student_status_code,
@@ -1038,6 +1066,7 @@ export class TeacherAccessRepository {
           latest_comment.comment_text AS teacher_comment,
           COUNT(*) OVER()::int AS total_count
         FROM student_term enrollment
+        LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
         LEFT JOIN student_risk_profiles risk ON risk.student_uuid = enrollment.student_uuid
         LEFT JOIN LATERAL (

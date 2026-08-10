@@ -73,6 +73,8 @@ export interface RiskDashboardSummary {
 export interface RiskDashboardRow extends QueryResultRow {
   student_uuid: string;
   student_name: string;
+  photo_storage_key: string | null;
+  photo_updated_at: string | Date | null;
   school_id: number | null;
   school_name: string | null;
   grade: string | null;

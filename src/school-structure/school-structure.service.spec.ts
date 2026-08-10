@@ -289,6 +289,8 @@ describe('SchoolStructureService', () => {
         {
           student_uuid: '00000000-0000-4000-8000-000000000001',
           student_number: '66000001',
+          photo_storage_key: 'student-photos/person/profile.webp',
+          photo_updated_at: '2026-08-10T06:30:00.000Z',
           risk_tier: 'WATCH',
           risk_severity: 1,
           teacher_comment: 'ควรติดตามการส่งงาน',
@@ -311,6 +313,8 @@ describe('SchoolStructureService', () => {
       data: [
         {
           studentNumber: '66000001',
+          photoUrl:
+            '/api/students/00000000-0000-4000-8000-000000000001/photo?v=2026-08-10T06%3A30%3A00.000Z',
           riskTier: 'WATCH',
           riskSeverity: 1,
           teacherComment: 'ควรติดตามการส่งงาน',

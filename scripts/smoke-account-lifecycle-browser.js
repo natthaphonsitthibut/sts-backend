@@ -6,7 +6,7 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
-const { SessionCookieService } = require('../dist/auth/session-cookie.service');
+const { FILE_STORAGE_ADAPTER } = require('../dist/files/storage/file-storage.types');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run account lifecycle browser smoke with NODE_ENV=production');
@@ -23,8 +23,16 @@ const BROWSER_BACKEND_URL =
 const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9234);
+const PROFILE_PHOTO_ONLY = process.env.SMOKE_PROFILE_PHOTO_ONLY === 'true';
+const USER_CONTACT_ADDRESS_ONLY = process.env.SMOKE_USER_CONTACT_ADDRESS_ONLY === 'true';
 const ADMIN_USERNAME = 'account_lifecycle_browser_admin';
 const TEACHER_USERNAME = 'account_lifecycle_browser_teacher';
+const TEACHER_DISPLAY_NAME = 'Account Browser Teacher';
+const PROFILE_PHOTO_KEY = 'user-photos/account-lifecycle-browser/profile.png';
+const PROFILE_PHOTO_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -246,7 +254,16 @@ async function chooseComboboxOption(client, selector, label) {
         : null;
       if (!option) throw new Error('Combobox option not found: ${label}');
       option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      option.click();
     })()`,
+  );
+  await waitFor(
+    async () =>
+      (await evaluate(
+        client,
+        `document.querySelector(${JSON.stringify(selector)})?.value || ''`,
+      )) === label,
+    `Combobox option did not apply: ${selector}`,
   );
 }
 
@@ -266,36 +283,6 @@ async function clearBrowserSession(client) {
   );
 }
 
-function createSessionCookie(sessionCookieService, userId) {
-  let captured = null;
-  sessionCookieService.setSession(
-    {
-      cookie: (name, value, options) => {
-        captured = { name, value, options };
-      },
-    },
-    userId,
-  );
-  assert(captured, 'Session cookie was not created');
-  return captured;
-}
-
-async function loginAdminSession(client, user, sessionCookie) {
-  await navigate(client, `${FRONTEND_URL}/login`);
-  await client.call('Network.setCookie', {
-    name: sessionCookie.name,
-    value: sessionCookie.value,
-    url: BROWSER_BACKEND_URL,
-    httpOnly: true,
-    sameSite: 'Lax',
-  });
-  await evaluate(
-    client,
-    `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(user))});
-     localStorage.setItem('admin_access', 'true');`,
-  );
-}
-
 async function loginWithForm(client, username, password, shouldSucceed) {
   await navigate(client, `${FRONTEND_URL}/login`);
   await waitFor(
@@ -306,17 +293,26 @@ async function loginWithForm(client, username, password, shouldSucceed) {
   await fillInput(client, '#password', password);
   await click(
     client,
-    `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'เข้าสู่ระบบ')`,
+    `document.querySelector('form button[type="submit"]')`,
     'Login submit button was not found',
   );
 
   if (shouldSucceed) {
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'localStorage.getItem("sts_user") || ""')).includes(username) &&
-        !String(await evaluate(client, 'location.pathname')).startsWith('/login'),
-      `Login did not succeed for ${username}`,
-    );
+    try {
+      await waitFor(
+        async () =>
+          String(await evaluate(client, 'localStorage.getItem("sts_user") || ""')).includes(username) &&
+          !String(await evaluate(client, 'location.pathname')).startsWith('/login'),
+        `Login did not succeed for ${username}`,
+      );
+    } catch (error) {
+      if (process.env.SMOKE_DEBUG === 'true') {
+        console.log(await evaluate(client, 'location.href'));
+        console.log(await evaluate(client, 'localStorage.getItem("sts_user") || ""'));
+        console.log(await evaluate(client, 'document.body.innerText'));
+      }
+      throw error;
+    }
     return;
   }
 
@@ -414,7 +410,7 @@ async function main() {
   });
   const dataSource = app.get(DataSource);
   const passwordService = app.get(PasswordService);
-  const sessionCookieService = app.get(SessionCookieService);
+  const storage = app.get(FILE_STORAGE_ADAPTER);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const adminPassword = `AdminBrowser-${suffix}-Password`;
   const teacherPassword = `TeacherBrowser-${suffix}-Password`;
@@ -426,7 +422,7 @@ async function main() {
       passwordHash: await passwordService.hash(adminPassword),
       firstName: 'Account Browser',
       lastName: 'Admin',
-      permissions: ['home', 'manage-users-list'],
+      permissions: ['home', 'manage-users-list', 'attendance'],
       role: 'ADMIN',
       dataScope: { global: true },
     });
@@ -436,22 +432,15 @@ async function main() {
       firstName: 'Account Browser',
       lastName: 'Teacher',
       permissions: ['home', 'attendance'],
-      role: 'TEACHER',
-      dataScope: { school_ids: [10010002] },
+      role: 'EXECUTIVE',
+      dataScope: { global: true },
     });
+    await storage.save(PROFILE_PHOTO_BYTES, PROFILE_PHOTO_KEY);
+    await dataSource.query(
+      `UPDATE users SET photo_storage_key = $2, data_origin_code = 'OPERATIONAL' WHERE id = $1`,
+      [teacher.id, PROFILE_PHOTO_KEY],
+    );
     assert(admin.id !== teacher.id, 'Admin and teacher fixtures unexpectedly share an id');
-
-    const adminUser = {
-      id: admin.id,
-      username: ADMIN_USERNAME,
-      FirstName: 'Account Browser',
-      LastName: 'Admin',
-      roles: ['ADMIN'],
-      permissions: ['home', 'manage-users-list'],
-      data_scope: { global: true },
-      must_change_password: false,
-    };
-    const adminSession = createSessionCookie(sessionCookieService, admin.id);
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -468,10 +457,119 @@ async function main() {
     await loginWithForm(client, TEACHER_USERNAME, teacherPassword, true);
     await clearBrowserSession(client);
 
-    await loginAdminSession(client, adminUser, adminSession);
+    await loginWithForm(client, ADMIN_USERNAME, adminPassword, true);
+    if (USER_CONTACT_ADDRESS_ONLY) {
+      await navigate(client, `${FRONTEND_URL}/manage-users/new`);
+      await waitFor(
+        async () =>
+          Boolean(
+            await evaluate(
+              client,
+              `Boolean(
+                document.querySelector('#line_id') &&
+                document.querySelector('#address_line') &&
+                document.querySelector('#address_latitude') &&
+                document.querySelector('#address_longitude')
+              )`,
+            ),
+          ),
+        'Add-user contact and address fields did not render',
+      );
+      await navigate(client, `${FRONTEND_URL}/manage-users/${teacher.id}/edit`);
+      await waitFor(
+        async () =>
+          Boolean(
+            await evaluate(
+              client,
+              `Boolean(
+                document.querySelector('#line_id') &&
+                document.querySelector('#address_line') &&
+                document.querySelector('#address_latitude') &&
+                document.querySelector('#address_longitude')
+              )`,
+            ),
+          ),
+        'User contact and address fields did not render',
+      );
+      await setInputValue(client, '#email', 'account.browser@example.invalid');
+      await setInputValue(client, '#phone', '0812345678');
+      await setInputValue(client, '#PersonID_Onec', String(teacher.id).padStart(13, '9'));
+      await setInputValue(client, '#line_id', 'account.browser.line');
+      await setInputValue(client, '#address_line', '99/1');
+      await setInputValue(client, '#address_latitude', '13.756300');
+      await setInputValue(client, '#address_longitude', '100.501800');
+      await click(
+        client,
+        `document.querySelector('form button[type="submit"]')`,
+        'User form submit button was not found',
+      );
+      if (process.env.SMOKE_DEBUG === 'true') {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        console.log(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('[aria-invalid="true"]')].map((element) => ({ id: element.id, value: element.value }))`,
+          ),
+        );
+        console.log(await evaluate(client, 'document.body.innerText'));
+      }
+      await waitFor(async () => {
+        const [row] = await dataSource.query(
+          `
+            SELECT line_id, address_line, address_latitude, address_longitude
+            FROM users
+            WHERE id = $1
+          `,
+          [teacher.id],
+        );
+        return (
+          row?.line_id === 'account.browser.line' &&
+          row.address_line === '99/1' &&
+          Number(row.address_latitude) === 13.7563 &&
+          Number(row.address_longitude) === 100.5018
+        );
+      }, 'User LINE and address fields did not persist');
+
+      await navigate(client, `${FRONTEND_URL}/manage-users/${teacher.id}`);
+      await waitFor(
+        async () =>
+          String(await evaluate(client, 'document.body.innerText')).includes('account.browser.line'),
+        'User detail did not render the saved LINE ID',
+      );
+      await click(
+        client,
+        `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ดูที่อยู่และแผนที่'))`,
+        'Reveal user address button was not found',
+      );
+      await chooseComboboxOption(client, '#user-address-reason', 'ตรวจสอบ/แก้ไขข้อมูล');
+      await click(
+        client,
+        `(() => {
+          const reasonField = document.querySelector('#user-address-reason');
+          const dialog = reasonField?.closest('[role="dialog"]');
+          return dialog
+            ? [...dialog.querySelectorAll('button')].find((button) => button.textContent.includes('แสดง'))
+            : null;
+        })()`,
+        'Reveal user address submit button was not found',
+      );
+      if (process.env.SMOKE_DEBUG === 'true') {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        console.log(await evaluate(client, 'document.body.innerText'));
+      }
+      await waitFor(
+        async () => {
+          const body = String(await evaluate(client, 'document.body.innerText'));
+          return body.includes('99/1') && body.includes('พิกัดที่อยู่ผู้ใช้งาน');
+        },
+        'User address map did not render after the audited reveal',
+      );
+      console.log('user contact/address browser smoke passed (LINE, address fields, persistence, audited detail map)');
+      return;
+    }
     await navigate(client, `${FRONTEND_URL}/manage-users`);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('จัดการรายชื่อผู้ใช้งาน'),
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('จัดการผู้ใช้งาน'),
       'Manage users page did not render',
     );
     await waitFor(
@@ -479,19 +577,53 @@ async function main() {
         Boolean(
           await evaluate(
             client,
-            `Boolean(document.querySelector('input[placeholder="ค้นหาชื่อหรือ username..."]'))`,
+            `Boolean(document.querySelector('input[placeholder="ค้นหา"]'))`,
           ),
         ),
       'Manage users search input did not render',
     );
-    await setInputValue(client, 'input[placeholder="ค้นหาชื่อหรือ username..."]', TEACHER_USERNAME);
+    await setInputValue(client, 'input[placeholder="ค้นหา"]', TEACHER_DISPLAY_NAME);
+    if (process.env.SMOKE_DEBUG === 'true') {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      console.log(await evaluate(client, 'document.body.innerText'));
+    }
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes(TEACHER_USERNAME),
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('a[href="/manage-users/${teacher.id}"]'))`,
+          ),
+        ),
       'Teacher fixture did not appear in manage users search',
     );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `(() => {
+              const link = document.querySelector('a[href="/manage-users/${teacher.id}"]');
+              const image = link?.querySelector('img[data-avatar-image]');
+              return Boolean(
+                image &&
+                image.complete &&
+                image.naturalWidth > 0 &&
+                image.src.includes('/api/users/${teacher.id}/photo?v=') &&
+                !image.src.includes(${JSON.stringify(PROFILE_PHOTO_KEY)})
+              );
+            })()`,
+          ),
+        ),
+      'Managed-user profile photo did not load through the guarded URL',
+    );
+    if (PROFILE_PHOTO_ONLY) {
+      console.log('managed-user profile photo browser smoke passed');
+      return;
+    }
     await click(
       client,
-      `[...document.querySelectorAll('button[aria-label="ปิดใช้งานผู้ใช้งาน"]')][0]`,
+      `document.querySelector('button[aria-label^="ปิดใช้งานผู้ใช้งาน "]')`,
       'Deactivate user button was not found',
     );
     await waitFor(
@@ -524,26 +656,32 @@ async function main() {
     await loginWithForm(client, TEACHER_USERNAME, teacherPassword, false);
     await clearBrowserSession(client);
 
-    await loginAdminSession(client, adminUser, adminSession);
+    await loginWithForm(client, ADMIN_USERNAME, adminPassword, true);
     await navigate(client, `${FRONTEND_URL}/manage-users`);
     await waitFor(
       async () =>
         Boolean(
           await evaluate(
             client,
-            `Boolean(document.querySelector('input[placeholder="ค้นหาชื่อหรือ username..."]'))`,
+            `Boolean(document.querySelector('input[placeholder="ค้นหา"]'))`,
           ),
         ),
       'Manage users search input did not render after re-login',
     );
-    await setInputValue(client, 'input[placeholder="ค้นหาชื่อหรือ username..."]', TEACHER_USERNAME);
+    await setInputValue(client, 'input[placeholder="ค้นหา"]', TEACHER_DISPLAY_NAME);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes(TEACHER_USERNAME),
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('a[href="/manage-users/${teacher.id}"]'))`,
+          ),
+        ),
       'Disabled teacher fixture did not appear in manage users search',
     );
     await click(
       client,
-      `[...document.querySelectorAll('button[aria-label="เปิดใช้งานผู้ใช้งาน"]')][0]`,
+      `document.querySelector('button[aria-label^="เปิดใช้งานผู้ใช้งาน "]')`,
       'Reactivate user button was not found',
     );
     await waitFor(
@@ -588,6 +726,26 @@ async function main() {
   } finally {
     await closeChrome(chrome);
     try {
+      await dataSource.query(
+        `UPDATE users
+         SET photo_storage_key = NULL,
+             data_origin_code = 'AUTOMATED_TEST',
+             line_id = NULL,
+             address_line = NULL,
+             address_village_no = NULL,
+             address_street = NULL,
+             address_soi = NULL,
+             address_trok = NULL,
+             address_sub_district = NULL,
+             address_district = NULL,
+             address_province = NULL,
+             address_postal_code = NULL,
+             address_latitude = NULL,
+             address_longitude = NULL
+         WHERE username = $1`,
+        [TEACHER_USERNAME],
+      );
+      await storage.delete(PROFILE_PHOTO_KEY).catch(() => undefined);
       await disableUsers(dataSource);
     } finally {
       await app.close();

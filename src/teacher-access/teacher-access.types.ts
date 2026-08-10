@@ -72,6 +72,7 @@ export interface TeacherAccessAssignmentRow extends Record<string, unknown> {
 export interface TeacherAccessRosterRow extends Record<string, unknown> {
   student_uuid: string;
   student_number: string | null;
+  has_photo: boolean;
   first_name: string | null;
   last_name: string | null;
   student_status_code: number | null;

@@ -35,6 +35,7 @@ export interface StudentFilterOptions {
 export interface StudentListRow extends Record<string, unknown> {
   id: string;
   photo_storage_key?: string | null;
+  photo_updated_at?: string | Date | null;
   name: string;
   grade: string;
   room: string;
@@ -47,6 +48,8 @@ export interface StudentListRow extends Record<string, unknown> {
 
 export interface StudentDetailRow extends Record<string, unknown> {
   PersonID_Onec: string;
+  photo_storage_key?: string | null;
+  photo_updated_at?: string | Date | null;
   student_uuid?: string | null;
   grade?: string | null;
   room?: string | null;

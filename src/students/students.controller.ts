@@ -168,7 +168,14 @@ export class StudentsController {
    * before the bytes do; the adapter hands back a short-lived signed URL.
    */
   @Get(':id/photo')
-  @RequireAnyPermission('students', 'student-self')
+  @RequireAnyPermission(
+    'students',
+    'student-self',
+    'attendance',
+    'manage-school-structure',
+    'dashboard',
+    'review-cases',
+  )
   async getStudentPhoto(
     @Param('id') id: string,
     @Res() res: Response,

@@ -96,6 +96,8 @@ type RepositoryMock = jest.Mocked<
     | 'createGrant'
     | 'getGrantDetail'
     | 'listGrants'
+    | 'listTeacherLinkRoster'
+    | 'findTeacherMembershipPhoto'
     | 'revokeGrant'
     | 'rotateGrantToken'
     | 'findGrantByTokenHashForUpdate'
@@ -140,6 +142,8 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
       assignments: [ASSIGNMENT],
     }),
     listGrants: jest.fn(),
+    listTeacherLinkRoster: jest.fn().mockResolvedValue([]),
+    findTeacherMembershipPhoto: jest.fn(),
     revokeGrant: jest.fn(),
     rotateGrantToken: jest.fn(),
     findGrantByTokenHashForUpdate: jest.fn().mockResolvedValue(grant),
@@ -217,6 +221,11 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     markUnreachable: jest.fn().mockResolvedValue(undefined),
     unlinkActiveAccountForTeacher: jest.fn().mockResolvedValue(true),
   };
+  const studentsService = {
+    resolveStudentPhoto: jest
+      .fn()
+      .mockResolvedValue({ kind: 'local', filePath: '/tmp/student-profile.webp' }),
+  };
   const service = new TeacherAccessService(
     repository as unknown as TeacherAccessRepository,
     auditLog as never,
@@ -230,7 +239,7 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     messaging as never,
     teacherMessaging as never,
     storage as never,
-    {} as never,
+    studentsService as never,
     {} as never,
   );
   return {
@@ -248,10 +257,65 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     storage,
     automation,
     risk,
+    studentsService,
   };
 }
 
 describe('TeacherAccessService', () => {
+  it('returns guarded teacher photo URLs without exposing storage keys', async () => {
+    const { service, repository } = createHarness();
+    repository.listTeacherLinkRoster.mockResolvedValue([
+      {
+        teacher_membership_id: '12',
+        teacher_id: '7',
+        teacher_display_name: 'ครู หนึ่ง',
+        teacher_email: 'teacher.one@sts-demo.ac.th',
+        teacher_photo_storage_key: 'teacher-photos/7/profile.webp',
+        teacher_photo_updated_at: '2026-08-10T05:00:00.000Z',
+        assignment_count: 2,
+        grant_id: null,
+        grant_status: null,
+        has_token_cipher: null,
+        issued_at: null,
+        expires_at: null,
+        last_used_at: null,
+        line_verified: false,
+        line_friend_state: null,
+        total_count: 1,
+      },
+    ]);
+
+    const result = await service.listTeacherLinkRoster({ schoolId: 10, schoolTermId: 21 }, ACTOR);
+
+    expect(result.data[0]).toMatchObject({
+      teacherMembershipId: '12',
+      photoUrl:
+        '/api/teacher-access-grants/teacher-memberships/12/photo?v=2026-08-10T05%3A00%3A00.000Z',
+    });
+    expect(JSON.stringify(result)).not.toContain('teacher-photos/7/profile.webp');
+  });
+
+  it('serves a teacher roster photo only inside the actor school scope', async () => {
+    const { service, repository, storage } = createHarness();
+    repository.findTeacherMembershipPhoto.mockResolvedValue({
+      school_id: 10,
+      photo_storage_key: 'teacher-photos/7/profile.webp',
+    });
+    storage.resolve.mockResolvedValue({ kind: 'local', filePath: '/tmp/profile.webp' });
+
+    await expect(service.resolveTeacherRosterPhoto(12, ACTOR)).resolves.toEqual({
+      kind: 'local',
+      filePath: '/tmp/profile.webp',
+    });
+
+    repository.isSchoolInScope.mockResolvedValue(false);
+    storage.resolve.mockClear();
+    await expect(service.resolveTeacherRosterPhoto(12, ACTOR)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(storage.resolve).not.toHaveBeenCalled();
+  });
+
   it('returns only server-derived teacher and assignment context for a valid token', async () => {
     const { service, repository } = createHarness();
 
@@ -281,6 +345,8 @@ describe('TeacherAccessService', () => {
     repository.listRoster.mockResolvedValue([
       {
         student_uuid: studentUuid,
+        student_number: '66001',
+        has_photo: true,
         first_name: 'สมชาย',
         last_name: 'ใจดี',
         student_status_code: 10,
@@ -298,8 +364,51 @@ describe('TeacherAccessService', () => {
         10,
       ),
     ).resolves.toMatchObject({
-      data: [{ studentUuid, studentTermId: studentUuid }],
+      data: [{ studentUuid, studentTermId: studentUuid, hasPhoto: true }],
     });
+  });
+
+  it('serves a roster student photo through the header-authenticated grant scope', async () => {
+    const { service, repository, studentsService } = createHarness();
+    const studentUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+    await expect(
+      service.resolvePublicStudentPhoto(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31, studentUuid },
+      ),
+    ).resolves.toEqual({ kind: 'local', filePath: '/tmp/student-profile.webp' });
+
+    expect(repository.isStudentInClassroom).toHaveBeenCalledWith(
+      studentUuid,
+      Number(ASSIGNMENT.classroom_id),
+      expect.anything(),
+    );
+    expect(studentsService.resolveStudentPhoto).toHaveBeenCalledWith(
+      studentUuid,
+      expect.objectContaining({
+        teacher_membership_id: Number(GRANT.teacher_membership_id),
+        permissions: ['students', 'student-observations'],
+      }),
+      { school_ids: [GRANT.school_id] },
+    );
+    expect(repository.touchGrant).not.toHaveBeenCalled();
+  });
+
+  it('denies a student photo outside the assignment roster before resolving storage', async () => {
+    const { service, repository, studentsService } = createHarness();
+    repository.isStudentInClassroom.mockResolvedValueOnce(false);
+
+    await expect(
+      service.resolvePublicStudentPhoto(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        {
+          assignmentId: 31,
+          studentUuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(studentsService.resolveStudentPhoto).not.toHaveBeenCalled();
   });
 
   it.each([

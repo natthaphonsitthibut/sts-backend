@@ -408,6 +408,63 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   }
 }
 
+async function assertMapWheelIsolation(client) {
+  const before = await evaluate(
+    client,
+    `(async () => {
+      const surface = document.querySelector('[data-home-risk-map-surface]');
+      if (!surface) return null;
+      surface.scrollIntoView({ block: 'center' });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const scrollContainer = surface.closest('main');
+      const svg = surface.querySelector('svg');
+      const rect = surface.getBoundingClientRect();
+      return {
+        x: Math.min(Math.max(rect.left + rect.width / 2, 1), innerWidth - 1),
+        y: Math.min(Math.max(rect.top + rect.height / 2, 1), innerHeight - 1),
+        scrollTop: scrollContainer?.scrollTop ?? null,
+        transform: svg?.style.transform ?? null,
+      };
+    })()`,
+  );
+  assert(before?.scrollTop !== null, 'Home risk map interaction surface was not available');
+
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: before.x,
+    y: before.y,
+  });
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x: before.x,
+    y: before.y,
+    deltaX: 0,
+    deltaY: -240,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  const after = await evaluate(
+    client,
+    `(() => {
+      const surface = document.querySelector('[data-home-risk-map-surface]');
+      const scrollContainer = surface?.closest('main');
+      return {
+        scrollTop: scrollContainer?.scrollTop ?? null,
+        transform: surface?.querySelector('svg')?.style.transform ?? null,
+      };
+    })()`,
+  );
+  assert(after?.scrollTop !== null, 'Home risk map disappeared after wheel interaction');
+  assert(
+    Math.abs(after.scrollTop - before.scrollTop) < 1,
+    `Map wheel leaked into page scroll: before=${before.scrollTop}, after=${after.scrollTop}`,
+  );
+  assert(
+    after.transform !== before.transform,
+    `Map wheel did not zoom the map: before=${before.transform}, after=${after.transform}`,
+  );
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -551,6 +608,7 @@ async function main() {
       createSessionCookie(sessionCookieService, actorIds.get(admin.label)),
     );
     await assertOverview(client, expectedActiveCases, 'desktop', admin.expectations);
+    await assertMapWheelIsolation(client);
     const selectedProvince = await evaluate(
       client,
       `(() => {
@@ -680,7 +738,7 @@ async function main() {
     await capture(client, '/tmp/sts-home-overview-trends-mobile.png');
 
     console.log(
-      'home dashboard browser smoke passed (permission-driven navigation/grouping, risk drill-down/back, scoped denial, case permissions, desktop/mobile render)',
+      'home dashboard browser smoke passed (map wheel isolation, permission-driven navigation/grouping, risk drill-down/back, scoped denial, case permissions, desktop/mobile render)',
     );
   } finally {
     await closeChrome(chrome);

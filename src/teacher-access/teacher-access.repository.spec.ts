@@ -126,7 +126,9 @@ describe('TeacherAccessRepository', () => {
     });
 
     expect(runner.query).toHaveBeenCalledWith(
-      expect.stringMatching(/ORDER BY[\s\S]*NOT_CREATED[\s\S]*DESC[\s\S]*LIMIT \$5 OFFSET \$6/),
+      expect.stringMatching(
+        /teacher\.photo_storage_key AS teacher_photo_storage_key[\s\S]*ORDER BY[\s\S]*NOT_CREATED[\s\S]*DESC[\s\S]*LIMIT \$5 OFFSET \$6/,
+      ),
       [10, 21, '2026-08-03', null, 20, 0, null],
       true,
     );

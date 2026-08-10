@@ -69,6 +69,9 @@ export interface AttendanceStudentRow extends Record<string, unknown> {
   room: string;
   school_id: number | string;
   school_name?: string | null;
+  student_number: string | null;
+  photo_storage_key: string | null;
+  photo_updated_at: string | Date | null;
   total_late: number | string;
   total_absent: number | string;
 }

@@ -21,6 +21,7 @@ import { UpdateStudentDto } from './dto/update-student.dto';
 import type { DataScope } from '../common/utils/authorization';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { piiConfig } from '../config/pii.config';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
@@ -209,6 +210,8 @@ function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
 
   return {
     id: student.student_uuid ?? '',
+    photo_storage_key: student.photo_storage_key ?? null,
+    photo_updated_at: student.photo_updated_at ?? null,
     name: `${firstName} ${lastName}`.trim() || 'ไม่ทราบ',
     grade:
       typeof student.grade === 'string' && student.grade.trim().length > 0
@@ -337,7 +340,20 @@ export class StudentsService {
           throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
         }
         const ownStudent = await this.studentsRepository.findStudentById(actor.student_uuid);
-        const data = ownStudent ? [mapDetailRowToListRow(ownStudent)] : [];
+        const data = ownStudent
+          ? [mapDetailRowToListRow(ownStudent)].map(
+              ({
+                photo_storage_key: photoStorageKey,
+                photo_updated_at: photoUpdatedAt,
+                ...row
+              }) => ({
+                ...row,
+                photo_url: photoStorageKey
+                  ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
+                  : null,
+              }),
+            )
+          : [];
 
         return {
           success: true,
@@ -350,12 +366,14 @@ export class StudentsService {
 
       return {
         success: true,
-        data: rows.map(({ photo_storage_key: photoStorageKey, ...row }) => ({
-          ...row,
-          photo_url: photoStorageKey
-            ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeURIComponent(String(photoStorageKey))}`
-            : null,
-        })),
+        data: rows.map(
+          ({ photo_storage_key: photoStorageKey, photo_updated_at: photoUpdatedAt, ...row }) => ({
+            ...row,
+            photo_url: photoStorageKey
+              ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
+              : null,
+          }),
+        ),
         meta: buildPaginationMeta(page, limit, totalCount),
       };
     } catch (error) {
@@ -453,16 +471,18 @@ export class StudentsService {
           ])
         : [null, [], null];
 
-      const { photo_storage_key: photoStorageKey, ...studentRow } = student as typeof student & {
-        photo_storage_key?: string | null;
-      };
+      const {
+        photo_storage_key: photoStorageKey,
+        photo_updated_at: photoUpdatedAt,
+        ...studentRow
+      } = student;
       return maskStudentDetail(
         {
           ...studentRow,
-          // Cache-busted by the storage key so a replaced photo shows at once;
-          // the endpoint redirects to a short-lived signed URL, never the object.
+          // Cache-busted by person.updated_at so the internal storage key never
+          // leaves the API; the endpoint mints a fresh short-lived signed URL.
           photo_url: photoStorageKey
-            ? `/api/students/${encodeURIComponent(id)}/photo?v=${encodeURIComponent(photoStorageKey)}`
+            ? `/api/students/${encodeURIComponent(id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
             : null,
           contact: personContact
             ? {

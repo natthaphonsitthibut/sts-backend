@@ -3,6 +3,7 @@ import { PasswordService } from '../auth/password.service';
 import type { LoginDto } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository } from './users.repository';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 
 @Injectable()
 export class UserAuthService {
@@ -53,7 +54,7 @@ export class UserAuthService {
       // The storage key stays server-internal; this guarded route redirects to
       // a short-lived signed URL when the browser loads it.
       photo_url: photo_storage_key
-        ? `/api/users/me/photo?v=${encodeURIComponent(photo_storage_key)}`
+        ? `/api/users/me/photo?v=${encodeMediaVersion(user.updated_at)}`
         : null,
     };
   }

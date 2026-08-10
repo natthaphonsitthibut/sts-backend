@@ -91,6 +91,7 @@ describe('UsersService student accounts', () => {
       | 'insertUserAddressAccessEvent'
       | 'hasActiveUserNationalIdReveal'
       | 'insertUserNationalIdAccessEvent'
+      | 'listUsersPaginated'
     >
   >;
   let usersPolicyService: jest.Mocked<
@@ -104,6 +105,7 @@ describe('UsersService student accounts', () => {
       | 'normalizePermissionList'
       | 'normalizeRole'
       | 'getPrimaryRole'
+      | 'getRoleRank'
     >
   >;
   let passwordService: jest.Mocked<Pick<PasswordService, 'generateTempPassword' | 'hash'>>;
@@ -163,6 +165,11 @@ describe('UsersService student accounts', () => {
       insertUserAddressAccessEvent: jest.fn().mockResolvedValue(undefined),
       hasActiveUserNationalIdReveal: jest.fn().mockResolvedValue(false),
       insertUserNationalIdAccessEvent: jest.fn().mockResolvedValue(undefined),
+      listUsersPaginated: jest.fn().mockResolvedValue({
+        rows: [],
+        totalCount: 0,
+        lifecycleStatusCounts: {},
+      }),
     };
     usersPolicyService = {
       ensureActor: jest.fn().mockImplementation((value: ActorContext | undefined) => {
@@ -209,6 +216,7 @@ describe('UsersService student accounts', () => {
           (value: { role?: string; roles?: string[] }) =>
             value.role || value.roles?.[0] || 'STUDENT',
         ),
+      getRoleRank: jest.fn().mockReturnValue(100),
     };
     passwordService = {
       generateTempPassword: jest.fn().mockReturnValue('TEMP123456789'),
@@ -238,6 +246,38 @@ describe('UsersService student accounts', () => {
       },
       fileStorage,
     );
+  });
+
+  it('returns guarded profile URLs in the managed-user list without leaking storage keys', async () => {
+    const updatedAt = '2026-08-10T06:30:00.000Z';
+    usersRepository.listUsersPaginated.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 77,
+          username: 'director.one',
+          FirstName: 'กะลา',
+          LastName: 'หลบ',
+          photo_storage_key: 'user-photos/77/profile.webp',
+          updated_at: updatedAt,
+          role: 'DIRECTOR',
+          roles: ['DIRECTOR'],
+          permissions: ['manage-users-list'],
+          data_scope: { school_ids: [10010002] },
+        },
+      ] as never,
+      totalCount: 1,
+      lifecycleStatusCounts: {} as never,
+    });
+    usersPolicyService.hydrateUserPermissions.mockImplementationOnce((row) => row);
+
+    const result = await service.getAllUsers(actor, { page: 1, limit: 20 });
+
+    expect(result.data[0]).toMatchObject({
+      id: 77,
+      photo_url: `/api/users/77/photo?v=${encodeURIComponent(updatedAt)}`,
+    });
+    expect(JSON.stringify(result)).not.toContain('user-photos/77/profile.webp');
+    expect(result.data[0]).not.toHaveProperty('photo_storage_key');
   });
 
   it('rejects actors without manage-student-accounts', async () => {

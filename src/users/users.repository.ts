@@ -302,6 +302,7 @@ export class UsersRepository {
     u.deactivation_reason_code,
     u.deactivation_note,
     u.created_at,
+    u.updated_at,
     CASE
       WHEN u.role IS NOT NULL THEN ARRAY[u.role]::text[]
       ELSE ARRAY[]::text[]

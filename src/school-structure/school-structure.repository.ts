@@ -1135,6 +1135,8 @@ export class SchoolStructureRepository {
         SELECT
           enrollment.student_uuid::text,
           enrollment.student_number,
+          person.photo_storage_key,
+          person.updated_at AS photo_updated_at,
           profile.risk_tier,
           profile.risk_severity,
           latest_comment.comment_text AS teacher_comment,
@@ -1148,6 +1150,7 @@ export class SchoolStructureRepository {
           classroom.room_code
         FROM student_term enrollment
         JOIN school_classrooms classroom ON classroom.id = enrollment.classroom_id
+        LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = enrollment.student_uuid
@@ -1322,6 +1325,8 @@ export class SchoolStructureRepository {
         SELECT
           enrollment.student_uuid::text,
           enrollment.student_number,
+          person.photo_storage_key,
+          person.updated_at AS photo_updated_at,
           enrollment."FirstName_Onec" AS first_name,
           enrollment."LastName_Onec" AS last_name,
           COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_PRESENT})::int AS present_count,
@@ -1329,12 +1334,13 @@ export class SchoolStructureRepository {
           COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LEAVE})::int AS leave_count,
           COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
         FROM student_term enrollment
+        LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
         LEFT JOIN attendance
           ON attendance.student_uuid = enrollment.student_uuid
          AND attendance.session_kind = 'DAILY'
          ${attendanceDateCondition}
         WHERE ${where}
-        GROUP BY enrollment.student_uuid
+        GROUP BY enrollment.student_uuid, person.photo_storage_key, person.updated_at
         ORDER BY ${orderBy} ${direction}, enrollment."LastName_Onec" ${direction}, enrollment.student_uuid ${direction}
         LIMIT $${allParams.length + 1} OFFSET $${allParams.length + 2}
       `,

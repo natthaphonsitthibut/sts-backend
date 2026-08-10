@@ -309,6 +309,7 @@ describe('TaskRepository', () => {
                 id: 41,
                 student_id: '00000000-0000-4000-8000-000000000041',
                 student_photo_storage_key: 'student-photos/person/profile.webp',
+                student_photo_updated_at: '2026-08-10T06:30:00.000Z',
                 active_link_token_encrypted: null,
               },
             ],
@@ -328,7 +329,7 @@ describe('TaskRepository', () => {
 
     expect(result.rows[0]).toMatchObject({
       student_photo_url:
-        '/api/students/00000000-0000-4000-8000-000000000041/photo?v=student-photos%2Fperson%2Fprofile.webp',
+        '/api/students/00000000-0000-4000-8000-000000000041/photo?v=2026-08-10T06%3A30%3A00.000Z',
     });
     expect(result.rows[0]).not.toHaveProperty('student_photo_storage_key');
     expect(queryRunner.query).toHaveBeenCalledWith(

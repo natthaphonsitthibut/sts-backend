@@ -88,6 +88,11 @@ describe('AttendanceRepository', () => {
 
     expect(queries).toHaveLength(1);
     expectCurrentEnrollmentPolicy(queries[0].sql);
+    expect(queries[0].sql).toContain('s.student_number');
+    expect(queries[0].sql).toContain('person.photo_storage_key');
+    expect(queries[0].sql).toContain(
+      'LEFT JOIN student_person person ON person.person_uuid = s.person_uuid',
+    );
   });
 
   it('filters attendance room options through current enrollment policy', async () => {

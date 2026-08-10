@@ -21,6 +21,7 @@ const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5174';
 const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9245);
+const NAVIGATION_ONLY = process.env.SMOKE_NAVIGATION_ONLY === 'true';
 const USERNAME = 'risk_dashboard_browser_smoke';
 const MANUAL_CASE_REASON_PREFIX = 'Browser smoke manual case';
 
@@ -283,15 +284,28 @@ async function assertLegacyRouteRedirects(client) {
 
 async function upsertActor(dataSource, passwordHash) {
   const permissions = [
+    'attendance',
     'attendance-dashboard',
+    'audit-log',
+    'create',
     'dashboard',
+    'edit-students',
+    'export-data',
     'field-monitor',
     'home',
+    'import-data',
+    'import-school-roster',
     'login-links',
+    'manage-curriculum',
+    'manage-role-groups',
+    'manage-school-structure',
     'manage-student-accounts',
     'manage-student-observations',
+    'manage-teacher-access',
+    'manage-teachers',
     'manage-users-list',
     'review-cases',
+    'settings',
     'students',
   ];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
@@ -498,6 +512,83 @@ async function assertAvatarOnlyStudentNavigation(client, label) {
     async () => evaluate(client, `window.location.pathname.startsWith('/students/')`),
     `${label} student avatar did not navigate to the student detail page`,
   );
+
+  const studentPath = await evaluate(client, 'window.location.pathname');
+  const assertContextNavigation = async (expectedParent, expectedMenuRoute, contextLabel) => {
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `(() => {
+            const breadcrumb = document.querySelector('[data-page-breadcrumb]');
+            const labels = breadcrumb
+              ? [...breadcrumb.querySelectorAll('a, [data-breadcrumb-current]')]
+                  .map((node) => node.textContent.trim())
+                  .filter(Boolean)
+              : [];
+            return labels.join(' > ') === ${JSON.stringify(
+              `หน้าหลัก > ${expectedParent} > ข้อมูลนักเรียน`,
+            )}
+              && Boolean(document.querySelector(
+                'a[aria-current="page"][href="${expectedMenuRoute}"]',
+              ))
+              && !document.querySelector(
+                'a[aria-current="page"][href="${
+                  expectedMenuRoute === '/students' ? '/student-risk-report' : '/students'
+                }"]',
+              );
+          })()`,
+        ),
+      `${label} ${contextLabel} breadcrumb/sidebar context was incorrect`,
+    );
+  };
+
+  await assertContextNavigation(
+    'ความเสี่ยงจากการมาเรียน',
+    '/student-risk-report',
+    'risk-to-student',
+  );
+  await client.call('Page.reload', { ignoreCache: true });
+  await waitFor(
+    async () => evaluate(client, `document.readyState === 'complete'`),
+    `${label} student detail did not reload`,
+  );
+  await assertContextNavigation(
+    'ความเสี่ยงจากการมาเรียน',
+    '/student-risk-report',
+    'risk-to-student after refresh',
+  );
+
+  await evaluate(
+    client,
+    `(() => {
+      const back = [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('ย้อนกลับ'));
+      if (!back) throw new Error('Student detail back button not found');
+      back.click();
+    })()`,
+  );
+  await waitFor(
+    async () => evaluate(client, `window.location.pathname === '/student-risk-report'`),
+    `${label} contextual back did not return to the risk dashboard`,
+  );
+
+  await navigate(client, `${FRONTEND_URL}${studentPath}`);
+  await assertContextNavigation('รายชื่อนักเรียน', '/students', 'direct student fallback');
+  await evaluate(
+    client,
+    `(() => {
+      const back = [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('ย้อนกลับ'));
+      if (!back) throw new Error('Direct student fallback back button not found');
+      back.click();
+    })()`,
+  );
+  await waitFor(
+    async () => evaluate(client, `window.location.pathname === '/students'`),
+    `${label} direct student fallback did not return to the student list`,
+  );
+
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
   await waitFor(
     async () => (await bodyText(client)).includes('ความเสี่ยงจากการมาเรียน'),
@@ -512,6 +603,78 @@ async function assertAvatarOnlyStudentNavigation(client, label) {
       ),
     `${label} dashboard rows did not render again after avatar navigation`,
   );
+}
+
+async function assertCanonicalRouteNavigation(client) {
+  const routes = [
+    ['/student-risk-report', 'ความเสี่ยงจากการมาเรียน', '/student-risk-report'],
+    ['/student-risk-report/teacher-comments', 'ความคิดเห็นจากคุณครู', '/student-risk-report'],
+    ['/students', 'รายชื่อนักเรียน', '/students'],
+    ['/students/history', 'ประวัติรายชื่อนักเรียน', '/students'],
+    ['/students/export', 'ส่งออกข้อมูลนักเรียน', '/students'],
+    ['/create', 'สร้างลิงก์', '/create'],
+    ['/create/visit', 'สร้างลิงก์ลงพื้นที่', '/create'],
+    ['/create/attendance', 'สร้างลิงก์เช็คชื่อ', '/create'],
+    ['/create/recruitment', 'สร้างลิงก์รับสมัคร', '/create'],
+    ['/attendance', 'เช็คชื่อ', '/attendance'],
+    ['/attendance/history', 'ประวัติการเช็คชื่อ', '/attendance'],
+    ['/cases', 'เคสติดตาม', '/cases'],
+    ['/cases/history', 'ประวัติเคสติดตาม', '/cases'],
+    ['/visit-links', 'ลิงก์ลงพื้นที่', '/visit-links'],
+    ['/visit-links/history', 'ประวัติลิงก์ลงพื้นที่', '/visit-links'],
+    ['/attendance-links', 'จัดการลิงก์เช็คชื่อ', '/attendance-links'],
+    ['/attendance-operations', 'ความครบถ้วน', '/attendance-operations'],
+    ['/timetable', 'ตารางสอน', '/timetable'],
+    ['/classrooms', 'ห้องเรียนทั้งหมด', '/classrooms'],
+    ['/school-structure', 'จัดการภาคเรียนและห้องเรียน', '/school-structure'],
+    ['/import-data', 'นำเข้าข้อมูล', '/import-data'],
+    ['/import-data/quarantine', 'รายการรอตรวจสอบ', '/import-data'],
+    ['/import-data/history', 'ประวัติการนำเข้า', '/import-data'],
+    ['/data-exports', 'ส่งออกข้อมูล', '/data-exports'],
+    ['/data-exports/history', 'ประวัติการส่งออก', '/data-exports'],
+    ['/manage-users', 'จัดการผู้ใช้งาน', '/manage-users'],
+    ['/manage-users/new', 'เพิ่มผู้ใช้งาน', '/manage-users'],
+    ['/curriculum', 'จัดการข้อมูลหลักสูตร', '/curriculum'],
+    ['/manage-teachers', 'จัดการข้อมูลคุณครู', '/manage-teachers'],
+    ['/manage-teachers/new', 'เพิ่มข้อมูลคุณครู', '/manage-teachers'],
+    ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
+    ['/field-followers', 'ลิงก์รับสมัคร', '/field-followers'],
+    ['/field-followers/history', 'ประวัติลิงก์รับสมัคร', '/field-followers'],
+    ['/field-follower-applications', 'ตรวจสอบใบสมัคร', '/field-follower-applications'],
+    [
+      '/field-follower-applications/history',
+      'ประวัติการตรวจสอบใบสมัคร',
+      '/field-follower-applications',
+    ],
+    ['/settings', 'ตั้งค่าระบบ', '/settings'],
+    ['/settings/student-statuses', 'สถานะนักเรียน', '/settings'],
+    ['/settings/master-data-lookups', 'ข้อมูลพื้นฐาน', '/settings'],
+    ['/profile', 'โปรไฟล์ของฉัน', null],
+    ['/notifications', 'การแจ้งเตือน', null],
+    ['/change-password', 'เปลี่ยนรหัสผ่าน', null],
+  ];
+
+  for (const [route, currentLabel, menuRoute] of routes) {
+    await navigate(client, `${FRONTEND_URL}${route}`);
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `(() => {
+            const current = document.querySelector('[data-breadcrumb-current]');
+            if (location.pathname !== ${JSON.stringify(route)}
+              || current?.textContent.trim() !== ${JSON.stringify(currentLabel)}) return false;
+            const activeRoutes = [...document.querySelectorAll('aside a[aria-current="page"]')]
+              .filter((link) => link.offsetParent !== null)
+              .map((link) => link.getAttribute('href'));
+            return ${menuRoute === null
+              ? 'activeRoutes.length === 0'
+              : `activeRoutes.length === 1 && activeRoutes[0] === ${JSON.stringify(menuRoute)}`};
+          })()`,
+        ),
+      `Canonical breadcrumb/menu owner was incorrect for ${route}`,
+    );
+  }
 }
 
 async function assertManualCaseFlow(client, row, createdCaseIds) {
@@ -1357,15 +1520,28 @@ async function main() {
       LastName: 'Browser Smoke',
       roles: ['ADMIN'],
       permissions: [
+        'attendance',
         'attendance-dashboard',
+        'audit-log',
+        'create',
         'dashboard',
+        'edit-students',
+        'export-data',
         'field-monitor',
         'home',
+        'import-data',
+        'import-school-roster',
         'login-links',
+        'manage-curriculum',
+        'manage-role-groups',
+        'manage-school-structure',
         'manage-student-accounts',
         'manage-student-observations',
+        'manage-teacher-access',
+        'manage-teachers',
         'manage-users-list',
         'review-cases',
+        'settings',
         'students',
       ],
       data_scope: { global: true },
@@ -1377,6 +1553,27 @@ async function main() {
     await client.call('Page.enable');
     await client.call('Runtime.enable');
     await client.call('Network.enable');
+    await client.call('Page.addScriptToEvaluateOnNewDocument', {
+      source: `
+        (() => {
+          const backendUrl = ${JSON.stringify(BACKEND_URL)};
+          const rewrite = (url) => {
+            if (typeof url !== 'string') return url;
+            const parsed = new URL(url, window.location.origin);
+            return parsed.port === '3000' ? backendUrl + parsed.pathname + parsed.search : url;
+          };
+          const originalFetch = window.fetch;
+          window.fetch = (input, init) => originalFetch(
+            typeof input === 'string' ? rewrite(input) : input,
+            init,
+          );
+          const originalOpen = XMLHttpRequest.prototype.open;
+          XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+            return originalOpen.call(this, method, rewrite(url), ...rest);
+          };
+        })();
+      `,
+    });
 
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 1366,
@@ -1385,10 +1582,12 @@ async function main() {
       mobile: false,
     });
     await loginInBrowser(client, user, createSessionCookie(sessionCookieService, actorId));
-    await assertLegacyRouteRedirects(client);
-    await assertCanonicalPageWidths(client);
-    await assertUserStatusFilterApi(client);
-    await assertStatusSummaryCardFilters(client);
+    if (!NAVIGATION_ONLY) {
+      await assertLegacyRouteRedirects(client);
+      await assertCanonicalPageWidths(client);
+      await assertUserStatusFilterApi(client);
+      await assertStatusSummaryCardFilters(client);
+    }
 
     const apiResult = await fetchRiskDashboard(client);
     assert(apiResult.status === 200, `Risk dashboard API returned ${apiResult.status}`);
@@ -1400,6 +1599,47 @@ async function main() {
     const expectedStudentName = apiResult.payload.data[0].studentName;
     const expectedTotalCount = Number(apiResult.payload.meta?.totalCount ?? 0);
     assert(expectedTotalCount > 0, 'Risk dashboard API totalCount was zero');
+
+    if (NAVIGATION_ONLY) {
+      await navigate(client, `${FRONTEND_URL}/student-risk-report`);
+      await waitFor(
+        async () =>
+          evaluate(
+            client,
+            `document.body.innerText.includes('ความเสี่ยงจากการมาเรียน')
+              && Array.from(document.querySelectorAll('[data-student-navigation]'))
+                .some((candidate) => candidate.offsetParent !== null)`,
+          ),
+        'desktop navigation risk dashboard rows did not render',
+      );
+      await assertVisibleStudentProfileLink(client, 'desktop navigation');
+      await assertAvatarOnlyStudentNavigation(client, 'desktop navigation');
+      await assertCanonicalRouteNavigation(client);
+
+      await client.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await navigate(client, `${FRONTEND_URL}/student-risk-report`);
+      await waitFor(
+        async () =>
+          evaluate(
+            client,
+            `document.body.innerText.includes('ความเสี่ยงจากการมาเรียน')
+              && Array.from(document.querySelectorAll('[data-student-navigation]'))
+                .some((candidate) => candidate.offsetParent !== null)`,
+          ),
+        'mobile navigation risk dashboard rows did not render',
+      );
+      await assertVisibleStudentProfileLink(client, 'mobile navigation');
+      await assertAvatarOnlyStudentNavigation(client, 'mobile navigation');
+      console.log(
+        'risk dashboard navigation smoke passed (40 canonical routes plus contextual breadcrumb, menu ownership, reload, direct-open fallback, and safe back on desktop/mobile)',
+      );
+      return;
+    }
 
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop');
     await assertSharedVisualSystem(client);

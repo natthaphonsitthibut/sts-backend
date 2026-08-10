@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { isRestrictedExecutive } from '../auth/permissions.constants';
 import { getBangkokDateString } from '../common/utils/date.util';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import {
   buildPaginationMeta,
   resolveLimit,
@@ -167,6 +168,9 @@ export class TaskStatsService {
         data: rows.map((row) => ({
           studentId: row.student_uuid,
           studentName: row.student_name,
+          studentPhotoUrl: row.photo_storage_key
+            ? `/api/students/${encodeURIComponent(row.student_uuid)}/photo?v=${encodeMediaVersion(row.photo_updated_at)}`
+            : null,
           schoolId: row.school_id,
           schoolName: row.school_name,
           grade: row.grade,

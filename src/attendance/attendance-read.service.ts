@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { DataScope } from '../common/utils/authorization';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { AttendanceRepository } from './attendance.repository';
 import { attendanceStatusFromCode } from './attendance-status';
 
@@ -24,7 +25,17 @@ export class AttendanceReadService {
       userScope,
     );
 
-    return { success: true, data };
+    return {
+      success: true,
+      data: data.map(
+        ({ photo_storage_key: photoStorageKey, photo_updated_at: photoUpdatedAt, ...student }) => ({
+          ...student,
+          photo_url: photoStorageKey
+            ? `/api/students/${encodeURIComponent(student.id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
+            : null,
+        }),
+      ),
+    };
   }
 
   async getHistory(

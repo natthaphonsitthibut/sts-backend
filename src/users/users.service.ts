@@ -17,6 +17,7 @@ import {
   type FileStorageAdapter,
 } from '../files/storage/file-storage.types';
 import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { piiConfig } from '../config/pii.config';
 import {
   PII_REASON_CODES,
@@ -391,7 +392,21 @@ export class UsersService {
         page,
         limit,
       });
-    const users = rows.map((row) => this.usersPolicyService.hydrateUserPermissions(row, roleMap));
+    const users = rows.map((row) => {
+      const hydrated = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
+      const {
+        photo_storage_key: photoStorageKey,
+        role_default_permissions: _roleDefaultPermissions,
+        ...user
+      } = hydrated;
+      void _roleDefaultPermissions;
+      return {
+        ...user,
+        photo_url: photoStorageKey
+          ? `/api/users/${user.id}/photo?v=${encodeMediaVersion(user.updated_at)}`
+          : null,
+      };
+    });
 
     return {
       success: true,
@@ -422,8 +437,17 @@ export class UsersService {
           this.usersRepository.findResolvedNationalIdByUserId(user.id),
         ])
       : [null, user.PersonID_Onec ?? null];
+    const {
+      photo_storage_key: photoStorageKey,
+      role_default_permissions: _roleDefaultPermissions,
+      ...safeUser
+    } = user;
+    void _roleDefaultPermissions;
     const resolvedUser = {
-      ...user,
+      ...safeUser,
+      photo_url: photoStorageKey
+        ? `/api/users/${user.id}/photo?v=${encodeMediaVersion(user.updated_at)}`
+        : null,
       PersonID_Onec: normalizeNationalIdValue(resolvedNationalId) || null,
     };
     return studentUuid ? { ...resolvedUser, student_uuid: studentUuid } : resolvedUser;
@@ -471,12 +495,9 @@ export class UsersService {
       phone: user.phone ?? null,
       email: user.email ?? null,
       affiliation: user.affiliation ?? null,
-      // Cache-busted by the storage key, which is regenerated on every upload, so
-      // a replaced photo shows immediately. The endpoint itself redirects to a
-      // short-lived signed URL rather than exposing the object.
-      photo_url: user.photo_storage_key
-        ? `/api/users/${user.id}/photo?v=${encodeURIComponent(user.photo_storage_key)}`
-        : null,
+      // Cache-busted by updated_at so the internal storage key stays server-side.
+      // The endpoint itself redirects to a fresh short-lived signed URL.
+      photo_url: user.photo_url ?? null,
       line_id: profile?.line_id ?? null,
       role: user.role ?? null,
       roles: user.roles ?? [],
@@ -596,7 +617,7 @@ export class UsersService {
       // Same cache-busting contract as the admin list; the self route needs no
       // manage-users permission.
       photo_url: user.photo_storage_key
-        ? `/api/users/me/photo?v=${encodeURIComponent(user.photo_storage_key)}`
+        ? `/api/users/me/photo?v=${encodeMediaVersion(user.updated_at)}`
         : null,
       PersonID_Onec: normalizeNationalIdValue(resolvedNationalId) || null,
       phone: studentContact?.has_canonical_contact ? studentContact.phone : (user.phone ?? null),

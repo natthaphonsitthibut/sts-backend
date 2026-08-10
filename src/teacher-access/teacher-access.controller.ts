@@ -125,6 +125,22 @@ export class TeacherAccessGrantController {
     return this.service.unlinkTeacherLineAccount(teacherMembershipId, actor);
   }
 
+  @Get('teacher-memberships/:teacherMembershipId/photo')
+  async teacherRosterPhoto(
+    @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.service.resolveTeacherRosterPhoto(teacherMembershipId, actor);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
   @Get(':grantId')
   detail(
     @Param('grantId', ParseUUIDPipe) grantId: string,
@@ -311,6 +327,28 @@ export class PublicTeacherAccessController {
       query,
       this.session(rawSession),
     );
+  }
+
+  @Get('student-photo')
+  @ThrottleTeacherAccess()
+  async studentPhoto(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Query() query: TeacherAccessStudentProfileQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.service.resolvePublicStudentPhoto(
+      this.token(rawToken),
+      query,
+      this.session(rawSession),
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
   }
 
   @Get('student-subject-attendance')

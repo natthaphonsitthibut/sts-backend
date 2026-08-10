@@ -110,6 +110,8 @@ describe('TaskStatsService', () => {
           {
             student_uuid: 'student-1',
             student_name: 'เด็ก ทดสอบ',
+            photo_storage_key: 'student-photos/person/profile.webp',
+            photo_updated_at: '2026-08-10T06:30:00.000Z',
             school_id: 101,
             school_name: 'โรงเรียนทดสอบ',
             grade: 'ม.1',
@@ -145,6 +147,7 @@ describe('TaskStatsService', () => {
       data: [
         {
           studentId: 'student-1',
+          studentPhotoUrl: '/api/students/student-1/photo?v=2026-08-10T06%3A30%3A00.000Z',
           riskTier: 'HIGH',
           weightedAttendancePercent: 72.5,
         },

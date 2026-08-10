@@ -7,6 +7,7 @@ import { isUnconfiguredDataScope, normalizeScopeArray } from '../auth/auth.types
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { normalizeScalar } from '../common/utils/helpers';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import type {
   ActorContext,
   DataScope,
@@ -2643,6 +2644,7 @@ export class TaskRepository {
         c.created_at,
         student_match.student_id,
         student_match.photo_storage_key AS student_photo_storage_key,
+        student_match.photo_updated_at AS student_photo_updated_at,
         t.id AS task_id,
         tl.id AS active_link_id,
         tl.token_encrypted AS active_link_token_encrypted,
@@ -2669,9 +2671,13 @@ export class TaskRepository {
           CASE
             WHEN COUNT(*) = 1 THEN (array_agg(candidate.photo_storage_key))[1]
             ELSE NULL
-          END AS photo_storage_key
+          END AS photo_storage_key,
+          CASE
+            WHEN COUNT(*) = 1 THEN (array_agg(candidate.photo_updated_at))[1]
+            ELSE NULL
+          END AS photo_updated_at
         FROM (
-          SELECT DISTINCT s.student_uuid, person.photo_storage_key
+          SELECT DISTINCT s.student_uuid, person.photo_storage_key, person.updated_at AS photo_updated_at
           FROM student_term s
           LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
           LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
@@ -2727,7 +2733,12 @@ export class TaskRepository {
 
     return {
       rows: result.rows.map(
-        ({ active_link_token_encrypted, student_photo_storage_key, ...row }) => {
+        ({
+          active_link_token_encrypted,
+          student_photo_storage_key,
+          student_photo_updated_at,
+          ...row
+        }) => {
           const studentId = typeof row.student_id === 'string' ? row.student_id : null;
           const photoStorageKey =
             typeof student_photo_storage_key === 'string' ? student_photo_storage_key : null;
@@ -2736,7 +2747,7 @@ export class TaskRepository {
             ...row,
             student_photo_url:
               studentId && photoStorageKey
-                ? `/api/students/${encodeURIComponent(studentId)}/photo?v=${encodeURIComponent(photoStorageKey)}`
+                ? `/api/students/${encodeURIComponent(studentId)}/photo?v=${encodeMediaVersion(student_photo_updated_at)}`
                 : null,
             active_link: this.resolveMagicLink(active_link_token_encrypted as string | null),
           };
@@ -3031,6 +3042,8 @@ export class TaskRepository {
           s.student_uuid,
           s."SchoolID_Onec" AS school_id,
           (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS student_name,
+          person.photo_storage_key,
+          person.updated_at AS photo_updated_at,
           COALESCE(gl.label, 'ไม่ทราบ') AS grade,
           s."RoomID_Onec"::text AS room,
           sc.name AS school_name,
@@ -3055,6 +3068,7 @@ export class TaskRepository {
           ON current_enrollment.person_uuid = s.person_uuid
          AND current_enrollment.selected_student_uuid = s.student_uuid
          AND current_enrollment.resolution_state = 'ACTIVE'
+        LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
@@ -3142,6 +3156,8 @@ export class TaskRepository {
         SELECT
           student_uuid,
           student_name,
+          photo_storage_key,
+          photo_updated_at,
           school_id,
           school_name,
           grade,

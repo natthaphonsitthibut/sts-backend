@@ -32,6 +32,7 @@ import {
 } from '../common/pagination/pagination.util';
 import { generateToken, hashToken } from '../common/utils/helpers';
 import { getBangkokDateString, getIsoDayOfWeekFromDateString } from '../common/utils/date.util';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { AutomationService } from '../automation/automation.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
@@ -764,6 +765,9 @@ export class TeacherAccessService {
         teacherMembershipId: row.teacher_membership_id,
         teacherId: row.teacher_id,
         teacherDisplayName: row.teacher_display_name,
+        photoUrl: row.teacher_photo_storage_key
+          ? `/api/teacher-access-grants/teacher-memberships/${row.teacher_membership_id}/photo?v=${encodeMediaVersion(row.teacher_photo_updated_at)}`
+          : null,
         hasEmail: Boolean(row.teacher_email),
         assignmentCount: Number(row.assignment_count),
         grantId: row.grant_id,
@@ -782,6 +786,18 @@ export class TeacherAccessService {
       })),
       meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
     };
+  }
+
+  async resolveTeacherRosterPhoto(
+    teacherMembershipId: number,
+    actor: AuthenticatedRequestUser,
+  ): Promise<FileServeResult> {
+    const photo = await this.repository.findTeacherMembershipPhoto(teacherMembershipId);
+    if (!photo?.photo_storage_key) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+    await this.assertSchoolAccess(photo.school_id, actor);
+    const result = await this.storage.resolve(photo.photo_storage_key);
+    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+    return result;
   }
 
   async unlinkTeacherLineAccount(teacherMembershipId: number, actor: AuthenticatedRequestUser) {
@@ -1360,6 +1376,7 @@ export class TeacherAccessService {
             studentUuid: row.student_uuid,
             studentTermId: row.student_uuid,
             studentNumber: row.student_number,
+            hasPhoto: row.has_photo,
             firstName: row.first_name,
             lastName: row.last_name,
             studentStatusCode: row.student_status_code,
@@ -1370,6 +1387,29 @@ export class TeacherAccessService {
           meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
         };
       },
+    );
+  }
+
+  async resolvePublicStudentPhoto(
+    rawToken: string,
+    input: { assignmentId: number; studentUuid: string },
+    sessionToken?: string,
+  ): Promise<FileServeResult> {
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: input.assignmentId,
+        studentUuid: input.studentUuid,
+        sessionToken,
+        operation: 'VIEW_STUDENT_PHOTO',
+        recordSuccessfulUse: false,
+      },
+      async (context) =>
+        await this.studentsService.resolveStudentPhoto(
+          input.studentUuid,
+          this.grantActor(context),
+          { school_ids: [context.schoolId] },
+        ),
     );
   }
 
