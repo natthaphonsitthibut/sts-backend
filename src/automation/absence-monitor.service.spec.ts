@@ -42,7 +42,7 @@ describe('AbsenceMonitorService', () => {
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
   let notificationsService: jest.Mocked<Pick<NotificationsService, 'notifyCaseCreated'>>;
-  let riskProfileService: jest.Mocked<Pick<RiskProfileService, 'enqueueStudents'>>;
+  let riskProfileService: jest.Mocked<Pick<RiskProfileService, 'requestStudentRecalculation'>>;
 
   beforeEach(() => {
     automationRepository = {
@@ -70,7 +70,7 @@ describe('AbsenceMonitorService', () => {
       notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
     };
     riskProfileService = {
-      enqueueStudents: jest.fn().mockResolvedValue(undefined),
+      requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new AbsenceMonitorService(
@@ -107,7 +107,7 @@ describe('AbsenceMonitorService', () => {
       },
       ip: null,
     });
-    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
     );
@@ -166,7 +166,7 @@ describe('AbsenceMonitorService', () => {
     const createdInput = automationRepository.createAutomatedCase.mock.calls[0]?.[0];
     expect(createdInput?.riskTier).toBe('HIGH');
     expect(createdInput?.slaDueAt).toBeInstanceOf(Date);
-    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
     );
@@ -175,7 +175,7 @@ describe('AbsenceMonitorService', () => {
   it('does not enqueue a risk profile refresh when nothing changed', async () => {
     await service.checkConsecutiveAbsences();
 
-    expect(riskProfileService.enqueueStudents).not.toHaveBeenCalled();
+    expect(riskProfileService.requestStudentRecalculation).not.toHaveBeenCalled();
   });
 
   it('does not auto-cancel a legacy case without a stable student uuid', async () => {

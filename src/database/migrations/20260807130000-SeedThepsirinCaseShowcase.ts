@@ -29,7 +29,8 @@ export class SeedThepsirinCaseShowcase20260807130000 implements MigrationInterfa
               "GradeLevelID_Onec" AS grade_level_id, "RoomID_Onec" AS room_id,
               school_term_id
        FROM student_term
-       WHERE "SchoolID_Onec" = $1 AND deleted_at IS NULL
+       WHERE "SchoolID_Onec" = $1
+         AND deleted_at IS NULL
        ORDER BY "FirstName_Onec", "LastName_Onec", student_uuid
        LIMIT 6`,
       [school.id],
@@ -45,6 +46,7 @@ export class SeedThepsirinCaseShowcase20260807130000 implements MigrationInterfa
         AND membership.membership_status = 'ACTIVE'
         AND membership.deleted_at IS NULL
        WHERE account.status = 'ACTIVE'
+         AND account.data_origin_code = 'DEMO'
        ORDER BY account.id
        LIMIT 1`,
       [school.id],
@@ -144,10 +146,9 @@ export class SeedThepsirinCaseShowcase20260807130000 implements MigrationInterfa
         (
           (await queryRunner.query(
             `INSERT INTO task_links (task_id, token_hash, delegation_depth, assigned_to_name, assigned_to_email, subject, status, expires_at, created_by, updated_by)
-         VALUES ($1, encode(digest($2, 'sha256'), 'hex'), 0, $3, $4, 'ติดตามนักเรียน', $5, now() + interval '30 days', $6, $6) RETURNING id`,
+         VALUES ($1, encode(gen_random_bytes(32), 'hex'), 0, $2, $3, 'ติดตามนักเรียน', $4, now() + interval '30 days', $5, $5) RETURNING id`,
             [
               taskId,
-              `thepsirin-showcase-${caseId}`,
               actor.display_name,
               actor.email,
               status === 'IN_PROGRESS' ? 'ACTIVE' : 'COMPLETED',

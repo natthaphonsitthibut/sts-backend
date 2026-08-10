@@ -653,7 +653,7 @@ export class TaskLifecycleService {
       }
       if (!assignmentReused && riskProfileStudentUuid) {
         await this.riskProfileService
-          ?.enqueueStudents([riskProfileStudentUuid], 'case-task-create')
+          ?.requestStudentRecalculation([riskProfileStudentUuid], 'case-task-create')
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(`Failed to enqueue case risk profile recalculation: ${message}`);

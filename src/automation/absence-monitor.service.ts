@@ -252,7 +252,7 @@ export class AbsenceMonitorService {
 
       if (riskProfileStudentUuids.size > 0) {
         await this.riskProfileService
-          ?.enqueueStudents([...riskProfileStudentUuids], 'case-auto-monitor')
+          ?.requestStudentRecalculation([...riskProfileStudentUuids], 'case-auto-monitor')
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(

@@ -1,12 +1,13 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
 const RECORDER_MARKER = 'SYSTEM:DEMO_RISK_DISTRIBUTION';
-const CALENDAR_REASON = 'ข้อมูลสาธิตความเสี่ยงทุกโรงเรียน';
+const CALENDAR_REASON = 'ข้อมูลสาธิตความเสี่ยงโรงเรียน showcase';
 const TARGET_HIGH_RISK_PERCENT = 5;
+const SCHOOL_NAME = 'โรงเรียนเทพศิรินทร์ราชดำริ';
 
 /**
- * Builds a deterministic high-risk demo population in every school from real
- * active enrollments and unused configured school days. Existing attendance is
+ * Builds a deterministic high-risk demo population only in the configured
+ * showcase school when an active DEMO actor exists there. Existing attendance is
  * never replaced. Derived profiles are invalidated so the bounded synchronous
  * startup repair recalculates them through the canonical risk-profile query
  * before the application starts serving requests.
@@ -50,8 +51,22 @@ export class SeedDemoRiskDistribution20260807160000 implements MigrationInterfac
            AND current_enrollment.selected_student_uuid = enrollment.student_uuid
            AND current_enrollment.resolution_state = 'ACTIVE'
           JOIN school_terms school_term ON school_term.id = enrollment.school_term_id
+          JOIN schools school
+            ON school.id = school_term.school_id
+           AND school.name = $2
           WHERE enrollment.deleted_at IS NULL
             AND school_term.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1
+              FROM users demo_actor
+              JOIN school_teacher_memberships demo_membership
+                ON demo_membership.teacher_user_id = demo_actor.id
+               AND demo_membership.school_id = school.id
+               AND demo_membership.membership_status = 'ACTIVE'
+               AND demo_membership.deleted_at IS NULL
+              WHERE demo_actor.data_origin_code = 'DEMO'
+                AND demo_actor.status = 'ACTIVE'
+            )
         ),
         selected_dates AS (
           SELECT active_term.school_term_id, available_date.calendar_date
@@ -97,7 +112,7 @@ export class SeedDemoRiskDistribution20260807160000 implements MigrationInterfac
         FROM selected_dates
         ON CONFLICT (school_term_id, calendar_date) DO NOTHING
       `,
-      [CALENDAR_REASON],
+      [CALENDAR_REASON, SCHOOL_NAME],
     );
 
     await queryRunner.query(
@@ -129,9 +144,23 @@ export class SeedDemoRiskDistribution20260807160000 implements MigrationInterfac
             ON current_enrollment.person_uuid = enrollment.person_uuid
            AND current_enrollment.selected_student_uuid = enrollment.student_uuid
            AND current_enrollment.resolution_state = 'ACTIVE'
+          JOIN schools school
+            ON school.id = enrollment."SchoolID_Onec"
+           AND school.name = $3
           WHERE enrollment.deleted_at IS NULL
             AND enrollment."SchoolID_Onec" IS NOT NULL
             AND enrollment.school_term_id IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM users demo_actor
+              JOIN school_teacher_memberships demo_membership
+                ON demo_membership.teacher_user_id = demo_actor.id
+               AND demo_membership.school_id = school.id
+               AND demo_membership.membership_status = 'ACTIVE'
+               AND demo_membership.deleted_at IS NULL
+              WHERE demo_actor.data_origin_code = 'DEMO'
+                AND demo_actor.status = 'ACTIVE'
+            )
         ),
         school_targets AS (
           SELECT
@@ -269,7 +298,7 @@ export class SeedDemoRiskDistribution20260807160000 implements MigrationInterfac
         USING affected_students student
         WHERE profile.student_uuid = student.student_uuid
       `,
-      [RECORDER_MARKER, TARGET_HIGH_RISK_PERCENT],
+      [RECORDER_MARKER, TARGET_HIGH_RISK_PERCENT, SCHOOL_NAME],
     );
   }
 

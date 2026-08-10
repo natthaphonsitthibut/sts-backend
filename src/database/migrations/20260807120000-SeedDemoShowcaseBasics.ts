@@ -1,5 +1,6 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
-import { STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL } from '../bootstrap-sql';
+
+const SCHOOL_NAME = 'โรงเรียนเทพศิรินทร์ราชดำริ';
 
 /**
  * One-time demo-data migration for environments whose deployment platform
@@ -10,7 +11,8 @@ export class SeedDemoShowcaseBasics20260807120000 implements MigrationInterface 
   name = 'SeedDemoShowcaseBasics20260807120000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`
+    await queryRunner.query(
+      `
       UPDATE student_term student
       SET
         "ProvinceNameThai_Onec" = COALESCE(NULLIF(BTRIM(student."ProvinceNameThai_Onec"), ''), school.province),
@@ -22,7 +24,19 @@ export class SeedDemoShowcaseBasics20260807120000 implements MigrationInterface 
         "PostalCode_Onec" = NULLIF(BTRIM(student."PostalCode_Onec"), '')
       FROM schools school
       WHERE school.id = student."SchoolID_Onec"
+        AND school.name = $1
         AND student.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM users demo_actor
+          JOIN school_teacher_memberships demo_membership
+            ON demo_membership.teacher_user_id = demo_actor.id
+           AND demo_membership.school_id = school.id
+           AND demo_membership.membership_status = 'ACTIVE'
+           AND demo_membership.deleted_at IS NULL
+          WHERE demo_actor.data_origin_code = 'DEMO'
+            AND demo_actor.status = 'ACTIVE'
+        )
         AND (
           NULLIF(BTRIM(student."ProvinceNameThai_Onec"), '') IS NULL
           OR NULLIF(BTRIM(student."DistrictNameThai_Onec"), '') IS NULL
@@ -32,20 +46,44 @@ export class SeedDemoShowcaseBasics20260807120000 implements MigrationInterface 
           OR NULLIF(BTRIM(student."Soi_Onec"), '') IS NULL
           OR NULLIF(BTRIM(student."PostalCode_Onec"), '') IS NULL
         )
-    `);
-    await queryRunner.query(STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL);
+    `,
+      [SCHOOL_NAME],
+    );
 
-    const targets = (await queryRunner.query(`
+    const targets = (await queryRunner.query(
+      `
       SELECT classroom.id AS classroom_id, classroom.school_id, slot.subject_id,
              slot.id AS timetable_slot_id
       FROM school_classrooms classroom
+      JOIN schools school
+        ON school.id = classroom.school_id
+       AND school.name = $1
+       AND EXISTS (
+         SELECT 1
+         FROM users demo_actor
+         JOIN school_teacher_memberships demo_membership
+           ON demo_membership.teacher_user_id = demo_actor.id
+          AND demo_membership.school_id = school.id
+          AND demo_membership.membership_status = 'ACTIVE'
+          AND demo_membership.deleted_at IS NULL
+         WHERE demo_actor.data_origin_code = 'DEMO'
+           AND demo_actor.status = 'ACTIVE'
+       )
       JOIN timetable_slots slot
         ON slot.classroom_id = classroom.id
        AND slot.deleted_at IS NULL
       WHERE classroom.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM student_term demo_student
+          WHERE demo_student.classroom_id = classroom.id
+            AND demo_student.deleted_at IS NULL
+        )
       ORDER BY classroom.school_id, classroom.id, slot.day_of_week, slot.period
       LIMIT 1
-    `)) as Array<{
+    `,
+      [SCHOOL_NAME],
+    )) as Array<{
       classroom_id: number;
       school_id: number;
       subject_id: number;
@@ -59,6 +97,7 @@ export class SeedDemoShowcaseBasics20260807120000 implements MigrationInterface 
       FROM users user_account
       WHERE user_account.role = 'TEACHER'
         AND user_account.status = 'ACTIVE'
+        AND user_account.data_origin_code = 'DEMO'
         AND NOT EXISTS (
           SELECT 1
           FROM school_teacher_memberships membership

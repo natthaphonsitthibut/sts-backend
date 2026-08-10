@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
@@ -40,6 +40,8 @@ const CURRENT_ENROLLMENT_JOIN = `
 
 @Injectable()
 export class AttendanceRepository {
+  private readonly logger = new Logger(AttendanceRepository.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly tokenEncryption: TokenEncryptionService,
@@ -50,8 +52,13 @@ export class AttendanceRepository {
   /** See TaskRepository.resolveMagicLink — same reconstruct-from-ciphertext logic. */
   private resolveMagicLink(tokenEncrypted: string | null | undefined): string | null {
     if (!tokenEncrypted) return null;
-    const token = this.tokenEncryption.decrypt(tokenEncrypted);
-    return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/task/${token}`;
+    try {
+      const token = this.tokenEncryption.decrypt(tokenEncrypted);
+      return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/task/${token}`;
+    } catch {
+      this.logger.warn('Unable to decrypt a stored task link; returning it as unavailable');
+      return null;
+    }
   }
 
   private async query<T extends Record<string, unknown>>(

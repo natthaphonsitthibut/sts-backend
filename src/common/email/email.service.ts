@@ -29,18 +29,10 @@ export class EmailService {
     expiresInMinutes = 10,
   ): Promise<{ success: boolean; provider: string }> {
     if (!this.config.enabled || !this.config.user) {
-      // A disabled email provider is an intentional demo-mode fallback. Use
-      // warn rather than log so hosted free tiers that suppress INFO still
-      // surface the code in their deployment logs.
-      if (this.config.logSimulatedOtp) {
-        this.logger.warn(
-          `[SIMULATED_EMAIL_OTP] to=${email} code=${code} expiresInMinutes=${expiresInMinutes}`,
-        );
-      } else {
-        this.logger.warn(
-          '[SIMULATED_EMAIL_OTP] Email delivery is disabled; OTP value is hidden in production',
-        );
-      }
+      // Authentication factors and recipient PII must never enter application
+      // logs. Tests capture this service at the boundary instead of scraping a
+      // simulated OTP from process output.
+      this.logger.warn('Email delivery is disabled; OTP was not sent');
       return { success: true, provider: 'SIMULATOR' };
     }
 
@@ -57,7 +49,7 @@ export class EmailService {
       await this.sendViaSmtp(email, content);
       return { success: true, provider: 'SMTP' };
     } catch (err) {
-      this.logger.error(`Email Error: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.error('Email delivery failed through the configured provider');
       throw err;
     }
   }
@@ -112,8 +104,7 @@ export class EmailService {
     });
 
     if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Gmail API send failed (${response.status}): ${errorBody}`);
+      throw new Error(`Gmail API send failed with status ${response.status}`);
     }
   }
 
@@ -130,8 +121,7 @@ export class EmailService {
     });
 
     if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Gmail OAuth token refresh failed (${response.status}): ${errorBody}`);
+      throw new Error(`Gmail OAuth token refresh failed with status ${response.status}`);
     }
 
     const data = (await response.json()) as { access_token?: string };

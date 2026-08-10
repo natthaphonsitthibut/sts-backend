@@ -75,7 +75,7 @@ export class AttendanceWriteService {
 
     const triggerType = await this.attendanceRepository.getAlertTriggerType();
     await this.riskProfileService
-      ?.enqueueStudents(result.affectedStudentIds, 'attendance-save')
+      ?.requestStudentRecalculation(result.affectedStudentIds, 'attendance-save')
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`Failed to enqueue attendance risk profile recalculation: ${message}`);

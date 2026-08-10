@@ -325,7 +325,7 @@ export class TaskSubmissionService {
       });
 
       await this.riskProfileService
-        ?.enqueueStudents(affectedStudentIds, 'attendance-task-link-save')
+        ?.requestStudentRecalculation(affectedStudentIds, 'attendance-task-link-save')
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
           this.logger.error(

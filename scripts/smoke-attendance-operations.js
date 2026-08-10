@@ -2,6 +2,7 @@ const { ValidationPipe } = require('@nestjs/common');
 const { NestFactory } = require('@nestjs/core');
 const { JwtService } = require('@nestjs/jwt');
 const { DataSource } = require('typeorm');
+const { randomUUID } = require('crypto');
 const { AppModule } = require('../dist/app.module');
 const { AppExceptionFilter } = require('../dist/common/filters/app-exception.filter');
 const {
@@ -15,6 +16,131 @@ if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function createSyntheticFixture(dataSource) {
+  return dataSource.transaction(async (manager) => {
+    await manager.query(`
+    DELETE FROM school_terms term
+    WHERE term.academic_year BETWEEN 3000 AND 8999
+      AND term.semester = 3
+      AND term.status = 'DRAFT'
+      AND term.starts_on IS NULL
+      AND term.ends_on IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM school_classrooms classroom WHERE classroom.school_term_id = term.id
+      )
+  `);
+    const [source] = await manager.query(`
+    SELECT student."SchoolID_Onec" AS school_id,
+      student."GradeLevelID_Onec" AS grade_level_id,
+      grade.label AS grade_label,
+      COALESCE(student.student_status_code, student."StudentStatusID_Onec")::int AS status_code
+    FROM student_term student
+    JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
+    JOIN schools school ON school.id = student."SchoolID_Onec"
+    WHERE student.deleted_at IS NULL
+      AND student.student_uuid IS NOT NULL
+      AND COALESCE(student.student_status_code, student."StudentStatusID_Onec") IS NOT NULL
+    ORDER BY student."SchoolID_Onec", student."GradeLevelID_Onec"
+    LIMIT 1
+  `);
+    assert(source, 'No school/grade/status seed is available for the synthetic fixture');
+
+    const academicYear = 3000 + (Math.floor(Date.now() / 1000) % 6000);
+    const semester = 3;
+    const [schoolIdRow] = await manager.query(
+      `SELECT (COALESCE(MAX(id), 0) + 1000000)::int AS id FROM schools`,
+    );
+    const [school] = await manager.query(
+      `INSERT INTO schools (id, name, province, district, sub_district, school_status)
+       VALUES ($1, $2, 'AUTOMATED_TEST', 'AUTOMATED_TEST', 'AUTOMATED_TEST', 'ACTIVE')
+       RETURNING id`,
+      [schoolIdRow.id, `Attendance Operations Smoke ${academicYear}`],
+    );
+    const [term] = await manager.query(
+      `INSERT INTO school_terms (school_id, academic_year, semester, status)
+     VALUES ($1, $2, $3, 'DRAFT')
+     RETURNING id`,
+      [school.id, academicYear, semester],
+    );
+    const [classroom] = await manager.query(
+      `INSERT INTO school_classrooms (
+       school_term_id, school_id, grade_level_id, legacy_room_number,
+       room_code, room_name, classroom_status
+     )
+     VALUES ($1, $2, $3, 99, '99', 'Attendance Smoke', 'ACTIVE')
+     RETURNING id`,
+      [term.id, school.id, source.grade_level_id],
+    );
+
+    const students = [];
+    for (let index = 1; index <= 2; index += 1) {
+      const personUuid = randomUUID();
+      const studentUuid = randomUUID();
+      const personId = `9${String(Date.now()).slice(-11)}${index}`;
+      await manager.query(
+        `INSERT INTO student_person (person_uuid, identity_status)
+       VALUES ($1, 'ACTIVE')`,
+        [personUuid],
+      );
+      await manager.query(
+        `INSERT INTO student_term (
+         student_uuid, person_uuid, "PersonID_Onec", "FirstName_Onec", "LastName_Onec",
+         "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
+         "StudentStatusID_Onec", student_status_code,
+         "AcademicYear_Onec", "Semester_Onec", school_term_id, classroom_id
+       )
+       VALUES ($1, $2, $3, $4, 'Attendance Smoke', $5, $6, 99, $7, $7, $8, $9, $10, $11)`,
+        [
+          studentUuid,
+          personUuid,
+          personId,
+          `Student ${index}`,
+          school.id,
+          source.grade_level_id,
+          source.status_code,
+          academicYear,
+          semester,
+          term.id,
+          classroom.id,
+        ],
+      );
+      students.push({ studentUuid, personUuid });
+    }
+
+    return {
+      term_id: term.id,
+      school_id: school.id,
+      academic_year: academicYear,
+      semester,
+      grade_level_id: source.grade_level_id,
+      grade_label: source.grade_label,
+      room_id: 99,
+      roster_count: students.length,
+      original_status: 'DRAFT',
+      original_starts_on: null,
+      original_ends_on: null,
+      synthetic: { schoolId: school.id, classroomId: classroom.id, students },
+    };
+  });
+}
+
+async function cleanupSyntheticFixture(dataSource, fixture) {
+  if (!fixture?.synthetic) return;
+  const studentUuids = fixture.synthetic.students.map((student) => student.studentUuid);
+  const personUuids = fixture.synthetic.students.map((student) => student.personUuid);
+  await dataSource.query(`DELETE FROM student_term WHERE student_uuid = ANY($1::uuid[])`, [
+    studentUuids,
+  ]);
+  await dataSource.query(`DELETE FROM student_person WHERE person_uuid = ANY($1::uuid[])`, [
+    personUuids,
+  ]);
+  await dataSource.query(`DELETE FROM school_classrooms WHERE id = $1`, [
+    fixture.synthetic.classroomId,
+  ]);
+  await dataSource.query(`DELETE FROM school_terms WHERE id = $1`, [fixture.term_id]);
+  await dataSource.query(`DELETE FROM schools WHERE id = $1`, [fixture.synthetic.schoolId]);
 }
 
 async function main() {
@@ -73,8 +199,7 @@ async function main() {
     ORDER BY roster.roster_count DESC, term.id
     LIMIT 1
   `);
-  assert(fixtureRows.length === 1, 'No isolated term fixture is available');
-  const fixture = fixtureRows[0];
+  const fixture = fixtureRows[0] ?? (await createSyntheticFixture(dataSource));
 
   const roster = await dataSource.query(
     `SELECT student_uuid FROM student_term
@@ -82,7 +207,13 @@ async function main() {
        AND "Semester_Onec" = $3 AND "GradeLevelID_Onec" = $4
        AND "RoomID_Onec"::int = $5 AND deleted_at IS NULL
      ORDER BY student_uuid`,
-    [fixture.school_id, fixture.academic_year, fixture.semester, fixture.grade_level_id, fixture.room_id],
+    [
+      fixture.school_id,
+      fixture.academic_year,
+      fixture.semester,
+      fixture.grade_level_id,
+      fixture.room_id,
+    ],
   );
   assert(roster.length === fixture.roster_count, 'Roster fixture count changed during setup');
   console.error('[smoke] isolated fixture ready');
@@ -120,7 +251,12 @@ async function main() {
        RETURNING id`,
       [
         allowedUsername,
-        JSON.stringify(['home', 'attendance', 'attendance-dashboard', 'manage-attendance-calendar']),
+        JSON.stringify([
+          'home',
+          'attendance',
+          'attendance-dashboard',
+          'manage-attendance-calendar',
+        ]),
         JSON.stringify({ school_ids: [fixture.school_id] }),
       ],
     );
@@ -154,7 +290,10 @@ async function main() {
     settingsOnlyActorId = Number(settingsOnlyActor.id);
     assert(Number.isInteger(settingsOnlyActorId), 'Settings-only admin fixture was not created');
     const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
     }).format(new Date());
 
     await dataSource.query(
@@ -176,37 +315,58 @@ async function main() {
       endsOn: today,
       status: 'DRAFT',
     };
-    await request('GET', `/api/attendance/terms?schoolId=${fixture.school_id}`, 403, settingsOnlyActorId);
+    await request(
+      'GET',
+      `/api/attendance/terms?schoolId=${fixture.school_id}`,
+      403,
+      settingsOnlyActorId,
+    );
     await request('POST', '/api/attendance/terms', 403, settingsOnlyActorId, termBody);
     const draft = await request('POST', '/api/attendance/terms', 201, adminId, termBody);
     console.error('[smoke] term and authorization checks passed');
     assert(Number(draft.data.id) === Number(fixture.term_id), 'Term upsert returned another term');
     const generated = await request(
-      'POST', `/api/attendance/terms/${fixture.term_id}/calendar/generate`, 201, adminId,
+      'POST',
+      `/api/attendance/terms/${fixture.term_id}/calendar/generate`,
+      201,
+      adminId,
       { schoolDays: [1, 2, 3, 4, 5, 6, 7] },
     );
     assert(generated.data.length === 1, 'Expected exactly one generated calendar day');
     const calendarDayId = generated.data[0].id;
     const active = await request('POST', '/api/attendance/terms', 201, adminId, {
-      ...termBody, status: 'ACTIVE',
+      ...termBody,
+      status: 'ACTIVE',
     });
     assert(active.data.status === 'ACTIVE', 'Term did not become ACTIVE');
     console.error('[smoke] calendar activated');
 
     await request('PATCH', `/api/attendance/calendar-days/${calendarDayId}`, 200, adminId, {
-      dayType: 'HOLIDAY', reason: 'automated smoke test',
+      dayType: 'HOLIDAY',
+      reason: 'automated smoke test',
     });
-    const presentRecords = roster.map((row) => ({ student_id: row.student_uuid, status: 'P_PRESENT' }));
+    const presentRecords = roster.map((row) => ({
+      student_id: row.student_uuid,
+      status: 'P_PRESENT',
+    }));
     await request('POST', '/api/attendance', 409, adminId, { records: presentRecords });
     await request('PATCH', `/api/attendance/calendar-days/${calendarDayId}`, 200, adminId, {
-      dayType: 'SCHOOL_DAY', reason: 'automated smoke test',
+      dayType: 'SCHOOL_DAY',
+      reason: 'automated smoke test',
     });
 
     const sessionQuery = new URLSearchParams({
-      schoolId: String(fixture.school_id), grade: fixture.grade_label,
-      room: String(fixture.room_id), date: today,
+      schoolId: String(fixture.school_id),
+      grade: fixture.grade_label,
+      room: String(fixture.room_id),
+      date: today,
     });
-    const beforeSubmit = await request('GET', `/api/attendance/session?${sessionQuery}`, 200, adminId);
+    const beforeSubmit = await request(
+      'GET',
+      `/api/attendance/session?${sessionQuery}`,
+      200,
+      adminId,
+    );
     assert(beforeSubmit.data.calendarConfigured === true, 'Calendar is not configured');
     assert(beforeSubmit.data.session === null, 'Session unexpectedly exists before submit');
     console.error('[smoke] holiday and session-context checks passed');
@@ -219,10 +379,15 @@ async function main() {
     const sessionId = initialSubmit.session.id;
     console.error('[smoke] initial submit locked');
     await request('POST', '/api/attendance', 409, adminId, { records: presentRecords });
-    await request('POST', `/api/attendance/sessions/${sessionId}/reopen`, 400, adminId, { reason: '' });
+    await request('POST', `/api/attendance/sessions/${sessionId}/reopen`, 400, adminId, {
+      reason: '',
+    });
 
     const reopened = await request(
-      'POST', `/api/attendance/sessions/${sessionId}/reopen`, 201, adminId,
+      'POST',
+      `/api/attendance/sessions/${sessionId}/reopen`,
+      201,
+      adminId,
       { reason: 'correct first student status' },
     );
     assert(reopened.data.status === 'REOPENED', 'Session did not enter REOPENED state');
@@ -230,7 +395,8 @@ async function main() {
     console.error('[smoke] reopen validation passed');
 
     const correctedRecords = presentRecords.map((record, index) => ({
-      ...record, status: index === 0 ? 'P_LEAVE' : record.status,
+      ...record,
+      status: index === 0 ? 'P_LEAVE' : record.status,
     }));
     const corrected = await request('POST', '/api/attendance', 201, adminId, {
       records: correctedRecords,
@@ -246,14 +412,20 @@ async function main() {
       adminId,
     );
     const classRow = reconciliation.rows.find(
-      (row) => Number(row.gradeLevelId) === Number(fixture.grade_level_id)
-        && Number(row.room) === Number(fixture.room_id),
+      (row) =>
+        Number(row.gradeLevelId) === Number(fixture.grade_level_id) &&
+        Number(row.room) === Number(fixture.room_id),
     );
     assert(classRow, 'Reconciliation did not include the submitted class');
     assert(classRow.operationalStatus === 'COMPLETED', 'Class is not reconciled as COMPLETED');
     assert(classRow.recordedCount === roster.length, 'Recorded count does not match roster');
 
-    const finalContext = await request('GET', `/api/attendance/session?${sessionQuery}`, 200, adminId);
+    const finalContext = await request(
+      'GET',
+      `/api/attendance/session?${sessionQuery}`,
+      200,
+      adminId,
+    );
     assert(finalContext.data.session.status === 'SUBMITTED', 'Session is not locked');
     assert(finalContext.data.session.revision === 2, 'Session revision is incorrect');
 
@@ -271,12 +443,17 @@ async function main() {
     assert(Array.isArray(changes) && changes.length === 1, 'Correction audit is incorrect');
     assert(changes[0].nextStatusCode === 4, 'Leave correction was not persisted as status code 4');
 
-    console.log(JSON.stringify({
-      status: 'attendance_operations_smoke_ok', checks: 20, rosterCount: roster.length,
-      finalSessionStatus: finalContext.data.session.status,
-      revision: finalContext.data.session.revision,
-      reconciliation: classRow.operationalStatus, auditEvents: auditRows.length,
-    }));
+    console.log(
+      JSON.stringify({
+        status: 'attendance_operations_smoke_ok',
+        checks: 20,
+        rosterCount: roster.length,
+        finalSessionStatus: finalContext.data.session.status,
+        revision: finalContext.data.session.revision,
+        reconciliation: classRow.operationalStatus,
+        auditEvents: auditRows.length,
+      }),
+    );
   } finally {
     if (allowedActorId) {
       const smokeSessions = await dataSource.query(
@@ -297,7 +474,7 @@ async function main() {
         [fixture.term_id, allowedActorId],
       );
     }
-    if (fixturePrepared) {
+    if (fixturePrepared && !fixture.synthetic) {
       await dataSource.query(
         `UPDATE school_terms
          SET status = $2, starts_on = $3, ends_on = $4
@@ -310,6 +487,7 @@ async function main() {
         ],
       );
     }
+    await cleanupSyntheticFixture(dataSource, fixture);
     await dataSource.query(
       `
         UPDATE users

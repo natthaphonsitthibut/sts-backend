@@ -250,10 +250,12 @@ export class CaseService {
         schoolName: mapped.student_school,
         reason: mapped.reason_flagged ?? reason,
       });
-      await this.riskProfileService?.enqueueStudents([studentUuid], 'case-open').catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Failed to enqueue opened case risk profile recalculation: ${message}`);
-      });
+      await this.riskProfileService
+        ?.requestStudentRecalculation([studentUuid], 'case-open')
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`Failed to recalculate opened case risk profile: ${message}`);
+        });
     }
 
     return {
@@ -425,7 +427,7 @@ export class CaseService {
           : null;
       if (riskProfileStudentUuid) {
         await this.riskProfileService
-          ?.enqueueStudents([riskProfileStudentUuid], 'case-review')
+          ?.requestStudentRecalculation([riskProfileStudentUuid], 'case-review')
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(
