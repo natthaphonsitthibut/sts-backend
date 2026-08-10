@@ -418,8 +418,39 @@ async function main() {
     await waitFor(
       async () =>
         (await evaluate(client, 'location.pathname')) === '/notifications' &&
+        (await evaluate(client, 'location.search')) === '?status=all' &&
         String(await evaluate(client, 'document.body.innerText')).includes('Browser smoke account batch'),
       'Full notification inbox did not render',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('ยังไม่อ่าน'))?.click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'location.search')) === '?status=unread',
+      'Unread notification filter did not persist in the URL',
+    );
+    await navigate(client, `${FRONTEND_URL}/notifications?status=unread`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) =>
+              button.textContent.includes('ยังไม่อ่าน') && button.getAttribute('aria-selected') === 'true')`,
+          ),
+        ),
+      'Unread notification direct-open did not restore the active filter',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'ทั้งหมด')?.click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'location.search')) === '?status=all',
+      'All notification filter did not restore its canonical URL',
     );
     await capture(client, '/tmp/sts-notifications-desktop.png');
 

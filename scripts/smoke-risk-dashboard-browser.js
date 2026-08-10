@@ -618,13 +618,14 @@ async function assertCanonicalRouteNavigation(client) {
     ['/create/recruitment', 'สร้างลิงก์รับสมัคร', '/create'],
     ['/attendance', 'เช็คชื่อ', '/attendance'],
     ['/attendance/history', 'ประวัติการเช็คชื่อ', '/attendance'],
-    ['/cases', 'เคสติดตาม', '/cases'],
-    ['/cases/history', 'ประวัติเคสติดตาม', '/cases'],
+    ['/cases/risk', 'เคสติดตาม', '/cases/risk'],
+    ['/cases/watchlist', 'เคสติดตาม', '/cases/risk'],
+    ['/cases/history', 'ประวัติเคสติดตาม', '/cases/risk'],
     ['/visit-links', 'ลิงก์ลงพื้นที่', '/visit-links'],
     ['/visit-links/history', 'ประวัติลิงก์ลงพื้นที่', '/visit-links'],
     ['/attendance-links', 'จัดการลิงก์เช็คชื่อ', '/attendance-links'],
     ['/attendance-operations', 'ความครบถ้วน', '/attendance-operations'],
-    ['/timetable', 'ตารางสอน', '/timetable'],
+    ['/timetable/rooms', 'ตารางสอน', '/timetable'],
     ['/classrooms', 'ห้องเรียนทั้งหมด', '/classrooms'],
     ['/school-structure', 'จัดการภาคเรียนและห้องเรียน', '/school-structure'],
     ['/import-data', 'นำเข้าข้อมูล', '/import-data'],
@@ -798,21 +799,38 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   assert(duplicate.payload?.created === false, 'duplicate manual case request created another case');
   assert(Number(duplicate.payload?.data?.id) === caseId, 'duplicate request returned another case');
 
-  await waitForReload(
-    client,
-    `${FRONTEND_URL}/student-risk-report`,
-    async () =>
-      evaluate(
-        client,
-        `(() => {
-          const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
-            .find((candidate) => candidate.offsetParent !== null
-              && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-          return Boolean(row?.querySelector('button[aria-label^="ดูเคสที่กำลังติดตาม"]'));
-        })()`,
-      ),
-    'risk dashboard did not expose the active case list action',
-  );
+  try {
+    await waitForReload(
+      client,
+      `${FRONTEND_URL}/student-risk-report`,
+      async () =>
+        evaluate(
+          client,
+          `(() => {
+            const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
+              .find((candidate) => candidate.offsetParent !== null
+                && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+            return Boolean(row?.querySelector('button[aria-label^="ดูเคสที่กำลังติดตาม"]'));
+          })()`,
+        ),
+      'risk dashboard did not expose the active case list action',
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      client,
+      `(() => {
+        const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
+          .find((candidate) => candidate.offsetParent !== null
+            && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+        return {
+          path: location.pathname,
+          rowText: row?.innerText ?? null,
+          buttons: row ? [...row.querySelectorAll('button')].map((button) => button.getAttribute('aria-label')) : [],
+        };
+      })()`,
+    );
+    throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
+  }
   await evaluate(
     client,
     `(() => {
@@ -1168,10 +1186,11 @@ async function assertCollapsedGroupAccordion(client) {
   const collapsed = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('button[aria-label="พับเมนูด้านข้าง"]');
-      if (!button) return false;
-      button.click();
-      return true;
+      const collapseButton = document.querySelector('button[aria-label="พับเมนูด้านข้าง"]');
+      if (collapseButton) collapseButton.click();
+      return Boolean(
+        collapseButton || document.querySelector('button[aria-label="ขยายเมนูด้านข้าง"]'),
+      );
     })()`,
   );
   assert(collapsed, 'desktop sidebar could not be collapsed');
@@ -1430,9 +1449,9 @@ async function assertSharedVisualSystem(client) {
     `Active navigation surface drifted: ${colors.activeNavigationSurface}`,
   );
   assert(
-    colors.refreshBackground === 'rgb(255, 255, 255)' &&
+      colors.refreshBackground === 'rgb(255, 255, 255)' &&
       colors.refreshText === 'rgb(17, 17, 17)' &&
-      colors.refreshBorder === 'rgb(212, 212, 212)',
+      colors.refreshBorder === 'rgb(221, 221, 221)',
     `Refresh button colors drifted: ${JSON.stringify(colors)}`,
   );
 
