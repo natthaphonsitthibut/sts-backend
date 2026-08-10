@@ -22,7 +22,9 @@ import {
   RequestTeacherLineOtpDto,
   StartTeacherLineAuthorizationDto,
   TeacherLineCallbackDto,
+  TeacherLineInvitationTokenDto,
   VerifyTeacherLineOtpDto,
+  VerifyTeacherLineInvitationOtpDto,
 } from './dto/teacher-line.dto';
 import { TeacherLineService } from './teacher-line.service';
 
@@ -61,6 +63,33 @@ export class TeacherLineController {
     return {
       success: true,
       data: await this.service.verifyOtp(body.email, body.code, request.ip ?? null),
+    };
+  }
+
+  @Post('invitation/resolve')
+  @ThrottleTeacherAccess()
+  async resolveInvitation(@Body() body: TeacherLineInvitationTokenDto) {
+    return { success: true, data: await this.service.resolveInvitation(body.token) };
+  }
+
+  @Post('invitation/otp/request')
+  @ThrottleOtpRequest()
+  async requestInvitationOtp(@Body() body: TeacherLineInvitationTokenDto, @Req() request: Request) {
+    return {
+      success: true,
+      data: await this.service.requestInvitationOtp(body.token, request.ip ?? null),
+    };
+  }
+
+  @Post('invitation/otp/verify')
+  @ThrottleOtpVerify()
+  async verifyInvitationOtp(
+    @Body() body: VerifyTeacherLineInvitationOtpDto,
+    @Req() request: Request,
+  ) {
+    return {
+      success: true,
+      data: await this.service.verifyInvitationOtp(body.token, body.code, request.ip ?? null),
     };
   }
 

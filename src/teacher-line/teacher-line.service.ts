@@ -1,6 +1,8 @@
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ConflictException,
+  GoneException,
   Inject,
   Injectable,
   Logger,
@@ -12,12 +14,13 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
 import { OtpStore } from '../common/otp/otp.store';
+import { hashToken } from '../common/utils/helpers';
 import { appConfig } from '../config/app.config';
 import { authConfig } from '../config/auth.config';
 import { lineConfig } from '../config/line.config';
 import { TeacherLineRepository } from './teacher-line.repository';
 import { TeacherLineSessionStore } from './teacher-line-session.store';
-import type { TeacherLineLinkOutcome } from './teacher-line.types';
+import type { TeacherLineInvitationRow, TeacherLineLinkOutcome } from './teacher-line.types';
 
 /**
  * Identical whether or not the address belongs to a teacher. Telling an
@@ -31,6 +34,10 @@ const GENERIC_OTP_VERIFY_MESSAGE = 'อีเมลหรือรหัสย�
 /** Namespaces this feature's codes in the shared OTP store. */
 function otpKey(teacherId: string): string {
   return `line-link:${teacherId}`;
+}
+
+function invitationOtpKey(invitationId: string): string {
+  return `line-link-invitation:${invitationId}`;
 }
 
 @Injectable()
@@ -63,6 +70,166 @@ export class TeacherLineService {
     }
   }
 
+  private assertInvitationUsable(invitation: TeacherLineInvitationRow | null): asserts invitation {
+    if (!invitation) throw new GoneException('ลิงก์ยืนยัน LINE ไม่ถูกต้องหรือหมดอายุแล้ว');
+    if (
+      invitation.consumed_at ||
+      invitation.revoked_at ||
+      new Date(invitation.expires_at).getTime() <= Date.now() ||
+      invitation.teacher_status !== 'ACTIVE' ||
+      invitation.membership_status !== 'ACTIVE' ||
+      invitation.membership_deleted_at
+    ) {
+      throw new GoneException('ลิงก์ยืนยัน LINE ไม่ถูกต้องหรือหมดอายุแล้ว');
+    }
+  }
+
+  private maskEmail(email: string): string {
+    const [localPart, domain] = email.split('@');
+    if (!localPart || !domain) return '***';
+    return `${localPart.slice(0, 1)}***@${domain}`;
+  }
+
+  async issueInvitation(
+    input: {
+      teacherMembershipId: number;
+      teacherId: string;
+      issuedBy: number;
+      baseUrl: string;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<{ id: string; url: string; expiresAt: string }> {
+    if (
+      await this.repository.hasActiveAccountForTeacher(
+        input.teacherId,
+        this.line.messagingChannelId,
+        queryRunner,
+      )
+    ) {
+      throw new ConflictException('ครูคนนี้เชื่อมบัญชี LINE แล้ว กรุณาปลดการเชื่อมต่อก่อน');
+    }
+    const rawToken = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + this.line.invitationTtlHours * 60 * 60 * 1000);
+    const invitation = await this.repository.createInvitation(
+      {
+        teacherMembershipId: input.teacherMembershipId,
+        tokenHash: hashToken(rawToken),
+        issuedBy: input.issuedBy,
+        expiresAt,
+      },
+      queryRunner,
+    );
+    const invitationUrl = new URL('/line-link/invite', input.baseUrl);
+    invitationUrl.hash = `token=${encodeURIComponent(rawToken)}`;
+    return {
+      id: invitation.id,
+      url: invitationUrl.toString(),
+      expiresAt: new Date(invitation.expires_at).toISOString(),
+    };
+  }
+
+  async revokeInvitation(
+    teacherMembershipId: number,
+    revokedBy: number,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    return await this.repository.revokeActiveInvitation(
+      teacherMembershipId,
+      revokedBy,
+      'REVOKED_BY_SCHOOL_ADMIN',
+      queryRunner,
+    );
+  }
+
+  async resolveInvitation(rawToken: string): Promise<{
+    teacherName: string;
+    maskedEmail: string;
+    expiresAt: string;
+  }> {
+    this.assertEnabled();
+    const invitation = await this.repository.findInvitationByTokenHash(hashToken(rawToken.trim()));
+    this.assertInvitationUsable(invitation);
+    return {
+      teacherName: `${invitation.first_name} ${invitation.last_name}`.trim(),
+      maskedEmail: this.maskEmail(invitation.email),
+      expiresAt: new Date(invitation.expires_at).toISOString(),
+    };
+  }
+
+  async requestInvitationOtp(rawToken: string, ip: string | null): Promise<{ message: string }> {
+    this.assertEnabled();
+    const invitation = await this.repository.findInvitationByTokenHash(hashToken(rawToken.trim()));
+    this.assertInvitationUsable(invitation);
+    if (
+      await this.repository.hasActiveAccountForTeacher(
+        invitation.teacher_id,
+        this.line.messagingChannelId,
+      )
+    ) {
+      throw new ConflictException(
+        'บัญชีนี้เชื่อม LINE แล้ว หากต้องการเปลี่ยนกรุณาติดต่อผู้ดูแลระบบ',
+      );
+    }
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    await this.otpStore.issue(invitationOtpKey(invitation.id), code);
+    await this.emailService.sendOTP(
+      invitation.email,
+      code,
+      Math.floor(this.auth.otpTtlSeconds / 60),
+    );
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: 'line-invitation',
+      action: 'TEACHER_ACCESS_OTP_REQUEST',
+      targetType: 'teacher_line_invitations',
+      targetId: invitation.id,
+      metadata: { via: 'LINE_INVITATION', schoolId: invitation.school_id },
+      ip,
+    });
+    return { message: 'ส่งรหัสยืนยันไปยังอีเมลที่ลงทะเบียนแล้ว' };
+  }
+
+  async verifyInvitationOtp(
+    rawToken: string,
+    code: string,
+    ip: string | null,
+  ): Promise<{ bindingToken: string; teacherName: string }> {
+    this.assertEnabled();
+    const invitation = await this.repository.findInvitationByTokenHash(hashToken(rawToken.trim()));
+    this.assertInvitationUsable(invitation);
+    const outcome = await this.otpStore.verify(invitationOtpKey(invitation.id), code.trim());
+    if (outcome !== 'ok') {
+      await this.auditLog.record({
+        actorUserId: null,
+        actorLabel: 'line-invitation',
+        action: 'TEACHER_ACCESS_OTP_FAILED',
+        targetType: 'teacher_line_invitations',
+        targetId: invitation.id,
+        metadata: { via: 'LINE_INVITATION', outcome, schoolId: invitation.school_id },
+        ip,
+      });
+      throw new BadRequestException('รหัสยืนยันไม่ถูกต้องหรือหมดอายุแล้ว');
+    }
+    if (
+      await this.repository.hasActiveAccountForTeacher(
+        invitation.teacher_id,
+        this.line.messagingChannelId,
+      )
+    ) {
+      throw new ConflictException(
+        'บัญชีนี้เชื่อม LINE แล้ว หากต้องการเปลี่ยนกรุณาติดต่อผู้ดูแลระบบ',
+      );
+    }
+    return {
+      bindingToken: await this.sessionStore.createBindingSession({
+        teacherId: invitation.teacher_id,
+        email: invitation.email,
+        invitationId: invitation.id,
+      }),
+      teacherName: `${invitation.first_name} ${invitation.last_name}`.trim(),
+    };
+  }
+
   /**
    * Step 1. Emails a code to the address the teacher typed. The response never
    * varies, so a caller learns nothing from it.
@@ -93,13 +260,11 @@ export class TeacherLineService {
         metadata: { via: 'LINE_LINK' },
         ip,
       });
-    } catch (error) {
+    } catch {
       // Keep the public response indistinguishable from an unknown address.
       // Operational failures remain visible in server logs without exposing
       // the address or proving that a teacher account exists.
-      this.logger.error(
-        `LINE link OTP delivery failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error('LINE link OTP delivery failed');
     }
     return { message: GENERIC_OTP_REQUEST_MESSAGE };
   }
@@ -132,12 +297,21 @@ export class TeacherLineService {
           metadata: { via: 'LINE_LINK', outcome },
           ip,
         });
-      } catch (error) {
-        this.logger.error(
-          `LINE link OTP failure audit failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        this.logger.error('LINE link OTP failure audit failed');
       }
       throw new BadRequestException(GENERIC_OTP_VERIFY_MESSAGE);
+    }
+
+    if (
+      await this.repository.hasActiveAccountForTeacher(
+        teacher.teacher_id,
+        this.line.messagingChannelId,
+      )
+    ) {
+      throw new ConflictException(
+        'บัญชีนี้เชื่อม LINE แล้ว หากต้องการเปลี่ยนกรุณาติดต่อผู้ดูแลระบบ',
+      );
     }
 
     return {
@@ -196,10 +370,8 @@ export class TeacherLineService {
       const result = await this.messaging.completeAuthorization(code, pending.nonce);
       identity = result.identity;
       friendState = result.friendState;
-    } catch (error) {
-      this.logger.error(
-        `LINE link callback failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      this.logger.error('LINE link callback failed at the messaging provider');
       return { outcome: 'FAILED', addContactUrl: null };
     }
 
@@ -210,95 +382,109 @@ export class TeacherLineService {
     }
 
     const channelId = this.line.messagingChannelId;
-    const outcome = await this.repository.withTransaction(async (queryRunner) => {
-      let heldByOther = await this.repository.findActiveAccountByProviderUser(
-        channelId,
-        identity.providerUserId,
-        queryRunner,
-      );
-      let linkOutcome: 'SUCCESS' | 'ALREADY_LINKED_TO_ANOTHER_TEACHER';
-      if (heldByOther && heldByOther.teacher_id !== session.teacherId) {
-        const ownerStillActive = await this.repository.hasActiveTeacherMembership(
-          heldByOther.teacher_id,
-          queryRunner,
-        );
-        if (ownerStillActive) {
-          linkOutcome = 'ALREADY_LINKED_TO_ANOTHER_TEACHER';
-        } else {
-          await this.repository.unlinkAccount(
-            heldByOther.id,
-            'STALE_INACTIVE_TEACHER_BINDING',
-            queryRunner,
-          );
-          heldByOther = null;
-          linkOutcome = 'SUCCESS';
+    let outcome: TeacherLineLinkOutcome;
+    try {
+      outcome = await this.repository.withTransaction(async (queryRunner) => {
+        const invitation = session.invitationId
+          ? await this.repository.findInvitationById(session.invitationId, queryRunner, true)
+          : null;
+        if (session.invitationId) {
+          this.assertInvitationUsable(invitation);
+          if (invitation.teacher_id !== session.teacherId) {
+            throw new GoneException('ลิงก์ยืนยัน LINE ไม่ถูกต้องหรือหมดอายุแล้ว');
+          }
         }
-      } else {
-        linkOutcome = 'SUCCESS';
-      }
-
-      if (linkOutcome === 'SUCCESS') {
-        const current = await this.repository.findActiveAccountForTeacher(
-          session.teacherId,
+        let heldByOther = await this.repository.findActiveAccountByProviderUser(
           channelId,
+          identity.providerUserId,
           queryRunner,
         );
-        if (current && current.provider_user_id === identity.providerUserId) {
-          // Re-verifying the same account: refresh what we know, keep the row.
-          await this.repository.updateFriendState(
-            current.id,
-            friendState,
-            identity.displayName,
+        let linkOutcome: 'SUCCESS' | 'TEACHER_ALREADY_LINKED' | 'ALREADY_LINKED_TO_ANOTHER_TEACHER';
+        if (heldByOther && heldByOther.teacher_id !== session.teacherId) {
+          const ownerStillActive = await this.repository.hasActiveTeacherMembership(
+            heldByOther.teacher_id,
             queryRunner,
           );
-        } else {
-          if (current) {
-            // Replaced, not overwritten — the old binding stays readable so
-            // previous recipients remain auditable.
+          if (ownerStillActive) {
+            linkOutcome = 'ALREADY_LINKED_TO_ANOTHER_TEACHER';
+          } else {
             await this.repository.unlinkAccount(
-              current.id,
-              'REPLACED_BY_NEW_VERIFICATION',
+              heldByOther.id,
+              'STALE_INACTIVE_TEACHER_BINDING',
               queryRunner,
             );
+            heldByOther = null;
+            linkOutcome = 'SUCCESS';
           }
-          await this.repository.insertAccount(
-            {
-              teacherId: session.teacherId,
-              providerChannelId: channelId,
-              providerUserId: identity.providerUserId,
-              displayName: identity.displayName,
-              friendState,
-            },
+        } else {
+          linkOutcome = 'SUCCESS';
+        }
+
+        if (linkOutcome === 'SUCCESS') {
+          const current = await this.repository.findActiveAccountForTeacher(
+            session.teacherId,
+            channelId,
             queryRunner,
           );
+          if (current) {
+            linkOutcome = 'TEACHER_ALREADY_LINKED';
+          } else {
+            await this.repository.insertAccount(
+              {
+                teacherId: session.teacherId,
+                providerChannelId: channelId,
+                providerUserId: identity.providerUserId,
+                displayName: identity.displayName,
+                friendState,
+              },
+              queryRunner,
+            );
+            if (invitation) {
+              const consumed = await this.repository.consumeInvitation(invitation.id, queryRunner);
+              if (!consumed) {
+                throw new GoneException('ลิงก์ยืนยัน LINE ไม่ถูกต้องหรือหมดอายุแล้ว');
+              }
+            }
+          }
         }
+
+        // Binding and its audit record commit or roll back together. Otherwise an
+        // audit outage could leave an unaudited recipient while the browser sees
+        // a failed callback and retries the operation.
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: null,
+            actorLabel: 'line-link',
+            action:
+              linkOutcome === 'SUCCESS'
+                ? 'TEACHER_MESSAGING_LINK'
+                : 'TEACHER_MESSAGING_LINK_DENIED',
+            targetType: 'teachers',
+            targetId: session.teacherId,
+            metadata: { provider: 'LINE', outcome: linkOutcome },
+            ip,
+          },
+          queryRunner,
+        );
+        return linkOutcome;
+      });
+    } catch (error) {
+      if (error instanceof GoneException) {
+        return { outcome: 'EXPIRED', addContactUrl: null };
       }
+      this.logger.error('LINE link callback transaction failed');
+      return { outcome: 'FAILED', addContactUrl: null };
+    }
 
-      // Binding and its audit record commit or roll back together. Otherwise an
-      // audit outage could leave an unaudited recipient while the browser sees
-      // a failed callback and retries the operation.
-      await this.auditLog.recordAtomic(
-        {
-          actorUserId: null,
-          actorLabel: 'line-link',
-          action:
-            linkOutcome === 'SUCCESS' ? 'TEACHER_MESSAGING_LINK' : 'TEACHER_MESSAGING_LINK_DENIED',
-          targetType: 'teachers',
-          targetId: session.teacherId,
-          metadata: { provider: 'LINE', outcome: linkOutcome },
-          ip,
-        },
-        queryRunner,
-      );
-      return linkOutcome;
-    });
-
-    if (outcome === 'SUCCESS') {
+    if (outcome === 'SUCCESS' || outcome === 'TEACHER_ALREADY_LINKED') {
       await this.sessionStore.clearBindingSession(pending.bindingToken);
     }
     return {
       outcome,
-      addContactUrl: outcome === 'SUCCESS' ? null : this.messaging.buildAddContactUrl(),
+      addContactUrl:
+        outcome === 'ALREADY_LINKED_TO_ANOTHER_TEACHER'
+          ? this.messaging.buildAddContactUrl()
+          : null,
     };
   }
 

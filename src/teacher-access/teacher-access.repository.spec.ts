@@ -197,18 +197,6 @@ describe('TeacherAccessRepository', () => {
     );
   });
 
-  it('loads demo timetable slots through the canonical classroom foreign key', async () => {
-    const { repository, runner } = createRepository();
-
-    await repository.listClassroomSlotsForDate(41, 2, runner as never);
-
-    expect(runner.query).toHaveBeenCalledWith(
-      expect.stringMatching(/slot\.classroom_id = classroom\.id[\s\S]*slot\.day_of_week = \$2/),
-      [41, 2],
-      true,
-    );
-  });
-
   it('selects demo days without attendance recorded outside the same demo grant', async () => {
     const { repository, runner } = createRepository();
     runner.query.mockResolvedValueOnce({

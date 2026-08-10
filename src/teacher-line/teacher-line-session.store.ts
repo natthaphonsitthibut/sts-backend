@@ -6,6 +6,7 @@ import { RedisClientService } from '../redis/redis-client.service';
 export interface TeacherLineBindingSession {
   teacherId: string;
   email: string;
+  invitationId?: string;
 }
 
 /** One in-flight sign-in: ties the provider's `state` back to a binding session. */

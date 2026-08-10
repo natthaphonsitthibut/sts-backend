@@ -100,6 +100,10 @@ async function evaluate(client, expression) {
   return result.result?.value;
 }
 
+async function bodyText(client) {
+  return String(await evaluate(client, 'document.body.innerText'));
+}
+
 async function navigate(client, url) {
   await client.call('Page.navigate', { url });
   await waitFor(
@@ -501,6 +505,8 @@ async function main() {
       `document.querySelector('a[href^="/teacher-access/classes/"]')?.getAttribute('href') || null`,
     );
     assert(teacherAssignmentPath, 'Teacher classroom card did not expose its own route');
+    assert(teacherAssignmentPath.endsWith('/roster'), 'Teacher classroom card did not use roster');
+    const teacherAssignmentBase = teacherAssignmentPath.replace(/\/roster$/, '');
     await evaluate(
       client,
       `document.querySelector('a[href=${JSON.stringify(teacherAssignmentPath)}]')?.click()`,
@@ -537,7 +543,8 @@ async function main() {
         Boolean(
           await evaluate(
             client,
-            `document.querySelector('table') && document.body.innerText.includes(${JSON.stringify(
+            `location.pathname === ${JSON.stringify(`${teacherAssignmentBase}/attendance`)}
+              && document.querySelector('table') && document.body.innerText.includes(${JSON.stringify(
               fixtureStudentNumbers[0],
             )})`,
           ),
@@ -570,13 +577,20 @@ async function main() {
       `Teacher-link attendance status pills drifted: ${JSON.stringify(teacherAttendanceTable.statuses)}`,
     );
 
-    await navigate(client, `${FRONTEND_URL}${teacherAssignmentPath}/history`);
+    await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}?tab=attendance`);
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) === `${teacherAssignmentBase}/attendance`,
+      'Legacy teacher classroom tab did not redirect to canonical attendance',
+    );
+
+    await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}/history`);
     await waitFor(
       async () =>
         Boolean(
           await evaluate(
             client,
-            `location.pathname === ${JSON.stringify(`${teacherAssignmentPath}/history`)}
+            `location.pathname === ${JSON.stringify(`${teacherAssignmentBase}/history/attendance`)}
               && document.querySelector('[data-breadcrumb-current]')?.textContent.trim()
                 === 'ประวัติการเช็คชื่อ'`,
           ),
@@ -594,6 +608,22 @@ async function main() {
     );
     await evaluate(
       client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'นำเข้าไฟล์')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) ===
+        `${teacherAssignmentBase}/history/imports`,
+      'Teacher imports history tab did not persist in the URL',
+    );
+    await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}/history/imports`);
+    await waitFor(
+      async () => (await bodyText(client)).includes('นำเข้าไฟล์'),
+      'Teacher imports history direct-open did not survive refresh navigation',
+    );
+    await evaluate(
+      client,
       `Array.from(document.querySelectorAll('button')).find((button) =>
         button.innerText.includes('ย้อนกลับ'))?.click()`,
     );
@@ -605,14 +635,14 @@ async function main() {
 
     await navigate(
       client,
-      `${FRONTEND_URL}${teacherAssignmentPath}/students/${fixture.students[0].studentUuid}`,
+      `${FRONTEND_URL}${teacherAssignmentBase}/students/${fixture.students[0].studentUuid}`,
     );
     await waitFor(
       async () =>
         Boolean(
           await evaluate(
             client,
-            `location.pathname.startsWith(${JSON.stringify(`${teacherAssignmentPath}/students/`)})
+            `location.pathname.startsWith(${JSON.stringify(`${teacherAssignmentBase}/students/`)})
               && document.querySelector('[data-breadcrumb-current]')?.textContent.trim()
                 === 'ข้อมูลนักเรียน'`,
           ),
@@ -727,22 +757,37 @@ async function main() {
       'Teacher-link roster sort did not reach the server before pagination',
     );
 
-    // The LINE verification page is one static URL shared with every teacher,
-    // so this copy button is the only place the product hands it out. Without
-    // it an admin can see "ยังไม่ยืนยัน" and have no way to act on it.
+    // LINE invitations are teacher-scoped and issued from the unverified row;
+    // there must not be a global reusable verification URL.
     const lineActions = await evaluate(
       client,
       `(() => {
-        const labels = [...document.querySelectorAll('button')].map((button) => button.textContent);
+        const unverifiedRow = [...document.querySelectorAll('tbody tr')].find((row) =>
+          row.querySelector('button[aria-label^="ปลดการเชื่อมต่อ LINE ของ"]')?.disabled,
+        );
+        unverifiedRow?.querySelector('button[aria-label^="เครื่องมือลิงก์ของ"]')?.click();
         return {
-          send: labels.some((text) => text.includes('ส่งลิงก์ทาง LINE') || text.includes('ส่งทาง LINE')),
-          copy: labels.some((text) => text.includes('คัดลอกลิงก์ยืนยัน LINE')),
+          rowFound: Boolean(unverifiedRow),
+          globalCopy: [...document.querySelectorAll('button')].some((button) =>
+            button.textContent.includes('คัดลอกลิงก์ยืนยัน LINE')),
         };
       })()`,
     );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) =>
+              button.getClientRects().length > 0 &&
+              button.textContent.includes('ออกลิงก์ยืนยัน LINE'))`,
+          ),
+        ),
+      'The unverified teacher row did not expose a scoped LINE invitation action',
+    );
     assert(
-      lineActions.send === lineActions.copy,
-      `LINE actions are out of step: send=${lineActions.send}, copy=${lineActions.copy}`,
+      lineActions.rowFound && !lineActions.globalCopy,
+      `LINE invitation scope is wrong: ${JSON.stringify(lineActions)}`,
     );
 
     const unlinkSnapshot = await evaluate(
@@ -1066,7 +1111,7 @@ async function main() {
           'teacher-link and authenticated attendance share the same numbered roster and status-pill table',
           'authenticated attendance search, status selection and mobile internal scrolling work',
           'teacher-link classroom, history and student routes keep their breadcrumbs, menu owner and safe back targets',
-          'the LINE verification link is copyable wherever sending over LINE is offered',
+          'LINE invitations are scoped to unverified teacher rows with no global reusable URL',
           'teacher-link roster renders one profile avatar per visible teacher',
           'LINE unlink icons stay visible, disable by verification state and refresh after unlink',
           'LINE link result omits the guest profile avatar',

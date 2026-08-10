@@ -29,6 +29,7 @@ function createHarness() {
     findTeacherByCitizenId: jest.fn().mockResolvedValue(null),
     findActiveMembership: jest.fn().mockResolvedValue(null),
     createTeacher: jest.fn(),
+    reactivateTeacher: jest.fn(),
     createMembership: jest.fn().mockResolvedValue({ id: '5' }),
     findTeacherById: jest.fn(),
     updateTeacher: jest.fn(),
@@ -77,6 +78,34 @@ describe('TeachersService duplicate identity messages', () => {
     await expect(service.update('7', { email: 'taken@example.com' }, ACTOR)).rejects.toThrow(
       new ConflictException('อีเมลนี้ถูกใช้กับครูคนอื่นแล้ว'),
     );
+  });
+});
+
+describe('TeachersService canonical teacher lifecycle', () => {
+  it('reactivates an inactive canonical teacher before attaching a new membership', async () => {
+    const { service, repository } = createHarness();
+    repository.findTeacherByCitizenId.mockResolvedValue({
+      id: '7',
+      teacher_status: 'INACTIVE',
+    });
+    repository.findTeacherById.mockResolvedValue({
+      id: '7',
+      school_id: 10,
+      membership_id: '5',
+      teacher_status: 'ACTIVE',
+    });
+
+    await service.create(
+      { schoolId: 10, firstName: 'สมชาย', lastName: 'ใจดี', citizenId: '1234567890123' },
+      ACTOR,
+    );
+
+    expect(repository.reactivateTeacher).toHaveBeenCalledWith('7', 1, expect.anything());
+    expect(repository.createMembership).toHaveBeenCalledWith(
+      { teacherId: '7', schoolId: 10, actorId: 1 },
+      expect.anything(),
+    );
+    expect(repository.createTeacher).not.toHaveBeenCalled();
   });
 });
 

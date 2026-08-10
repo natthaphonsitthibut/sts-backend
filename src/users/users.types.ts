@@ -99,6 +99,7 @@ export interface HydratableUserRow extends Record<string, unknown> {
   role_default_permissions?: unknown;
   password?: string;
   student_uuid?: string;
+  teacher_membership_attention_required?: boolean;
 }
 
 export interface StudentAccountCandidateRow extends Record<string, unknown> {

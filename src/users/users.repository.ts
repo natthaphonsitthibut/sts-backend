@@ -316,7 +316,19 @@ export class UsersRepository {
 
   private readonly userSelectSql = `
     SELECT
-      ${this.userFieldsSql}
+      ${this.userFieldsSql},
+      (
+        EXISTS (
+          SELECT 1 FROM school_teacher_memberships membership
+          WHERE membership.teacher_user_id = u.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM school_teacher_memberships active_membership
+          WHERE active_membership.teacher_user_id = u.id
+            AND active_membership.membership_status = 'ACTIVE'
+            AND active_membership.deleted_at IS NULL
+        )
+      ) AS teacher_membership_attention_required
     FROM users u
     LEFT JOIN roles r ON r.name = u.role
   `;

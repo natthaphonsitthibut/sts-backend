@@ -783,6 +783,11 @@ export class TeacherAccessService {
           : row.line_friend_state === 'FRIEND'
             ? ('VERIFIED' as const)
             : ('VERIFIED_NOT_REACHABLE' as const),
+        lineInvitationId: row.line_invitation_id,
+        lineInvitationStatus: row.line_invitation_status ?? 'NOT_ISSUED',
+        lineInvitationExpiresAt: row.line_invitation_expires_at
+          ? new Date(row.line_invitation_expires_at).toISOString()
+          : null,
       })),
       meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
     };
@@ -847,6 +852,90 @@ export class TeacherAccessService {
         queryRunner,
       );
       return { data: { success: true } };
+    });
+  }
+
+  async issueTeacherLineInvitation(
+    teacherMembershipId: number,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ออกลิงก์ยืนยัน LINE');
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const membership = await this.repository.findMembershipForIssue(
+        teacherMembershipId,
+        queryRunner,
+      );
+      if (
+        !membership ||
+        membership.membership_status !== 'ACTIVE' ||
+        membership.teacher_status !== 'ACTIVE'
+      ) {
+        throw new NotFoundException('ไม่พบครูที่เปิดใช้งานในโรงเรียนนี้');
+      }
+      await this.assertSchoolAccess(membership.school_id, actor);
+      if (!membership.teacher_email?.trim()) {
+        throw new ConflictException('ครูคนนี้ยังไม่มีอีเมลสำหรับรับรหัสยืนยัน');
+      }
+      const invitation = await this.teacherMessaging.issueInvitation(
+        {
+          teacherMembershipId,
+          teacherId: membership.teacher_id,
+          issuedBy: actorId,
+          baseUrl,
+        },
+        queryRunner,
+      );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'TEACHER_LINE_INVITATION_ISSUE',
+          targetType: 'teacher_line_invitations',
+          targetId: invitation.id,
+          metadata: {
+            schoolId: membership.school_id,
+            teacherMembershipId,
+            expiresAt: invitation.expiresAt,
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return { success: true, data: invitation };
+    });
+  }
+
+  async revokeTeacherLineInvitation(teacherMembershipId: number, actor: AuthenticatedRequestUser) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ยกเลิกลิงก์ยืนยัน LINE');
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const membership = await this.repository.findMembershipForIssue(
+        teacherMembershipId,
+        queryRunner,
+      );
+      if (!membership) throw new NotFoundException('ไม่พบครูในโรงเรียนนี้');
+      await this.assertSchoolAccess(membership.school_id, actor);
+      const revoked = await this.teacherMessaging.revokeInvitation(
+        teacherMembershipId,
+        actorId,
+        queryRunner,
+      );
+      if (!revoked) throw new ConflictException('ไม่มีลิงก์ยืนยัน LINE ที่ยังใช้งานได้');
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'TEACHER_LINE_INVITATION_REVOKE',
+          targetType: 'teachers',
+          targetId: membership.teacher_id,
+          metadata: { schoolId: membership.school_id, teacherMembershipId },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return { success: true };
     });
   }
 
@@ -1053,6 +1142,7 @@ export class TeacherAccessService {
       teacherUserId: detail.grant.teacher_user_id,
       teacherUsername: detail.grant.teacher_username,
       teacherDisplayName: detail.grant.teacher_display_name,
+      teacherDataOriginCode: detail.grant.teacher_data_origin_code,
       schoolId: detail.grant.school_id,
       schoolName: detail.grant.school_name,
       schoolTermId: detail.grant.school_term_id,
@@ -1293,6 +1383,9 @@ export class TeacherAccessService {
             schoolTermId: context.schoolTermId,
             academicYear: context.academicYear,
             semester: context.semester,
+            demoAttendanceActionsEnabled:
+              context.teacherDataOriginCode === 'DEMO' &&
+              context.schoolName === 'โรงเรียนเทพศิรินทร์ราชดำริ',
             capabilities: context.capabilities,
             assignments: activeAssignments.map((row) =>
               this.toAssignment(row, context.capabilities),
@@ -1901,7 +1994,7 @@ export class TeacherAccessService {
     );
 
     await this.riskProfileService
-      .enqueueStudents(affectedStudentIds, 'teacher-access-attendance-save')
+      .requestStudentRecalculation(affectedStudentIds, 'teacher-access-attendance-save')
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
@@ -1926,12 +2019,21 @@ export class TeacherAccessService {
       { assignmentId, sessionToken, operation: 'SUBMIT_ATTENDANCE' },
       async (context, queryRunner) => {
         if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        if (
+          context.teacherDataOriginCode !== 'DEMO' ||
+          context.schoolName !== 'โรงเรียนเทพศิรินทร์ราชดำริ'
+        ) {
+          throw new ForbiddenException('ฟังก์ชันข้อมูลสาธิตไม่เปิดใช้กับข้อมูลปฏิบัติงาน');
+        }
         const assignment = await this.repository.findGrantAssignment(
           context.grantId,
           assignmentId,
           queryRunner,
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        if (assignment.assignment_kind !== 'SUBJECT' || !assignment.subject_id) {
+          throw new BadRequestException('ข้อมูลสาธิตใช้ได้เฉพาะ assignment รายวิชา');
+        }
         const rosterIds = await this.repository.listRosterIds(
           Number(context.classroomId),
           queryRunner,
@@ -1971,9 +2073,13 @@ export class TeacherAccessService {
 
         let savedSessions = 0;
         for (const date of dates) {
-          const slots = await this.repository.listClassroomSlotsForDate(
-            Number(context.classroomId),
-            getIsoDayOfWeekFromDateString(date),
+          const slots = await this.repository.listAssignmentSlotsForDate(
+            {
+              classroomId: Number(context.classroomId),
+              subjectId: assignment.subject_id,
+              teacherMembershipId: Number(assignment.teacher_membership_id),
+              isoDayOfWeek: getIsoDayOfWeekFromDateString(date),
+            },
             queryRunner,
           );
           for (const slot of slots) {
@@ -2008,7 +2114,7 @@ export class TeacherAccessService {
       },
     );
     this.riskProfileService
-      ?.enqueueStudents(affectedStudentIds, 'teacher-access-demo-absences')
+      ?.requestStudentRecalculation(affectedStudentIds, 'teacher-access-demo-absences')
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`Failed to enqueue demo attendance risk recalculation: ${message}`);
@@ -2028,6 +2134,12 @@ export class TeacherAccessService {
       { assignmentId, sessionToken, operation: 'SUBMIT_ATTENDANCE' },
       async (context, queryRunner) => {
         if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        if (
+          context.teacherDataOriginCode !== 'DEMO' ||
+          context.schoolName !== 'โรงเรียนเทพศิรินทร์ราชดำริ'
+        ) {
+          throw new ForbiddenException('ฟังก์ชันข้อมูลสาธิตไม่เปิดใช้กับข้อมูลปฏิบัติงาน');
+        }
         const assignment = await this.repository.findGrantAssignment(
           context.grantId,
           assignmentId,

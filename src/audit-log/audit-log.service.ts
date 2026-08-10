@@ -274,6 +274,22 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'outcome', label: 'ผลลัพธ์' },
     ],
   },
+  TEACHER_LINE_INVITATION_ISSUE: {
+    domain: 'tasks',
+    label: 'ออกคำเชิญยืนยันบัญชี LINE ของครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'expiresAt', label: 'หมดอายุ' },
+    ],
+  },
+  TEACHER_LINE_INVITATION_REVOKE: {
+    domain: 'tasks',
+    label: 'ยกเลิกคำเชิญยืนยันบัญชี LINE ของครู',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'reason', label: 'เหตุผล' },
+    ],
+  },
   TEACHER_MESSAGING_LINK_DENIED: {
     domain: 'tasks',
     label: 'เชื่อมบัญชี LINE ของครูไม่สำเร็จ',

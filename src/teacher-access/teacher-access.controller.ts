@@ -125,6 +125,24 @@ export class TeacherAccessGrantController {
     return this.service.unlinkTeacherLineAccount(teacherMembershipId, actor);
   }
 
+  @Post('teacher-memberships/:teacherMembershipId/line-invitation')
+  issueLineInvitation(
+    @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.issueTeacherLineInvitation(teacherMembershipId, actor, baseUrl);
+  }
+
+  @Post('teacher-memberships/:teacherMembershipId/line-invitation/revoke')
+  revokeLineInvitation(
+    @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.revokeTeacherLineInvitation(teacherMembershipId, actor);
+  }
+
   @Get('teacher-memberships/:teacherMembershipId/photo')
   async teacherRosterPhoto(
     @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,

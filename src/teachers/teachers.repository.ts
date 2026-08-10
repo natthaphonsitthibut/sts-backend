@@ -171,10 +171,13 @@ export class TeachersRepository {
   async findTeacherByCitizenId(
     citizenId: string,
     queryRunner: QueryRunner,
-  ): Promise<{ id: string } | null> {
-    const result = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
+  ): Promise<{ id: string; teacher_status: 'ACTIVE' | 'INACTIVE' } | null> {
+    const result = await createSqlQueryExecutor(queryRunner).query<{
+      id: string;
+      teacher_status: 'ACTIVE' | 'INACTIVE';
+    }>(
       `
-        SELECT id::text
+        SELECT id::text, teacher_status
         FROM teachers
         WHERE citizen_id = $1 AND deleted_at IS NULL
         LIMIT 1
@@ -182,6 +185,23 @@ export class TeachersRepository {
       [citizenId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async reactivateTeacher(
+    teacherId: string,
+    actorId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        UPDATE teachers
+        SET teacher_status = 'ACTIVE', updated_by = $2, updated_at = now()
+        WHERE id = $1
+          AND teacher_status = 'INACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [teacherId, actorId],
+    );
   }
 
   async createTeacher(

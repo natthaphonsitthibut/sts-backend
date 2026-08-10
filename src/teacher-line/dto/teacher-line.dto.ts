@@ -31,6 +31,20 @@ export class StartTeacherLineAuthorizationDto {
   token!: string;
 }
 
+export class TeacherLineInvitationTokenDto {
+  @Transform(trimText)
+  @IsString()
+  @Matches(/^[0-9a-f]{64}$/i, { message: 'ลิงก์ยืนยัน LINE ไม่ถูกต้อง' })
+  token!: string;
+}
+
+export class VerifyTeacherLineInvitationOtpDto extends TeacherLineInvitationTokenDto {
+  @Transform(trimText)
+  @IsString()
+  @Matches(/^[0-9]{6}$/, { message: 'รหัสยืนยันต้องเป็นตัวเลข 6 หลัก' })
+  code!: string;
+}
+
 /**
  * Query LINE puts on the callback. Everything is optional at the DTO level
  * because a user who declines consent is redirected back with `error` and no

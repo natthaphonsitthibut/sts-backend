@@ -13,6 +13,7 @@ const NOW = new Date();
 const FUTURE = new Date(NOW.getTime() + 86_400_000).toISOString();
 const PAST = new Date(NOW.getTime() - 86_400_000).toISOString();
 const TODAY = getBangkokDateString(NOW);
+const SHOWCASE_SCHOOL_NAME = 'โรงเรียนเทพศิรินทร์ราชดำริ';
 
 const GRANT: TeacherAccessGrantRow = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -21,6 +22,7 @@ const GRANT: TeacherAccessGrantRow = {
   teacher_username: 'teacher.one',
   teacher_display_name: 'ครู หนึ่ง',
   teacher_email: 'teacher.one@sts-demo.ac.th',
+  teacher_data_origin_code: 'OPERATIONAL',
   teacher_status: 'ACTIVE',
   membership_status: 'ACTIVE',
   membership_deleted_at: null,
@@ -120,7 +122,6 @@ type RepositoryMock = jest.Mocked<
     | 'listRecentClassroomSchoolDays'
     | 'ensureDemoSchoolDays'
     | 'hasNonDemoAttendanceSessions'
-    | 'listClassroomSlotsForDate'
     | 'deleteClassroomRecentAttendance'
     | 'findClassroomPresentation'
     | 'updateClassroomPresentation'
@@ -172,7 +173,6 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
       .mockResolvedValue(['2026-08-03', '2026-08-04', '2026-08-05']),
     ensureDemoSchoolDays: jest.fn().mockResolvedValue(undefined),
     hasNonDemoAttendanceSessions: jest.fn().mockResolvedValue(false),
-    listClassroomSlotsForDate: jest.fn().mockResolvedValue([{ id: '71' }]),
     deleteClassroomRecentAttendance: jest.fn().mockResolvedValue(3),
     findClassroomPresentation: jest.fn().mockResolvedValue({
       card_cover_color: '#4F86E8',
@@ -190,7 +190,7 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
   };
   const attendance = { saveAttendanceWithinTransaction: jest.fn() };
   const automation = { checkConsecutiveAbsences: jest.fn().mockResolvedValue([]) };
-  const risk = { enqueueStudents: jest.fn().mockResolvedValue(undefined) };
+  const risk = { requestStudentRecalculation: jest.fn().mockResolvedValue(undefined) };
   const tokenEncryption = {
     encrypt: jest.fn((value: string) => `v1:${value}`),
     decrypt: jest.fn((value: string) => value.replace(/^v1:/, '')),
@@ -220,6 +220,12 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
   const teacherMessaging = {
     markUnreachable: jest.fn().mockResolvedValue(undefined),
     unlinkActiveAccountForTeacher: jest.fn().mockResolvedValue(true),
+    issueInvitation: jest.fn().mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+      url: 'https://sts.test/line-link/invite#token=raw-token',
+      expiresAt: '2026-08-11T00:00:00.000Z',
+    }),
+    revokeInvitation: jest.fn().mockResolvedValue(true),
   };
   const studentsService = {
     resolveStudentPhoto: jest
@@ -281,6 +287,9 @@ describe('TeacherAccessService', () => {
         last_used_at: null,
         line_verified: false,
         line_friend_state: null,
+        line_invitation_id: null,
+        line_invitation_status: null,
+        line_invitation_expires_at: null,
         total_count: 1,
       },
     ]);
@@ -873,6 +882,7 @@ describe('TeacherAccessService', () => {
       teacher_id: '7',
       teacher_user_id: 44,
       teacher_display_name: 'ครู หนึ่ง',
+      teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
       teacher_status: 'ACTIVE',
     });
@@ -904,6 +914,7 @@ describe('TeacherAccessService', () => {
       teacher_id: '7',
       teacher_user_id: 44,
       teacher_display_name: 'ครู หนึ่ง',
+      teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
       teacher_status: 'ACTIVE',
     });
@@ -913,6 +924,56 @@ describe('TeacherAccessService', () => {
       NotFoundException,
     );
     expect(teacherMessaging.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
+  });
+
+  it('issues a per-teacher LINE invitation only after school scope validation', async () => {
+    const { service, repository, teacherMessaging, auditLog } = createHarness();
+    repository.findMembershipForIssue.mockResolvedValue({
+      id: '12',
+      school_id: 10,
+      teacher_id: '7',
+      teacher_user_id: 44,
+      teacher_display_name: 'ครู หนึ่ง',
+      teacher_email: 'teacher.one@sts-demo.ac.th',
+      membership_status: 'ACTIVE',
+      teacher_status: 'ACTIVE',
+    });
+
+    const result = await service.issueTeacherLineInvitation(12, ACTOR, 'https://sts.test');
+    expect(result.success).toBe(true);
+    expect(typeof result.data.id).toBe('string');
+    expect(teacherMessaging.issueInvitation).toHaveBeenCalledWith(
+      {
+        teacherMembershipId: 12,
+        teacherId: '7',
+        issuedBy: 1,
+        baseUrl: 'https://sts.test',
+      },
+      expect.anything(),
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'TEACHER_LINE_INVITATION_ISSUE' }),
+      expect.anything(),
+    );
+  });
+
+  it('refuses to issue a LINE invitation when the teacher has no email', async () => {
+    const { service, repository, teacherMessaging } = createHarness();
+    repository.findMembershipForIssue.mockResolvedValue({
+      id: '12',
+      school_id: 10,
+      teacher_id: '7',
+      teacher_user_id: 44,
+      teacher_display_name: 'ครู หนึ่ง',
+      teacher_email: null,
+      membership_status: 'ACTIVE',
+      teacher_status: 'ACTIVE',
+    });
+
+    await expect(service.issueTeacherLineInvitation(12, ACTOR, 'https://sts.test')).rejects.toThrow(
+      'ยังไม่มีอีเมล',
+    );
+    expect(teacherMessaging.issueInvitation).not.toHaveBeenCalled();
   });
 
   it('refuses to issue a link for a teacher with no class this term', async () => {
@@ -1060,7 +1121,16 @@ describe('TeacherAccessService', () => {
   });
 
   it('creates demo attendance for the same three classroom days without overwriting real data', async () => {
-    const { service, repository, attendance, risk } = createHarness();
+    const { service, repository, attendance, risk } = createHarness({
+      teacher_data_origin_code: 'DEMO',
+      school_name: SHOWCASE_SCHOOL_NAME,
+    });
+    repository.findGrantAssignment.mockResolvedValue({
+      ...ASSIGNMENT,
+      assignment_kind: 'SUBJECT',
+      subject_id: 7,
+    });
+    repository.listAssignmentSlotsForDate.mockResolvedValue([{ id: '71', period: 1 }]);
     repository.listRosterIds.mockResolvedValue([
       'student-1',
       'student-2',
@@ -1085,6 +1155,10 @@ describe('TeacherAccessService', () => {
       expect.anything(),
     );
     expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledTimes(3);
+    expect(repository.listAssignmentSlotsForDate).toHaveBeenCalledWith(
+      { classroomId: 41, subjectId: 7, teacherMembershipId: 12, isoDayOfWeek: 1 },
+      expect.anything(),
+    );
     expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledWith(
       [
         { student_id: 'student-1', status: 'P_ABSENT' },
@@ -1098,7 +1172,7 @@ describe('TeacherAccessService', () => {
       71,
       '2026-08-03',
     );
-    expect(risk.enqueueStudents).toHaveBeenCalledWith(
+    expect(risk.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-1', 'student-2', 'student-3', 'student-4'],
       'teacher-access-demo-absences',
     );
@@ -1110,7 +1184,16 @@ describe('TeacherAccessService', () => {
   });
 
   it('returns demo attendance before immediate case automation finishes', async () => {
-    const { service, repository, attendance, automation } = createHarness();
+    const { service, repository, attendance, automation } = createHarness({
+      teacher_data_origin_code: 'DEMO',
+      school_name: SHOWCASE_SCHOOL_NAME,
+    });
+    repository.findGrantAssignment.mockResolvedValue({
+      ...ASSIGNMENT,
+      assignment_kind: 'SUBJECT',
+      subject_id: 7,
+    });
+    repository.listAssignmentSlotsForDate.mockResolvedValue([{ id: '71', period: 1 }]);
     repository.listRosterIds.mockResolvedValue([
       'student-1',
       'student-2',
@@ -1142,7 +1225,10 @@ describe('TeacherAccessService', () => {
   });
 
   it('clears only demo-marked sessions from the same three classroom days', async () => {
-    const { service, repository } = createHarness();
+    const { service, repository } = createHarness({
+      teacher_data_origin_code: 'DEMO',
+      school_name: SHOWCASE_SCHOOL_NAME,
+    });
 
     const result = await service.clearPublicAttendanceDemo(
       'valid-token-value-that-is-at-least-thirty-two-characters',
@@ -1159,6 +1245,18 @@ describe('TeacherAccessService', () => {
       dates: ['2026-08-03', '2026-08-04', '2026-08-05'],
       deletedSessionCount: 3,
     });
+  });
+
+  it('denies demo attendance for operational teacher data', async () => {
+    const { service, attendance } = createHarness();
+
+    await expect(
+      service.seedPublicAttendanceDemo(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        31,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(attendance.saveAttendanceWithinTransaction).not.toHaveBeenCalled();
   });
 
   it('deletes a newly uploaded cover when the classroom update rolls back', async () => {

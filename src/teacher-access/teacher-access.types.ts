@@ -12,6 +12,7 @@ export interface TeacherAccessGrantRow extends Record<string, unknown> {
   teacher_username: string;
   teacher_display_name: string;
   teacher_email: string | null;
+  teacher_data_origin_code: string | null;
   teacher_status: string;
   membership_status: 'ACTIVE' | 'INACTIVE';
   membership_deleted_at: string | Date | null;
@@ -108,6 +109,7 @@ export interface ActiveTeacherGrantContext {
   teacherUserId: number | null;
   teacherUsername: string;
   teacherDisplayName: string;
+  teacherDataOriginCode: string | null;
   schoolId: number;
   schoolName: string;
   schoolTermId: string;

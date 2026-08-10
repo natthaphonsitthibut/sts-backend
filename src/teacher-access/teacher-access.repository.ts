@@ -29,6 +29,7 @@ interface MembershipIssueRow extends Record<string, unknown> {
   teacher_id: string;
   teacher_user_id: number;
   teacher_display_name: string;
+  teacher_email: string | null;
   membership_status: 'ACTIVE' | 'INACTIVE';
   teacher_status: string;
 }
@@ -52,6 +53,9 @@ export interface TeacherLinkRosterRow extends Record<string, unknown> {
   last_used_at: string | Date | null;
   line_verified: boolean | null;
   line_friend_state: string | null;
+  line_invitation_id: string | null;
+  line_invitation_status: 'ACTIVE' | 'CONSUMED' | 'EXPIRED' | 'REVOKED' | null;
+  line_invitation_expires_at: string | Date | null;
   total_count: number | string;
 }
 
@@ -155,6 +159,7 @@ export class TeacherAccessRepository {
                membership.teacher_id::text AS teacher_id,
                membership.teacher_user_id,
                TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
+               teacher.email AS teacher_email,
                membership.membership_status, teacher.teacher_status
         FROM school_teacher_memberships membership
         JOIN teachers teacher ON teacher.id = membership.teacher_id
@@ -350,6 +355,7 @@ export class TeacherAccessRepository {
         COALESCE(teacher_account.username, TRIM(teacher.first_name || ' ' || teacher.last_name)) AS teacher_username,
         TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
         teacher.email AS teacher_email,
+        teacher_account.data_origin_code AS teacher_data_origin_code,
         teacher.teacher_status AS teacher_status,
         membership.membership_status,
         membership.deleted_at AS membership_deleted_at,
@@ -706,6 +712,15 @@ export class TeacherAccessRepository {
           latest_grant.last_used_at,
           (line_account.id IS NOT NULL) AS line_verified,
           line_account.friend_state AS line_friend_state,
+          latest_invitation.id::text AS line_invitation_id,
+          CASE
+            WHEN latest_invitation.id IS NULL THEN NULL
+            WHEN latest_invitation.consumed_at IS NOT NULL THEN 'CONSUMED'
+            WHEN latest_invitation.revoked_at IS NOT NULL THEN 'REVOKED'
+            WHEN latest_invitation.expires_at <= now() THEN 'EXPIRED'
+            ELSE 'ACTIVE'
+          END AS line_invitation_status,
+          latest_invitation.expires_at AS line_invitation_expires_at,
           COUNT(*) OVER()::int AS total_count
         FROM school_teacher_memberships membership
         JOIN teachers teacher ON teacher.id = membership.teacher_id
@@ -717,6 +732,13 @@ export class TeacherAccessRepository {
           ORDER BY access_grant.issued_at DESC, access_grant.id DESC
           LIMIT 1
         ) latest_grant ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT invitation.*
+          FROM teacher_line_invitations invitation
+          WHERE invitation.teacher_membership_id = membership.id
+          ORDER BY invitation.issued_at DESC, invitation.id DESC
+          LIMIT 1
+        ) latest_invitation ON TRUE
         LEFT JOIN teacher_messaging_accounts line_account
           ON line_account.teacher_id = teacher.id
          AND line_account.provider = 'LINE'
@@ -1127,28 +1149,6 @@ export class TeacherAccessRepository {
         ORDER BY slot.period
       `,
       [input.classroomId, input.subjectId, input.teacherMembershipId, input.isoDayOfWeek],
-    );
-    return result.rows;
-  }
-
-  async listClassroomSlotsForDate(
-    classroomId: number,
-    isoDayOfWeek: number,
-    queryRunner: QueryRunner,
-  ): Promise<Array<{ id: string }>> {
-    const result = await this.executor(queryRunner).query<{ id: string }>(
-      `
-        SELECT slot.id::text
-        FROM school_classrooms classroom
-        JOIN timetable_slots slot
-          ON slot.classroom_id = classroom.id
-        WHERE classroom.id = $1
-          AND classroom.deleted_at IS NULL
-          AND slot.day_of_week = $2
-          AND slot.deleted_at IS NULL
-        ORDER BY slot.period
-      `,
-      [classroomId, isoDayOfWeek],
     );
     return result.rows;
   }

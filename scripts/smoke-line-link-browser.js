@@ -12,6 +12,7 @@ process.env.LINE_OA_BASIC_ID = '@sts-smoke';
 process.env.FRONTEND_BASE_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5174';
 
 const { spawn } = require('child_process');
+const { createHash, randomBytes } = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -297,6 +298,21 @@ async function resetThrottleCounters(app) {
 
 async function cleanup(dataSource) {
   await dataSource.query(
+    `DELETE FROM teacher_line_invitations
+     WHERE teacher_membership_id IN (
+       SELECT membership.id
+       FROM school_teacher_memberships membership
+       JOIN teachers teacher ON teacher.id = membership.teacher_id
+       WHERE teacher.email = $1
+     )`,
+    [EMAIL],
+  );
+  await dataSource.query(
+    `DELETE FROM school_teacher_memberships
+     WHERE teacher_id IN (SELECT id FROM teachers WHERE email = $1)`,
+    [EMAIL],
+  );
+  await dataSource.query(
     `DELETE FROM teacher_messaging_accounts
      WHERE teacher_id IN (SELECT id FROM teachers WHERE email = $1)`,
     [EMAIL],
@@ -333,10 +349,36 @@ async function main() {
     }, `Frontend is not serving at ${FRONTEND_URL} — start it before this smoke`);
 
     await cleanup(dataSource);
-    await dataSource.query(
+    const [teacher] = await dataSource.query(
       `INSERT INTO teachers (first_name, last_name, email, teacher_status)
-       VALUES ('Line', 'Browser Smoke', $1, 'ACTIVE')`,
+       VALUES ('Line', 'Browser Smoke', $1, 'ACTIVE')
+       RETURNING id`,
       [EMAIL],
+    );
+    const [school] = await dataSource.query(
+      `SELECT id FROM schools WHERE school_status = 'ACTIVE' ORDER BY id LIMIT 1`,
+    );
+    const [issuer] = await dataSource.query(
+      `SELECT id FROM users ORDER BY (data_origin_code = 'AUTOMATED_TEST') DESC, id LIMIT 1`,
+    );
+    assert(school && issuer, 'The invitation smoke requires one school and one issuing user');
+    const [membership] = await dataSource.query(
+      `INSERT INTO school_teacher_memberships (
+         school_id, teacher_user_id, teacher_id, membership_status, created_by, updated_by
+       )
+       VALUES ($1, NULL, $2, 'ACTIVE', $3, $3)
+       RETURNING id`,
+      [school.id, teacher.id, issuer.id],
+    );
+    const invitationToken = randomBytes(32).toString('hex');
+    const invitationHash = createHash('sha256').update(invitationToken).digest('hex');
+    const [invitation] = await dataSource.query(
+      `INSERT INTO teacher_line_invitations (
+         teacher_membership_id, token_hash, issued_by, expires_at
+       )
+       VALUES ($1, $2, $3, now() + interval '1 hour')
+       RETURNING id`,
+      [membership.id, invitationHash, issuer.id],
     );
 
     chrome = await openChrome();
@@ -404,26 +446,27 @@ async function main() {
       'A binding was stored for a teacher who had not added the account',
     );
 
-    // 6. After adding, the same run completes and the success screen shows.
+    // 6. The scoped one-time invitation resolves without putting its token in
+    //    the query string, emails an OTP, and completes the binding.
     provider.friendState = 'FRIEND';
-    await navigate(client, `${FRONTEND_URL}/line-link`);
-    await waitForSelector(client, '#line-link-email');
-    await fillInput(client, '#line-link-email', EMAIL);
-    await clickText(client, 'ถัดไป');
+    await navigate(client, `${FRONTEND_URL}/line-link/invite#token=${invitationToken}`);
     await waitFor(
-      async () => (await bodyText(client)).includes('กรอกรหัสยืนยัน'),
-      'The second round did not reach the OTP step',
+      async () => {
+        const text = await bodyText(client);
+        return text.includes('ยืนยันบัญชี LINE') && text.includes('l***@sts-smoke.invalid');
+      },
+      'The scoped invitation did not resolve to the expected masked teacher',
     );
     await clickText(client, 'รับรหัส OTP');
     await waitFor(
       async () => (await evaluate(client, "document.querySelectorAll('input').length")) > 1,
-      'The second round did not show the OTP boxes',
+      'The invitation did not show the OTP boxes',
     );
     await fillOtp(client, codes.get(EMAIL));
     await clickText(client, 'ตรวจสอบรหัส');
     await waitFor(
       async () => (await bodyText(client)).includes('เข้าสู่ระบบด้วย LINE'),
-      'The second round did not reach the connect step',
+      'The invitation OTP did not reach the connect step',
     );
     await clickText(client, 'เข้าสู่ระบบด้วย LINE');
     await waitFor(
@@ -438,6 +481,12 @@ async function main() {
     );
     assert(stored.length === 1, 'The binding was not stored exactly once');
     assert(stored[0].friend_state === 'FRIEND', 'The stored friendship state is wrong');
+    const [invitationState] = await dataSource.query(
+      `SELECT consumed_at, revoked_at FROM teacher_line_invitations WHERE id = $1`,
+      [invitation.id],
+    );
+    assert(invitationState?.consumed_at, 'The successful invitation was not consumed');
+    assert(!invitationState?.revoked_at, 'The consumed invitation was unexpectedly revoked');
 
     console.log(
       JSON.stringify({
@@ -448,7 +497,8 @@ async function main() {
           'a wrong code is refused in the UI',
           'a correct code reaches the connect step',
           'a teacher without the OA added lands on the add-friend screen and nothing is stored',
-          'completing the flow stores exactly one reachable binding and shows the success screen',
+          'a scoped fragment-token invitation resolves to a masked teacher identity',
+          'the invitation OTP completes one binding and consumes the invitation',
         ],
       }),
     );
