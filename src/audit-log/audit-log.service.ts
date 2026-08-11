@@ -258,6 +258,16 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'outcome', label: 'ผลลัพธ์' },
     ],
   },
+  TEACHER_ACCESS_ARAID_VERIFY: {
+    domain: 'tasks',
+    label: 'ยืนยัน AraID ของลิงก์ครูสำเร็จ',
+    detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
+  },
+  TEACHER_ACCESS_ARAID_FAILED: {
+    domain: 'tasks',
+    label: 'ยืนยัน AraID ของลิงก์ครูไม่สำเร็จ',
+    detailKeys: [{ key: 'reason', label: 'เหตุผล' }],
+  },
   TEACHER_ACCESS_GRANT_SEND: {
     domain: 'tasks',
     label: 'ส่งลิงก์เข้าใช้งานครูทาง LINE',

@@ -16,6 +16,7 @@ const TEACHER = {
 };
 
 const IDENTITY = { providerUserId: 'U0000000000000000000000000000001', displayName: 'Somchai' };
+const GROUP_TOKEN = 'b'.repeat(64);
 const INVITATION = {
   id: '11111111-1111-4111-8111-111111111111',
   teacher_membership_id: '12',
@@ -43,6 +44,7 @@ function createHarness() {
       operation({} as QueryRunner),
     ),
     findActiveTeacherByEmail: jest.fn().mockResolvedValue(TEACHER),
+    findActiveTeacherByCitizenId: jest.fn().mockResolvedValue(TEACHER),
     findActiveAccountForTeacher: jest.fn().mockResolvedValue(null),
     hasActiveAccountForTeacher: jest.fn().mockResolvedValue(false),
     findActiveAccountByProviderUser: jest.fn().mockResolvedValue(null),
@@ -61,10 +63,23 @@ function createHarness() {
     consumeInvitation: jest.fn().mockResolvedValue(true),
   };
   const sessionStore = {
+    createGroupInvitation: jest.fn().mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      token: GROUP_TOKEN,
+    }),
+    readGroupInvitation: jest.fn().mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      schoolId: 7,
+      schoolName: 'โรงเรียนทดสอบ',
+      startsAt: Date.now() - 60_000,
+      expiresAt: Date.now() + 86_400_000,
+    }),
+    readActiveGroupInvitation: jest.fn().mockResolvedValue(null),
+    updateGroupInvitation: jest.fn().mockResolvedValue(true),
+    revokeGroupInvitation: jest.fn().mockResolvedValue(true),
     createBindingSession: jest.fn().mockResolvedValue('binding-token'),
     readBindingSession: jest.fn().mockResolvedValue({
       teacherId: TEACHER.teacher_id,
-      email: TEACHER.email,
     }),
     clearBindingSession: jest.fn().mockResolvedValue(undefined),
     createOAuthState: jest.fn().mockResolvedValue('state-value'),
@@ -79,6 +94,17 @@ function createHarness() {
     verify: jest.fn().mockResolvedValue('ok'),
   };
   const emailService = { sendOTP: jest.fn().mockResolvedValue({ success: true }) };
+  const araIdService = {
+    getVerifiedIdentityNumber: jest.fn().mockResolvedValue('1101700200018'),
+  };
+  const araIdChallengeStore = {
+    create: jest.fn(),
+    read: jest.fn(),
+    claim: jest.fn(),
+    readAuthorization: jest.fn(),
+    approveAuthorization: jest.fn(),
+    consumeApproved: jest.fn(),
+  };
   const auditLog = {
     record: jest.fn().mockResolvedValue(undefined),
     recordAtomic: jest.fn().mockResolvedValue(undefined),
@@ -100,37 +126,157 @@ function createHarness() {
     otpStore as never,
     emailService as never,
     auditLog as never,
+    araIdService as never,
+    araIdChallengeStore as never,
     messaging,
     { messagingChannelId: '2000000002', invitationTtlHours: 24 } as never,
     { frontendBaseUrl: 'https://sts.test' } as never,
     { otpTtlSeconds: 600 } as never,
   );
-  return { service, repository, sessionStore, otpStore, emailService, auditLog, messaging };
+  return {
+    service,
+    repository,
+    sessionStore,
+    otpStore,
+    emailService,
+    auditLog,
+    araIdService,
+    araIdChallengeStore,
+    messaging,
+  };
 }
 
 describe('TeacherLineService', () => {
+  it('issues one expiring group link without teacher identity in the URL', async () => {
+    const { service } = createHarness();
+    const result = await service.issueGroupInvitation({
+      schoolId: 7,
+      schoolName: 'โรงเรียนทดสอบ',
+      startsAt: new Date(Date.now()),
+      expiresAt: new Date(Date.now() + 86_400_000),
+      baseUrl: 'https://sts.test',
+    });
+
+    expect(result.url).toContain(`/line-link#token=${GROUP_TOKEN}`);
+    expect(result.schoolName).toBe('โรงเรียนทดสอบ');
+    expect(result.url).not.toContain(TEACHER.email);
+    expect(result.expiresAt).toBeTruthy();
+  });
+
+  it('rejects group OTP requests after the shared link expires', async () => {
+    const { service, sessionStore, emailService } = createHarness();
+    sessionStore.readGroupInvitation.mockResolvedValue(null);
+
+    await expect(service.requestOtp(TEACHER.email, null, GROUP_TOKEN)).rejects.toBeInstanceOf(
+      GoneException,
+    );
+    expect(emailService.sendOTP).not.toHaveBeenCalled();
+  });
+
   it('answers the same way whether or not the address belongs to a teacher', async () => {
     const known = createHarness();
     const unknown = createHarness();
     unknown.repository.findActiveTeacherByEmail.mockResolvedValue(null);
 
-    const knownAnswer = await known.service.requestOtp(TEACHER.email, null);
-    const unknownAnswer = await unknown.service.requestOtp('stranger@example.com', null);
+    const knownAnswer = await known.service.requestOtp(TEACHER.email, null, GROUP_TOKEN);
+    const unknownAnswer = await unknown.service.requestOtp(
+      'stranger@example.com',
+      null,
+      GROUP_TOKEN,
+    );
 
     // Identical wording is the whole point: a differing response would turn this
     // public form into a way to enumerate staff addresses.
     expect(knownAnswer).toEqual(unknownAnswer);
+    expect(known.repository.findActiveTeacherByEmail).toHaveBeenCalledWith(TEACHER.email, 7);
     expect(known.emailService.sendOTP).toHaveBeenCalledTimes(1);
     expect(unknown.emailService.sendOTP).not.toHaveBeenCalled();
+  });
+
+  it('matches AraID only against an active teacher in the invitation school', async () => {
+    const { service, repository, araIdService, sessionStore } = createHarness();
+
+    await expect(service.verifyAraId(GROUP_TOKEN, 'araid-profile')).resolves.toEqual({
+      bindingToken: 'binding-token',
+      teacherName: `${TEACHER.first_name} ${TEACHER.last_name}`,
+    });
+
+    expect(araIdService.getVerifiedIdentityNumber).toHaveBeenCalledWith('araid-profile');
+    expect(repository.findActiveTeacherByCitizenId).toHaveBeenCalledWith('1101700200018', 7);
+    expect(sessionStore.createBindingSession).toHaveBeenCalledWith(
+      expect.objectContaining({ schoolId: 7, teacherId: TEACHER.teacher_id }),
+    );
+  });
+
+  it('creates a real expiring AraID QR and can restore its details after refresh', async () => {
+    const { service, araIdChallengeStore, sessionStore } = createHarness();
+    const stored = {
+      token: 'c'.repeat(43),
+      invitationId: '22222222-2222-4222-8222-222222222222',
+      schoolId: 7,
+      schoolName: 'โรงเรียนทดสอบ',
+      referenceCode: 'A1B2C3',
+      status: 'PENDING',
+      entryExpiresAt: Date.now() + 90_000,
+      expiresAt: Date.now() + 90_000,
+    };
+    araIdChallengeStore.create.mockResolvedValue(stored);
+    araIdChallengeStore.read.mockResolvedValue(stored);
+    sessionStore.readActiveGroupInvitation.mockResolvedValue({
+      id: stored.invitationId,
+      schoolId: stored.schoolId,
+      schoolName: stored.schoolName,
+      startsAt: Date.now() - 60_000,
+      expiresAt: Date.now() + 86_400_000,
+    });
+
+    const created = await service.createAraIdChallenge(GROUP_TOKEN);
+    const restored = await service.getAraIdChallenge(stored.token);
+
+    expect(created.verificationUrl).toBe(
+      `https://sts.test/line-link/araid-authorize#challenge=${stored.token}`,
+    );
+    expect(created.qrDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(created.referenceCode).toBe('A1B2C3');
+    expect(created.expiresAt).toBe(new Date(stored.entryExpiresAt).toISOString());
+    expect(restored).toEqual(created);
+  }, 15_000);
+
+  it('claims an active QR before login so completion can outlive the entry window', async () => {
+    const { service, araIdChallengeStore, sessionStore } = createHarness();
+    const challenge = {
+      invitationId: '22222222-2222-4222-8222-222222222222',
+      schoolId: 7,
+      schoolName: 'โรงเรียนทดสอบ',
+      referenceCode: 'A1B2C3',
+      status: 'PENDING',
+      entryExpiresAt: Date.now() + 90_000,
+      expiresAt: Date.now() + 90_000,
+    };
+    araIdChallengeStore.read.mockResolvedValue(challenge);
+    araIdChallengeStore.claim.mockResolvedValue({
+      authorizationToken: 'd'.repeat(43),
+      expiresAt: Date.now() + 600_000,
+    });
+    sessionStore.readActiveGroupInvitation.mockResolvedValue({
+      id: challenge.invitationId,
+      schoolId: 7,
+      startsAt: Date.now() - 60_000,
+      expiresAt: Date.now() + 86_400_000,
+    });
+
+    await expect(service.beginAraIdChallenge('c'.repeat(43))).resolves.toMatchObject({
+      authorizationToken: 'd'.repeat(43),
+    });
   });
 
   it('refuses to hand out a binding session on a wrong code', async () => {
     const { service, otpStore, sessionStore } = createHarness();
     otpStore.verify.mockResolvedValue('wrong');
 
-    await expect(service.verifyOtp(TEACHER.email, '000000', null)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.verifyOtp(TEACHER.email, '000000', null, GROUP_TOKEN),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(sessionStore.createBindingSession).not.toHaveBeenCalled();
   });
 
@@ -138,9 +284,9 @@ describe('TeacherLineService', () => {
     const { service, repository, sessionStore } = createHarness();
     repository.hasActiveAccountForTeacher.mockResolvedValue(true);
 
-    await expect(service.verifyOtp(TEACHER.email, '123456', null)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      service.verifyOtp(TEACHER.email, '123456', null, GROUP_TOKEN),
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(sessionStore.createBindingSession).not.toHaveBeenCalled();
   });
 
@@ -148,9 +294,9 @@ describe('TeacherLineService', () => {
     const { service, repository, otpStore } = createHarness();
     repository.findActiveTeacherByEmail.mockResolvedValue(null);
 
-    await expect(service.verifyOtp('stranger@example.com', '123456', null)).rejects.toThrow(
-      'อีเมลหรือรหัสยืนยันไม่ถูกต้อง',
-    );
+    await expect(
+      service.verifyOtp('stranger@example.com', '123456', null, GROUP_TOKEN),
+    ).rejects.toThrow('อีเมลหรือรหัสยืนยันไม่ถูกต้อง');
     expect(otpStore.verify).not.toHaveBeenCalled();
   });
 
@@ -160,7 +306,7 @@ describe('TeacherLineService', () => {
       const { service, otpStore } = createHarness();
       otpStore.verify.mockResolvedValue(outcome);
 
-      await expect(service.verifyOtp(TEACHER.email, '000000', null)).rejects.toThrow(
+      await expect(service.verifyOtp(TEACHER.email, '000000', null, GROUP_TOKEN)).rejects.toThrow(
         'อีเมลหรือรหัสยืนยันไม่ถูกต้อง',
       );
     },
@@ -172,8 +318,8 @@ describe('TeacherLineService', () => {
     known.emailService.sendOTP.mockRejectedValue(new Error('mail unavailable'));
     unknown.repository.findActiveTeacherByEmail.mockResolvedValue(null);
 
-    await expect(known.service.requestOtp(TEACHER.email, null)).resolves.toEqual(
-      await unknown.service.requestOtp('stranger@example.com', null),
+    await expect(known.service.requestOtp(TEACHER.email, null, GROUP_TOKEN)).resolves.toEqual(
+      await unknown.service.requestOtp('stranger@example.com', null, GROUP_TOKEN),
     );
   });
 
@@ -305,7 +451,6 @@ describe('TeacherLineService', () => {
     const { service, sessionStore, repository } = createHarness();
     sessionStore.readBindingSession.mockResolvedValue({
       teacherId: TEACHER.teacher_id,
-      email: TEACHER.email,
       invitationId: INVITATION.id,
     });
 
@@ -357,7 +502,7 @@ describe('TeacherLineService', () => {
     const { service, messaging } = createHarness();
     messaging.isEnabled.mockReturnValue(false);
 
-    await expect(service.requestOtp(TEACHER.email, null)).rejects.toBeInstanceOf(
+    await expect(service.requestOtp(TEACHER.email, null, GROUP_TOKEN)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
     await expect(service.startAuthorization('binding-token')).rejects.toBeInstanceOf(

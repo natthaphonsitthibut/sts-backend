@@ -13,7 +13,6 @@ const NOW = new Date();
 const FUTURE = new Date(NOW.getTime() + 86_400_000).toISOString();
 const PAST = new Date(NOW.getTime() - 86_400_000).toISOString();
 const TODAY = getBangkokDateString(NOW);
-const SHOWCASE_SCHOOL_NAME = 'โรงเรียนเทพศิรินทร์ราชดำริ';
 
 const GRANT: TeacherAccessGrantRow = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -22,6 +21,7 @@ const GRANT: TeacherAccessGrantRow = {
   teacher_username: 'teacher.one',
   teacher_display_name: 'ครู หนึ่ง',
   teacher_email: 'teacher.one@sts-demo.ac.th',
+  teacher_citizen_id: '1234567890123',
   teacher_data_origin_code: 'OPERATIONAL',
   teacher_status: 'ACTIVE',
   membership_status: 'ACTIVE',
@@ -119,10 +119,6 @@ type RepositoryMock = jest.Mocked<
     | 'findGrantById'
     | 'syncGrantScopeFromAssignments'
     | 'listAssignmentSlotsForDate'
-    | 'listRecentClassroomSchoolDays'
-    | 'ensureDemoSchoolDays'
-    | 'hasNonDemoAttendanceSessions'
-    | 'deleteClassroomRecentAttendance'
     | 'findClassroomPresentation'
     | 'updateClassroomPresentation'
   >
@@ -168,12 +164,6 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     findGrantById: jest.fn().mockResolvedValue(grant),
     syncGrantScopeFromAssignments: jest.fn().mockResolvedValue(undefined),
     listAssignmentSlotsForDate: jest.fn().mockResolvedValue([]),
-    listRecentClassroomSchoolDays: jest
-      .fn()
-      .mockResolvedValue(['2026-08-03', '2026-08-04', '2026-08-05']),
-    ensureDemoSchoolDays: jest.fn().mockResolvedValue(undefined),
-    hasNonDemoAttendanceSessions: jest.fn().mockResolvedValue(false),
-    deleteClassroomRecentAttendance: jest.fn().mockResolvedValue(3),
     findClassroomPresentation: jest.fn().mockResolvedValue({
       card_cover_color: '#4F86E8',
       cover_image_storage_key: 'classroom-covers/old.png',
@@ -204,6 +194,28 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
   const magicSessionStore = {
     issue: jest.fn().mockResolvedValue('ms_session'),
     isVerified: jest.fn().mockResolvedValue(true),
+  };
+  const araIdService = {
+    getVerifiedIdentityNumber: jest.fn().mockResolvedValue('1234567890123'),
+  };
+  const araIdChallengeStore = {
+    create: jest.fn().mockResolvedValue({
+      token: 'challenge-token',
+      grantId: GRANT.id,
+      referenceCode: 'ABC123',
+      status: 'PENDING',
+      entryExpiresAt: Date.now() + 90_000,
+      expiresAt: Date.now() + 90_000,
+    }),
+    read: jest.fn(),
+    claim: jest.fn().mockResolvedValue({
+      authorizationToken: 'authorization-token',
+      expiresAt: Date.now() + 600_000,
+    }),
+    resume: jest.fn(),
+    readAuthorization: jest.fn(),
+    approveAuthorization: jest.fn().mockResolvedValue(true),
+    consumeApproved: jest.fn(),
   };
   const storage = {
     kind: 'private-object',
@@ -242,6 +254,8 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     emailService as never,
     otpStore as never,
     magicSessionStore as never,
+    araIdService as never,
+    araIdChallengeStore as never,
     messaging as never,
     teacherMessaging as never,
     storage as never,
@@ -260,6 +274,8 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     emailService,
     otpStore,
     magicSessionStore,
+    araIdService,
+    araIdChallengeStore,
     storage,
     automation,
     risk,
@@ -1033,6 +1049,150 @@ describe('TeacherAccessService', () => {
     );
   });
 
+  it('issues the same magic session when AraID matches the teacher identity', async () => {
+    const { service, araIdService, magicSessionStore, auditLog } = createHarness({
+      step_up_policy: 'EMAIL_OTP',
+    });
+
+    await expect(
+      service.verifyAraId(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        'araid-profile-id',
+      ),
+    ).resolves.toMatchObject({ data: { sessionToken: 'ms_session' } });
+
+    expect(araIdService.getVerifiedIdentityNumber).toHaveBeenCalledWith('araid-profile-id');
+    expect(magicSessionStore.issue).toHaveBeenCalledWith(GRANT.id);
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'TEACHER_ACCESS_ARAID_VERIFY' }),
+    );
+  });
+
+  it('fails closed when the AraID identity does not match the teacher', async () => {
+    const { service, araIdService, magicSessionStore, auditLog } = createHarness({
+      step_up_policy: 'EMAIL_OTP',
+    });
+    araIdService.getVerifiedIdentityNumber.mockResolvedValue('9999999999999');
+
+    await expect(
+      service.verifyAraId(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        'araid-profile-id',
+      ),
+    ).rejects.toThrow('ไม่ตรงกับครูเจ้าของลิงก์');
+    expect(magicSessionStore.issue).not.toHaveBeenCalled();
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'TEACHER_ACCESS_ARAID_FAILED',
+        actorUserId: null,
+        actorLabel: 'AraID',
+      }),
+    );
+  });
+
+  it('requires the teacher citizen ID before AraID verification', async () => {
+    const { service, araIdService, magicSessionStore } = createHarness({
+      step_up_policy: 'EMAIL_OTP',
+      teacher_citizen_id: null,
+    });
+
+    await expect(
+      service.verifyAraId(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        'araid-profile-id',
+      ),
+    ).rejects.toThrow('ยังไม่มีเลขบัตรประชาชน');
+    expect(araIdService.getVerifiedIdentityNumber).not.toHaveBeenCalled();
+    expect(magicSessionStore.issue).not.toHaveBeenCalled();
+  });
+
+  it('accepts AraID for a THAID step-up policy', async () => {
+    const { service } = createHarness({ step_up_policy: 'THAID' });
+
+    await expect(
+      service.verifyAraId(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        'araid-profile-id',
+      ),
+    ).resolves.toMatchObject({ data: { sessionToken: 'ms_session' } });
+  });
+
+  it('creates an opaque AraID QR challenge without identity data in the URL', async () => {
+    const { service, araIdChallengeStore } = createHarness({ step_up_policy: 'EMAIL_OTP' });
+
+    const result = await service.createAraIdChallenge(
+      'valid-token-value-that-is-at-least-thirty-two-characters',
+      'https://sts.test',
+    );
+
+    expect(araIdChallengeStore.create).toHaveBeenCalledWith(GRANT.id);
+    expect(result.data.verificationUrl).toContain('/araid/authorize#challenge=challenge-token');
+    expect(result.data.verificationUrl).not.toContain('1234567890123');
+    expect(result.data.qrDataUrl).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it('approves a matching AraID challenge and lets desktop consume it once', async () => {
+    const { service, araIdChallengeStore, magicSessionStore } = createHarness({
+      step_up_policy: 'EMAIL_OTP',
+    });
+    araIdChallengeStore.readAuthorization.mockResolvedValue({
+      grantId: GRANT.id,
+      referenceCode: 'ABC123',
+      status: 'CLAIMED',
+      expiresAt: Date.now() + 60_000,
+    });
+
+    await expect(
+      service.approveAraIdChallenge('challenge-token', 'araid-profile-id'),
+    ).resolves.toMatchObject({ data: { approved: true } });
+
+    araIdChallengeStore.read.mockResolvedValue({
+      grantId: GRANT.id,
+      referenceCode: 'ABC123',
+      status: 'APPROVED',
+      expiresAt: Date.now() + 60_000,
+    });
+    araIdChallengeStore.consumeApproved.mockResolvedValue({
+      grantId: GRANT.id,
+      referenceCode: 'ABC123',
+      status: 'APPROVED',
+      expiresAt: Date.now() + 60_000,
+    });
+    await expect(service.pollAraIdChallenge('challenge-token')).resolves.toMatchObject({
+      data: { status: 'APPROVED', sessionToken: 'ms_session' },
+    });
+    expect(magicSessionStore.issue).toHaveBeenCalledWith(GRANT.id);
+  });
+
+  it('resumes the same claimed AraID challenge after returning from login', async () => {
+    const { service, araIdChallengeStore } = createHarness({ step_up_policy: 'EMAIL_OTP' });
+    araIdChallengeStore.resume.mockResolvedValue({
+      authorizationToken: 'existing-authorization',
+      expiresAt: Date.now() + 300_000,
+    });
+
+    await expect(
+      service.beginAraIdChallenge('challenge-token', 'existing-authorization'),
+    ).resolves.toMatchObject({ authorizationToken: 'existing-authorization' });
+    expect(araIdChallengeStore.claim).not.toHaveBeenCalled();
+  });
+
+  it('rejects AraID when the link does not require step-up verification', async () => {
+    const { service, araIdService, magicSessionStore } = createHarness({
+      step_up_policy: 'NONE',
+    });
+
+    await expect(
+      service.verifyAraId(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        'araid-profile-id',
+      ),
+    ).rejects.toThrow('ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
+
+    expect(araIdService.getVerifiedIdentityNumber).not.toHaveBeenCalled();
+    expect(magicSessionStore.issue).not.toHaveBeenCalled();
+  });
+
   it('rotates the token so the old hash is denied and the new link resolves', async () => {
     const { service, repository } = createHarness();
     let activeHash = GRANT.token_hash;
@@ -1118,145 +1278,6 @@ describe('TeacherAccessService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
 
     expect(storage.save).not.toHaveBeenCalled();
-  });
-
-  it('creates demo attendance for the same three classroom days without overwriting real data', async () => {
-    const { service, repository, attendance, risk } = createHarness({
-      teacher_data_origin_code: 'DEMO',
-      school_name: SHOWCASE_SCHOOL_NAME,
-    });
-    repository.findGrantAssignment.mockResolvedValue({
-      ...ASSIGNMENT,
-      assignment_kind: 'SUBJECT',
-      subject_id: 7,
-    });
-    repository.listAssignmentSlotsForDate.mockResolvedValue([{ id: '71', period: 1 }]);
-    repository.listRosterIds.mockResolvedValue([
-      'student-1',
-      'student-2',
-      'student-3',
-      'student-4',
-    ]);
-    attendance.saveAttendanceWithinTransaction.mockResolvedValue({
-      affectedStudentIds: ['student-1', 'student-2', 'student-3', 'student-4'],
-      calendarConfigured: true,
-      session: { id: 'session-1', status: 'SUBMITTED', revision: 1 },
-    });
-
-    const result = await service.seedPublicAttendanceDemo(
-      'valid-token-value-that-is-at-least-thirty-two-characters',
-      31,
-    );
-
-    expect(repository.hasNonDemoAttendanceSessions).toHaveBeenCalledWith(
-      41,
-      ['2026-08-03', '2026-08-04', '2026-08-05'],
-      `TEACHER_ACCESS_DEMO:${GRANT.id}`,
-      expect.anything(),
-    );
-    expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledTimes(3);
-    expect(repository.listAssignmentSlotsForDate).toHaveBeenCalledWith(
-      { classroomId: 41, subjectId: 7, teacherMembershipId: 12, isoDayOfWeek: 1 },
-      expect.anything(),
-    );
-    expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledWith(
-      [
-        { student_id: 'student-1', status: 'P_ABSENT' },
-        { student_id: 'student-2', status: 'P_ABSENT' },
-        { student_id: 'student-3', status: 'P_ABSENT' },
-        { student_id: 'student-4', status: 'P_PRESENT' },
-      ],
-      expect.objectContaining({ recorder: `TEACHER_ACCESS_DEMO:${GRANT.id}` }),
-      expect.anything(),
-      undefined,
-      71,
-      '2026-08-03',
-    );
-    expect(risk.requestStudentRecalculation).toHaveBeenCalledWith(
-      ['student-1', 'student-2', 'student-3', 'student-4'],
-      'teacher-access-demo-absences',
-    );
-    expect(result.data).toEqual({
-      dates: ['2026-08-03', '2026-08-04', '2026-08-05'],
-      studentCount: 3,
-      sessionCount: 3,
-    });
-  });
-
-  it('returns demo attendance before immediate case automation finishes', async () => {
-    const { service, repository, attendance, automation } = createHarness({
-      teacher_data_origin_code: 'DEMO',
-      school_name: SHOWCASE_SCHOOL_NAME,
-    });
-    repository.findGrantAssignment.mockResolvedValue({
-      ...ASSIGNMENT,
-      assignment_kind: 'SUBJECT',
-      subject_id: 7,
-    });
-    repository.listAssignmentSlotsForDate.mockResolvedValue([{ id: '71', period: 1 }]);
-    repository.listRosterIds.mockResolvedValue([
-      'student-1',
-      'student-2',
-      'student-3',
-      'student-4',
-    ]);
-    repository.getAlertTriggerType.mockResolvedValue('IMMEDIATE');
-    attendance.saveAttendanceWithinTransaction.mockResolvedValue({
-      affectedStudentIds: ['student-1', 'student-2', 'student-3', 'student-4'],
-      calendarConfigured: true,
-      session: { id: 'session-1', status: 'SUBMITTED', revision: 1 },
-    });
-    let finishAutomation!: (value: unknown[]) => void;
-    automation.checkConsecutiveAbsences.mockReturnValue(
-      new Promise((resolve) => {
-        finishAutomation = resolve;
-      }),
-    );
-
-    await expect(
-      service.seedPublicAttendanceDemo(
-        'valid-token-value-that-is-at-least-thirty-two-characters',
-        31,
-      ),
-    ).resolves.toMatchObject({ success: true, data: { studentCount: 3, sessionCount: 3 } });
-    expect(automation.checkConsecutiveAbsences).toHaveBeenCalledTimes(1);
-
-    finishAutomation([]);
-  });
-
-  it('clears only demo-marked sessions from the same three classroom days', async () => {
-    const { service, repository } = createHarness({
-      teacher_data_origin_code: 'DEMO',
-      school_name: SHOWCASE_SCHOOL_NAME,
-    });
-
-    const result = await service.clearPublicAttendanceDemo(
-      'valid-token-value-that-is-at-least-thirty-two-characters',
-      31,
-    );
-
-    expect(repository.deleteClassroomRecentAttendance).toHaveBeenCalledWith(
-      41,
-      ['2026-08-03', '2026-08-04', '2026-08-05'],
-      `TEACHER_ACCESS_DEMO:${GRANT.id}`,
-      expect.anything(),
-    );
-    expect(result.data).toEqual({
-      dates: ['2026-08-03', '2026-08-04', '2026-08-05'],
-      deletedSessionCount: 3,
-    });
-  });
-
-  it('denies demo attendance for operational teacher data', async () => {
-    const { service, attendance } = createHarness();
-
-    await expect(
-      service.seedPublicAttendanceDemo(
-        'valid-token-value-that-is-at-least-thirty-two-characters',
-        31,
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(attendance.saveAttendanceWithinTransaction).not.toHaveBeenCalled();
   });
 
   it('deletes a newly uploaded cover when the classroom update rolls back', async () => {

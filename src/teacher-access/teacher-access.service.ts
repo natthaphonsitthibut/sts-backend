@@ -1,4 +1,5 @@
 import * as crypto from 'crypto';
+import * as QRCode from 'qrcode';
 import {
   BadRequestException,
   forwardRef,
@@ -23,6 +24,7 @@ import {
   type DataScope,
 } from '../auth';
 import { hasPermission } from '../auth/permissions.constants';
+import { AraIdService } from '../araid/araid.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import {
@@ -71,6 +73,7 @@ import { OtpStore } from '../common/otp/otp.store';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
 import { TeacherLineService } from '../teacher-line/teacher-line.service';
 import { TeacherAccessRepository, type TeacherGrantDeliveryRow } from './teacher-access.repository';
+import { TeacherAccessAraIdChallengeStore } from './teacher-access-araid-challenge.store';
 import type {
   ActiveTeacherGrantContext,
   TeacherAccessAssignmentRow,
@@ -128,6 +131,8 @@ export class TeacherAccessService {
     private readonly emailService: EmailService,
     private readonly otpStore: OtpStore,
     private readonly magicSessionStore: MagicSessionStoreService,
+    private readonly araIdService: AraIdService,
+    private readonly araIdChallengeStore: TeacherAccessAraIdChallengeStore,
     @Inject(MESSAGING_PROVIDER)
     private readonly messaging: MessagingProvider,
     private readonly teacherMessaging: TeacherLineService,
@@ -907,6 +912,106 @@ export class TeacherAccessService {
     });
   }
 
+  async issueTeacherLineGroupInvitation(
+    input: { schoolId: number; startsAt: string; expiresAt: string },
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ออกลิงก์ยืนยัน LINE');
+    await this.assertSchoolAccess(input.schoolId, actor);
+    const schoolName = await this.repository.findActiveSchoolName(input.schoolId);
+    if (!schoolName) throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
+    const result = await this.teacherMessaging.issueGroupInvitation({
+      schoolId: input.schoolId,
+      schoolName,
+      startsAt: new Date(input.startsAt),
+      expiresAt: new Date(input.expiresAt),
+      baseUrl,
+    });
+    await this.auditLog.record({
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      action: 'TEACHER_LINE_INVITATION_ISSUE',
+      targetType: 'teacher_line_group_invitation',
+      metadata: {
+        invitationMode: 'GROUP',
+        schoolId: input.schoolId,
+        startsAt: result.startsAt,
+        expiresAt: result.expiresAt,
+      },
+      ip: null,
+    });
+    return { success: true, data: result };
+  }
+
+  async getTeacherLineGroupInvitation(
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    await this.assertSchoolAccess(schoolId, actor);
+    return {
+      success: true,
+      data: await this.teacherMessaging.getActiveGroupInvitation(schoolId, baseUrl),
+    };
+  }
+
+  async updateTeacherLineGroupInvitation(
+    invitationId: string,
+    input: { schoolId: number; startsAt: string; expiresAt: string },
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้แก้ไขลิงก์ยืนยัน LINE');
+    await this.assertSchoolAccess(input.schoolId, actor);
+    const result = await this.teacherMessaging.updateGroupInvitation({
+      id: invitationId,
+      schoolId: input.schoolId,
+      startsAt: new Date(input.startsAt),
+      expiresAt: new Date(input.expiresAt),
+      baseUrl,
+    });
+    await this.auditLog.record({
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      action: 'TEACHER_LINE_INVITATION_ISSUE',
+      targetType: 'teacher_line_group_invitation',
+      targetId: invitationId,
+      metadata: {
+        invitationMode: 'GROUP_UPDATE',
+        schoolId: input.schoolId,
+        startsAt: result.startsAt,
+        expiresAt: result.expiresAt,
+      },
+      ip: null,
+    });
+    return { success: true, data: result };
+  }
+
+  async revokeTeacherLineGroupInvitation(
+    invitationId: string,
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ปิดลิงก์ยืนยัน LINE');
+    await this.assertSchoolAccess(schoolId, actor);
+    const revoked = await this.teacherMessaging.revokeGroupInvitation(invitationId, schoolId);
+    if (!revoked) throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
+    await this.auditLog.record({
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      action: 'TEACHER_LINE_INVITATION_REVOKE',
+      targetType: 'teacher_line_group_invitation',
+      targetId: invitationId,
+      metadata: { invitationMode: 'GROUP', schoolId, reason: 'REVOKED_BY_ADMIN' },
+      ip: null,
+    });
+    return { success: true, data: { revoked: true } };
+  }
+
   async revokeTeacherLineInvitation(teacherMembershipId: number, actor: AuthenticatedRequestUser) {
     const actorId = resolveAuditActorId(actor);
     if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ยกเลิกลิงก์ยืนยัน LINE');
@@ -1097,7 +1202,7 @@ export class TeacherAccessService {
     sessionToken: string | undefined,
   ): Promise<void> {
     if (grant.step_up_policy === 'NONE') return;
-    if (grant.step_up_policy !== 'EMAIL_OTP') {
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
       throw new ForbiddenException('ลิงก์นี้ต้องยืนยันตัวตนเพิ่มเติม');
     }
     const verified = await this.magicSessionStore.isVerified(grant.id, sessionToken);
@@ -1142,7 +1247,6 @@ export class TeacherAccessService {
       teacherUserId: detail.grant.teacher_user_id,
       teacherUsername: detail.grant.teacher_username,
       teacherDisplayName: detail.grant.teacher_display_name,
-      teacherDataOriginCode: detail.grant.teacher_data_origin_code,
       schoolId: detail.grant.school_id,
       schoolName: detail.grant.school_name,
       schoolTermId: detail.grant.school_term_id,
@@ -1257,7 +1361,7 @@ export class TeacherAccessService {
    * deliberately runs before the OTP gate, so it must never expose anything but
    * whether the link works and where the code will be sent.
    */
-  private async findUsableGrantForStepUp(rawToken: string): Promise<TeacherAccessGrantRow> {
+  private async findUsableGrantForVerification(rawToken: string): Promise<TeacherAccessGrantRow> {
     const token = rawToken.trim();
     if (token.length < 32 || token.length > 256) {
       throw new NotFoundException('ไม่พบลิงก์เข้าใช้งาน');
@@ -1267,9 +1371,6 @@ export class TeacherAccessService {
     );
     if (!grant) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งาน');
     this.assertGrantUsable(grant);
-    if (grant.step_up_policy !== 'EMAIL_OTP') {
-      throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันด้วยรหัส OTP');
-    }
     return grant;
   }
 
@@ -1282,7 +1383,10 @@ export class TeacherAccessService {
   }
 
   async requestOtp(rawToken: string) {
-    const grant = await this.findUsableGrantForStepUp(rawToken);
+    const grant = await this.findUsableGrantForVerification(rawToken);
+    if (grant.step_up_policy !== 'EMAIL_OTP') {
+      throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันด้วยรหัส OTP');
+    }
     const email = grant.teacher_email?.trim() ?? '';
     if (!email) {
       throw new ConflictException(
@@ -1314,7 +1418,10 @@ export class TeacherAccessService {
   }
 
   async verifyOtp(rawToken: string, code: string) {
-    const grant = await this.findUsableGrantForStepUp(rawToken);
+    const grant = await this.findUsableGrantForVerification(rawToken);
+    if (grant.step_up_policy !== 'EMAIL_OTP') {
+      throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันด้วยรหัส OTP');
+    }
     const outcome = await this.otpStore.verify(otpKey(grant.id), code.trim());
     if (outcome !== 'ok') {
       await this.auditLog.record({
@@ -1345,6 +1452,157 @@ export class TeacherAccessService {
     }
     const sessionToken = await this.magicSessionStore.issue(grant.id);
     return { success: true, data: { sessionToken } };
+  }
+
+  async verifyAraId(rawToken: string, araIdProfileId: string) {
+    const grant = await this.findUsableGrantForVerification(rawToken);
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
+      throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
+    }
+
+    await this.assertAraIdIdentityMatchesGrant(grant, araIdProfileId);
+
+    const sessionToken = await this.magicSessionStore.issue(grant.id);
+    await this.auditLog.record({
+      actorUserId: grant.teacher_user_id,
+      actorLabel: grant.teacher_username,
+      action: 'TEACHER_ACCESS_ARAID_VERIFY',
+      targetType: 'teacher_access_grants',
+      targetId: grant.id,
+      metadata: { schoolId: grant.school_id, authMethod: 'ARAID' },
+      ip: null,
+    });
+    return { success: true, data: { sessionToken } };
+  }
+
+  async createAraIdChallenge(rawToken: string, baseUrl: string) {
+    const grant = await this.findUsableGrantForVerification(rawToken);
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
+      throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
+    }
+    if (!/^\d{13}$/.test(grant.teacher_citizen_id?.trim() ?? '')) {
+      throw new ConflictException('ครูเจ้าของลิงก์ยังไม่มีเลขบัตรประชาชนสำหรับยืนยันผ่าน AraID');
+    }
+    const challenge = await this.araIdChallengeStore.create(grant.id);
+    const verificationUrl = new URL('/araid/authorize', baseUrl);
+    verificationUrl.hash = `challenge=${encodeURIComponent(challenge.token)}`;
+    const qrDataUrl = await QRCode.toDataURL(verificationUrl.toString(), {
+      width: 320,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+    return {
+      success: true,
+      data: {
+        challengeToken: challenge.token,
+        verificationUrl: verificationUrl.toString(),
+        qrDataUrl,
+        referenceCode: challenge.referenceCode,
+        expiresAt: new Date(challenge.entryExpiresAt).toISOString(),
+      },
+    };
+  }
+
+  async beginAraIdChallenge(challengeToken: string, existingAuthorizationToken?: string) {
+    if (existingAuthorizationToken) {
+      const resumed = await this.araIdChallengeStore.resume(
+        challengeToken,
+        existingAuthorizationToken,
+      );
+      if (resumed) {
+        return {
+          authorizationToken: resumed.authorizationToken,
+          expiresAt: new Date(resumed.expiresAt),
+        };
+      }
+    }
+    const challenge = await this.araIdChallengeStore.read(challengeToken);
+    if (!challenge || challenge.status !== 'PENDING') {
+      throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
+    }
+    const authorization = await this.araIdChallengeStore.claim(challengeToken);
+    if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
+    return {
+      authorizationToken: authorization.authorizationToken,
+      expiresAt: new Date(authorization.expiresAt),
+    };
+  }
+
+  async approveAraIdChallenge(authorizationToken: string, araIdProfileId: string) {
+    const challenge = await this.araIdChallengeStore.readAuthorization(authorizationToken);
+    if (!challenge) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
+    const grant = await this.repository.findGrantById(challenge.grantId);
+    if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกยกเลิกแล้ว');
+    this.assertGrantUsable(grant);
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
+      throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
+    }
+    await this.assertAraIdIdentityMatchesGrant(grant, araIdProfileId);
+    if (!(await this.araIdChallengeStore.approveAuthorization(authorizationToken))) {
+      throw new GoneException('คำขอยืนยัน AraID ถูกใช้หรือหมดอายุแล้ว');
+    }
+    await this.auditLog.record({
+      actorUserId: grant.teacher_user_id,
+      actorLabel: grant.teacher_username,
+      action: 'TEACHER_ACCESS_ARAID_VERIFY',
+      targetType: 'teacher_access_grants',
+      targetId: grant.id,
+      metadata: { schoolId: grant.school_id, authMethod: 'ARAID_QR' },
+      ip: null,
+    });
+    return { success: true, data: { approved: true } };
+  }
+
+  async pollAraIdChallenge(challengeToken: string) {
+    const challenge = await this.araIdChallengeStore.read(challengeToken);
+    if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+    if (challenge.status === 'PENDING') {
+      return { success: true, data: { status: 'PENDING' as const } };
+    }
+    if (challenge.status === 'CLAIMED') {
+      return {
+        success: true,
+        data: {
+          status: 'IN_PROGRESS' as const,
+          expiresAt: new Date(challenge.expiresAt).toISOString(),
+        },
+      };
+    }
+    const consumed = await this.araIdChallengeStore.consumeApproved(challengeToken);
+    if (!consumed) throw new GoneException('คำขอยืนยัน AraID ถูกใช้แล้ว');
+    const grant = await this.repository.findGrantById(consumed.grantId);
+    if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกยกเลิกแล้ว');
+    this.assertGrantUsable(grant);
+    const sessionToken = await this.magicSessionStore.issue(grant.id);
+    return { success: true, data: { status: 'APPROVED' as const, sessionToken } };
+  }
+
+  private async assertAraIdIdentityMatchesGrant(
+    grant: TeacherAccessGrantRow,
+    araIdProfileId: string,
+  ): Promise<void> {
+    const expectedIdentityNumber = grant.teacher_citizen_id?.trim() ?? '';
+    if (!/^\d{13}$/.test(expectedIdentityNumber)) {
+      throw new ConflictException('ครูเจ้าของลิงก์ยังไม่มีเลขบัตรประชาชนสำหรับยืนยันผ่าน AraID');
+    }
+    const verifiedIdentityNumber =
+      await this.araIdService.getVerifiedIdentityNumber(araIdProfileId);
+    const expectedBuffer = Buffer.from(expectedIdentityNumber);
+    const verifiedBuffer = Buffer.from(verifiedIdentityNumber);
+    const matches =
+      expectedBuffer.length === verifiedBuffer.length &&
+      crypto.timingSafeEqual(expectedBuffer, verifiedBuffer);
+    if (matches) return;
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: 'AraID',
+      action: 'TEACHER_ACCESS_ARAID_FAILED',
+      targetType: 'teacher_access_grants',
+      targetId: grant.id,
+      metadata: { schoolId: grant.school_id, reason: 'IDENTITY_MISMATCH' },
+      ip: null,
+    });
+    throw new ForbiddenException('ข้อมูล AraID ไม่ตรงกับครูเจ้าของลิงก์');
   }
 
   async resolveActiveGrant(
@@ -1383,9 +1641,6 @@ export class TeacherAccessService {
             schoolTermId: context.schoolTermId,
             academicYear: context.academicYear,
             semester: context.semester,
-            demoAttendanceActionsEnabled:
-              context.teacherDataOriginCode === 'DEMO' &&
-              context.schoolName === 'โรงเรียนเทพศิรินทร์ราชดำริ',
             capabilities: context.capabilities,
             assignments: activeAssignments.map((row) =>
               this.toAssignment(row, context.capabilities),
@@ -2009,167 +2264,5 @@ export class TeacherAccessService {
       });
     }
     return { success: true, data };
-  }
-
-  async seedPublicAttendanceDemo(rawToken: string, assignmentId: number, sessionToken?: string) {
-    let affectedStudentIds: string[] = [];
-    let calendarConfigured = false;
-    const data = await this.withActiveGrantContext(
-      rawToken,
-      { assignmentId, sessionToken, operation: 'SUBMIT_ATTENDANCE' },
-      async (context, queryRunner) => {
-        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
-        if (
-          context.teacherDataOriginCode !== 'DEMO' ||
-          context.schoolName !== 'โรงเรียนเทพศิรินทร์ราชดำริ'
-        ) {
-          throw new ForbiddenException('ฟังก์ชันข้อมูลสาธิตไม่เปิดใช้กับข้อมูลปฏิบัติงาน');
-        }
-        const assignment = await this.repository.findGrantAssignment(
-          context.grantId,
-          assignmentId,
-          queryRunner,
-        );
-        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
-        if (assignment.assignment_kind !== 'SUBJECT' || !assignment.subject_id) {
-          throw new BadRequestException('ข้อมูลสาธิตใช้ได้เฉพาะ assignment รายวิชา');
-        }
-        const rosterIds = await this.repository.listRosterIds(
-          Number(context.classroomId),
-          queryRunner,
-        );
-        const students = rosterIds.slice(0, 3);
-        if (students.length < 3)
-          throw new BadRequestException('ห้องนี้มีนักเรียนไม่ครบ 3 คนสำหรับข้อมูลสาธิต');
-        const recorderMarker = this.demoAttendanceRecorder(context.grantId);
-        const dates = await this.repository.listRecentClassroomSchoolDays(
-          Number(context.classroomId),
-          getBangkokDateString(),
-          3,
-          recorderMarker,
-          queryRunner,
-        );
-        if (dates.length < 3) {
-          throw new BadRequestException('ไม่พบวันเรียนย้อนหลังครบ 3 วันสำหรับห้องนี้');
-        }
-        await this.repository.ensureDemoSchoolDays(
-          Number(context.classroomId),
-          dates,
-          context.teacherUserId,
-          queryRunner,
-        );
-        if (
-          await this.repository.hasNonDemoAttendanceSessions(
-            Number(context.classroomId),
-            dates,
-            recorderMarker,
-            queryRunner,
-          )
-        ) {
-          throw new BadRequestException(
-            '3 วันล่าสุดมีประวัติเช็กชื่อจริงอยู่แล้ว กรุณาใช้ห้องหรือช่วงวันที่สำหรับสาธิต',
-          );
-        }
-
-        let savedSessions = 0;
-        for (const date of dates) {
-          const slots = await this.repository.listAssignmentSlotsForDate(
-            {
-              classroomId: Number(context.classroomId),
-              subjectId: assignment.subject_id,
-              teacherMembershipId: Number(assignment.teacher_membership_id),
-              isoDayOfWeek: getIsoDayOfWeekFromDateString(date),
-            },
-            queryRunner,
-          );
-          for (const slot of slots) {
-            const result = await this.attendanceWriteService.saveAttendanceWithinTransaction(
-              rosterIds.map((studentId) => ({
-                student_id: studentId,
-                status: students.includes(studentId)
-                  ? ('P_ABSENT' as const)
-                  : ('P_PRESENT' as const),
-              })),
-              {
-                actorUserId: context.teacherUserId,
-                actorLabel: context.teacherUsername,
-                recorder: recorderMarker,
-                allowedStudentIds: rosterIds,
-              },
-              createSqlQueryExecutor(queryRunner),
-              undefined,
-              Number(slot.id),
-              date,
-            );
-            affectedStudentIds = [
-              ...new Set([...affectedStudentIds, ...result.affectedStudentIds]),
-            ];
-            calendarConfigured = calendarConfigured || result.calendarConfigured;
-            savedSessions += 1;
-          }
-        }
-        if (savedSessions === 0)
-          throw new BadRequestException('ไม่พบคาบสอนใน 3 วันย้อนหลังสำหรับห้องนี้');
-        return { dates, studentCount: students.length, sessionCount: savedSessions };
-      },
-    );
-    this.riskProfileService
-      ?.requestStudentRecalculation(affectedStudentIds, 'teacher-access-demo-absences')
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Failed to enqueue demo attendance risk recalculation: ${message}`);
-      });
-    if ((await this.repository.getAlertTriggerType()) === 'IMMEDIATE' && calendarConfigured) {
-      this.automationService.checkConsecutiveAbsences().catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Demo attendance immediate absence check failed: ${message}`);
-      });
-    }
-    return { success: true, data };
-  }
-
-  async clearPublicAttendanceDemo(rawToken: string, assignmentId: number, sessionToken?: string) {
-    const data = await this.withActiveGrantContext(
-      rawToken,
-      { assignmentId, sessionToken, operation: 'SUBMIT_ATTENDANCE' },
-      async (context, queryRunner) => {
-        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
-        if (
-          context.teacherDataOriginCode !== 'DEMO' ||
-          context.schoolName !== 'โรงเรียนเทพศิรินทร์ราชดำริ'
-        ) {
-          throw new ForbiddenException('ฟังก์ชันข้อมูลสาธิตไม่เปิดใช้กับข้อมูลปฏิบัติงาน');
-        }
-        const assignment = await this.repository.findGrantAssignment(
-          context.grantId,
-          assignmentId,
-          queryRunner,
-        );
-        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
-        const recorderMarker = this.demoAttendanceRecorder(context.grantId);
-        const dates = await this.repository.listRecentClassroomSchoolDays(
-          Number(context.classroomId),
-          getBangkokDateString(),
-          3,
-          recorderMarker,
-          queryRunner,
-        );
-        if (dates.length < 3) {
-          throw new BadRequestException('ไม่พบวันเรียนย้อนหลังครบ 3 วันสำหรับห้องนี้');
-        }
-        const deletedSessionCount = await this.repository.deleteClassroomRecentAttendance(
-          Number(context.classroomId),
-          dates,
-          recorderMarker,
-          queryRunner,
-        );
-        return { dates, deletedSessionCount };
-      },
-    );
-    return { success: true, data };
-  }
-
-  private demoAttendanceRecorder(grantId: string): string {
-    return `TEACHER_ACCESS_DEMO:${grantId}`;
   }
 }

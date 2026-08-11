@@ -7,6 +7,12 @@ export interface TeacherLineIdentityRow extends Record<string, unknown> {
   email: string;
 }
 
+export interface TeacherLineCitizenIdentityRow extends Record<string, unknown> {
+  teacher_id: string;
+  first_name: string;
+  last_name: string;
+}
+
 export interface TeacherMessagingAccountRow extends Record<string, unknown> {
   id: string;
   teacher_id: string;

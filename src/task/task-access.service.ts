@@ -168,6 +168,7 @@ export class TaskAccessService {
         result.student_lat = caseData?.student_lat || null;
         result.student_lng = caseData?.student_lng || null;
         result.reason_flagged = caseData?.reason_flagged || null;
+        result.case_status = caseData?.status || null;
         result.academic_year = caseData?.academic_year || null;
         result.semester = caseData?.semester || null;
         result.student_grade = caseData?.grade || null;

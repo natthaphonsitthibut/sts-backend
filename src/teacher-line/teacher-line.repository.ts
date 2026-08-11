@@ -3,6 +3,7 @@ import { DataSource, type QueryRunner } from 'typeorm';
 import type { MessagingFriendState } from '../common/messaging/messaging.types';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import type {
+  TeacherLineCitizenIdentityRow,
   TeacherLineIdentityRow,
   TeacherLineInvitationRow,
   TeacherMessagingAccountRow,
@@ -49,7 +50,10 @@ export class TeacherLineRepository {
    * indexes it, so the lookup uses that index and cannot disagree with the
    * constraint that guarantees at most one row comes back.
    */
-  async findActiveTeacherByEmail(email: string): Promise<TeacherLineIdentityRow | null> {
+  async findActiveTeacherByEmail(
+    email: string,
+    schoolId: number,
+  ): Promise<TeacherLineIdentityRow | null> {
     const result = await this.executor().query<TeacherLineIdentityRow>(
       `
         SELECT
@@ -61,9 +65,46 @@ export class TeacherLineRepository {
         WHERE lower(btrim(teacher.email)) = lower(btrim($1))
           AND teacher.deleted_at IS NULL
           AND teacher.teacher_status = 'ACTIVE'
+          AND EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships membership
+            WHERE membership.teacher_id = teacher.id
+              AND membership.school_id = $2
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          )
         LIMIT 1
       `,
-      [email],
+      [email, schoolId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findActiveTeacherByCitizenId(
+    citizenId: string,
+    schoolId: number,
+  ): Promise<TeacherLineCitizenIdentityRow | null> {
+    const result = await this.executor().query<TeacherLineCitizenIdentityRow>(
+      `
+        SELECT
+          teacher.id::text AS teacher_id,
+          teacher.first_name,
+          teacher.last_name
+        FROM teachers teacher
+        WHERE teacher.citizen_id = $1
+          AND teacher.deleted_at IS NULL
+          AND teacher.teacher_status = 'ACTIVE'
+          AND EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships membership
+            WHERE membership.teacher_id = teacher.id
+              AND membership.school_id = $2
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          )
+        LIMIT 1
+      `,
+      [citizenId, schoolId],
     );
     return result.rows[0] ?? null;
   }
@@ -328,7 +369,11 @@ export class TeacherLineRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async hasActiveTeacherMembership(teacherId: string, queryRunner: QueryRunner): Promise<boolean> {
+  async hasActiveTeacherMembership(
+    teacherId: string,
+    queryRunner: QueryRunner,
+    schoolId?: number,
+  ): Promise<boolean> {
     const result = await this.executor(queryRunner).query(
       `
         SELECT 1
@@ -340,9 +385,10 @@ export class TeacherLineRepository {
           AND teacher.deleted_at IS NULL
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
+          AND ($2::bigint IS NULL OR membership.school_id = $2::bigint)
         LIMIT 1
       `,
-      [teacherId],
+      [teacherId, schoolId ?? null],
     );
     return result.rows.length > 0;
   }

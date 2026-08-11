@@ -49,6 +49,7 @@ import { TeachersModule } from './teachers/teachers.module';
 import { CurriculumModule } from './curriculum/curriculum.module';
 import { StudentObservationsModule } from './student-observations/student-observations.module';
 import { StudentObservationSummaryModule } from './student-observation-summaries/student-observation-summary.module';
+import { AraIdModule } from './araid/araid.module';
 import { ObservationReviewsModule } from './observation-reviews/observation-reviews.module';
 
 @Module({
@@ -136,6 +137,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     StudentObservationsModule,
     ObservationReviewsModule,
     StudentObservationSummaryModule,
+    AraIdModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],

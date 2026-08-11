@@ -427,7 +427,31 @@ async function main() {
       sameSite: 'Lax',
     });
 
-    await navigate(client, `${FRONTEND_URL}/teacher-access`);
+    await navigate(client, `${FRONTEND_URL}/teacher-access#token=${grant.token}`);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'เลือกยืนยันผ่าน AraID หรือรับรหัสทางอีเมล',
+        ),
+      'Teacher verification method choice did not load',
+    );
+    const verificationChoice = await evaluate(
+      client,
+      `({
+        hasAraId: document.body.innerText.includes('AraID'),
+        hasEmail: document.body.innerText.includes('อีเมล'),
+        hasGuestProfile: Boolean(document.querySelector('[aria-label^="ผู้รับมอบหมาย"]')),
+      })`,
+    );
+    assert(
+      verificationChoice.hasAraId && verificationChoice.hasEmail,
+      `Teacher verification methods were incomplete: ${JSON.stringify(verificationChoice)}`,
+    );
+    assert(
+      !verificationChoice.hasGuestProfile,
+      'Teacher verification method choice rendered an unnecessary guest profile avatar',
+    );
+
     await evaluate(
       client,
       `sessionStorage.setItem('sts_teacher_link_session', ${JSON.stringify(
@@ -701,7 +725,9 @@ async function main() {
     const directorBase = await cardSnapshot(client, classroomId);
     const directorHover = await hoverSnapshot(client, classroomId);
 
-    for (const key of ['cardClass', 'coverClass', 'gridClass', 'headerClass', 'sidebarClass']) {
+    // Guest teacher access intentionally has no expandable admin navigation;
+    // compare the classroom surface, not the two different navigation shells.
+    for (const key of ['cardClass', 'coverClass', 'gridClass', 'headerClass']) {
       assert(
         teacherBase[key] === directorBase[key],
         `Teacher/director classroom ${key} drifted`,
@@ -757,8 +783,8 @@ async function main() {
       'Teacher-link roster sort did not reach the server before pagination',
     );
 
-    // LINE invitations are teacher-scoped and issued from the unverified row;
-    // there must not be a global reusable verification URL.
+    // The toolbar issues one expiring group link, while the row action remains
+    // available for a teacher-scoped single-use invitation.
     const lineActions = await evaluate(
       client,
       `(() => {
@@ -768,8 +794,8 @@ async function main() {
         unverifiedRow?.querySelector('button[aria-label^="เครื่องมือลิงก์ของ"]')?.click();
         return {
           rowFound: Boolean(unverifiedRow),
-          globalCopy: [...document.querySelectorAll('button')].some((button) =>
-            button.textContent.includes('คัดลอกลิงก์ยืนยัน LINE')),
+          globalCreate: [...document.querySelectorAll('button')].some((button) =>
+            button.textContent.includes('สร้างลิงก์ยืนยัน LINE')),
         };
       })()`,
     );
@@ -786,8 +812,125 @@ async function main() {
       'The unverified teacher row did not expose a scoped LINE invitation action',
     );
     assert(
-      lineActions.rowFound && !lineActions.globalCopy,
+      lineActions.rowFound && lineActions.globalCreate,
       `LINE invitation scope is wrong: ${JSON.stringify(lineActions)}`,
+    );
+
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('สร้างลิงก์ยืนยัน LINE'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('[role="dialog"]')?.textContent.includes('กำหนดอายุลิงก์ยืนยัน LINE')`,
+          ),
+        ),
+      'Group LINE link scheduling dialog did not open',
+    );
+    const groupDialog = await evaluate(
+      client,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const buttons = [...dialog.querySelectorAll('button')];
+        return {
+          hasStart: dialog.textContent.includes('วันและเวลาเริ่ม'),
+          hasExpiry: dialog.textContent.includes('วันและเวลาหมดอายุ'),
+          hasDuration: dialog.textContent.includes('ระยะเวลา'),
+          hasDurationTime: dialog.textContent.includes('ชั่วโมง:นาที'),
+          equalFooterWidths: (() => {
+            const cancel = buttons.find((button) => button.textContent.trim() === 'ยกเลิก');
+            const create = buttons.find((button) => button.textContent.includes('สร้างลิงก์'));
+            return Boolean(cancel && create && Math.abs(
+              cancel.getBoundingClientRect().width - create.getBoundingClientRect().width,
+            ) < 1);
+          })(),
+        };
+      })()`,
+    );
+    assert(
+      groupDialog.hasStart && groupDialog.hasExpiry && groupDialog.hasDuration &&
+        groupDialog.hasDurationTime && groupDialog.equalFooterWidths,
+      `Group LINE scheduling controls drifted: ${JSON.stringify(groupDialog)}`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('#line-group-duration-unit')?.parentElement?.querySelector('button')?.click()`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="option"]')]
+        .find((option) => option.textContent.trim() === 'วัน')
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`,
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#line-group-duration');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '12');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('#line-group-duration-unit')?.parentElement?.querySelector('button')?.click()`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="option"]')]
+        .find((option) => option.textContent.trim() === 'สัปดาห์')
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`,
+    );
+    const preservedDuration = await evaluate(
+      client,
+      `({
+        amount: document.querySelector('#line-group-duration')?.value,
+        unit: document.querySelector('#line-group-duration-unit')?.textContent.trim(),
+      })`,
+    );
+    assert(
+      preservedDuration.amount === '12' && preservedDuration.unit === 'สัปดาห์',
+      `Changing duration units rewrote the amount: ${JSON.stringify(preservedDuration)}`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.trim() === 'ยกเลิก')?.click()`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('สร้างลิงก์ยืนยัน LINE'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('[role="dialog"]')?.textContent.includes('กำหนดอายุลิงก์ยืนยัน LINE')`,
+          ),
+        ),
+      'Group LINE scheduling dialog did not reopen',
+    );
+    const resetDuration = await evaluate(
+      client,
+      `({
+        amount: document.querySelector('#line-group-duration')?.value,
+        unit: document.querySelector('#line-group-duration-unit')?.textContent.trim(),
+      })`,
+    );
+    assert(
+      resetDuration.amount === '1' && resetDuration.unit === 'สัปดาห์',
+      `Group LINE scheduling draft did not reset: ${JSON.stringify(resetDuration)}`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.trim() === 'ยกเลิก')?.click()`,
     );
 
     const unlinkSnapshot = await evaluate(
@@ -1114,6 +1257,7 @@ async function main() {
           'LINE invitations are scoped to unverified teacher rows with no global reusable URL',
           'teacher-link roster renders one profile avatar per visible teacher',
           'LINE unlink icons stay visible, disable by verification state and refresh after unlink',
+          'teacher verification method choice offers AraID/email without a guest profile avatar',
           'LINE link result omits the guest profile avatar',
           'curriculum MultiSelect filters as you type and supports ArrowDown, Enter and Escape',
         ],

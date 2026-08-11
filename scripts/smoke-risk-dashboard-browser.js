@@ -22,6 +22,7 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9245);
 const NAVIGATION_ONLY = process.env.SMOKE_NAVIGATION_ONLY === 'true';
+const FOCUSED_UI = process.env.SMOKE_FOCUSED_UI === 'true';
 const USERNAME = 'risk_dashboard_browser_smoke';
 const MANUAL_CASE_REASON_PREFIX = 'Browser smoke manual case';
 
@@ -735,6 +736,19 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
       ),
     `student detail did not render persisted risk tier ${expectedRiskTier}`,
   );
+  const riskBadgeColor = await evaluate(
+    client,
+    `getComputedStyle(document.querySelector('[data-student-risk-tier]')).color`,
+  );
+  const expectedRiskBadgeColors = {
+    HIGH: 'rgb(186, 26, 26)',
+    WATCH: 'rgb(245, 116, 11)',
+    NORMAL: 'rgb(22, 101, 52)',
+  };
+  assert(
+    riskBadgeColor === expectedRiskBadgeColors[expectedRiskTier],
+    `student risk badge ${expectedRiskTier} used ${riskBadgeColor}`,
+  );
   await waitFor(
     async () =>
       evaluate(
@@ -777,11 +791,60 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     'case detail did not render the submitted reason',
   );
 
+  const detailBadge = await evaluate(
+    client,
+    `(() => {
+      const badge = document.querySelector('[data-case-status="OPEN"]');
+      if (!badge) return null;
+      const style = getComputedStyle(badge);
+      return { color: style.color, backgroundColor: style.backgroundColor };
+    })()`,
+  );
+  assert(detailBadge, 'case detail did not render the OPEN status badge');
+  assert(
+    detailBadge.color === 'rgb(245, 158, 11)',
+    `OPEN detail badge used ${detailBadge.color} instead of #F59E0B`,
+  );
+  assert(
+    detailBadge.backgroundColor === 'rgb(254, 241, 219)',
+    `OPEN detail badge used unexpected soft-fill ${detailBadge.backgroundColor}`,
+  );
+
   const caseId = Number(
     await evaluate(client, `Number(window.location.pathname.split('/').filter(Boolean).at(-1))`),
   );
   assert(Number.isInteger(caseId) && caseId > 0, 'opened case id was invalid');
   createdCaseIds.push(caseId);
+
+  const tableBadge = await evaluate(
+    client,
+    `(() => {
+      const source = document.querySelector('[data-case-status="OPEN"]');
+      if (!source) return null;
+      const table = document.createElement('div');
+      table.setAttribute('data-slot', 'data-table');
+      const badge = source.cloneNode(true);
+      table.appendChild(badge);
+      document.body.appendChild(table);
+      const style = getComputedStyle(badge);
+      const result = {
+        color: style.color,
+        borderColor: style.borderTopColor,
+        backgroundColor: style.backgroundColor,
+      };
+      table.remove();
+      return result;
+    })()`,
+  );
+  assert(tableBadge, 'case table badge treatment could not be verified');
+  assert(
+    tableBadge.color === 'rgb(245, 158, 11)' && tableBadge.borderColor === tableBadge.color,
+    `OPEN table badge used color=${tableBadge.color} border=${tableBadge.borderColor}`,
+  );
+  assert(
+    tableBadge.backgroundColor !== detailBadge.backgroundColor,
+    'case table and detail badges unexpectedly used the same visual treatment',
+  );
 
   const duplicate = await evaluate(
     client,
@@ -1183,6 +1246,65 @@ async function assertMobileFilterReset(client, expectedStudentName) {
 }
 
 async function assertCollapsedGroupAccordion(client) {
+  await navigate(client, `${FRONTEND_URL}/attendance`);
+  await waitFor(
+    async () => (await bodyText(client)).includes('เช็คชื่อ'),
+    'Attendance page did not render before sidebar verification',
+  );
+
+  const persistedExpanded = await evaluate(
+    client,
+    `(() => {
+      const button = document.querySelector('button[aria-label="ขยายเมนูด้านข้าง"]');
+      button?.click();
+      return Boolean(button || document.querySelector('button[aria-label="พับเมนูด้านข้าง"]'));
+    })()`,
+  );
+  assert(persistedExpanded, 'desktop sidebar expansion control was not found');
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => {
+          const sidebar = document.querySelector('aside');
+          return Boolean(sidebar && Number.parseFloat(getComputedStyle(sidebar).width) >= 259);
+        })()`,
+      ),
+    'desktop sidebar did not finish expanding to 260px',
+  );
+
+  const collapsedActiveGroup = await evaluate(
+    client,
+    `(() => {
+      const button = Array.from(document.querySelectorAll('aside button'))
+        .find((candidate) => candidate.innerText.includes('ระบบเช็คชื่อ'));
+      if (!button || button.getAttribute('aria-expanded') !== 'true') return false;
+      button.click();
+      return true;
+    })()`,
+  );
+  assert(collapsedActiveGroup, 'active attendance group was not initially expanded');
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => Array.from(document.querySelectorAll('aside button'))
+          .some((button) => button.innerText.includes('ระบบเช็คชื่อ')
+            && button.getAttribute('aria-expanded') === 'false'))()`,
+      ),
+    'active attendance group could not be collapsed',
+  );
+  const reopenedActiveGroup = await evaluate(
+    client,
+    `(() => {
+      const button = Array.from(document.querySelectorAll('aside button'))
+        .find((candidate) => candidate.innerText.includes('ระบบเช็คชื่อ'));
+      button?.click();
+      return Boolean(button);
+    })()`,
+  );
+  assert(reopenedActiveGroup, 'active attendance group could not be reopened');
+
   const collapsed = await evaluate(
     client,
     `(() => {
@@ -1214,42 +1336,100 @@ async function assertCollapsedGroupAccordion(client) {
     'desktop sidebar did not finish collapsing to 80px',
   );
 
-  const openedGroup = await evaluate(
+  const collapsedState = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('button[aria-label="งานติดตามเคส"]');
-      if (!button) return false;
-      button.click();
-      return true;
+      const button = document.querySelector('aside button[aria-label="ระบบเช็คชื่อ"]');
+      const main = document.querySelector('main');
+      return {
+        active: button?.getAttribute('aria-current') === 'page',
+        background: button ? getComputedStyle(button).backgroundColor : null,
+        mainLeft: main?.getBoundingClientRect().left ?? null,
+        transitionDuration: document.querySelector('aside')
+          ? getComputedStyle(document.querySelector('aside')).transitionDuration
+          : null,
+      };
     })()`,
   );
-  assert(openedGroup, 'collapsed sidebar group was not clickable');
+  assert(collapsedState.active, 'collapsed sidebar did not mark the active attendance parent');
+  assert(
+    collapsedState.background === 'rgb(231, 237, 248)',
+    `collapsed attendance parent active surface drifted: ${collapsedState.background}`,
+  );
+  assert(
+    String(collapsedState.transitionDuration).includes('0.3s'),
+    `sidebar hover transition was not 300ms: ${collapsedState.transitionDuration}`,
+  );
+
+  const sidebarPoint = await evaluate(
+    client,
+    `(() => {
+      const rect = document.querySelector('aside')?.getBoundingClientRect();
+      return rect ? { x: rect.left + 40, y: rect.top + 120 } : null;
+    })()`,
+  );
+  assert(sidebarPoint, 'collapsed sidebar bounds were not available');
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: sidebarPoint.x,
+    y: sidebarPoint.y,
+  });
   await waitFor(
     async () =>
       evaluate(
         client,
-        `(() => Array.from(document.querySelectorAll('button'))
-          .some((button) => button.innerText.includes('งานติดตามเคส')
-            && button.getAttribute('aria-expanded') === 'true'))()`,
+        `(() => {
+          const sidebar = document.querySelector('aside');
+          return Boolean(sidebar && Number.parseFloat(getComputedStyle(sidebar).width) >= 259);
+        })()`,
       ),
-    'collapsed sidebar group did not open its nested icon list',
+    'collapsed sidebar did not smoothly expand on hover',
   );
-  const childVisibleAndWidthStable = await evaluate(
+  const hoverState = await evaluate(
     client,
     `(() => {
-      const child = document.querySelector('a[aria-label="เคสติดตาม"]');
+      const child = document.querySelector('aside a[href="/attendance"]');
       const sidebar = document.querySelector('aside');
-      return Boolean(
-        child
-        && child.offsetParent !== null
-        && sidebar
-        && getComputedStyle(sidebar).width === '80px'
-      );
+      const main = document.querySelector('main');
+      return {
+        childVisible: Boolean(child && child.offsetParent !== null),
+        mainLeft: main?.getBoundingClientRect().left ?? null,
+        sidebarRight: sidebar?.getBoundingClientRect().right ?? null,
+        sidebarWidth: sidebar ? Number.parseFloat(getComputedStyle(sidebar).width) : null,
+      };
     })()`,
   );
   assert(
-    childVisibleAndWidthStable,
-    'collapsed sidebar did not show its child icons while preserving the collapsed width',
+    hoverState.childVisible && hoverState.sidebarWidth >= 259,
+    `hover-expanded attendance group was not visible: ${JSON.stringify(hoverState)}`,
+  );
+  assert(
+    hoverState.mainLeft >= 259 && hoverState.sidebarRight === hoverState.mainLeft,
+    `sidebar hover overlapped main layout: ${JSON.stringify({ before: collapsedState.mainLeft, after: hoverState.mainLeft, sidebarRight: hoverState.sidebarRight })}`,
+  );
+
+  await client.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1000, y: 200 });
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => {
+          const sidebar = document.querySelector('aside');
+          const main = document.querySelector('main');
+          return Boolean(
+            sidebar
+            && getComputedStyle(sidebar).width === '80px'
+            && main?.getBoundingClientRect().left === ${JSON.stringify(collapsedState.mainLeft)}
+          );
+        })()`,
+      ),
+    'sidebar did not smoothly return to the collapsed rail',
+  );
+
+  await navigate(client, `${FRONTEND_URL}/student-risk-report`);
+  await waitFor(
+    async () => (await bodyText(client)).includes('ความเสี่ยงจากการมาเรียน'),
+    'Risk dashboard did not restore after sidebar verification',
   );
 }
 
@@ -1376,6 +1556,71 @@ async function assertRiskDashboard(client, expectedStudentName, expectedTotalCou
     },
     `${label} did not render total count ${expectedTotalCount}`,
   );
+
+  if (label.startsWith('desktop')) {
+    const actionState = await evaluate(
+      client,
+      `(() => {
+        const visibleTable = Array.from(document.querySelectorAll('table'))
+          .find((table) => table.offsetParent !== null);
+        const rows = visibleTable
+          ? Array.from(visibleTable.querySelectorAll('tbody tr')).filter((row) => row.offsetParent !== null)
+          : [];
+        const rowActions = rows.map((row) => {
+          const cell = row.lastElementChild;
+          const controls = cell
+            ? Array.from(cell.querySelectorAll('button, a[href]')).filter((control) => control.offsetParent !== null)
+            : [];
+          return controls.map((control) => ({
+            background: getComputedStyle(control).backgroundColor,
+            color: getComputedStyle(control).color,
+            height: control.getBoundingClientRect().height,
+            width: control.getBoundingClientRect().width,
+          }));
+        });
+        return {
+          actionHeading: visibleTable
+            ? Array.from(visibleTable.querySelectorAll('thead th')).at(-1)?.innerText.trim()
+            : null,
+          rowActions,
+        };
+      })()`,
+    );
+    assert(actionState.actionHeading === 'เครื่องมือ', 'Risk action heading was not เครื่องมือ');
+    assert(actionState.rowActions.length > 0, 'Risk table had no visible action rows');
+    assert(
+      actionState.rowActions.every((actions) =>
+        actions.length === 2 &&
+        actions.every((action) =>
+          action.width === 40 &&
+          action.height === 40 &&
+          action.color === 'rgb(255, 255, 255)' &&
+          action.background !== 'rgba(0, 0, 0, 0)'
+        )
+      ),
+      `Risk action slots drifted: ${JSON.stringify(actionState.rowActions.slice(0, 3))}`,
+    );
+  } else if (label.startsWith('mobile')) {
+    const mobileActions = await evaluate(
+      client,
+      `(() => Array.from(document.querySelectorAll('[data-student-navigation]'))
+        .filter((row) => row.offsetParent !== null)
+        .map((row) => Array.from(row.lastElementChild?.querySelectorAll('button, a[aria-label]') || [])
+          .filter((control) => control.offsetParent !== null)
+          .map((control) => ({
+            height: control.getBoundingClientRect().height,
+            width: control.getBoundingClientRect().width,
+          }))))()`,
+    );
+    assert(mobileActions.length > 0, 'Mobile risk cards had no visible action rows');
+    assert(
+      mobileActions.every((actions) =>
+        actions.length === 2 &&
+        actions.every((action) => action.width === 40 && action.height === 40)
+      ),
+      `Mobile risk action slots drifted: ${JSON.stringify(mobileActions.slice(0, 3))}`,
+    );
+  }
 }
 
 async function assertSharedVisualSystem(client) {
@@ -1618,6 +1863,23 @@ async function main() {
     const expectedStudentName = apiResult.payload.data[0].studentName;
     const expectedTotalCount = Number(apiResult.payload.meta?.totalCount ?? 0);
     assert(expectedTotalCount > 0, 'Risk dashboard API totalCount was zero');
+
+    if (FOCUSED_UI) {
+      await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop focused UI');
+      await capture(client, '/tmp/sts-risk-dashboard-focused-desktop.png');
+      await assertCollapsedGroupAccordion(client);
+      await client.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'mobile focused UI');
+      console.log(
+        'risk dashboard focused UI smoke passed (fixed action slots plus collapsible active sidebar and push-content hover)',
+      );
+      return;
+    }
 
     if (NAVIGATION_ONLY) {
       await navigate(client, `${FRONTEND_URL}/student-risk-report`);

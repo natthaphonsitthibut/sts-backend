@@ -323,6 +323,7 @@ describe('TaskAccessService home visit report context', () => {
         address_sub_district: 'ดุสิต',
         postal_code: '10300',
         reason_flagged: 'ขาดเรียนต่อเนื่อง',
+        status: 'IN_PROGRESS',
         academic_year: 2569,
         semester: 1,
         grade: 'ม.3',
@@ -368,6 +369,7 @@ describe('TaskAccessService home visit report context', () => {
       semester: 1,
       student_grade: 'ม.3',
       student_room: '2',
+      case_status: 'IN_PROGRESS',
       address_province: 'กรุงเทพมหานคร',
       contact_channels: [
         {
@@ -399,6 +401,7 @@ describe('TaskAccessService home visit report context', () => {
     });
     expect(result).not.toHaveProperty('follow_up_history');
     expect(result).not.toHaveProperty('contact_channels');
+    expect(result).not.toHaveProperty('case_status');
     expect(taskRepository.listPublicCaseContactChannels).not.toHaveBeenCalled();
     expect(taskRepository.listPublicCaseFollowUpHistory).not.toHaveBeenCalled();
   });

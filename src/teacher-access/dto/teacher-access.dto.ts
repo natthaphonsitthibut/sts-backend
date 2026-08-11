@@ -46,6 +46,19 @@ export class IssueTeacherAccessGrantDto {
   expiresAt?: string;
 }
 
+export class IssueTeacherLineGroupInvitationDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
+
+  @IsISO8601({ strict: true })
+  startsAt!: string;
+
+  @IsISO8601({ strict: true })
+  expiresAt!: string;
+}
+
 /**
  * Without `teacherMembershipIds` the term is issued in full: every teacher who
  * still needs a link gets one. With it, only the picked teachers are considered —
@@ -342,14 +355,6 @@ export class SaveTeacherAccessAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => TeacherAccessAttendanceRecordDto)
   records!: TeacherAccessAttendanceRecordDto[];
-}
-
-/** Temporary production-demo action; remove with the demo data after presentation. */
-export class SeedTeacherAccessAbsenceDemoDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  assignmentId!: number;
 }
 
 export class TeacherAccessAttendanceSlotsQueryDto {
