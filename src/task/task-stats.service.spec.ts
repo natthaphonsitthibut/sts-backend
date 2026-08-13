@@ -126,10 +126,17 @@ describe('TaskStatsService', () => {
             risk_score: '1.0000',
             open_case_count: 1,
             latest_case_at: '2026-07-06T00:00:00.000Z',
+            teacher_comment: 'ความเห็นของครูที่ต้องมีสิทธิ์จึงจะเห็น',
           },
         ],
         totalCount: 1,
         summary: { HIGH: 1, WATCH: 0, NORMAL: 0 },
+        caseStatusSummary: {
+          OPEN: 0,
+          IN_PROGRESS: 0,
+          PENDING_REVIEW: 0,
+          STUDENT_NOT_FOUND: 0,
+        },
       }),
     };
     const taskPolicyService = {
@@ -150,6 +157,7 @@ describe('TaskStatsService', () => {
           studentPhotoUrl: '/api/students/student-1/photo?v=2026-08-10T06%3A30%3A00.000Z',
           riskTier: 'HIGH',
           weightedAttendancePercent: 72.5,
+          teacherComment: null,
         },
       ],
       meta: {

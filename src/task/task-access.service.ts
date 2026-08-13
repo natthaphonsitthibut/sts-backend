@@ -131,6 +131,7 @@ export class TaskAccessService {
       opens_at: link.opens_at ?? null,
       expires_at: link.expires_at,
       delegation_note: link.delegation_note ?? null,
+      assignment_note: link.assignment_note ?? null,
       created_at: link.created_at ?? null,
       subject: link.subject,
       school_name: link.school_name,

@@ -63,6 +63,12 @@ export class TaskController {
     }
   }
 
+  @UseGuards(AuthGuard)
+  @Get('visit-assignees/:studentId')
+  async getVisitAssignees(@Param('studentId') studentId: string, @Req() req: RequestWithActor) {
+    return { data: await this.taskService.getVisitAssignees(req.user, studentId) };
+  }
+
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('review-cases')
   @Get('visit-links')

@@ -53,12 +53,16 @@ export class StatsController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return await this.taskService.getRiskDashboard(actor, {
+      studentGroup: query.studentGroup,
       riskTier: query.riskTier && query.riskTier !== 'ALL' ? query.riskTier : undefined,
       searchTerm: query.searchTerm?.trim() || undefined,
       province: query.province?.trim() || undefined,
       district: query.district?.trim() || undefined,
       subDistrict: query.subDistrict?.trim() || undefined,
       schoolId: query.schoolId,
+      academicYear: query.academicYear,
+      semester: query.semester,
+      caseStatus: query.caseStatus,
       grade: query.grade?.trim() || undefined,
       room: query.room?.trim() || undefined,
       page: query.page,

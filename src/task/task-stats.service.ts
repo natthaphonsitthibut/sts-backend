@@ -144,7 +144,7 @@ export class TaskStatsService {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);
       const thresholds = await this.getRiskDashboardThresholds();
-      const { rows, totalCount, summary, missingProfileCount } =
+      const { rows, totalCount, summary, caseStatusSummary, missingProfileCount } =
         await this.taskRepository.listRiskDashboardStudents(
           currentActor,
           {
@@ -157,6 +157,9 @@ export class TaskStatsService {
           },
           thresholds,
         );
+      const canViewTeacherComments = currentActor.permissions.includes(
+        'manage-student-observations',
+      );
       if (missingProfileCount && missingProfileCount > 0) {
         this.logger.warn(
           `Risk dashboard has ${missingProfileCount} active enrollment(s) without risk profiles`,
@@ -192,11 +195,16 @@ export class TaskStatsService {
             row.latest_open_case_id == null ? null : Number(row.latest_open_case_id),
           latestOpenCaseReason: row.latest_open_case_reason ?? null,
           latestOpenTaskId: row.latest_open_task_id ?? null,
+          latestCaseId: row.latest_case_id == null ? null : Number(row.latest_case_id),
+          latestCaseStatus: row.latest_case_status ?? null,
           latestCaseAt: row.latest_case_at,
+          latestCaseMagicLink: row.latest_case_magic_link ?? null,
+          teacherComment: canViewTeacherComments ? (row.teacher_comment ?? null) : null,
         })),
         meta: {
           ...buildPaginationMeta(page, limit, totalCount),
           summary,
+          caseStatusSummary,
           thresholds,
         },
       };

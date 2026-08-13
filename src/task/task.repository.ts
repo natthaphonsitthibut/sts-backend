@@ -5,7 +5,7 @@ import { appConfig } from '../config/app.config';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import { isUnconfiguredDataScope, normalizeScopeArray } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
-import { normalizeScalar } from '../common/utils/helpers';
+import { escapeLikePattern, normalizeScalar } from '../common/utils/helpers';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import type {
@@ -14,6 +14,7 @@ import type {
   QueryExecutor,
   QueryResultLike,
   QueryResultRow,
+  RiskDashboardCaseStatusSummary,
   RiskDashboardFilters,
   RiskDashboardResult,
   RiskDashboardRow,
@@ -41,9 +42,20 @@ const EMPTY_RISK_DASHBOARD_SUMMARY: RiskDashboardSummary = {
   NORMAL: 0,
 };
 
+const EMPTY_RISK_DASHBOARD_CASE_STATUS_SUMMARY: RiskDashboardCaseStatusSummary = {
+  OPEN: 0,
+  IN_PROGRESS: 0,
+  PENDING_REVIEW: 0,
+  STUDENT_NOT_FOUND: 0,
+};
+
 interface RiskDashboardSummaryRow extends QueryResultRow, RiskDashboardSummary {
   total_count: number | string;
   missing_profile_count?: number | string;
+  case_open_count?: number | string;
+  case_in_progress_count?: number | string;
+  case_pending_review_count?: number | string;
+  case_student_not_found_count?: number | string;
 }
 
 export interface LoginLinkListFilters {
@@ -138,6 +150,7 @@ interface CreateTaskLinkInput {
   opensAt: string | null;
   subject: string | null;
   delegationNote: string | null;
+  assignmentNote: string | null;
   subjectId: number | null;
   sourceFieldFollowerId: number | null;
   otpVerified: number;
@@ -159,6 +172,13 @@ export interface FollowUpTaskAssignmentRow extends QueryResultRow {
   opened_case_id: number | string | null;
   assigned_link_token_encrypted: string | null;
   assigned_link_expires_at: Date | string | null;
+}
+
+export interface VisitAssigneeRow extends QueryResultRow {
+  teacher_user_id: number | string;
+  display_name: string;
+  email: string | null;
+  is_homeroom: boolean;
 }
 
 interface TaskLinkTimetableSlotRow extends QueryResultRow {
@@ -555,7 +575,7 @@ export class TaskRepository {
           UPDATE cases c
           SET sla_warning_notified_at = now(), updated_at = now()
           WHERE c.deleted_at IS NULL
-            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
+            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
             AND c.sla_due_at IS NOT NULL
             AND c.sla_warning_notified_at IS NULL
             AND $1::timestamptz >= c.created_at + ((c.sla_due_at - c.created_at) * 0.8)
@@ -622,7 +642,7 @@ export class TaskRepository {
           UPDATE cases c
           SET sla_breached_notified_at = now(), updated_at = now()
           WHERE c.deleted_at IS NULL
-            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
+            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
             AND c.sla_due_at IS NOT NULL
             AND c.sla_breached_notified_at IS NULL
             AND c.sla_due_at < $1::timestamptz
@@ -692,6 +712,99 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
+  async lockCaseForVisitAssignment(
+    caseId: number,
+    actor: ActorContext,
+    executor: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await executor.query<QueryResultRow>(
+      `
+      SELECT
+        c.id,
+        c.school_id,
+        c.student_uuid::text,
+        c.status,
+        EXISTS (
+          SELECT 1
+          FROM tasks active_task
+          JOIN task_links active_link
+            ON active_link.task_id = active_task.id
+           AND active_link.deleted_at IS NULL
+          WHERE active_task.case_id = c.id
+            AND active_task.task_type = 'VISIT'
+            AND active_task.deleted_at IS NULL
+            AND active_link.status = 'ACTIVE'
+            AND active_link.expires_at > NOW()
+        ) AS has_live_assignment
+      FROM cases c
+      WHERE c.id = $1
+        AND c.deleted_at IS NULL${scopeSql}
+      FOR UPDATE OF c
+      `,
+      [caseId, ...scopeQuery.params],
+    );
+    return result.rows[0] || null;
+  }
+
+  async listVisitAssignees(
+    studentUuid: string,
+    executor?: QueryExecutor,
+  ): Promise<VisitAssigneeRow[]> {
+    const result = await this.getExecutor(executor).query<VisitAssigneeRow>(
+      `
+        WITH current_student AS (
+          SELECT student."SchoolID_Onec" AS school_id, student.classroom_id
+          FROM student_term student
+          JOIN student_current_enrollment_resolution enrollment
+            ON enrollment.person_uuid = student.person_uuid
+           AND enrollment.selected_student_uuid = student.student_uuid
+           AND enrollment.resolution_state = 'ACTIVE'
+          WHERE student.student_uuid = $1
+          LIMIT 1
+        )
+        SELECT
+          membership.teacher_user_id,
+          COALESCE(
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
+            teacher.username
+          ) AS display_name,
+          teacher.email,
+          EXISTS (
+            SELECT 1
+            FROM classroom_teacher_assignments assignment
+            WHERE assignment.classroom_id = current_student.classroom_id
+              AND assignment.teacher_membership_id = membership.id
+              AND assignment.assignment_kind = 'HOMEROOM'
+              AND assignment.assignment_status = 'ACTIVE'
+              AND assignment.deleted_at IS NULL
+          ) AS is_homeroom
+        FROM current_student
+        JOIN school_teacher_memberships membership
+          ON membership.school_id = current_student.school_id
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+        JOIN teachers teacher_person
+          ON teacher_person.id = membership.teacher_id
+         AND teacher_person.teacher_status = 'ACTIVE'
+         AND teacher_person.deleted_at IS NULL
+        JOIN users teacher
+          ON teacher.id = membership.teacher_user_id
+         AND teacher.status = 'ACTIVE'
+        ORDER BY
+          is_homeroom DESC,
+          COALESCE(
+            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
+            teacher.username
+          ) COLLATE "th-x-icu",
+          membership.id
+      `,
+      [studentUuid],
+    );
+    return result.rows;
+  }
+
   async canAccessVisitAttachment(storagePath: string, actor: ActorContext): Promise<boolean> {
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
@@ -722,6 +835,8 @@ export class TaskRepository {
         c.student_name,
         c.student_school,
         c.student_address,
+        c.student_lat,
+        c.student_lng,
         c.reason_flagged,
         c.status,
         case_status.label_th AS status_label,
@@ -733,19 +848,35 @@ export class TaskRepository {
           ELSE case_status.label_th
         END AS display_status_label,
         case_status.badge_variant AS status_badge_variant,
-        case_status.summary_tone AS status_summary_tone,
         c.created_at,
         c.updated_at,
         c.school_id,
         grade.label AS grade,
         student."RoomID_Onec"::text AS room,
+        person.photo_storage_key AS student_photo_storage_key,
+        person.updated_at AS student_photo_updated_at,
+        person_contact.phone AS student_phone,
+        COALESCE(
+          latest_comment.comment_text,
+          c.reason_flagged
+        ) AS teacher_comment,
         latest_task.id AS task_id
       FROM cases c
       INNER JOIN case_workflow_statuses case_status ON case_status.code = c.status
       LEFT JOIN case_completion_outcomes completion_outcome
         ON completion_outcome.code = c.completion_outcome_code
       LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
+      LEFT JOIN student_person person ON person.person_uuid = student.person_uuid
+      LEFT JOIN student_person_contact person_contact ON person_contact.person_uuid = student.person_uuid
       LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
+      LEFT JOIN LATERAL (
+        SELECT comment.comment_text
+        FROM classroom_student_comments comment
+        WHERE comment.classroom_id = student.classroom_id
+          AND comment.person_uuid = student.person_uuid
+        ORDER BY comment.created_at DESC, comment.id DESC
+        LIMIT 1
+      ) latest_comment ON TRUE
       LEFT JOIN LATERAL (
         SELECT task.id
         FROM tasks task
@@ -812,7 +943,7 @@ export class TaskRepository {
       SELECT c.id
       FROM cases c
       WHERE c.student_uuid = $1
-        AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
+        AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
         AND c.deleted_at IS NULL${scopeSql}
       ORDER BY c.created_at DESC, c.id DESC
       LIMIT 1
@@ -959,6 +1090,7 @@ export class TaskRepository {
         expires_at,
         subject,
         delegation_note,
+        assignment_note,
         subject_id,
         otp_verified,
         created_by,
@@ -987,12 +1119,13 @@ export class TaskRepository {
         $15,
         $16,
         $17,
-        $17,
+        $18,
         $18,
         $19,
         $20,
         $21,
-        $22
+        $22,
+        $23
       )
     `,
       [
@@ -1010,6 +1143,7 @@ export class TaskRepository {
         data.expiresAt,
         data.subject,
         data.delegationNote,
+        data.assignmentNote,
         data.subjectId,
         data.otpVerified,
         data.createdBy,
@@ -2647,7 +2781,6 @@ export class TaskRepository {
           ELSE case_status.label_th
         END AS display_status_label,
         case_status.badge_variant AS status_badge_variant,
-        case_status.summary_tone AS status_summary_tone,
         c.created_at,
         student_match.student_id,
         student_match.photo_storage_key AS student_photo_storage_key,
@@ -2881,7 +3014,7 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 1);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW') AND c.deleted_at IS NULL${scopeSql}`,
+      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND') AND c.deleted_at IS NULL${scopeSql}`,
       scopeQuery.params,
     );
 
@@ -2889,7 +3022,7 @@ export class TaskRepository {
   }
 
   async countAtRiskStudents(actor?: ActorContext): Promise<number> {
-    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW'];
+    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND'];
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
@@ -2985,7 +3118,12 @@ export class TaskRepository {
     thresholds: RiskDashboardThresholds,
   ): Promise<RiskDashboardResult> {
     if (actor.data_scope?.own_only === true) {
-      return { rows: [], totalCount: 0, summary: { ...EMPTY_RISK_DASHBOARD_SUMMARY } };
+      return {
+        rows: [],
+        totalCount: 0,
+        summary: { ...EMPTY_RISK_DASHBOARD_SUMMARY },
+        caseStatusSummary: { ...EMPTY_RISK_DASHBOARD_CASE_STATUS_SUMMARY },
+      };
     }
 
     void thresholds;
@@ -3027,6 +3165,14 @@ export class TaskRepository {
       params.push(filters.schoolId);
       conditions.push(`s."SchoolID_Onec" = $${params.length}`);
     }
+    if (typeof filters.academicYear === 'number') {
+      params.push(filters.academicYear);
+      conditions.push(`s."AcademicYear_Onec" = $${params.length}`);
+    }
+    if (typeof filters.semester === 'number') {
+      params.push(filters.semester);
+      conditions.push(`s."Semester_Onec" = $${params.length}`);
+    }
     if (filters.grade) {
       params.push(filters.grade);
       conditions.push(`gl.label = $${params.length}`);
@@ -3036,13 +3182,23 @@ export class TaskRepository {
       conditions.push(`s."RoomID_Onec"::text = $${params.length}`);
     }
     if (filters.searchTerm) {
-      params.push(`%${filters.searchTerm}%`);
+      params.push(`%${escapeLikePattern(filters.searchTerm)}%`);
       conditions.push(
-        `((s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length} OR s."PersonID_Onec" ILIKE $${params.length})`,
+        `((s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length} ESCAPE '\\' OR s."PersonID_Onec" ILIKE $${params.length} ESCAPE '\\')`,
       );
     }
 
-    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    // A risk row exists only once a case was opened. A watchlist row exists
+    // only after a teacher left a comment for the student's current classroom.
+    // Keep that product distinction in SQL before pagination and counting.
+    const studentGroupConditions =
+      filters.studentGroup === 'RISK'
+        ? [...conditions, 'latest_case.id IS NOT NULL']
+        : filters.studentGroup === 'WATCHLIST'
+          ? [...conditions, 'latest_comment.id IS NOT NULL']
+          : conditions;
+    const whereSql =
+      studentGroupConditions.length > 0 ? `WHERE ${studentGroupConditions.join(' AND ')}` : '';
     const baseCte = `
       WITH base_students AS (
         SELECT
@@ -3068,7 +3224,15 @@ export class TaskRepository {
           profile.latest_open_case_id,
           latest_case.reason_flagged AS latest_open_case_reason,
           profile.latest_open_task_id,
-          latest_case.created_at AS latest_case_at,
+          latest_case.id AS latest_case_id,
+          latest_case.status AS latest_case_status,
+          latest_case.updated_at AS latest_case_at,
+          latest_case_link.token_encrypted AS latest_case_link_token_encrypted,
+          latest_comment.id AS latest_comment_id,
+          COALESCE(
+            latest_comment.comment_text,
+            CONCAT('ขาดเรียนสะสม ', COALESCE(profile.absent_days, 0), ' วัน')
+          ) AS teacher_comment,
           (profile.student_uuid IS NULL) AS missing_profile
         FROM student_term s
         JOIN student_current_enrollment_resolution current_enrollment
@@ -3079,40 +3243,79 @@ export class TaskRepository {
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
-        LEFT JOIN cases latest_case
-          ON latest_case.id = profile.latest_open_case_id
-         AND latest_case.deleted_at IS NULL
+        LEFT JOIN LATERAL (
+          SELECT c.id, c.status, c.updated_at, c.reason_flagged
+          FROM cases c
+          WHERE c.student_uuid = s.student_uuid
+            AND c.deleted_at IS NULL
+          ORDER BY c.created_at DESC, c.id DESC
+          LIMIT 1
+        ) latest_case ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT link.token_encrypted
+          FROM tasks task
+          JOIN task_links link ON link.task_id = task.id
+          WHERE task.case_id = latest_case.id
+            AND task.deleted_at IS NULL
+            AND link.deleted_at IS NULL
+            AND link.status = 'ACTIVE'
+            AND link.expires_at > NOW()
+            AND COALESCE(link.admin_locked, 0) <> 1
+            AND (link.opens_at IS NULL OR link.opens_at <= NOW())
+          ORDER BY link.created_at DESC, link.id DESC
+          LIMIT 1
+        ) latest_case_link ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT comment.id, comment.comment_text
+          FROM classroom_student_comments comment
+          WHERE comment.classroom_id = s.classroom_id
+            AND comment.person_uuid = s.person_uuid
+          ORDER BY comment.created_at DESC, comment.id DESC
+          LIMIT 1
+        ) latest_comment ON TRUE
         ${whereSql}
       )
     `;
 
-    const filteredParams = [...params];
+    const scopedParams = [...params];
     const riskWhere =
       filters.riskTier && filters.riskTier !== 'NORMAL'
         ? (() => {
-            filteredParams.push(filters.riskTier);
-            return `WHERE risk_tier = $${filteredParams.length}`;
+            scopedParams.push(filters.riskTier);
+            return `WHERE risk_tier = $${scopedParams.length}`;
           })()
         : filters.riskTier === 'NORMAL'
           ? (() => {
-              filteredParams.push('NORMAL');
-              return `WHERE risk_tier = $${filteredParams.length}`;
+              scopedParams.push('NORMAL');
+              return `WHERE risk_tier = $${scopedParams.length}`;
             })()
           : '';
-    const filteredCte = `${baseCte}, filtered AS (SELECT * FROM base_students ${riskWhere})`;
+    const scopedCte = `${baseCte}, risk_scoped AS (SELECT * FROM base_students ${riskWhere})`;
+    const filteredParams = [...scopedParams];
+    const caseStatusWhere = filters.caseStatus
+      ? (() => {
+          filteredParams.push(filters.caseStatus);
+          return `WHERE latest_case_status = $${filteredParams.length}`;
+        })()
+      : '';
+    const filteredCte = `${scopedCte}, filtered AS (SELECT * FROM risk_scoped ${caseStatusWhere})`;
 
     const summaryResult = await this.query<RiskDashboardSummaryRow>(
       `
-        ${baseCte}
+        ${scopedCte}
         SELECT
           COUNT(*)::int AS total_count,
           COUNT(*) FILTER (WHERE risk_tier = 'HIGH')::int AS "HIGH",
           COUNT(*) FILTER (WHERE risk_tier = 'WATCH')::int AS "WATCH",
           COUNT(*) FILTER (WHERE risk_tier = 'NORMAL')::int AS "NORMAL",
-          COUNT(*) FILTER (WHERE missing_profile)::int AS missing_profile_count
-        FROM base_students
+          COUNT(*) FILTER (WHERE missing_profile)::int AS missing_profile_count,
+          COUNT(*) FILTER (WHERE latest_case_status = 'OPEN')::int AS case_open_count,
+          COUNT(*) FILTER (WHERE latest_case_status = 'IN_PROGRESS')::int AS case_in_progress_count,
+          COUNT(*) FILTER (WHERE latest_case_status = 'PENDING_REVIEW')::int AS case_pending_review_count,
+          COUNT(*) FILTER (WHERE latest_case_status = 'STUDENT_NOT_FOUND')::int AS case_student_not_found_count
+        FROM risk_scoped
       `,
-      params,
+      scopedParams,
     );
     const totalCountResult = await this.query<CountRow>(
       `
@@ -3133,6 +3336,21 @@ export class TaskRepository {
       String(summaryResult.rows[0]?.missing_profile_count || '0'),
       10,
     );
+    const caseStatusSummary: RiskDashboardCaseStatusSummary = {
+      OPEN: Number.parseInt(String(summaryResult.rows[0]?.case_open_count || '0'), 10),
+      IN_PROGRESS: Number.parseInt(
+        String(summaryResult.rows[0]?.case_in_progress_count || '0'),
+        10,
+      ),
+      PENDING_REVIEW: Number.parseInt(
+        String(summaryResult.rows[0]?.case_pending_review_count || '0'),
+        10,
+      ),
+      STUDENT_NOT_FOUND: Number.parseInt(
+        String(summaryResult.rows[0]?.case_student_not_found_count || '0'),
+        10,
+      ),
+    };
 
     const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
     const page = filters.page && filters.page > 0 ? filters.page : 1;
@@ -3155,7 +3373,9 @@ export class TaskRepository {
                 ? `weighted_attendance_percent ${sortDirection} NULLS LAST, risk_severity DESC, student_name ASC`
                 : filters.sortBy === 'openCases'
                   ? `open_case_count ${sortDirection}, risk_severity DESC, risk_score DESC, student_name ASC`
-                  : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
+                  : filters.sortBy === 'updatedAt'
+                    ? `latest_case_at ${sortDirection} NULLS LAST, student_name ASC`
+                    : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
 
     const rowsResult = await this.query<RiskDashboardRow>(
       `
@@ -3182,7 +3402,11 @@ export class TaskRepository {
           latest_open_case_id,
           latest_open_case_reason,
           latest_open_task_id,
-          latest_case_at
+          latest_case_id,
+          latest_case_status,
+          latest_case_at,
+          latest_case_link_token_encrypted,
+          teacher_comment
         FROM filtered
         ORDER BY ${orderBy}
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
@@ -3190,7 +3414,18 @@ export class TaskRepository {
       rowParams,
     );
 
-    return { rows: rowsResult.rows, totalCount, summary, missingProfileCount };
+    return {
+      rows: rowsResult.rows.map(({ latest_case_link_token_encrypted, ...row }) => ({
+        ...row,
+        latest_case_magic_link: this.resolveMagicLink(
+          latest_case_link_token_encrypted as string | null,
+        ),
+      })),
+      totalCount,
+      summary,
+      caseStatusSummary,
+      missingProfileCount,
+    };
   }
 
   async findDelegationLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {
@@ -3268,6 +3503,9 @@ export class TaskRepository {
         t.status AS task_status,
         t.created_at,
         tl.assigned_to_name AS initial_assignee,
+        tl.opens_at AS assignment_starts_at,
+        tl.expires_at AS assignment_ends_at,
+        tl.assignment_note,
         (SELECT COUNT(*) FROM task_links WHERE task_id = t.id AND deleted_at IS NULL) AS link_count,
         latest_submission.submitted_at,
         latest_submission.visited_at,

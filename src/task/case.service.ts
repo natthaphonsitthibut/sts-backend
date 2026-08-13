@@ -15,6 +15,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
@@ -78,13 +79,23 @@ export class CaseService {
     return actor?.username || actorName || null;
   }
 
-  private mapCaseDetail(row: Record<string, unknown>) {
+  private mapCaseDetail(row: Record<string, unknown>, includeTeacherComment = false) {
     return {
       id: this.normalizeNumber(row.id),
       student_id: this.normalizeText(row.student_id) || null,
+      student_photo_url:
+        this.normalizeText(row.student_id) && this.normalizeText(row.student_photo_storage_key)
+          ? `/api/students/${encodeURIComponent(this.normalizeText(row.student_id))}/photo?v=${encodeMediaVersion(row.student_photo_updated_at)}`
+          : null,
       student_name: this.normalizeText(row.student_name),
       student_school: this.normalizeText(row.student_school) || null,
       student_address: this.normalizeText(row.student_address) || null,
+      student_phone: this.normalizeText(row.student_phone) || null,
+      student_lat: this.normalizeNumber(row.student_lat),
+      student_lng: this.normalizeNumber(row.student_lng),
+      teacher_comment: includeTeacherComment
+        ? this.normalizeText(row.teacher_comment) || null
+        : null,
       reason_flagged: this.normalizeText(row.reason_flagged) || null,
       status: this.normalizeText(row.status),
       status_label: this.normalizeText(row.status_label) || null,
@@ -95,7 +106,6 @@ export class CaseService {
         this.normalizeText(row.status_label) ||
         null,
       status_badge_variant: this.normalizeText(row.status_badge_variant) || null,
-      status_summary_tone: this.normalizeText(row.status_summary_tone) || null,
       school_id: this.normalizeNumber(row.school_id),
       grade: this.normalizeText(row.grade) || null,
       room: this.normalizeText(row.room) || null,
@@ -106,11 +116,17 @@ export class CaseService {
   }
 
   private mapFollowUpRound(row: Record<string, unknown>) {
+    const photoPaths = Array.isArray(row.photo_paths)
+      ? JSON.stringify(row.photo_paths.filter((path): path is string => typeof path === 'string'))
+      : this.normalizeText(row.photo_paths) || null;
     return {
       task_id: this.normalizeText(row.task_id),
       task_status: this.normalizeText(row.task_status),
       created_at: row.created_at ?? null,
       initial_assignee: this.normalizeText(row.initial_assignee) || null,
+      assignment_starts_at: row.assignment_starts_at ?? null,
+      assignment_ends_at: row.assignment_ends_at ?? null,
+      assignment_note: this.normalizeText(row.assignment_note) || null,
       link_count: this.normalizeNumber(row.link_count) ?? 0,
       submitted_at: row.submitted_at ?? null,
       visited_at: row.visited_at ?? null,
@@ -121,7 +137,7 @@ export class CaseService {
       recommendation: this.normalizeText(row.recommendation) || null,
       visit_lat: row.visit_lat ?? null,
       visit_lng: row.visit_lng ?? null,
-      photo_paths: this.normalizeText(row.photo_paths) || null,
+      photo_paths: photoPaths,
       address_changed: row.address_changed === true,
       home_visit_exception_code: this.normalizeText(row.home_visit_exception_code) || null,
       updated_student_address: this.normalizeText(row.updated_student_address) || null,
@@ -233,7 +249,10 @@ export class CaseService {
     }
 
     if (result.created) {
-      const mapped = this.mapCaseDetail(detail);
+      const mapped = this.mapCaseDetail(
+        detail,
+        this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+      );
       await this.auditLog.record({
         actorUserId: resolveAuditActorId(currentActor),
         actorLabel: this.actorLabel(currentActor),
@@ -261,7 +280,10 @@ export class CaseService {
     return {
       success: true,
       created: result.created,
-      data: this.mapCaseDetail(detail),
+      data: this.mapCaseDetail(
+        detail,
+        this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+      ),
     };
   }
 
@@ -282,7 +304,10 @@ export class CaseService {
     return {
       success: true,
       data: {
-        ...this.mapCaseDetail(detail),
+        ...this.mapCaseDetail(
+          detail,
+          this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+        ),
         follow_up_rounds: rounds.map((round) => this.mapFollowUpRound(round)),
         reviews: reviews.map((review) => this.mapCaseReview(review)),
         risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
@@ -413,14 +438,19 @@ export class CaseService {
         ip: null,
       });
 
-      await this.notificationsService.notifyCaseStatusChanged({
-        caseId,
-        studentName: this.normalizeText(caseRecord.student_name) || null,
-        schoolId: this.normalizeNumber(caseRecord.school_id),
-        nextStatus,
-        completionOutcomeCode: reviewAction.completionOutcomeCode,
-        actorUserId: resolveAuditActorId(actor),
-      });
+      try {
+        await this.notificationsService.notifyCaseStatusChanged({
+          caseId,
+          studentName: this.normalizeText(caseRecord.student_name) || null,
+          schoolId: this.normalizeNumber(caseRecord.school_id),
+          nextStatus,
+          completionOutcomeCode: reviewAction.completionOutcomeCode,
+          actorUserId: resolveAuditActorId(actor),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to notify reviewed case after commit: ${message}`);
+      }
       const riskProfileStudentUuid =
         typeof caseRecord.student_uuid === 'string'
           ? this.normalizeText(caseRecord.student_uuid) || null

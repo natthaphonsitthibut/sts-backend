@@ -543,13 +543,18 @@ export class TaskSubmissionService {
             ip: null,
           });
         }
-        caseStatusRecipients = await this.notificationsService.notifyCaseStatusChanged({
-          caseId,
-          studentName: this.toScalarString(link.student_name),
-          schoolId: this.normalizeNumber(link.school_id as string | number | null | undefined),
-          nextStatus: targetCaseStatus,
-          actorUserId: null,
-        });
+        try {
+          caseStatusRecipients = await this.notificationsService.notifyCaseStatusChanged({
+            caseId,
+            studentName: this.toScalarString(link.student_name),
+            schoolId: this.normalizeNumber(link.school_id as string | number | null | undefined),
+            nextStatus: targetCaseStatus,
+            actorUserId: null,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`Failed to notify case status after submission commit: ${message}`);
+        }
       }
 
       this.logger.log(
@@ -558,11 +563,16 @@ export class TaskSubmissionService {
       // One submission, one notification per person: whoever was just told the
       // case changed status is skipped here instead of getting a second row
       // saying the same report came back.
-      await this.notificationsService.notifyTaskSubmitted({
-        taskId: String(link.task_id),
-        submitterName: typeof task?.assigned_to_name === 'string' ? task.assigned_to_name : null,
-        alreadyNotifiedUserIds: caseStatusRecipients,
-      });
+      try {
+        await this.notificationsService.notifyTaskSubmitted({
+          taskId: String(link.task_id),
+          submitterName: typeof task?.assigned_to_name === 'string' ? task.assigned_to_name : null,
+          alreadyNotifiedUserIds: caseStatusRecipients,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to notify task submission after commit: ${message}`);
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

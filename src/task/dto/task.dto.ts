@@ -65,6 +65,17 @@ export class CreateTaskDto {
   @IsOptional()
   assigned_to_phone?: string | null;
 
+  /**
+   * Selected from the active teachers of the selected VISIT student's school.
+   * The lifecycle service resolves the name/email server-side; this id is never
+   * trusted as an unrestricted user reference.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assigned_teacher_user_id?: number | null;
+
   @IsOptional()
   expires_value?: string | number | null;
 
@@ -170,6 +181,12 @@ export class CreateTaskDto {
 
   @IsOptional()
   existing_case_id?: string | number | null;
+
+  /** Optional instruction shown to the assigned teacher for this case follow-up. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  assignment_note?: string | null;
 
   /** Approved follow-up request consumed by this VISIT assignment. */
   @IsOptional()
@@ -409,10 +426,23 @@ export const RISK_DASHBOARD_SORT_FIELDS = [
   'room',
   'attendance',
   'openCases',
+  'updatedAt',
 ] as const;
 export const RISK_DASHBOARD_SORT_DIRECTIONS = ['asc', 'desc'] as const;
+export const RISK_DASHBOARD_CASE_STATUSES = [
+  'OPEN',
+  'IN_PROGRESS',
+  'PENDING_REVIEW',
+  'STUDENT_NOT_FOUND',
+  'RESOLVED',
+] as const;
+export const RISK_DASHBOARD_STUDENT_GROUPS = ['RISK', 'WATCHLIST'] as const;
 
 export class GetRiskDashboardQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsIn(RISK_DASHBOARD_STUDENT_GROUPS)
+  studentGroup?: (typeof RISK_DASHBOARD_STUDENT_GROUPS)[number];
+
   @IsOptional()
   @IsIn(RISK_DASHBOARD_TIERS)
   riskTier?: (typeof RISK_DASHBOARD_TIERS)[number];
@@ -437,6 +467,22 @@ export class GetRiskDashboardQueryDto extends PaginationQueryDto {
   @Type(() => Number)
   @IsInt()
   schoolId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  academicYear?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  semester?: number;
+
+  @IsOptional()
+  @IsIn(RISK_DASHBOARD_CASE_STATUSES)
+  caseStatus?: (typeof RISK_DASHBOARD_CASE_STATUSES)[number];
 
   @IsOptional()
   @IsString()

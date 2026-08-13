@@ -7,6 +7,8 @@ const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
+const { TaskRepository } = require('../dist/task/task.repository');
+const { FILE_STORAGE_ADAPTER } = require('../dist/files/storage/file-storage.types');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run home visit browser smoke with NODE_ENV=production');
@@ -25,8 +27,6 @@ const CHROME_PATH =
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9235);
 const CREATOR_USERNAME = 'home_visit_browser_creator';
 const NO_CREATE_USERNAME = 'home_visit_browser_no_permission';
-const ASSIGNEE_EMAIL = 'home.visit.browser@example.test';
-const ASSIGNEE_NAME = 'Home Visit Browser Smoke';
 const REASON_FLAGGED = 'Automated home visit browser smoke';
 
 function assert(condition, message) {
@@ -299,6 +299,22 @@ async function fetchBrowserJson(client, url) {
   );
 }
 
+async function postBrowserJson(client, url, body) {
+  return await evaluate(
+    client,
+    `fetch(${JSON.stringify(url)}, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: ${JSON.stringify(JSON.stringify(body))}
+    }).then(async (response) => ({
+      ok: response.ok,
+      status: response.status,
+      body: await response.json().catch(() => null),
+    }))`,
+  );
+}
+
 function browserUser(row, username, permissions) {
   return {
     id: row.id,
@@ -377,19 +393,37 @@ async function disableUsers(dataSource) {
   );
 }
 
-async function cleanupSmokeTasks(dataSource) {
+async function cleanupSmokeTasks(dataSource, storage) {
   const rows = await dataSource.query(
     `
       SELECT DISTINCT t.id AS task_id, t.case_id, tl.id AS link_id
       FROM tasks t
       JOIN task_links tl ON tl.task_id = t.id
-      WHERE tl.assigned_to_email = $1
-        OR tl.assigned_to_name = $2
+      JOIN cases c ON c.id = t.case_id
+      WHERE c.reason_flagged = $1
     `,
-    [ASSIGNEE_EMAIL, ASSIGNEE_NAME],
+    [REASON_FLAGGED],
   );
   const taskIds = rows.map((row) => row.task_id).filter(Boolean);
   const linkIds = rows.map((row) => row.link_id).filter(Boolean);
+  if (linkIds.length && storage) {
+    const attachmentRows = await dataSource.query(
+      `SELECT photo_paths FROM task_submissions WHERE task_link_id = ANY($1::uuid[])`,
+      [linkIds],
+    );
+    for (const row of attachmentRows) {
+      const paths = Array.isArray(row.photo_paths)
+        ? row.photo_paths
+        : typeof row.photo_paths === 'string'
+          ? JSON.parse(row.photo_paths)
+          : [];
+      for (const storedPath of paths) {
+        if (typeof storedPath === 'string' && storedPath.startsWith('/uploads/visit-attachments/')) {
+          await storage.delete(storedPath.slice('/uploads/'.length));
+        }
+      }
+    }
+  }
   const orphanCaseRows = await dataSource.query(
     `SELECT id FROM cases WHERE reason_flagged = $1`,
     [REASON_FLAGGED],
@@ -416,6 +450,7 @@ async function cleanupSmokeTasks(dataSource) {
         UPDATE cases
         SET deleted_at = COALESCE(deleted_at, NOW()),
             status = 'RESOLVED',
+            completion_outcome_code = COALESCE(completion_outcome_code, 'CLOSED'),
             result_summary = COALESCE(result_summary, 'Automated home visit browser smoke cleanup')
         WHERE id = ANY($1::int[])
           AND reason_flagged = $2
@@ -453,44 +488,33 @@ async function findStudentFixture(dataSource) {
         AND NULLIF(TRIM(s."ProvinceNameThai_Onec"), '') IS NOT NULL
         AND NULLIF(TRIM(s."DistrictNameThai_Onec"), '') IS NOT NULL
         AND NULLIF(TRIM(s."SubDistrictNameThai_Onec"), '') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cases active_case
+          WHERE active_case.student_uuid = s.student_uuid
+            AND active_case.deleted_at IS NULL
+            AND active_case.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM school_teacher_memberships membership
+          JOIN teachers teacher
+            ON teacher.id = membership.teacher_id
+           AND teacher.teacher_status = 'ACTIVE'
+           AND teacher.deleted_at IS NULL
+          JOIN users teacher_user
+            ON teacher_user.id = membership.teacher_user_id
+           AND teacher_user.status = 'ACTIVE'
+          WHERE membership.school_id = s."SchoolID_Onec"
+            AND membership.membership_status = 'ACTIVE'
+            AND membership.deleted_at IS NULL
+        )
       ORDER BY s.student_uuid
       LIMIT 1
     `,
   );
   assert(student, 'No active student with address fixture was available for home visit smoke');
   return student;
-}
-
-async function selectStudent(client, student) {
-  const searchTerm = String(student.first_name).slice(0, 8);
-  await setInputValue(client, 'input[placeholder="พิมพ์ชื่อนักเรียนเพื่อค้นหา"]', searchTerm);
-  await waitFor(
-    async () =>
-      Boolean(
-        await evaluate(
-          client,
-          `(() => {
-            const expected = ${JSON.stringify(`${student.first_name} ${student.last_name}`)};
-            return [...document.querySelectorAll('button')].some((button) => button.textContent.includes(expected));
-          })()`,
-        ),
-      ),
-    'Student picker did not show the selected roster fixture',
-  );
-  await click(
-    client,
-    `(() => {
-      const expected = ${JSON.stringify(`${student.first_name} ${student.last_name}`)};
-      return [...document.querySelectorAll('button')].find((button) => button.textContent.includes(expected));
-    })()`,
-    'Student picker result button was not found',
-  );
-  await waitFor(
-    async () =>
-      String(await evaluate(client, 'document.body.innerText')).includes(student.school_name) &&
-      Boolean(await evaluate(client, `document.querySelector('#address_province')?.value`)),
-    'Student selection did not prefill school and address fields',
-  );
 }
 
 async function selectCombobox(client, selector, label) {
@@ -539,50 +563,149 @@ async function selectHomeVisitException(client, label) {
   );
 }
 
-async function waitForMapSurface(client, message) {
-  await waitFor(async () => {
-    const text = String(await evaluate(client, 'document.body.innerText'));
-    if (text.includes('ยังไม่ได้ตั้งค่า Google Maps')) {
-      throw new Error('VITE_GOOGLE_MAPS_BROWSER_KEY is not configured for the running frontend');
-    }
-    if (text.includes('โหลดแผนที่ไม่สำเร็จ')) {
-      throw new Error('Google Maps browser surface did not load');
-    }
-    return Boolean(
-      await evaluate(
-        client,
-        `(() => {
-          const surface = document.querySelector('[data-sts-map-surface]');
-          return Boolean(surface?.__stsGoogleMap);
-        })()`,
-      ),
-    );
-  }, message, 35_000);
-}
+async function setAssignmentEnd(client) {
+  const tomorrowParts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      day: '2-digit',
+      month: '2-digit',
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+    })
+      .formatToParts(new Date(Date.now() + 24 * 60 * 60 * 1000))
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value]),
+  );
+  const todayMonth = new Intl.DateTimeFormat('en-CA', {
+    month: '2-digit',
+    timeZone: 'Asia/Bangkok',
+  }).format(new Date());
 
-async function clickMap(client) {
+  await click(
+    client,
+    `document.querySelector('button[aria-label="วันที่สิ้นสุดมอบหมาย"]')`,
+    'Assignment end-date picker was not found',
+  );
+  if (tomorrowParts.month !== todayMonth) {
+    await click(
+      client,
+      `document.querySelector('[role="dialog"][aria-label="เลือกวันที่"] button[aria-label="ถัดไป"]')`,
+      'Assignment end-date next-month button was not found',
+    );
+  }
+  await click(
+    client,
+    `(() => [...document.querySelectorAll('[role="dialog"][aria-label="เลือกวันที่"] button')]
+      .find((button) => button.textContent.trim() === ${JSON.stringify(String(Number(tomorrowParts.day)))}))()`,
+    'Tomorrow was not selectable in the assignment end-date picker',
+  );
+
+  await click(
+    client,
+    `document.querySelector('button[aria-label="เวลาสิ้นสุดมอบหมาย"]')`,
+    'Assignment end-time picker was not found',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const select = document.querySelector('[role="dialog"][aria-label="เลือกเวลา"] select[aria-label="ชั่วโมง"]');
+      if (!select) throw new Error('Assignment end hour select was not found');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(select, '23');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`,
+  );
   await waitFor(
     async () =>
       Boolean(
         await evaluate(
           client,
-          `(() => {
-            const surface = document.querySelector('[data-sts-map-surface]');
-            const google = window.google;
-            const map = surface?.__stsGoogleMap;
-            if (!surface || !google || !map) return false;
-            const next = new google.maps.LatLng(13.7563, 100.5018);
-            google.maps.event.trigger(map, 'click', { latLng: next });
-            return true;
-          })()`,
+          `document.querySelector('[role="dialog"][aria-label="เลือกเวลา"] select[aria-label="ชั่วโมง"]')?.value === '23'`,
         ),
       ),
-    'Home visit map was not available for click smoke',
-    35_000,
+    'Assignment end hour did not update',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const select = document.querySelector('[role="dialog"][aria-label="เลือกเวลา"] select[aria-label="นาที"]');
+      if (!select) throw new Error('Assignment end minute select was not found');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(select, '59');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`,
+  );
+  await click(
+    client,
+    `(() => [...document.querySelectorAll('[role="dialog"][aria-label="เลือกเวลา"] button')]
+      .find((button) => button.textContent.trim() === 'เสร็จสิ้น'))()`,
+    'Assignment end-time done button was not found',
   );
 }
 
-async function getCreatedLink(dataSource) {
+async function selectFirstVisitAssignee(client) {
+  const hasDefault = await evaluate(
+    client,
+    `Boolean(document.querySelector('input[aria-label="ครูผู้ได้รับมอบหมาย"]')?.value)`,
+  );
+  if (hasDefault) return;
+  await click(
+    client,
+    `document.querySelector('input[aria-label="ครูผู้ได้รับมอบหมาย"]')`,
+    'Visit assignee combobox was not found',
+  );
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('input[aria-label="ครูผู้ได้รับมอบหมาย"]')?.parentElement?.querySelector('ul li button'))`,
+        ),
+      ),
+    'Visit assignee options did not load',
+  );
+  await click(
+    client,
+    `document.querySelector('input[aria-label="ครูผู้ได้รับมอบหมาย"]')?.parentElement?.querySelector('ul li button')`,
+    'No active teacher was available for visit assignment',
+  );
+}
+
+async function attachVisitEvidence(client) {
+  await evaluate(
+    client,
+    `(() => {
+      const input = document.querySelector('input[type="file"]');
+      if (!input) throw new Error('Visit attachment input was not found');
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(['not allowed'], 'unsafe.txt', { type: 'text/plain' }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`,
+  );
+  await waitFor(
+    async () => (await evaluate(client, 'document.body.innerText')).includes('รองรับเฉพาะไฟล์'),
+    'Visit attachment type validation did not render',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const input = document.querySelector('input[type="file"]');
+      if (!input) throw new Error('Visit attachment input was not found');
+      const binary = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], 'visit-proof.png', { type: 'image/png' }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`,
+  );
+  await waitFor(
+    async () => (await evaluate(client, 'document.body.innerText')).includes('visit-proof.png'),
+    'Valid visit evidence did not appear in the attachment list',
+  );
+}
+
+async function getCreatedLink(dataSource, taskRepository, caseId, expectedNote) {
   const [row] = await dataSource.query(
     `
       SELECT
@@ -593,25 +716,30 @@ async function getCreatedLink(dataSource) {
         c.student_lat,
         c.student_lng,
         tl.assigned_to_first_name,
-        tl.assigned_to_last_name
+        tl.assigned_to_last_name,
+        tl.assigned_to_name,
+        tl.assignment_note,
+        tl.opens_at,
+        tl.expires_at
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       JOIN cases c ON c.id = t.case_id
-      WHERE tl.assigned_to_email = $1
-        AND tl.assigned_to_name = $2
+      WHERE c.id = $1
+        AND t.task_type = 'VISIT'
+        AND t.deleted_at IS NULL
+        AND tl.deleted_at IS NULL
       ORDER BY tl.created_at DESC
       LIMIT 1
     `,
-    [ASSIGNEE_EMAIL, ASSIGNEE_NAME],
+    [caseId],
   );
   assert(row, 'Created home visit task link was not persisted');
-  assert(row.student_lat !== null && row.student_lng !== null, 'Created case did not persist coordinates');
-  assert(
-    row.assigned_to_first_name === 'Home Visit' &&
-      row.assigned_to_last_name === 'Browser Smoke',
-    'Created task link did not persist structured assignee names',
-  );
-  return row;
+  assert(row.assigned_to_name, 'Created task link did not persist the selected teacher');
+  assert(row.assignment_note === expectedNote, 'Assignment note was not persisted');
+  assert(new Date(row.expires_at) > new Date(row.opens_at), 'Assignment window was not persisted in order');
+  const detail = await taskRepository.findLinkDetailById(row.link_id);
+  assert(detail?.magic_link, 'Created task link could not be reconstructed');
+  return { ...row, magic_link: detail.magic_link };
 }
 
 async function assertSubmittedReport(dataSource, createdLink) {
@@ -626,7 +754,8 @@ async function assertSubmittedReport(dataSource, createdLink) {
         submission.cause_category,
         submission.follow_up_assessment_code,
         submission.cause_detail,
-        submission.case_follow_up_decision
+        submission.case_follow_up_decision,
+        submission.photo_paths
       FROM tasks t
       JOIN task_links tl ON tl.task_id = t.id
       JOIN cases c ON c.id = t.case_id
@@ -646,10 +775,7 @@ async function assertSubmittedReport(dataSource, createdLink) {
     `Expected case PENDING_REVIEW, received ${row.case_status}`,
   );
   assert(row.visited_at, 'Home visit report did not persist visited_at');
-  assert(
-    row.home_visit_exception_code === 'STUDENT_NOT_FOUND',
-    `Expected STUDENT_NOT_FOUND, received ${row.home_visit_exception_code}`,
-  );
+  assert(row.home_visit_exception_code === null, 'Normal visit unexpectedly stored an exception');
   assert(
     row.follow_up_assessment_code === 'CONTINUE_FOLLOW_UP',
     `Expected CONTINUE_FOLLOW_UP assessment, received ${row.follow_up_assessment_code}`,
@@ -657,6 +783,15 @@ async function assertSubmittedReport(dataSource, createdLink) {
   assert(
     row.case_follow_up_decision === 'REQUEST_REVIEW',
     `Expected REQUEST_REVIEW, received ${row.case_follow_up_decision}`,
+  );
+  const photoPaths = Array.isArray(row.photo_paths)
+    ? row.photo_paths
+    : typeof row.photo_paths === 'string'
+      ? JSON.parse(row.photo_paths)
+      : [];
+  assert(
+    photoPaths.length === 1 && photoPaths[0].startsWith('/uploads/visit-attachments/'),
+    'Uploaded visit evidence was not persisted in private attachment storage',
   );
 
   // One submission must not tell a single person about it twice, even though it
@@ -686,17 +821,19 @@ async function main() {
   const dataSource = app.get(DataSource);
   const passwordService = app.get(PasswordService);
   const sessionCookieService = app.get(SessionCookieService);
+  const taskRepository = app.get(TaskRepository);
+  const storage = app.get(FILE_STORAGE_ADAPTER);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let chrome;
 
   try {
-    await cleanupSmokeTasks(dataSource);
+    await cleanupSmokeTasks(dataSource, storage);
     const student = await findStudentFixture(dataSource);
     const creator = await upsertUser(dataSource, {
       username: CREATOR_USERNAME,
       passwordHash: await passwordService.hash(`HomeVisitCreator-${suffix}-Password`),
       firstName: 'Home Visit Creator',
-      permissions: ['home', 'create', 'students'],
+      permissions: ['home', 'create', 'review-cases', 'close-case', 'manage-student-observations'],
     });
     const noCreate = await upsertUser(dataSource, {
       username: NO_CREATE_USERNAME,
@@ -734,83 +871,125 @@ async function main() {
 
     await loginSession(
       client,
-      browserUser(creator, CREATOR_USERNAME, ['home', 'create', 'students']),
+      browserUser(creator, CREATOR_USERNAME, [
+        'home',
+        'create',
+        'review-cases',
+        'close-case',
+        'manage-student-observations',
+      ]),
       createSessionCookie(sessionCookieService, creator.id),
     );
-    await navigate(client, `${FRONTEND_URL}/create/visit`, 'create visit');
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes('รายละเอียด') &&
-        Boolean(
-          await evaluate(client, `Boolean(document.querySelector('#assigned_to_first_name'))`),
-        ) &&
-        Boolean(
-          await evaluate(client, `Boolean(document.querySelector('#assigned_to_last_name'))`),
-        ) &&
-        Boolean(
-          await evaluate(client, `Boolean(document.querySelector('#assignment-start-time'))`),
-        ) &&
-        Boolean(await evaluate(client, `Boolean(document.querySelector('#assignment-end-time'))`)),
-      'Create visit page did not render',
-    );
-
-    await setInputValue(client, '#assigned_to_first_name', 'Home Visit');
-    await setInputValue(client, '#assigned_to_last_name', 'Browser Smoke');
-    await setInputValue(client, '#assigned_to_email', ASSIGNEE_EMAIL);
-    await selectStudent(client, student);
-    await setInputValue(client, '#reason_flagged', REASON_FLAGGED);
-
-    const allowedGeocode = await fetchBrowserJson(
+    const openCaseResult = await postBrowserJson(client, `${BROWSER_BACKEND_URL}/api/cases`, {
+      student_id: student.student_uuid,
+      reason: REASON_FLAGGED,
+    });
+    assert(openCaseResult.status === 200, `Open case expected 200, received ${openCaseResult.status}`);
+    assert(openCaseResult.body?.created === true, 'Home visit smoke did not create a fresh OPEN case');
+    const caseId = Number(openCaseResult.body?.data?.id);
+    assert(Number.isInteger(caseId), 'Open case response did not return a case id');
+    const visitAssigneesResult = await fetchBrowserJson(
       client,
-      `${BROWSER_BACKEND_URL}/api/geo/geocode?address=${encodeURIComponent('ดอนเมือง กรุงเทพมหานคร 10210')}`,
+      `${BROWSER_BACKEND_URL}/api/tasks/visit-assignees/${encodeURIComponent(student.student_uuid)}`,
     );
-    assert(allowedGeocode.status === 200, 'Create actor could not call /api/geo/geocode');
-    assert(allowedGeocode.body?.lat && allowedGeocode.body?.lng, 'Allowed geocode did not return coordinates');
+    assert(
+      visitAssigneesResult.status === 200 && visitAssigneesResult.body?.data?.length > 0,
+      `Visit assignee API returned status=${visitAssigneesResult.status} count=${visitAssigneesResult.body?.data?.length ?? 0}`,
+    );
 
-    await waitForMapSurface(client, 'Home visit map surface did not render on create form');
-    const mapUxText = String(await evaluate(client, 'document.body.innerText'));
-    assert(
-      mapUxText.includes('ผลค้นหาเป็นตำแหน่งโดยประมาณ — ลากหมุดปรับให้ตรงจุดจริง'),
-      'Create-visit map did not render the approximate geocode hint',
-    );
-    assert(
-      !mapUxText.includes('ค้นหาพิกัดจากที่อยู่'),
-      'Create-visit map still rendered the legacy geocode button',
-    );
-    assert(
-      mapUxText.includes('ใช้ที่อยู่ที่กรอกไว้'),
-      'Create-visit map did not render the filled-address shortcut',
-    );
-    await clickMap(client);
+    await navigate(client, `${FRONTEND_URL}/cases/${caseId}`, 'open case assignment');
     await waitFor(
       async () =>
-        Boolean(
-          await evaluate(
-            client,
-            `document.querySelector('#address_latitude')?.value && document.querySelector('#address_longitude')?.value`,
-          ),
+        String(await evaluate(client, 'document.body.innerText')).includes('รอมอบหมาย') &&
+        Boolean(await evaluate(client, `Boolean(document.querySelector('button[aria-label="วันที่เริ่มมอบหมาย"]'))`)) &&
+        Boolean(await evaluate(client, `Boolean(document.querySelector('button[aria-label="วันที่สิ้นสุดมอบหมาย"]'))`)),
+      'OPEN case assignment form did not render',
+    );
+
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.offsetParent !== null && button.textContent.includes('มอบหมาย')))()`,
+      'Assignment submit button was not found',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'กรุณาระบุ วันที่สิ้นสุด, เวลาสิ้นสุด',
         ),
-      'Clicking the home visit map did not update coordinate inputs',
+      'Assignment form did not validate the missing end window',
+    );
+    await setAssignmentEnd(client);
+    await selectFirstVisitAssignee(client);
+    await setInputValue(
+      client,
+      'textarea[placeholder="คำอธิบาย"]',
+      'ตรวจสอบการมาเรียนและพูดคุยกับผู้ปกครอง',
     );
     await click(
       client,
-      `document.querySelector('button[type="submit"]')`,
-      'Create visit submit button was not found',
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.offsetParent !== null && button.textContent.includes('มอบหมาย')))()`,
+      'Assignment submit button was not found after completing the form',
     );
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์สำเร็จ'),
-      'Create visit success state did not render',
+      async () => (await evaluate(client, 'document.body.innerText')).includes('ยืนยันการมอบหมาย'),
+      'Assignment confirmation dialog did not render',
     );
-    const guestLink = await evaluate(
+    await click(
       client,
-      `document.querySelector('a[aria-label="เปิดลิงก์"]')?.href || null`,
+      `(() => [...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.trim() === 'ยืนยัน'))()`,
+      'Assignment confirmation button was not found',
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT status FROM cases WHERE id = $1`,
+          [caseId],
+        );
+        return row?.status === 'IN_PROGRESS';
+      },
+      'Assignment did not persist the IN_PROGRESS case state',
+    );
+    const assignmentDetailResult = await fetchBrowserJson(
+      client,
+      `${BROWSER_BACKEND_URL}/api/cases/${caseId}`,
+    );
+    const latestAssignment = assignmentDetailResult.body?.data?.follow_up_rounds?.at(-1);
+    assert(latestAssignment, 'Assigned case detail did not return a follow-up round');
+    assert(
+      new Date(latestAssignment.assignment_ends_at).getTime() > Date.now(),
+      `Assigned case returned an expired end time: ${latestAssignment.assignment_ends_at}`,
     );
     assert(
-      typeof guestLink === 'string' && guestLink.startsWith(FRONTEND_URL),
-      'Create visit result did not expose a same-origin guest link',
+      latestAssignment.assignment_note === 'ตรวจสอบการมาเรียนและพูดคุยกับผู้ปกครอง',
+      `Assigned case returned an incorrect note: ${latestAssignment.assignment_note}`,
+    );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        const savedNoteVisible = await evaluate(
+          client,
+          `([...document.querySelectorAll('textarea:disabled')]
+            .some((textarea) => textarea.value === 'ตรวจสอบการมาเรียนและพูดคุยกับผู้ปกครอง'))`,
+        );
+        if (!text.includes('รอติดตาม') || !savedNoteVisible) {
+          throw new Error(`Current case page: ${text.slice(0, 1400)}`);
+        }
+        return true;
+      },
+      'Assigned case did not enter IN_PROGRESS with its saved assignment note',
     );
 
-    const createdLink = await getCreatedLink(dataSource);
+    const createdLink = await getCreatedLink(
+      dataSource,
+      taskRepository,
+      caseId,
+      'ตรวจสอบการมาเรียนและพูดคุยกับผู้ปกครอง',
+    );
+    const guestPath = new URL(createdLink.magic_link, FRONTEND_URL).pathname;
+    const guestLink = `${FRONTEND_URL}${guestPath}`;
     await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1`, [
       createdLink.link_id,
     ]);
@@ -823,7 +1002,9 @@ async function main() {
           pageText.includes('ขั้นตอนการติดตาม') &&
           Boolean(await evaluate(client, `Boolean(document.querySelector('#visited-time'))`));
         if (!ready) {
-          throw new Error(`Current guest page: ${pageText.slice(0, 500)}`);
+          throw new Error(
+            `Guest link=${guestLink} pathname=${await evaluate(client, 'location.pathname')} page=${pageText.slice(0, 500)}`,
+          );
         }
         return true;
       },
@@ -831,7 +1012,7 @@ async function main() {
     );
     await click(
       client,
-      `document.querySelector('button[aria-label="ดูเบอร์ติดต่อนักเรียนและผู้ปกครอง"]')`,
+      `document.querySelector('button[aria-label="ดูเบอร์ติดต่อนักเรียน"]')`,
       'Contact dialog button was not found',
     );
     await waitFor(
@@ -865,14 +1046,12 @@ async function main() {
     const reportAlignment = await evaluate(
       client,
       `(() => {
-        const detail = document.querySelector('#cause-detail')?.getBoundingClientRect();
-        const upload = document.querySelector('[data-visit-upload-dropzone]')?.getBoundingClientRect();
+        const detail = document.querySelector('[data-visit-report-fields]')?.getBoundingClientRect();
+        const upload = document.querySelector('[data-visit-report-upload]')?.getBoundingClientRect();
         const exceptions = document.querySelector('[data-home-visit-exceptions]')?.getBoundingClientRect();
         if (!detail || !upload || !exceptions) return null;
         return {
-          topDelta: Math.abs(
-            document.querySelector('#visited-date')?.getBoundingClientRect().top - upload.top
-          ),
+          topDelta: Math.abs(detail.top - upload.top),
           bottomDelta: Math.abs(detail.bottom - upload.bottom),
           exceptionsClearBoth: exceptions.top > Math.max(detail.bottom, upload.bottom),
           trackingStepTop: document.querySelector('[data-flow-step="2"]')?.getBoundingClientRect().top,
@@ -882,7 +1061,7 @@ async function main() {
     assert(reportAlignment, 'Report alignment elements were not rendered');
     assert(
       reportAlignment.topDelta <= 1,
-      `Report visit-date/upload tops differ by ${reportAlignment.topDelta}px`,
+      `Report field/upload columns differ at the top by ${reportAlignment.topDelta}px`,
     );
     assert(
       reportAlignment.bottomDelta <= 1,
@@ -1021,13 +1200,13 @@ async function main() {
         Boolean(await evaluate(client, `Boolean(document.querySelector('#visited-time'))`)),
       'Mobile guest home visit report did not render',
     );
-    await selectHomeVisitException(client, 'ไม่พบนักเรียน');
     await selectCombobox(client, '#follow-up-assessment', 'ควรติดตามต่อ');
     await setInputValue(
       client,
       '#cause-detail',
-      'ตรวจสอบบริเวณบ้านและสอบถามเพื่อนบ้านแล้ว ไม่พบนักเรียน',
+      'เยี่ยมบ้านและพูดคุยกับผู้ปกครองแล้ว เห็นควรติดตามต่อ',
     );
+    await attachVisitEvidence(client);
     await click(
       client,
       `document.querySelector('button[type="submit"]')`,
@@ -1048,13 +1227,270 @@ async function main() {
     await captureScreenshot(client, process.env.SMOKE_SUCCESS_SCREENSHOT_PATH);
     await assertSubmittedReport(dataSource, createdLink);
 
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1366,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await navigate(client, `${FRONTEND_URL}/cases/${caseId}`, 'pending-review case');
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return text.includes('รอพิจารณา') &&
+          Boolean(await evaluate(client, `Boolean(document.querySelector('img[alt="ไฟล์แนบการติดตาม 1"]'))`)) &&
+          text.includes('ส่งต่อหน่วยงาน') &&
+          text.includes('ปิดเคส');
+      },
+      'PENDING_REVIEW case did not render its attachment and separate review actions',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'ส่งต่อหน่วยงาน'))()`,
+      'Refer-agency review action was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('เหตุผลการพิจารณา'),
+      'Refer-agency review dialog did not render',
+    );
+    const reviewSubmitInitiallyDisabled = await evaluate(
+      client,
+      `(() => [...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.includes('ส่งต่อหน่วยงาน'))?.disabled === true)()`,
+    );
+    assert(reviewSubmitInitiallyDisabled, 'Review dialog allowed an empty reason');
+    await setInputValue(client, '#case-note', 'ส่งต่อหน่วยงานเพื่อดูแลต่อเนื่อง');
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.includes('ส่งต่อหน่วยงาน')))()`,
+      'Refer-agency review confirmation was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('เสร็จสิ้น'),
+      'Reviewed case did not render the RESOLVED state',
+    );
+    const [reviewedCase] = await dataSource.query(
+      `SELECT status, completion_outcome_code FROM cases WHERE id = $1`,
+      [caseId],
+    );
+    assert(
+      reviewedCase?.status === 'RESOLVED' &&
+        reviewedCase?.completion_outcome_code === 'REFERRED_AGENCY',
+      'Refer-agency review did not persist RESOLVED/REFERRED_AGENCY',
+    );
+
+    const studentNotFoundCaseResult = await postBrowserJson(
+      client,
+      `${BROWSER_BACKEND_URL}/api/cases`,
+      { student_id: student.student_uuid, reason: REASON_FLAGGED },
+    );
+    const studentNotFoundCaseId = Number(studentNotFoundCaseResult.body?.data?.id);
+    assert(
+      studentNotFoundCaseResult.body?.created === true && Number.isInteger(studentNotFoundCaseId),
+      'Could not create a fresh case for STUDENT_NOT_FOUND flow',
+    );
+    const assignmentStart = new Date();
+    const assignmentEnd = new Date(assignmentStart.getTime() + 24 * 60 * 60 * 1000);
+    const assignmentResult = await postBrowserJson(client, `${BROWSER_BACKEND_URL}/api/tasks`, {
+      task_type: 'VISIT',
+      type: 'VISIT',
+      assigned_to_name: '',
+      assigned_to_first_name: '',
+      assigned_to_last_name: '',
+      assigned_teacher_user_id: visitAssigneesResult.body.data[0].teacherUserId,
+      expires_value: 1,
+      expires_unit: 'days',
+      opens_at: assignmentStart.toISOString(),
+      expires_at: assignmentEnd.toISOString(),
+      existing_case_id: String(studentNotFoundCaseId),
+      student_id: student.student_uuid,
+      student_name: `${student.first_name} ${student.last_name}`,
+      student_school: student.school_name,
+      target_school_id: student.school_id,
+      reason_flagged: REASON_FLAGGED,
+      assignment_note: 'ตรวจสอบกรณีไม่พบนักเรียน',
+    });
+    assert(assignmentResult.status === 201, `Student-not-found assignment returned ${assignmentResult.status}`);
+    const studentNotFoundLink = await getCreatedLink(
+      dataSource,
+      taskRepository,
+      studentNotFoundCaseId,
+      'ตรวจสอบกรณีไม่พบนักเรียน',
+    );
+    await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1`, [
+      studentNotFoundLink.link_id,
+    ]);
+    const studentNotFoundGuestPath = new URL(studentNotFoundLink.magic_link, FRONTEND_URL).pathname;
+    await navigate(client, `${FRONTEND_URL}${studentNotFoundGuestPath}`, 'student-not-found report');
+    await waitFor(
+      async () => Boolean(await evaluate(client, `Boolean(document.querySelector('#visited-time'))`)),
+      'Student-not-found report form did not render',
+    );
+    await selectHomeVisitException(client, 'ไม่พบนักเรียน');
+    await selectCombobox(client, '#follow-up-assessment', 'ควรติดตามต่อ');
+    await setInputValue(
+      client,
+      '#cause-detail',
+      'ตรวจบริเวณบ้านและสอบถามเพื่อนบ้านแล้ว ยังไม่พบนักเรียน',
+    );
+    await click(
+      client,
+      `document.querySelector('button[type="submit"]')`,
+      'Student-not-found report submit button was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('ส่งผลการติดตาม'),
+      'Student-not-found report did not reach its receipt',
+    );
+    const [studentNotFoundCase] = await dataSource.query(
+      `SELECT status FROM cases WHERE id = $1`,
+      [studentNotFoundCaseId],
+    );
+    assert(
+      studentNotFoundCase?.status === 'STUDENT_NOT_FOUND',
+      `Expected STUDENT_NOT_FOUND, received ${studentNotFoundCase?.status}`,
+    );
+
+    await navigate(client, `${FRONTEND_URL}/cases/${studentNotFoundCaseId}`, 'student-not-found case');
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('มอบหมายอีกครั้ง'),
+      'STUDENT_NOT_FOUND case did not expose re-assignment',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'มอบหมายอีกครั้ง'))()`,
+      'Re-assignment button was not found',
+    );
+    await setAssignmentEnd(client);
+    await selectFirstVisitAssignee(client);
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.offsetParent !== null && button.textContent.includes('มอบหมาย')))()`,
+      'Student-not-found re-assignment submit was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('ยืนยันการมอบหมาย'),
+      'Student-not-found re-assignment confirmation did not render',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.trim() === 'ยืนยัน'))()`,
+      'Student-not-found re-assignment confirmation was not found',
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(`SELECT status FROM cases WHERE id = $1`, [studentNotFoundCaseId]);
+        return row?.status === 'IN_PROGRESS';
+      },
+      'Student-not-found re-assignment did not return the case to IN_PROGRESS',
+    );
+
+    const [latestReassignment] = await dataSource.query(
+      `SELECT tl.id, t.id AS task_id
+       FROM tasks t
+       JOIN task_links tl ON tl.task_id = t.id AND tl.deleted_at IS NULL
+       WHERE t.case_id = $1 AND t.deleted_at IS NULL
+       ORDER BY t.created_at DESC, tl.created_at DESC
+       LIMIT 1`,
+      [studentNotFoundCaseId],
+    );
+    await dataSource.query(
+      `UPDATE task_links
+       SET opens_at = NOW() - INTERVAL '2 days', expires_at = NOW() - INTERVAL '1 day'
+       WHERE id = $1`,
+      [latestReassignment.id],
+    );
+    await navigate(client, `${FRONTEND_URL}/cases/${studentNotFoundCaseId}`, 'expired assignment renewal');
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('ลิงก์เดิมหมดอายุแล้ว'),
+      'Expired IN_PROGRESS case did not expose renewal flow',
+    );
+    await setAssignmentEnd(client);
+    await selectFirstVisitAssignee(client);
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.offsetParent !== null && button.textContent.includes('มอบหมาย')))()`,
+      'Expired-link renewal submit was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('ยืนยันการมอบหมาย'),
+      'Expired-link renewal confirmation did not render',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.trim() === 'ยืนยัน'))()`,
+      'Expired-link renewal confirmation was not found',
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT COUNT(*)::int AS live_count
+           FROM tasks t JOIN task_links tl ON tl.task_id = t.id
+           WHERE t.case_id = $1 AND tl.status = 'ACTIVE' AND tl.expires_at > NOW()
+             AND t.deleted_at IS NULL AND tl.deleted_at IS NULL`,
+          [studentNotFoundCaseId],
+        );
+        return Number(row?.live_count) === 1;
+      },
+      'Expired-link renewal did not create exactly one usable assignment',
+    );
+
+    await dataSource.query(
+      `UPDATE task_links
+       SET status = 'COMPLETED'
+       WHERE task_id IN (SELECT id FROM tasks WHERE case_id = $1)`,
+      [studentNotFoundCaseId],
+    );
+    await dataSource.query(`UPDATE tasks SET status = 'COMPLETED' WHERE case_id = $1`, [
+      studentNotFoundCaseId,
+    ]);
+    await dataSource.query(
+      `UPDATE cases SET status = 'PENDING_REVIEW', completion_outcome_code = NULL WHERE id = $1`,
+      [studentNotFoundCaseId],
+    );
+    await navigate(client, `${FRONTEND_URL}/cases/${studentNotFoundCaseId}`, 'close-case review');
+    await waitFor(
+      async () => (await evaluate(client, 'document.body.innerText')).includes('ปิดเคส'),
+      'PENDING_REVIEW case did not expose the close action',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'ปิดเคส'))()`,
+      'Close-case action was not found',
+    );
+    await setInputValue(client, '#case-note', 'ตรวจสอบแล้ว ปิดเคสได้');
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.includes('ปิดเคส')))()`,
+      'Close-case confirmation was not found',
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT status, completion_outcome_code FROM cases WHERE id = $1`,
+          [studentNotFoundCaseId],
+        );
+        return row?.status === 'RESOLVED' && row?.completion_outcome_code === 'CLOSED';
+      },
+      'Close review did not persist RESOLVED/CLOSED',
+    );
+
     console.log(
-      'home visit browser smoke passed (assignee names, assignment times, dialogs, delegation form, aligned report, assessment, changed-address map, mobile submit, pending review)',
+      'home visit browser smoke passed (OPEN assignment, IN_PROGRESS report/upload, PENDING_REVIEW review, REFER_AGENCY/CLOSE resolution, STUDENT_NOT_FOUND re-assignment, expired-link renewal)',
     );
   } finally {
     await closeChrome(chrome);
     try {
-      await cleanupSmokeTasks(dataSource);
+      await cleanupSmokeTasks(dataSource, storage);
       await disableUsers(dataSource);
     } finally {
       await app.close();

@@ -61,6 +61,10 @@ export class TaskService {
     return await this.taskLifecycleService.createTask(actor, data, baseUrl);
   }
 
+  async getVisitAssignees(actor: ActorContext | undefined, studentUuid: string) {
+    return await this.taskLifecycleService.listVisitAssignees(actor, studentUuid);
+  }
+
   async assertVisitSubmissionAccess(token: string, sessionToken?: string): Promise<void> {
     await this.taskSubmissionService.assertVisitSubmissionAccess(token, sessionToken);
   }
