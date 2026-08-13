@@ -95,6 +95,7 @@
     "backfill:curriculum-from-timetable": "node scripts/backfill-curriculum-from-timetable.js",
     "audit:demo-school-structure": "node scripts/seed-demo-school-structure.js --audit-only",
     "seed:demo-case-scenarios": "node scripts/seed-demo-case-scenarios.js",
+    "seed:darun-student-status-report": "node scripts/seed-darun-student-status-report.js",
     "seed:demo-attendance-history": "node scripts/seed-demo-attendance-history.js",
     "audit:demo-data-provenance": "node scripts/audit-demo-data-provenance.js --strict",
     "commitlint": "commitlint --edit",
