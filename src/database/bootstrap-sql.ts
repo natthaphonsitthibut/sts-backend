@@ -664,30 +664,26 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
     code VARCHAR(32) PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,
     badge_variant VARCHAR(16) NOT NULL,
-    summary_tone VARCHAR(16) NOT NULL,
     sort_order SMALLINT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     ${AUDIT_COLUMNS_SQL},
     CONSTRAINT chk_case_workflow_statuses_label_th CHECK (length(trim(label_th)) > 0),
     CONSTRAINT chk_case_workflow_statuses_badge_variant
       CHECK (badge_variant IN ('default', 'secondary', 'destructive', 'success', 'warning')),
-    CONSTRAINT chk_case_workflow_statuses_summary_tone
-      CHECK (summary_tone IN ('default', 'success', 'warning', 'danger', 'info')),
     CONSTRAINT chk_case_workflow_statuses_sort_order CHECK (sort_order >= 0)
   );
   ${auditUpdatedAtTriggerSql('case_workflow_statuses')}
   INSERT INTO case_workflow_statuses (
-    code, label_th, badge_variant, summary_tone, sort_order
+    code, label_th, badge_variant, sort_order
   ) VALUES
-    ('OPEN', 'รอมอบหมาย', 'secondary', 'default', 10),
-    ('PENDING_REVIEW', 'รอพิจารณา', 'default', 'info', 20),
-    ('IN_PROGRESS', 'รอติดตาม', 'warning', 'warning', 30),
-    ('STUDENT_NOT_FOUND', 'ไม่พบนักเรียน', 'destructive', 'danger', 40),
-    ('RESOLVED', 'เสร็จสิ้น', 'success', 'success', 50)
+    ('OPEN', 'รอมอบหมาย', 'secondary', 10),
+    ('PENDING_REVIEW', 'รอพิจารณา', 'default', 20),
+    ('IN_PROGRESS', 'รอติดตาม', 'warning', 30),
+    ('STUDENT_NOT_FOUND', 'ไม่พบนักเรียน', 'destructive', 40),
+    ('RESOLVED', 'เสร็จสิ้น', 'success', 50)
   ON CONFLICT (code) DO UPDATE SET
     label_th = EXCLUDED.label_th,
     badge_variant = EXCLUDED.badge_variant,
-    summary_tone = EXCLUDED.summary_tone,
     sort_order = EXCLUDED.sort_order,
     is_active = TRUE,
     deleted_at = NULL;
@@ -707,6 +703,11 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
         ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
   END $case_workflow_status_fk$;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_cases_active_student_uuid
+    ON cases(student_uuid)
+    WHERE student_uuid IS NOT NULL
+      AND deleted_at IS NULL
+      AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND');
 `;
 
 export const CASE_TRACKING_DECISION_TABLES_SQL = `
@@ -1728,6 +1729,7 @@ export const DATABASE_BASELINE_SQL = `
     otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
     delegation_note TEXT,
+    assignment_note TEXT CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000),
     status TEXT DEFAULT 'ACTIVE',
     admin_locked INTEGER DEFAULT 0,
     admin_lock_reason TEXT,
@@ -2112,7 +2114,8 @@ export const DATABASE_BASELINE_SQL = `
     ON attendance (student_uuid, "AcademicYear_Onec", "Semester_Onec", "AttendanceDate" DESC);
   CREATE INDEX IF NOT EXISTS idx_cases_risk_profile_open_student
     ON cases (student_uuid, created_at DESC, id DESC)
-    WHERE deleted_at IS NULL AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW');
+    WHERE deleted_at IS NULL
+      AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND');
   CREATE INDEX IF NOT EXISTS idx_school_calendar_days_risk_profile
     ON school_calendar_days (school_term_id, day_type, deleted_at, calendar_date);
 
@@ -2126,6 +2129,10 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMP WITH TIME ZONE;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS delegation_note TEXT;
+  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS assignment_note TEXT;
+  ALTER TABLE task_links DROP CONSTRAINT IF EXISTS chk_task_links_assignment_note_length;
+  ALTER TABLE task_links ADD CONSTRAINT chk_task_links_assignment_note_length
+    CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000);
 
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS result_summary TEXT;
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_school_id INTEGER;

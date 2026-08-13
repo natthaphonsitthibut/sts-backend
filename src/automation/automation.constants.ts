@@ -9,4 +9,9 @@ export const STUDENT_RISK_WATCH_REF_ENTITY = 'student-risk-watch';
  */
 export const ABSENCE_CASE_REASON_PREFIXES = ['ขาดเรียนสะสม%', 'ขาดเรียนติดต่อกัน%'] as const;
 
-export const ACTIVE_CASE_STATUSES = ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW'] as const;
+export const ACTIVE_CASE_STATUSES = [
+  'OPEN',
+  'IN_PROGRESS',
+  'PENDING_REVIEW',
+  'STUDENT_NOT_FOUND',
+] as const;

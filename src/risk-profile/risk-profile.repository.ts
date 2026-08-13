@@ -136,10 +136,28 @@ export class RiskProfileRepository {
            AND current_enrollment.selected_student_uuid = s.student_uuid
            AND current_enrollment.resolution_state = 'ACTIVE'
           ${selectedWhereSql}
+        ), case_completion_baselines AS (
+          SELECT
+            s.student_uuid,
+            MAX(COALESCE(latest_review.reviewed_at, tracked_case.updated_at))::date
+              AS reset_after_date
+          FROM selected_students s
+          JOIN cases tracked_case
+            ON tracked_case.student_uuid = s.student_uuid
+           AND tracked_case.status = 'RESOLVED'
+           AND tracked_case.deleted_at IS NULL
+          LEFT JOIN LATERAL (
+            SELECT review.reviewed_at
+            FROM case_reviews review
+            WHERE review.case_id = tracked_case.id
+            ORDER BY review.reviewed_at DESC, review.id DESC
+            LIMIT 1
+          ) latest_review ON TRUE
+          GROUP BY s.student_uuid
         ),
-        -- DAILY and SUBJECT records contribute to one day verdict: ลา (status 4)
-        -- is not measured, มา/สาย both count as attended, and the day is ขาด
-        -- only when every measured record from both sources is unattended.
+        -- Subject-period records form one day verdict: ลา (status 4) is not
+        -- measured, มา/สาย both count as attended, and the day is ขาด only
+        -- when every measured period is unattended.
         classified_days AS (
           SELECT
             a.student_uuid,
@@ -151,9 +169,12 @@ export class RiskProfileRepository {
             ) AS is_absent_day
           FROM attendance a
           JOIN selected_students s ON s.student_uuid = a.student_uuid
+          LEFT JOIN case_completion_baselines baseline
+            ON baseline.student_uuid = a.student_uuid
           WHERE a."AcademicYear_Onec" = s.academic_year
             AND a."Semester_Onec" = s.semester
-            AND a.session_kind IN ('DAILY', 'SUBJECT')
+            AND a.session_kind = 'SUBJECT'
+            AND a."AttendanceDate"::date > COALESCE(baseline.reset_after_date, '-infinity'::date)
           GROUP BY a.student_uuid, a."AttendanceDate"
         ),
         ranked_attendance_days AS (
@@ -264,7 +285,7 @@ export class RiskProfileRepository {
             LIMIT 1
           ) latest_task ON true
           WHERE c.deleted_at IS NULL
-            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
+            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
           GROUP BY c.student_uuid
         ),
         metrics AS (

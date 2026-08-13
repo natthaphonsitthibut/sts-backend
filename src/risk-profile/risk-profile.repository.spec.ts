@@ -37,15 +37,19 @@ describe('RiskProfileRepository', () => {
     ]);
     expect(queries[0].sql).toContain('INSERT INTO student_risk_profiles');
     expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($2::uuid[])');
-    // Day verdict mirrors ประวัติการเข้าเรียน: ลา is unmeasured, มา/สาย attend,
-    // and both DAILY and SUBJECT records feed the same day.
+    // Day verdict mirrors ประวัติการเข้าเรียน: ลา is unmeasured and มา/สาย attend.
     expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0');
-    expect(queries[0].sql).toContain("a.session_kind IN ('DAILY', 'SUBJECT')");
+    expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
     expect(queries[0].sql).toContain('teacher_signal_summary');
     expect(queries[0].sql).toContain('FROM student_observations observation');
     expect(queries[0].sql).toContain('WHERE observation.deleted_at IS NULL');
     expect(queries[0].sql).toContain('ON CONFLICT (student_uuid) DO UPDATE SET');
     expect(queries[0].sql).toContain('JOIN student_current_enrollment_resolution');
+    expect(queries[0].sql).toContain('case_completion_baselines');
+    expect(queries[0].sql).toContain("tracked_case.status = 'RESOLVED'");
+    expect(queries[0].sql).toContain(
+      'a."AttendanceDate"::date > COALESCE(baseline.reset_after_date',
+    );
   });
 
   it('recalculates all active enrollments without a student filter', async () => {

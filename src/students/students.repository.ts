@@ -761,7 +761,7 @@ export class StudentsRepository {
       JOIN attendance a ON a.student_uuid = s.student_uuid
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       WHERE s.student_uuid = $1
-        AND a.session_kind = 'DAILY'
+        AND a.session_kind = 'SUBJECT'
     `;
     const params: unknown[] = [id];
 

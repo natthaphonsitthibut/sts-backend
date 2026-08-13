@@ -74,6 +74,24 @@ export class AutomationRepository {
            AND current_enrollment.selected_student_uuid = enrollment.student_uuid
            AND current_enrollment.resolution_state = 'ACTIVE'
           WHERE enrollment.deleted_at IS NULL
+        ), resolved_case_baselines AS (
+          SELECT
+            tracked_case.student_uuid,
+            MAX(COALESCE(latest_review.reviewed_at, tracked_case.updated_at))::date
+              AS reset_after_date
+          FROM cases tracked_case
+          JOIN current_enrollments enrollment
+            ON enrollment.student_uuid = tracked_case.student_uuid
+          LEFT JOIN LATERAL (
+            SELECT review.reviewed_at
+            FROM case_reviews review
+            WHERE review.case_id = tracked_case.id
+            ORDER BY review.reviewed_at DESC, review.id DESC
+            LIMIT 1
+          ) latest_review ON TRUE
+          WHERE tracked_case.status = 'RESOLVED'
+            AND tracked_case.deleted_at IS NULL
+          GROUP BY tracked_case.student_uuid
         ), classified_days AS (
           SELECT
             a.student_uuid,
@@ -90,9 +108,12 @@ export class AutomationRepository {
            AND enrollment.deleted_at IS NULL
           JOIN current_enrollments current_enrollment
             ON current_enrollment.student_uuid = enrollment.student_uuid
+          LEFT JOIN resolved_case_baselines baseline
+            ON baseline.student_uuid = a.student_uuid
           WHERE a.student_uuid IS NOT NULL
-            AND a.session_kind IN ('DAILY', 'SUBJECT')
+            AND a.session_kind = 'SUBJECT'
             AND a."AttendanceDate"::date <= $2::date
+            AND a."AttendanceDate"::date > COALESCE(baseline.reset_after_date, '-infinity'::date)
           GROUP BY a.student_uuid, a."AttendanceDate"
         ),
         candidates AS (
@@ -158,7 +179,7 @@ export class AutomationRepository {
           ON enrollment.student_uuid = attendance.student_uuid
          AND enrollment.academic_year = attendance."AcademicYear_Onec"
          AND enrollment.semester = attendance."Semester_Onec"
-        WHERE attendance.session_kind IN ('DAILY', 'SUBJECT')
+        WHERE attendance.session_kind = 'SUBJECT'
           AND attendance."AttendanceDate"::date <= $2::date
       `,
       [studentUuids, asOfDate],
