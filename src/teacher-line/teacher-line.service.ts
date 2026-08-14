@@ -16,7 +16,7 @@ import { AraIdService } from '../araid/araid.service';
 import { EmailService } from '../common/email/email.service';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
 import { OtpStore } from '../common/otp/otp.store';
-import { hashToken } from '../common/utils/helpers';
+import { hashToken, maskEmailAddress } from '../common/utils/helpers';
 import { appConfig } from '../config/app.config';
 import { authConfig } from '../config/auth.config';
 import { lineConfig } from '../config/line.config';
@@ -253,12 +253,6 @@ export class TeacherLineService {
     return invitation;
   }
 
-  private maskEmail(email: string): string {
-    const [localPart, domain] = email.split('@');
-    if (!localPart || !domain) return '***';
-    return `${localPart.slice(0, 1)}***@${domain}`;
-  }
-
   async issueInvitation(
     input: {
       teacherMembershipId: number;
@@ -320,7 +314,7 @@ export class TeacherLineService {
     this.assertInvitationUsable(invitation);
     return {
       teacherName: `${invitation.first_name} ${invitation.last_name}`.trim(),
-      maskedEmail: this.maskEmail(invitation.email),
+      maskedEmail: maskEmailAddress(invitation.email, 1, 3),
       expiresAt: new Date(invitation.expires_at).toISOString(),
     };
   }

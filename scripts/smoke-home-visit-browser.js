@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { NestFactory } = require('@nestjs/core');
@@ -28,6 +29,7 @@ const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9235);
 const CREATOR_USERNAME = 'home_visit_browser_creator';
 const NO_CREATE_USERNAME = 'home_visit_browser_no_permission';
 const REASON_FLAGGED = 'Automated home visit browser smoke';
+const SMTP_CAPTURE_PORT = Number(process.env.SMOKE_SMTP_PORT || 2526);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -38,6 +40,78 @@ function errorMessage(error) {
     return error.errors.map((cause) => cause?.message || String(cause)).join(' | ');
   }
   return error?.message || String(error);
+}
+
+async function startSmtpCapture() {
+  const messages = [];
+  const server = net.createServer((socket) => {
+    let buffer = '';
+    let dataLines = null;
+    let loginStep = 0;
+    socket.setEncoding('utf8');
+    socket.write('220 localhost STS smoke SMTP\r\n');
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      while (buffer.includes('\r\n')) {
+        const lineEnd = buffer.indexOf('\r\n');
+        const line = buffer.slice(0, lineEnd);
+        buffer = buffer.slice(lineEnd + 2);
+
+        if (dataLines) {
+          if (line === '.') {
+            messages.push(dataLines.join('\r\n'));
+            dataLines = null;
+            socket.write('250 2.0.0 accepted\r\n');
+          } else {
+            dataLines.push(line.startsWith('..') ? line.slice(1) : line);
+          }
+          continue;
+        }
+
+        if (loginStep === 1) {
+          loginStep = 2;
+          socket.write('334 UGFzc3dvcmQ6\r\n');
+          continue;
+        }
+        if (loginStep === 2) {
+          loginStep = 0;
+          socket.write('235 2.7.0 authenticated\r\n');
+          continue;
+        }
+
+        const command = line.toUpperCase();
+        if (command.startsWith('EHLO') || command.startsWith('HELO')) {
+          socket.write('250-localhost\r\n250 AUTH PLAIN LOGIN\r\n');
+        } else if (command.startsWith('AUTH PLAIN')) {
+          socket.write('235 2.7.0 authenticated\r\n');
+        } else if (command === 'AUTH LOGIN') {
+          loginStep = 1;
+          socket.write('334 VXNlcm5hbWU6\r\n');
+        } else if (command.startsWith('MAIL FROM:') || command.startsWith('RCPT TO:')) {
+          socket.write('250 2.1.0 ok\r\n');
+        } else if (command === 'DATA') {
+          dataLines = [];
+          socket.write('354 end with <CRLF>.<CRLF>\r\n');
+        } else if (command === 'RSET' || command === 'NOOP') {
+          socket.write('250 2.0.0 ok\r\n');
+        } else if (command === 'QUIT') {
+          socket.end('221 2.0.0 bye\r\n');
+        } else {
+          socket.write('250 2.0.0 ok\r\n');
+        }
+      }
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(SMTP_CAPTURE_PORT, '127.0.0.1', resolve);
+  });
+
+  return {
+    messages,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
 }
 
 async function waitFor(check, message, timeoutMs = 20_000) {
@@ -718,6 +792,7 @@ async function getCreatedLink(dataSource, taskRepository, caseId, expectedNote) 
         tl.assigned_to_first_name,
         tl.assigned_to_last_name,
         tl.assigned_to_name,
+        tl.assigned_to_email,
         tl.assignment_note,
         tl.opens_at,
         tl.expires_at
@@ -740,6 +815,71 @@ async function getCreatedLink(dataSource, taskRepository, caseId, expectedNote) 
   const detail = await taskRepository.findLinkDetailById(row.link_id);
   assert(detail?.magic_link, 'Created task link could not be reconstructed');
   return { ...row, magic_link: detail.magic_link };
+}
+
+async function verifyGuestOtp(client, createdLink, guestLink) {
+  const smtpCapture = await startSmtpCapture();
+  try {
+    await navigate(client, guestLink, 'guest OTP gate');
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean([...document.querySelectorAll('button')]
+              .find((button) => button.textContent.includes('รับรหัส OTP')))`,
+          ),
+        ),
+      'Guest task did not render the OTP gate; start the backend with the smoke SMTP settings',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('รับรหัส OTP')))()`,
+      'Guest OTP request button was not found',
+    );
+
+    await waitFor(() => smtpCapture.messages.length === 1, 'Guest OTP email was not delivered');
+    const deliveredCodes = [
+      ...new Set(smtpCapture.messages[0].match(/\b\d{6}\b/g) || []),
+    ];
+    assert(deliveredCodes.length === 1, 'Guest OTP email did not contain one six-digit challenge');
+    const [otpCode] = deliveredCodes;
+
+    const gateText = String(await evaluate(client, 'document.body.innerText'));
+    assert(gateText.includes('ระบบส่งรหัสไปที่'), 'Guest OTP gate did not show the masked recipient');
+    assert(
+      !gateText.includes(createdLink.assigned_to_email) && !gateText.includes(otpCode),
+      'Guest OTP gate exposed a full recipient address or OTP code',
+    );
+
+    for (let index = 0; index < otpCode.length; index += 1) {
+      await evaluate(
+        client,
+        `document.querySelector('[aria-label="รหัส OTP หลักที่ ${index + 1}"]')?.focus()`,
+      );
+      await client.call('Input.insertText', { text: otpCode[index] });
+    }
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean([...document.querySelectorAll('button')]
+              .find((button) => button.textContent.includes('ตรวจสอบรหัส') && !button.disabled))`,
+          ),
+        ),
+      'Guest OTP verify button did not become enabled',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('ตรวจสอบรหัส')))()`,
+      'Guest OTP verify button was not found',
+    );
+  } finally {
+    await smtpCapture.close();
+  }
 }
 
 async function assertSubmittedReport(dataSource, createdLink) {
@@ -990,10 +1130,7 @@ async function main() {
     );
     const guestPath = new URL(createdLink.magic_link, FRONTEND_URL).pathname;
     const guestLink = `${FRONTEND_URL}${guestPath}`;
-    await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1`, [
-      createdLink.link_id,
-    ]);
-    await navigate(client, guestLink, 'guest visit');
+    await verifyGuestOtp(client, createdLink, guestLink);
     await waitFor(
       async () => {
         const pageText = String(await evaluate(client, 'document.body.innerText'));

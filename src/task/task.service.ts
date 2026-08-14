@@ -78,7 +78,15 @@ export class TaskService {
     // guest holding the token. These fields are consumed only internally by the
     // login-verify flow (verifyMagicLogin reads the unsanitized access-service
     // result directly), so strip them from the HTTP-facing response.
-    const { login_role, login_permissions, login_data_scope, otp_verified, ...safe } = result;
+    const {
+      assigned_to_email,
+      login_role,
+      login_permissions,
+      login_data_scope,
+      otp_verified,
+      ...safe
+    } = result;
+    void assigned_to_email;
     void login_role;
     void login_permissions;
     void login_data_scope;

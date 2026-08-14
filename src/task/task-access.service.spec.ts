@@ -459,6 +459,46 @@ describe('TaskAccessService OTP sessions', () => {
   });
 });
 
+describe('TaskAccessService OTP challenge', () => {
+  it('returns only a masked destination after issuing an OTP', async () => {
+    const taskRepository = {
+      findOtpLinkByTokenHash: jest.fn().mockResolvedValue({
+        id: 'link-1',
+        assigned_to_email: 'teacher@example.test',
+      }),
+      updateLinkOtp: jest.fn().mockResolvedValue(undefined),
+    };
+    const emailService = { sendOTP: jest.fn().mockResolvedValue(undefined) };
+    const service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      emailService as unknown as EmailService,
+      {} as AuditLogService,
+      {
+        sessionSecret: 'test-session-secret-at-least-16-chars',
+        magicSessionTtlSeconds: 21_600,
+        otpTtlSeconds: 600,
+      } as AuthRuntimeConfig,
+      { enabled: true, user: 'mailer@example.test' } as EmailRuntimeConfig,
+      {} as MagicSessionStoreService,
+    );
+
+    const result = await service.requestOtp('public-token');
+
+    expect(result).toMatchObject({
+      success: true,
+      method: 'EMAIL',
+      maskedEmail: 'te*****@example.test',
+    });
+    expect(JSON.stringify(result)).not.toContain('teacher@example.test');
+    expect(emailService.sendOTP).toHaveBeenCalledWith(
+      'teacher@example.test',
+      expect.any(String),
+      10,
+    );
+  });
+});
+
 describe('TaskAccessService admin link audit', () => {
   const actor = {
     id: 53,

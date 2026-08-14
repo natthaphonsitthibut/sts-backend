@@ -32,7 +32,7 @@ import {
   resolveLimit,
   resolvePage,
 } from '../common/pagination/pagination.util';
-import { generateToken, hashToken } from '../common/utils/helpers';
+import { generateToken, hashToken, maskEmailAddress } from '../common/utils/helpers';
 import { getBangkokDateString, getIsoDayOfWeekFromDateString } from '../common/utils/date.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { AutomationService } from '../automation/automation.service';
@@ -1374,14 +1374,6 @@ export class TeacherAccessService {
     return grant;
   }
 
-  /** Masks an address down to what a recipient needs to recognise their own. */
-  private maskEmail(email: string): string {
-    const [name, domain] = email.split('@');
-    if (!domain) return '***';
-    const visible = name.slice(0, 2);
-    return `${visible}${'*'.repeat(Math.max(name.length - visible.length, 1))}@${domain}`;
-  }
-
   async requestOtp(rawToken: string) {
     const grant = await this.findUsableGrantForVerification(rawToken);
     if (grant.step_up_policy !== 'EMAIL_OTP') {
@@ -1411,7 +1403,7 @@ export class TeacherAccessService {
       success: true,
       data: {
         method: 'EMAIL' as const,
-        maskedEmail: this.maskEmail(email),
+        maskedEmail: maskEmailAddress(email),
         expiresAt: expiresAt.toISOString(),
       },
     };

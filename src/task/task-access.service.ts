@@ -13,7 +13,7 @@ import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { authConfig } from '../config/auth.config';
 import { emailConfig } from '../config/email.config';
-import { clean, hashToken } from '../common/utils/helpers';
+import { clean, hashToken, maskEmailAddress } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
@@ -376,6 +376,8 @@ export class TaskAccessService {
         message: 'OTP sent successfully',
         expires_at: expiresAt.toISOString(),
         method: 'EMAIL',
+        maskedEmail: maskEmailAddress(email),
+        expiresAt: expiresAt.toISOString(),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
