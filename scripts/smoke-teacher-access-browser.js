@@ -582,6 +582,10 @@ async function main() {
         const firstStatusGroup = table.querySelector('[role="group"][aria-label^="สถานะของ"]');
         return {
           headings: [...table.querySelectorAll('thead th')].map((cell) => cell.textContent.trim()),
+          studentNumberSort: table.querySelector('thead th:nth-child(3)')?.getAttribute('aria-sort'),
+          studentNumbers: [...table.querySelectorAll('tbody tr')].map(
+            (row) => row.cells[2]?.textContent.trim(),
+          ),
           statuses: [...firstStatusGroup.querySelectorAll('button')].map((button) => ({
             label: button.textContent.trim(),
             pressed: button.getAttribute('aria-pressed'),
@@ -593,6 +597,11 @@ async function main() {
       JSON.stringify(teacherAttendanceTable.headings) ===
         JSON.stringify(['ลำดับ', 'รูปประจำตัว', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'สถานะการเข้าเรียน']),
       `Teacher-link attendance headings drifted: ${teacherAttendanceTable.headings.join(' | ')}`,
+    );
+    assert(
+      teacherAttendanceTable.studentNumberSort === 'ascending' &&
+        JSON.stringify(teacherAttendanceTable.studentNumbers) === JSON.stringify(fixtureStudentNumbers),
+      `Teacher-link attendance did not default to ascending student number: ${JSON.stringify(teacherAttendanceTable)}`,
     );
     assert(
       JSON.stringify(teacherAttendanceTable.statuses.map((item) => item.label)) ===
@@ -1143,7 +1152,7 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: false,
     });
-    await navigate(client, `${FRONTEND_URL}/attendance`);
+    await navigate(client, `${FRONTEND_URL}/attendance/check-in`);
     await waitFor(
       async () =>
         Boolean(
@@ -1166,6 +1175,10 @@ async function main() {
         return {
           headings: [...table.querySelectorAll('thead th')].map((cell) => cell.textContent.trim()),
           labels: statuses.map((button) => button.textContent.trim()),
+          studentNumberSort: table.querySelector('thead th:nth-child(3)')?.getAttribute('aria-sort'),
+          studentNumbers: [...table.querySelectorAll('tbody tr')].map(
+            (row) => row.cells[2]?.textContent.trim(),
+          ),
         };
       })()`,
     );
@@ -1173,6 +1186,11 @@ async function main() {
       JSON.stringify(systemAttendanceTable.headings) ===
         JSON.stringify(['ลำดับ', 'รูปประจำตัว', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'สถานะการเข้าเรียน']),
       `Authenticated attendance headings drifted: ${systemAttendanceTable.headings.join(' | ')}`,
+    );
+    assert(
+      systemAttendanceTable.studentNumberSort === 'ascending' &&
+        JSON.stringify(systemAttendanceTable.studentNumbers) === JSON.stringify(fixtureStudentNumbers),
+      `Authenticated attendance did not default to ascending student number: ${JSON.stringify(systemAttendanceTable)}`,
     );
     assert(
       JSON.stringify(systemAttendanceTable.labels) === JSON.stringify(['มา', 'สาย', 'ลา', 'ขาด']),
@@ -1251,7 +1269,7 @@ async function main() {
           'teacher and director card hover transform and shadow are identical',
           'teacher card color updates every subject card for the shared classroom',
           'teacher-link roster sorting reaches the server',
-          'teacher-link and authenticated attendance share the same numbered roster and status-pill table',
+          'teacher-link and authenticated attendance default to ascending student number in the shared numbered roster',
           'authenticated attendance search, status selection and mobile internal scrolling work',
           'teacher-link classroom, history and student routes keep their breadcrumbs, menu owner and safe back targets',
           'LINE invitations are scoped to unverified teacher rows with no global reusable URL',
