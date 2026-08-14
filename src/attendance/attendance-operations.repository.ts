@@ -447,6 +447,38 @@ export class AttendanceOperationsRepository {
     return result.rows[0];
   }
 
+  /**
+   * Term lookup without the `FOR UPDATE` that find-or-create takes. Draft saves
+   * run many times per class, and serialising all of them on one `school_terms`
+   * row would turn the 08:00 rush into a queue; callers fall back to the
+   * locking path when the term does not exist yet.
+   */
+  async findTermForClass(
+    metadata: { school_id: number; academic_year: number; semester: number },
+    executor?: QueryExecutor,
+  ): Promise<SchoolTermRow | null> {
+    const result = await this.getExecutor(executor).query<SchoolTermRow>(
+      `
+        SELECT
+          st.id::text,
+          st.school_id,
+          sc.name AS school_name,
+          st.academic_year,
+          st.semester,
+          st.starts_on::text,
+          st.ends_on::text,
+          st.status,
+          0 AS calendar_day_count,
+          0 AS school_day_count
+        FROM school_terms st
+        JOIN schools sc ON sc.id = st.school_id
+        WHERE st.school_id = $1 AND st.academic_year = $2 AND st.semester = $3
+      `,
+      [metadata.school_id, metadata.academic_year, metadata.semester],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async findCalendarDay(
     termId: string,
     date: string,
@@ -642,24 +674,56 @@ export class AttendanceOperationsRepository {
     };
   }
 
+  /**
+   * `recorded_count` is derived from the rows that actually exist for the
+   * session rather than the payload length, so incremental draft saves and the
+   * final submit can never disagree with the table.
+   */
   async updateSessionSubmitted(
     sessionId: string,
-    recordedCount: number,
     actorUserId: number | null,
     executor: QueryExecutor,
   ): Promise<void> {
     await executor.query(
       `
-        UPDATE attendance_sessions
+        UPDATE attendance_sessions session
         SET status = 'SUBMITTED',
-            recorded_count = $2,
+            recorded_count = (
+              SELECT COUNT(*) FROM attendance record WHERE record.session_id = session.id
+            ),
             submitted_at = now(),
-            submitted_by = $3,
-            updated_by = $3
-        WHERE id = $1
+            submitted_by = $2,
+            updated_by = $2
+        WHERE session.id = $1
       `,
-      [sessionId, recordedCount, actorUserId],
+      [sessionId, actorUserId],
     );
+  }
+
+  /**
+   * Draft autosave progress: refresh how many students are marked so the
+   * reconciliation dashboard shows live progress, without touching `status`,
+   * `submitted_at` or `submitted_by` — a draft is not a submission.
+   */
+  async updateSessionDraftProgress(
+    sessionId: string,
+    actorUserId: number | null,
+    executor: QueryExecutor,
+  ): Promise<number> {
+    const result = await executor.query<{ recorded_count: number | string }>(
+      `
+        UPDATE attendance_sessions session
+        SET recorded_count = (
+              SELECT COUNT(*) FROM attendance record WHERE record.session_id = session.id
+            ),
+            updated_by = $2,
+            updated_at = now()
+        WHERE session.id = $1
+        RETURNING recorded_count
+      `,
+      [sessionId, actorUserId],
+    );
+    return Number(result.rows[0]?.recorded_count ?? 0);
   }
 
   async recordSessionAudit(
@@ -687,6 +751,59 @@ export class AttendanceOperationsRepository {
         JSON.stringify(input.metadata),
       ],
     );
+  }
+
+  async listSessionAttendanceStatuses(
+    sessionId: string,
+    executor: QueryExecutor,
+  ): Promise<Array<{ student_uuid: string; attendance_status: number }>> {
+    const result = await executor.query<{
+      student_uuid: string;
+      attendance_status: number;
+    }>(
+      `
+        SELECT student_uuid::text, "AttendanceStatus"::int AS attendance_status
+        FROM attendance
+        WHERE session_id = $1
+        ORDER BY student_uuid
+      `,
+      [sessionId],
+    );
+    return result.rows.map((row) => ({
+      student_uuid: row.student_uuid,
+      attendance_status: Number(row.attendance_status),
+    }));
+  }
+
+  async findReopenBaseline(
+    sessionId: string,
+    revision: number,
+    executor: QueryExecutor,
+  ): Promise<Array<{ student_uuid: string; attendance_status: number }> | null> {
+    const result = await executor.query<{ baseline_statuses: unknown }>(
+      `
+        SELECT metadata->'baselineStatuses' AS baseline_statuses
+        FROM audit_log
+        WHERE action = 'ATTENDANCE_REOPEN'
+          AND target_type = 'attendance_session'
+          AND target_id = $1
+          AND metadata->>'revision' = $2::text
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [sessionId, revision],
+    );
+    const raw = result.rows[0]?.baseline_statuses;
+    const parsed = typeof raw === 'string' ? (JSON.parse(raw) as unknown) : raw;
+    if (!Array.isArray(parsed)) return null;
+    return parsed.flatMap((value) => {
+      if (!value || typeof value !== 'object') return [];
+      const row = value as Record<string, unknown>;
+      if (typeof row.studentUuid !== 'string' || !Number.isFinite(Number(row.statusCode))) {
+        return [];
+      }
+      return [{ student_uuid: row.studentUuid, attendance_status: Number(row.statusCode) }];
+    });
   }
 
   async reopenSession(

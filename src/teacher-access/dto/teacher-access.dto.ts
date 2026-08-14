@@ -233,6 +233,11 @@ export class TeacherAccessAttendanceRecordDto {
 
   @IsIn(ATTENDANCE_SELECTION_STATUS_VALUES)
   status!: AttendanceSelectionStatus;
+
+  /** Device tap time (ISO 8601); server clamps it into the attendance day. */
+  @IsOptional()
+  @IsISO8601()
+  markedAt?: string;
 }
 
 export class RecordTeacherAccessExportDto {
@@ -355,6 +360,55 @@ export class SaveTeacherAccessAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => TeacherAccessAttendanceRecordDto)
   records!: TeacherAccessAttendanceRecordDto[];
+}
+
+/**
+ * Autosave for a teacher-link check-in in progress. Mirrors
+ * {@link SaveTeacherAccessAttendanceDto} but may carry only part of the class.
+ */
+export class SaveTeacherAccessAttendanceMarksDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId!: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetableSlotId?: number;
+
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  date!: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TeacherAccessAttendanceRecordDto)
+  records?: TeacherAccessAttendanceRecordDto[];
+
+  /** Students whose mark the teacher took back; their stored row is deleted. */
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  clearedStudentIds?: string[];
+}
+
+/** Session state + already-recorded marks for one class/date/period. */
+export class TeacherAccessAttendanceSessionQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignmentId!: number;
+
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  date!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetableSlotId?: number;
 }
 
 export class TeacherAccessAttendanceSlotsQueryDto {

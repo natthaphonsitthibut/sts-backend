@@ -281,6 +281,44 @@ export class AraIdService {
     return this.toSessionResponse(profile, record);
   }
 
+  async reauthenticate(profileId: string, pin: string): Promise<void> {
+    const profile = await this.profiles.findOne({ where: { id: profileId } });
+    if (!profile || profile.registrationStatus === 'REVOKED') {
+      throw new UnauthorizedException('เซสชัน AraID ไม่ถูกต้อง');
+    }
+    const record = await this.records.findOne({
+      where: { id: profile.identityRecordId, recordStatus: 'ACTIVE' },
+    });
+    if (!record) throw new UnauthorizedException('เซสชัน AraID ไม่ถูกต้อง');
+
+    const now = new Date();
+    if (profile.pinLockedUntil && profile.pinLockedUntil > now) {
+      throw new HttpException(
+        'บัญชีถูกล็อกชั่วคราว กรุณาลองใหม่ภายหลัง',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (profile.pinLockedUntil) {
+      profile.pinLockedUntil = null;
+      profile.failedPinAttempts = 0;
+      profile.registrationStatus = 'ACTIVE';
+    }
+    if (!(await this.passwordService.compare(pin, profile.pinHash))) {
+      profile.failedPinAttempts += 1;
+      if (profile.failedPinAttempts >= PIN_ATTEMPT_LIMIT) {
+        profile.failedPinAttempts = PIN_ATTEMPT_LIMIT;
+        profile.registrationStatus = 'LOCKED';
+        profile.pinLockedUntil = new Date(now.getTime() + PIN_LOCK_MILLISECONDS);
+      }
+      await this.profiles.save(profile);
+      throw new UnauthorizedException('PIN ไม่ถูกต้อง');
+    }
+    profile.failedPinAttempts = 0;
+    profile.pinLockedUntil = null;
+    profile.registrationStatus = 'ACTIVE';
+    await this.profiles.save(profile);
+  }
+
   /** Server-only identity claim for relying flows; never expose this value to the browser. */
   async getVerifiedIdentityNumber(profileId: string): Promise<string> {
     const profile = await this.profiles.findOne({ where: { id: profileId } });

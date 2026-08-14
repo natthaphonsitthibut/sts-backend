@@ -69,26 +69,20 @@ export class AttendanceService {
     return await this.attendanceWriteService.saveAttendance(records, actor, timetableSlotId, date);
   }
 
-  async getAttendanceTasks(userScope?: DataScope) {
-    return await this.attendanceReadService.getAttendanceTasks(userScope);
-  }
-
-  async getAttendanceTasksPaginated(
-    userScope: DataScope | undefined,
-    filters: {
-      page: number;
-      limit: number;
-      searchTerm?: string;
-      status?: string;
-      province?: string;
-      district?: string;
-      subDistrict?: string;
-      schoolId?: number;
-      grade?: string;
-      room?: string;
-    },
+  async saveDraftMarks(
+    records: AttendanceSaveRecordInput[],
+    actor?: AuthenticatedRequestUser,
+    timetableSlotId?: number,
+    date?: string,
+    clearedStudentIds: string[] = [],
   ) {
-    return await this.attendanceReadService.getAttendanceTasksPaginated(userScope, filters);
+    return await this.attendanceWriteService.saveDraftMarks(
+      records,
+      actor,
+      timetableSlotId,
+      date,
+      clearedStudentIds,
+    );
   }
 
   async getRooms(gradeLabel: string, schoolId?: string, userScope?: DataScope) {

@@ -132,3 +132,8 @@ export class AraIdLoginDto {
   @Matches(/^\d{8}$/)
   pin!: string;
 }
+
+export class AraIdReauthenticateDto {
+  @Matches(/^\d{8}$/)
+  pin!: string;
+}

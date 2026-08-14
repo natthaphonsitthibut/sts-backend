@@ -15,6 +15,7 @@ interface StoredChallenge {
 interface StoredAuthorization {
   challengeKey: string;
   expiresAt: number;
+  minimumAuthenticatedAt: number;
 }
 
 export interface TeacherAccessAraIdChallenge extends StoredChallenge {
@@ -56,7 +57,11 @@ export class TeacherAccessAraIdChallengeStore {
     const authorizationToken = randomBytes(32).toString('base64url');
     const authorizationKey = this.authorizationKey(authorizationToken);
     const expiresAt = Date.now() + TEACHER_ACCESS_ARAID_AUTHORIZATION_TTL_SECONDS * 1000;
-    const authorization: StoredAuthorization = { challengeKey, expiresAt };
+    const authorization: StoredAuthorization = {
+      challengeKey,
+      expiresAt,
+      minimumAuthenticatedAt: Date.now(),
+    };
     const client = this.redisClientService.getClient();
     if (!client) {
       const stored = await this.read(token);
@@ -115,7 +120,9 @@ export class TeacherAccessAraIdChallengeStore {
     }
   }
 
-  async readAuthorization(authorizationToken: string): Promise<StoredChallenge | null> {
+  async readAuthorization(
+    authorizationToken: string,
+  ): Promise<{ challenge: StoredChallenge; minimumAuthenticatedAt: number } | null> {
     const authorizationKey = this.authorizationKey(authorizationToken);
     const client = this.redisClientService.getClient();
     const raw = client
@@ -138,7 +145,9 @@ export class TeacherAccessAraIdChallengeStore {
         typeof challengeRaw === 'string'
           ? (JSON.parse(challengeRaw) as StoredChallenge)
           : challengeRaw;
-      return challenge.status === 'CLAIMED' && challenge.expiresAt > Date.now() ? challenge : null;
+      return challenge.status === 'CLAIMED' && challenge.expiresAt > Date.now()
+        ? { challenge, minimumAuthenticatedAt: authorization.minimumAuthenticatedAt }
+        : null;
     } catch {
       return null;
     }

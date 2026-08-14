@@ -173,4 +173,71 @@ describe('AttendanceOperationsService', () => {
     ]);
     expect(result.summary.holidayAttendance).toBe(1);
   });
+
+  it('captures immutable attendance statuses when reopening a session', async () => {
+    const executor = { query: jest.fn() };
+    const session = {
+      id: '10000000-0000-4000-8000-000000000001',
+      school_term_id: '10',
+      school_id: 10010002,
+      grade_level_id: 6,
+      room_id: 1,
+      attendance_date: '2026-08-15',
+      period: 1,
+      session_kind: 'DAILY',
+      status: 'SUBMITTED',
+      expected_roster_count: 2,
+      recorded_count: 2,
+      revision: 1,
+      submitted_at: '2026-08-15T02:00:00.000Z',
+      correction_reason: null,
+    };
+    const reopened = { ...session, status: 'REOPENED', revision: 2 };
+    const repository = {
+      findSessionById: jest.fn().mockResolvedValue(session),
+      isSchoolInScope: jest.fn().mockResolvedValue(true),
+      withTransaction: jest.fn(
+        async (callback: (value: QueryExecutor) => Promise<unknown>) => await callback(executor),
+      ),
+      reopenSession: jest.fn().mockResolvedValue(reopened),
+      listSessionAttendanceStatuses: jest.fn().mockResolvedValue([
+        { student_uuid: '00000000-0000-4000-8000-000000000001', attendance_status: 1 },
+        { student_uuid: '00000000-0000-4000-8000-000000000002', attendance_status: 2 },
+      ]),
+      recordSessionAudit: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AttendanceOperationsService(
+      repository as unknown as AttendanceOperationsRepository,
+    );
+
+    await service.reopenSession('10000000-0000-4000-8000-000000000001', 'แก้ตามหลักฐาน', {
+      id: 5,
+      username: 'director',
+      roles: ['DIRECTOR'],
+      permissions: ['manage-attendance-calendar'],
+      data_scope: { school_ids: [10010002] },
+    });
+
+    expect(repository.recordSessionAudit).toHaveBeenCalledWith(
+      {
+        action: 'ATTENDANCE_REOPEN',
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        actorUserId: 5,
+        actorLabel: 'director',
+        metadata: {
+          schoolId: 10010002,
+          gradeLevelId: 6,
+          roomId: 1,
+          attendanceDate: '2026-08-15',
+          revision: 2,
+          reason: 'แก้ตามหลักฐาน',
+          baselineStatuses: [
+            { studentUuid: '00000000-0000-4000-8000-000000000001', statusCode: 1 },
+            { studentUuid: '00000000-0000-4000-8000-000000000002', statusCode: 2 },
+          ],
+        },
+      },
+      executor,
+    );
+  });
 });

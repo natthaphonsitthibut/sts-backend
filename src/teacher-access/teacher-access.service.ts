@@ -38,6 +38,7 @@ import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { AutomationService } from '../automation/automation.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
+import { attendanceStatusFromCode } from '../attendance/attendance-status';
 import { StudentsService } from '../students/students.service';
 import { StudentObservationsService } from '../student-observations/student-observations.service';
 import { TimetableService } from '../timetable/timetable.service';
@@ -67,6 +68,7 @@ import type {
   ListTeacherAccessGrantsDto,
   ListTeacherLinkRosterDto,
   SaveTeacherAccessAttendanceDto,
+  SaveTeacherAccessAttendanceMarksDto,
   SendTeacherAccessGrantsDto,
 } from './dto/teacher-access.dto';
 import { OtpStore } from '../common/otp/otp.store';
@@ -1520,10 +1522,17 @@ export class TeacherAccessService {
     };
   }
 
-  async approveAraIdChallenge(authorizationToken: string, araIdProfileId: string) {
-    const challenge = await this.araIdChallengeStore.readAuthorization(authorizationToken);
-    if (!challenge) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
-    const grant = await this.repository.findGrantById(challenge.grantId);
+  async approveAraIdChallenge(
+    authorizationToken: string,
+    araIdProfileId: string,
+    authenticatedAt: number,
+  ) {
+    const authorization = await this.araIdChallengeStore.readAuthorization(authorizationToken);
+    if (!authorization) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
+    if (authenticatedAt < authorization.minimumAuthenticatedAt) {
+      throw new UnauthorizedException('กรุณากรอก PIN AraID ใหม่เพื่อยืนยันลิงก์ครู');
+    }
+    const grant = await this.repository.findGrantById(authorization.challenge.grantId);
     if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกยกเลิกแล้ว');
     this.assertGrantUsable(grant);
     if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
@@ -1761,7 +1770,7 @@ export class TeacherAccessService {
    */
   private async resolveAttendanceSlotId(
     assignment: TeacherAccessAssignmentRow,
-    dto: SaveTeacherAccessAttendanceDto,
+    dto: { date: string; timetableSlotId?: number },
     queryRunner: QueryRunner,
   ): Promise<number | undefined> {
     if (assignment.assignment_kind !== 'SUBJECT') return undefined;
@@ -2187,6 +2196,145 @@ export class TeacherAccessService {
     );
   }
 
+  /**
+   * Autosave for a teacher-link check-in in progress. Same capability, same
+   * assignment and same roster bound as the final submit — the only difference
+   * is that this may carry part of the class and does not close the round.
+   */
+  async savePublicAttendanceMarks(
+    rawToken: string,
+    dto: SaveTeacherAccessAttendanceMarksDto,
+    sessionToken?: string,
+  ) {
+    if (dto.date > getBangkokDateString()) {
+      throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าได้');
+    }
+    // Same envelope as savePublicAttendance so the two write paths look alike
+    // to the client.
+    const data = await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: dto.assignmentId,
+        sessionToken,
+        operation: 'SUBMIT_ATTENDANCE_DRAFT',
+        recordSuccessfulUse: false,
+      },
+      async (context, queryRunner) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          dto.assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        const capability = this.attendanceCapability(assignment.assignment_kind);
+        if (!context.capabilities.includes(capability)) {
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+        }
+        const timetableSlotId = await this.resolveAttendanceSlotId(assignment, dto, queryRunner);
+        const allowedStudentIds = await this.repository.listRosterIds(
+          Number(context.classroomId),
+          queryRunner,
+        );
+        return await this.attendanceWriteService.saveDraftMarksWithinTransaction(
+          (dto.records ?? []).map((record) => ({
+            student_id: record.studentId,
+            status: record.status,
+            marked_at: record.markedAt ?? null,
+          })),
+          {
+            actorUserId: context.teacherUserId,
+            actorLabel: context.teacherUsername,
+            recorder: context.teacherUsername,
+            allowedStudentIds,
+          },
+          createSqlQueryExecutor(queryRunner),
+          undefined,
+          timetableSlotId,
+          dto.date,
+          dto.clearedStudentIds ?? [],
+        );
+      },
+    );
+    return { success: true, data };
+  }
+
+  /**
+   * Session state plus the marks already stored, so the teacher-link page can
+   * prefill what was checked earlier and lock itself once the round is
+   * submitted — the authenticated page has had both since day one.
+   */
+  async getPublicAttendanceSession(
+    rawToken: string,
+    query: { assignmentId: number; date: string; timetableSlotId?: number },
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: query.assignmentId,
+        sessionToken,
+        operation: 'VIEW_ATTENDANCE_DRAFT',
+        recordSuccessfulUse: false,
+      },
+      async (context, queryRunner) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
+        const assignment = await this.repository.findGrantAssignment(
+          context.grantId,
+          query.assignmentId,
+          queryRunner,
+        );
+        if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        if (!context.capabilities.includes(this.attendanceCapability(assignment.assignment_kind))) {
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์ดูรอบเช็คชื่อของห้องนี้');
+        }
+        const classroomId = Number(context.classroomId);
+        const sessionKind = assignment.assignment_kind === 'SUBJECT' ? 'SUBJECT' : 'DAILY';
+        // A subject class with several periods a day needs the caller to say
+        // which one; resolveAttendanceSlotId raises the same errors the write
+        // path does, so read and write agree on what "this round" means.
+        const timetableSlotId =
+          sessionKind === 'SUBJECT'
+            ? ((await this.resolveAttendanceSlotId(assignment, query, queryRunner)) ?? null)
+            : null;
+        const roster = await this.repository.listRosterIds(classroomId, queryRunner);
+        const session = await this.repository.findAttendanceSessionForClassroom(
+          {
+            classroomId,
+            attendanceDate: query.date,
+            sessionKind,
+            timetableSlotId,
+          },
+          queryRunner,
+        );
+        const marks = session
+          ? await this.repository.listAttendanceMarksForSession(session.id, queryRunner)
+          : [];
+        return {
+          data: {
+            expectedRosterCount: roster.length,
+            session: session
+              ? {
+                  id: session.id,
+                  status: session.status,
+                  revision: Number(session.revision),
+                  expectedRosterCount: Number(session.expected_roster_count),
+                  recordedCount: Number(session.recorded_count),
+                  submittedAt: session.submitted_at,
+                  correctionReason: session.correction_reason,
+                }
+              : null,
+            marks: marks.map((row) => ({
+              studentUuid: row.student_uuid,
+              status: attendanceStatusFromCode(row.status_code),
+              markedAt: row.marked_at,
+            })),
+          },
+        };
+      },
+    );
+  }
+
   async savePublicAttendance(
     rawToken: string,
     dto: SaveTeacherAccessAttendanceDto,
@@ -2222,7 +2370,11 @@ export class TeacherAccessService {
           queryRunner,
         );
         const result = await this.attendanceWriteService.saveAttendanceWithinTransaction(
-          dto.records.map((record) => ({ student_id: record.studentId, status: record.status })),
+          dto.records.map((record) => ({
+            student_id: record.studentId,
+            status: record.status,
+            marked_at: record.markedAt ?? null,
+          })),
           {
             actorUserId: context.teacherUserId,
             actorLabel: context.teacherUsername,

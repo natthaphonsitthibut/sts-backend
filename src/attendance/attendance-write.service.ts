@@ -6,7 +6,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { resolveActorDataScope, type AuthenticatedRequestUser, type DataScope } from '../auth';
-import { getBangkokDateString, getIsoDayOfWeekFromDateString } from '../common/utils/date.util';
+import {
+  getBangkokDateString,
+  getBangkokDayBounds,
+  getIsoDayOfWeekFromDateString,
+} from '../common/utils/date.util';
 import { AutomationService, NewCase } from '../automation/automation.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceRepository } from './attendance.repository';
@@ -95,20 +99,21 @@ export class AttendanceWriteService {
     };
   }
 
-  async saveAttendanceWithinTransaction(
-    records: AttendanceSaveRecordInput[] | AttendanceWriteRecord[],
+  /**
+   * Everything both write paths need before touching rows: scope, class shape,
+   * roster, term/calendar validity and the locked session. `requireFullRoster`
+   * is the one difference — a final submit must carry the whole class, while a
+   * draft autosave carries only what the teacher has tapped so far.
+   */
+  private async resolveWriteContext(
+    studentIds: string[],
     context: AttendanceWriteContext,
     executor: QueryExecutor,
+    options: { requireFullRoster: boolean },
     actorScope?: DataScope,
     timetableSlotId?: number,
     date?: string,
-  ): Promise<{
-    session: { id: string; status: string; revision: number };
-    calendarConfigured: boolean;
-    affectedStudentIds: string[];
-  }> {
-    const normalizedRecords = this.normalizeRecords(records);
-    const studentIds = normalizedRecords.map((record) => record.student_id);
+  ) {
     const uniqueIds = new Set(studentIds);
     if (uniqueIds.size !== studentIds.length) {
       throw new BadRequestException('พบรายชื่อนักเรียนซ้ำในคำขอ');
@@ -149,11 +154,19 @@ export class AttendanceWriteService {
     }
 
     const rosterIds = await this.attendanceOperationsRepository.listRosterIds(first, executor);
-    if (
-      rosterIds.length !== studentIds.length ||
-      rosterIds.some((studentId) => !uniqueIds.has(studentId))
-    ) {
-      throw new ConflictException('รายชื่อที่ส่งไม่ตรงกับ roster ปัจจุบัน กรุณาโหลดรายชื่อใหม่');
+    if (options.requireFullRoster) {
+      if (
+        rosterIds.length !== studentIds.length ||
+        rosterIds.some((studentId) => !uniqueIds.has(studentId))
+      ) {
+        throw new ConflictException('รายชื่อที่ส่งไม่ตรงกับ roster ปัจจุบัน กรุณาโหลดรายชื่อใหม่');
+      }
+    } else {
+      // A draft may cover part of the class, but never anyone outside it.
+      const roster = new Set(rosterIds);
+      if (studentIds.some((studentId) => !roster.has(studentId))) {
+        throw new ForbiddenException('พบนักเรียนที่ไม่อยู่ใน roster ของห้องนี้');
+      }
     }
 
     const attendanceDate = date ?? getBangkokDateString();
@@ -176,11 +189,21 @@ export class AttendanceWriteService {
             timetableSlotId: Number(selectedSlot.id),
           }
         : { kind: 'DAILY' as const, period: 1 });
-    const term = await this.attendanceOperationsRepository.findOrCreateTermForClass(
-      first,
-      context.actorUserId,
-      executor,
-    );
+    // Drafts fire many times per class, so they read the term without the
+    // FOR UPDATE lock that find-or-create takes; only the rare first write of a
+    // term falls through to the locking path.
+    const term = options.requireFullRoster
+      ? await this.attendanceOperationsRepository.findOrCreateTermForClass(
+          first,
+          context.actorUserId,
+          executor,
+        )
+      : ((await this.attendanceOperationsRepository.findTermForClass(first, executor)) ??
+        (await this.attendanceOperationsRepository.findOrCreateTermForClass(
+          first,
+          context.actorUserId,
+          executor,
+        )));
     if (selectedSlot && String(selectedSlot.school_term_id) !== String(term.id)) {
       throw new BadRequestException('คาบเรียนนี้ไม่อยู่ในภาคเรียนปัจจุบันของห้อง');
     }
@@ -230,15 +253,89 @@ export class AttendanceWriteService {
       throw new ConflictException('รอบเช็คชื่อนี้ถูกยกเลิกแล้ว');
     }
 
+    return {
+      studentIds,
+      metadata: first,
+      rosterIds,
+      attendanceDate,
+      sessionContext,
+      calendarConfigured,
+      session,
+    };
+  }
+
+  async saveDraftMarks(
+    records: AttendanceSaveRecordInput[],
+    actor?: AuthenticatedRequestUser,
+    timetableSlotId?: number,
+    date?: string,
+    clearedStudentIds: string[] = [],
+  ) {
+    if (date && date > getBangkokDateString()) {
+      throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าสำหรับวันที่ในอนาคตได้');
+    }
+
+    return await this.attendanceOperationsRepository.withTransaction(
+      async (executor) =>
+        await this.saveDraftMarksWithinTransaction(
+          records,
+          {
+            actorUserId: actor?.id ?? null,
+            actorLabel: actor?.username || (actor?.id ? `user#${actor.id}` : 'unknown-user'),
+            recorder: this.resolveRecorder(actor),
+          },
+          executor,
+          resolveActorDataScope(actor),
+          timetableSlotId,
+          date,
+          clearedStudentIds,
+        ),
+    );
+  }
+
+  async saveAttendanceWithinTransaction(
+    records: AttendanceSaveRecordInput[] | AttendanceWriteRecord[],
+    context: AttendanceWriteContext,
+    executor: QueryExecutor,
+    actorScope?: DataScope,
+    timetableSlotId?: number,
+    date?: string,
+  ): Promise<{
+    session: { id: string; status: string; revision: number };
+    calendarConfigured: boolean;
+    affectedStudentIds: string[];
+  }> {
+    const normalizedRecords = this.normalizeRecords(records);
+    const {
+      studentIds,
+      metadata: first,
+      rosterIds,
+      attendanceDate,
+      sessionContext,
+      calendarConfigured,
+      session,
+    } = await this.resolveWriteContext(
+      normalizedRecords.map((record) => record.student_id),
+      context,
+      executor,
+      { requireFullRoster: true },
+      actorScope,
+      timetableSlotId,
+      date,
+    );
+
     const statusCodes = normalizedRecords.map((record) => ATTENDANCE_STATUS_CODE[record.status]);
     const previousStatuses =
-      session.status === 'REOPENED' && sessionContext.kind === 'DAILY'
-        ? await this.attendanceRepository.listAttendanceStatuses(
-            studentIds,
-            attendanceDate,
-            sessionContext.period,
+      session.status === 'REOPENED'
+        ? ((await this.attendanceOperationsRepository.findReopenBaseline(
+            session.id,
+            session.revision,
             executor,
-          )
+          )) ??
+          (await this.attendanceOperationsRepository.listSessionAttendanceStatuses(
+            session.id,
+            executor,
+          )))
         : [];
     const previousStatusByStudent = new Map(
       previousStatuses.map((row) => [row.student_uuid, row.attendance_status] as const),
@@ -258,6 +355,9 @@ export class AttendanceWriteService {
       {
         studentIds,
         statusCodes,
+        markedAt: normalizedRecords.map((record) =>
+          this.clampMarkedAt(record.marked_at, attendanceDate),
+        ),
         date: attendanceDate,
         period: sessionContext.period,
         sessionKind: sessionContext.kind,
@@ -275,7 +375,6 @@ export class AttendanceWriteService {
     );
     await this.attendanceOperationsRepository.updateSessionSubmitted(
       session.id,
-      studentIds.length,
       context.actorUserId,
       executor,
     );
@@ -308,6 +407,88 @@ export class AttendanceWriteService {
       session: { id: session.id, status: 'SUBMITTED', revision: session.revision },
       calendarConfigured,
       affectedStudentIds: studentIds,
+    };
+  }
+
+  /**
+   * Autosave for a check-in in progress. Writes only the students the teacher
+   * has actually marked and deliberately stops there: the session stays OPEN,
+   * no submit audit row is written, and neither risk recalculation nor the
+   * absence automation fires. Those are side effects of *finishing* a class,
+   * and firing them on every keystroke would mean an audit row and a full
+   * absence scan per tap. `saveAttendance` remains the one place a round closes.
+   */
+  async saveDraftMarksWithinTransaction(
+    records: AttendanceSaveRecordInput[] | AttendanceWriteRecord[],
+    context: AttendanceWriteContext,
+    executor: QueryExecutor,
+    actorScope?: DataScope,
+    timetableSlotId?: number,
+    date?: string,
+    clearedStudentIds: string[] = [],
+  ): Promise<{
+    session: { id: string; status: string; revision: number };
+    expectedRosterCount: number;
+    recordedCount: number;
+  }> {
+    const normalizedRecords = this.normalizeRecords(records);
+    const cleared = clearedStudentIds.map((studentId) => studentId.trim()).filter(Boolean);
+    if (normalizedRecords.length === 0 && cleared.length === 0) {
+      throw new BadRequestException('กรุณาส่งสถานะอย่างน้อยหนึ่งรายการ');
+    }
+
+    const markedIds = normalizedRecords.map((record) => record.student_id);
+    // Both sets go through the same scope/roster/class checks; only the writes
+    // differ, so a caller cannot clear a student it may not also mark.
+    const { metadata, rosterIds, attendanceDate, sessionContext, session } =
+      await this.resolveWriteContext(
+        [...markedIds, ...cleared],
+        context,
+        executor,
+        { requireFullRoster: false },
+        actorScope,
+        timetableSlotId,
+        date,
+      );
+
+    await this.attendanceRepository.deleteAttendanceMarks(
+      { sessionId: session.id, studentIds: cleared },
+      executor,
+    );
+    if (normalizedRecords.length > 0) {
+      await this.attendanceRepository.upsertAttendanceBatch(
+        {
+          studentIds: markedIds,
+          statusCodes: normalizedRecords.map((record) => ATTENDANCE_STATUS_CODE[record.status]),
+          markedAt: normalizedRecords.map((record) =>
+            this.clampMarkedAt(record.marked_at, attendanceDate),
+          ),
+          date: attendanceDate,
+          period: sessionContext.period,
+          sessionKind: sessionContext.kind,
+          recordedBy: context.recorder,
+          sessionId: session.id,
+          metadata: {
+            SchoolID_Onec: metadata.school_id,
+            GradeLevelID_Onec: metadata.grade_level_id,
+            RoomID_Onec: metadata.room_id,
+            AcademicYear_Onec: metadata.academic_year,
+            Semester_Onec: metadata.semester,
+          },
+        },
+        executor,
+      );
+    }
+    const recordedCount = await this.attendanceOperationsRepository.updateSessionDraftProgress(
+      session.id,
+      context.actorUserId,
+      executor,
+    );
+
+    return {
+      session: { id: session.id, status: session.status, revision: session.revision },
+      expectedRosterCount: rosterIds.length,
+      recordedCount,
     };
   }
 
@@ -436,8 +617,49 @@ export class AttendanceWriteService {
       return {
         student_id: studentId,
         status,
+        marked_at: typeof record.marked_at === 'string' ? record.marked_at : null,
       };
     });
+  }
+
+  /**
+   * `marked_at` comes from the teacher's device, so it is never trusted as-is:
+   * a wrong device clock would otherwise write a mark hours outside the class.
+   * The value is clamped into the attendance day (and never into the future)
+   * rather than rejected — failing the whole save over a skewed clock would
+   * block check-in entirely, which is far worse than a few minutes of drift.
+   * `"RecordedAt"` stays server-generated, so the true write time survives.
+   */
+  private clampMarkedAt(rawMarkedAt: string | null, attendanceDate: string): string | null {
+    if (!rawMarkedAt) {
+      return null;
+    }
+
+    const marked = new Date(rawMarkedAt);
+    if (Number.isNaN(marked.getTime())) {
+      this.logger.warn(`Discarding unparsable attendance marked_at: ${rawMarkedAt}`);
+      return null;
+    }
+
+    const { start, end } = getBangkokDayBounds(attendanceDate);
+    const upper = new Date(Math.min(end.getTime(), Date.now()));
+    // A back-dated check-in has an upper bound in the past; keep the day's start
+    // as the floor so the clamp range can never invert.
+    const ceiling = upper.getTime() < start.getTime() ? start : upper;
+
+    if (marked < start) {
+      this.logger.warn(
+        `Clamping attendance marked_at ${marked.toISOString()} up to ${start.toISOString()} (before ${attendanceDate})`,
+      );
+      return start.toISOString();
+    }
+    if (marked > ceiling) {
+      this.logger.warn(
+        `Clamping attendance marked_at ${marked.toISOString()} down to ${ceiling.toISOString()} (after ${attendanceDate} or in the future)`,
+      );
+      return ceiling.toISOString();
+    }
+    return marked.toISOString();
   }
 
   private isAttendanceSelectionStatus(status: string): status is AttendanceSelectionStatus {

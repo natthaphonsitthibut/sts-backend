@@ -23,3 +23,15 @@ export function getIsoDayOfWeekFromDateString(dateString: string): number {
   const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
   return utcDay === 0 ? 7 : utcDay;
 }
+
+/**
+ * Instant bounds of a Bangkok calendar day, for a `YYYY-MM-DD` string.
+ * Thailand has no DST, so the offset is a fixed +07:00 and this needs no
+ * timezone database lookup. `end` is the last millisecond of the day.
+ */
+export function getBangkokDayBounds(dateString: string): { start: Date; end: Date } {
+  return {
+    start: new Date(`${dateString}T00:00:00.000+07:00`),
+    end: new Date(`${dateString}T23:59:59.999+07:00`),
+  };
+}

@@ -12,6 +12,7 @@ import type {
   TeacherAccessRosterRow,
   TeacherAttendanceHistoryRow,
 } from './teacher-access.types';
+import { rosterProfileColumnsSql, rosterProfileJoinsSql } from '../common/utils/student-roster.sql';
 
 interface TermIssueRow extends Record<string, unknown> {
   id: string;
@@ -1096,25 +1097,13 @@ export class TeacherAccessRepository {
           enrollment.student_uuid::text,
           enrollment.student_number,
           (person.photo_storage_key IS NOT NULL) AS has_photo,
-          enrollment."FirstName_Onec" AS first_name,
-          enrollment."LastName_Onec" AS last_name,
+          ${rosterProfileColumnsSql('enrollment')},
           enrollment.student_status_code,
           status.label_th AS student_status_label,
-          risk.risk_tier,
-          latest_comment.comment_text AS teacher_comment,
           COUNT(*) OVER()::int AS total_count
         FROM student_term enrollment
-        LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
+        ${rosterProfileJoinsSql('enrollment')}
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
-        LEFT JOIN student_risk_profiles risk ON risk.student_uuid = enrollment.student_uuid
-        LEFT JOIN LATERAL (
-          SELECT comment.comment_text
-          FROM classroom_student_comments comment
-          WHERE comment.classroom_id = enrollment.classroom_id
-            AND comment.person_uuid = enrollment.person_uuid
-          ORDER BY comment.created_at DESC, comment.id DESC
-          LIMIT 1
-        ) latest_comment ON TRUE
         WHERE enrollment.classroom_id = $1
           AND enrollment.deleted_at IS NULL
           AND (
@@ -1371,6 +1360,101 @@ export class TeacherAccessRepository {
       [classroomId],
     );
     return result.rows.map((row) => row.student_uuid);
+  }
+
+  /**
+   * Attendance session for one classroom/date/period, resolved from the class
+   * identity that `student_term` already carries. Lets the teacher-link surface
+   * show the same OPEN/SUBMITTED state the authenticated page shows, without
+   * granting the link any wider scope than its own classroom.
+   */
+  async findAttendanceSessionForClassroom(
+    input: {
+      classroomId: number;
+      attendanceDate: string;
+      sessionKind: 'DAILY' | 'SUBJECT';
+      timetableSlotId: number | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<{
+    id: string;
+    status: string;
+    revision: number;
+    expected_roster_count: number;
+    recorded_count: number;
+    submitted_at: string | null;
+    correction_reason: string | null;
+  } | null> {
+    const result = await this.executor(queryRunner).query<{
+      id: string;
+      status: string;
+      revision: number;
+      expected_roster_count: number;
+      recorded_count: number;
+      submitted_at: string | null;
+      correction_reason: string | null;
+    }>(
+      `
+        WITH class_identity AS (
+          SELECT DISTINCT
+            enrollment."SchoolID_Onec" AS school_id,
+            enrollment."GradeLevelID_Onec" AS grade_level_id,
+            enrollment."RoomID_Onec" AS room_id,
+            enrollment."AcademicYear_Onec" AS academic_year,
+            enrollment."Semester_Onec" AS semester
+          FROM student_term enrollment
+          WHERE enrollment.classroom_id = $1 AND enrollment.deleted_at IS NULL
+        )
+        SELECT
+          session.id::text,
+          session.status,
+          session.revision,
+          session.expected_roster_count,
+          session.recorded_count,
+          session.submitted_at::text,
+          session.correction_reason
+        FROM attendance_sessions session
+        JOIN class_identity class
+          ON session.grade_level_id = class.grade_level_id
+         AND session.room_id = class.room_id
+        JOIN school_terms term
+          ON term.id = session.school_term_id
+         AND term.school_id = class.school_id
+         AND term.academic_year = class.academic_year
+         AND term.semester = class.semester
+        WHERE session.attendance_date = $2
+          AND session.session_kind = $3
+          AND ($4::bigint IS NULL OR session.timetable_slot_id = $4)
+          AND ($4::bigint IS NOT NULL OR session.period = 1)
+          AND session.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [input.classroomId, input.attendanceDate, input.sessionKind, input.timetableSlotId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Per-student marks already stored for a session, for prefill on reopen. */
+  async listAttendanceMarksForSession(
+    sessionId: string,
+    queryRunner: QueryRunner,
+  ): Promise<Array<{ student_uuid: string; status_code: number; marked_at: string | null }>> {
+    const result = await this.executor(queryRunner).query<{
+      student_uuid: string;
+      status_code: number;
+      marked_at: string | null;
+    }>(
+      `
+        SELECT
+          record.student_uuid::text,
+          record."AttendanceStatus" AS status_code,
+          record.marked_at::text
+        FROM attendance record
+        WHERE record.session_id = $1
+      `,
+      [sessionId],
+    );
+    return result.rows;
   }
 
   async isStudentInClassroom(

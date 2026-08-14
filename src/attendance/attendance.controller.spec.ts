@@ -32,7 +32,6 @@ describe('AttendanceController access', () => {
     'getSchools',
     'getStudents',
     'getHistory',
-    'getAttendanceTasks',
     'getRooms',
   ];
 
@@ -55,12 +54,14 @@ describe('AttendanceController access', () => {
 
   it('allows attendance lookup/task reads to the required actors only', () => {
     const guard = new PermissionsGuard(new Reflector());
-    const attendanceLookupMethods: Array<keyof AttendanceController> = ['getAttendanceTasks'];
+    const attendanceLookupMethods: Array<keyof AttendanceController> = ['getRooms'];
 
     for (const method of attendanceLookupMethods) {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'attendance',
         'attendance-dashboard',
+        'students',
+        'export-data',
       ]);
       expect(guard.canActivate(contextWithPermissions(method, ['attendance']))).toBe(true);
       expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(

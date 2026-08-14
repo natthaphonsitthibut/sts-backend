@@ -4,6 +4,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsISO8601,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -14,45 +15,11 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 import { ISO_DATE_PATTERN } from './attendance-operations.dto';
 import { ATTENDANCE_SELECTION_STATUS_VALUES } from '../attendance-status';
 
 const ATTENDANCE_STATUS_VALUES = ATTENDANCE_SELECTION_STATUS_VALUES;
 const ATTENDANCE_SESSION_KIND_VALUES = ['DAILY', 'SUBJECT'] as const;
-
-export const ATTENDANCE_LINK_STATE_VALUES = ['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'] as const;
-
-export class GetAttendanceTasksQueryDto extends PaginatedSearchQueryDto {
-  @IsOptional()
-  @IsIn(ATTENDANCE_LINK_STATE_VALUES)
-  status?: (typeof ATTENDANCE_LINK_STATE_VALUES)[number];
-
-  @IsOptional()
-  @IsString()
-  province?: string;
-
-  @IsOptional()
-  @IsString()
-  district?: string;
-
-  @IsOptional()
-  @IsString()
-  subDistrict?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  schoolId?: number;
-
-  @IsOptional()
-  @IsString()
-  grade?: string;
-
-  @IsOptional()
-  @IsString()
-  room?: string;
-}
 
 export class GetSchoolsQueryDto {
   @IsOptional()
@@ -134,6 +101,46 @@ export class AttendanceRecordDto {
   @IsString()
   @IsIn(ATTENDANCE_STATUS_VALUES)
   status!: string;
+
+  /**
+   * When the teacher tapped this status on their device (ISO 8601). Optional so
+   * older clients keep working; the server clamps it into the attendance day
+   * before persisting, and `"RecordedAt"` remains the server-side truth.
+   */
+  @IsOptional()
+  @IsISO8601()
+  marked_at?: string;
+}
+
+/**
+ * Autosave payload for a check-in in progress. Unlike {@link SaveAttendanceDto}
+ * this may carry a subset of the class — the round is not being closed yet.
+ */
+export class SaveAttendanceMarksDto {
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AttendanceRecordDto)
+  records?: AttendanceRecordDto[];
+
+  /**
+   * Students whose mark the teacher took back (tapping the same status twice).
+   * Their stored row is deleted so the next prefill does not bring it back.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  cleared_student_ids?: string[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  timetable_slot_id?: number;
+
+  @IsOptional()
+  @Matches(ISO_DATE_PATTERN)
+  date?: string;
 }
 
 export class SaveAttendanceDto {

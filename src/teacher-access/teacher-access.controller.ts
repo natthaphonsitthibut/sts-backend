@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  GoneException,
   Get,
   Headers,
   Inject,
@@ -44,6 +45,8 @@ import {
   RevokeTeacherAccessGrantDto,
   SendTeacherAccessGrantsDto,
   SaveTeacherAccessAttendanceDto,
+  SaveTeacherAccessAttendanceMarksDto,
+  TeacherAccessAttendanceSessionQueryDto,
   TeacherAccessAttendanceSlotsQueryDto,
   TeacherAccessAssignmentOptionsDto,
   TeacherAccessAttendanceHistoryQueryDto,
@@ -275,13 +278,8 @@ export class PublicTeacherAccessController {
 
   @Post('araid/verify')
   @ThrottleTeacherAccess()
-  verifyAraId(
-    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
-    @Req() request: Request,
-  ) {
-    const profileId = this.araIdSessionCookie.readProfileId(request.headers.cookie);
-    if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
-    return this.service.verifyAraId(this.token(rawToken), profileId);
+  verifyAraId() {
+    throw new GoneException('กรุณายืนยันผ่าน QR และ PIN AraID');
   }
 
   @Post('araid/challenge')
@@ -323,13 +321,17 @@ export class PublicTeacherAccessController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const profileId = this.araIdSessionCookie.readProfileId(request.headers.cookie);
-    if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
+    const session = this.araIdSessionCookie.readSessionIdentity(request.headers.cookie);
+    if (!session) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
     const authorizationToken = this.araIdSessionCookie.readTeacherAccessAuthorization(
       request.headers.cookie,
     );
     if (!authorizationToken) throw new UnauthorizedException('การยืนยัน AraID หมดอายุแล้ว');
-    const result = await this.service.approveAraIdChallenge(authorizationToken, profileId);
+    const result = await this.service.approveAraIdChallenge(
+      authorizationToken,
+      session.profileId,
+      session.authenticatedAt,
+    );
     this.araIdSessionCookie.clearTeacherAccessAuthorization(response);
     return result;
   }
@@ -521,6 +523,34 @@ export class PublicTeacherAccessController {
       return;
     }
     res.sendFile(result.filePath);
+  }
+
+  @Get('attendance-session')
+  @ThrottleTeacherAccess()
+  attendanceSession(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Query() query: TeacherAccessAttendanceSessionQueryDto,
+  ) {
+    return this.service.getPublicAttendanceSession(
+      this.token(rawToken),
+      query,
+      this.session(rawSession),
+    );
+  }
+
+  @Post('attendance-marks')
+  @ThrottleTeacherAccess()
+  attendanceMarks(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Body() body: SaveTeacherAccessAttendanceMarksDto,
+  ) {
+    return this.service.savePublicAttendanceMarks(
+      this.token(rawToken),
+      body,
+      this.session(rawSession),
+    );
   }
 
   @Post('attendance')

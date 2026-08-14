@@ -259,6 +259,7 @@ async function main() {
         role: 'ADMIN',
         permissions: [
           'manage-teacher-access',
+          'manage-teachers',
           'manage-school-structure',
           'manage-curriculum',
           'manage-timetable',
@@ -606,9 +607,172 @@ async function main() {
     assert(
       JSON.stringify(teacherAttendanceTable.statuses.map((item) => item.label)) ===
         JSON.stringify(['มา', 'สาย', 'ลา', 'ขาด']) &&
-        teacherAttendanceTable.statuses[0]?.pressed === 'true',
+        teacherAttendanceTable.statuses.every((item) => item.pressed === 'false'),
       `Teacher-link attendance status pills drifted: ${JSON.stringify(teacherAttendanceTable.statuses)}`,
     );
+
+    // No default status: an untouched roster leaves submit blocked and every
+    // row flagged, and "มาทั้งหมด" fills only what the teacher has not answered.
+    const beforeMarking = await evaluate(
+      client,
+      `(() => {
+        const rows = [...document.querySelectorAll('table tbody tr')];
+        const submit = [...document.querySelectorAll('button[type="submit"]')].at(-1);
+        return {
+          unmarkedRows: rows.filter(
+            (row) => row.getAttribute('data-attendance-mark') === 'NONE',
+          ).length,
+          rowCount: rows.length,
+          submitDisabled: submit ? submit.disabled : null,
+          bodyText: document.body.innerText,
+        };
+      })()`,
+    );
+    assert(
+      beforeMarking.rowCount > 0 && beforeMarking.unmarkedRows === beforeMarking.rowCount,
+      `Every row must start unmarked: ${JSON.stringify(beforeMarking)}`,
+    );
+
+    // ย้อนกลับ must use the same white/dark treatment as the other secondary
+    // buttons, not the tinted ghost variant it shipped with.
+    const undoButtonStyle = await evaluate(
+      client,
+      `(() => {
+        const undo = [...document.querySelectorAll('button')].find(
+          (button) => button.textContent.trim() === 'ย้อนกลับ',
+        );
+        if (!undo) return null;
+        const style = getComputedStyle(undo);
+        return { background: style.backgroundColor, color: style.color };
+      })()`,
+    );
+    assert(
+      undoButtonStyle &&
+        undoButtonStyle.background === 'rgb(255, 255, 255)' &&
+        undoButtonStyle.color !== 'rgb(255, 255, 255)',
+      `ย้อนกลับ must be a white button with dark text: ${JSON.stringify(undoButtonStyle)}`,
+    );
+
+    // The badge must line up down the column and must not move the table when a
+    // mark is set — both were real defects before it was pinned right and kept
+    // in the DOM while hidden.
+    const badgeGeometry = await evaluate(
+      client,
+      `(() => {
+        const badges = [...document.querySelectorAll('table tbody tr')].map((row) =>
+          [...row.querySelectorAll('span')].find(
+            (span) => span.textContent.trim() === 'ยังไม่เช็ค',
+          ),
+        );
+        const lefts = badges.map((badge) => Math.round(badge.getBoundingClientRect().left));
+        const nameColumnWidth = Math.round(
+          document.querySelector('table tbody tr').cells[3].getBoundingClientRect().width,
+        );
+        return { distinctLefts: [...new Set(lefts)].length, badgeCount: badges.length, nameColumnWidth };
+      })()`,
+    );
+    assert(
+      badgeGeometry.badgeCount === beforeMarking.rowCount &&
+        badgeGeometry.distinctLefts === 1,
+      `Unmarked badges must share one left edge: ${JSON.stringify(badgeGeometry)}`,
+    );
+    assert(
+      beforeMarking.submitDisabled === true &&
+        beforeMarking.bodyText.includes('ยังไม่เช็ค'),
+      'Submit must stay blocked while students are unmarked',
+    );
+
+    await evaluate(
+      client,
+      `(() => {
+        const group = document.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        [...group.querySelectorAll('button')][3].click();
+      })()`,
+    );
+    // Tapping the same status again clears the student back to "ยังไม่เช็ค".
+    await evaluate(
+      client,
+      `(() => {
+        const group = document.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        [...group.querySelectorAll('button')][3].click();
+      })()`,
+    );
+    const widthAfterMarking = await evaluate(
+      client,
+      `Math.round(
+        document.querySelector('table tbody tr').cells[3].getBoundingClientRect().width,
+      )`,
+    );
+    assert(
+      widthAfterMarking === badgeGeometry.nameColumnWidth,
+      `Marking a student must not resize the name column: ${badgeGeometry.nameColumnWidth} -> ${widthAfterMarking}`,
+    );
+
+    // Read after the click in a separate call so React has committed.
+    const toggledOff = await evaluate(
+      client,
+      `(() => {
+        const row = document.querySelector('table tbody tr');
+        return {
+          mark: row.getAttribute('data-attendance-mark'),
+          pressed: [...row.querySelectorAll('[role="group"] button')].map((button) =>
+            button.getAttribute('aria-pressed'),
+          ),
+        };
+      })()`,
+    );
+    assert(
+      toggledOff.mark === 'NONE' &&
+        toggledOff.pressed.every((value) => value === 'false'),
+      `Tapping the same status twice must clear the student: ${JSON.stringify(toggledOff)}`,
+    );
+    // Put it back so the mark-all assertion below still has an explicit answer
+    // to protect.
+    await evaluate(
+      client,
+      `(() => {
+        const group = document.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        [...group.querySelectorAll('button')][3].click();
+      })()`,
+    );
+
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim().startsWith('มาทั้งหมด'))
+        ?.click()`,
+    );
+    const afterMarkAll = await evaluate(
+      client,
+      `(() => {
+        const rows = [...document.querySelectorAll('table tbody tr')];
+        const submit = [...document.querySelectorAll('button[type="submit"]')].at(-1);
+        return {
+          stillUnmarked: rows.filter(
+            (row) => row.getAttribute('data-attendance-mark') === 'NONE',
+          ).length,
+          firstRowMark: rows[0].getAttribute('data-attendance-mark'),
+          firstRowPressed: [
+            ...rows[0].querySelectorAll('[role="group"] button'),
+          ].map((button) => button.getAttribute('aria-pressed')),
+          submitDisabled: submit ? submit.disabled : null,
+        };
+      })()`,
+    );
+    assert(
+      afterMarkAll.stillUnmarked === 0 && afterMarkAll.submitDisabled === false,
+      `"มาทั้งหมด" must complete the class and unblock submit: ${JSON.stringify(afterMarkAll)}`,
+    );
+    assert(
+      // The row marked ขาด before the bulk action must keep it, proving the
+      // fill only touches students with no answer.
+      afterMarkAll.firstRowMark === 'P_ABSENT' &&
+        JSON.stringify(afterMarkAll.firstRowPressed) ===
+          JSON.stringify(['false', 'false', 'false', 'true']),
+      `"มาทั้งหมด" must not overwrite an explicit mark: ${JSON.stringify(afterMarkAll)}`,
+    );
+
+
 
     await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}?tab=attendance`);
     await waitFor(
@@ -712,6 +876,7 @@ async function main() {
       roles: ['ADMIN'],
       permissions: [
         'manage-teacher-access',
+        'manage-teachers',
         'manage-school-structure',
         'manage-curriculum',
         'manage-timetable',
@@ -790,6 +955,30 @@ async function main() {
           ),
         ),
       'Teacher-link roster sort did not reach the server before pagination',
+    );
+
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button[data-teacher-link-profile]')]
+        .find((button) => button.getAttribute('aria-label') === 'เปิดข้อมูลคุณครู Teacher One Smoke')
+        ?.click()`,
+    );
+    const teacherProfilePath = `/manage-teachers/${fixture.teacherMemberships[0].teacherId}/edit`;
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) === teacherProfilePath,
+      'Teacher-link roster profile did not open the matching teacher record',
+    );
+    await navigate(client, `${FRONTEND_URL}/attendance-links`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('th button')].some((button) => button.textContent.includes('ชื่อ-นามสกุล'))`,
+          ),
+        ),
+      'Teacher-link roster did not render after returning from the teacher record',
     );
 
     // The toolbar issues one expiring group link, while the row action remains
@@ -1152,6 +1341,52 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: false,
     });
+    // The system roster tab must carry the same columns and per-student tools
+    // as the teacher-link classroom, not a bare name list.
+    await navigate(client, `${FRONTEND_URL}/attendance/roster`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelectorAll('table tbody tr').length > 0`,
+          ),
+        ),
+      'System roster tab did not render',
+    );
+    const systemRoster = await evaluate(
+      client,
+      `(() => {
+        const table = document.querySelector('table');
+        const row = table.querySelector('tbody tr');
+        return {
+          headings: [...table.querySelectorAll('thead th')].map((cell) => cell.textContent.trim()),
+          riskBadges: row.querySelectorAll('[data-student-risk-tier]').length,
+          toolButtons: [...row.querySelectorAll('button[aria-label]')]
+            .map((button) => button.getAttribute('aria-label'))
+            .filter((label) => label.startsWith('ดูข้อมูล') || label.startsWith('เพิ่มความคิดเห็น'))
+            .length,
+        };
+      })()`,
+    );
+    assert(
+      JSON.stringify(systemRoster.headings) ===
+        JSON.stringify([
+          'ลำดับ',
+          'รูปประจำตัว',
+          'รหัสประจำตัว',
+          'ชื่อ-นามสกุล',
+          'หมายเหตุ',
+          'สถานะความเสี่ยง',
+          'เครื่องมือ',
+        ]),
+      `System roster columns drifted from the teacher-link roster: ${JSON.stringify(systemRoster.headings)}`,
+    );
+    assert(
+      systemRoster.riskBadges === 1 && systemRoster.toolButtons === 2,
+      `System roster must show a risk badge and both row tools: ${JSON.stringify(systemRoster)}`,
+    );
+
     await navigate(client, `${FRONTEND_URL}/attendance/check-in`);
     await waitFor(
       async () =>
@@ -1160,7 +1395,7 @@ async function main() {
             client,
             `document.querySelector('table') &&
              document.body.innerText.includes(${JSON.stringify(fixtureStudentNumbers[0])}) &&
-             document.body.innerText.includes('บันทึกการเช็คชื่อ 2 คน')`,
+             document.body.innerText.includes('ส่งเช็คชื่อ 2 คน')`,
           ),
         ),
       'Authenticated attendance page did not render the fixture roster',
@@ -1270,10 +1505,16 @@ async function main() {
           'teacher card color updates every subject card for the shared classroom',
           'teacher-link roster sorting reaches the server',
           'teacher-link and authenticated attendance default to ascending student number in the shared numbered roster',
+          'teacher-link attendance has no default status, blocks submit until complete, and มาทั้งหมด fills only unmarked rows',
+          'tapping the same status twice clears the student back to ยังไม่เช็ค',
+          'ยังไม่เช็ค badges share one left edge and marking a student does not resize the name column',
+          'ย้อนกลับ uses the shared white/dark secondary button treatment',
+          'system roster tab matches the teacher-link roster columns and per-student tools',
           'authenticated attendance search, status selection and mobile internal scrolling work',
           'teacher-link classroom, history and student routes keep their breadcrumbs, menu owner and safe back targets',
           'LINE invitations are scoped to unverified teacher rows with no global reusable URL',
           'teacher-link roster renders one profile avatar per visible teacher',
+          'teacher-link roster avatar opens the matching teacher record',
           'LINE unlink icons stay visible, disable by verification state and refresh after unlink',
           'teacher verification method choice offers AraID/email without a guest profile avatar',
           'LINE link result omits the guest profile avatar',

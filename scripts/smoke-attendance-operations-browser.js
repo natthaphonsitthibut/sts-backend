@@ -378,10 +378,18 @@ function containsManageButtons(text) {
 
 async function assertAttendancePage(client, expectedManage, label) {
   await navigate(client, `${FRONTEND_URL}/attendance-operations`);
-  await waitFor(
-    async () => (await bodyText(client)).includes('ตรวจสถานะเช็คชื่อรายวัน'),
-    `${label} attendance operations page did not render`,
-  );
+  try {
+    await waitFor(
+      async () => (await bodyText(client)).includes('ตรวจสถานะเช็คชื่อรายวัน'),
+      `${label} attendance operations page did not render`,
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      client,
+      `JSON.stringify({ path: location.pathname, text: document.body.innerText.slice(0, 1000) })`,
+    );
+    throw new Error(`${errorMessage(error)}: ${diagnostic}`);
+  }
   await waitFor(
     async () => (await bodyText(client)).includes('ตรวจความครบถ้วน'),
     `${label} reconciliation section did not render`,

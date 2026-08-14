@@ -46,6 +46,10 @@ describe('AraIdSessionCookieService', () => {
     expect(
       service.readProfileId(`unrelated=value; araid_session=${encodeURIComponent(token)}`),
     ).toBe(profileId);
+    const identity = service.readSessionIdentity(`araid_session=${encodeURIComponent(token)}`);
+    expect(identity).not.toBeNull();
+    expect(identity?.profileId).toBe(profileId);
+    expect(identity?.authenticatedAt).toBeGreaterThan(0);
   });
 
   it('rejects a valid JWT that was not issued for an AraID session', () => {

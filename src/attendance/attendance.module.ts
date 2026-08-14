@@ -4,7 +4,6 @@ import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
 import { AutomationModule } from '../automation/automation.module';
 import { AuthModule } from '../auth/auth.module';
-import { NotificationsModule } from '../notifications/notifications.module';
 import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 import { AttendanceRepository } from './attendance.repository';
 import { AttendanceLookupService } from './attendance-lookup.service';
@@ -15,13 +14,7 @@ import { AttendanceOperationsService } from './attendance-operations.service';
 import { PublicLocationsController } from './public-locations.controller';
 
 @Module({
-  imports: [
-    AuthModule,
-    AutomationModule,
-    NotificationsModule,
-    RiskProfileModule,
-    TokenEncryptionModule,
-  ],
+  imports: [AuthModule, AutomationModule, RiskProfileModule, TokenEncryptionModule],
   controllers: [AttendanceController, PublicLocationsController],
   providers: [
     AttendanceRepository,

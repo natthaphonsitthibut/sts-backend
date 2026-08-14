@@ -350,6 +350,10 @@ async function main() {
       status: 'P_PRESENT',
     }));
     await request('POST', '/api/attendance', 409, adminId, { records: presentRecords });
+    // A submitted round rejects further autosaves the same way it rejects submits.
+    await request('POST', '/api/attendance/marks', 409, adminId, {
+      records: [presentRecords[0]],
+    });
     await request('PATCH', `/api/attendance/calendar-days/${calendarDayId}`, 200, adminId, {
       dayType: 'SCHOOL_DAY',
       reason: 'automated smoke test',
@@ -371,6 +375,69 @@ async function main() {
     assert(beforeSubmit.data.session === null, 'Session unexpectedly exists before submit');
     console.error('[smoke] holiday and session-context checks passed');
 
+    // Draft autosave: a partial class, an open session, no audit row and a
+    // per-student mark time that survives to the row.
+    const markedAt = new Date(Date.now() - 90 * 1000).toISOString();
+    const draftMarks = await request('POST', '/api/attendance/marks', 201, adminId, {
+      records: [{ ...presentRecords[0], marked_at: markedAt }],
+    });
+    assert(draftMarks.session.status === 'OPEN', 'Draft must leave the session open');
+    assert(draftMarks.recordedCount === 1, 'Draft recorded_count must count stored rows');
+    assert(
+      draftMarks.expectedRosterCount === presentRecords.length,
+      'Draft must report the full expected roster',
+    );
+    const afterDraft = await request(
+      'GET',
+      `/api/attendance/session?${sessionQuery}`,
+      200,
+      adminId,
+    );
+    assert(
+      afterDraft.data.session && afterDraft.data.session.status === 'OPEN',
+      'Session must exist and stay OPEN after a draft save',
+    );
+    const [draftAudit] = await dataSource.query(
+      `SELECT count(*)::int AS total FROM audit_log
+       WHERE target_type = 'attendance_session' AND target_id = $1`,
+      [afterDraft.data.session.id],
+    );
+    assert(draftAudit.total === 0, 'Draft autosave must not write a submit audit row');
+    const [draftRow] = await dataSource.query(
+      `SELECT marked_at, "RecordedAt" FROM attendance
+       WHERE student_uuid = $1 AND "AttendanceDate" = $2`,
+      [presentRecords[0].student_id, today],
+    );
+    assert(draftRow && draftRow.marked_at, 'Draft must persist marked_at');
+    assert(
+      new Date(draftRow.marked_at) <= new Date(draftRow.RecordedAt),
+      'marked_at must never be after RecordedAt',
+    );
+    console.error('[smoke] draft autosave kept the session open');
+
+    await request('POST', '/api/attendance/marks', 403, adminId, {
+      records: [
+        { student_id: '00000000-0000-4000-8000-0000000000ff', status: 'P_PRESENT' },
+      ],
+    });
+
+    // Tapping the same status again clears the student: the stored row must go,
+    // otherwise the next prefill would restore what the teacher just undid.
+    const cleared = await request('POST', '/api/attendance/marks', 201, adminId, {
+      cleared_student_ids: [presentRecords[0].student_id],
+    });
+    assert(cleared.recordedCount === 0, 'Clearing a mark must drop the recorded count');
+    const [clearedRow] = await dataSource.query(
+      `SELECT count(*)::int AS total FROM attendance
+       WHERE student_uuid = $1 AND "AttendanceDate" = $2`,
+      [presentRecords[0].student_id, today],
+    );
+    assert(clearedRow.total === 0, 'Clearing a mark must delete the stored row');
+    await request('POST', '/api/attendance/marks', 403, adminId, {
+      cleared_student_ids: ['00000000-0000-4000-8000-0000000000ff'],
+    });
+    console.error('[smoke] clearing a mark removed the row');
+
     const initialSubmit = await request('POST', '/api/attendance', 201, adminId, {
       records: presentRecords,
     });
@@ -379,6 +446,10 @@ async function main() {
     const sessionId = initialSubmit.session.id;
     console.error('[smoke] initial submit locked');
     await request('POST', '/api/attendance', 409, adminId, { records: presentRecords });
+    // A submitted round rejects further autosaves the same way it rejects submits.
+    await request('POST', '/api/attendance/marks', 409, adminId, {
+      records: [presentRecords[0]],
+    });
     await request('POST', `/api/attendance/sessions/${sessionId}/reopen`, 400, adminId, {
       reason: '',
     });

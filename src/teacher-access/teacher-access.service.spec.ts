@@ -1,5 +1,10 @@
 import { TEACHER_ACCESS_NO_ASSIGNMENT_REASON } from './teacher-access.constants';
-import { ForbiddenException, GoneException, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  GoneException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 import type { AuthenticatedRequestUser } from '../auth';
 import { hashToken } from '../common/utils/helpers';
@@ -1136,14 +1141,17 @@ describe('TeacherAccessService', () => {
       step_up_policy: 'EMAIL_OTP',
     });
     araIdChallengeStore.readAuthorization.mockResolvedValue({
-      grantId: GRANT.id,
-      referenceCode: 'ABC123',
-      status: 'CLAIMED',
-      expiresAt: Date.now() + 60_000,
+      challenge: {
+        grantId: GRANT.id,
+        referenceCode: 'ABC123',
+        status: 'CLAIMED',
+        expiresAt: Date.now() + 60_000,
+      },
+      minimumAuthenticatedAt: 1,
     });
 
     await expect(
-      service.approveAraIdChallenge('challenge-token', 'araid-profile-id'),
+      service.approveAraIdChallenge('challenge-token', 'araid-profile-id', Date.now()),
     ).resolves.toMatchObject({ data: { approved: true } });
 
     araIdChallengeStore.read.mockResolvedValue({
@@ -1162,6 +1170,23 @@ describe('TeacherAccessService', () => {
       data: { status: 'APPROVED', sessionToken: 'ms_session' },
     });
     expect(magicSessionStore.issue).toHaveBeenCalledWith(GRANT.id);
+  });
+
+  it('rejects a session authenticated before the AraID challenge was claimed', async () => {
+    const { service, araIdChallengeStore } = createHarness({ step_up_policy: 'EMAIL_OTP' });
+    araIdChallengeStore.readAuthorization.mockResolvedValue({
+      challenge: {
+        grantId: GRANT.id,
+        referenceCode: 'ABC123',
+        status: 'CLAIMED',
+        expiresAt: Date.now() + 60_000,
+      },
+      minimumAuthenticatedAt: Date.now(),
+    });
+
+    await expect(
+      service.approveAraIdChallenge('challenge-token', 'araid-profile-id', Date.now() - 1),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('resumes the same claimed AraID challenge after returning from login', async () => {

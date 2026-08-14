@@ -765,7 +765,72 @@ async function main() {
 
     // 7. Attendance write + the history the teacher reads back.
     let attendanceChecked = false;
+    let teacherLinkDraftChecked = false;
     if (fixture.attendanceDate) {
+      // Draft autosave over the link: partial class, session stays open, and
+      // the session read gives the page enough to prefill and lock itself.
+      const linkMarkedAt = new Date(`${fixture.attendanceDate}T02:15:00.000Z`).toISOString();
+      const draft = await request(
+        baseUrl,
+        'POST',
+        '/api/teacher-access/attendance-marks',
+        201,
+        {
+          token: grantOne.token,
+          headers: sessionHeaders,
+          body: {
+            assignmentId: fixture.homeroomAssignmentId,
+            date: fixture.attendanceDate,
+            records: [
+              {
+                studentId: fixture.students[0].studentUuid,
+                status: 'P_LATE',
+                markedAt: linkMarkedAt,
+              },
+            ],
+          },
+        },
+      );
+      assert(
+        draft.payload?.data?.session?.status === 'OPEN',
+        'Teacher-link draft must leave the session open',
+      );
+      const draftSession = await request(
+        baseUrl,
+        'GET',
+        `/api/teacher-access/attendance-session?assignmentId=${fixture.homeroomAssignmentId}&date=${fixture.attendanceDate}`,
+        200,
+        { token: grantOne.token, headers: sessionHeaders },
+      );
+      assert(
+        draftSession.payload?.data?.session?.status === 'OPEN',
+        'Session read must report the open draft round',
+      );
+      assert(
+        draftSession.payload.data.marks.some(
+          (mark) =>
+            mark.studentUuid === fixture.students[0].studentUuid && mark.status === 'P_LATE',
+        ),
+        'Session read must prefill the mark saved by the draft',
+      );
+      assert(
+        draftSession.payload.data.expectedRosterCount === fixture.students.length,
+        'Session read must report the full roster size',
+      );
+      // A link may never draft outside its own classroom.
+      await request(baseUrl, 'POST', '/api/teacher-access/attendance-marks', 403, {
+        token: grantOne.token,
+        headers: sessionHeaders,
+        body: {
+          assignmentId: fixture.homeroomAssignmentId,
+          date: fixture.attendanceDate,
+          records: [
+            { studentId: '00000000-0000-4000-8000-0000000000ff', status: 'P_PRESENT' },
+          ],
+        },
+      });
+      teacherLinkDraftChecked = true;
+
       const attendance = await request(baseUrl, 'POST', '/api/teacher-access/attendance', 201, {
         token: grantOne.token,
         headers: sessionHeaders,
@@ -910,6 +975,9 @@ async function main() {
           'guest reads are refused until the emailed OTP is verified',
           'wrong OTP rejected; verified session unlocks context, roster and attendance',
           attendanceChecked ? 'attendance write and history read back the same round' : null,
+          teacherLinkDraftChecked
+            ? 'teacher-link draft autosave keeps the round open and prefills the session read'
+            : null,
           'rotate invalidates the old token; revoke closes the link',
           'real row lock serializes context and revoke',
           'legacy per-classroom attendance link creation is refused',

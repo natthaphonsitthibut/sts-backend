@@ -10,8 +10,14 @@ const ARAID_LINE_AUTHORIZATION_COOKIE_NAME = 'araid_line_authorization';
 const ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME = 'araid_teacher_access_authorization';
 
 interface AraIdSessionPayload {
+  authenticatedAt?: number;
   sub?: string;
   purpose?: string;
+}
+
+export interface AraIdSessionIdentity {
+  authenticatedAt: number;
+  profileId: string;
 }
 
 @Injectable()
@@ -23,7 +29,11 @@ export class AraIdSessionCookieService {
   ) {}
 
   setSession(response: Response, profileId: string): void {
-    const token = this.jwtService.sign({ sub: profileId, purpose: ARAID_SESSION_PURPOSE });
+    const token = this.jwtService.sign({
+      sub: profileId,
+      purpose: ARAID_SESSION_PURPOSE,
+      authenticatedAt: Date.now(),
+    });
     response.cookie(ARAID_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: this.config.cookieSameSite,
@@ -72,12 +82,18 @@ export class AraIdSessionCookieService {
   }
 
   readProfileId(cookieHeader: string | undefined): string | null {
+    return this.readSessionIdentity(cookieHeader)?.profileId ?? null;
+  }
+
+  readSessionIdentity(cookieHeader: string | undefined): AraIdSessionIdentity | null {
     const token = this.readCookie(cookieHeader, ARAID_COOKIE_NAME);
     if (!token) return null;
     try {
       const payload = this.jwtService.verify<AraIdSessionPayload>(token);
-      return payload.purpose === ARAID_SESSION_PURPOSE && typeof payload.sub === 'string'
-        ? payload.sub
+      return payload.purpose === ARAID_SESSION_PURPOSE &&
+        typeof payload.sub === 'string' &&
+        typeof payload.authenticatedAt === 'number'
+        ? { profileId: payload.sub, authenticatedAt: payload.authenticatedAt }
         : null;
     } catch {
       return null;

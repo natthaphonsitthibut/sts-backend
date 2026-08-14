@@ -21,12 +21,12 @@ import {
 } from '../auth';
 import { AttendanceService } from './attendance.service';
 import {
-  GetAttendanceTasksQueryDto,
   GetHistoryQueryDto,
   GetRoomsQueryDto,
   GetSchoolsQueryDto,
   GetStudentsQueryDto,
   SaveAttendanceDto,
+  SaveAttendanceMarksDto,
 } from './dto/attendance.dto';
 import { resolveLimit, resolvePage } from '../common/pagination/pagination.util';
 import { AttendanceOperationsService } from './attendance-operations.service';
@@ -139,31 +139,22 @@ export class AttendanceController {
     );
   }
 
-  @Get('tasks')
+  // Same permission as the final submit: a draft is still an attendance write,
+  // it just does not close the round. Scope is enforced server-side as usual.
+  @Post('marks')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard')
-  async getAttendanceTasks(
-    @Query() query: GetAttendanceTasksQueryDto,
+  @RequirePermission('attendance')
+  async saveAttendanceMarks(
+    @Body() body: SaveAttendanceMarksDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    const scope = resolveActorDataScope(actor);
-    // Opt-in pagination: the dashboard sends `page` and gets the paginated
-    // envelope; legacy callers (no page) still get the full array.
-    if (query.page === undefined) {
-      return await this.attendanceService.getAttendanceTasks(scope);
-    }
-    return await this.attendanceService.getAttendanceTasksPaginated(scope, {
-      page: resolvePage(query.page),
-      limit: resolveLimit(query.limit),
-      searchTerm: query.searchTerm?.trim() || undefined,
-      status: query.status,
-      province: query.province?.trim() || undefined,
-      district: query.district?.trim() || undefined,
-      subDistrict: query.subDistrict?.trim() || undefined,
-      schoolId: query.schoolId,
-      grade: query.grade?.trim() || undefined,
-      room: query.room?.trim() || undefined,
-    });
+    return await this.attendanceService.saveDraftMarks(
+      body.records ?? [],
+      actor,
+      body.timetable_slot_id,
+      body.date,
+      body.cleared_student_ids ?? [],
+    );
   }
 
   @Get('rooms')

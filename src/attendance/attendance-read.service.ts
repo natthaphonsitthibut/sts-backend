@@ -61,30 +61,6 @@ export class AttendanceReadService {
     return { success: true, data };
   }
 
-  async getAttendanceTasks(userScope?: DataScope) {
-    return await this.attendanceRepository.listAttendanceTasks(userScope);
-  }
-
-  async getAttendanceTasksPaginated(
-    userScope: DataScope | undefined,
-    filters: {
-      page: number;
-      limit: number;
-      searchTerm?: string;
-      status?: string;
-      province?: string;
-      district?: string;
-      subDistrict?: string;
-      schoolId?: number;
-      grade?: string;
-      room?: string;
-    },
-  ) {
-    const { rows, totalCount, summary } =
-      await this.attendanceRepository.listAttendanceTasksPaginated(userScope, filters);
-    return { rows, totalCount, page: filters.page, limit: filters.limit, summary };
-  }
-
   private parseOptionalInteger(value: string | undefined, fieldName: string): number | undefined {
     if (!value) {
       return undefined;
