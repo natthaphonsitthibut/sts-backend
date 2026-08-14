@@ -37,7 +37,6 @@ import { createTypeOrmOptions } from './database/typeorm.config';
 import { GeoModule } from './geo/geo.module';
 import { StatusCatalogModule } from './status-catalog/status-catalog.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { FieldFollowersModule } from './field-followers/field-followers.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { TimetableModule } from './timetable/timetable.module';
 import { RedisModule } from './redis/redis.module';
@@ -126,7 +125,6 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     GeoModule,
     StatusCatalogModule,
     NotificationsModule,
-    FieldFollowersModule,
     SubjectsModule,
     TimetableModule,
     HomeDashboardModule,

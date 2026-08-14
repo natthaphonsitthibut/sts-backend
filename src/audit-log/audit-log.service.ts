@@ -575,44 +575,6 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'schoolId', label: 'โรงเรียน' },
     ],
   },
-  FIELD_FOLLOWER_APPLY: {
-    domain: 'field_followers',
-    label: 'สมัครเป็นผู้ติดตามภาคสนาม',
-    detailKeys: [{ key: 'province', label: 'จังหวัด' }],
-  },
-  FIELD_FOLLOWER_REVIEW: {
-    domain: 'field_followers',
-    label: 'ตรวจสอบผู้สมัครติดตามภาคสนาม',
-    detailKeys: [
-      { key: 'reviewAction', label: 'การดำเนินการ' },
-      { key: 'toStatus', label: 'สถานะใหม่' },
-    ],
-  },
-  FIELD_MAP_VIEW: {
-    domain: 'field_followers',
-    label: 'เปิดแผนที่เด็กเสี่ยง',
-    detailKeys: [{ key: 'studentCount', label: 'จำนวนที่เลือก' }],
-  },
-  FOLLOWER_CAMPAIGN_CREATE: {
-    domain: 'field_followers',
-    label: 'สร้างลิงก์รับสมัคร อสม.',
-    detailKeys: [{ key: 'name', label: 'ชื่อลิงก์' }],
-  },
-  FOLLOWER_CAMPAIGN_UPDATE: {
-    domain: 'field_followers',
-    label: 'แก้ไขลิงก์รับสมัคร อสม.',
-    detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
-  },
-  FOLLOWER_CAMPAIGN_DELETE: {
-    domain: 'field_followers',
-    label: 'ปิดลิงก์รับสมัคร อสม. ถาวร',
-    detailKeys: [{ key: 'name', label: 'ชื่อลิงก์' }],
-  },
-  FOLLOWER_CAMPAIGN_TARGETS_ADD: {
-    domain: 'field_followers',
-    label: 'เพิ่มเคสในแคมเปญรับสมัคร อสม.',
-    detailKeys: [{ key: 'caseCount', label: 'จำนวนเคส' }],
-  },
   SUBJECT_CREATE: {
     domain: 'timetable',
     label: 'เพิ่มรายวิชา',
@@ -674,7 +636,6 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   cases: ['review-cases'],
   tasks: ['create', 'review-cases', 'attendance-dashboard'],
   attendance: ['attendance', 'attendance-dashboard'],
-  field_followers: ['field-monitor'],
   timetable: ['manage-timetable'],
 };
 

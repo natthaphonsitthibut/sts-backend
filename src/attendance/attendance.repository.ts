@@ -215,23 +215,15 @@ export class AttendanceRepository {
         s.student_number,
         person.photo_storage_key,
         person.updated_at AS photo_updated_at,
-        (
-          SELECT COUNT(*)
-          FROM attendance a
-          WHERE a.student_uuid = s.student_uuid
-            AND a."AttendanceStatus" = 3
-        ) as total_late,
-        (
-          SELECT COUNT(*)
-          FROM attendance a
-          WHERE a.student_uuid = s.student_uuid
-            AND a."AttendanceStatus" = 2
-        ) as total_absent
+        COALESCE(profile.term_absent_days, 0)::int AS term_absent_days,
+        COALESCE(profile.absent_days, 0)::int AS post_case_absent_days,
+        profile.absence_reset_after_date
       FROM student_term s
       ${CURRENT_ENROLLMENT_JOIN}
       LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+      LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
     `;
     const params: unknown[] = [];
     const conditions: string[] = [];

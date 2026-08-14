@@ -194,7 +194,6 @@ export class DelegationService {
           delegationNote,
           assignmentNote: null,
           subjectId: null,
-          sourceFieldFollowerId: null,
           otpVerified,
           createdBy: null,
           loginRole: null,

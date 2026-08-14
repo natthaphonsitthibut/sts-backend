@@ -12,8 +12,8 @@ export interface ApproximateLocation {
  * pin (`cases.student_lat/lng`) — geocoded once per student and cached in
  * `student_home_geocode_cache`, re-geocoded only when the registered address
  * text changes. Cuts repeat Google Geocoding API calls across every screen
- * that shows a student's approximate location (field-monitor map, student
- * detail) instead of each one geocoding independently per view.
+ * that shows a student's approximate location (e.g. student detail)
+ * instead of each one geocoding independently per view.
  */
 @Injectable()
 export class StudentGeocodeCacheService {

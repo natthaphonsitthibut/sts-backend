@@ -29,7 +29,6 @@ describe('TaskRepository', () => {
         loginRole: null,
         loginPermissions: [],
         loginDataScope: {},
-        sourceFieldFollowerId: null,
       },
       executor,
     );
@@ -414,6 +413,8 @@ describe('TaskRepository', () => {
               room: '1',
               consecutive_absent_days: 5,
               absent_days: 6,
+              term_absent_days: 9,
+              absence_reset_after_date: '2026-08-01',
               late_count: 1,
               school_day_count: 20,
               weighted_absence_days: '6.25',
@@ -466,6 +467,8 @@ describe('TaskRepository', () => {
     expect(queries[2].params).toEqual([[101], 101, '%เด็ก%', 'HIGH', 10, 10]);
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('LEFT JOIN student_risk_profiles profile');
+    expect(queries[0].sql).toContain('profile.term_absent_days');
+    expect(queries[0].sql).toContain('profile.absence_reset_after_date');
     expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
     expect(queries[0].sql).toContain('latest_case.id IS NOT NULL');
     expect(queries[0].sql).toContain("COUNT(*) FILTER (WHERE latest_case_status = 'OPEN')");

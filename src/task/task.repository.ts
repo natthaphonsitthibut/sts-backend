@@ -152,7 +152,6 @@ interface CreateTaskLinkInput {
   delegationNote: string | null;
   assignmentNote: string | null;
   subjectId: number | null;
-  sourceFieldFollowerId: number | null;
   otpVerified: number;
   createdBy: number | null;
   loginRole: string | null;
@@ -1098,8 +1097,7 @@ export class TaskRepository {
         login_role,
         login_permissions,
         login_data_scope,
-        opens_at,
-        source_field_follower_id
+        opens_at
       )
       VALUES (
         $1,
@@ -1124,8 +1122,7 @@ export class TaskRepository {
         $19,
         $20,
         $21,
-        $22,
-        $23
+        $22
       )
     `,
       [
@@ -1151,7 +1148,6 @@ export class TaskRepository {
         JSON.stringify(data.loginPermissions),
         JSON.stringify(data.loginDataScope),
         data.opensAt,
-        data.sourceFieldFollowerId,
       ],
     );
   }
@@ -1212,52 +1208,6 @@ export class TaskRepository {
       [requestId, taskId, actorId],
     );
     return (result.rowCount ?? result.rows.length) === 1;
-  }
-
-  async assignFollowerCampaignTarget(
-    data: {
-      campaignTargetId: number;
-      sourceFieldFollowerId: number;
-      taskLinkId: string;
-      caseId: number;
-      actorId: number | null;
-    },
-    executor?: QueryExecutor,
-  ): Promise<boolean> {
-    const result = await this.getExecutor(executor).query(
-      `
-        UPDATE follower_recruitment_campaign_targets target
-        SET
-          status = 'ASSIGNED',
-          assigned_follower_id = $2,
-          assigned_task_link_id = $3,
-          assigned_at = now(),
-          assigned_by = $5,
-          updated_by = $5,
-          updated_at = now()
-        WHERE target.id = $1
-          AND target.case_id = $4
-          AND target.status = 'OPEN'
-          AND target.deleted_at IS NULL
-          AND EXISTS (
-            SELECT 1
-            FROM field_followers follower
-            WHERE follower.id = $2
-              AND follower.campaign_id = target.campaign_id
-              AND follower.status = 'ACTIVE'
-              AND follower.email IS NOT NULL
-          )
-        RETURNING target.id
-      `,
-      [
-        data.campaignTargetId,
-        data.sourceFieldFollowerId,
-        data.taskLinkId,
-        data.caseId,
-        data.actorId,
-      ],
-    );
-    return (result.rowCount ?? 0) > 0;
   }
 
   async listTimetableSlotsForTaskLink(
@@ -3212,6 +3162,8 @@ export class TaskRepository {
           sc.name AS school_name,
           COALESCE(profile.consecutive_absent_days, 0)::int AS consecutive_absent_days,
           COALESCE(profile.absent_days, 0)::int AS absent_days,
+          COALESCE(profile.term_absent_days, 0)::int AS term_absent_days,
+          profile.absence_reset_after_date,
           COALESCE(profile.late_count, 0)::int AS late_count,
           COALESCE(profile.subject_late_count, 0)::int AS subject_late_count,
           COALESCE(profile.school_day_count, 0)::int AS school_day_count,
@@ -3231,7 +3183,14 @@ export class TaskRepository {
           latest_comment.id AS latest_comment_id,
           COALESCE(
             latest_comment.comment_text,
-            CONCAT('ขาดเรียนสะสม ', COALESCE(profile.absent_days, 0), ' วัน')
+            CASE
+              WHEN profile.absence_reset_after_date IS NULL
+                THEN CONCAT('ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0), ' วัน')
+              ELSE CONCAT(
+                'ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0),
+                ' วัน · หลังปิดเคสล่าสุด ', COALESCE(profile.absent_days, 0), ' วัน'
+              )
+            END
           ) AS teacher_comment,
           (profile.student_uuid IS NULL) AS missing_profile
         FROM student_term s
@@ -3391,6 +3350,8 @@ export class TaskRepository {
           room,
           consecutive_absent_days,
           absent_days,
+          term_absent_days,
+          absence_reset_after_date,
           late_count,
           subject_late_count,
           school_day_count,

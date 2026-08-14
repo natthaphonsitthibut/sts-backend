@@ -180,6 +180,8 @@ export class TaskStatsService {
           room: row.room,
           consecutiveAbsentDays: Number(row.consecutive_absent_days ?? 0),
           absentDays: Number(row.absent_days ?? 0),
+          termAbsentDays: Number(row.term_absent_days ?? 0),
+          absenceResetAfterDate: row.absence_reset_after_date ?? null,
           lateCount: Number(row.late_count ?? 0),
           subjectLateCount: Number(row.subject_late_count ?? 0),
           schoolDayCount: Number(row.school_day_count ?? 0),

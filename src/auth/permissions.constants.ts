@@ -77,7 +77,6 @@ export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
   { id: 'import-school-roster', label: 'นำเข้าครูและนักเรียนของโรงเรียน' },
   { id: 'settings', label: 'ตั้งค่าระบบ' },
   { id: 'audit-log', label: 'บันทึกการใช้งาน' },
-  { id: 'field-monitor', label: 'จัดการผู้ติดตามและแผนที่ภาคสนาม' },
 ];
 
 function collectLeafPermissions(items: PermissionMenuItem[]): Array<{ id: string; label: string }> {
@@ -136,7 +135,6 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'settings',
       'export-data',
       'audit-log',
-      'field-monitor',
     ],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',

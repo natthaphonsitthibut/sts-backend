@@ -335,7 +335,7 @@ export class StudentsRepository {
         -- Latest home-visit case pin wins (most recent on-the-ground
         -- observation); falls back to the student's own confirmed profile
         -- coordinate (student_term.address_latitude/longitude, set via the
-        -- edit form) — mirrors field-monitor-map.repository.ts's priority.
+        -- edit form).
         COALESCE(latest_case.student_lat, s.address_latitude) AS resolved_home_lat,
         COALESCE(latest_case.student_lng, s.address_longitude) AS resolved_home_lng
       FROM student_term s

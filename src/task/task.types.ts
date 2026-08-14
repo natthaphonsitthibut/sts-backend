@@ -93,6 +93,8 @@ export interface RiskDashboardRow extends QueryResultRow {
   room: string | null;
   consecutive_absent_days: number | string;
   absent_days: number | string;
+  term_absent_days: number | string;
+  absence_reset_after_date: string | Date | null;
   late_count: number | string;
   subject_late_count: number | string;
   school_day_count: number | string;

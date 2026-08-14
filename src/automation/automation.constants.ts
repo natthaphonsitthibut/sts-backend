@@ -7,7 +7,11 @@ export const STUDENT_RISK_WATCH_REF_ENTITY = 'student-risk-watch';
  * so cases they opened before the rule change are still recognised as
  * attendance-driven ones.
  */
-export const ABSENCE_CASE_REASON_PREFIXES = ['ขาดเรียนสะสม%', 'ขาดเรียนติดต่อกัน%'] as const;
+export const ABSENCE_CASE_REASON_PREFIXES = [
+  'ขาดเรียนสะสม%',
+  'ขาดเรียนหลังปิดเคสล่าสุด%',
+  'ขาดเรียนติดต่อกัน%',
+] as const;
 
 export const ACTIVE_CASE_STATUSES = [
   'OPEN',

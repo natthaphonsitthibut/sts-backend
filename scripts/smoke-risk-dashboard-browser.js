@@ -239,10 +239,7 @@ async function assertLegacyRouteRedirects(client) {
   );
 
   const legacyTaskId = '00000000-0000-4000-8000-000000000000';
-  await navigate(
-    client,
-    `${FRONTEND_URL}/task-detail/${legacyTaskId}?source=legacy#detail`,
-  );
+  await navigate(client, `${FRONTEND_URL}/task-detail/${legacyTaskId}?source=legacy#detail`);
   await waitFor(
     async () =>
       evaluate(
@@ -254,24 +251,7 @@ async function assertLegacyRouteRedirects(client) {
     'Legacy task-detail route did not preserve its id/search/hash while redirecting',
   );
 
-  await navigate(
-    client,
-    `${FRONTEND_URL}/field-followers-review/history?source=legacy`,
-  );
-  await waitFor(
-    async () =>
-      evaluate(
-        client,
-        `location.pathname === '/field-follower-applications/history'
-          && location.search === '?source=legacy'`,
-      ),
-    'Legacy field-follower review history route did not preserve its search',
-  );
-
-  await navigate(
-    client,
-    `${FRONTEND_URL}/admin-access?next=%2Fstudent-risk-report`,
-  );
+  await navigate(client, `${FRONTEND_URL}/admin-access?next=%2Fstudent-risk-report`);
   await waitFor(
     async () =>
       evaluate(
@@ -292,7 +272,6 @@ async function upsertActor(dataSource, passwordHash) {
     'dashboard',
     'edit-students',
     'export-data',
-    'field-monitor',
     'home',
     'import-data',
     'import-school-roster',
@@ -309,9 +288,7 @@ async function upsertActor(dataSource, passwordHash) {
     'settings',
     'students',
   ];
-  const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
-    USERNAME,
-  ]);
+  const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
     await dataSource.query(
       `
@@ -419,7 +396,10 @@ async function assertUserStatusFilterApi(client) {
   assert(result.validSuccess === true, 'ACTIVE user filter did not return success=true');
   assert(result.rowCount > 0, 'ACTIVE user filter returned no rows for the smoke actor');
   assert(result.allActive, 'ACTIVE user filter returned a different lifecycle status');
-  assert(result.invalidStatus === 400, `Invalid user accountStatus returned ${result.invalidStatus}`);
+  assert(
+    result.invalidStatus === 400,
+    `Invalid user accountStatus returned ${result.invalidStatus}`,
+  );
 }
 
 async function clickRiskSortHeader(client) {
@@ -547,11 +527,7 @@ async function assertAvatarOnlyStudentNavigation(client, label) {
     );
   };
 
-  await assertContextNavigation(
-    'รายงานสถานะนักเรียน',
-    '/student-risk-report',
-    'risk-to-student',
-  );
+  await assertContextNavigation('รายงานสถานะนักเรียน', '/student-risk-report', 'risk-to-student');
   await client.call('Page.reload', { ignoreCache: true });
   await waitFor(
     async () => evaluate(client, `document.readyState === 'complete'`),
@@ -617,11 +593,8 @@ async function assertCanonicalRouteNavigation(client) {
     ['/students', 'รายชื่อนักเรียน', '/students'],
     ['/students/history', 'ประวัติรายชื่อนักเรียน', '/students'],
     ['/students/export', 'ส่งออกข้อมูลนักเรียน', '/students'],
-    ['/create', 'สร้างลิงก์', '/create'],
-    ['/create/visit', 'สร้างลิงก์ลงพื้นที่', '/create'],
-    ['/create/attendance', 'สร้างลิงก์เช็คชื่อ', '/create'],
-    ['/create/recruitment', 'สร้างลิงก์รับสมัคร', '/create'],
-    ['/attendance', 'เช็คชื่อ', '/attendance'],
+    ['/attendance/roster', 'เช็คชื่อ', '/attendance'],
+    ['/attendance/check-in', 'เช็คชื่อ', '/attendance'],
     ['/attendance/history', 'ประวัติการเช็คชื่อ', '/attendance'],
     ['/visit-links', 'ลิงก์ลงพื้นที่', '/visit-links'],
     ['/visit-links/history', 'ประวัติลิงก์ลงพื้นที่', '/visit-links'],
@@ -641,14 +614,6 @@ async function assertCanonicalRouteNavigation(client) {
     ['/manage-teachers', 'จัดการข้อมูลคุณครู', '/manage-teachers'],
     ['/manage-teachers/new', 'เพิ่มข้อมูลคุณครู', '/manage-teachers'],
     ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
-    ['/field-followers', 'ลิงก์รับสมัคร', '/field-followers'],
-    ['/field-followers/history', 'ประวัติลิงก์รับสมัคร', '/field-followers'],
-    ['/field-follower-applications', 'ตรวจสอบใบสมัคร', '/field-follower-applications'],
-    [
-      '/field-follower-applications/history',
-      'ประวัติการตรวจสอบใบสมัคร',
-      '/field-follower-applications',
-    ],
     ['/settings', 'ตั้งค่าระบบ', '/settings'],
     ['/settings/student-statuses', 'สถานะนักเรียน', '/settings'],
     ['/settings/master-data-lookups', 'ข้อมูลพื้นฐาน', '/settings'],
@@ -670,9 +635,11 @@ async function assertCanonicalRouteNavigation(client) {
             const activeRoutes = [...document.querySelectorAll('aside a[aria-current="page"]')]
               .filter((link) => link.offsetParent !== null)
               .map((link) => link.getAttribute('href'));
-            return ${menuRoute === null
-              ? 'activeRoutes.length === 0'
-              : `activeRoutes.length === 1 && activeRoutes[0] === ${JSON.stringify(menuRoute)}`};
+            return ${
+              menuRoute === null
+                ? 'activeRoutes.length === 0'
+                : `activeRoutes.length === 1 && activeRoutes[0] === ${JSON.stringify(menuRoute)}`
+            };
           })()`,
         ),
       `Canonical breadcrumb/menu owner was incorrect for ${route}`,
@@ -686,19 +653,36 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   const reason = `${MANUAL_CASE_REASON_PREFIX} ${Date.now()}`;
 
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
-  await waitFor(
-    async () =>
-      evaluate(
-        client,
-        `(() => {
-          const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
-            .find((candidate) => candidate.offsetParent !== null
-              && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-          return Boolean(row?.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]'));
-        })()`,
-      ),
-    'risk dashboard did not expose the manual case action',
-  );
+  try {
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `(() => {
+            const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
+              .find((candidate) => candidate.offsetParent !== null
+                && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+            return Boolean(row?.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]'));
+          })()`,
+        ),
+      'risk dashboard did not expose the manual case action',
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      client,
+      `({
+        path: location.pathname,
+        rows: [...document.querySelectorAll('[data-student-navigation]')]
+          .filter((row) => row.offsetParent !== null)
+          .map((row) => ({
+            studentId: row.getAttribute('data-student-navigation'),
+            actions: [...row.querySelectorAll('button[aria-label]')]
+              .map((button) => button.getAttribute('aria-label'))
+          }))
+      })`,
+    );
+    throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
+  }
   await evaluate(
     client,
     `(() => {
@@ -741,13 +725,24 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     client,
     `getComputedStyle(document.querySelector('[data-student-risk-tier]')).color`,
   );
-  const expectedRiskBadgeColors = {
-    HIGH: 'rgb(186, 26, 26)',
-    WATCH: 'rgb(245, 116, 11)',
-    NORMAL: 'rgb(22, 101, 52)',
-  };
+  const riskTierColorClass = {
+    HIGH: 'text-danger',
+    WATCH: 'text-brand-orange',
+    NORMAL: 'text-success',
+  }[expectedRiskTier];
+  const expectedRiskBadgeColor = await evaluate(
+    client,
+    `(() => {
+      const probe = document.createElement('span');
+      probe.className = ${JSON.stringify(riskTierColorClass)};
+      document.body.appendChild(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    })()`,
+  );
   assert(
-    riskBadgeColor === expectedRiskBadgeColors[expectedRiskTier],
+    riskBadgeColor === expectedRiskBadgeColor,
     `student risk badge ${expectedRiskTier} used ${riskBadgeColor}`,
   );
   await waitFor(
@@ -784,13 +779,10 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     async () => evaluate(client, `window.location.pathname.startsWith('/cases/')`),
     'opening a case did not navigate to case detail',
   );
-  await waitFor(
-    async () => {
-      const text = await bodyText(client);
-      return text.includes('รายละเอียดเคส') && text.includes(reason);
-    },
-    'case detail did not render the submitted reason',
-  );
+  await waitFor(async () => {
+    const text = await bodyText(client);
+    return text.includes('เหตุผลที่เปิดเคส') && text.includes(reason);
+  }, 'case detail did not render the submitted reason');
 
   const detailBadge = await evaluate(
     client,
@@ -860,7 +852,10 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     })()`,
   );
   assert(duplicate.status === 200, `duplicate manual case request returned ${duplicate.status}`);
-  assert(duplicate.payload?.created === false, 'duplicate manual case request created another case');
+  assert(
+    duplicate.payload?.created === false,
+    'duplicate manual case request created another case',
+  );
   assert(Number(duplicate.payload?.data?.id) === caseId, 'duplicate request returned another case');
 
   try {
@@ -904,23 +899,21 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
       row?.querySelector('button[aria-label^="ดูเคสที่กำลังติดตาม"]')?.click();
     })()`,
   );
-  await waitFor(
-    async () => {
-      const text = await evaluate(
-        client,
-        `document.querySelector('[role="dialog"]')?.innerText ?? ''`,
-      );
-      return text.includes('เคสที่กำลังติดตาม') && text.includes(reason);
-    },
-    'active case list dialog did not render the student case',
-  );
+  await waitFor(async () => {
+    const text = await evaluate(
+      client,
+      `document.querySelector('[role="dialog"]')?.innerText ?? ''`,
+    );
+    return text.includes('เคสที่กำลังติดตาม') && text.includes(reason);
+  }, 'active case list dialog did not render the student case');
   await evaluate(
     client,
     `Array.from(document.querySelectorAll('[role="dialog"] button'))
       .find((button) => button.innerText.trim() === 'ดูรายละเอียด')?.click()`,
   );
   await waitFor(
-    async () => evaluate(client, `window.location.pathname === ${JSON.stringify(`/cases/${caseId}`)}`),
+    async () =>
+      evaluate(client, `window.location.pathname === ${JSON.stringify(`/cases/${caseId}`)}`),
     'active case list did not navigate to the selected case detail',
   );
   await capture(client, '/tmp/sts-manual-case-detail.png');
@@ -1023,7 +1016,7 @@ async function assertCanonicalPageWidths(client) {
 async function assertStatusSummaryCardFilters(client) {
   // /manage-users and /manage-student-accounts dropped their selectable
   // summary cards in the roster redesign; only these routes keep the pattern.
-  const routes = ['/student-risk-report/risk', '/visit-links', '/field-followers'];
+  const routes = ['/student-risk-report/risk', '/visit-links'];
 
   for (const route of routes) {
     await navigate(client, `${FRONTEND_URL}${route}`);
@@ -1086,7 +1079,9 @@ async function assertStatusSummaryCardFilters(client) {
           visible: button.offsetParent !== null,
         })))()`,
       );
-      throw new Error(`${errorMessage(error)}; card=${cardLabel}; states=${JSON.stringify(states)}`);
+      throw new Error(
+        `${errorMessage(error)}; card=${cardLabel}; states=${JSON.stringify(states)}`,
+      );
     }
     const toggledOff = await evaluate(
       client,
@@ -1270,10 +1265,7 @@ async function assertCollapsedGroupAccordion(client) {
   assert(collapsed, 'desktop sidebar could not be collapsed');
   await waitFor(
     async () =>
-      evaluate(
-        client,
-        `Boolean(document.querySelector('button[aria-label="ขยายเมนูด้านข้าง"]'))`,
-      ),
+      evaluate(client, `Boolean(document.querySelector('button[aria-label="ขยายเมนูด้านข้าง"]'))`),
     'desktop sidebar did not expose its collapsed state',
   );
   await waitFor(
@@ -1503,16 +1495,13 @@ async function assertRiskDashboard(client, expectedStudentName, expectedTotalCou
     async () => (await bodyText(client)).includes(expectedStudentName),
     `${label} did not render first API student ${expectedStudentName}`,
   );
-  await waitFor(
-    async () => {
-      const nextText = await bodyText(client);
-      return (
-        nextText.includes(expectedTotalCount.toLocaleString()) ||
-        nextText.includes(String(expectedTotalCount))
-      );
-    },
-    `${label} did not render total count ${expectedTotalCount}`,
-  );
+  await waitFor(async () => {
+    const nextText = await bodyText(client);
+    return (
+      nextText.includes(expectedTotalCount.toLocaleString()) ||
+      nextText.includes(String(expectedTotalCount))
+    );
+  }, `${label} did not render total count ${expectedTotalCount}`);
 
   if (label.startsWith('desktop')) {
     const actionState = await evaluate(
@@ -1546,14 +1535,16 @@ async function assertRiskDashboard(client, expectedStudentName, expectedTotalCou
     assert(actionState.actionHeading === 'เครื่องมือ', 'Risk action heading was not เครื่องมือ');
     assert(actionState.rowActions.length > 0, 'Risk table had no visible action rows');
     assert(
-      actionState.rowActions.every((actions) =>
-        actions.length === 2 &&
-        actions.every((action) =>
-          action.width === 40 &&
-          action.height === 40 &&
-          action.color === 'rgb(255, 255, 255)' &&
-          action.background !== 'rgba(0, 0, 0, 0)'
-        )
+      actionState.rowActions.every(
+        (actions) =>
+          actions.length === 2 &&
+          actions.every(
+            (action) =>
+              action.width === 40 &&
+              action.height === 40 &&
+              action.color === 'rgb(255, 255, 255)' &&
+              action.background !== 'rgba(0, 0, 0, 0)',
+          ),
       ),
       `Risk action slots drifted: ${JSON.stringify(actionState.rowActions.slice(0, 3))}`,
     );
@@ -1571,9 +1562,10 @@ async function assertRiskDashboard(client, expectedStudentName, expectedTotalCou
     );
     assert(mobileActions.length > 0, 'Mobile risk cards had no visible action rows');
     assert(
-      mobileActions.every((actions) =>
-        actions.length === 2 &&
-        actions.every((action) => action.width === 40 && action.height === 40)
+      mobileActions.every(
+        (actions) =>
+          actions.length === 2 &&
+          actions.every((action) => action.width === 40 && action.height === 40),
       ),
       `Mobile risk action slots drifted: ${JSON.stringify(mobileActions.slice(0, 3))}`,
     );
@@ -1652,7 +1644,7 @@ async function assertSharedVisualSystem(client) {
   );
   if (colors.refreshBackground !== null) {
     assert(
-        colors.refreshBackground === 'rgb(255, 255, 255)' &&
+      colors.refreshBackground === 'rgb(255, 255, 255)' &&
         colors.refreshText === 'rgb(17, 17, 17)' &&
         colors.refreshBorder === 'rgb(221, 221, 221)',
       `Refresh button colors drifted: ${JSON.stringify(colors)}`,
@@ -1752,7 +1744,6 @@ async function main() {
         'dashboard',
         'edit-students',
         'export-data',
-        'field-monitor',
         'home',
         'import-data',
         'import-school-roster',
@@ -1826,7 +1817,12 @@ async function main() {
     assert(expectedTotalCount > 0, 'Risk dashboard API totalCount was zero');
 
     if (FOCUSED_UI) {
-      await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop focused UI');
+      await assertRiskDashboard(
+        client,
+        expectedStudentName,
+        expectedTotalCount,
+        'desktop focused UI',
+      );
       await capture(client, '/tmp/sts-risk-dashboard-focused-desktop.png');
       await assertCollapsedGroupAccordion(client);
       await client.call('Emulation.setDeviceMetricsOverride', {
@@ -1835,7 +1831,12 @@ async function main() {
         deviceScaleFactor: 1,
         mobile: true,
       });
-      await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'mobile focused UI');
+      await assertRiskDashboard(
+        client,
+        expectedStudentName,
+        expectedTotalCount,
+        'mobile focused UI',
+      );
       console.log(
         'risk dashboard focused UI smoke passed (fixed action slots plus collapsible active sidebar and push-content hover)',
       );
@@ -1890,7 +1891,12 @@ async function main() {
     );
     if (manualCaseRow) {
       await assertManualCaseFlow(client, manualCaseRow, createdCaseIds);
-      await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop after case flow');
+      await assertRiskDashboard(
+        client,
+        expectedStudentName,
+        expectedTotalCount,
+        'desktop after case flow',
+      );
     }
     await assertVisibleStudentProfileLink(client, 'desktop');
     await assertAvatarOnlyStudentNavigation(client, 'desktop');
@@ -1928,10 +1934,7 @@ async function main() {
     await navigate(client, `${FRONTEND_URL}/login`);
     await waitFor(
       async () =>
-        evaluate(
-          client,
-          `Boolean(document.querySelector('[data-page-container="guest"]'))`,
-        ),
+        evaluate(client, `Boolean(document.querySelector('[data-page-container="guest"]'))`),
       'mobile guest/auth page container did not render',
     );
     await waitFor(

@@ -192,12 +192,6 @@ export class CreateTaskDto {
   @IsOptional()
   @IsUUID()
   follow_up_request_id?: string | null;
-
-  @IsOptional()
-  source_field_follower_id?: string | number | null;
-
-  @IsOptional()
-  campaign_target_id?: string | number | null;
 }
 
 export class TaskAttendanceRecordDto {

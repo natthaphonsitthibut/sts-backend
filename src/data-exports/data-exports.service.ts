@@ -955,7 +955,8 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       `
         SELECT s.student_uuid::text, s."FirstName_Onec" AS first_name, s."LastName_Onec" AS last_name,
                sc.name AS school_name, gl.label AS grade, s."RoomID_Onec"::text AS room,
-               profile.risk_tier, profile.consecutive_absent_days, profile.absent_days,
+               profile.risk_tier, profile.consecutive_absent_days, profile.term_absent_days,
+               profile.absent_days AS post_case_absent_days, profile.absence_reset_after_date,
                profile.late_count, profile.weighted_attendance_percent, profile.open_case_count,
                profile.profile_calculated_at
         FROM student_term s
@@ -982,7 +983,9 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'room',
         'risk_tier',
         'consecutive_absent_days',
-        'absent_days',
+        'term_absent_days',
+        'post_case_absent_days',
+        'absence_reset_after_date',
         'late_count',
         'weighted_attendance_percent',
         'open_case_count',

@@ -435,8 +435,6 @@ export class TaskLifecycleService {
     const auditTargetRoom = clean(data.target_room) || null;
     const subjectId = this.normalizeNumber(data.subject_id);
     const timetableSlotIds = this.normalizePositiveIntList(data.timetable_slot_ids);
-    const sourceFieldFollowerId = this.normalizeNumber(data.source_field_follower_id);
-    const campaignTargetId = this.normalizeNumber(data.campaign_target_id);
     const followUpRequestId = clean(data.follow_up_request_id) || null;
     const actorId = resolveAuditActorId(currentActor);
 
@@ -444,20 +442,6 @@ export class TaskLifecycleService {
     // still sending the old field is told rather than silently ignored.
     if (followUpRequestId) {
       throw new BadRequestException('ระบบไม่รองรับคำขอติดตามแล้ว กรุณาสร้างงานโดยตรง');
-    }
-
-    if ((sourceFieldFollowerId !== null || campaignTargetId !== null) && taskType !== 'VISIT') {
-      throw new BadRequestException(
-        'campaign follower assignment is only supported for VISIT tasks',
-      );
-    }
-    if (campaignTargetId !== null && sourceFieldFollowerId === null) {
-      throw new BadRequestException('source_field_follower_id is required with campaign_target_id');
-    }
-    if (sourceFieldFollowerId !== null && !assignedEmail) {
-      throw new BadRequestException(
-        'assigned_to_email is required when assigning a field follower',
-      );
     }
 
     try {
@@ -679,7 +663,6 @@ export class TaskLifecycleService {
             loginRole,
             loginPermissions,
             loginDataScope,
-            sourceFieldFollowerId,
           },
           executor,
         );
@@ -689,23 +672,6 @@ export class TaskLifecycleService {
           resolveAuditActorId(currentActor),
           executor,
         );
-        if (campaignTargetId !== null && sourceFieldFollowerId !== null && caseId !== null) {
-          const assigned = await this.taskRepository.assignFollowerCampaignTarget(
-            {
-              campaignTargetId,
-              sourceFieldFollowerId,
-              taskLinkId: linkId,
-              caseId,
-              actorId: resolveAuditActorId(currentActor),
-            },
-            executor,
-          );
-          if (!assigned) {
-            throw new BadRequestException(
-              'ไม่สามารถมอบหมายเคสนี้ได้ กรุณาโหลดข้อมูลล่าสุดแล้วลองใหม่',
-            );
-          }
-        }
       });
 
       if (!assignmentReused) {

@@ -89,7 +89,7 @@ describe('AutomationRepository', () => {
       'student-uuid-1',
       'สมชาย ใจดี',
       10010002,
-      ['ขาดเรียนสะสม%', 'ขาดเรียนติดต่อกัน%'],
+      ['ขาดเรียนสะสม%', 'ขาดเรียนหลังปิดเคสล่าสุด%', 'ขาดเรียนติดต่อกัน%'],
     ]);
     expect(queries[0].sql).toContain('status = ANY($1::text[])');
     expect(queries[0].sql).toContain('reason_flagged LIKE ANY($5::text[])');

@@ -152,7 +152,7 @@ describe('AbsenceMonitorService', () => {
         case_id: 77,
         student_name: 'สมชาย ใจดี',
         student_school: 'โรงเรียนทดสอบ',
-        reason_flagged: 'ขาดเรียนสะสม 7 วัน',
+        reason_flagged: 'ขาดเรียนหลังปิดเคสล่าสุด 7 วัน',
         school_id: 10010002,
       },
     ]);
@@ -161,7 +161,7 @@ describe('AbsenceMonitorService', () => {
       studentName: 'สมชาย ใจดี',
       schoolId: 10010002,
       schoolName: 'โรงเรียนทดสอบ',
-      reason: 'ขาดเรียนสะสม 7 วัน',
+      reason: 'ขาดเรียนหลังปิดเคสล่าสุด 7 วัน',
     });
     const createdInput = automationRepository.createAutomatedCase.mock.calls[0]?.[0];
     expect(createdInput?.riskTier).toBe('HIGH');

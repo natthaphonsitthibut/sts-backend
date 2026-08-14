@@ -1355,14 +1355,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('STUDENT_STATUS_FLAG', 'TERMINAL', 'สิ้นสุด', 'secondary', NULL, 20),
     ('STUDENT_STATUS_FLAG', 'FOLLOWUP_REQUIRED', 'ควรพิจารณาติดตาม', 'warning', NULL, 30),
     ('STUDENT_STATUS_FLAG', 'DISABLED', 'ปิดใช้งาน', 'destructive', NULL, 40),
-    ('FIELD_FOLLOWER_STATUS', 'APPLIED', 'รอตรวจสอบ', 'warning', NULL, 10),
-    ('FIELD_FOLLOWER_STATUS', 'VERIFIED', 'ยืนยันตัวตน', 'secondary', NULL, 20),
-    ('FIELD_FOLLOWER_STATUS', 'ACTIVE', 'ใช้งาน', 'success', NULL, 30),
-    ('FIELD_FOLLOWER_STATUS', 'SUSPENDED', 'ระงับ', 'destructive', NULL, 40),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'SCHEDULED', 'รอเปิด', 'secondary', 'info', 5),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'ACTIVE', 'ใช้งาน', 'success', 'success', 10),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', 'danger', 20),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'EXPIRED', 'หมดอายุ', 'warning', 'warning', 30),
     ('ROLE_ORIGIN', 'SYSTEM', 'ระบบ', 'secondary', NULL, 10),
     ('ATTENDANCE_ANOMALY', 'HOLIDAY_ATTENDANCE', 'เช็คชื่อในวันหยุด', 'warning', NULL, 10),
     ('ATTENDANCE_ANOMALY', 'CANCELLED_ATTENDANCE', 'เช็คชื่อในวันที่ยกเลิกเรียน', 'warning', NULL, 20),
@@ -2198,6 +2190,10 @@ export const DATABASE_BASELINE_SQL = `
     semester INTEGER NOT NULL,
     consecutive_absent_days INTEGER NOT NULL DEFAULT 0,
     absent_days INTEGER NOT NULL DEFAULT 0,
+    term_absent_days INTEGER NOT NULL DEFAULT 0
+      CONSTRAINT chk_student_risk_profiles_term_absent_days
+      CHECK (term_absent_days >= 0),
+    absence_reset_after_date DATE NULL,
     late_count INTEGER NOT NULL DEFAULT 0,
     subject_late_count INTEGER NOT NULL DEFAULT 0,
     school_day_count INTEGER NOT NULL DEFAULT 0,
@@ -2222,129 +2218,6 @@ export const DATABASE_BASELINE_SQL = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
-
-  CREATE TABLE IF NOT EXISTS follower_recruitment_campaigns (
-    id BIGSERIAL PRIMARY KEY,
-    name TEXT NOT NULL
-      CONSTRAINT chk_frc_name_not_blank CHECK (btrim(name) <> ''),
-    description TEXT NULL,
-    public_code TEXT NOT NULL
-      CONSTRAINT uq_frc_public_code UNIQUE
-      CONSTRAINT chk_frc_public_code_format CHECK (public_code ~ '^[A-Za-z0-9_-]{12,64}$'),
-    data_scope JSONB NOT NULL DEFAULT '{}'::jsonb,
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
-      CONSTRAINT chk_frc_status CHECK (status IN ('ACTIVE', 'LOCKED', 'EXPIRED', 'SCHEDULED')),
-    opens_at TIMESTAMPTZ NULL,
-    closes_at TIMESTAMPTZ NULL,
-    view_count BIGINT NOT NULL DEFAULT 0
-      CONSTRAINT chk_frc_view_count_nonneg CHECK (view_count >= 0),
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_frc_window CHECK (
-      opens_at IS NULL OR closes_at IS NULL OR closes_at > opens_at
-    )
-  );
-  ${auditUpdatedAtTriggerSql('follower_recruitment_campaigns')}
-  CREATE INDEX IF NOT EXISTS idx_frc_active_live
-    ON follower_recruitment_campaigns (is_active)
-    WHERE deleted_at IS NULL;
-  CREATE INDEX IF NOT EXISTS idx_frc_created_at
-    ON follower_recruitment_campaigns (created_at DESC);
-
-  CREATE TABLE IF NOT EXISTS field_followers (
-    id BIGSERIAL PRIMARY KEY,
-    first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL,
-    phone VARCHAR(20) NOT NULL,
-    email TEXT NULL,
-    gender VARCHAR(20) NULL,
-    sub_district TEXT NULL,
-    district TEXT NULL,
-    province TEXT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'APPLIED'
-      CONSTRAINT chk_field_followers_status
-      CHECK (status IN ('APPLIED', 'VERIFIED', 'ACTIVE', 'SUSPENDED')),
-    trust_level VARCHAR(20) NOT NULL DEFAULT 'STANDARD',
-    applied_via VARCHAR(20) NOT NULL DEFAULT 'PUBLIC_FORM',
-    verification_method VARCHAR(16) NOT NULL DEFAULT 'PENDING'
-      CONSTRAINT chk_field_followers_verification_method
-      CHECK (verification_method IN ('THAID', 'ID_CARD_PHOTO', 'PENDING')),
-    thaid_person_ref TEXT NULL,
-    id_card_photo_filename TEXT NULL,
-    id_card_photo_uploaded_at TIMESTAMPTZ NULL,
-    campaign_id BIGINT NULL
-      CONSTRAINT fk_field_followers_campaign
-      REFERENCES follower_recruitment_campaigns(id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    reviewed_by_user_id INTEGER NULL
-      CONSTRAINT fk_field_followers_reviewed_by
-      REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
-    reviewed_at TIMESTAMPTZ NULL,
-    verified_by_user_id INTEGER NULL
-      CONSTRAINT fk_field_followers_verified_by
-      REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
-    verified_at TIMESTAMPTZ NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-  CREATE INDEX IF NOT EXISTS idx_field_followers_campaign_id
-    ON field_followers (campaign_id)
-    WHERE campaign_id IS NOT NULL;
-  CREATE INDEX IF NOT EXISTS idx_field_followers_verification_method
-    ON field_followers (verification_method);
-
-  ALTER TABLE task_links
-    ADD COLUMN IF NOT EXISTS source_field_follower_id BIGINT NULL;
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_links_field_follower'
-    ) THEN
-      ALTER TABLE task_links
-        ADD CONSTRAINT fk_task_links_field_follower
-        FOREIGN KEY (source_field_follower_id)
-        REFERENCES field_followers(id)
-        ON DELETE SET NULL ON UPDATE CASCADE;
-    END IF;
-  END $$;
-  CREATE INDEX IF NOT EXISTS idx_task_links_source_field_follower
-    ON task_links (source_field_follower_id)
-    WHERE source_field_follower_id IS NOT NULL;
-
-  CREATE TABLE IF NOT EXISTS follower_recruitment_campaign_targets (
-    id BIGSERIAL PRIMARY KEY,
-    campaign_id BIGINT NOT NULL
-      CONSTRAINT fk_frct_campaign
-      REFERENCES follower_recruitment_campaigns(id)
-      ON DELETE CASCADE ON UPDATE CASCADE,
-    case_id INTEGER NOT NULL
-      CONSTRAINT fk_frct_case
-      REFERENCES cases(id)
-      ON DELETE CASCADE ON UPDATE CASCADE,
-    status VARCHAR(16) NOT NULL DEFAULT 'OPEN'
-      CONSTRAINT chk_frct_status
-      CHECK (status IN ('OPEN', 'ASSIGNED', 'COMPLETED', 'CANCELED')),
-    assigned_follower_id BIGINT NULL
-      CONSTRAINT fk_frct_follower
-      REFERENCES field_followers(id)
-      ON DELETE SET NULL ON UPDATE CASCADE,
-    assigned_task_link_id UUID NULL
-      CONSTRAINT fk_frct_task_link
-      REFERENCES task_links(id)
-      ON DELETE SET NULL ON UPDATE CASCADE,
-    assigned_at TIMESTAMPTZ NULL,
-    assigned_by INTEGER NULL
-      CONSTRAINT fk_frct_assigned_by
-      REFERENCES users(id)
-      ON DELETE SET NULL ON UPDATE CASCADE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT uq_frct_campaign_case UNIQUE (campaign_id, case_id)
-  );
-  ${auditUpdatedAtTriggerSql('follower_recruitment_campaign_targets')}
-  CREATE INDEX IF NOT EXISTS idx_frct_campaign_status
-    ON follower_recruitment_campaign_targets (campaign_id, status);
-  CREATE INDEX IF NOT EXISTS idx_frct_follower
-    ON follower_recruitment_campaign_targets (assigned_follower_id)
-    WHERE assigned_follower_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS system_settings (
     setting_key TEXT PRIMARY KEY,
