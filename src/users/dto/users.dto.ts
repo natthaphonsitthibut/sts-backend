@@ -2,7 +2,6 @@ import { PartialType } from '@nestjs/mapped-types';
 import { Transform, Type } from 'class-transformer';
 import {
   Allow,
-  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -13,7 +12,6 @@ import {
   IsObject,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -336,136 +334,7 @@ export class UpdateOwnProfileDto {
   address_longitude?: number | null;
 }
 
-export class StudentAccountBulkFilterDto {
-  @IsOptional()
-  @IsString()
-  province?: string;
-
-  @IsOptional()
-  @IsString()
-  district?: string;
-
-  @IsOptional()
-  @IsString()
-  subDistrict?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  schoolId?: number;
-
-  @IsOptional()
-  @IsString()
-  grade?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  room?: number;
-
-  @IsOptional()
-  @Transform(({ value }) => toBoolean(value))
-  onlyWithoutAccount?: boolean;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(200)
-  limit?: number;
-}
-
-export class StudentAccountSelectionFilterDto extends StudentAccountBulkFilterDto {
-  @IsOptional()
-  @Transform(({ value }) => trimOptionalText(value))
-  @IsString()
-  @MaxLength(150)
-  searchTerm?: string;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(200)
-  @IsUUID('4', { each: true })
-  studentIds?: string[];
-}
-
-export class PreviewStudentAccountsDto extends StudentAccountSelectionFilterDto {}
-
-export class GenerateStudentAccountsDto extends StudentAccountSelectionFilterDto {}
-
-export class StudentAccountListQueryDto extends StudentAccountBulkFilterDto {
-  @IsOptional()
-  @IsString()
-  searchTerm?: string;
-
-  @IsOptional()
-  @IsIn(ACCOUNT_LIFECYCLE_STATUSES)
-  accountStatus?: AccountLifecycleStatus;
-
-  @IsOptional()
-  @Transform(({ value }) => toBoolean(value))
-  onlyExpired?: boolean;
-}
-
-export class BulkReissueStudentAccountsDto extends StudentAccountListQueryDto {
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(200)
-  @Type(() => Number)
-  @IsInt({ each: true })
-  userIds?: number[];
-}
-
-export const STUDENT_ACCOUNT_BATCH_JOB_STATUSES = [
-  'PENDING',
-  'RUNNING',
-  'COMPLETED',
-  'FAILED',
-  'INTERRUPTED',
-  'CANCELED',
-] as const;
-
-export class StudentAccountBatchListQueryDto {
-  @IsOptional()
-  @IsIn(STUDENT_ACCOUNT_BATCH_JOB_STATUSES)
-  status?: (typeof STUDENT_ACCOUNT_BATCH_JOB_STATUSES)[number];
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number;
-}
-
-export class StudentAccountBatchCredentialQueryDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(200)
-  limit?: number;
-}
-
-export class DeactivateStudentAccountDto {
+export class DeactivateUserAccountDto {
   @IsOptional()
   @IsIn(ACCOUNT_DEACTIVATION_REASON_CODES)
   reasonCode?: AccountDeactivationReasonCode;

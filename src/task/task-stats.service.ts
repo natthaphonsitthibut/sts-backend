@@ -75,7 +75,6 @@ export class TaskStatsService {
         today: await this.taskRepository.countCasesCreatedOn(today, currentActor),
         pendingReview: await this.taskRepository.countCases('PENDING_REVIEW', currentActor),
         activeLinks: await this.taskRepository.countActiveTaskLinks(currentActor),
-        delegations: 0,
         statusCounts,
       };
     } catch (err) {

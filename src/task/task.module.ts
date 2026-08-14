@@ -5,8 +5,6 @@ import { TaskService } from './task.service';
 import { TaskController } from './task.controller';
 import { AdminController } from './admin.controller';
 import { StatsController } from './stats.controller';
-import { DelegationController } from './delegation.controller';
-import { DelegationService } from './delegation.service';
 import { SubmissionController } from './submission.controller';
 import { EmailModule } from '../common/email/email.module';
 import { CaseController } from './case.controller';
@@ -37,7 +35,6 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     TaskController,
     AdminController,
     StatsController,
-    DelegationController,
     SubmissionController,
     CaseController,
     CaseTrackingOptionsController,
@@ -51,17 +48,9 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     TaskSubmissionService,
     TaskStatsService,
     TaskService,
-    DelegationService,
     CaseService,
     CaseTrackingOptionsService,
   ],
-  exports: [
-    TaskService,
-    DelegationService,
-    CaseService,
-    TaskPolicyService,
-    TaskAccessService,
-    TaskRepository,
-  ],
+  exports: [TaskService, CaseService, TaskPolicyService, TaskAccessService, TaskRepository],
 })
 export class TaskModule {}

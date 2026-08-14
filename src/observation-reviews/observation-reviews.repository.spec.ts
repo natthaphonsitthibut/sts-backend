@@ -32,25 +32,6 @@ describe('ObservationReviewsRepository', () => {
     expect(queries[0].params).toEqual(['11111111-1111-4111-8111-111111111111', [9], [2]]);
   });
 
-  it('updates only the pre-case request when a reviewer decides', async () => {
-    const { repository, queryRunner, queries } = buildRepository();
-    await repository.reviewFollowUp(
-      '22222222-2222-4222-8222-222222222222',
-      2,
-      'APPROVED',
-      'approved',
-      5,
-      123,
-      queryRunner as never,
-    );
-
-    expect(queries[0].sql).toContain('UPDATE student_follow_up_requests');
-    expect(queries[0].sql).toContain("status = 'PENDING_REVIEW'");
-    expect(queries[0].sql).not.toContain('UPDATE cases');
-    expect(queries[0].sql).not.toContain('INSERT INTO tasks');
-    expect(queries[0].sql).not.toContain('student_risk_profiles');
-  });
-
   it('derives calculated attendance risk without mutating the profile', async () => {
     const { repository, queryRunner, queries } = buildRepository();
     await repository.findCalculatedAttendanceRisk(

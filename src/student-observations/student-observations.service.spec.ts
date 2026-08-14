@@ -124,7 +124,6 @@ function createHarness() {
     }),
     createObservation: jest.fn().mockResolvedValue(OBSERVATION),
     listObservations: jest.fn().mockResolvedValue([OBSERVATION]),
-    listTaskLinkObservations: jest.fn().mockResolvedValue([OBSERVATION]),
     findObservationById: jest.fn().mockResolvedValue(OBSERVATION),
     updateObservation: jest
       .fn()
@@ -163,22 +162,6 @@ function createHarness() {
       ) => await operation(grantContext, RUNNER),
     ),
   };
-  const taskAccess = {
-    getTaskByToken: jest.fn().mockResolvedValue({
-      task_type: 'ATTENDANCE',
-      auth_required: false,
-      link_id: '22222222-2222-4222-8222-222222222222',
-      target_school_id: 10,
-      target_grade: 'ป.1',
-      target_room: '1',
-      assigned_to_name: 'ผู้ช่วยเช็คชื่อ',
-    }),
-  };
-  const taskRepository = {
-    findTaskLinkById: jest.fn().mockResolvedValue({ created_by: 77 }),
-    listLinkedTimetableSlots: jest.fn().mockResolvedValue([{ id: 901 }]),
-    listTaskStudents: jest.fn().mockResolvedValue([{ id: STUDENT_UUID }]),
-  };
   const riskProfileService = {
     requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
   };
@@ -186,17 +169,13 @@ function createHarness() {
     repository as unknown as StudentObservationsRepository,
     auditLog as never,
     teacherAccess as never,
-    taskAccess as never,
-    taskRepository as never,
-    riskProfileService as never,
+    riskProfileService,
   );
   return {
     service,
     repository,
     auditLog,
     teacherAccess,
-    taskAccess,
-    taskRepository,
     riskProfileService,
   };
 }
@@ -409,39 +388,6 @@ describe('StudentObservationsService', () => {
       }),
       RUNNER,
     );
-  });
-
-  it('binds task-link observations to the link, selected slot and displayed observer', async () => {
-    const { service, repository, taskAccess } = createHarness();
-    await service.createWithTaskLink('task-token', 'verified-session', {
-      studentTermId: STUDENT_UUID,
-      timetableSlotId: 901,
-      dimensionCode: 'LEARNING',
-      concernLevel: 'WATCH',
-      tagCodes: ['MISSING_ASSIGNMENTS'],
-    });
-
-    expect(taskAccess.getTaskByToken).toHaveBeenCalledWith('task-token', 'verified-session');
-    expect(repository.createObservation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authorUserId: 77,
-        sourceTaskLinkId: '22222222-2222-4222-8222-222222222222',
-        sourceTimetableSlotId: 901,
-        sourceAssignmentId: null,
-        observerDisplayName: 'ผู้ช่วยเช็คชื่อ',
-      }),
-      RUNNER,
-    );
-  });
-
-  it('loads the task-link catalog before a timetable slot is selected', async () => {
-    const { service, repository } = createHarness();
-    await expect(service.getCatalogWithTaskLink('task-token', 'verified-session')).resolves.toEqual(
-      {
-        data: { dimensions: [], tags: [] },
-      },
-    );
-    expect(repository.listCatalog).toHaveBeenCalled();
   });
 
   it('returns bounded pagination and audits raw timeline reads without comment metadata', async () => {

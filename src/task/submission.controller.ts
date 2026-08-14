@@ -78,7 +78,7 @@ export class SubmissionController {
 
     // Validate the public credential before persisting processed files. The
     // submission service repeats this check inside the write flow to close
-    // races with expiry, completion, delegation, or an admin lock.
+    // races with expiry, completion, or an admin lock.
     await this.taskService.assertVisitSubmissionAccess(token, sessionToken);
 
     // Images are re-encoded to strip EXIF/GPS. Documents are signature-checked.

@@ -1,9 +1,7 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayNotEmpty,
   IsArray,
   IsDateString,
-  IsEmail,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -12,21 +10,13 @@ import {
   IsString,
   IsUUID,
   Matches,
-  Max,
   MaxLength,
   Min,
-  ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
-import { MAX_LINK_LIFETIME_HOURS } from '../task-link-expiry';
-import {
-  ATTENDANCE_SELECTION_STATUS_VALUES,
-  type AttendanceSelectionStatus,
-} from '../../attendance/attendance-status';
 
 export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
-export type AttendanceTaskStatus = AttendanceSelectionStatus;
 export type CaseResolutionOutcome =
   | 'RETURNED_TO_SCHOOL'
   | 'TRANSFERRED_SCHOOL'
@@ -148,10 +138,6 @@ export class CreateTaskDto {
   subject_id?: string | number | null;
 
   @IsOptional()
-  @IsArray()
-  timetable_slot_ids?: Array<string | number>;
-
-  @IsOptional()
   target_school_id?: string | number | null;
 
   @IsOptional()
@@ -187,32 +173,6 @@ export class CreateTaskDto {
   @IsString()
   @MaxLength(2000)
   assignment_note?: string | null;
-
-  /** Approved follow-up request consumed by this VISIT assignment. */
-  @IsOptional()
-  @IsUUID()
-  follow_up_request_id?: string | null;
-}
-
-export class TaskAttendanceRecordDto {
-  @IsString()
-  @IsNotEmpty()
-  student_id?: string;
-
-  @IsString()
-  @IsIn(ATTENDANCE_SELECTION_STATUS_VALUES)
-  status?: AttendanceTaskStatus;
-}
-
-export class SaveTaskAttendanceDto {
-  @IsArray()
-  @ArrayNotEmpty()
-  @ValidateNested({ each: true })
-  @Type(() => TaskAttendanceRecordDto)
-  records?: TaskAttendanceRecordDto[];
-
-  @IsOptional()
-  timetable_slot_id?: string | number | null;
 }
 
 // Loose unions coerced by the service; @IsOptional() keeps each field through the
@@ -300,49 +260,6 @@ export class SaveTaskSubmissionDto {
 
   @IsOptional()
   status?: string | null;
-}
-
-export class DelegateTaskDto {
-  /** @deprecated Send structured first/last name fields for new clients. */
-  @IsOptional()
-  @IsString()
-  new_assignee_name?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(150)
-  new_assignee_first_name?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(150)
-  new_assignee_last_name?: string | null;
-
-  @IsString()
-  @IsNotEmpty()
-  @Matches(/^\d{9,10}$/)
-  new_assignee_phone?: string | null;
-
-  @IsEmail()
-  @IsString()
-  @IsNotEmpty()
-  new_assignee_email?: string | null;
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(1000)
-  delegation_note?: string | null;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(MAX_LINK_LIFETIME_HOURS)
-  expires_in_hours?: number | null;
-
-  @IsOptional()
-  @IsDateString()
-  expires_at?: string | null;
 }
 
 export class ReviewCaseDto {
@@ -498,42 +415,6 @@ export class GetRiskDashboardQueryDto extends PaginationQueryDto {
 export class GetLoginLinksQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'])
-  status?: string;
-
-  @IsOptional()
-  @IsString()
-  searchTerm?: string;
-
-  @IsOptional()
-  @IsString()
-  province?: string;
-
-  @IsOptional()
-  @IsString()
-  district?: string;
-
-  @IsOptional()
-  @IsString()
-  subDistrict?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  schoolId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  gradeLevelId?: number;
-
-  @IsOptional()
-  @IsString()
-  room?: string;
-}
-
-export class GetVisitLinksQueryDto extends PaginationQueryDto {
-  @IsOptional()
-  @IsIn(['ALL', 'SCHEDULED', 'ACTIVE', 'LOCKED', 'EXPIRED'])
   status?: string;
 
   @IsOptional()

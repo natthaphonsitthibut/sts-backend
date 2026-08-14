@@ -97,7 +97,7 @@ describe('TaskAccessService login-link usage', () => {
 
 describe('TaskAccessService.getAdminLinkDetail own_only VISIT reviewer access', () => {
   let service: TaskAccessService;
-  let taskRepository: jest.Mocked<Pick<TaskRepository, 'findLinkDetailById' | 'listTaskHistory'>>;
+  let taskRepository: jest.Mocked<Pick<TaskRepository, 'findLinkDetailById'>>;
   let taskPolicyService: TaskPolicyService;
 
   const ownOnlyReviewer = {
@@ -124,7 +124,6 @@ describe('TaskAccessService.getAdminLinkDetail own_only VISIT reviewer access', 
   beforeEach(() => {
     taskRepository = {
       findLinkDetailById: jest.fn(),
-      listTaskHistory: jest.fn().mockResolvedValue([]),
     };
     // Real TaskPolicyService (not mocked) so canManageAdminLink's own_only
     // branch actually runs — a mocked policy would hide the getAdminLinkDetail
@@ -170,45 +169,13 @@ describe('TaskAccessService.getAdminLinkDetail own_only VISIT reviewer access', 
   });
 });
 
-describe('TaskAccessService attendance link slots', () => {
+describe('TaskAccessService scheduled link access', () => {
   let service: TaskAccessService;
-  let taskRepository: jest.Mocked<
-    Pick<TaskRepository, 'findTaskLinkByTokenHash' | 'listLinkedTimetableSlots'>
-  >;
+  let taskRepository: jest.Mocked<Pick<TaskRepository, 'findTaskLinkByTokenHash'>>;
 
   beforeEach(() => {
     taskRepository = {
-      findTaskLinkByTokenHash: jest.fn().mockResolvedValue({
-        id: 'link-1',
-        task_id: 'task-1',
-        task_type: 'ATTENDANCE',
-        status: 'ACTIVE',
-        expires_at: '2999-01-01T00:00:00.000Z',
-        admin_locked: 0,
-        otp_verified: 1,
-        delegation_depth: 0,
-        max_delegation_depth: 0,
-        target_school_id: 10010002,
-        target_grade: 'ม.6',
-        target_room: '1',
-        assigned_to_name: 'ครูประจำวิชา',
-        subject: 'คณิตศาสตร์',
-        school_name: 'โรงเรียนทดสอบ',
-      }),
-      listLinkedTimetableSlots: jest.fn().mockResolvedValue([
-        {
-          id: 11,
-          school_id: 10010002,
-          grade_level_id: 423,
-          grade_label: 'ม.6',
-          room_no: 1,
-          subject_id: 5,
-          subject_name_th: 'คณิตศาสตร์',
-          teacher_name: 'ครูประจำวิชา',
-          day_of_week: 2,
-          period: 3,
-        },
-      ]),
+      findTaskLinkByTokenHash: jest.fn(),
     };
 
     service = new TaskAccessService(
@@ -228,28 +195,11 @@ describe('TaskAccessService attendance link slots', () => {
     );
   });
 
-  it('includes linked timetable slots for attendance guests', async () => {
-    await expect(service.getTaskByToken('public-token')).resolves.toMatchObject({
-      task_type: 'ATTENDANCE',
-      timetable_slots: [
-        {
-          id: 11,
-          day_of_week: 2,
-          period: 3,
-          subject_id: 5,
-          subject_name_th: 'คณิตศาสตร์',
-          teacher_name: 'ครูประจำวิชา',
-        },
-      ],
-    });
-    expect(taskRepository.listLinkedTimetableSlots).toHaveBeenCalledWith('link-1');
-  });
-
   it('refuses a link whose opens_at is still in the future (SCHEDULED, no access)', async () => {
     taskRepository.findTaskLinkByTokenHash.mockResolvedValue({
       id: 'link-1',
       task_id: 'task-1',
-      task_type: 'ATTENDANCE',
+      task_type: 'VISIT',
       status: 'ACTIVE',
       expires_at: '2999-01-01T00:00:00.000Z',
       opens_at: '2999-01-01T00:00:00.000Z',
@@ -262,8 +212,6 @@ describe('TaskAccessService attendance link slots', () => {
     await expect(service.getTaskByToken('public-token')).resolves.toMatchObject({
       status: 'SCHEDULED',
     });
-    // A not-yet-open link must never resolve to the usable task shape.
-    expect(taskRepository.listLinkedTimetableSlots).not.toHaveBeenCalled();
   });
 });
 
@@ -521,7 +469,7 @@ describe('TaskAccessService admin link audit', () => {
       findTaskLinkById: jest.fn().mockResolvedValue({
         id: 'link-1',
         task_id: 'task-1',
-        task_type: 'ATTENDANCE',
+        task_type: 'VISIT',
         status: 'ACTIVE',
         login_role: null,
         login_data_scope: null,
@@ -575,7 +523,7 @@ describe('TaskAccessService admin link audit', () => {
       targetId: 'link-1',
     });
     expect(auditEvent?.metadata).toMatchObject({
-      taskType: 'ATTENDANCE',
+      taskType: 'VISIT',
       schoolId: 10010002,
       grade: 'ม.6',
       room: '1',
@@ -603,7 +551,7 @@ describe('TaskAccessService admin link audit', () => {
       targetId: 'link-1',
     });
     expect(auditEvent?.metadata).toMatchObject({
-      taskType: 'ATTENDANCE',
+      taskType: 'VISIT',
       schoolId: 10010002,
       grade: 'ม.6',
       room: '1',

@@ -241,12 +241,12 @@ export class AbsenceMonitorService {
       }
 
       for (const created of newCases) {
-        await this.notificationsService.notifyCaseCreated({
+        await this.notificationsService.notifyCaseStatusChanged({
           caseId: created.case_id,
           studentName: created.student_name,
           schoolId: created.school_id ?? null,
-          schoolName: created.student_school,
-          reason: created.reason_flagged,
+          nextStatus: 'OPEN',
+          actorUserId: null,
         });
       }
 

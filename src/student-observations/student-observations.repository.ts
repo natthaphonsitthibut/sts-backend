@@ -467,27 +467,6 @@ export class StudentObservationsRepository {
     return result.rows;
   }
 
-  async listTaskLinkObservations(
-    studentUuid: string,
-    taskLinkId: string,
-    timetableSlotId: number | null,
-    page: number,
-    limit: number,
-    queryRunner?: QueryRunner,
-  ): Promise<StudentObservationRow[]> {
-    const result = await this.executor(queryRunner).query<StudentObservationRow>(
-      `SELECT selected.*, COUNT(*) OVER()::int AS total_count
-       FROM (${this.observationSelectSql()}) selected
-       WHERE selected.student_uuid = $1
-         AND selected.source_task_link_id = $2
-         AND ($3::bigint IS NULL OR selected.source_timetable_slot_id = $3::bigint)
-       ORDER BY selected.observed_at DESC, selected.id DESC
-       LIMIT $4 OFFSET $5`,
-      [studentUuid, taskLinkId, timetableSlotId, limit, (page - 1) * limit],
-    );
-    return result.rows;
-  }
-
   async updateObservation(
     observationId: string,
     next: ObservationWriteInput,

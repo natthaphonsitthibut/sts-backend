@@ -3,11 +3,6 @@ import { registerAs } from '@nestjs/config';
 export interface QueueRuntimeConfig {
   redisUrl?: string;
   requireRedis: boolean;
-  studentAccountBatch: {
-    queueName: string;
-    attempts: number;
-    backoffMs: number;
-  };
   riskProfile: {
     queueName: string;
     attempts: number;
@@ -39,11 +34,6 @@ export function getQueueConfigFromEnv(): QueueRuntimeConfig {
   return {
     redisUrl,
     requireRedis: nodeEnv === 'production',
-    studentAccountBatch: {
-      queueName: clean(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_NAME) ?? 'student-account-batch',
-      attempts: parsePositiveInt(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_ATTEMPTS, 3),
-      backoffMs: parsePositiveInt(process.env.STUDENT_ACCOUNT_BATCH_QUEUE_BACKOFF_MS, 30_000),
-    },
     riskProfile: {
       queueName: clean(process.env.RISK_PROFILE_QUEUE_NAME) ?? 'student-risk-profile',
       attempts: parsePositiveInt(process.env.RISK_PROFILE_QUEUE_ATTEMPTS, 3),

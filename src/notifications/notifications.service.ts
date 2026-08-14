@@ -2,13 +2,8 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { maskName } from '../common/utils/helpers';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
-import {
-  STUDENT_RISK_WATCH_NOTIFICATION_TYPE,
-  STUDENT_RISK_WATCH_REF_ENTITY,
-} from '../automation/automation.constants';
 import { NotificationsRepository } from './notifications.repository';
 import type { NotificationFanOutInput, NotificationListFilters } from './notifications.types';
-import type { DirectNotificationInput } from './notifications.types';
 
 const CASE_STATUS_LABELS: Record<string, string> = {
   OPEN: 'รอมอบหมาย',
@@ -26,10 +21,7 @@ export class NotificationsService {
 
   constructor(private readonly notificationsRepository: NotificationsRepository) {}
 
-  /**
-   * Fan-out is best-effort by design: a notification failure must never break
-   * the domain flow that triggered it (case write, delegation, submission).
-   */
+  /** A notification failure must never roll back a case transition. */
   private async fanOutSafely(input: NotificationFanOutInput): Promise<number[]> {
     try {
       const recipients = await this.notificationsRepository.fanOut(input);
@@ -44,105 +36,6 @@ export class NotificationsService {
     }
   }
 
-  private async createForRecipientSafely(input: DirectNotificationInput): Promise<void> {
-    try {
-      const created = await this.notificationsRepository.createForEligibleRecipient(input);
-      if (created) {
-        this.logger.log(
-          `Notification ${input.typeCode} created for recipient ${input.recipientUserId}.`,
-        );
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Notification creation failed for ${input.typeCode}: ${message}`);
-    }
-  }
-
-  async notifyImportCompleted(event: {
-    batchId: string;
-    actorUserId: number;
-    targetLabel: string;
-    importedRows: number;
-    quarantinedRows: number;
-  }): Promise<void> {
-    await this.createForRecipientSafely({
-      recipientUserId: event.actorUserId,
-      typeCode: 'IMPORT_COMPLETED',
-      title: 'นำเข้าข้อมูลเสร็จแล้ว',
-      body: `${event.targetLabel} · สำเร็จ ${event.importedRows} รายการ · รอตรวจ ${event.quarantinedRows} รายการ`,
-      refEntity: 'import',
-      refId: event.batchId,
-    });
-  }
-
-  async notifyImportFailed(event: {
-    batchId: string;
-    actorUserId: number;
-    targetLabel: string;
-  }): Promise<void> {
-    await this.createForRecipientSafely({
-      recipientUserId: event.actorUserId,
-      typeCode: 'IMPORT_FAILED',
-      title: 'นำเข้าข้อมูลไม่สำเร็จ',
-      body: event.targetLabel,
-      refEntity: 'import',
-      refId: event.batchId,
-    });
-  }
-
-  async notifyStudentAccountBatchCompleted(event: {
-    jobId: string;
-    actorUserId: number;
-    createdCount: number;
-    skippedCount: number;
-    failedCount: number;
-  }): Promise<void> {
-    await this.createForRecipientSafely({
-      recipientUserId: event.actorUserId,
-      typeCode: 'STUDENT_ACCOUNT_BATCH_COMPLETED',
-      title: 'สร้างบัญชีนักเรียนเสร็จแล้ว',
-      body: `สร้าง ${event.createdCount} บัญชี · ข้าม ${event.skippedCount} รายการ · ไม่สำเร็จ ${event.failedCount} รายการ`,
-      refEntity: 'student-account-batch',
-      refId: event.jobId,
-    });
-  }
-
-  async notifyStudentAccountBatchFailed(event: {
-    jobId: string;
-    actorUserId: number;
-  }): Promise<void> {
-    await this.createForRecipientSafely({
-      recipientUserId: event.actorUserId,
-      typeCode: 'STUDENT_ACCOUNT_BATCH_FAILED',
-      title: 'สร้างบัญชีนักเรียนไม่สำเร็จ',
-      body: 'เปิดประวัติงานเพื่อตรวจสอบและลองทำต่อ',
-      refEntity: 'student-account-batch',
-      refId: event.jobId,
-    });
-  }
-
-  async notifyCaseCreated(event: {
-    caseId: number;
-    studentName: string | null;
-    schoolId: number | null;
-    schoolName: string | null;
-    reason: string;
-  }): Promise<void> {
-    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    await this.fanOutSafely({
-      typeCode: 'CASE_CREATED',
-      title: 'มีเคสติดตามใหม่',
-      body: [student, event.reason].filter(Boolean).join(' · '),
-      caseId: event.caseId,
-      studentNameMasked: student,
-      reasonText: event.reason,
-      refEntity: 'case',
-      refId: String(event.caseId),
-      schoolId: event.schoolId,
-    });
-  }
-
-  /** Returns the recipients, so a caller can avoid notifying them twice for one action. */
   async notifyCaseStatusChanged(event: {
     caseId: number;
     studentName: string | null;
@@ -167,225 +60,13 @@ export class NotificationsService {
       title: `เคสเปลี่ยนสถานะ: ${statusLabel}`,
       body: student,
       caseId: event.caseId,
+      caseStatusCode: event.nextStatus,
       studentNameMasked: student,
       refEntity: 'case',
       refId: String(event.caseId),
       schoolId: event.schoolId,
       excludeUserId: event.actorUserId,
     });
-  }
-
-  async notifyCaseSlaWarning(event: {
-    caseId: number;
-    studentName: string | null;
-    schoolId: number | null;
-    riskTier: string | null;
-    dueAt: Date | string | null;
-  }): Promise<void> {
-    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    await this.fanOutSafely({
-      typeCode: 'CASE_SLA_WARNING',
-      title: 'เคสใกล้เกินกำหนดดำเนินการ',
-      body: student,
-      caseId: event.caseId,
-      studentNameMasked: student,
-      refEntity: 'case',
-      refId: String(event.caseId),
-      schoolId: event.schoolId,
-    });
-  }
-
-  async notifyCaseSlaBreached(event: {
-    caseId: number;
-    studentName: string | null;
-    schoolId: number | null;
-    riskTier: string | null;
-    dueAt: Date | string | null;
-  }): Promise<void> {
-    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    await this.fanOutSafely({
-      typeCode: 'CASE_SLA_BREACHED',
-      title: 'เคสเกินกำหนดดำเนินการ',
-      body: student,
-      caseId: event.caseId,
-      studentNameMasked: student,
-      refEntity: 'case',
-      refId: String(event.caseId),
-      schoolId: event.schoolId,
-    });
-  }
-
-  async notifyCaseRiskEscalated(event: {
-    caseId: number;
-    studentName: string | null;
-    schoolId: number | null;
-    fromTier: string;
-    toTier: string;
-    reason: string;
-  }): Promise<void> {
-    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    await this.fanOutSafely({
-      typeCode: 'CASE_RISK_ESCALATED',
-      title: 'เคสถูกยกระดับความเสี่ยง',
-      body: [student, event.reason].filter(Boolean).join(' · '),
-      caseId: event.caseId,
-      studentNameMasked: student,
-      reasonText: event.reason,
-      refEntity: 'case',
-      refId: String(event.caseId),
-      schoolId: event.schoolId,
-    });
-  }
-
-  async notifyStudentRiskWatch(event: {
-    studentUuid: string;
-    studentName: string | null;
-    schoolId: number | null;
-    gradeLevel: string | number | null;
-    roomId: string | number | null;
-    reason: string;
-    refId: string;
-  }): Promise<void> {
-    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
-    await this.fanOutSafely({
-      typeCode: STUDENT_RISK_WATCH_NOTIFICATION_TYPE,
-      title: 'นักเรียนเข้าเกณฑ์เฝ้าระวัง',
-      body: `เฝ้าระวัง ${student} · ${event.reason}`,
-      studentUuid: event.studentUuid,
-      studentNameMasked: student,
-      reasonText: event.reason,
-      refEntity: STUDENT_RISK_WATCH_REF_ENTITY,
-      refId: event.refId,
-      schoolId: event.schoolId,
-      gradeLevel: event.gradeLevel,
-      roomId: event.roomId,
-    });
-  }
-
-  async notifyAttendanceIncomplete(event: {
-    sessionId: string;
-    schoolId: number;
-    gradeLevel: number | null;
-    roomId: number | null;
-    attendanceDate: string;
-    expected: number;
-    recorded: number;
-  }): Promise<void> {
-    const remaining = Math.max(event.expected - event.recorded, 0);
-    await this.fanOutSafely({
-      typeCode: 'ATTENDANCE_INCOMPLETE',
-      title: 'เช็กชื่อไม่ครบเลยกำหนด',
-      body: `วันที่ ${event.attendanceDate} · ยังเช็กไม่ครบ ${remaining} คน`,
-      refEntity: 'attendance',
-      refId: event.sessionId,
-      schoolId: event.schoolId,
-      gradeLevel: event.gradeLevel,
-      roomId: event.roomId,
-    });
-  }
-
-  async notifyTaskOverdue(event: {
-    linkId: string;
-    taskId: string | null;
-    recipientUserId: number;
-    assigneeName: string | null;
-  }): Promise<void> {
-    const assignee = event.assigneeName ? maskName(event.assigneeName) : 'ผู้รับงาน';
-    await this.createForRecipientSafely({
-      recipientUserId: event.recipientUserId,
-      typeCode: 'TASK_OVERDUE',
-      title: 'งานเยี่ยมบ้านเลยกำหนดแล้ว',
-      body: `งานที่มอบให้ ${assignee} ยังไม่เสร็จและเลยกำหนด`,
-      refEntity: 'task',
-      refId: event.taskId ?? event.linkId,
-    });
-  }
-
-  async notifyAccountDeactivated(event: {
-    userId: number;
-    displayName: string | null;
-    schoolId: number | null;
-    actorUserId: number | null;
-  }): Promise<void> {
-    const who = event.displayName ? maskName(event.displayName) : 'บัญชีผู้ใช้งาน';
-    await this.fanOutSafely({
-      typeCode: 'ACCOUNT_DEACTIVATED',
-      title: 'มีบัญชีถูกปิดใช้งาน',
-      body: who,
-      refEntity: 'user',
-      refId: String(event.userId),
-      schoolId: event.schoolId,
-      excludeUserId: event.actorUserId,
-    });
-  }
-
-  async notifyAccountReactivated(event: {
-    userId: number;
-    displayName: string | null;
-    schoolId: number | null;
-    actorUserId: number | null;
-  }): Promise<void> {
-    const who = event.displayName ? maskName(event.displayName) : 'บัญชีผู้ใช้งาน';
-    await this.fanOutSafely({
-      typeCode: 'ACCOUNT_REACTIVATED',
-      title: 'มีบัญชีถูกเปิดใช้งานอีกครั้ง',
-      body: who,
-      refEntity: 'user',
-      refId: String(event.userId),
-      schoolId: event.schoolId,
-      excludeUserId: event.actorUserId,
-    });
-  }
-
-  async notifyTaskDelegated(event: { taskId: string; assigneeName: string | null }): Promise<void> {
-    const context = await this.findTaskContextSafely(event.taskId);
-    const assignee = event.assigneeName ? maskName(event.assigneeName) : 'ผู้รับงานใหม่';
-    await this.fanOutSafely({
-      typeCode: 'TASK_DELEGATED',
-      title: 'งานเยี่ยมบ้านถูกส่งต่อ',
-      body: `ส่งต่อให้ ${assignee}`,
-      refEntity: 'task',
-      refId: event.taskId,
-      schoolId: context?.target_school_id ?? null,
-      gradeLevel: context?.target_grade ?? null,
-      roomId: context?.target_room ?? null,
-    });
-  }
-
-  /**
-   * `alreadyNotifiedUserIds` carries the recipients of the case-status
-   * notification raised by the same submission. Both types are kept because
-   * they require different permissions and therefore reach different people,
-   * but anyone holding both would otherwise see the one report twice.
-   */
-  async notifyTaskSubmitted(event: {
-    taskId: string;
-    submitterName: string | null;
-    alreadyNotifiedUserIds?: number[];
-  }): Promise<void> {
-    const context = await this.findTaskContextSafely(event.taskId);
-    const submitter = event.submitterName ? maskName(event.submitterName) : 'ผู้รับงาน';
-    await this.fanOutSafely({
-      typeCode: 'TASK_SUBMITTED',
-      title: 'มีรายงานเยี่ยมบ้านส่งกลับ',
-      body: `รายงานจาก ${submitter}`,
-      refEntity: 'task',
-      refId: event.taskId,
-      schoolId: context?.target_school_id ?? null,
-      gradeLevel: context?.target_grade ?? null,
-      roomId: context?.target_room ?? null,
-      excludeUserIds: event.alreadyNotifiedUserIds ?? [],
-    });
-  }
-
-  private async findTaskContextSafely(taskId: string) {
-    try {
-      return await this.notificationsRepository.findTaskContext(taskId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Notification task-context lookup failed for ${taskId}: ${message}`);
-      return null;
-    }
   }
 
   async listForUser(userId: number, filters: NotificationListFilters) {
@@ -404,6 +85,7 @@ export class NotificationsService {
         body: row.body,
         student_person_uuid: row.student_person_uuid,
         case_id: row.case_id,
+        case_status_code: row.case_status_code,
         student_name_masked: row.student_name_masked,
         reason_text: row.reason_text,
         ref_entity: row.ref_entity,
@@ -436,6 +118,11 @@ export class NotificationsService {
   async markAllRead(userId: number) {
     const updated = await this.notificationsRepository.markAllRead(userId);
     return { success: true, updated };
+  }
+
+  async deleteAllRead(userId: number) {
+    const deleted = await this.notificationsRepository.deleteAllRead(userId);
+    return { success: true, deleted };
   }
 
   async cleanupExpiredNotifications(now = new Date()): Promise<{ deleted: number }> {

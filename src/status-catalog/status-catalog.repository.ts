@@ -53,14 +53,6 @@ export class StatusCatalogRepository {
                sort_order
         FROM attendance_session_statuses WHERE is_active = TRUE AND deleted_at IS NULL
         UNION ALL
-        SELECT 'STUDENT_ACCOUNT_BATCH_JOB', code::text, NULL, NULL, label_th, badge_variant,
-               NULL, sort_order
-        FROM student_account_batch_job_statuses WHERE is_active = TRUE AND deleted_at IS NULL
-        UNION ALL
-        SELECT 'STUDENT_ACCOUNT_BATCH_ITEM', code::text, NULL, NULL, label_th, badge_variant,
-               NULL, sort_order
-        FROM student_account_batch_item_statuses WHERE is_active = TRUE AND deleted_at IS NULL
-        UNION ALL
         SELECT 'STUDENT_IMPORT_BATCH', code::text, NULL, NULL, label_th, badge_variant, NULL,
                sort_order
         FROM student_import_batch_statuses WHERE is_active = TRUE AND deleted_at IS NULL

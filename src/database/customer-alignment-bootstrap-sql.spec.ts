@@ -33,8 +33,6 @@ describe('CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL', () => {
       'student_observation_revisions',
       'student_observation_risk_reviews',
       'student_observation_risk_review_sources',
-      'student_follow_up_requests',
-      'student_follow_up_request_sources',
       'student_observation_summaries',
       'student_observation_summary_sources',
     ];
@@ -70,10 +68,8 @@ describe('CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL', () => {
     expect(sql).toContain("'INVALID_TEACHER_START_DATE'");
     expect(sql).toContain("'TEACHER_MEMBERSHIP_NOT_FOUND'");
     expect(sql).toContain("'ASSIGNMENT_CONFLICT'");
-    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_up_requests_pending_type');
-    expect(sql).toContain('FOREIGN KEY (assigned_task_id) REFERENCES tasks(id)');
-    expect(sql).toContain('CONSTRAINT chk_follow_up_requests_assignment_state');
-    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_up_requests_assigned_task');
+    expect(sql).not.toContain('CREATE TABLE IF NOT EXISTS student_follow_up_requests');
+    expect(sql).not.toContain('CREATE TABLE IF NOT EXISTS student_follow_up_request_sources');
     expect(sql).toMatch(
       /CREATE TABLE IF NOT EXISTS student_observations \([\s\S]*?deleted_at TIMESTAMPTZ/,
     );

@@ -329,12 +329,10 @@ export const AUDIT_RETROFIT_SQL = `
 `;
 
 /**
- * Async large-batch student-account generation job + per-candidate items.
- * Shared by the fresh-install baseline and the AddStudentAccountBatchJob
- * migration so the two never drift. Depends on `users` (FK) and the
- * `set_updated_at()` trigger function existing first. The job never stores
- * plaintext credentials — printable credentials are produced on demand via the
- * existing reissue (rotate) path, so items keep only non-secret fields.
+ * Legacy student-account batch storage. This remains exported because the
+ * historical migration that originally introduced the tables must stay
+ * executable on a fresh database. The current bootstrap intentionally omits
+ * this SQL because the feature is retired by a later migration.
  */
 export const STUDENT_ACCOUNT_BATCH_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS student_account_batch_job (
@@ -1108,31 +1106,6 @@ export const HOME_VISIT_ASSESSMENT_SQL = `
   END $home_visit_assessment_fks$;
 `;
 
-export const STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS student_follow_up_request_statuses (
-    code VARCHAR(24) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_terminal BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_student_follow_up_statuses_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_student_follow_up_statuses_badge
-      CHECK (badge_variant IN ('default','secondary','destructive','success','warning')),
-    CONSTRAINT chk_student_follow_up_statuses_sort_order CHECK (sort_order >= 0)
-  );
-  ${auditUpdatedAtTriggerSql('student_follow_up_request_statuses')}
-  INSERT INTO student_follow_up_request_statuses (
-    code, label_th, badge_variant, sort_order, is_terminal, is_active
-  ) VALUES
-    ('PENDING_REVIEW', 'รอพิจารณา', 'warning', 10, FALSE, TRUE),
-    ('APPROVED', 'เปิดเคสแล้ว', 'success', 20, TRUE, TRUE),
-    ('REJECTED', 'ไม่อนุมัติ', 'secondary', 30, TRUE, TRUE),
-    ('NEED_MORE_INFO', 'ขอข้อมูลเพิ่ม (เดิม)', 'secondary', 90, TRUE, FALSE)
-  ON CONFLICT (code) DO NOTHING;
-`;
-
 export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS user_account_statuses (
     code VARCHAR(16) PRIMARY KEY,
@@ -1182,8 +1155,7 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   ${auditUpdatedAtTriggerSql('task_link_statuses')}
   INSERT INTO task_link_statuses (code, label_th, badge_variant, sort_order) VALUES
     ('ACTIVE', 'ใช้งาน', 'success', 10),
-    ('DELEGATED', 'ส่งต่อแล้ว', 'secondary', 20),
-    ('COMPLETED', 'เสร็จสิ้น', 'success', 30)
+    ('COMPLETED', 'เสร็จสิ้น', 'success', 20)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS attendance_record_statuses (
@@ -1260,44 +1232,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('VOIDED', 'ยกเลิก', 'destructive', 40)
   ON CONFLICT (code) DO NOTHING;
 
-  CREATE TABLE IF NOT EXISTS student_account_batch_job_statuses (
-    code VARCHAR(16) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_student_account_batch_job_statuses_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_student_account_batch_job_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
-  );
-  ${auditUpdatedAtTriggerSql('student_account_batch_job_statuses')}
-  INSERT INTO student_account_batch_job_statuses (code, label_th, badge_variant, sort_order) VALUES
-    ('PENDING', 'รอเริ่ม', 'secondary', 10),
-    ('RUNNING', 'กำลังทำงาน', 'default', 20),
-    ('COMPLETED', 'เสร็จสิ้น', 'success', 30),
-    ('FAILED', 'ล้มเหลว', 'destructive', 40),
-    ('INTERRUPTED', 'หยุดชะงัก', 'warning', 50),
-    ('CANCELED', 'ยกเลิกแล้ว', 'secondary', 60)
-  ON CONFLICT (code) DO NOTHING;
-
-  CREATE TABLE IF NOT EXISTS student_account_batch_item_statuses (
-    code VARCHAR(16) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_student_account_batch_item_statuses_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_student_account_batch_item_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
-  );
-  ${auditUpdatedAtTriggerSql('student_account_batch_item_statuses')}
-  INSERT INTO student_account_batch_item_statuses (code, label_th, badge_variant, sort_order) VALUES
-    ('PENDING', 'รอดำเนินการ', 'secondary', 10),
-    ('CREATED', 'สร้างแล้ว', 'success', 20),
-    ('SKIPPED', 'ข้าม', 'warning', 30),
-    ('FAILED', 'ล้มเหลว', 'destructive', 40)
-  ON CONFLICT (code) DO NOTHING;
-
   CREATE TABLE IF NOT EXISTS student_import_batch_statuses (
     code VARCHAR(16) PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,
@@ -1343,7 +1277,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('TASK_LINK_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', NULL, 20),
     ('TASK_LINK_STATE', 'EXPIRED', 'หมดอายุ', 'warning', NULL, 30),
     ('TASK_LINK_STATE', 'COMPLETED', 'เสร็จสิ้น', 'success', NULL, 40),
-    ('TASK_LINK_STATE', 'DELEGATED', 'ส่งต่อแล้ว', 'secondary', NULL, 50),
     ('LOGIN_LINK_USAGE', 'USED', 'เข้าใช้แล้ว', 'success', NULL, 10),
     ('LOGIN_LINK_USAGE', 'UNUSED', 'ยังไม่เข้าใช้', 'secondary', NULL, 20),
     ('ATTENDANCE_RECONCILIATION', 'COMPLETED', 'ครบ', 'success', NULL, 10),
@@ -1367,8 +1300,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   ALTER TABLE school_terms DROP CONSTRAINT IF EXISTS chk_school_terms_status;
   ALTER TABLE school_calendar_days DROP CONSTRAINT IF EXISTS chk_school_calendar_days_type;
   ALTER TABLE attendance_sessions DROP CONSTRAINT IF EXISTS chk_attendance_sessions_status;
-  ALTER TABLE student_account_batch_job DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_status;
-  ALTER TABLE student_account_batch_job_item DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_item_status;
   ALTER TABLE student_import_batches DROP CONSTRAINT IF EXISTS chk_student_import_batches_status;
 
   DO $operational_status_fks$
@@ -1400,14 +1331,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_sessions_status') THEN
       ALTER TABLE attendance_sessions ADD CONSTRAINT fk_attendance_sessions_status FOREIGN KEY (status)
         REFERENCES attendance_session_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_account_batch_job_status') THEN
-      ALTER TABLE student_account_batch_job ADD CONSTRAINT fk_student_account_batch_job_status FOREIGN KEY (status)
-        REFERENCES student_account_batch_job_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_account_batch_item_status') THEN
-      ALTER TABLE student_account_batch_job_item ADD CONSTRAINT fk_student_account_batch_item_status FOREIGN KEY (status)
-        REFERENCES student_account_batch_item_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_import_batches_status') THEN
       ALTER TABLE student_import_batches ADD CONSTRAINT fk_student_import_batches_status FOREIGN KEY (status)
@@ -1523,16 +1446,7 @@ export const NOTIFICATION_TABLES_SQL = `
 
   INSERT INTO notification_types (code, label_th, required_permission, sort_order)
   VALUES
-    ('CASE_CREATED', 'เคสติดตามใหม่', 'review-cases', 10),
-    ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'review-cases', 20),
-    ('TASK_DELEGATED', 'งานถูกส่งต่อ', 'attendance-dashboard', 30),
-    ('TASK_SUBMITTED', 'มีรายงานส่งกลับ', 'attendance-dashboard', 40),
-    ('IMPORT_COMPLETED', 'นำเข้าข้อมูลเสร็จแล้ว', 'import-data', 50),
-    ('IMPORT_FAILED', 'นำเข้าข้อมูลไม่สำเร็จ', 'import-data', 60),
-    ('STUDENT_ACCOUNT_BATCH_COMPLETED', 'สร้างบัญชีนักเรียนเสร็จแล้ว', 'manage-student-accounts', 70),
-    ('STUDENT_ACCOUNT_BATCH_FAILED', 'สร้างบัญชีนักเรียนไม่สำเร็จ', 'manage-student-accounts', 80),
-    ('CASE_RISK_ESCALATED', 'เคสถูกยกระดับความเสี่ยง', 'review-cases', 150),
-    ('STUDENT_RISK_WATCH', 'นักเรียนเข้าเกณฑ์เฝ้าระวัง', 'review-cases', 160)
+    ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'review-cases', 10)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS notifications (
@@ -1548,6 +1462,10 @@ export const NOTIFICATION_TABLES_SQL = `
     case_id INTEGER CONSTRAINT fk_notifications_case
       REFERENCES cases(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
+    case_status_code VARCHAR(32) NOT NULL
+      CONSTRAINT fk_notifications_case_status
+      REFERENCES case_workflow_statuses(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
     student_name_masked TEXT,
     reason_text TEXT,
     ref_entity VARCHAR(32),
@@ -1558,58 +1476,33 @@ export const NOTIFICATION_TABLES_SQL = `
     CONSTRAINT chk_notifications_title CHECK (length(trim(title)) > 0),
     CONSTRAINT chk_notifications_student_context CHECK (
       (
-        type_code IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND student_person_uuid IS NOT NULL
+        type_code = 'CASE_STATUS_CHANGED'
         AND student_name_masked IS NOT NULL
         AND length(trim(student_name_masked)) > 0
       )
       OR (
-        type_code NOT IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND student_person_uuid IS NULL
+        type_code <> 'CASE_STATUS_CHANGED'
         AND student_name_masked IS NULL
         AND reason_text IS NULL
       )
     ),
     CONSTRAINT chk_notifications_case_context CHECK (
       (
-        type_code IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED'
-        )
+        type_code = 'CASE_STATUS_CHANGED'
         AND case_id IS NOT NULL
+        AND case_status_code IS NOT NULL
       )
       OR (
-        type_code NOT IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED'
-        )
+        type_code <> 'CASE_STATUS_CHANGED'
         AND case_id IS NULL
+        AND case_status_code IS NULL
       )
     ),
     CONSTRAINT chk_notifications_reason_text CHECK (
       reason_text IS NULL OR length(trim(reason_text)) > 0
     ),
     CONSTRAINT chk_notifications_reason_type CHECK (
-      (
-        type_code IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND reason_text IS NOT NULL
-      )
-      OR (
-        type_code NOT IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND reason_text IS NULL
-      )
+      type_code = 'CASE_STATUS_CHANGED'
     )
   );
 
@@ -1688,7 +1581,6 @@ export const DATABASE_BASELINE_SQL = `
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     status TEXT DEFAULT 'IN_PROGRESS',
-    max_delegation_depth INTEGER DEFAULT 3,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     task_type TEXT DEFAULT 'VISIT',
     target_grade TEXT,
@@ -1699,14 +1591,12 @@ export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS task_links (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-    parent_link_id UUID REFERENCES task_links(id),
     token_hash TEXT NOT NULL UNIQUE,
     magic_link TEXT,
     -- Encrypted (AES-256-GCM) raw token, redisplay source of truth going
     -- forward — magic_link itself is legacy/plaintext and being phased out,
     -- see tasks/task-magic-link-plaintext-token.md.
     token_encrypted TEXT NULL,
-    delegation_depth INTEGER DEFAULT 0,
     assigned_to_name TEXT,
     assigned_to_first_name VARCHAR(150)
       CHECK (assigned_to_first_name IS NULL OR BTRIM(assigned_to_first_name) <> ''),
@@ -1720,7 +1610,6 @@ export const DATABASE_BASELINE_SQL = `
     otp_attempts INTEGER NOT NULL DEFAULT 0,
     otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
-    delegation_note TEXT,
     assignment_note TEXT CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000),
     status TEXT DEFAULT 'ACTIVE',
     admin_locked INTEGER DEFAULT 0,
@@ -2120,7 +2009,6 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_permissions JSONB DEFAULT '[]'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMP WITH TIME ZONE;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS delegation_note TEXT;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS assignment_note TEXT;
   ALTER TABLE task_links DROP CONSTRAINT IF EXISTS chk_task_links_assignment_note_length;
   ALTER TABLE task_links ADD CONSTRAINT chk_task_links_assignment_note_length
@@ -2553,13 +2441,10 @@ export const DATABASE_BASELINE_SQL = `
 
   ${STUDENT_CURRENT_ENROLLMENT_VIEW_SQL}
 
-  ${STUDENT_ACCOUNT_BATCH_TABLES_SQL}
-
   ${DATA_EXPORT_TABLES_SQL}
 
   ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
 
-  ${STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL}
 
   ${ARAID_PROFILE_TABLE_SQL}
 

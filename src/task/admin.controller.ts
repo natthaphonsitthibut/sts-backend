@@ -4,7 +4,6 @@ import {
   Post,
   Body,
   Param,
-  Query,
   HttpException,
   HttpStatus,
   Req,
@@ -42,13 +41,9 @@ export class AdminController {
 
   @UseGuards(AuthGuard)
   @Get(':linkId/detail')
-  async getLinkDetail(
-    @Param('linkId') linkId: string,
-    @Query('date') date: string | undefined,
-    @Req() req: RequestWithActor,
-  ) {
+  async getLinkDetail(@Param('linkId') linkId: string, @Req() req: RequestWithActor) {
     try {
-      return await this.taskService.getAdminLinkDetail(req.user, linkId, date);
+      return await this.taskService.getAdminLinkDetail(req.user, linkId);
     } catch (err) {
       const status = hasHttpStatusGetter(err) ? err.getStatus() : HttpStatus.BAD_REQUEST;
       const message = getTaskErrorMessage(err);

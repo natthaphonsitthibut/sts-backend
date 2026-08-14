@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
-import { randomInt } from 'crypto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { processImageUpload } from '../common/file-upload/visit-photo.util';
 import {
@@ -28,7 +27,6 @@ import {
 } from '../students/pii-fields.config';
 import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { finalizePersistedDataScope } from '../auth/auth.types';
 import { hasPermission } from '../auth/permissions.constants';
 import {
@@ -39,30 +37,15 @@ import {
 import { PasswordService } from '../auth/password.service';
 import type {
   AccountDeactivationReasonCode,
-  BulkReissueStudentAccountsDto,
   ChangePasswordDto,
   CreateUserDto,
-  DeactivateStudentAccountDto,
-  GenerateStudentAccountsDto,
-  PreviewStudentAccountsDto,
-  StudentAccountSelectionFilterDto,
-  StudentAccountListQueryDto,
+  DeactivateUserAccountDto,
   UpdateOwnProfileDto,
   UpdateUserDto,
 } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
-import {
-  UsersRepository,
-  type StudentAccountManagementFilters,
-  type UserListFilters,
-} from './users.repository';
-import type {
-  ActorContext,
-  DataScope,
-  QueryExecutor,
-  StudentAccountCandidateRow,
-  StudentAccountManagementRow,
-} from './users.types';
+import { UsersRepository, type UserListFilters } from './users.repository';
+import type { ActorContext, DataScope, QueryExecutor } from './users.types';
 
 interface LifecycleAuditMeta {
   ip?: string | null;
@@ -70,14 +53,8 @@ interface LifecycleAuditMeta {
   metadata?: Record<string, unknown>;
 }
 
-// Shared with StudentAccountBatchService so the async batch path can't drift
-// from the synchronous generate/reissue path (same TTL, alphabet, role, perms).
-export const STUDENT_ACCOUNT_PERMISSIONS = ['student-self'] as const;
-export const STUDENT_ACCOUNT_ROLE = 'STUDENT';
 const SUPER_ADMIN_ROLE = 'ADMIN';
-const STUDENT_ACCOUNT_BATCH_LIMIT = 200;
 export const TEMP_PASSWORD_TTL_DAYS = 7;
-export const USERNAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const HARD_DELETE_PERMISSION = 'manage-users-hard-delete';
 const USERNAME_ALREADY_USED_MESSAGE = 'ชื่อผู้ใช้งานนี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น';
 
@@ -116,7 +93,6 @@ export class UsersService {
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
-    private readonly notificationsService?: NotificationsService,
   ) {}
 
   /**
@@ -1068,7 +1044,7 @@ export class UsersService {
   async deactivateAccount(
     actor: ActorContext | undefined,
     userId: number,
-    data: DeactivateStudentAccountDto,
+    data: DeactivateUserAccountDto,
     auditMeta: LifecycleAuditMeta,
   ) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
@@ -1134,9 +1110,6 @@ export class UsersService {
       );
     });
 
-    // Best-effort: alert admins who manage users in this account's scope.
-    await this.notifyAccountLifecycleChange(existingUser, currentActor, 'DEACTIVATED');
-
     return {
       success: true,
       userId,
@@ -1189,52 +1162,12 @@ export class UsersService {
       );
     });
 
-    // Best-effort: alert admins who manage users in this account's scope.
-    await this.notifyAccountLifecycleChange(existingUser, currentActor, 'REACTIVATED');
-
     return {
       success: true,
       userId,
       status: 'ACTIVE',
       needsReissue: this.needsTemporaryPasswordReissue(existingUser),
     };
-  }
-
-  /**
-   * Fan a best-effort account-lifecycle notification out to staff who hold
-   * `manage-users-list` and whose data scope covers the affected account
-   * (nationwide admins always; scoped admins only for their own school). The
-   * acting admin is excluded. Never throws — notification is non-critical.
-   */
-  private async notifyAccountLifecycleChange(
-    affected: {
-      id: number;
-      username: string;
-      FirstName: string | null;
-      LastName: string | null;
-      data_scope: DataScope | null;
-    },
-    actor: ActorContext,
-    change: 'DEACTIVATED' | 'REACTIVATED',
-  ): Promise<void> {
-    if (!this.notificationsService) {
-      return;
-    }
-    const displayName =
-      [affected.FirstName, affected.LastName].filter(Boolean).join(' ').trim() || affected.username;
-    const schoolIds = affected.data_scope?.school_ids;
-    const schoolId = Array.isArray(schoolIds) && schoolIds.length > 0 ? Number(schoolIds[0]) : null;
-    const event = {
-      userId: affected.id,
-      displayName,
-      schoolId: Number.isFinite(schoolId) ? schoolId : null,
-      actorUserId: resolveAuditActorId(actor),
-    };
-    if (change === 'DEACTIVATED') {
-      await this.notificationsService.notifyAccountDeactivated(event);
-    } else {
-      await this.notificationsService.notifyAccountReactivated(event);
-    }
   }
 
   async changeOwnPassword(actor: ActorContext | undefined, data: ChangePasswordDto) {
@@ -1265,48 +1198,8 @@ export class UsersService {
     return { success: true, must_change_password: false };
   }
 
-  async reissueStudentTemporaryPassword(actor: ActorContext | undefined, userId: number) {
-    const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertCanManageStudentAccounts(currentActor);
-    const row = await this.usersRepository.findStudentAccountForManagement(
-      userId,
-      currentActor.data_scope,
-    );
-    if (!row) {
-      throw new NotFoundException('ไม่พบบัญชีนักเรียน');
-    }
-    if (row.status !== 'ACTIVE') {
-      throw new ConflictException('บัญชีนักเรียนนี้ถูกปิดการใช้งาน');
-    }
-
-    const tempPassword = this.passwordService.generateTempPassword();
-    const passwordHash = await this.passwordService.hash(tempPassword);
-    const issuedAt = new Date();
-    const expiresAt = new Date(issuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000);
-    const updated = await this.usersRepository.reissueTemporaryPassword(
-      userId,
-      passwordHash,
-      issuedAt,
-      expiresAt,
-    );
-    if (!updated) {
-      throw new ConflictException('ไม่สามารถออกรหัสชั่วคราวใหม่ให้บัญชีนี้ได้');
-    }
-
-    return {
-      success: true,
-      userId,
-      username: row.username,
-      tempPassword,
-      temporaryPasswordIssuedAt: issuedAt.toISOString(),
-      temporaryPasswordExpiresAt: expiresAt.toISOString(),
-      auditMetadata: this.studentAccountAuditMetadata(row),
-    };
-  }
-
   // General reissue for any role the actor may manage (Manage Users page),
-  // guarded by the same role-hierarchy/scope check as edit/delete — unlike
-  // reissueStudentTemporaryPassword which is scoped to student-account management.
+  // guarded by the same role-hierarchy/scope check as edit/delete.
   async reissueTemporaryPassword(actor: ActorContext | undefined, userId: number) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     const roleMap = await this.usersPolicyService.getRoleMap();
@@ -1347,301 +1240,6 @@ export class UsersService {
     };
   }
 
-  async listStudentAccounts(actor: ActorContext | undefined, filters: StudentAccountListQueryDto) {
-    const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertCanManageStudentAccounts(currentActor);
-    const normalizedFilters = this.normalizeStudentAccountManagementFilters(
-      filters,
-      currentActor.data_scope,
-    );
-    const [{ rows, totalCount }, statusCounts] = await Promise.all([
-      this.usersRepository.listStudentAccountsPaginated(normalizedFilters),
-      this.usersRepository.countStudentAccountStatuses(normalizedFilters),
-    ]);
-
-    return {
-      success: true,
-      data: rows.map((row) => this.toStudentAccountManagementResponse(row)),
-      meta: {
-        ...buildPaginationMeta(
-          normalizedFilters.page ?? 1,
-          normalizedFilters.limit ?? 20,
-          totalCount,
-        ),
-        statusCounts,
-      },
-    };
-  }
-
-  async bulkReissueStudentTemporaryPasswords(
-    actor: ActorContext | undefined,
-    filters: BulkReissueStudentAccountsDto,
-  ) {
-    const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertCanManageStudentAccounts(currentActor);
-    const userIds = Array.isArray(filters.userIds)
-      ? Array.from(new Set(filters.userIds.filter((id) => Number.isInteger(id) && id > 0)))
-      : [];
-    const normalizedFilters = this.normalizeStudentAccountManagementFilters(
-      {
-        ...filters,
-        userIds,
-        page: userIds.length > 0 ? 1 : filters.page,
-        onlyExpired: userIds.length > 0 ? filters.onlyExpired : true,
-        limit: Math.min(filters.limit ?? STUDENT_ACCOUNT_BATCH_LIMIT, STUDENT_ACCOUNT_BATCH_LIMIT),
-      },
-      currentActor.data_scope,
-    );
-    const { rows } = await this.usersRepository.listStudentAccountsPaginated(normalizedFilters);
-    if (rows.length === 0) {
-      throw new ConflictException('ไม่มีบัญชีนักเรียนที่ต้องออกรหัสใหม่');
-    }
-
-    const credentials: Array<{
-      userId: number;
-      username: string;
-      tempPassword: string;
-      studentName: string;
-      schoolName: string | null;
-      schoolId: number | null;
-      grade: string | null;
-      room: number | null;
-      temporaryPasswordIssuedAt: string;
-      temporaryPasswordExpiresAt: string;
-    }> = [];
-    const skipped: Array<{ userId: number; reason: string }> = [];
-    for (const row of rows) {
-      if (row.status !== 'ACTIVE') {
-        skipped.push({ userId: row.user_id, reason: 'บัญชีถูกปิดการใช้งาน' });
-        continue;
-      }
-      const tempPassword = this.passwordService.generateTempPassword();
-      const passwordHash = await this.passwordService.hash(tempPassword);
-      const issuedAt = new Date();
-      const expiresAt = new Date(issuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000);
-      const updated = await this.usersRepository.reissueTemporaryPassword(
-        row.user_id,
-        passwordHash,
-        issuedAt,
-        expiresAt,
-      );
-      if (!updated) {
-        skipped.push({ userId: row.user_id, reason: 'ไม่สามารถออกรหัสใหม่ได้' });
-        continue;
-      }
-      credentials.push({
-        userId: row.user_id,
-        username: row.username,
-        tempPassword,
-        studentName: this.getStudentAccountManagementName(row),
-        schoolName: row.school_name,
-        schoolId: row.school_id,
-        grade: row.grade_label,
-        room: row.room_id,
-        temporaryPasswordIssuedAt: issuedAt.toISOString(),
-        temporaryPasswordExpiresAt: expiresAt.toISOString(),
-      });
-    }
-
-    if (credentials.length === 0) {
-      throw new ConflictException('ไม่สามารถออกรหัสใหม่ให้บัญชีนักเรียนในรายการนี้ได้');
-    }
-
-    return {
-      success: true,
-      requestedCount: rows.length,
-      reissuedCount: credentials.length,
-      skippedCount: skipped.length,
-      credentials,
-      skipped,
-    };
-  }
-
-  async deactivateStudentAccount(
-    actor: ActorContext | undefined,
-    userId: number,
-    data: DeactivateStudentAccountDto,
-    auditMeta: Omit<LifecycleAuditMeta, 'action'> = {},
-  ) {
-    const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertCanManageStudentAccounts(currentActor);
-    const row = await this.usersRepository.findStudentAccountForManagement(
-      userId,
-      currentActor.data_scope,
-    );
-    if (!row) {
-      throw new NotFoundException('ไม่พบบัญชีนักเรียน');
-    }
-    if (row.status !== 'ACTIVE') {
-      throw new ConflictException('บัญชีนักเรียนนี้ถูกปิดการใช้งานแล้ว');
-    }
-    return await this.deactivateAccount(actor, userId, data, {
-      action: 'STUDENT_ACCOUNT_DEACTIVATE',
-      ip: auditMeta.ip ?? null,
-      metadata: this.studentAccountAuditMetadata(row),
-    });
-  }
-
-  async reactivateStudentAccount(
-    actor: ActorContext | undefined,
-    userId: number,
-    auditMeta: Omit<LifecycleAuditMeta, 'action'> = {},
-  ) {
-    const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertCanManageStudentAccounts(currentActor);
-    const row = await this.usersRepository.findStudentAccountForManagement(
-      userId,
-      currentActor.data_scope,
-    );
-    if (!row) {
-      throw new NotFoundException('ไม่พบบัญชีนักเรียน');
-    }
-    if (row.status === 'ACTIVE') {
-      throw new ConflictException('บัญชีนักเรียนนี้เปิดใช้งานอยู่แล้ว');
-    }
-    return await this.reactivateAccount(actor, userId, {
-      action: 'STUDENT_ACCOUNT_REACTIVATE',
-      ip: auditMeta.ip ?? null,
-      metadata: this.studentAccountAuditMetadata(row),
-    });
-  }
-
-  private studentAccountAuditMetadata(row: StudentAccountManagementRow): Record<string, unknown> {
-    return {
-      schoolId: row.school_id,
-      schoolName: row.school_name,
-      grade: row.grade_label,
-      room: row.room_id,
-    };
-  }
-
-  async previewStudentAccounts(
-    actor: ActorContext | undefined,
-    filters: PreviewStudentAccountsDto,
-  ) {
-    const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertCanManageStudentAccounts(currentActor);
-    const normalizedFilters = this.normalizeStudentAccountFilters(filters, currentActor.data_scope);
-    const [summary, candidates] = await Promise.all([
-      this.usersRepository.countStudentAccountCandidates(normalizedFilters),
-      this.usersRepository.listStudentAccountCandidates(normalizedFilters),
-    ]);
-
-    return {
-      success: true,
-      data: {
-        summary,
-        candidates: candidates.map((candidate) =>
-          this.toStudentAccountCandidateResponse(candidate),
-        ),
-        limit: normalizedFilters.limit,
-        meta: buildPaginationMeta(
-          normalizedFilters.page,
-          normalizedFilters.limit,
-          summary.withoutAccountCount,
-        ),
-      },
-    };
-  }
-
-  async generateStudentAccounts(
-    actor: ActorContext | undefined,
-    filters: GenerateStudentAccountsDto,
-  ) {
-    const currentActor = this.usersPolicyService.ensureActor(actor);
-    this.assertCanManageStudentAccounts(currentActor);
-    const normalizedFilters = this.normalizeStudentAccountFilters(
-      {
-        ...filters,
-        onlyWithoutAccount: true,
-      },
-      currentActor.data_scope,
-    );
-    const actorId = resolveAuditActorId(currentActor);
-    const credentials = await this.usersRepository.withTransaction(async (executor) => {
-      const candidates = await this.usersRepository.listStudentAccountCandidates(
-        normalizedFilters,
-        executor,
-      );
-      const created: Array<{
-        userId: number;
-        username: string;
-        tempPassword: string;
-        studentName: string;
-        schoolName: string | null;
-        grade: string | null;
-        room: number | null;
-        temporaryPasswordIssuedAt: string;
-        temporaryPasswordExpiresAt: string;
-      }> = [];
-
-      for (const candidate of candidates) {
-        const username = await this.generateUniqueStudentUsername(candidate.school_id, executor);
-        const tempPassword = this.passwordService.generateTempPassword();
-        const passwordHash = await this.passwordService.hash(tempPassword);
-        const temporaryPasswordIssuedAt = new Date();
-        const temporaryPasswordExpiresAt = new Date(
-          temporaryPasswordIssuedAt.getTime() + TEMP_PASSWORD_TTL_DAYS * 24 * 60 * 60 * 1000,
-        );
-        try {
-          const userId = await this.usersRepository.createUser(
-            {
-              username,
-              passwordHash,
-              firstName: candidate.first_name || '-',
-              lastName: candidate.last_name || '-',
-              // Student identity stays on the linked person/enrollment record;
-              // do not duplicate sensitive identity into the account mirror.
-              personIdOnec: '',
-              personUuid: candidate.person_uuid,
-              phone: null,
-              email: null,
-              affiliation: candidate.school_name || null,
-              status: 'ACTIVE',
-              permissions: [...STUDENT_ACCOUNT_PERMISSIONS],
-              role: STUDENT_ACCOUNT_ROLE,
-              dataScope: { own_only: true },
-              mustChangePassword: true,
-              temporaryPasswordIssuedAt,
-              temporaryPasswordExpiresAt,
-              createdBy: actorId,
-            },
-            executor,
-          );
-          created.push({
-            userId,
-            username,
-            tempPassword,
-            studentName: this.getStudentDisplayName(candidate),
-            schoolName: candidate.school_name,
-            grade: candidate.grade_label,
-            room: candidate.room_id,
-            temporaryPasswordIssuedAt: temporaryPasswordIssuedAt.toISOString(),
-            temporaryPasswordExpiresAt: temporaryPasswordExpiresAt.toISOString(),
-          });
-        } catch (error) {
-          if (!this.isUniqueViolation(error)) {
-            throw error;
-          }
-          this.logger.warn('Skipped duplicate student account during bulk generate');
-        }
-      }
-      return created;
-    });
-
-    if (credentials.length === 0) {
-      throw new ConflictException('ไม่มีนักเรียนที่ต้องสร้างบัญชี');
-    }
-
-    this.logger.log(`Generated ${credentials.length} student accounts by actor ${currentActor.id}`);
-
-    return {
-      success: true,
-      createdCount: credentials.length,
-      credentials,
-    };
-  }
-
   async getRoles(actor?: ActorContext) {
     if (!actor) {
       return await this.usersPolicyService.getRoleDefinitions();
@@ -1671,129 +1269,7 @@ export class UsersService {
     );
   }
 
-  private assertCanManageStudentAccounts(actor: ActorContext): void {
-    const permissions = new Set(actor.permissions || []);
-    if (
-      permissions.has('manage-student-accounts') ||
-      permissions.has('*') ||
-      permissions.has('ALL')
-    ) {
-      return;
-    }
-    throw new ForbiddenException('ไม่มีสิทธิ์สร้างบัญชีนักเรียน');
-  }
-
-  private normalizeStudentAccountFilters(
-    filters: StudentAccountSelectionFilterDto,
-    actorScope: DataScope | undefined,
-  ) {
-    if (actorScope?.own_only) {
-      throw new ForbiddenException('บัญชีส่วนตัวไม่สามารถสร้างบัญชีนักเรียนได้');
-    }
-    const studentIds = filters.studentIds?.length
-      ? Array.from(new Set(filters.studentIds))
-      : undefined;
-    const requestedLimit = Math.max(filters.limit ?? 50, studentIds?.length ?? 0);
-    const limit = Math.min(Math.max(requestedLimit, 1), STUDENT_ACCOUNT_BATCH_LIMIT);
-    const page = Math.max(filters.page ?? 1, 1);
-    const cleanString = (value: unknown): string | undefined =>
-      typeof value === 'string' && value.trim() ? value.trim() : undefined;
-    const grade = cleanString(filters.grade);
-    if (typeof filters.room === 'number' && !grade) {
-      throw new BadRequestException('กรุณาเลือกชั้นเรียนก่อนเลือกห้อง');
-    }
-    return {
-      actorScope,
-      schoolId: filters.schoolId,
-      province: cleanString(filters.province),
-      district: cleanString(filters.district),
-      subDistrict: cleanString(filters.subDistrict),
-      grade,
-      room: filters.room,
-      searchTerm: cleanString(filters.searchTerm),
-      studentIds,
-      onlyWithoutAccount: filters.onlyWithoutAccount !== false,
-      page,
-      limit,
-    };
-  }
-
-  private normalizeStudentAccountManagementFilters(
-    filters: StudentAccountListQueryDto & { userIds?: number[] },
-    actorScope: DataScope | undefined,
-  ): StudentAccountManagementFilters {
-    if (actorScope?.own_only) {
-      throw new ForbiddenException('บัญชีส่วนตัวไม่สามารถจัดการบัญชีนักเรียนได้');
-    }
-    const limit = Math.min(Math.max(filters.limit ?? 20, 1), STUDENT_ACCOUNT_BATCH_LIMIT);
-    const page = Math.max(filters.page ?? 1, 1);
-    const cleanString = (value: unknown): string | undefined =>
-      typeof value === 'string' && value.trim() ? value.trim() : undefined;
-    const grade = cleanString(filters.grade);
-    if (typeof filters.room === 'number' && !grade) {
-      throw new BadRequestException('กรุณาเลือกชั้นเรียนก่อนเลือกห้อง');
-    }
-    return {
-      actorScope,
-      userIds: filters.userIds,
-      searchTerm: cleanString(filters.searchTerm),
-      schoolId: filters.schoolId,
-      province: cleanString(filters.province),
-      district: cleanString(filters.district),
-      subDistrict: cleanString(filters.subDistrict),
-      grade,
-      room: filters.room,
-      accountStatus: filters.accountStatus,
-      onlyExpired: filters.onlyExpired === true,
-      page,
-      limit,
-    };
-  }
-
-  private async generateUniqueStudentUsername(
-    schoolId: number,
-    executor: QueryExecutor,
-  ): Promise<string> {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const suffix = Array.from(
-        { length: 5 },
-        () => USERNAME_ALPHABET[randomInt(0, USERNAME_ALPHABET.length)],
-      ).join('');
-      const username = `${schoolId}-${suffix}`;
-      if (!(await this.usersRepository.usernameExists(username, executor))) {
-        return username;
-      }
-    }
-    throw new BadRequestException('ไม่สามารถสุ่ม username ที่ไม่ซ้ำได้ กรุณาลองใหม่');
-  }
-
-  private getStudentDisplayName(candidate: StudentAccountCandidateRow): string {
-    return [candidate.first_name, candidate.last_name].filter(Boolean).join(' ') || '-';
-  }
-
-  private getStudentAccountManagementName(row: StudentAccountManagementRow): string {
-    return [row.first_name, row.last_name].filter(Boolean).join(' ') || '-';
-  }
-
-  private getStudentAccountStatus(
-    row: StudentAccountManagementRow,
-  ): 'PENDING_FIRST_LOGIN' | 'ACTIVE' | 'TEMP_PASSWORD_EXPIRED' | 'DISABLED' {
-    if (row.status !== 'ACTIVE') {
-      return 'DISABLED';
-    }
-    if (row.must_change_password === true) {
-      const expiresAt = row.temporary_password_expires_at
-        ? new Date(row.temporary_password_expires_at)
-        : null;
-      if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now()) {
-        return 'TEMP_PASSWORD_EXPIRED';
-      }
-      return 'PENDING_FIRST_LOGIN';
-    }
-    return 'ACTIVE';
-  }
-
-  private normalizeDeactivationReason(data: DeactivateStudentAccountDto): {
+  private normalizeDeactivationReason(data: DeactivateUserAccountDto): {
     reasonCode: AccountDeactivationReasonCode;
     note: string | null;
   } {
@@ -1824,55 +1300,6 @@ export class UsersService {
       return null;
     }
     return date.toISOString();
-  }
-
-  private toStudentAccountManagementResponse(row: StudentAccountManagementRow) {
-    const expiresAt = row.temporary_password_expires_at
-      ? new Date(row.temporary_password_expires_at)
-      : null;
-    const remainingSeconds =
-      expiresAt && !Number.isNaN(expiresAt.getTime())
-        ? Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000))
-        : null;
-    return {
-      userId: row.user_id,
-      username: row.username,
-      studentId: row.student_uuid,
-      studentName: this.getStudentAccountManagementName(row),
-      schoolId: row.school_id,
-      schoolName: row.school_name,
-      grade: row.grade_label,
-      gradeLevelId: row.grade_level_id,
-      room: row.room_id,
-      academicYear: row.academic_year,
-      semester: row.semester,
-      status: this.getStudentAccountStatus(row),
-      accountStatus: row.status || null,
-      mustChangePassword: row.must_change_password === true,
-      temporaryPasswordIssuedAt: this.toIsoString(row.temporary_password_issued_at),
-      temporaryPasswordExpiresAt: this.toIsoString(row.temporary_password_expires_at),
-      temporaryPasswordRemainingSeconds: remainingSeconds,
-      deactivatedAt: this.toIsoString(row.deactivated_at),
-      deactivatedBy: row.deactivated_by ?? null,
-      deactivationReasonCode: row.deactivation_reason_code ?? null,
-      deactivationNote: row.deactivation_note ?? null,
-      createdAt: this.toIsoString(row.created_at),
-    };
-  }
-
-  private toStudentAccountCandidateResponse(candidate: StudentAccountCandidateRow) {
-    return {
-      studentId: candidate.student_uuid,
-      studentName: this.getStudentDisplayName(candidate),
-      schoolId: candidate.school_id,
-      schoolName: candidate.school_name,
-      grade: candidate.grade_label,
-      room: candidate.room_id,
-      academicYear: candidate.academic_year,
-      semester: candidate.semester,
-      hasActiveAccount: candidate.existing_user_id !== null,
-      username: candidate.existing_username,
-    };
   }
 
   private isUniqueViolation(error: unknown): boolean {

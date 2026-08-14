@@ -47,9 +47,6 @@ export class TaskEntity {
   @Column({ name: 'status', type: 'text', default: 'IN_PROGRESS' })
   status!: string;
 
-  @Column({ name: 'max_delegation_depth', type: 'integer', default: 3 })
-  maxDelegationDepth!: number;
-
   @Column({ name: 'created_at', type: 'timestamp', nullable: true })
   createdAt!: Date | null;
 
@@ -74,17 +71,11 @@ export class TaskLinkEntity {
   @Column({ name: 'task_id', type: 'uuid' })
   taskId!: string;
 
-  @Column({ name: 'parent_link_id', type: 'uuid', nullable: true })
-  parentLinkId!: string | null;
-
   @Column({ name: 'token_hash', type: 'text', unique: true })
   tokenHash!: string;
 
   @Column({ name: 'magic_link', type: 'text', nullable: true })
   magicLink!: string | null;
-
-  @Column({ name: 'delegation_depth', type: 'integer', default: 0 })
-  delegationDepth!: number;
 
   @Column({ name: 'assigned_to_name', type: 'text', nullable: true })
   assignedToName!: string | null;
@@ -122,9 +113,6 @@ export class TaskLinkEntity {
 
   @Column({ name: 'subject', type: 'text', nullable: true })
   subject!: string | null;
-
-  @Column({ name: 'delegation_note', type: 'text', nullable: true })
-  delegationNote!: string | null;
 
   @Column({ name: 'status', type: 'text', default: 'ACTIVE' })
   status!: string;

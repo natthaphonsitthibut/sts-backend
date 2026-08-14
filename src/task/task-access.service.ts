@@ -18,11 +18,7 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
 import { TaskPolicyService } from './task-policy.service';
-import {
-  TaskRepository,
-  type LoginLinkListFilters,
-  type VisitLinkListFilters,
-} from './task.repository';
+import { TaskRepository, type LoginLinkListFilters } from './task.repository';
 import { getTaskErrorMessage, type ActorContext } from './task.types';
 import {
   buildPaginationMeta,
@@ -81,22 +77,10 @@ export class TaskAccessService {
       return { error: 'Link not yet open', status: 'SCHEDULED' };
     }
 
-    if (
-      link.status === 'COMPLETED' &&
-      link.task_type !== 'ATTENDANCE' &&
-      link.task_type !== 'LOGIN'
-    ) {
+    if (link.status === 'COMPLETED' && link.task_type !== 'LOGIN') {
       return { error: 'Task already completed', status: 'COMPLETED' };
     }
 
-    if (link.status === 'DELEGATED') {
-      return { error: 'Task already delegated', status: 'DELEGATED' };
-    }
-
-    const canDelegate =
-      Number(link.delegation_depth) < Number(link.max_delegation_depth) &&
-      link.status === 'ACTIVE' &&
-      !link.admin_locked;
     const hasEmailForOtp =
       typeof link.assigned_to_email === 'string' && link.assigned_to_email.trim().length > 0;
     const sessionVerified = !link.otp_verified
@@ -124,13 +108,9 @@ export class TaskAccessService {
       assigned_to_name: link.assigned_to_name,
       assigned_to_first_name: link.assigned_to_first_name ?? null,
       assigned_to_last_name: link.assigned_to_last_name ?? null,
-      delegation_depth: link.delegation_depth,
-      max_delegation_depth: link.max_delegation_depth,
-      can_delegate: canDelegate,
       status: link.status,
       opens_at: link.opens_at ?? null,
       expires_at: link.expires_at,
-      delegation_note: link.delegation_note ?? null,
       assignment_note: link.assignment_note ?? null,
       created_at: link.created_at ?? null,
       subject: link.subject,
@@ -196,18 +176,6 @@ export class TaskAccessService {
             }))
           : [];
       }
-    }
-
-    if (link.task_type === 'ATTENDANCE') {
-      const slots = await this.taskRepository.listLinkedTimetableSlots(String(link.id));
-      result.timetable_slots = slots.map((slot) => ({
-        id: Number(slot.id),
-        day_of_week: Number(slot.day_of_week),
-        period: Number(slot.period),
-        subject_id: Number(slot.subject_id),
-        subject_name_th: typeof slot.subject_name_th === 'string' ? slot.subject_name_th : null,
-        teacher_name: typeof slot.teacher_name === 'string' ? slot.teacher_name : null,
-      }));
     }
 
     return result;
@@ -308,40 +276,6 @@ export class TaskAccessService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`getLoginLinks error: ${message}`);
-      throw err;
-    }
-  }
-
-  async getVisitLinks(actor?: ActorContext, filters: Partial<VisitLinkListFilters> = {}) {
-    try {
-      const currentActor = this.taskPolicyService.ensureActor(actor);
-      const page = resolvePage(filters.page);
-      const limit = resolveLimit(filters.limit);
-      const { rows, totalCount, summary } = await this.taskRepository.listVisitLinksPaginated(
-        currentActor,
-        {
-          status: filters.status,
-          searchTerm: filters.searchTerm,
-          province: filters.province,
-          district: filters.district,
-          subDistrict: filters.subDistrict,
-          schoolId: filters.schoolId,
-          gradeLevelId: filters.gradeLevelId,
-          room: filters.room,
-          page,
-          limit,
-        },
-      );
-
-      return {
-        success: true,
-        data: rows,
-        meta: buildPaginationMeta(page, limit, totalCount),
-        summary,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`getVisitLinks error: ${message}`);
       throw err;
     }
   }
@@ -474,12 +408,8 @@ export class TaskAccessService {
       if (!link) {
         throw new Error('Link not found');
       }
-      if (
-        link.task_type !== 'LOGIN' &&
-        link.task_type !== 'ATTENDANCE' &&
-        link.task_type !== 'VISIT'
-      ) {
-        throw new Error('Only ATTENDANCE and VISIT links can be changed by admin');
+      if (link.task_type !== 'LOGIN' && link.task_type !== 'VISIT') {
+        throw new Error('Only VISIT and LOGIN links can be changed by admin');
       }
       if (link.status !== 'ACTIVE') {
         throw new Error('Only ACTIVE links can be changed by admin');
@@ -574,7 +504,7 @@ export class TaskAccessService {
    * page can render and manage it. Same scope gate as adminLockLink. Returns an
    * explicit shape (never the raw row) so token_hash / otp are never leaked.
    */
-  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string, date?: string) {
+  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string) {
     try {
       const currentActor = this.taskPolicyService.ensureActor(actor);
       const link = await this.taskRepository.findLinkDetailById(linkId);
@@ -606,24 +536,6 @@ export class TaskAccessService {
             ? 'SCHEDULED'
             : 'ACTIVE';
 
-      const schoolId =
-        typeof link.target_school_id === 'number'
-          ? link.target_school_id
-          : typeof link.target_school_id === 'string' && link.target_school_id.trim().length > 0
-            ? Number.parseInt(link.target_school_id, 10)
-            : null;
-
-      const records =
-        link.task_type === 'ATTENDANCE' && typeof date === 'string' && date.trim().length > 0
-          ? await this.taskRepository.listTaskHistory(
-              date,
-              typeof link.target_grade === 'string' ? link.target_grade : null,
-              typeof link.target_room === 'string' ? link.target_room : null,
-              Number.isInteger(schoolId) ? schoolId : null,
-              typeof link.id === 'string' ? link.id : null,
-            )
-          : [];
-
       return {
         link_id: link.id,
         task_id: link.task_id,
@@ -647,7 +559,6 @@ export class TaskAccessService {
         login_role_label: link.login_role_label ?? null,
         login_permissions: link.login_permissions ?? [],
         login_data_scope: link.login_data_scope ?? {},
-        records,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

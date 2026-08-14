@@ -5,7 +5,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import { isRestrictedExecutive } from '../auth/permissions.constants';
@@ -14,15 +13,12 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
-import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
-
-const CASE_SLA_REMINDER_CRON = '0 45 4 * * *';
 
 @Injectable()
 export class CaseService {
@@ -262,12 +258,12 @@ export class CaseService {
         metadata: { schoolId: mapped.school_id },
         ip: null,
       });
-      await this.notificationsService.notifyCaseCreated({
+      await this.notificationsService.notifyCaseStatusChanged({
         caseId: result.caseId,
         studentName: mapped.student_name || null,
         schoolId: mapped.school_id,
-        schoolName: mapped.student_school,
-        reason: mapped.reason_flagged ?? reason,
+        nextStatus: 'OPEN',
+        actorUserId: resolveAuditActorId(currentActor),
       });
       await this.riskProfileService
         ?.requestStudentRecalculation([studentUuid], 'case-open')
@@ -313,52 +309,6 @@ export class CaseService {
         risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
       },
     };
-  }
-
-  async remindCaseSla(now = new Date()): Promise<{ warned: number; breached: number }> {
-    const warnings = await this.taskRepository.claimCaseSlaWarnings(now);
-    const breaches = await this.taskRepository.claimCaseSlaBreaches(now);
-
-    for (const row of warnings) {
-      await this.notificationsService.notifyCaseSlaWarning({
-        caseId: row.id,
-        studentName: row.student_name,
-        schoolId: row.school_id,
-        riskTier: row.risk_tier,
-        dueAt: row.sla_due_at,
-      });
-    }
-
-    for (const row of breaches) {
-      await this.notificationsService.notifyCaseSlaBreached({
-        caseId: row.id,
-        studentName: row.student_name,
-        schoolId: row.school_id,
-        riskTier: row.risk_tier,
-        dueAt: row.sla_due_at,
-      });
-    }
-
-    if (warnings.length > 0 || breaches.length > 0) {
-      this.logger.log(
-        `Sent ${warnings.length} case SLA warning(s) and ${breaches.length} breach escalation(s).`,
-      );
-    }
-
-    return { warned: warnings.length, breached: breaches.length };
-  }
-
-  @Cron(CASE_SLA_REMINDER_CRON, {
-    timeZone: BANGKOK_TIME_ZONE,
-    name: 'case_sla_reminder',
-  })
-  async runCaseSlaReminder(): Promise<void> {
-    try {
-      await this.remindCaseSla();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Case SLA reminder job failed: ${message}`);
-    }
   }
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {

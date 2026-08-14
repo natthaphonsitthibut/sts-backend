@@ -88,9 +88,6 @@ describe('CaseService', () => {
     };
     notificationsService = {
       notifyCaseStatusChanged: jest.fn().mockResolvedValue(undefined),
-      notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
-      notifyCaseSlaWarning: jest.fn().mockResolvedValue(undefined),
-      notifyCaseSlaBreached: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new CaseService(
@@ -155,7 +152,7 @@ describe('CaseService', () => {
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CASE_CREATE', targetId: '10' }),
     );
-    expect(notificationsService.notifyCaseCreated).toHaveBeenCalled();
+    expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalled();
   });
 
   it('returns the existing active case instead of creating a duplicate', async () => {
@@ -172,7 +169,7 @@ describe('CaseService', () => {
     expect(result.created).toBe(false);
     expect(taskRepository.createCase).not.toHaveBeenCalled();
     expect(auditLog.record).not.toHaveBeenCalled();
-    expect(notificationsService.notifyCaseCreated).not.toHaveBeenCalled();
+    expect(notificationsService.notifyCaseStatusChanged).not.toHaveBeenCalled();
   });
 
   it('separates system risk signals from human review history', async () => {
@@ -437,53 +434,5 @@ describe('CaseService', () => {
 
     expect(taskRepository.findCaseById).not.toHaveBeenCalled();
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
-  });
-
-  it('notifies claimed case SLA warnings and breaches once', async () => {
-    const dueAt = new Date('2026-07-10T00:00:00.000Z');
-    taskRepository.claimCaseSlaWarnings.mockResolvedValueOnce([
-      {
-        id: 101,
-        student_name: 'สมชาย ใจดี',
-        school_id: 10010002,
-        risk_tier: 'MEDIUM',
-        sla_due_at: dueAt,
-      },
-    ]);
-    taskRepository.claimCaseSlaBreaches.mockResolvedValueOnce([
-      {
-        id: 102,
-        student_name: 'สมหญิง ดีใจ',
-        school_id: 10010002,
-        risk_tier: 'HIGH',
-        sla_due_at: dueAt,
-      },
-    ]);
-
-    const result = await service.remindCaseSla(new Date('2026-07-09T00:00:00.000Z'));
-
-    expect(result).toEqual({ warned: 1, breached: 1 });
-    expect(notificationsService.notifyCaseSlaWarning).toHaveBeenCalledWith({
-      caseId: 101,
-      studentName: 'สมชาย ใจดี',
-      schoolId: 10010002,
-      riskTier: 'MEDIUM',
-      dueAt,
-    });
-    expect(notificationsService.notifyCaseSlaBreached).toHaveBeenCalledWith({
-      caseId: 102,
-      studentName: 'สมหญิง ดีใจ',
-      schoolId: 10010002,
-      riskTier: 'HIGH',
-      dueAt,
-    });
-    expect(auditLog.record).not.toHaveBeenCalled();
-
-    taskRepository.claimCaseSlaWarnings.mockResolvedValueOnce([]);
-    taskRepository.claimCaseSlaBreaches.mockResolvedValueOnce([]);
-    await expect(service.remindCaseSla(new Date('2026-07-09T00:00:00.000Z'))).resolves.toEqual({
-      warned: 0,
-      breached: 0,
-    });
   });
 });

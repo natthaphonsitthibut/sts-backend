@@ -183,11 +183,6 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
       this.runtimeQueueConfig ?? {
         redisUrl: undefined,
         requireRedis: false,
-        studentAccountBatch: {
-          queueName: 'student-account-batch',
-          attempts: 3,
-          backoffMs: 30_000,
-        },
         riskProfile: {
           queueName: 'student-risk-profile',
           attempts: 3,

@@ -934,22 +934,23 @@ async function assertSubmittedReport(dataSource, createdLink) {
     'Uploaded visit evidence was not persisted in private attachment storage',
   );
 
-  // One submission must not tell a single person about it twice, even though it
-  // raises both a case-status and a task-submitted notification type.
+  // A case can legitimately emit one notification per workflow transition.
+  // What must never happen is duplicate delivery of the same status event to
+  // the same recipient.
   const duplicateRecipients = await dataSource.query(
     `
       SELECT recipient_user_id, COUNT(*)::int AS notification_count
       FROM notifications
       WHERE (case_id = (SELECT case_id FROM tasks WHERE id = $1) OR ref_id = $1::text)
-        AND type_code IN ('CASE_STATUS_CHANGED', 'TASK_SUBMITTED')
-      GROUP BY recipient_user_id
+        AND type_code = 'CASE_STATUS_CHANGED'
+      GROUP BY recipient_user_id, case_status_code
       HAVING COUNT(*) > 1
     `,
     [createdLink.task_id],
   );
   assert(
     duplicateRecipients.length === 0,
-    `One submission produced duplicate notifications for ${duplicateRecipients.length} recipient(s)`,
+    `One status transition produced duplicate notifications for ${duplicateRecipients.length} recipient/status pair(s)`,
   );
 }
 
@@ -1223,42 +1224,6 @@ async function main() {
     assert(
       guardedLocations.status === 404,
       `Attendance module still exposes an ungated locations route (${guardedLocations.status})`,
-    );
-
-    await navigate(client, `${guestLink}/delegate`, 'delegate visit');
-    await waitFor(
-      async () =>
-        Boolean(
-          await evaluate(
-            client,
-            `[
-              '#delegate-first-name',
-              '#delegate-last-name',
-              '#delegate-phone',
-              '#delegate-email',
-              '#delegate-note',
-              '#delegate-expiry-date',
-              '#delegate-expiry-time'
-            ].every((selector) => Boolean(document.querySelector(selector)))`,
-          ),
-        ),
-      'Delegation form did not render structured assignee and expiry fields',
-    );
-    await click(
-      client,
-      `([...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ย้อนกลับ'))`,
-      'Delegation back button was not found',
-    );
-    await waitFor(
-      async () =>
-        Boolean(
-          await evaluate(
-            client,
-            `Boolean(document.querySelector('#visited-time')) &&
-             document.body.innerText.includes('ขั้นตอนการติดตาม')`,
-          ),
-        ),
-      'Delegation back button did not return to the report form',
     );
 
     await selectHomeVisitException(client, 'เปลี่ยนที่อยู่');

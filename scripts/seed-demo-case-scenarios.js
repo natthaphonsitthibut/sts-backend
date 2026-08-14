@@ -103,13 +103,11 @@ async function main() {
       );
       await manager.query(
         `INSERT INTO tasks (
-           id, case_id, status, max_delegation_depth, task_type, target_school_id,
-           created_by, updated_by
-         ) VALUES ($1, $2, 'PENDING_REVIEW', 2, 'VISIT', $3, $4, $4)
+           id, case_id, status, task_type, target_school_id, created_by, updated_by
+         ) VALUES ($1, $2, 'PENDING_REVIEW', 'VISIT', $3, $4, $4)
          ON CONFLICT (id) DO UPDATE SET
            case_id = EXCLUDED.case_id,
            status = EXCLUDED.status,
-           max_delegation_depth = EXCLUDED.max_delegation_depth,
            task_type = EXCLUDED.task_type,
            target_school_id = EXCLUDED.target_school_id,
            created_by = EXCLUDED.created_by,
@@ -118,10 +116,10 @@ async function main() {
       );
       await manager.query(
         `INSERT INTO task_links (
-           id, task_id, token_hash, delegation_depth, assigned_to_name,
+           id, task_id, token_hash, assigned_to_name,
            assigned_to_phone, assigned_to_email, subject, status, expires_at,
            created_by, updated_by
-         ) VALUES ($1, $2, $3, 0, $4, $5, $6, $7, 'COMPLETED', NOW() + INTERVAL '30 days', $8, $8)
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', NOW() + INTERVAL '30 days', $7, $7)
          ON CONFLICT (id) DO UPDATE SET
            task_id = EXCLUDED.task_id,
            assigned_to_name = EXCLUDED.assigned_to_name,

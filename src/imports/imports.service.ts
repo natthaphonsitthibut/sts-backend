@@ -15,7 +15,6 @@ import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { normalizeScalar } from '../common/utils/helpers';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
-import { NotificationsService } from '../notifications/notifications.service';
 import { maskPiiValue } from '../students/pii-fields.config';
 import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
 import { ImportsRepository, type QuarantineLookupRow } from './imports.repository';
@@ -244,7 +243,6 @@ export class ImportsService {
   constructor(
     private readonly importsRepository: ImportsRepository,
     private readonly auditLog: AuditLogService,
-    private readonly notificationsService?: NotificationsService,
   ) {}
 
   getCatalog(actor: AuthenticatedRequestUser) {
@@ -2442,28 +2440,12 @@ export class ImportsService {
         );
         return result;
       });
-      if (actorUserId !== null) {
-        await this.notificationsService?.notifyImportCompleted({
-          batchId,
-          actorUserId,
-          targetLabel: this.getTargetLabel(validTarget),
-          importedRows: result.rowsInserted + result.rowsUpdated,
-          quarantinedRows: result.rowsQuarantined,
-        });
-      }
       return result;
     } catch (error) {
       try {
         await this.importsRepository.failImportBatch(batchId);
       } catch {
         this.logger.error(`Failed to persist FAILED status for ${validTarget} import batch`);
-      }
-      if (actorUserId !== null) {
-        await this.notificationsService?.notifyImportFailed({
-          batchId,
-          actorUserId,
-          targetLabel: this.getTargetLabel(validTarget),
-        });
       }
       throw error;
     }

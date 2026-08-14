@@ -41,7 +41,7 @@ describe('AbsenceMonitorService', () => {
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
-  let notificationsService: jest.Mocked<Pick<NotificationsService, 'notifyCaseCreated'>>;
+  let notificationsService: jest.Mocked<Pick<NotificationsService, 'notifyCaseStatusChanged'>>;
   let riskProfileService: jest.Mocked<Pick<RiskProfileService, 'requestStudentRecalculation'>>;
 
   beforeEach(() => {
@@ -67,7 +67,7 @@ describe('AbsenceMonitorService', () => {
       record: jest.fn().mockResolvedValue(undefined),
     };
     notificationsService = {
-      notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
+      notifyCaseStatusChanged: jest.fn().mockResolvedValue(undefined),
     };
     riskProfileService = {
       requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
@@ -130,7 +130,7 @@ describe('AbsenceMonitorService', () => {
       undefined,
     );
     expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
-    expect(notificationsService.notifyCaseCreated).not.toHaveBeenCalled();
+    expect(notificationsService.notifyCaseStatusChanged).not.toHaveBeenCalled();
   });
 
   it('notifies eligible staff after creating an absence case', async () => {
@@ -156,12 +156,12 @@ describe('AbsenceMonitorService', () => {
         school_id: 10010002,
       },
     ]);
-    expect(notificationsService.notifyCaseCreated).toHaveBeenCalledWith({
+    expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalledWith({
       caseId: 77,
       studentName: 'สมชาย ใจดี',
       schoolId: 10010002,
-      schoolName: 'โรงเรียนทดสอบ',
-      reason: 'ขาดเรียนหลังปิดเคสล่าสุด 7 วัน',
+      nextStatus: 'OPEN',
+      actorUserId: null,
     });
     const createdInput = automationRepository.createAutomatedCase.mock.calls[0]?.[0];
     expect(createdInput?.riskTier).toBe('HIGH');

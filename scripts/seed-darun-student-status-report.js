@@ -454,9 +454,9 @@ async function main() {
         const taskId = existingTask?.id ?? (
           await manager.query(
             `INSERT INTO tasks (
-               case_id, status, max_delegation_depth, task_type,
+               case_id, status, task_type,
                target_school_id, target_grade, target_room, created_by, updated_by
-             ) VALUES ($1, $2, 2, 'VISIT', $3, $4, $5, $6, $6)
+             ) VALUES ($1, $2, 'VISIT', $3, $4, $5, $6, $6)
              RETURNING id`,
             [caseId, scenario.taskStatus, school.id, student.grade, student.room, student.teacher_user_id],
           )
@@ -494,10 +494,10 @@ async function main() {
           linkId = (
             await manager.query(
               `INSERT INTO task_links (
-                 task_id, token_hash, token_encrypted, delegation_depth, assigned_to_name,
+                 task_id, token_hash, token_encrypted, assigned_to_name,
                  assigned_to_first_name, assigned_to_last_name, assigned_to_email,
                  subject, status, expires_at, created_by, updated_by
-               ) VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
                RETURNING id`,
               [
                 taskId,

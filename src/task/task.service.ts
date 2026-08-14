@@ -5,20 +5,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { hashToken } from '../common/utils/helpers';
 import { isRestrictedExecutive } from '../auth/permissions.constants';
-import type { CreateTaskDto, SaveTaskAttendanceDto, SaveTaskSubmissionDto } from './dto/task.dto';
+import { hashToken } from '../common/utils/helpers';
+import type { CreateTaskDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
 import { TaskReadService } from './task-read.service';
 import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
-import type {
-  CaseListFilters,
-  LoginLinkListFilters,
-  VisitLinkListFilters,
-} from './task.repository';
+import type { CaseListFilters, LoginLinkListFilters } from './task.repository';
 import type { ActorContext, RiskDashboardFilters } from './task.types';
 
 @Injectable()
@@ -102,13 +98,6 @@ export class TaskService {
     return await this.taskAccessService.getLoginLinks(actor, filters);
   }
 
-  async getVisitLinks(actor?: ActorContext, filters: Partial<VisitLinkListFilters> = {}) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
-    return await this.taskAccessService.getVisitLinks(actor, filters);
-  }
-
   async findCaseForActor(caseId: number, actor?: ActorContext) {
     if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
@@ -120,24 +109,8 @@ export class TaskService {
     return await this.taskLifecycleService.deleteTask(taskId, actor, ip);
   }
 
-  async getTaskStudents(token: string) {
-    return await this.taskReadService.getTaskStudents(token);
-  }
-
-  async getTaskHistory(token: string, date: string) {
-    return await this.taskReadService.getTaskHistory(token, date);
-  }
-
   async getTaskChain(actor: ActorContext | undefined, taskId: string) {
     return await this.taskReadService.getTaskChain(actor, taskId);
-  }
-
-  async saveTaskAttendance(
-    token: string,
-    data: SaveTaskAttendanceDto | SaveTaskAttendanceDto['records'],
-    sessionToken?: string,
-  ) {
-    return await this.taskSubmissionService.saveTaskAttendance(token, data, sessionToken);
   }
 
   async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto, sessionToken?: string) {
@@ -163,8 +136,8 @@ export class TaskService {
     return await this.taskAccessService.adminLockLink(actor, linkId, action, reason);
   }
 
-  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string, date?: string) {
-    return await this.taskAccessService.getAdminLinkDetail(actor, linkId, date);
+  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string) {
+    return await this.taskAccessService.getAdminLinkDetail(actor, linkId);
   }
 
   async getCases(actor?: ActorContext, filters: CaseListFilters = {}) {

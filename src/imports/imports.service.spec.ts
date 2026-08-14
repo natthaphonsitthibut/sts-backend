@@ -1027,7 +1027,7 @@ describe('ImportsService', () => {
     const service = new ImportsService(
       repository as never,
       auditLog as never,
-      notificationsService as never,
+      notificationsService,
     );
     const file = makeImportFile([
       {
@@ -1075,14 +1075,7 @@ describe('ImportsService', () => {
       rowsUpdated: 0,
       rowsQuarantined: 0,
     });
-    expect(notificationsService.notifyImportCompleted).toHaveBeenNthCalledWith(1, {
-      batchId: 'batch-id',
-      actorUserId: 1,
-      targetLabel: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
-      importedRows: 2,
-      quarantinedRows: 0,
-    });
-    expect(notificationsService.notifyImportCompleted).toHaveBeenCalledTimes(2);
+    expect(notificationsService.notifyImportCompleted).not.toHaveBeenCalled();
     expect(notificationsService.notifyImportFailed).not.toHaveBeenCalled();
   });
 
@@ -1166,7 +1159,7 @@ describe('ImportsService', () => {
     const service = new ImportsService(
       repository as never,
       auditLog as never,
-      notificationsService as never,
+      notificationsService,
     );
     const file = makeImportFile([
       {
@@ -1187,11 +1180,7 @@ describe('ImportsService', () => {
     expect(repository.failImportBatch).toHaveBeenCalledWith('batch-id');
     expect(repository.completeImportBatch).not.toHaveBeenCalled();
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
-    expect(notificationsService.notifyImportFailed).toHaveBeenCalledWith({
-      batchId: 'batch-id',
-      actorUserId: 1,
-      targetLabel: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
-    });
+    expect(notificationsService.notifyImportFailed).not.toHaveBeenCalled();
     expect(notificationsService.notifyImportCompleted).not.toHaveBeenCalled();
   });
 

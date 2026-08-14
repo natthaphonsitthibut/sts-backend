@@ -6,7 +6,6 @@ import {
   Delete,
   Body,
   Param,
-  Query,
   Req,
   HttpException,
   HttpStatus,
@@ -15,17 +14,11 @@ import {
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
 import type { Request } from 'express';
-import { AuthGuard, CurrentUser, PermissionsGuard, Public, RequirePermission } from '../auth';
+import { AuthGuard, CurrentUser, Public } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
-import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
 import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decorators';
-import {
-  CreateTaskDto,
-  GetVisitLinksQueryDto,
-  SaveTaskAttendanceDto,
-  SaveTaskSubmissionDto,
-} from './dto/task.dto';
+import { CreateTaskDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import {
   getHeaderValue,
   getTaskErrorMessage,
@@ -69,24 +62,6 @@ export class TaskController {
     return { data: await this.taskService.getVisitAssignees(req.user, studentId) };
   }
 
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
-  @Get('visit-links')
-  async getVisitLinks(@Req() req: RequestWithActor, @Query() query: GetVisitLinksQueryDto) {
-    return await this.taskService.getVisitLinks(req.user, {
-      status: query.status,
-      searchTerm: query.searchTerm?.trim() || undefined,
-      province: query.province?.trim() || undefined,
-      district: query.district?.trim() || undefined,
-      subDistrict: query.subDistrict?.trim() || undefined,
-      schoolId: query.schoolId,
-      gradeLevelId: query.gradeLevelId,
-      room: query.room?.trim() || undefined,
-      page: query.page,
-      limit: query.limit,
-    });
-  }
-
   @Public()
   @Get(':token')
   async getTask(@Param('token') token: string, @Req() req: Request) {
@@ -101,19 +76,6 @@ export class TaskController {
     return task;
   }
 
-  @Public()
-  @Get(':token/students')
-  async getTaskStudents(@Param('token') token: string) {
-    return await this.taskService.getTaskStudents(token);
-  }
-
-  @Public()
-  @Get(':token/history')
-  async getTaskHistory(@Param('token') token: string, @Query('date') date: string) {
-    const targetDate = date || getBangkokDateString();
-    return await this.taskService.getTaskHistory(token, targetDate);
-  }
-
   @Get(':taskId/chain')
   @UseGuards(AuthGuard)
   async getTaskChain(
@@ -125,17 +87,6 @@ export class TaskController {
       throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
     }
     return result;
-  }
-
-  @Public()
-  @Post(':token/attendance')
-  async saveTaskAttendance(
-    @Param('token') token: string,
-    @Body() body: SaveTaskAttendanceDto,
-    @Req() req: Request,
-  ) {
-    const sessionToken = getHeaderValue(req.headers['x-magic-session']);
-    return await this.taskService.saveTaskAttendance(token, body, sessionToken);
   }
 
   @Public()

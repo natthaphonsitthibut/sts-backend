@@ -23,7 +23,6 @@ function buildActor(): AuthenticatedRequestUser {
 
 describe('TaskLifecycleService', () => {
   const studentUuid = '11111111-1111-4111-8111-111111111111';
-  const followUpRequestId = '22222222-2222-4222-8222-222222222222';
   let service: TaskLifecycleService;
   let taskRepository: jest.Mocked<
     Pick<
@@ -38,8 +37,6 @@ describe('TaskLifecycleService', () => {
       | 'updateCaseStatus'
       | 'createTask'
       | 'createTaskLink'
-      | 'listTimetableSlotsForTaskLink'
-      | 'insertTaskLinkTimetableSlots'
       | 'lockFollowUpTaskAssignment'
       | 'markFollowUpTaskAssigned'
     >
@@ -71,8 +68,6 @@ describe('TaskLifecycleService', () => {
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       createTask: jest.fn().mockResolvedValue(undefined),
       createTaskLink: jest.fn().mockResolvedValue(undefined),
-      listTimetableSlotsForTaskLink: jest.fn().mockResolvedValue([]),
-      insertTaskLinkTimetableSlots: jest.fn().mockResolvedValue(undefined),
       lockFollowUpTaskAssignment: jest.fn().mockResolvedValue(null),
       markFollowUpTaskAssigned: jest.fn().mockResolvedValue(true),
     };
@@ -412,7 +407,7 @@ describe('TaskLifecycleService', () => {
     ).rejects.toThrow('อายุลิงก์ต้องไม่เกิน 90 วัน');
   });
 
-  it('refuses to create a per-classroom attendance link now that teacher links replace them', async () => {
+  it('refuses to create a retired link type such as the per-classroom attendance link', async () => {
     await expect(
       service.createTask(
         buildActor(),
@@ -422,31 +417,10 @@ describe('TaskLifecycleService', () => {
           target_school_id: 10010002,
           target_grade: 'ม.6',
           target_room: '1',
-          subject_id: 5,
-          timetable_slot_ids: [11],
         },
         'https://app.example.invalid',
       ),
-    ).rejects.toThrow('ลิงก์เช็คชื่อรายห้องถูกยกเลิกแล้ว');
+    ).rejects.toThrow('ประเภทลิงก์นี้ถูกยกเลิกแล้ว');
     expect(taskRepository.createTaskLink).not.toHaveBeenCalled();
-    expect(taskRepository.insertTaskLinkTimetableSlots).not.toHaveBeenCalled();
-  });
-
-  it('rejects the retired follow-up request field instead of ignoring it', async () => {
-    await expect(
-      service.createTask(
-        buildActor(),
-        {
-          task_type: 'VISIT',
-          assigned_to_name: 'ครูผู้ติดตาม',
-          student_id: studentUuid,
-          student_name: 'เด็กทดสอบ',
-          target_school_id: 10010002,
-          follow_up_request_id: followUpRequestId,
-        },
-        'https://app.example.invalid',
-      ),
-    ).rejects.toThrow('ระบบไม่รองรับคำขอติดตามแล้ว');
-    expect(taskRepository.createTask).not.toHaveBeenCalled();
   });
 });

@@ -82,27 +82,6 @@ export interface LoginLinkSummary {
   scheduled: number;
 }
 
-export interface VisitLinkListFilters {
-  status?: string;
-  searchTerm?: string;
-  province?: string;
-  district?: string;
-  subDistrict?: string;
-  schoolId?: number;
-  gradeLevelId?: number;
-  room?: string;
-  page?: number;
-  limit?: number;
-}
-
-export interface VisitLinkSummary {
-  total: number;
-  active: number;
-  locked: number;
-  expired: number;
-  scheduled: number;
-}
-
 interface CreateCaseInput {
   studentName: string;
   studentFirstName: string | null;
@@ -135,11 +114,9 @@ interface CreateTaskInput {
 interface CreateTaskLinkInput {
   linkId: string;
   taskId: string;
-  parentLinkId: string | null;
   tokenHash: string;
   /** AES-256-GCM ciphertext of the raw token (see TokenEncryptionService). */
   tokenEncrypted: string;
-  delegationDepth: number;
   assignedToName: string;
   assignedToFirstName: string | null;
   assignedToLastName: string | null;
@@ -149,7 +126,6 @@ interface CreateTaskLinkInput {
   /** Optional future open time; null = usable immediately. */
   opensAt: string | null;
   subject: string | null;
-  delegationNote: string | null;
   assignmentNote: string | null;
   subjectId: number | null;
   otpVerified: number;
@@ -159,44 +135,11 @@ interface CreateTaskLinkInput {
   loginDataScope: DataScope | Record<string, unknown>;
 }
 
-export interface FollowUpTaskAssignmentRow extends QueryResultRow {
-  id: string;
-  student_uuid: string;
-  school_id: number | string;
-  status: string;
-  assigned_task_id: string | null;
-  assigned_by: number | string | null;
-  assigned_at: Date | string | null;
-  assigned_case_id: number | string | null;
-  opened_case_id: number | string | null;
-  assigned_link_token_encrypted: string | null;
-  assigned_link_expires_at: Date | string | null;
-}
-
 export interface VisitAssigneeRow extends QueryResultRow {
   teacher_user_id: number | string;
   display_name: string;
   email: string | null;
   is_homeroom: boolean;
-}
-
-interface TaskLinkTimetableSlotRow extends QueryResultRow {
-  id: number | string;
-  school_id: number | string;
-  grade_level_id: number | string;
-  grade_label: string;
-  room_no: number | string;
-  subject_id: number | string;
-  subject_name_th?: string | null;
-  teacher_name?: string | null;
-  day_of_week: number | string;
-  period: number | string;
-}
-
-interface TaskStudentFilters {
-  targetGrade?: string | null;
-  targetRoom?: string | null;
-  targetSchoolId?: number | null;
 }
 
 interface TaskSubmissionInput {
@@ -1077,10 +1020,8 @@ export class TaskRepository {
       INSERT INTO task_links (
         id,
         task_id,
-        parent_link_id,
         token_hash,
         token_encrypted,
-        delegation_depth,
         assigned_to_name,
         assigned_to_first_name,
         assigned_to_last_name,
@@ -1088,7 +1029,6 @@ export class TaskRepository {
         assigned_to_email,
         expires_at,
         subject,
-        delegation_note,
         assignment_note,
         subject_id,
         otp_verified,
@@ -1115,23 +1055,18 @@ export class TaskRepository {
         $13,
         $14,
         $15,
+        $15,
         $16,
         $17,
         $18,
-        $18,
-        $19,
-        $20,
-        $21,
-        $22
+        $19
       )
     `,
       [
         data.linkId,
         data.taskId,
-        data.parentLinkId,
         data.tokenHash,
         data.tokenEncrypted,
-        data.delegationDepth,
         data.assignedToName,
         data.assignedToFirstName,
         data.assignedToLastName,
@@ -1139,7 +1074,6 @@ export class TaskRepository {
         data.assignedToEmail,
         data.expiresAt,
         data.subject,
-        data.delegationNote,
         data.assignmentNote,
         data.subjectId,
         data.otpVerified,
@@ -1150,150 +1084,6 @@ export class TaskRepository {
         data.opensAt,
       ],
     );
-  }
-
-  async lockFollowUpTaskAssignment(
-    requestId: string,
-    executor: QueryExecutor,
-  ): Promise<FollowUpTaskAssignmentRow | null> {
-    const result = await executor.query<FollowUpTaskAssignmentRow>(
-      `SELECT request.id,
-              request.student_uuid::text,
-              request.school_id,
-              request.status,
-              request.assigned_task_id::text,
-              request.assigned_by,
-              request.assigned_at,
-              request.opened_case_id,
-              task.case_id AS assigned_case_id,
-              root_link.token_encrypted AS assigned_link_token_encrypted,
-              root_link.expires_at AS assigned_link_expires_at
-       FROM student_follow_up_requests request
-       LEFT JOIN tasks task
-         ON task.id = request.assigned_task_id
-        AND task.deleted_at IS NULL
-       LEFT JOIN LATERAL (
-         SELECT link.token_encrypted, link.expires_at
-         FROM task_links link
-         WHERE link.task_id = request.assigned_task_id
-           AND link.parent_link_id IS NULL
-           AND link.deleted_at IS NULL
-         ORDER BY link.created_at ASC, link.id ASC
-         LIMIT 1
-       ) root_link ON TRUE
-       WHERE request.id = $1
-       LIMIT 1
-       FOR UPDATE OF request`,
-      [requestId],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async markFollowUpTaskAssigned(
-    requestId: string,
-    taskId: string,
-    actorId: number,
-    executor: QueryExecutor,
-  ): Promise<boolean> {
-    const result = await executor.query(
-      `UPDATE student_follow_up_requests
-       SET assigned_task_id = $2,
-           assigned_by = $3,
-           assigned_at = now(),
-           revision_number = revision_number + 1
-       WHERE id = $1
-         AND status = 'APPROVED'
-         AND assigned_task_id IS NULL
-       RETURNING id`,
-      [requestId, taskId, actorId],
-    );
-    return (result.rowCount ?? result.rows.length) === 1;
-  }
-
-  async listTimetableSlotsForTaskLink(
-    slotIds: number[],
-    executor?: QueryExecutor,
-  ): Promise<TaskLinkTimetableSlotRow[]> {
-    if (slotIds.length === 0) {
-      return [];
-    }
-
-    const result = await this.getExecutor(executor).query<TaskLinkTimetableSlotRow>(
-      `
-        SELECT
-          ts.id,
-          ts.school_id,
-          ts.grade_level_id,
-          gl.label AS grade_label,
-          ts.room_no,
-          ts.subject_id,
-          ts.day_of_week,
-          ts.period
-        FROM timetable_slots ts
-        JOIN grade_levels gl ON gl.id = ts.grade_level_id
-        WHERE ts.id = ANY($1::bigint[])
-          AND ts.deleted_at IS NULL
-        ORDER BY array_position($1::bigint[], ts.id)
-      `,
-      [slotIds],
-    );
-    return result.rows;
-  }
-
-  async insertTaskLinkTimetableSlots(
-    linkId: string,
-    slotIds: number[],
-    actorUserId: number | null,
-    executor?: QueryExecutor,
-  ): Promise<void> {
-    if (slotIds.length === 0) {
-      return;
-    }
-
-    await this.getExecutor(executor).query(
-      `
-        INSERT INTO task_link_timetable_slots (
-          task_link_id,
-          timetable_slot_id,
-          created_by,
-          updated_by
-        )
-        SELECT $1, slot_id, $3, $3
-        FROM unnest($2::bigint[]) AS slot_id
-      `,
-      [linkId, slotIds, actorUserId],
-    );
-  }
-
-  async listLinkedTimetableSlots(
-    linkId: string,
-    executor?: QueryExecutor,
-  ): Promise<TaskLinkTimetableSlotRow[]> {
-    const result = await this.getExecutor(executor).query<TaskLinkTimetableSlotRow>(
-      `
-        SELECT
-          ts.id,
-          ts.school_id,
-          ts.grade_level_id,
-          gl.label AS grade_label,
-          ts.room_no,
-          ts.subject_id,
-          sub.name_th AS subject_name_th,
-          NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), '') AS teacher_name,
-          ts.day_of_week,
-          ts.period
-        FROM task_link_timetable_slots link_slot
-        JOIN timetable_slots ts ON ts.id = link_slot.timetable_slot_id
-        JOIN grade_levels gl ON gl.id = ts.grade_level_id
-        JOIN subjects sub ON sub.id = ts.subject_id
-        LEFT JOIN users teacher ON teacher.id = ts.teacher_user_id
-        WHERE link_slot.task_link_id = $1
-          AND link_slot.deleted_at IS NULL
-        ORDER BY ts.day_of_week ASC, ts.period ASC, ts.id ASC
-      `,
-      [linkId],
-    );
-    return result.rows;
   }
 
   async markLoginLinkUsed(linkId: string): Promise<void> {
@@ -1318,7 +1108,6 @@ export class TaskRepository {
         t.target_room,
         t.target_school_id,
         t.status AS task_status,
-        t.max_delegation_depth,
         s.name AS school_name
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
@@ -1641,208 +1430,9 @@ export class TaskRepository {
     };
   }
 
-  async listVisitLinksPaginated(
-    actor: ActorContext | undefined,
-    filters: VisitLinkListFilters = {},
-  ): Promise<{ rows: QueryResultRow[]; totalCount: number; summary: VisitLinkSummary }> {
-    const params: unknown[] = [];
-    const baseConditions: string[] = [
-      `t.task_type = 'VISIT'`,
-      `tl.deleted_at IS NULL`,
-      `tl.status = 'ACTIVE'`,
-      `t.deleted_at IS NULL`,
-      `c.deleted_at IS NULL`,
-    ];
-    const linkStateSql = `
-      CASE
-        WHEN tl.expires_at <= NOW() THEN 'EXPIRED'
-        WHEN tl.admin_locked = 1 THEN 'LOCKED'
-        WHEN tl.opens_at IS NOT NULL AND tl.opens_at > NOW() THEN 'SCHEDULED'
-        ELSE 'ACTIVE'
-      END
-    `;
-
-    const scopeQuery = this.buildCaseScopeQuery(actor, params.length + 1, 'c');
-    if (scopeQuery.sql) {
-      baseConditions.push(scopeQuery.sql);
-      params.push(...scopeQuery.params);
-    }
-
-    if (filters.searchTerm) {
-      params.push(`%${filters.searchTerm}%`);
-      const searchPlaceholder = params.length;
-      baseConditions.push(`
-        (
-          c.student_name ILIKE $${searchPlaceholder}
-          OR c.student_first_name ILIKE $${searchPlaceholder}
-          OR c.student_last_name ILIKE $${searchPlaceholder}
-          OR c.student_school ILIKE $${searchPlaceholder}
-          OR tl.assigned_to_name ILIKE $${searchPlaceholder}
-          OR tl.assigned_to_email ILIKE $${searchPlaceholder}
-        )
-      `);
-    }
-
-    if (filters.province) {
-      params.push(filters.province);
-      baseConditions.push(
-        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.province = $${params.length})`,
-      );
-    }
-    if (filters.district) {
-      params.push(filters.district);
-      baseConditions.push(
-        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.district = $${params.length})`,
-      );
-    }
-    if (filters.subDistrict) {
-      params.push(filters.subDistrict);
-      baseConditions.push(
-        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.sub_district = $${params.length})`,
-      );
-    }
-    if (filters.schoolId) {
-      params.push(filters.schoolId);
-      baseConditions.push(`c.school_id = $${params.length}`);
-    }
-    if (filters.gradeLevelId) {
-      params.push(filters.gradeLevelId);
-      baseConditions.push(`
-        EXISTS (
-          SELECT 1
-          FROM student_term case_student
-          WHERE case_student.student_uuid = c.student_uuid
-            AND case_student."GradeLevelID_Onec" = $${params.length}
-        )
-      `);
-    }
-    if (filters.room) {
-      params.push(filters.room);
-      baseConditions.push(`
-        EXISTS (
-          SELECT 1
-          FROM student_term case_student
-          WHERE case_student.student_uuid = c.student_uuid
-            AND case_student."RoomID_Onec"::text = $${params.length}
-        )
-      `);
-    }
-
-    const filteredConditions = [...baseConditions];
-    if (filters.status && filters.status !== 'ALL') {
-      params.push(filters.status);
-      filteredConditions.push(`${linkStateSql} = $${params.length}`);
-    }
-
-    const baseParamCount = params.length - (filteredConditions.length - baseConditions.length);
-    const fromSql = `
-      FROM tasks t
-      JOIN cases c ON c.id = t.case_id
-      JOIN LATERAL (
-        SELECT latest_link.*
-        FROM task_links latest_link
-        WHERE latest_link.task_id = t.id
-          AND latest_link.status = 'ACTIVE'
-          AND latest_link.deleted_at IS NULL
-        ORDER BY latest_link.delegation_depth DESC, latest_link.created_at DESC
-        LIMIT 1
-      ) tl ON true
-      LEFT JOIN schools school ON school.id = c.school_id
-      LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
-      LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
-    `;
-    const baseWhereSql = `WHERE ${baseConditions.join(' AND ')}`;
-    const filteredWhereSql = `WHERE ${filteredConditions.join(' AND ')}`;
-
-    const summaryResult = await this.query<QueryResultRow>(
-      `
-      SELECT
-        COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE link_state = 'ACTIVE')::int AS active,
-        COUNT(*) FILTER (WHERE link_state = 'LOCKED')::int AS locked,
-        COUNT(*) FILTER (WHERE link_state = 'EXPIRED')::int AS expired,
-        COUNT(*) FILTER (WHERE link_state = 'SCHEDULED')::int AS scheduled
-      FROM (
-        SELECT ${linkStateSql} AS link_state
-        ${fromSql}
-        ${baseWhereSql}
-      ) scoped_visit_links
-    `,
-      params.slice(0, baseParamCount),
-    );
-
-    const countResult = await this.query<CountRow>(
-      `SELECT COUNT(*)::int AS count ${fromSql} ${filteredWhereSql}`,
-      params,
-    );
-    const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
-
-    const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
-    const page = filters.page && filters.page > 0 ? filters.page : 1;
-    const offset = (page - 1) * limit;
-    const selectParams = [...params, limit, offset];
-    const limitPlaceholder = selectParams.length - 1;
-    const offsetPlaceholder = selectParams.length;
-
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        tl.id,
-        tl.task_id,
-        t.case_id,
-        t.task_type,
-        tl.assigned_to_name,
-        tl.assigned_to_email,
-        tl.expires_at,
-        tl.opens_at,
-        tl.status,
-        tl.token_encrypted,
-        tl.admin_locked,
-        tl.admin_lock_reason,
-        tl.admin_lock_at,
-        tl.delegation_depth,
-        tl.created_at,
-        c.student_name,
-        c.student_first_name,
-        c.student_last_name,
-        c.student_school,
-        c.status AS case_status,
-        c.reason_flagged,
-        c.school_id,
-        school.name AS school_name,
-        student.student_uuid AS student_id,
-        grade.id AS grade_level_id,
-        grade.label AS grade_label,
-        student."RoomID_Onec" AS room,
-        ${linkStateSql} AS link_state
-      ${fromSql}
-      ${filteredWhereSql}
-      ORDER BY tl.created_at DESC, tl.id DESC
-      LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
-    `,
-      selectParams,
-    );
-
-    const summaryRow = summaryResult.rows[0] || {};
-    return {
-      rows: result.rows.map(({ token_encrypted, ...row }) => ({
-        ...row,
-        magic_link: this.resolveMagicLink(token_encrypted as string | null),
-      })),
-      totalCount,
-      summary: {
-        total: Number(summaryRow.total || 0),
-        active: Number(summaryRow.active || 0),
-        locked: Number(summaryRow.locked || 0),
-        expired: Number(summaryRow.expired || 0),
-        scheduled: Number(summaryRow.scheduled || 0),
-      },
-    };
-  }
-
   /**
-   * Soft-delete the whole task tree: tombstone the task and its delegation
-   * links in one transaction so the accountability chain survives for audit
+   * Soft-delete the task and its links in one transaction so accountability
+   * history survives for audit
    * and recovery (was a hard `DELETE FROM tasks` that cascade-purged links).
    * task_submissions are FK-protected and hidden via their join to a live link.
    * Idempotent via `deleted_at IS NULL`; returns rows affected on the task.
@@ -1858,114 +1448,6 @@ export class TaskRepository {
         [taskId, actorId ?? null],
       );
     });
-  }
-
-  async listTaskStudents(filters: TaskStudentFilters): Promise<QueryResultRow[]> {
-    let query = `
-      SELECT DISTINCT ON (s.student_uuid)
-        s.student_uuid AS id,
-        (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS name,
-        COALESCE(gl.label, 'ไม่ทราบ') AS grade,
-        s."RoomID_Onec"::text AS room
-      FROM student_term s
-      LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
-    `;
-    const params: unknown[] = [];
-    const conditions: string[] = [];
-
-    if (filters.targetGrade) {
-      params.push(filters.targetGrade);
-      conditions.push(`gl.label = $${params.length}`);
-    }
-
-    if (filters.targetRoom) {
-      params.push(Number.parseInt(filters.targetRoom, 10));
-      conditions.push(`s."RoomID_Onec" = $${params.length}`);
-    }
-
-    if (filters.targetSchoolId) {
-      params.push(filters.targetSchoolId);
-      conditions.push(`s."SchoolID_Onec" = $${params.length}`);
-    }
-
-    if (conditions.length > 0) {
-      query += ` WHERE ${conditions.join(' AND ')}`;
-    }
-
-    query += ` ORDER BY s.student_uuid ASC`;
-
-    const result = await this.query<QueryResultRow>(query, params);
-    return result.rows;
-  }
-
-  async listTaskHistory(
-    date: string,
-    targetGrade: string | null,
-    targetRoom: string | null,
-    targetSchoolId: number | null,
-    linkId?: string | null,
-  ): Promise<QueryResultRow[]> {
-    const params: unknown[] = [
-      date,
-      targetGrade,
-      Number.parseInt(targetRoom || '0', 10),
-      targetSchoolId,
-    ];
-    const linkModeSql =
-      typeof linkId === 'string' && linkId.trim().length > 0
-        ? `
-        AND (
-          (
-            NOT EXISTS (
-              SELECT 1 FROM task_link_timetable_slots link_slot
-              WHERE link_slot.task_link_id = $5
-            )
-            AND a."Period" = 1
-            AND a.session_kind = 'DAILY'
-          )
-          OR (
-            a.session_kind = 'SUBJECT'
-            AND EXISTS (
-              SELECT 1 FROM task_link_timetable_slots link_slot
-              WHERE link_slot.task_link_id = $5
-                AND link_slot.timetable_slot_id = sess.timetable_slot_id
-            )
-          )
-        )
-      `
-        : `
-        AND a."Period" = 1
-        AND a.session_kind = 'DAILY'
-      `;
-    if (typeof linkId === 'string' && linkId.trim().length > 0) {
-      params.push(linkId.trim());
-    }
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        a.student_uuid AS student_id,
-        (s."FirstName_Onec" || ' ' || s."LastName_Onec") AS student_name,
-        a."AttendanceStatus" AS status,
-        a.session_kind,
-        a."Period" AS period,
-        sess.timetable_slot_id,
-        sub.name_th AS subject_name_th,
-        sub.code AS subject_code
-      FROM attendance a
-      JOIN student_term s ON s.student_uuid = a.student_uuid
-      LEFT JOIN attendance_sessions sess ON sess.id = a.session_id
-      LEFT JOIN subjects sub ON sub.id = sess.subject_id
-      WHERE a."AttendanceDate" = $1
-        AND s."GradeLevelID_Onec" = (SELECT id FROM grade_levels WHERE label = $2)
-        AND s."RoomID_Onec" = $3
-        AND s."SchoolID_Onec" = $4
-        ${linkModeSql}
-      ORDER BY a.student_uuid ASC, a."Period" ASC
-    `,
-      params,
-    );
-
-    return result.rows;
   }
 
   async findTaskChainTask(taskId: string, actor?: ActorContext): Promise<QueryResultRow | null> {
@@ -2035,17 +1517,11 @@ export class TaskRepository {
         tl.expires_at,
         tl.token_encrypted,
         tl.admin_locked,
-        tl.delegation_depth,
-        parent.assigned_to_name AS delegated_by_name,
-        CASE WHEN tl.parent_link_id IS NULL THEN NULL ELSE tl.created_at END AS delegated_at
+        tl.created_at
       FROM task_links tl
-      LEFT JOIN task_links parent
-        ON parent.id = tl.parent_link_id
-        AND parent.task_id = tl.task_id
-        AND parent.deleted_at IS NULL
       WHERE tl.task_id = $1
         AND tl.deleted_at IS NULL
-      ORDER BY tl.delegation_depth ASC
+      ORDER BY tl.created_at ASC, tl.id ASC
     `,
       [taskId],
     );
@@ -2247,32 +1723,6 @@ export class TaskRepository {
       [nextStatus, linkId, expectedStatus],
     );
     return (result.rowCount ?? result.rows.length) === 1;
-  }
-
-  async lockDelegationLinkForUpdate(
-    linkId: string,
-    executor: QueryExecutor,
-  ): Promise<QueryResultRow | null> {
-    const result = await executor.query(
-      `SELECT
-         tl.id,
-         tl.task_id,
-         tl.assigned_to_name,
-         tl.expires_at,
-         tl.opens_at,
-         tl.status,
-         tl.admin_locked,
-         tl.delegation_depth,
-         t.max_delegation_depth
-       FROM task_links tl
-       JOIN tasks t ON t.id = tl.task_id
-       WHERE tl.id = $1
-         AND tl.deleted_at IS NULL
-         AND t.deleted_at IS NULL
-       FOR UPDATE OF tl`,
-      [linkId],
-    );
-    return result.rows[0] || null;
   }
 
   /**
@@ -2743,7 +2193,6 @@ export class TaskRepository {
         tl.created_at AS active_link_created_at,
         tl.expires_at AS active_link_expires_at,
         tl.assigned_to_name AS active_link_assigned_to,
-        tl.delegation_depth AS active_link_depth,
         latest_link.id AS latest_link_id,
         latest_link.status AS latest_link_status,
         latest_link.assigned_to_name AS latest_link_assigned_to,
@@ -2791,7 +2240,7 @@ export class TaskRepository {
         WHERE latest_active_link.task_id = t.id
           AND latest_active_link.status = 'ACTIVE'
           AND latest_active_link.deleted_at IS NULL
-        ORDER BY latest_active_link.delegation_depth DESC, latest_active_link.created_at DESC
+        ORDER BY latest_active_link.created_at DESC, latest_active_link.id DESC
         LIMIT 1
       ) link_state_snapshot ON true
       LEFT JOIN LATERAL (
@@ -2800,7 +2249,7 @@ export class TaskRepository {
         WHERE task_id = t.id
           AND status = 'ACTIVE'
           AND deleted_at IS NULL
-        ORDER BY delegation_depth DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
       ) tl ON true
       LEFT JOIN LATERAL (
@@ -2808,8 +2257,7 @@ export class TaskRepository {
         FROM task_links latest_assignee_link
         WHERE latest_assignee_link.task_id = t.id
           AND latest_assignee_link.deleted_at IS NULL
-        ORDER BY latest_assignee_link.delegation_depth DESC,
-                 latest_assignee_link.created_at DESC
+        ORDER BY latest_assignee_link.created_at DESC, latest_assignee_link.id DESC
         LIMIT 1
       ) latest_link ON true
       ${whereSql}
@@ -3389,31 +2837,6 @@ export class TaskRepository {
     };
   }
 
-  async findDelegationLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        tl.*,
-        t.max_delegation_depth
-      FROM task_links tl
-      JOIN tasks t ON t.id = tl.task_id
-      WHERE tl.token_hash = $1
-        AND tl.deleted_at IS NULL
-        AND t.deleted_at IS NULL
-    `,
-      [tokenHash],
-    );
-
-    return result.rows[0] || null;
-  }
-
-  async createDelegatedTaskLink(
-    data: CreateTaskLinkInput,
-    executor?: QueryExecutor,
-  ): Promise<void> {
-    await this.createTaskLink(data, executor);
-  }
-
   async insertCaseReview(data: CaseReviewInput, executor?: QueryExecutor): Promise<void> {
     await this.getExecutor(executor).query(
       `
@@ -3491,7 +2914,7 @@ export class TaskRepository {
         latest_submission.case_follow_up_decision,
         latest_submission.case_resolution_outcome_code
       FROM tasks t
-      LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.delegation_depth = 0 AND tl.deleted_at IS NULL
+      LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.deleted_at IS NULL
       LEFT JOIN LATERAL (
         SELECT submission.submitted_at, submission.visited_at,
                submission.cause_category, submission.follow_up_assessment_code,

@@ -278,6 +278,14 @@ export class TaskPolicyService {
       throw new BadRequestException('ยกเลิกการสร้างลิงก์เข้าสู่ระบบแล้ว');
     }
 
+    // VISIT is the only creatable type left: per-classroom attendance links were
+    // retired in favour of per-teacher links (teacher_access_grants). Reject
+    // anything else here so the API answers 400 instead of tripping the
+    // chk_tasks_task_type constraint with a 500.
+    if (taskType !== 'VISIT') {
+      throw new BadRequestException('ประเภทลิงก์นี้ถูกยกเลิกแล้ว');
+    }
+
     if (!this.hasPermission(actor, 'create')) {
       throw new ForbiddenException('ไม่มีสิทธิ์สร้างรายการนี้');
     }
@@ -400,15 +408,6 @@ export class TaskPolicyService {
 
     if (taskType === 'LOGIN') {
       return false;
-    }
-
-    if (taskType === 'ATTENDANCE') {
-      if (!this.hasPermission(actor, 'attendance-dashboard')) {
-        return false;
-      }
-
-      const scope = this.buildManagedTaskLinkScope(link);
-      return scope ? this.isScopeSubsetOfActor(scope, actor.data_scope) : true;
     }
 
     if (taskType === 'VISIT') {
