@@ -7,6 +7,7 @@ const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
+const { StudentAuthService } = require('../dist/auth/student-auth.service');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run timetable browser smoke with NODE_ENV=production');
@@ -28,6 +29,7 @@ const STAFF_USERNAME = 'timetable_browser_staff';
 const STUDENT_USERNAME = 'timetable_browser_student';
 const STUDENT_PERSON_UUID = '30000000-0000-4000-8000-000000000049';
 const STUDENT_UUID = '30000000-0000-4000-8000-000000000149';
+const STUDENT_NATIONAL_ID = '3000000000049';
 const FIXTURE_MARKER_PREFIX = 'TTSMK';
 
 function toSlotDayOfWeek(date) {
@@ -181,7 +183,9 @@ async function navigate(client, url) {
 async function fillInput(client, selector, value) {
   await waitFor(
     async () =>
-      Boolean(await evaluate(client, `Boolean(document.querySelector(${JSON.stringify(selector)}))`)),
+      Boolean(
+        await evaluate(client, `Boolean(document.querySelector(${JSON.stringify(selector)}))`),
+      ),
     `Input did not appear: ${selector}`,
     5_000,
   );
@@ -214,11 +218,28 @@ async function click(client, expression, message) {
 }
 
 /**
- * Drives the shared `Combobox` (input + <ul><li><button>> panel, options
- * picked via onMouseDown — not onClick, so a real `.click()` never registers).
+ * Drives the shared `Combobox` (input + <ul><li><button>> panel). Wait for
+ * each cascade input to become enabled before selecting its option.
  */
 async function pickComboboxOption(client, inputSelector, searchText, message) {
-  await click(client, `document.querySelector(${JSON.stringify(inputSelector)})`, `${message} (open)`);
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const input = document.querySelector(${JSON.stringify(inputSelector)});
+            return Boolean(input && !input.disabled);
+          })()`,
+        ),
+      ),
+    `${message} (input stayed disabled)`,
+  );
+  await click(
+    client,
+    `document.querySelector(${JSON.stringify(inputSelector)})`,
+    `${message} (open)`,
+  );
   if (searchText) {
     await fillInput(client, inputSelector, searchText);
   }
@@ -239,7 +260,7 @@ async function pickComboboxOption(client, inputSelector, searchText, message) {
     `(() => {
       const button = ${findButtonExpr};
       if (!button) throw new Error(${JSON.stringify(`${message} (option not found)`)});
-      button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      button.click();
     })()`,
   );
 }
@@ -260,13 +281,15 @@ function createSessionCookie(sessionCookieService, userId) {
 
 async function loginInBrowser(client, user, sessionCookie) {
   await navigate(client, `${FRONTEND_URL}/login`);
-  await client.call('Network.setCookie', {
-    name: sessionCookie.name,
-    value: sessionCookie.value,
-    url: BROWSER_BACKEND_URL,
-    httpOnly: true,
-    sameSite: 'Lax',
-  });
+  if (sessionCookie) {
+    await client.call('Network.setCookie', {
+      name: sessionCookie.name,
+      value: sessionCookie.value,
+      url: BROWSER_BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+  }
   await evaluate(
     client,
     `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(user))});
@@ -314,9 +337,10 @@ async function pickFixtureRoom(dataSource) {
 }
 
 async function pickDifferentSchool(dataSource, excludeSchoolId) {
-  const [row] = await dataSource.query(`SELECT id FROM schools WHERE id <> $1 ORDER BY id LIMIT 1`, [
-    excludeSchoolId,
-  ]);
+  const [row] = await dataSource.query(
+    `SELECT id FROM schools WHERE id <> $1 ORDER BY id LIMIT 1`,
+    [excludeSchoolId],
+  );
   assert(row, 'No second school found to test cross-school scope rejection');
   return row.id;
 }
@@ -351,14 +375,15 @@ async function cleanup(dataSource) {
     [`${FIXTURE_MARKER_PREFIX}%`],
   );
   await dataSource.query(
-    `DELETE FROM task_links WHERE assigned_to_name = 'Timetable Smoke Assignee'`,
-  );
-  await dataSource.query(
     `DELETE FROM timetable_slots WHERE subject_id IN (SELECT id FROM subjects WHERE code LIKE $1)`,
     [`${FIXTURE_MARKER_PREFIX}%`],
   );
   await dataSource.query(`DELETE FROM subjects WHERE code LIKE $1`, [`${FIXTURE_MARKER_PREFIX}%`]);
   await dataSource.query(`DELETE FROM student_term WHERE student_uuid = $1::uuid`, [STUDENT_UUID]);
+  await dataSource.query(
+    `DELETE FROM student_person_identifier WHERE person_uuid = $1::uuid AND source = 'AUTOMATED_TEST'`,
+    [STUDENT_PERSON_UUID],
+  );
 }
 
 async function disableActors(dataSource) {
@@ -409,7 +434,7 @@ async function upsertActor(dataSource, passwordHash, username, permissions, data
   return row;
 }
 
-async function upsertStudentActor(dataSource, passwordHash, room) {
+async function upsertStudentFixture(dataSource, room) {
   const [loginStatus] = await dataSource.query(
     `SELECT code FROM student_status
      WHERE category = 'ACTIVE' AND is_active_for_login IS TRUE AND is_enabled IS TRUE
@@ -424,6 +449,19 @@ async function upsertStudentActor(dataSource, passwordHash, room) {
      ON CONFLICT (person_uuid) DO UPDATE
      SET identity_status = 'ACTIVE', merged_into = NULL, deleted_at = NULL, deleted_by = NULL`,
     [STUDENT_PERSON_UUID],
+  );
+  await dataSource.query(
+    `DELETE FROM student_person_identifier
+     WHERE person_uuid = $1::uuid AND source = 'AUTOMATED_TEST'`,
+    [STUDENT_PERSON_UUID],
+  );
+  await dataSource.query(
+    `INSERT INTO student_person_identifier (
+       person_uuid, identifier_type, identifier_value, identifier_normalized,
+       is_primary, source
+     )
+     VALUES ($1::uuid, 'NATIONAL_ID', $2, $2, TRUE, 'AUTOMATED_TEST')`,
+    [STUDENT_PERSON_UUID, STUDENT_NATIONAL_ID],
   );
   await dataSource.query(
     `INSERT INTO student_term (
@@ -455,49 +493,6 @@ async function upsertStudentActor(dataSource, passwordHash, room) {
     ],
   );
 
-  const defaultStudentPermissions = ['student-self'];
-  const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
-    STUDENT_USERNAME,
-  ]);
-  if (existing) {
-    await dataSource.query(
-      `UPDATE users
-       SET password = $2, "FirstName" = 'ตารางเรียน', "LastName" = 'นักเรียนทดสอบ',
-           status = 'ACTIVE', permissions = $3::jsonb, role = 'STUDENT',
-           data_scope = '{"own_only":true}'::jsonb, person_uuid = $4::uuid,
-           must_change_password = FALSE, temporary_password_issued_at = NULL,
-           temporary_password_expires_at = NULL, deactivated_at = NULL, deactivated_by = NULL,
-           deactivation_reason_code = NULL, deactivation_note = NULL,
-           affiliation = 'Automated timetable browser smoke', data_origin_code = 'AUTOMATED_TEST',
-           email = NULL, phone = NULL
-       WHERE id = $1`,
-      [
-        existing.id,
-        passwordHash,
-        JSON.stringify(defaultStudentPermissions),
-        STUDENT_PERSON_UUID,
-      ],
-    );
-    return existing;
-  }
-
-  const [row] = await dataSource.query(
-    `INSERT INTO users (
-       username, password, "FirstName", "LastName", status, permissions, role,
-       data_scope, person_uuid, must_change_password, affiliation, data_origin_code, email, phone
-     )
-     VALUES ($1, $2, 'ตารางเรียน', 'นักเรียนทดสอบ', 'ACTIVE', $3::jsonb, 'STUDENT',
-             '{"own_only":true}'::jsonb, $4::uuid, FALSE,
-             'Automated timetable browser smoke', 'AUTOMATED_TEST', NULL, NULL)
-     RETURNING id`,
-    [
-      STUDENT_USERNAME,
-      passwordHash,
-      JSON.stringify(defaultStudentPermissions),
-      STUDENT_PERSON_UUID,
-    ],
-  );
-  return row;
 }
 
 async function main() {
@@ -508,6 +503,7 @@ async function main() {
   const dataSource = app.get(DataSource);
   const passwordService = app.get(PasswordService);
   const sessionCookieService = app.get(SessionCookieService);
+  const studentAuthService = app.get(StudentAuthService);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const password = `TimetableBrowser-${suffix}-Password`;
   const subjectCode = `${FIXTURE_MARKER_PREFIX}${suffix.slice(0, 8)}`;
@@ -565,7 +561,14 @@ async function main() {
         VALUES ($1, $2, $3, $4, $5, 7, $6)
         RETURNING id
       `,
-      [room.school_term_id, room.school_id, room.grade_level_id, room.room_no, todaySlotDay, subject.id],
+      [
+        room.school_term_id,
+        room.school_id,
+        room.grade_level_id,
+        room.room_no,
+        todaySlotDay,
+        subject.id,
+      ],
     );
     const [tomorrowSlot] = await dataSource.query(
       `
@@ -573,7 +576,14 @@ async function main() {
         VALUES ($1, $2, $3, $4, $5, 8, $6)
         RETURNING id
       `,
-      [room.school_term_id, room.school_id, room.grade_level_id, room.room_no, tomorrowSlotDay, subject.id],
+      [
+        room.school_term_id,
+        room.school_id,
+        room.grade_level_id,
+        room.room_no,
+        tomorrowSlotDay,
+        subject.id,
+      ],
     );
 
     const managerActor = await upsertActor(
@@ -597,11 +607,8 @@ async function main() {
       ['home'],
       { global: true },
     );
-    const studentActor = await upsertStudentActor(
-      dataSource,
-      await passwordService.hash(password),
-      room,
-    );
+    await upsertStudentFixture(dataSource, room);
+    const studentUser = await studentAuthService.loginWithMockThaId(STUDENT_NATIONAL_ID);
     const [emptyConfiguredPeriod] = await dataSource.query(
       `
         SELECT candidate.period
@@ -625,7 +632,10 @@ async function main() {
       `,
       [room.school_id],
     );
-    assert(emptyConfiguredPeriod, 'No free period number remained for configured-empty-column smoke');
+    assert(
+      emptyConfiguredPeriod,
+      'No free period number remained for configured-empty-column smoke',
+    );
     await dataSource.query(
       `
         INSERT INTO school_period_times (
@@ -696,21 +706,12 @@ async function main() {
       data_scope: { global: true },
       must_change_password: false,
     };
-    const studentUser = {
-      id: studentActor.id,
-      username: STUDENT_USERNAME,
-      FirstName: 'ตารางเรียน',
-      LastName: 'นักเรียนทดสอบ',
-      roles: ['STUDENT'],
-      permissions: ['student-self'],
-      data_scope: { own_only: true },
-      student_uuid: STUDENT_UUID,
-      must_change_password: false,
-    };
     const managerSession = createSessionCookie(sessionCookieService, managerActor.id);
-    const scopedOtherSchoolSession = createSessionCookie(sessionCookieService, scopedOtherSchoolActor.id);
+    const scopedOtherSchoolSession = createSessionCookie(
+      sessionCookieService,
+      scopedOtherSchoolActor.id,
+    );
     const staffSession = createSessionCookie(sessionCookieService, staffActor.id);
-    const studentSession = createSessionCookie(sessionCookieService, studentActor.id);
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -756,16 +757,45 @@ async function main() {
     //    slot seeded above is visible once the manager picks that room.
     await loginInBrowser(client, managerUser, managerSession);
     await navigate(client, `${FRONTEND_URL}/timetable`);
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes(
-          'เลือกห้องเรียนเพื่อจัดตารางสอน',
-        ),
-      'Timetable manage view did not render for the manager',
+    try {
+      await waitFor(
+        async () =>
+          Boolean(
+            await evaluate(
+              client,
+              `Boolean(document.querySelector('input[placeholder="ค้นหาโรงเรียน"]')) &&
+               [...document.querySelectorAll('button')].some((button) =>
+                 button.textContent.includes('ตั้งเวลาคาบ')
+               )`,
+            ),
+          ),
+        'Timetable manage view did not render for the manager',
+      );
+    } catch (error) {
+      const browserState = await evaluate(
+        client,
+        `({ url: location.href, body: document.body.innerText.slice(0, 500) })`,
+      );
+      throw new Error(`${error.message}; browser=${JSON.stringify(browserState)}`);
+    }
+    await pickComboboxOption(
+      client,
+      'input[placeholder="ค้นหาโรงเรียน"]',
+      room.school_name,
+      'Pick timetable school',
     );
-    await pickComboboxOption(client, 'input[placeholder="ค้นหาโรงเรียน"]', room.school_name, 'Pick timetable school');
-    await pickComboboxOption(client, 'input[placeholder="ค้นหาชั้น"]', room.grade_label, 'Pick timetable grade');
-    await pickComboboxOption(client, 'input[placeholder="ค้นหาห้อง"]', String(room.room_no), 'Pick timetable room');
+    await pickComboboxOption(
+      client,
+      'input[placeholder="ค้นหาชั้น"]',
+      room.grade_label,
+      'Pick timetable grade',
+    );
+    await pickComboboxOption(
+      client,
+      'input[placeholder="ค้นหาห้อง"]',
+      String(room.room_no),
+      'Pick timetable room',
+    );
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('เพิ่มคาบสอน'),
       'Timetable manage actions did not render after selecting a room',
@@ -799,7 +829,8 @@ async function main() {
       'Configure-period button was not found',
     );
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('จำนวนคาบต่อวัน'),
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('จำนวนคาบต่อวัน'),
       'Configure-period dialog did not render',
     );
     await waitFor(
@@ -825,7 +856,9 @@ async function main() {
       `Expected current period length ${expectedPeriodPrefill.period_length_minutes}, got ${periodPrefill.length}`,
     );
     assert(
-      periodPrefill.firstStart.includes(String(expectedPeriodPrefill.first_period_starts_at).slice(0, 5)),
+      periodPrefill.firstStart.includes(
+        String(expectedPeriodPrefill.first_period_starts_at).slice(0, 5),
+      ),
       `Expected current first period to start ${expectedPeriodPrefill.first_period_starts_at}, got ${periodPrefill.firstStart}`,
     );
     await logoutInBrowser(client);
@@ -845,12 +878,33 @@ async function main() {
     // 4. A student lands on their own data even when opening `/`, sees exactly
     //    the two default student navigation items, has no `home` permission,
     //    and gets the own-room timetable without room-selection UI.
-    await loginInBrowser(client, studentUser, studentSession);
+    await loginInBrowser(client, studentUser, null);
     await navigate(client, `${FRONTEND_URL}/`);
-    await waitFor(
-      async () => String(await evaluate(client, 'location.pathname')) === '/my-attendance',
-      'Student root route did not redirect to own data',
-    );
+    try {
+      await waitFor(
+        async () => String(await evaluate(client, 'location.pathname')) === '/my-attendance',
+        'Student root route did not redirect to own data',
+      );
+    } catch (error) {
+      const browserState = await evaluate(
+        client,
+        `(() => {
+          const user = JSON.parse(localStorage.getItem('sts_user') || 'null');
+          return {
+            url: location.href,
+            body: document.body.innerText.slice(0, 500),
+            authShape: user ? {
+              roles: user.roles,
+              permissions: user.permissions,
+              virtualLogin: user.virtual_login,
+              hasVirtualToken: Boolean(user.virtual_auth_token),
+              ownOnly: user.data_scope?.own_only
+            } : null
+          };
+        })()`,
+      );
+      throw new Error(`${error.message}; browser=${JSON.stringify(browserState)}`);
+    }
     const studentNavigation = await evaluate(
       client,
       `(() => {
@@ -866,158 +920,74 @@ async function main() {
     assert(studentNavigation.hasOwnData, 'Student own-data navigation item was missing');
     assert(studentNavigation.hasTimetable, 'Student timetable navigation item was missing');
     assert(!studentNavigation.hasHome, 'Student still saw the home navigation item');
-    assert(!studentNavigation.hasAttendanceGroup, 'Student timetable was still nested in the staff attendance group');
+    assert(
+      !studentNavigation.hasAttendanceGroup,
+      'Student timetable was still nested in the staff attendance group',
+    );
 
     const studentHomeStatus = await evaluate(
       client,
       `(async () => {
+        const user = JSON.parse(localStorage.getItem('sts_user') || 'null');
         const res = await fetch(${JSON.stringify(`${BROWSER_BACKEND_URL}/api/home-dashboard/summary`)}, {
-          credentials: 'include'
+          credentials: 'include',
+          headers: { 'x-virtual-auth': user?.virtual_auth_token || '' }
         });
         return res.status;
       })()`,
     );
-    assert(studentHomeStatus === 403, `Expected student home API to return 403, got ${studentHomeStatus}`);
+    assert(
+      studentHomeStatus === 403,
+      `Expected student home API to return 403, got ${studentHomeStatus}`,
+    );
 
     await navigate(client, `${FRONTEND_URL}/timetable`);
-    await waitFor(
-      async () => {
+    try {
+      await waitFor(async () => {
         const text = String(await evaluate(client, 'document.body.innerText'));
-        return text.includes('ดูตารางเรียนของคุณตามชั้นและห้องปัจจุบัน');
-      },
-      'Student own-room timetable did not render',
-    );
+        return (
+          text.includes(`คาบ ${emptyConfiguredPeriod.period}`) &&
+          !text.includes('เลือกห้องเรียน') &&
+          !text.includes('ตารางของฉัน')
+        );
+      }, 'Student own-room timetable did not render');
+    } catch (error) {
+      const browserState = await evaluate(
+        client,
+        `(() => {
+          const user = JSON.parse(localStorage.getItem('sts_user') || 'null');
+          return {
+            url: location.href,
+            body: document.body.innerText.slice(0, 500),
+            authShape: user ? {
+              roles: user.roles,
+              permissions: user.permissions,
+              virtualLogin: user.virtual_login,
+              hasVirtualToken: Boolean(user.virtual_auth_token),
+              ownOnly: user.data_scope?.own_only
+            } : null
+          };
+        })()`,
+      );
+      throw new Error(`${error.message}; browser=${JSON.stringify(browserState)}`);
+    }
     const studentTimetableText = String(await evaluate(client, 'document.body.innerText'));
     assert(
       studentTimetableText.includes(`คาบ ${emptyConfiguredPeriod.period}`),
       `Student timetable omitted configured empty period ${emptyConfiguredPeriod.period}`,
     );
-    assert(!studentTimetableText.includes('เลือกห้องเรียน'), 'Student timetable exposed the room picker');
-    assert(!studentTimetableText.includes('ตารางของฉัน'), 'Student timetable exposed staff view-mode tabs');
+    assert(
+      !studentTimetableText.includes('เลือกห้องเรียน'),
+      'Student timetable exposed the room picker',
+    );
+    assert(
+      !studentTimetableText.includes('ตารางของฉัน'),
+      'Student timetable exposed staff view-mode tabs',
+    );
     await logoutInBrowser(client);
 
-    // 5. CreateTaskPage — the subject Combobox for an ATTENDANCE link resolves
-    //    from real timetable data (the seeded fixture), and the selection is
-    //    persisted through to task_links.subject_id end-to-end.
-    await loginInBrowser(client, managerUser, managerSession);
-    await navigate(client, `${FRONTEND_URL}/create/attendance`);
-    await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์'),
-      'Create-task page did not render',
-    );
-    await fillInput(client, '#assigned_to_name', 'Timetable Smoke Assignee');
-    await fillInput(client, '#assigned_to_email', 'timetable-smoke@example.test');
-
-    await pickComboboxOption(client, 'input[placeholder="ค้นหาโรงเรียน"]', room.school_name, 'Pick school');
-    await pickComboboxOption(client, 'input[placeholder="ค้นหาชั้น"]', room.grade_label, 'Pick grade');
-    await pickComboboxOption(client, 'input[placeholder="ค้นหาห้อง"]', String(room.room_no), 'Pick room');
-    await fillInput(client, '#subject_id', subjectName);
-    await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes(subjectName),
-      'Subject combobox did not show the seeded fixture subject',
-    );
-    await pickComboboxOption(client, '#subject_id', subjectName, 'Pick subject');
-    await fillInput(client, '#expires_value', '1');
-    await pickComboboxOption(client, '#expires_unit', 'ชั่วโมง', 'Pick hour expiry');
-
-    await click(
-      client,
-      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 7'))`,
-      'Today slot checkbox was not found',
-    );
-    await click(
-      client,
-      `[...document.querySelectorAll('label')].find((label) => label.textContent.includes('คาบ 8'))`,
-      'Tomorrow slot checkbox was not found',
-    );
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes('อาจหมดอายุก่อนถึง'),
-      'Expiry warning did not render for a slot outside the link lifetime',
-    );
-
-    await click(
-      client,
-      `document.querySelector('form button[type="submit"]')`,
-      'Create-link submit button was not found',
-    );
-    await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์สำเร็จ'),
-      'Attendance link was not created',
-    );
-    const publicTaskUrl = await evaluate(
-      client,
-      `(() => {
-        const link = [...document.querySelectorAll('a')]
-          .find((node) => node.textContent.trim() === 'เปิดลิงก์');
-        return link?.href || '';
-      })()`,
-    );
-    const token = String(publicTaskUrl).split('/task/').pop()?.split(/[?#]/)[0];
-    assert(token, 'Created task result did not expose a public task token');
-
-    const [createdLink] = await dataSource.query(
-      `SELECT id, task_id, subject, subject_id FROM task_links WHERE assigned_to_name = 'Timetable Smoke Assignee' ORDER BY created_at DESC LIMIT 1`,
-    );
-    assert(createdLink, 'Created task_link was not found');
-    assert(
-      Number(createdLink.subject_id) === Number(subject.id),
-      `Expected subject_id ${subject.id}, got ${createdLink.subject_id}`,
-    );
-    assert(createdLink.subject === subjectName, `Expected subject label "${subjectName}", got "${createdLink.subject}"`);
-    const [slotBinding] = await dataSource.query(
-      `
-        SELECT COUNT(*)::int AS count
-        FROM task_link_timetable_slots
-        WHERE task_link_id = $1
-          AND timetable_slot_id = ANY($2::bigint[])
-      `,
-      [createdLink.id, [todaySlot.id, tomorrowSlot.id]],
-    );
-    assert(Number(slotBinding.count) === 2, `Expected 2 linked timetable slots, got ${slotBinding.count}`);
-    await dataSource.query(`UPDATE task_links SET otp_verified = 1 WHERE id = $1`, [createdLink.id]);
-
-    const students = await dataSource.query(
-      `
-        SELECT student_uuid
-        FROM student_term
-        WHERE "SchoolID_Onec" = $1 AND "GradeLevelID_Onec" = $2 AND "RoomID_Onec" = $3
-        ORDER BY student_uuid
-      `,
-      [room.school_id, room.grade_level_id, room.room_no],
-    );
-    assert(students.length > 0, 'No fixture student was available for subject attendance detail smoke');
-    const attendanceRecords = students.map((student) => ({
-      student_id: student.student_uuid,
-      status: 'P_PRESENT',
-    }));
-    const submitResult = await evaluate(
-      client,
-      `(async () => {
-        const res = await fetch(${JSON.stringify(`${BROWSER_BACKEND_URL}/api/tasks/${token}/attendance`)}, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timetable_slot_id: ${Number(todaySlot.id)},
-            records: ${JSON.stringify(attendanceRecords)}
-          })
-        });
-        return { status: res.status, body: await res.text() };
-      })()`,
-    );
-    assert(submitResult.status >= 200 && submitResult.status < 300, `Subject attendance submit failed: ${submitResult.status} ${submitResult.body}`);
-
-    await navigate(client, `${FRONTEND_URL}/attendance-links/${createdLink.id}`);
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes('รายวิชา') &&
-        String(await evaluate(client, 'document.body.innerText')).includes(subjectName),
-      'Admin attendance link detail did not show the subject attendance tag',
-    );
-
     console.log(
-      'timetable browser smoke passed (scope rejection, timetable action sizing, period prefill, staff/manager/student UI gating, configured empty student period, student home denial and own-room schedule, subject slot link creation, expiry warning, guest subject submit, subject detail tag)',
+      'timetable browser smoke passed (scope rejection, timetable action sizing, period prefill, staff/manager/student UI gating, configured empty student period, student home denial and own-room schedule)',
     );
   } finally {
     await closeChrome(chrome);

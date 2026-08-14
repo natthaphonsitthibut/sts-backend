@@ -50,7 +50,7 @@ import type {
   StudentListFilters,
   StudentListRow,
 } from './students.types';
-import type { AuthenticatedRequestUser } from '../auth';
+import { isStudentSelfActor, type AuthenticatedRequestUser } from '../auth';
 
 /** Metadata captured from the HTTP request for the PII access log. */
 export interface PiiRevealRequestMeta {
@@ -174,17 +174,6 @@ function buildPaginationMeta(page: number, limit: number, totalCount: number) {
     totalCount,
     totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 0,
   };
-}
-
-function isOwnOnlyStudentActor(
-  actor?: AuthenticatedRequestUser,
-): actor is AuthenticatedRequestUser {
-  return Boolean(
-    actor?.auth_source === 'THAID_MOCK' &&
-    actor.virtual_login === true &&
-    actor.permissions.includes('student-self') &&
-    actor.data_scope?.own_only,
-  );
 }
 
 function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
@@ -335,7 +324,7 @@ export class StudentsService {
     const limit = filters.limit ?? DEFAULT_STUDENT_PAGE_SIZE;
 
     try {
-      if (isOwnOnlyStudentActor(actor)) {
+      if (isStudentSelfActor(actor)) {
         if (!actor.student_uuid) {
           throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
         }
@@ -627,7 +616,7 @@ export class StudentsService {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
-      if (isOwnOnlyStudentActor(actor)) {
+      if (isStudentSelfActor(actor)) {
         return [];
       }
 
@@ -795,7 +784,7 @@ export class StudentsService {
 
     // Student self-service covers contact channels only — enrollment identity
     // (name/address) stays staff-editable to keep the record authoritative.
-    if (isOwnOnlyStudentActor(actor) && hasTermEdit) {
+    if (isStudentSelfActor(actor) && hasTermEdit) {
       throw new ForbiddenException('นักเรียนแก้ไขได้เฉพาะข้อมูลติดต่อและผู้ปกครอง');
     }
 
@@ -887,7 +876,7 @@ export class StudentsService {
     requestedUuid: string,
     actor?: AuthenticatedRequestUser,
   ): Promise<boolean> {
-    if (!isOwnOnlyStudentActor(actor)) {
+    if (!isStudentSelfActor(actor)) {
       return false;
     }
     if (actor.student_uuid === requestedUuid) {
@@ -912,7 +901,7 @@ export class StudentsService {
       throw new NotFoundException(`Student with ID ${requestedUuid} not found`);
     }
 
-    if (!isOwnOnlyStudentActor(actor)) {
+    if (!isStudentSelfActor(actor)) {
       return;
     }
 

@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
-import { resolveActorDataScope } from '../auth';
+import { isStudentAccountActor, resolveActorDataScope } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import type {
@@ -97,7 +97,7 @@ export class TimetableService {
     schoolId: number,
     actor: AuthenticatedRequestUser,
   ): Promise<void> {
-    if (actor.roles?.includes('STUDENT')) {
+    if (isStudentAccountActor(actor)) {
       const room = actor.student_uuid
         ? await this.repository.resolveStudentRoom(actor.student_uuid)
         : null;
@@ -212,7 +212,7 @@ export class TimetableService {
     actor: AuthenticatedRequestUser,
     filters: { schoolId?: number; gradeLevelId?: number; roomNo?: number; mine?: boolean },
   ) {
-    if (actor.roles?.includes('STUDENT') && actor.student_uuid) {
+    if (isStudentAccountActor(actor) && actor.student_uuid) {
       const room = await this.repository.resolveStudentRoom(actor.student_uuid);
       if (!room) {
         return { success: true, data: [] };
@@ -268,7 +268,11 @@ export class TimetableService {
             dayOfWeek: dto.dayOfWeek,
             period: dto.period,
             subjectId: dto.subjectId,
-            teacherUserId: dto.teacherUserId ?? null,
+            // The join table is authoritative whenever the modern payload is
+            // present. Do not persist a second, potentially conflicting legacy
+            // pointer even if an older client sends both fields.
+            teacherUserId:
+              dto.teacherMembershipIds !== undefined ? null : (dto.teacherUserId ?? null),
             actorId,
           },
           queryRunner,
@@ -339,11 +343,18 @@ export class TimetableService {
       ) {
         throw new BadRequestException('ผู้สอนไม่ใช่ครูที่ใช้งานของโรงเรียนนี้');
       }
+      // Reassigning teacherMembershipIds must also clear the legacy teacher_user_id
+      // / teacher_membership_id columns on the slot — otherwise a stale pointer to
+      // the previous teacher lingers and listForTeacher()'s legacy-fallback match
+      // resurfaces this slot on their schedule alongside their real one, showing
+      // as a phantom double-booking at the same day/period.
+      const clearingLegacyTeacherColumns =
+        'teacherUserId' in dto || dto.teacherMembershipIds !== undefined;
       await this.repository.update(
         id,
         {
           subjectId: dto.subjectId,
-          ...('teacherUserId' in dto ? { teacherUserId: dto.teacherUserId ?? null } : {}),
+          ...(clearingLegacyTeacherColumns ? { teacherUserId: dto.teacherUserId ?? null } : {}),
         },
         actorId,
         queryRunner,
