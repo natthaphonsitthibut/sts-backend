@@ -29,10 +29,13 @@ export class EmailService {
     expiresInMinutes = 10,
   ): Promise<{ success: boolean; provider: string }> {
     if (!this.config.enabled || !this.config.user) {
-      // Authentication factors and recipient PII must never enter application
-      // logs. Tests capture this service at the boundary instead of scraping a
-      // simulated OTP from process output.
-      this.logger.warn('Email delivery is disabled; OTP was not sent');
+      if (this.config.logSimulatedOtp) {
+        this.logger.warn(`[SIMULATED_EMAIL_OTP] code=${code} expiresInMinutes=${expiresInMinutes}`);
+      } else {
+        this.logger.warn(
+          '[SIMULATED_EMAIL_OTP] Email delivery is disabled; OTP value is hidden in production',
+        );
+      }
       return { success: true, provider: 'SIMULATOR' };
     }
 
