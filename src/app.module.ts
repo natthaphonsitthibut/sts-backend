@@ -37,7 +37,6 @@ import { createTypeOrmOptions } from './database/typeorm.config';
 import { GeoModule } from './geo/geo.module';
 import { StatusCatalogModule } from './status-catalog/status-catalog.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { FieldFollowersModule } from './field-followers/field-followers.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { TimetableModule } from './timetable/timetable.module';
 import { RedisModule } from './redis/redis.module';
@@ -49,6 +48,7 @@ import { TeachersModule } from './teachers/teachers.module';
 import { CurriculumModule } from './curriculum/curriculum.module';
 import { StudentObservationsModule } from './student-observations/student-observations.module';
 import { StudentObservationSummaryModule } from './student-observation-summaries/student-observation-summary.module';
+import { AraIdModule } from './araid/araid.module';
 import { ObservationReviewsModule } from './observation-reviews/observation-reviews.module';
 
 @Module({
@@ -125,7 +125,6 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     GeoModule,
     StatusCatalogModule,
     NotificationsModule,
-    FieldFollowersModule,
     SubjectsModule,
     TimetableModule,
     HomeDashboardModule,
@@ -136,6 +135,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     StudentObservationsModule,
     ObservationReviewsModule,
     StudentObservationSummaryModule,
+    AraIdModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],

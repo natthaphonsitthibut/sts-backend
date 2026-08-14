@@ -115,6 +115,35 @@ describe('StudentsService', () => {
     );
   });
 
+  it('returns guarded photo URLs from the student list without exposing storage keys', async () => {
+    studentsRepository.listStudents.mockResolvedValue({
+      rows: [
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          name: 'เด็ก ทดสอบ',
+          grade: 'ม.1',
+          room: '1',
+          school_name: 'โรงเรียนทดสอบ',
+          school_id: 10010002,
+          student_status_label: 'กำลังศึกษา',
+          student_status_category: 'ACTIVE',
+          student_status_badge_variant: 'success',
+          photo_storage_key: 'student-photos/person/profile.webp',
+          photo_updated_at: '2026-08-10T06:30:00.000Z',
+        },
+      ],
+      totalCount: 1,
+    });
+
+    const result = await service.findAll({ page: 1, limit: 20 }, { school_ids: [10010002] });
+
+    expect(result.data[0]).toMatchObject({
+      photo_url:
+        '/api/students/00000000-0000-4000-8000-000000000001/photo?v=2026-08-10T06%3A30%3A00.000Z',
+    });
+    expect(JSON.stringify(result)).not.toContain('student-photos/person/profile.webp');
+  });
+
   it('denies raw student lists to an EXECUTIVE even when students is re-granted', async () => {
     await expect(
       service.findAll(

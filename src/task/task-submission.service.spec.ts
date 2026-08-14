@@ -341,6 +341,42 @@ describe('TaskSubmissionService', () => {
     );
   });
 
+  it('returns success when post-commit notifications fail', async () => {
+    notificationsService.notifyCaseStatusChanged.mockRejectedValueOnce(
+      new Error('notification database unavailable'),
+    );
+    notificationsService.notifyTaskSubmitted.mockRejectedValueOnce(
+      new Error('notification queue unavailable'),
+    );
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+      assigned_to_name: 'ครูลงพื้นที่',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+      assigned_to_name: 'ครูลงพื้นที่',
+      student_name: 'เด็ก ทดสอบ',
+      school_id: 10010002,
+    });
+
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        notes: 'บันทึกผลการเยี่ยมบ้านแล้ว',
+        case_follow_up_decision: 'REQUEST_REVIEW',
+      }),
+    ).resolves.toEqual({ success: true });
+    expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalled();
+    expect(taskRepository.updateTaskStatus).toHaveBeenCalledWith('task-1', 'COMPLETED', undefined);
+    expect(notificationsService.notifyTaskSubmitted).toHaveBeenCalledWith(
+      expect.objectContaining({ alreadyNotifiedUserIds: [] }),
+    );
+  });
+
   it('rejects a visit timestamp outside the assignment window', async () => {
     const openedAt = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     taskAccessService.getTaskByToken.mockResolvedValue({

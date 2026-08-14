@@ -12,6 +12,8 @@ export interface TeacherAccessGrantRow extends Record<string, unknown> {
   teacher_username: string;
   teacher_display_name: string;
   teacher_email: string | null;
+  teacher_citizen_id: string | null;
+  teacher_data_origin_code: string | null;
   teacher_status: string;
   membership_status: 'ACTIVE' | 'INACTIVE';
   membership_deleted_at: string | Date | null;
@@ -72,6 +74,7 @@ export interface TeacherAccessAssignmentRow extends Record<string, unknown> {
 export interface TeacherAccessRosterRow extends Record<string, unknown> {
   student_uuid: string;
   student_number: string | null;
+  has_photo: boolean;
   first_name: string | null;
   last_name: string | null;
   student_status_code: number | null;

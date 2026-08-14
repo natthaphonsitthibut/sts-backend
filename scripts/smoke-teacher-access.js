@@ -150,6 +150,7 @@ async function cleanup(dataSource) {
   const adminId = admin ? Number(admin.id) : null;
 
   if (adminId) {
+    await dataSource.query(`DELETE FROM teacher_line_invitations WHERE issued_by = $1`, [adminId]);
     await dataSource.query(`DELETE FROM teacher_access_grants WHERE issued_by = $1`, [adminId]);
   }
 

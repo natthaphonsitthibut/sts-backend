@@ -126,7 +126,9 @@ describe('TeacherAccessRepository', () => {
     });
 
     expect(runner.query).toHaveBeenCalledWith(
-      expect.stringMatching(/ORDER BY[\s\S]*NOT_CREATED[\s\S]*DESC[\s\S]*LIMIT \$5 OFFSET \$6/),
+      expect.stringMatching(
+        /teacher\.photo_storage_key AS teacher_photo_storage_key[\s\S]*ORDER BY[\s\S]*NOT_CREATED[\s\S]*DESC[\s\S]*LIMIT \$5 OFFSET \$6/,
+      ),
       [10, 21, '2026-08-03', null, 20, 0, null],
       true,
     );
@@ -191,69 +193,6 @@ describe('TeacherAccessRepository', () => {
         /JOIN timetable_slot_teachers slot_teacher[\s\S]*slot_teacher\.teacher_membership_id = \$3[\s\S]*slot\.day_of_week = \$4/,
       ),
       [41, 7, 12, 2],
-      true,
-    );
-  });
-
-  it('loads demo timetable slots through the canonical classroom foreign key', async () => {
-    const { repository, runner } = createRepository();
-
-    await repository.listClassroomSlotsForDate(41, 2, runner as never);
-
-    expect(runner.query).toHaveBeenCalledWith(
-      expect.stringMatching(/slot\.classroom_id = classroom\.id[\s\S]*slot\.day_of_week = \$2/),
-      [41, 2],
-      true,
-    );
-  });
-
-  it('selects demo days without attendance recorded outside the same demo grant', async () => {
-    const { repository, runner } = createRepository();
-    runner.query.mockResolvedValueOnce({
-      records: [{ attendance_date: '2026-08-03' }],
-      affected: 1,
-    });
-
-    await repository.listRecentClassroomSchoolDays(
-      41,
-      '2026-08-07',
-      3,
-      'TEACHER_ACCESS_DEMO:grant-1',
-      runner as never,
-    );
-
-    const calls = runner.query.mock.calls as unknown as Array<[string, unknown[], boolean]>;
-    const sql = calls[0]?.[0] ?? '';
-    expect(sql).toMatch(
-      /classroom_slots AS \([\s\S]*JOIN classroom ON classroom\.id = slot\.classroom_id/,
-    );
-    expect(sql).toMatch(
-      /JOIN classroom_slots slot ON slot\.id = session\.timetable_slot_id[\s\S]*record\."RecordedBy" IS DISTINCT FROM \$4/,
-    );
-    expect(sql.match(/slot\.classroom_id/g)).toHaveLength(1);
-    expect(runner.query).toHaveBeenCalledWith(
-      expect.any(String),
-      [41, '2026-08-07', 3, 'TEACHER_ACCESS_DEMO:grant-1'],
-      true,
-    );
-  });
-
-  it('deletes only attendance sessions containing no non-demo records', async () => {
-    const { repository, runner } = createRepository();
-    runner.query.mockResolvedValueOnce({ records: [{ id: 'session-1' }], affected: 1 });
-
-    await repository.deleteClassroomRecentAttendance(
-      41,
-      ['2026-08-03', '2026-08-04', '2026-08-05'],
-      'TEACHER_ACCESS_DEMO:grant-1',
-      runner as never,
-    );
-
-    expect(runner.query).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /demo_record\."RecordedBy" = \$3[\s\S]*real_record\."RecordedBy" IS DISTINCT FROM \$3/,
-      ),
-      [41, ['2026-08-03', '2026-08-04', '2026-08-05'], 'TEACHER_ACCESS_DEMO:grant-1'],
       true,
     );
   });

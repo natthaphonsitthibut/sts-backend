@@ -1,6 +1,46 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('keeps task-link audit ids separate from OTP verification', async () => {
+    const executor = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    const repository = new TaskRepository({} as never, undefined as never, undefined as never);
+
+    await repository.createTaskLink(
+      {
+        linkId: '10000000-0000-4000-8000-000000000001',
+        taskId: '20000000-0000-4000-8000-000000000002',
+        parentLinkId: null,
+        tokenHash: 'token-hash',
+        tokenEncrypted: 'encrypted-token',
+        delegationDepth: 0,
+        assignedToName: 'ครู ทดสอบ',
+        assignedToFirstName: null,
+        assignedToLastName: null,
+        assignedToPhone: null,
+        assignedToEmail: 'teacher@example.test',
+        expiresAt: '2026-08-14T10:00:00.000Z',
+        opensAt: '2026-08-13T10:00:00.000Z',
+        subject: null,
+        delegationNote: null,
+        assignmentNote: 'ติดตามที่บ้าน',
+        subjectId: null,
+        otpVerified: 0,
+        createdBy: 460,
+        loginRole: null,
+        loginPermissions: [],
+        loginDataScope: {},
+      },
+      executor,
+    );
+
+    const [sql, params] = executor.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toMatch(
+      /otp_verified,[\s\S]*created_by,[\s\S]*updated_by[\s\S]*\$17,[\s\S]*\$18,[\s\S]*\$18/,
+    );
+    expect(params[16]).toBe(0);
+    expect(params[17]).toBe(460);
+  });
+
   it('checks visit attachments against the authenticated case scope', async () => {
     const queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -226,7 +266,12 @@ describe('TaskRepository', () => {
 
     expect(count).toBe(2);
     expect(queries).toHaveLength(1);
-    expect(queries[0].params).toEqual([['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW'], [101], [6], 7]);
+    expect(queries[0].params).toEqual([
+      ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND'],
+      [101],
+      [6],
+      7,
+    ]);
     expect(queries[0].sql).toContain('count(DISTINCT CASE');
     expect(queries[0].sql).toContain('c.status = ANY($1::text[])');
     expect(queries[0].sql).toContain('c.school_id = ANY($2::int[])');
@@ -309,6 +354,7 @@ describe('TaskRepository', () => {
                 id: 41,
                 student_id: '00000000-0000-4000-8000-000000000041',
                 student_photo_storage_key: 'student-photos/person/profile.webp',
+                student_photo_updated_at: '2026-08-10T06:30:00.000Z',
                 active_link_token_encrypted: null,
               },
             ],
@@ -328,7 +374,7 @@ describe('TaskRepository', () => {
 
     expect(result.rows[0]).toMatchObject({
       student_photo_url:
-        '/api/students/00000000-0000-4000-8000-000000000041/photo?v=student-photos%2Fperson%2Fprofile.webp',
+        '/api/students/00000000-0000-4000-8000-000000000041/photo?v=2026-08-10T06%3A30%3A00.000Z',
     });
     expect(result.rows[0]).not.toHaveProperty('student_photo_storage_key');
     expect(queryRunner.query).toHaveBeenCalledWith(
@@ -367,6 +413,8 @@ describe('TaskRepository', () => {
               room: '1',
               consecutive_absent_days: 5,
               absent_days: 6,
+              term_absent_days: 9,
+              absence_reset_after_date: '2026-08-01',
               late_count: 1,
               school_day_count: 20,
               weighted_absence_days: '6.25',
@@ -397,6 +445,7 @@ describe('TaskRepository', () => {
         data_scope: { school_ids: [101] },
       },
       {
+        studentGroup: 'RISK',
         riskTier: 'HIGH',
         schoolId: 101,
         searchTerm: 'เด็ก',
@@ -413,20 +462,74 @@ describe('TaskRepository', () => {
     expect(result.summary.WATCH).toBe(1);
     expect(result.rows[0].student_uuid).toBe('00000000-0000-4000-8000-000000000001');
     expect(queries).toHaveLength(3);
-    expect(queries[0].params).toEqual([[101], 101, '%เด็ก%']);
+    expect(queries[0].params).toEqual([[101], 101, '%เด็ก%', 'HIGH']);
     expect(queries[1].params).toEqual([[101], 101, '%เด็ก%', 'HIGH']);
     expect(queries[2].params).toEqual([[101], 101, '%เด็ก%', 'HIGH', 10, 10]);
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('LEFT JOIN student_risk_profiles profile');
+    expect(queries[0].sql).toContain('profile.term_absent_days');
+    expect(queries[0].sql).toContain('profile.absence_reset_after_date');
+    expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('latest_case.id IS NOT NULL');
+    expect(queries[0].sql).toContain("COUNT(*) FILTER (WHERE latest_case_status = 'OPEN')");
+    expect(queries[0].sql).not.toContain('JOIN base_students case_student');
     expect(queries[0].sql).not.toContain('FROM attendance a');
     expect(queries[0].sql).toContain('s."SchoolID_Onec" = ANY($1::int[])');
     expect(queries[0].sql).toContain('s."SchoolID_Onec" = $2');
-    expect(queries[0].sql).not.toContain('risk_tier = $4');
+    expect(queries[0].sql).toContain('risk_tier = $4');
     expect(queries[1].sql).toContain('risk_tier = $4');
     expect(queries[2].sql).toContain(
       'ORDER BY weighted_attendance_percent ASC NULLS LAST, risk_severity DESC, student_name ASC',
     );
     expect(queries[2].sql).toContain('LIMIT $5 OFFSET $6');
+  });
+
+  it('builds a valid unfiltered dashboard query and escapes literal search wildcards', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (queries.length === 1) {
+          return { records: [{ total_count: 0, HIGH: 0, WATCH: 0, NORMAL: 0 }], affected: 1 };
+        }
+        if (queries.length === 2) return { records: [{ count: 0 }], affected: 1 };
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.listRiskDashboardStudents(
+      {
+        id: 1,
+        username: 'national-admin',
+        roles: ['ADMIN'],
+        permissions: ['dashboard'],
+      },
+      {},
+      { highAbsentDays: 3 },
+    );
+    expect(queries[0].sql).not.toMatch(/\bWHERE\s*\)/);
+    expect(queries[0].sql).not.toContain('WHERE \n');
+
+    queries.length = 0;
+    await repository.listRiskDashboardStudents(
+      {
+        id: 1,
+        username: 'national-admin',
+        roles: ['ADMIN'],
+        permissions: ['dashboard'],
+      },
+      { searchTerm: 'เด็ก_100%' },
+      { highAbsentDays: 3 },
+    );
+    expect(queries[0].params).toEqual(['%เด็ก\\_100\\%%']);
+    expect(queries[0].sql).toContain("ESCAPE '\\'");
   });
 
   it('fails closed for own-only actors on the risk dashboard', async () => {
@@ -458,6 +561,12 @@ describe('TaskRepository', () => {
       rows: [],
       totalCount: 0,
       summary: { HIGH: 0, WATCH: 0, NORMAL: 0 },
+      caseStatusSummary: {
+        OPEN: 0,
+        IN_PROGRESS: 0,
+        PENDING_REVIEW: 0,
+        STUDENT_NOT_FOUND: 0,
+      },
     });
     expect(queryRunner.query).not.toHaveBeenCalled();
   });

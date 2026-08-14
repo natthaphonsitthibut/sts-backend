@@ -110,12 +110,16 @@ describe('TaskStatsService', () => {
           {
             student_uuid: 'student-1',
             student_name: 'เด็ก ทดสอบ',
+            photo_storage_key: 'student-photos/person/profile.webp',
+            photo_updated_at: '2026-08-10T06:30:00.000Z',
             school_id: 101,
             school_name: 'โรงเรียนทดสอบ',
             grade: 'ม.1',
             room: '1',
             consecutive_absent_days: 4,
             absent_days: 5,
+            term_absent_days: 8,
+            absence_reset_after_date: '2026-08-01',
             late_count: 2,
             school_day_count: 20,
             weighted_absence_days: '5.50',
@@ -124,10 +128,17 @@ describe('TaskStatsService', () => {
             risk_score: '1.0000',
             open_case_count: 1,
             latest_case_at: '2026-07-06T00:00:00.000Z',
+            teacher_comment: 'ความเห็นของครูที่ต้องมีสิทธิ์จึงจะเห็น',
           },
         ],
         totalCount: 1,
         summary: { HIGH: 1, WATCH: 0, NORMAL: 0 },
+        caseStatusSummary: {
+          OPEN: 0,
+          IN_PROGRESS: 0,
+          PENDING_REVIEW: 0,
+          STUDENT_NOT_FOUND: 0,
+        },
       }),
     };
     const taskPolicyService = {
@@ -145,8 +156,12 @@ describe('TaskStatsService', () => {
       data: [
         {
           studentId: 'student-1',
+          studentPhotoUrl: '/api/students/student-1/photo?v=2026-08-10T06%3A30%3A00.000Z',
           riskTier: 'HIGH',
+          termAbsentDays: 8,
+          absenceResetAfterDate: '2026-08-01',
           weightedAttendancePercent: 72.5,
+          teacherComment: null,
         },
       ],
       meta: {

@@ -26,7 +26,9 @@ export class AddTimetableSlotTeachers20260805150000 implements MigrationInterfac
         CONSTRAINT fk_timetable_slot_teachers_slot
           FOREIGN KEY (timetable_slot_id) REFERENCES timetable_slots(id) ON DELETE CASCADE,
         CONSTRAINT fk_timetable_slot_teachers_membership
-          FOREIGN KEY (teacher_membership_id) REFERENCES school_teacher_memberships(id) ON DELETE CASCADE
+          FOREIGN KEY (teacher_membership_id) REFERENCES school_teacher_memberships(id) ON DELETE CASCADE,
+        CONSTRAINT fk_timetable_slot_teachers_created_by
+          FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE
       );
 
       CREATE INDEX IF NOT EXISTS idx_timetable_slot_teachers_membership
@@ -73,6 +75,9 @@ export class AddTimetableSlotTeachers20260805150000 implements MigrationInterfac
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    // `curriculum_subjects` rows repaired above are intentionally retained:
+    // after deployment they become shared master data and cannot be attributed
+    // safely to this migration without deleting later user assignments.
     await queryRunner.query(`
       DROP TABLE IF EXISTS timetable_slot_teachers;
     `);

@@ -50,6 +50,17 @@ export class SeedThepsirinRiskShowcase20260807150000 implements MigrationInterfa
            AND current_enrollment.resolution_state = 'ACTIVE'
           WHERE tracked_case.reason_flagged = $1
             AND tracked_case.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1
+              FROM users demo_actor
+              JOIN school_teacher_memberships demo_membership
+                ON demo_membership.teacher_user_id = demo_actor.id
+               AND demo_membership.school_id = tracked_case.school_id
+               AND demo_membership.membership_status = 'ACTIVE'
+               AND demo_membership.deleted_at IS NULL
+              WHERE demo_actor.data_origin_code = 'DEMO'
+                AND demo_actor.status = 'ACTIVE'
+            )
         ),
         candidate_days AS (
           SELECT

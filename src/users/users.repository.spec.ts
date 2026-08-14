@@ -113,6 +113,8 @@ describe('UsersRepository user list queries', () => {
     });
 
     expect(queries[2]).toContain("ORDER BY COALESCE(u.affiliation, '') ASC, u.id ASC");
+    expect(queries[2]).toContain('teacher_membership_attention_required');
+    expect(queries[2]).toContain("active_membership.membership_status = 'ACTIVE'");
   });
 
   it('filters rows by lifecycle status without narrowing summary counts', async () => {

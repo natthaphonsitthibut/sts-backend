@@ -436,7 +436,7 @@ async function upsertSmokeUser(dataSource, passwordHash) {
             deactivation_reason_code = NULL,
             deactivation_note = NULL,
             affiliation = 'Automated profile browser smoke',
-            data_origin_code = 'OPERATIONAL',
+            data_origin_code = 'AUTOMATED_TEST',
             email = 'profile.browser.smoke@example.invalid',
             phone = '0891234567',
             line_id = NULL,
@@ -471,7 +471,7 @@ async function upsertSmokeUser(dataSource, passwordHash) {
         $1, $2, 'ProfileBrowser', 'Smoke', 'ACTIVE',
         '["home","audit-log","manage-users-list","attendance-dashboard"]'::jsonb, 'ADMIN',
         '{"global":true}'::jsonb, FALSE, 'Automated profile browser smoke',
-        'OPERATIONAL', 'profile.browser.smoke@example.invalid', '0891234567'
+        'AUTOMATED_TEST', 'profile.browser.smoke@example.invalid', '0891234567'
       )
       RETURNING id
     `,
@@ -593,7 +593,15 @@ async function main() {
         }),
       )}); localStorage.setItem('admin_access', 'true');`,
     );
-    await navigate(client, `${FRONTEND_URL}/profile`);
+    // The users API intentionally hides AUTOMATED_TEST rows, including this
+    // fixture. Do not weaken that boundary merely to click the self row here;
+    // the direct-own redirect below still proves identity comes from the
+    // server-issued session rather than the route parameter.
+    await navigate(client, `${FRONTEND_URL}/manage-users/${user.id}`);
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === '/profile',
+      'Direct own admin detail URL did not redirect to the canonical profile page',
+    );
     try {
       await waitFor(
         async () =>
@@ -608,16 +616,28 @@ async function main() {
       const pageText = String(await evaluate(client, 'document.body.innerText')).slice(0, 500);
       throw new Error(`${error.message}; path=${pathname}; page=${pageText}`);
     }
-    await waitFor(
-      async () =>
-        Boolean(
-          await evaluate(
-            client,
-            `Boolean(document.querySelector('a[href^="/manage-users/${user.id}/edit"]'))`,
+    try {
+      await waitFor(
+        async () =>
+          Boolean(
+            await evaluate(
+              client,
+              `Boolean(document.querySelector('a[href^="/manage-users/${user.id}/edit"]'))`,
+            ),
           ),
-        ),
-      'Manage-users profile edit link did not render for an authorized user',
-    );
+        'Manage-users profile edit link did not render for an authorized user',
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        client,
+        `({
+          text: document.body.innerText.slice(0, 800),
+          storedUser: localStorage.getItem('sts_user'),
+          links: [...document.querySelectorAll('a')].map((link) => link.getAttribute('href')).filter(Boolean),
+        })`,
+      );
+      throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
+    }
     assert(
       Boolean(
         await evaluate(

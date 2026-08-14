@@ -266,6 +266,12 @@ export class StudentRiskProfileEntity {
   @Column({ name: 'absent_days', type: 'integer', default: 0 })
   absentDays!: number;
 
+  @Column({ name: 'term_absent_days', type: 'integer', default: 0 })
+  termAbsentDays!: number;
+
+  @Column({ name: 'absence_reset_after_date', type: 'date', nullable: true })
+  absenceResetAfterDate!: string | null;
+
   @Column({ name: 'late_count', type: 'integer', default: 0 })
   lateCount!: number;
 

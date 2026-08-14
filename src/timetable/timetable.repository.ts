@@ -175,10 +175,10 @@ export class TimetableRepository {
             )
           ))
           OR ($2::integer IS NOT NULL AND $2::integer <> 0 AND (
-            ts.teacher_user_id = $2::integer
-            OR (
-              NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
-              AND cta.teacher_membership_id IN (SELECT id FROM school_teacher_memberships WHERE teacher_user_id = $2::integer AND deleted_at IS NULL)
+            NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
+            AND (
+              ts.teacher_user_id = $2::integer
+              OR cta.teacher_membership_id IN (SELECT id FROM school_teacher_memberships WHERE teacher_user_id = $2::integer AND deleted_at IS NULL)
             )
           ))
         )
@@ -471,6 +471,7 @@ export class TimetableRepository {
         UPDATE timetable_slots
         SET subject_id = COALESCE($2, subject_id),
             teacher_user_id = CASE WHEN $3 THEN $4 ELSE teacher_user_id END,
+            teacher_membership_id = CASE WHEN $3 THEN NULL ELSE teacher_membership_id END,
             updated_by = $5
         WHERE id = $1
       `,

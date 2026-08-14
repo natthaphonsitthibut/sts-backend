@@ -323,6 +323,7 @@ describe('TaskAccessService home visit report context', () => {
         address_sub_district: 'ดุสิต',
         postal_code: '10300',
         reason_flagged: 'ขาดเรียนต่อเนื่อง',
+        status: 'IN_PROGRESS',
         academic_year: 2569,
         semester: 1,
         grade: 'ม.3',
@@ -368,6 +369,7 @@ describe('TaskAccessService home visit report context', () => {
       semester: 1,
       student_grade: 'ม.3',
       student_room: '2',
+      case_status: 'IN_PROGRESS',
       address_province: 'กรุงเทพมหานคร',
       contact_channels: [
         {
@@ -399,6 +401,7 @@ describe('TaskAccessService home visit report context', () => {
     });
     expect(result).not.toHaveProperty('follow_up_history');
     expect(result).not.toHaveProperty('contact_channels');
+    expect(result).not.toHaveProperty('case_status');
     expect(taskRepository.listPublicCaseContactChannels).not.toHaveBeenCalled();
     expect(taskRepository.listPublicCaseFollowUpHistory).not.toHaveBeenCalled();
   });
@@ -453,6 +456,46 @@ describe('TaskAccessService OTP sessions', () => {
     });
     expect(taskRepository.clearOtpAttempts).toHaveBeenCalledWith('link-1', {});
     expect(magicSessionStore.issue).toHaveBeenCalledWith('link-1');
+  });
+});
+
+describe('TaskAccessService OTP challenge', () => {
+  it('returns only a masked destination after issuing an OTP', async () => {
+    const taskRepository = {
+      findOtpLinkByTokenHash: jest.fn().mockResolvedValue({
+        id: 'link-1',
+        assigned_to_email: 'teacher@example.test',
+      }),
+      updateLinkOtp: jest.fn().mockResolvedValue(undefined),
+    };
+    const emailService = { sendOTP: jest.fn().mockResolvedValue(undefined) };
+    const service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      emailService as unknown as EmailService,
+      {} as AuditLogService,
+      {
+        sessionSecret: 'test-session-secret-at-least-16-chars',
+        magicSessionTtlSeconds: 21_600,
+        otpTtlSeconds: 600,
+      } as AuthRuntimeConfig,
+      { enabled: true, user: 'mailer@example.test' } as EmailRuntimeConfig,
+      {} as MagicSessionStoreService,
+    );
+
+    const result = await service.requestOtp('public-token');
+
+    expect(result).toMatchObject({
+      success: true,
+      method: 'EMAIL',
+      maskedEmail: 'te*****@example.test',
+    });
+    expect(JSON.stringify(result)).not.toContain('teacher@example.test');
+    expect(emailService.sendOTP).toHaveBeenCalledWith(
+      'teacher@example.test',
+      expect.any(String),
+      10,
+    );
   });
 });
 

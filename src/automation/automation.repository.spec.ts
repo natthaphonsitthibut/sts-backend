@@ -25,7 +25,7 @@ describe('AutomationRepository', () => {
     expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4)');
     expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3))');
     expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0');
-    expect(queries[0].sql).toContain("a.session_kind IN ('DAILY', 'SUBJECT')");
+    expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
     expect(queries[0].sql).toContain('WITH current_enrollments AS');
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('HAVING COUNT(*) >= $1');
@@ -59,7 +59,7 @@ describe('AutomationRepository', () => {
     expect(queries).toHaveLength(1);
     expect(queries[0].params).toEqual([['11111111-1111-4111-8111-111111111111'], '2026-06-27']);
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
-    expect(queries[0].sql).toContain("attendance.session_kind IN ('DAILY', 'SUBJECT')");
+    expect(queries[0].sql).toContain("attendance.session_kind = 'SUBJECT'");
   });
 
   it('deduplicates against active absence cases, not only OPEN cases', async () => {
@@ -85,11 +85,11 @@ describe('AutomationRepository', () => {
 
     expect(result).toEqual({ id: 20, risk_tier: 'LOW' });
     expect(queries[0].params).toEqual([
-      ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW'],
+      ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND'],
       'student-uuid-1',
       'สมชาย ใจดี',
       10010002,
-      ['ขาดเรียนสะสม%', 'ขาดเรียนติดต่อกัน%'],
+      ['ขาดเรียนสะสม%', 'ขาดเรียนหลังปิดเคสล่าสุด%', 'ขาดเรียนติดต่อกัน%'],
     ]);
     expect(queries[0].sql).toContain('status = ANY($1::text[])');
     expect(queries[0].sql).toContain('reason_flagged LIKE ANY($5::text[])');
@@ -113,5 +113,28 @@ describe('AutomationRepository', () => {
     await repository.listOpenAbsenceCases();
 
     expect(queries[0].sql).toContain('SELECT id, student_name, student_uuid, school_id');
+  });
+
+  it('starts the next absence count after the latest resolved case review', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new AutomationRepository({
+      createQueryRunner: jest.fn(() => queryRunner),
+    } as never);
+
+    await repository.listCumulativeAbsentStudents(3, '2026-08-13');
+
+    expect(queries[0].sql).toContain('resolved_case_baselines');
+    expect(queries[0].sql).toContain("tracked_case.status = 'RESOLVED'");
+    expect(queries[0].sql).toContain(
+      'a."AttendanceDate"::date > COALESCE(baseline.reset_after_date',
+    );
   });
 });

@@ -42,7 +42,7 @@ describe('AbsenceMonitorService', () => {
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
   let notificationsService: jest.Mocked<Pick<NotificationsService, 'notifyCaseCreated'>>;
-  let riskProfileService: jest.Mocked<Pick<RiskProfileService, 'enqueueStudents'>>;
+  let riskProfileService: jest.Mocked<Pick<RiskProfileService, 'requestStudentRecalculation'>>;
 
   beforeEach(() => {
     automationRepository = {
@@ -70,7 +70,7 @@ describe('AbsenceMonitorService', () => {
       notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
     };
     riskProfileService = {
-      enqueueStudents: jest.fn().mockResolvedValue(undefined),
+      requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new AbsenceMonitorService(
@@ -107,7 +107,7 @@ describe('AbsenceMonitorService', () => {
       },
       ip: null,
     });
-    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
     );
@@ -152,7 +152,7 @@ describe('AbsenceMonitorService', () => {
         case_id: 77,
         student_name: 'สมชาย ใจดี',
         student_school: 'โรงเรียนทดสอบ',
-        reason_flagged: 'ขาดเรียนสะสม 7 วัน',
+        reason_flagged: 'ขาดเรียนหลังปิดเคสล่าสุด 7 วัน',
         school_id: 10010002,
       },
     ]);
@@ -161,12 +161,12 @@ describe('AbsenceMonitorService', () => {
       studentName: 'สมชาย ใจดี',
       schoolId: 10010002,
       schoolName: 'โรงเรียนทดสอบ',
-      reason: 'ขาดเรียนสะสม 7 วัน',
+      reason: 'ขาดเรียนหลังปิดเคสล่าสุด 7 วัน',
     });
     const createdInput = automationRepository.createAutomatedCase.mock.calls[0]?.[0];
     expect(createdInput?.riskTier).toBe('HIGH');
     expect(createdInput?.slaDueAt).toBeInstanceOf(Date);
-    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
     );
@@ -175,7 +175,7 @@ describe('AbsenceMonitorService', () => {
   it('does not enqueue a risk profile refresh when nothing changed', async () => {
     await service.checkConsecutiveAbsences();
 
-    expect(riskProfileService.enqueueStudents).not.toHaveBeenCalled();
+    expect(riskProfileService.requestStudentRecalculation).not.toHaveBeenCalled();
   });
 
   it('does not auto-cancel a legacy case without a stable student uuid', async () => {

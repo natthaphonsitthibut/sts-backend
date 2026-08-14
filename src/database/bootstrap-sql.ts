@@ -82,6 +82,86 @@ export const STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL = `
     AND student."SubDistrictNameThai_Onec" = postal.sub_district;
 `;
 
+export const ARAID_PROFILE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS araid_identity_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    identity_number CHAR(13) NOT NULL,
+    title_th VARCHAR(32),
+    given_name_th VARCHAR(100) NOT NULL,
+    family_name_th VARCHAR(100) NOT NULL,
+    given_name_en VARCHAR(100),
+    family_name_en VARCHAR(100),
+    date_of_birth DATE,
+    gender_code VARCHAR(16),
+    phone_number VARCHAR(20),
+    email_address VARCHAR(254),
+    address_line VARCHAR(255),
+    sub_district_name VARCHAR(100),
+    district_name VARCHAR(100),
+    province_name VARCHAR(100),
+    postal_code CHAR(5),
+    record_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    created_by_user_id INTEGER NOT NULL,
+    updated_by_user_id INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_araid_identity_records_number UNIQUE (identity_number),
+    CONSTRAINT fk_araid_identity_records_created_by
+      FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_araid_identity_records_updated_by
+      FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_araid_identity_records_number
+      CHECK (identity_number ~ '^[0-9]{13}$'),
+    CONSTRAINT chk_araid_identity_records_names
+      CHECK (btrim(given_name_th) <> '' AND btrim(family_name_th) <> ''),
+    CONSTRAINT chk_araid_identity_records_gender
+      CHECK (gender_code IS NULL OR gender_code IN ('MALE', 'FEMALE', 'OTHER')),
+    CONSTRAINT chk_araid_identity_records_postal_code
+      CHECK (postal_code IS NULL OR postal_code ~ '^[0-9]{5}$'),
+    CONSTRAINT chk_araid_identity_records_status
+      CHECK (record_status IN ('ACTIVE', 'INACTIVE'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_araid_identity_records_name
+    ON araid_identity_records (given_name_th, family_name_th);
+  CREATE INDEX IF NOT EXISTS idx_araid_identity_records_status_updated
+    ON araid_identity_records (record_status, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS araid_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    identity_record_id UUID NOT NULL,
+    created_by_user_id INTEGER NOT NULL,
+    pin_hash VARCHAR(255) NOT NULL,
+    registration_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    registration_method VARCHAR(24) NOT NULL DEFAULT 'MANAGED',
+    failed_pin_attempts SMALLINT NOT NULL DEFAULT 0,
+    pin_locked_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_araid_profiles_identity_record UNIQUE (identity_record_id),
+    CONSTRAINT fk_araid_profiles_identity_record
+      FOREIGN KEY (identity_record_id) REFERENCES araid_identity_records(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_araid_profiles_created_by
+      FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_araid_profiles_status
+      CHECK (registration_status IN ('ACTIVE', 'LOCKED', 'REVOKED')),
+    CONSTRAINT chk_araid_profiles_method
+      CHECK (registration_method = 'MANAGED'),
+    CONSTRAINT chk_araid_profiles_failed_pin_attempts
+      CHECK (failed_pin_attempts BETWEEN 0 AND 5),
+    CONSTRAINT chk_araid_profiles_lock_state
+      CHECK (
+        (registration_status = 'LOCKED' AND pin_locked_until IS NOT NULL)
+        OR (registration_status <> 'LOCKED' AND pin_locked_until IS NULL)
+      )
+  );
+  CREATE INDEX IF NOT EXISTS idx_araid_profiles_status
+    ON araid_profiles (registration_status);
+`;
+
 function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
@@ -584,30 +664,26 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
     code VARCHAR(32) PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,
     badge_variant VARCHAR(16) NOT NULL,
-    summary_tone VARCHAR(16) NOT NULL,
     sort_order SMALLINT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     ${AUDIT_COLUMNS_SQL},
     CONSTRAINT chk_case_workflow_statuses_label_th CHECK (length(trim(label_th)) > 0),
     CONSTRAINT chk_case_workflow_statuses_badge_variant
       CHECK (badge_variant IN ('default', 'secondary', 'destructive', 'success', 'warning')),
-    CONSTRAINT chk_case_workflow_statuses_summary_tone
-      CHECK (summary_tone IN ('default', 'success', 'warning', 'danger', 'info')),
     CONSTRAINT chk_case_workflow_statuses_sort_order CHECK (sort_order >= 0)
   );
   ${auditUpdatedAtTriggerSql('case_workflow_statuses')}
   INSERT INTO case_workflow_statuses (
-    code, label_th, badge_variant, summary_tone, sort_order
+    code, label_th, badge_variant, sort_order
   ) VALUES
-    ('OPEN', 'รอมอบหมาย', 'secondary', 'default', 10),
-    ('PENDING_REVIEW', 'รอพิจารณา', 'default', 'info', 20),
-    ('IN_PROGRESS', 'รอติดตาม', 'warning', 'warning', 30),
-    ('STUDENT_NOT_FOUND', 'ไม่พบนักเรียน', 'destructive', 'danger', 40),
-    ('RESOLVED', 'เสร็จสิ้น', 'success', 'success', 50)
+    ('OPEN', 'รอมอบหมาย', 'secondary', 10),
+    ('PENDING_REVIEW', 'รอพิจารณา', 'default', 20),
+    ('IN_PROGRESS', 'รอติดตาม', 'warning', 30),
+    ('STUDENT_NOT_FOUND', 'ไม่พบนักเรียน', 'destructive', 40),
+    ('RESOLVED', 'เสร็จสิ้น', 'success', 50)
   ON CONFLICT (code) DO UPDATE SET
     label_th = EXCLUDED.label_th,
     badge_variant = EXCLUDED.badge_variant,
-    summary_tone = EXCLUDED.summary_tone,
     sort_order = EXCLUDED.sort_order,
     is_active = TRUE,
     deleted_at = NULL;
@@ -627,6 +703,11 @@ export const CASE_WORKFLOW_STATUS_TABLE_SQL = `
         ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
   END $case_workflow_status_fk$;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_cases_active_student_uuid
+    ON cases(student_uuid)
+    WHERE student_uuid IS NOT NULL
+      AND deleted_at IS NULL
+      AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND');
 `;
 
 export const CASE_TRACKING_DECISION_TABLES_SQL = `
@@ -1274,14 +1355,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('STUDENT_STATUS_FLAG', 'TERMINAL', 'สิ้นสุด', 'secondary', NULL, 20),
     ('STUDENT_STATUS_FLAG', 'FOLLOWUP_REQUIRED', 'ควรพิจารณาติดตาม', 'warning', NULL, 30),
     ('STUDENT_STATUS_FLAG', 'DISABLED', 'ปิดใช้งาน', 'destructive', NULL, 40),
-    ('FIELD_FOLLOWER_STATUS', 'APPLIED', 'รอตรวจสอบ', 'warning', NULL, 10),
-    ('FIELD_FOLLOWER_STATUS', 'VERIFIED', 'ยืนยันตัวตน', 'secondary', NULL, 20),
-    ('FIELD_FOLLOWER_STATUS', 'ACTIVE', 'ใช้งาน', 'success', NULL, 30),
-    ('FIELD_FOLLOWER_STATUS', 'SUSPENDED', 'ระงับ', 'destructive', NULL, 40),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'SCHEDULED', 'รอเปิด', 'secondary', 'info', 5),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'ACTIVE', 'ใช้งาน', 'success', 'success', 10),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', 'danger', 20),
-    ('RECRUITMENT_CAMPAIGN_STATE', 'EXPIRED', 'หมดอายุ', 'warning', 'warning', 30),
     ('ROLE_ORIGIN', 'SYSTEM', 'ระบบ', 'secondary', NULL, 10),
     ('ATTENDANCE_ANOMALY', 'HOLIDAY_ATTENDANCE', 'เช็คชื่อในวันหยุด', 'warning', NULL, 10),
     ('ATTENDANCE_ANOMALY', 'CANCELLED_ATTENDANCE', 'เช็คชื่อในวันที่ยกเลิกเรียน', 'warning', NULL, 20),
@@ -1648,6 +1721,7 @@ export const DATABASE_BASELINE_SQL = `
     otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
     delegation_note TEXT,
+    assignment_note TEXT CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000),
     status TEXT DEFAULT 'ACTIVE',
     admin_locked INTEGER DEFAULT 0,
     admin_lock_reason TEXT,
@@ -2032,7 +2106,8 @@ export const DATABASE_BASELINE_SQL = `
     ON attendance (student_uuid, "AcademicYear_Onec", "Semester_Onec", "AttendanceDate" DESC);
   CREATE INDEX IF NOT EXISTS idx_cases_risk_profile_open_student
     ON cases (student_uuid, created_at DESC, id DESC)
-    WHERE deleted_at IS NULL AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW');
+    WHERE deleted_at IS NULL
+      AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND');
   CREATE INDEX IF NOT EXISTS idx_school_calendar_days_risk_profile
     ON school_calendar_days (school_term_id, day_type, deleted_at, calendar_date);
 
@@ -2046,6 +2121,10 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMP WITH TIME ZONE;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS delegation_note TEXT;
+  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS assignment_note TEXT;
+  ALTER TABLE task_links DROP CONSTRAINT IF EXISTS chk_task_links_assignment_note_length;
+  ALTER TABLE task_links ADD CONSTRAINT chk_task_links_assignment_note_length
+    CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000);
 
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS result_summary TEXT;
   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_school_id INTEGER;
@@ -2111,6 +2190,10 @@ export const DATABASE_BASELINE_SQL = `
     semester INTEGER NOT NULL,
     consecutive_absent_days INTEGER NOT NULL DEFAULT 0,
     absent_days INTEGER NOT NULL DEFAULT 0,
+    term_absent_days INTEGER NOT NULL DEFAULT 0
+      CONSTRAINT chk_student_risk_profiles_term_absent_days
+      CHECK (term_absent_days >= 0),
+    absence_reset_after_date DATE NULL,
     late_count INTEGER NOT NULL DEFAULT 0,
     subject_late_count INTEGER NOT NULL DEFAULT 0,
     school_day_count INTEGER NOT NULL DEFAULT 0,
@@ -2135,129 +2218,6 @@ export const DATABASE_BASELINE_SQL = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
-
-  CREATE TABLE IF NOT EXISTS follower_recruitment_campaigns (
-    id BIGSERIAL PRIMARY KEY,
-    name TEXT NOT NULL
-      CONSTRAINT chk_frc_name_not_blank CHECK (btrim(name) <> ''),
-    description TEXT NULL,
-    public_code TEXT NOT NULL
-      CONSTRAINT uq_frc_public_code UNIQUE
-      CONSTRAINT chk_frc_public_code_format CHECK (public_code ~ '^[A-Za-z0-9_-]{12,64}$'),
-    data_scope JSONB NOT NULL DEFAULT '{}'::jsonb,
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
-      CONSTRAINT chk_frc_status CHECK (status IN ('ACTIVE', 'LOCKED', 'EXPIRED', 'SCHEDULED')),
-    opens_at TIMESTAMPTZ NULL,
-    closes_at TIMESTAMPTZ NULL,
-    view_count BIGINT NOT NULL DEFAULT 0
-      CONSTRAINT chk_frc_view_count_nonneg CHECK (view_count >= 0),
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_frc_window CHECK (
-      opens_at IS NULL OR closes_at IS NULL OR closes_at > opens_at
-    )
-  );
-  ${auditUpdatedAtTriggerSql('follower_recruitment_campaigns')}
-  CREATE INDEX IF NOT EXISTS idx_frc_active_live
-    ON follower_recruitment_campaigns (is_active)
-    WHERE deleted_at IS NULL;
-  CREATE INDEX IF NOT EXISTS idx_frc_created_at
-    ON follower_recruitment_campaigns (created_at DESC);
-
-  CREATE TABLE IF NOT EXISTS field_followers (
-    id BIGSERIAL PRIMARY KEY,
-    first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL,
-    phone VARCHAR(20) NOT NULL,
-    email TEXT NULL,
-    gender VARCHAR(20) NULL,
-    sub_district TEXT NULL,
-    district TEXT NULL,
-    province TEXT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'APPLIED'
-      CONSTRAINT chk_field_followers_status
-      CHECK (status IN ('APPLIED', 'VERIFIED', 'ACTIVE', 'SUSPENDED')),
-    trust_level VARCHAR(20) NOT NULL DEFAULT 'STANDARD',
-    applied_via VARCHAR(20) NOT NULL DEFAULT 'PUBLIC_FORM',
-    verification_method VARCHAR(16) NOT NULL DEFAULT 'PENDING'
-      CONSTRAINT chk_field_followers_verification_method
-      CHECK (verification_method IN ('THAID', 'ID_CARD_PHOTO', 'PENDING')),
-    thaid_person_ref TEXT NULL,
-    id_card_photo_filename TEXT NULL,
-    id_card_photo_uploaded_at TIMESTAMPTZ NULL,
-    campaign_id BIGINT NULL
-      CONSTRAINT fk_field_followers_campaign
-      REFERENCES follower_recruitment_campaigns(id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    reviewed_by_user_id INTEGER NULL
-      CONSTRAINT fk_field_followers_reviewed_by
-      REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
-    reviewed_at TIMESTAMPTZ NULL,
-    verified_by_user_id INTEGER NULL
-      CONSTRAINT fk_field_followers_verified_by
-      REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
-    verified_at TIMESTAMPTZ NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-  CREATE INDEX IF NOT EXISTS idx_field_followers_campaign_id
-    ON field_followers (campaign_id)
-    WHERE campaign_id IS NOT NULL;
-  CREATE INDEX IF NOT EXISTS idx_field_followers_verification_method
-    ON field_followers (verification_method);
-
-  ALTER TABLE task_links
-    ADD COLUMN IF NOT EXISTS source_field_follower_id BIGINT NULL;
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_links_field_follower'
-    ) THEN
-      ALTER TABLE task_links
-        ADD CONSTRAINT fk_task_links_field_follower
-        FOREIGN KEY (source_field_follower_id)
-        REFERENCES field_followers(id)
-        ON DELETE SET NULL ON UPDATE CASCADE;
-    END IF;
-  END $$;
-  CREATE INDEX IF NOT EXISTS idx_task_links_source_field_follower
-    ON task_links (source_field_follower_id)
-    WHERE source_field_follower_id IS NOT NULL;
-
-  CREATE TABLE IF NOT EXISTS follower_recruitment_campaign_targets (
-    id BIGSERIAL PRIMARY KEY,
-    campaign_id BIGINT NOT NULL
-      CONSTRAINT fk_frct_campaign
-      REFERENCES follower_recruitment_campaigns(id)
-      ON DELETE CASCADE ON UPDATE CASCADE,
-    case_id INTEGER NOT NULL
-      CONSTRAINT fk_frct_case
-      REFERENCES cases(id)
-      ON DELETE CASCADE ON UPDATE CASCADE,
-    status VARCHAR(16) NOT NULL DEFAULT 'OPEN'
-      CONSTRAINT chk_frct_status
-      CHECK (status IN ('OPEN', 'ASSIGNED', 'COMPLETED', 'CANCELED')),
-    assigned_follower_id BIGINT NULL
-      CONSTRAINT fk_frct_follower
-      REFERENCES field_followers(id)
-      ON DELETE SET NULL ON UPDATE CASCADE,
-    assigned_task_link_id UUID NULL
-      CONSTRAINT fk_frct_task_link
-      REFERENCES task_links(id)
-      ON DELETE SET NULL ON UPDATE CASCADE,
-    assigned_at TIMESTAMPTZ NULL,
-    assigned_by INTEGER NULL
-      CONSTRAINT fk_frct_assigned_by
-      REFERENCES users(id)
-      ON DELETE SET NULL ON UPDATE CASCADE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT uq_frct_campaign_case UNIQUE (campaign_id, case_id)
-  );
-  ${auditUpdatedAtTriggerSql('follower_recruitment_campaign_targets')}
-  CREATE INDEX IF NOT EXISTS idx_frct_campaign_status
-    ON follower_recruitment_campaign_targets (campaign_id, status);
-  CREATE INDEX IF NOT EXISTS idx_frct_follower
-    ON follower_recruitment_campaign_targets (assigned_follower_id)
-    WHERE assigned_follower_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS system_settings (
     setting_key TEXT PRIMARY KEY,
@@ -2600,6 +2560,8 @@ export const DATABASE_BASELINE_SQL = `
   ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
 
   ${STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL}
+
+  ${ARAID_PROFILE_TABLE_SQL}
 
   ${CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL}
 

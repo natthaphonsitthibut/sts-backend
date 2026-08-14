@@ -215,6 +215,41 @@ describe('CaseService', () => {
     ]);
   });
 
+  it('serializes database attachment arrays for the case detail client', async () => {
+    taskRepository.listTasksByCase.mockResolvedValueOnce([
+      {
+        task_id: 'task-id',
+        task_status: 'COMPLETED',
+        photo_paths: ['/uploads/visit-attachments/proof.png'],
+      },
+    ]);
+
+    const result = await service.getCase(10, buildActor(['review-cases']));
+
+    expect(result.data.follow_up_rounds[0].photo_paths).toBe(
+      '["/uploads/visit-attachments/proof.png"]',
+    );
+  });
+
+  it('returns teacher comments only to observation managers', async () => {
+    taskRepository.findCaseDetailById.mockResolvedValue({
+      id: 10,
+      student_name: 'เด็ก ทดสอบ',
+      teacher_comment: 'ข้อมูลข้อสังเกตที่จำกัดสิทธิ์',
+      status: 'OPEN',
+      school_id: 10010002,
+    });
+
+    const restricted = await service.getCase(10, buildActor(['review-cases']));
+    const allowed = await service.getCase(
+      10,
+      buildActor(['review-cases', 'manage-student-observations']),
+    );
+
+    expect(restricted.data.teacher_comment).toBeNull();
+    expect(allowed.data.teacher_comment).toBe('ข้อมูลข้อสังเกตที่จำกัดสิทธิ์');
+  });
+
   it('hides an out-of-scope student when opening a case', async () => {
     taskRepository.findStudentForCaseCreation.mockResolvedValueOnce(null);
 
@@ -275,6 +310,22 @@ describe('CaseService', () => {
         targetId: '10',
       }),
     );
+  });
+
+  it('returns a successful review after notification failure post-commit', async () => {
+    notificationsService.notifyCaseStatusChanged.mockRejectedValueOnce(
+      new Error('notification service unavailable'),
+    );
+
+    await expect(
+      service.reviewCase(
+        10,
+        { review_action: 'REFER_AGENCY', review_note: 'ส่งต่อเพื่อดูแลต่อ' },
+        buildActor(['review-cases']),
+      ),
+    ).resolves.toEqual(expect.objectContaining({ success: true, case_status: 'RESOLVED' }));
+    expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalled();
+    expect(taskRepository.insertCaseReview).toHaveBeenCalled();
   });
 
   it('requires a reason before recording a human review', async () => {

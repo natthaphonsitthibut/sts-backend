@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import type { MessagingFriendState } from '../common/messaging/messaging.types';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
-import type { TeacherLineIdentityRow, TeacherMessagingAccountRow } from './teacher-line.types';
+import type {
+  TeacherLineCitizenIdentityRow,
+  TeacherLineIdentityRow,
+  TeacherLineInvitationRow,
+  TeacherMessagingAccountRow,
+} from './teacher-line.types';
 
 interface QueryExecutor {
   query<T extends Record<string, unknown>>(
@@ -45,7 +50,10 @@ export class TeacherLineRepository {
    * indexes it, so the lookup uses that index and cannot disagree with the
    * constraint that guarantees at most one row comes back.
    */
-  async findActiveTeacherByEmail(email: string): Promise<TeacherLineIdentityRow | null> {
+  async findActiveTeacherByEmail(
+    email: string,
+    schoolId: number,
+  ): Promise<TeacherLineIdentityRow | null> {
     const result = await this.executor().query<TeacherLineIdentityRow>(
       `
         SELECT
@@ -57,9 +65,46 @@ export class TeacherLineRepository {
         WHERE lower(btrim(teacher.email)) = lower(btrim($1))
           AND teacher.deleted_at IS NULL
           AND teacher.teacher_status = 'ACTIVE'
+          AND EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships membership
+            WHERE membership.teacher_id = teacher.id
+              AND membership.school_id = $2
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          )
         LIMIT 1
       `,
-      [email],
+      [email, schoolId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findActiveTeacherByCitizenId(
+    citizenId: string,
+    schoolId: number,
+  ): Promise<TeacherLineCitizenIdentityRow | null> {
+    const result = await this.executor().query<TeacherLineCitizenIdentityRow>(
+      `
+        SELECT
+          teacher.id::text AS teacher_id,
+          teacher.first_name,
+          teacher.last_name
+        FROM teachers teacher
+        WHERE teacher.citizen_id = $1
+          AND teacher.deleted_at IS NULL
+          AND teacher.teacher_status = 'ACTIVE'
+          AND EXISTS (
+            SELECT 1
+            FROM school_teacher_memberships membership
+            WHERE membership.teacher_id = teacher.id
+              AND membership.school_id = $2
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          )
+        LIMIT 1
+      `,
+      [citizenId, schoolId],
     );
     return result.rows[0] ?? null;
   }
@@ -93,6 +138,173 @@ export class TeacherLineRepository {
       [teacherId, providerChannelId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async hasActiveAccountForTeacher(
+    teacherId: string,
+    providerChannelId: string,
+    queryRunner?: QueryRunner,
+  ): Promise<boolean> {
+    const result = await this.executor(queryRunner).query(
+      `
+        SELECT 1
+        FROM teacher_messaging_accounts
+        WHERE teacher_id = $1::bigint
+          AND provider = 'LINE'
+          AND provider_channel_id = $2
+          AND unlinked_at IS NULL
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+      [teacherId, providerChannelId],
+    );
+    return result.rows.length > 0;
+  }
+
+  async createInvitation(
+    input: {
+      teacherMembershipId: number;
+      tokenHash: string;
+      issuedBy: number;
+      expiresAt: Date;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<{ id: string; expires_at: Date | string }> {
+    const executor = this.executor(queryRunner);
+    await executor.query(
+      `
+        UPDATE teacher_line_invitations
+        SET revoked_at = now(),
+            revoked_by = $2,
+            revocation_reason = 'ROTATED_BY_NEW_INVITATION',
+            updated_at = now()
+        WHERE teacher_membership_id = $1
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+      `,
+      [input.teacherMembershipId, input.issuedBy],
+    );
+    const result = await executor.query<{ id: string; expires_at: Date | string }>(
+      `
+        INSERT INTO teacher_line_invitations (
+          teacher_membership_id, token_hash, issued_by, expires_at
+        )
+        VALUES ($1, $2, $3, $4)
+        RETURNING id::text, expires_at
+      `,
+      [input.teacherMembershipId, input.tokenHash, input.issuedBy, input.expiresAt],
+    );
+    return result.rows[0];
+  }
+
+  async findInvitationByTokenHash(
+    tokenHash: string,
+    queryRunner?: QueryRunner,
+    lock = false,
+  ): Promise<TeacherLineInvitationRow | null> {
+    const result = await this.executor(queryRunner).query<TeacherLineInvitationRow>(
+      `
+        SELECT
+          invitation.id::text,
+          invitation.teacher_membership_id::text,
+          membership.teacher_id::text,
+          membership.school_id,
+          teacher.first_name,
+          teacher.last_name,
+          teacher.email,
+          invitation.token_hash,
+          invitation.issued_by,
+          invitation.issued_at,
+          invitation.expires_at,
+          invitation.consumed_at,
+          invitation.revoked_at,
+          invitation.revoked_by,
+          invitation.revocation_reason,
+          teacher.teacher_status,
+          membership.membership_status,
+          membership.deleted_at AS membership_deleted_at
+        FROM teacher_line_invitations invitation
+        JOIN school_teacher_memberships membership
+          ON membership.id = invitation.teacher_membership_id
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        WHERE invitation.token_hash = $1
+        ${lock ? 'FOR UPDATE OF invitation' : ''}
+      `,
+      [tokenHash],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findInvitationById(
+    invitationId: string,
+    queryRunner: QueryRunner,
+    lock = false,
+  ): Promise<TeacherLineInvitationRow | null> {
+    const result = await this.executor(queryRunner).query<TeacherLineInvitationRow>(
+      `
+        SELECT
+          invitation.id::text,
+          invitation.teacher_membership_id::text,
+          membership.teacher_id::text,
+          membership.school_id,
+          teacher.first_name,
+          teacher.last_name,
+          teacher.email,
+          invitation.token_hash,
+          invitation.issued_by,
+          invitation.issued_at,
+          invitation.expires_at,
+          invitation.consumed_at,
+          invitation.revoked_at,
+          invitation.revoked_by,
+          invitation.revocation_reason,
+          teacher.teacher_status,
+          membership.membership_status,
+          membership.deleted_at AS membership_deleted_at
+        FROM teacher_line_invitations invitation
+        JOIN school_teacher_memberships membership
+          ON membership.id = invitation.teacher_membership_id
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        WHERE invitation.id = $1::uuid
+        ${lock ? 'FOR UPDATE OF invitation' : ''}
+      `,
+      [invitationId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async revokeActiveInvitation(
+    teacherMembershipId: number,
+    revokedBy: number,
+    reason: string,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    const result = await this.executor(queryRunner).query(
+      `
+        UPDATE teacher_line_invitations
+        SET revoked_at = now(), revoked_by = $2, revocation_reason = $3, updated_at = now()
+        WHERE teacher_membership_id = $1
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+      `,
+      [teacherMembershipId, revokedBy, reason],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async consumeInvitation(invitationId: string, queryRunner: QueryRunner): Promise<boolean> {
+    const result = await this.executor(queryRunner).query(
+      `
+        UPDATE teacher_line_invitations
+        SET consumed_at = now(), updated_at = now()
+        WHERE id = $1::uuid
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+          AND expires_at > now()
+      `,
+      [invitationId],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   /** Which teacher — if anyone — this chat account is already bound to. */
@@ -157,7 +369,11 @@ export class TeacherLineRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async hasActiveTeacherMembership(teacherId: string, queryRunner: QueryRunner): Promise<boolean> {
+  async hasActiveTeacherMembership(
+    teacherId: string,
+    queryRunner: QueryRunner,
+    schoolId?: number,
+  ): Promise<boolean> {
     const result = await this.executor(queryRunner).query(
       `
         SELECT 1
@@ -169,9 +385,10 @@ export class TeacherLineRepository {
           AND teacher.deleted_at IS NULL
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
+          AND ($2::bigint IS NULL OR membership.school_id = $2::bigint)
         LIMIT 1
       `,
-      [teacherId],
+      [teacherId, schoolId ?? null],
     );
     return result.rows.length > 0;
   }

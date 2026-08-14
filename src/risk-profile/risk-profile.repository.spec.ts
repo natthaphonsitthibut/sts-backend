@@ -37,15 +37,23 @@ describe('RiskProfileRepository', () => {
     ]);
     expect(queries[0].sql).toContain('INSERT INTO student_risk_profiles');
     expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($2::uuid[])');
-    // Day verdict mirrors ประวัติการเข้าเรียน: ลา is unmeasured, มา/สาย attend,
-    // and both DAILY and SUBJECT records feed the same day.
+    // Day verdict mirrors ประวัติการเข้าเรียน: ลา is unmeasured and มา/สาย attend.
     expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0');
-    expect(queries[0].sql).toContain("a.session_kind IN ('DAILY', 'SUBJECT')");
+    expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
     expect(queries[0].sql).toContain('teacher_signal_summary');
     expect(queries[0].sql).toContain('FROM student_observations observation');
     expect(queries[0].sql).toContain('WHERE observation.deleted_at IS NULL');
     expect(queries[0].sql).toContain('ON CONFLICT (student_uuid) DO UPDATE SET');
     expect(queries[0].sql).toContain('JOIN student_current_enrollment_resolution');
+    expect(queries[0].sql).toContain('case_completion_baselines');
+    expect(queries[0].sql).toContain("tracked_case.status = 'RESOLVED'");
+    expect(queries[0].sql).toContain('classified_term_days');
+    expect(queries[0].sql).toContain('term_attendance_summary');
+    expect(queries[0].sql).toContain(
+      'term_days.attendance_date > COALESCE(baseline.reset_after_date',
+    );
+    expect(queries[0].sql).toContain('term_absent_days');
+    expect(queries[0].sql).toContain('absence_reset_after_date');
   });
 
   it('recalculates all active enrollments without a student filter', async () => {
@@ -70,6 +78,8 @@ describe('RiskProfileRepository', () => {
     for (const column of [
       'consecutive_absent_days',
       'absent_days',
+      'term_absent_days',
+      'absence_reset_after_date',
       'late_count',
       'subject_late_count',
       'school_day_count',

@@ -17,7 +17,7 @@ describe('SeedDemoRiskDistribution20260807160000', () => {
     return { sql: statements.join('\n'), parameters };
   };
 
-  it('targets five percent of every school using active enrollments and unused school days', async () => {
+  it('targets only the DEMO-backed showcase school using active enrollments', async () => {
     const { sql, parameters } = await collectSql('up');
 
     expect(sql).toContain("current_enrollment.resolution_state = 'ACTIVE'");
@@ -28,8 +28,17 @@ describe('SeedDemoRiskDistribution20260807160000', () => {
     expect(sql).toContain('INSERT INTO school_calendar_days');
     expect(sql).toContain('GENERATE_SERIES');
     expect(sql).toContain('idx_attendance_demo_risk_distribution_student');
-    expect(parameters).toContainEqual(['ข้อมูลสาธิตความเสี่ยงทุกโรงเรียน']);
-    expect(parameters).toContainEqual(['SYSTEM:DEMO_RISK_DISTRIBUTION', 5]);
+    expect(sql).toContain('school.name = $2');
+    expect(sql).toContain("demo_actor.data_origin_code = 'DEMO'");
+    expect(parameters).toContainEqual([
+      'ข้อมูลสาธิตความเสี่ยงโรงเรียน showcase',
+      'โรงเรียนเทพศิรินทร์ราชดำริ',
+    ]);
+    expect(parameters).toContainEqual([
+      'SYSTEM:DEMO_RISK_DISTRIBUTION',
+      5,
+      'โรงเรียนเทพศิรินทร์ราชดำริ',
+    ]);
   });
 
   it('preserves existing high-risk students and invalidates only newly seeded profiles', async () => {
@@ -51,6 +60,6 @@ describe('SeedDemoRiskDistribution20260807160000', () => {
     expect(sql).toContain('AND NOT EXISTS ( SELECT 1 FROM attendance existing_attendance');
     expect(sql).toContain('DROP INDEX IF EXISTS idx_attendance_demo_risk_distribution_student');
     expect(parameters).toContainEqual(['SYSTEM:DEMO_RISK_DISTRIBUTION']);
-    expect(parameters).toContainEqual(['ข้อมูลสาธิตความเสี่ยงทุกโรงเรียน']);
+    expect(parameters).toContainEqual(['ข้อมูลสาธิตความเสี่ยงโรงเรียน showcase']);
   });
 });

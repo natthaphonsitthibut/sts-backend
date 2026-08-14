@@ -1,5 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { AttendanceModule } from '../attendance/attendance.module';
+import { AraIdModule } from '../araid/araid.module';
 import { AutomationModule } from '../automation/automation.module';
 import { AuthModule } from '../auth/auth.module';
 import { EmailModule } from '../common/email/email.module';
@@ -16,11 +17,13 @@ import {
   TeacherAccessGrantController,
 } from './teacher-access.controller';
 import { TeacherAccessRepository } from './teacher-access.repository';
+import { TeacherAccessAraIdChallengeStore } from './teacher-access-araid-challenge.store';
 import { TeacherAccessService } from './teacher-access.service';
 
 @Module({
   imports: [
     AuthModule,
+    AraIdModule,
     AttendanceModule,
     AutomationModule,
     RiskProfileModule,
@@ -34,7 +37,7 @@ import { TeacherAccessService } from './teacher-access.service';
     forwardRef(() => StudentObservationsModule),
   ],
   controllers: [TeacherAccessGrantController, PublicTeacherAccessController],
-  providers: [TeacherAccessRepository, TeacherAccessService],
+  providers: [TeacherAccessRepository, TeacherAccessAraIdChallengeStore, TeacherAccessService],
   exports: [TeacherAccessService],
 })
 export class TeacherAccessModule {}

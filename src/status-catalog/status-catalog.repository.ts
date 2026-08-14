@@ -22,7 +22,7 @@ export class StatusCatalogRepository {
       this.dataSource,
       `
         SELECT 'CASE_WORKFLOW' AS domain_code, code::text, NULL::text AS internal_code,
-               NULL::text AS short_label_th, label_th, badge_variant, summary_tone,
+               NULL::text AS short_label_th, label_th, badge_variant, NULL::text AS summary_tone,
                sort_order
         FROM case_workflow_statuses WHERE is_active = TRUE AND deleted_at IS NULL
         UNION ALL

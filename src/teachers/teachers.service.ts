@@ -190,6 +190,10 @@ export class TeachersService {
             )
           ).id;
 
+        if (existing?.teacher_status === 'INACTIVE') {
+          await this.repository.reactivateTeacher(existing.id, actorId, queryRunner);
+        }
+
         const membership = await this.repository.createMembership(
           { teacherId, schoolId: dto.schoolId, actorId },
           queryRunner,
@@ -204,6 +208,7 @@ export class TeachersService {
             targetId: teacherId,
             metadata: {
               op: existing ? 'attach' : 'create',
+              reactivated: existing?.teacher_status === 'INACTIVE',
               schoolId: dto.schoolId,
               teacherId,
               teacherMembershipId: membership.id,

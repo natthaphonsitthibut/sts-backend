@@ -21,6 +21,7 @@ import { UpdateStudentDto } from './dto/update-student.dto';
 import type { DataScope } from '../common/utils/authorization';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { piiConfig } from '../config/pii.config';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
@@ -49,7 +50,7 @@ import type {
   StudentListFilters,
   StudentListRow,
 } from './students.types';
-import type { AuthenticatedRequestUser } from '../auth';
+import { isStudentSelfActor, type AuthenticatedRequestUser } from '../auth';
 
 /** Metadata captured from the HTTP request for the PII access log. */
 export interface PiiRevealRequestMeta {
@@ -175,17 +176,6 @@ function buildPaginationMeta(page: number, limit: number, totalCount: number) {
   };
 }
 
-function isOwnOnlyStudentActor(
-  actor?: AuthenticatedRequestUser,
-): actor is AuthenticatedRequestUser {
-  return Boolean(
-    actor?.auth_source === 'THAID_MOCK' &&
-    actor.virtual_login === true &&
-    actor.permissions.includes('student-self') &&
-    actor.data_scope?.own_only,
-  );
-}
-
 function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
   const firstName =
     typeof student['FirstName_Onec'] === 'string'
@@ -209,6 +199,8 @@ function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
 
   return {
     id: student.student_uuid ?? '',
+    photo_storage_key: student.photo_storage_key ?? null,
+    photo_updated_at: student.photo_updated_at ?? null,
     name: `${firstName} ${lastName}`.trim() || 'ไม่ทราบ',
     grade:
       typeof student.grade === 'string' && student.grade.trim().length > 0
@@ -332,12 +324,25 @@ export class StudentsService {
     const limit = filters.limit ?? DEFAULT_STUDENT_PAGE_SIZE;
 
     try {
-      if (isOwnOnlyStudentActor(actor)) {
+      if (isStudentSelfActor(actor)) {
         if (!actor.student_uuid) {
           throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
         }
         const ownStudent = await this.studentsRepository.findStudentById(actor.student_uuid);
-        const data = ownStudent ? [mapDetailRowToListRow(ownStudent)] : [];
+        const data = ownStudent
+          ? [mapDetailRowToListRow(ownStudent)].map(
+              ({
+                photo_storage_key: photoStorageKey,
+                photo_updated_at: photoUpdatedAt,
+                ...row
+              }) => ({
+                ...row,
+                photo_url: photoStorageKey
+                  ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
+                  : null,
+              }),
+            )
+          : [];
 
         return {
           success: true,
@@ -350,12 +355,14 @@ export class StudentsService {
 
       return {
         success: true,
-        data: rows.map(({ photo_storage_key: photoStorageKey, ...row }) => ({
-          ...row,
-          photo_url: photoStorageKey
-            ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeURIComponent(String(photoStorageKey))}`
-            : null,
-        })),
+        data: rows.map(
+          ({ photo_storage_key: photoStorageKey, photo_updated_at: photoUpdatedAt, ...row }) => ({
+            ...row,
+            photo_url: photoStorageKey
+              ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
+              : null,
+          }),
+        ),
         meta: buildPaginationMeta(page, limit, totalCount),
       };
     } catch (error) {
@@ -453,16 +460,18 @@ export class StudentsService {
           ])
         : [null, [], null];
 
-      const { photo_storage_key: photoStorageKey, ...studentRow } = student as typeof student & {
-        photo_storage_key?: string | null;
-      };
+      const {
+        photo_storage_key: photoStorageKey,
+        photo_updated_at: photoUpdatedAt,
+        ...studentRow
+      } = student;
       return maskStudentDetail(
         {
           ...studentRow,
-          // Cache-busted by the storage key so a replaced photo shows at once;
-          // the endpoint redirects to a short-lived signed URL, never the object.
+          // Cache-busted by person.updated_at so the internal storage key never
+          // leaves the API; the endpoint mints a fresh short-lived signed URL.
           photo_url: photoStorageKey
-            ? `/api/students/${encodeURIComponent(id)}/photo?v=${encodeURIComponent(photoStorageKey)}`
+            ? `/api/students/${encodeURIComponent(id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
             : null,
           contact: personContact
             ? {
@@ -607,7 +616,7 @@ export class StudentsService {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
-      if (isOwnOnlyStudentActor(actor)) {
+      if (isStudentSelfActor(actor)) {
         return [];
       }
 
@@ -775,7 +784,7 @@ export class StudentsService {
 
     // Student self-service covers contact channels only — enrollment identity
     // (name/address) stays staff-editable to keep the record authoritative.
-    if (isOwnOnlyStudentActor(actor) && hasTermEdit) {
+    if (isStudentSelfActor(actor) && hasTermEdit) {
       throw new ForbiddenException('นักเรียนแก้ไขได้เฉพาะข้อมูลติดต่อและผู้ปกครอง');
     }
 
@@ -867,7 +876,7 @@ export class StudentsService {
     requestedUuid: string,
     actor?: AuthenticatedRequestUser,
   ): Promise<boolean> {
-    if (!isOwnOnlyStudentActor(actor)) {
+    if (!isStudentSelfActor(actor)) {
       return false;
     }
     if (actor.student_uuid === requestedUuid) {
@@ -892,7 +901,7 @@ export class StudentsService {
       throw new NotFoundException(`Student with ID ${requestedUuid} not found`);
     }
 
-    if (!isOwnOnlyStudentActor(actor)) {
+    if (!isStudentSelfActor(actor)) {
       return;
     }
 

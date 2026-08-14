@@ -633,6 +633,68 @@ async function assertVisitLinksPage(client) {
     'ใช้งาน': 1,
     'หมดอายุ': 0,
   });
+
+  const actionState = await evaluate(
+    client,
+    `(() => {
+      const table = Array.from(document.querySelectorAll('table'))
+        .find((candidate) => candidate.offsetParent !== null);
+      const rows = table
+        ? Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.offsetParent !== null)
+        : [];
+      return {
+        heading: table
+          ? Array.from(table.querySelectorAll('thead th')).at(-1)?.innerText.trim()
+          : null,
+        rows: rows.map((row) => {
+          const controls = Array.from(row.lastElementChild?.querySelectorAll('button, a[href]') || [])
+            .filter((control) => control.offsetParent !== null);
+          return controls.map((control) => ({
+            color: getComputedStyle(control).color,
+            height: control.getBoundingClientRect().height,
+            width: control.getBoundingClientRect().width,
+          }));
+        }),
+      };
+    })()`,
+  );
+  assert(actionState.heading === 'เครื่องมือ', 'Visit-links action heading was not เครื่องมือ');
+  assert(actionState.rows.length === 2, `Expected two visit-link action rows: ${JSON.stringify(actionState)}`);
+  assert(
+    actionState.rows.every((controls) =>
+      controls.length === 3 &&
+      controls.every((control) =>
+        control.width === 40 && control.height === 40 && control.color === 'rgb(255, 255, 255)'
+      )
+    ),
+    `Visit-links desktop action slots drifted: ${JSON.stringify(actionState.rows)}`,
+  );
+}
+
+async function assertMobileActionSlots(client) {
+  const state = await evaluate(
+    client,
+    `(() => {
+      const cards = Array.from(document.querySelectorAll('[data-slot="table-card-list"] > div'))
+        .filter((card) => card.offsetParent !== null);
+      return cards.map((card) => {
+        const actions = Array.from(card.querySelectorAll('button, a[href]'))
+          .filter((control) => control.offsetParent !== null);
+        return actions.map((control) => ({
+          height: control.getBoundingClientRect().height,
+          width: control.getBoundingClientRect().width,
+        }));
+      });
+    })()`,
+  );
+  assert(state.length === 2, `Expected two mobile visit-link cards: ${JSON.stringify(state)}`);
+  assert(
+    state.every((controls) =>
+      controls.length === 3 &&
+      controls.every((control) => control.width === 112 && control.height === 40)
+    ),
+    `Visit-links mobile action slots drifted: ${JSON.stringify(state)}`,
+  );
 }
 
 async function assertNoHorizontalOverflow(client) {
@@ -740,6 +802,7 @@ async function main() {
       },
       'Mobile visit links page did not render seeded rows',
     );
+    await assertMobileActionSlots(client);
     await assertNoHorizontalOverflow(client);
     await capture(client, SCREENSHOTS.mobile);
     assertNoConsoleErrors(client);

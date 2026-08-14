@@ -13,7 +13,7 @@ import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { authConfig } from '../config/auth.config';
 import { emailConfig } from '../config/email.config';
-import { clean, hashToken } from '../common/utils/helpers';
+import { clean, hashToken, maskEmailAddress } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
@@ -131,6 +131,7 @@ export class TaskAccessService {
       opens_at: link.opens_at ?? null,
       expires_at: link.expires_at,
       delegation_note: link.delegation_note ?? null,
+      assignment_note: link.assignment_note ?? null,
       created_at: link.created_at ?? null,
       subject: link.subject,
       school_name: link.school_name,
@@ -168,6 +169,7 @@ export class TaskAccessService {
         result.student_lat = caseData?.student_lat || null;
         result.student_lng = caseData?.student_lng || null;
         result.reason_flagged = caseData?.reason_flagged || null;
+        result.case_status = caseData?.status || null;
         result.academic_year = caseData?.academic_year || null;
         result.semester = caseData?.semester || null;
         result.student_grade = caseData?.grade || null;
@@ -374,6 +376,8 @@ export class TaskAccessService {
         message: 'OTP sent successfully',
         expires_at: expiresAt.toISOString(),
         method: 'EMAIL',
+        maskedEmail: maskEmailAddress(email),
+        expiresAt: expiresAt.toISOString(),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -71,7 +71,6 @@ describe('demo data provenance seed contracts', () => {
   it('resolves SQL seed actors by stable DEMO usernames instead of numeric IDs', () => {
     const states = readSeed('demo-states.sql');
     const timetable = readSeed('demo-timetable.sql');
-    const followers = readSeed('demo-field-followers.sql');
 
     expect(states).toContain("username = 'orathai.b' AND data_origin_code = 'DEMO'");
     expect(states).toContain("username = 'narongsak.k' AND data_origin_code = 'DEMO'");
@@ -79,6 +78,5 @@ describe('demo data provenance seed contracts', () => {
     expect(timetable).toContain('homeroom.teacher_user_id');
     expect(timetable).toContain('ON CONFLICT (');
     expect(timetable).not.toMatch(/updated_by = 9|THEN 12|THEN 13/);
-    expect(followers).toContain("username = 'worapon.d' AND data_origin_code = 'DEMO'");
   });
 });

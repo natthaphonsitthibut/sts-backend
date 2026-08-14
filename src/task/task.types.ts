@@ -41,16 +41,21 @@ export type RiskDashboardSortBy =
   | 'grade'
   | 'room'
   | 'attendance'
-  | 'openCases';
+  | 'openCases'
+  | 'updatedAt';
 export type RiskDashboardSortDirection = 'asc' | 'desc';
 
 export interface RiskDashboardFilters {
+  studentGroup?: 'RISK' | 'WATCHLIST';
   riskTier?: RiskDashboardTier;
   searchTerm?: string;
   province?: string;
   district?: string;
   subDistrict?: string;
   schoolId?: number;
+  academicYear?: number;
+  semester?: number;
+  caseStatus?: 'OPEN' | 'IN_PROGRESS' | 'PENDING_REVIEW' | 'STUDENT_NOT_FOUND' | 'RESOLVED';
   grade?: string;
   room?: string;
   page?: number;
@@ -70,15 +75,26 @@ export interface RiskDashboardSummary {
   NORMAL: number;
 }
 
+export interface RiskDashboardCaseStatusSummary {
+  OPEN: number;
+  IN_PROGRESS: number;
+  PENDING_REVIEW: number;
+  STUDENT_NOT_FOUND: number;
+}
+
 export interface RiskDashboardRow extends QueryResultRow {
   student_uuid: string;
   student_name: string;
+  photo_storage_key: string | null;
+  photo_updated_at: string | Date | null;
   school_id: number | null;
   school_name: string | null;
   grade: string | null;
   room: string | null;
   consecutive_absent_days: number | string;
   absent_days: number | string;
+  term_absent_days: number | string;
+  absence_reset_after_date: string | Date | null;
   late_count: number | string;
   subject_late_count: number | string;
   school_day_count: number | string;
@@ -90,13 +106,19 @@ export interface RiskDashboardRow extends QueryResultRow {
   latest_open_case_id: number | string | null;
   latest_open_case_reason: string | null;
   latest_open_task_id: string | null;
+  latest_case_id: number | string | null;
+  latest_case_status: string | null;
   latest_case_at: string | null;
+  latest_case_link_token_encrypted?: string | null;
+  latest_case_magic_link?: string | null;
+  teacher_comment: string | null;
 }
 
 export interface RiskDashboardResult {
   rows: RiskDashboardRow[];
   totalCount: number;
   summary: RiskDashboardSummary;
+  caseStatusSummary: RiskDashboardCaseStatusSummary;
   missingProfileCount?: number;
 }
 

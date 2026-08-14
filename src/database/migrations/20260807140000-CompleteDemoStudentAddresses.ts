@@ -1,5 +1,4 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
-import { STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL } from '../bootstrap-sql';
 
 const DEMO_REASON = 'ข้อมูลสาธิตสำหรับการนำเสนอวงจรติดตามนักเรียน';
 const SCHOOL_NAME = 'โรงเรียนเทพศิรินทร์ราชดำริ';
@@ -13,7 +12,8 @@ export class CompleteDemoStudentAddresses20260807140000 implements MigrationInte
   name = 'CompleteDemoStudentAddresses20260807140000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`
+    await queryRunner.query(
+      `
       WITH student_seed AS (
         SELECT
           source.student_uuid,
@@ -59,8 +59,20 @@ export class CompleteDemoStudentAddresses20260807140000 implements MigrationInte
         "PostalCode_Onec" = NULLIF(BTRIM(student."PostalCode_Onec"), '')
       FROM schools school, student_seed seed
       WHERE school.id = student."SchoolID_Onec"
+        AND school.name = $1
         AND seed.student_uuid = student.student_uuid
         AND student.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM users demo_actor
+          JOIN school_teacher_memberships demo_membership
+            ON demo_membership.teacher_user_id = demo_actor.id
+           AND demo_membership.school_id = school.id
+           AND demo_membership.membership_status = 'ACTIVE'
+           AND demo_membership.deleted_at IS NULL
+          WHERE demo_actor.data_origin_code = 'DEMO'
+            AND demo_actor.status = 'ACTIVE'
+        )
         AND (
           NULLIF(BTRIM(student.address_house_no), '') IS NULL
           OR NULLIF(BTRIM(student."VillageNumber_Onec"), '') IS NULL
@@ -73,8 +85,9 @@ export class CompleteDemoStudentAddresses20260807140000 implements MigrationInte
           OR NULLIF(BTRIM(student."SubDistrictNameThai_Onec"), '') IS NULL
           OR NULLIF(BTRIM(student."PostalCode_Onec"), '') IS NULL
         )
-    `);
-    await queryRunner.query(STUDENT_TERM_POSTAL_CODE_BACKFILL_SQL);
+    `,
+      [SCHOOL_NAME],
+    );
 
     await queryRunner.query(
       `

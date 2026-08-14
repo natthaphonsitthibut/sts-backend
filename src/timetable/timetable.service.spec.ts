@@ -173,6 +173,28 @@ describe('TimetableService', () => {
       );
     });
 
+    it('does not persist a legacy teacher pointer with modern memberships', async () => {
+      repository.listEligibleTeacherMembershipIds.mockResolvedValue([8]);
+
+      await service.create(globalActor, {
+        schoolTermId: 1,
+        schoolId: 10010002,
+        gradeLevelId: 423,
+        roomNo: 1,
+        dayOfWeek: 1,
+        period: 1,
+        subjectId: 5,
+        teacherUserId: 99,
+        teacherMembershipIds: [8],
+      });
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ teacherUserId: null }),
+        expect.anything(),
+      );
+      expect(repository.replaceSlotTeachers).toHaveBeenCalledWith('1', [8], expect.anything());
+    });
+
     it('rejects an inactive or unassigned selected teacher membership', async () => {
       await expect(
         service.create(globalActor, {
@@ -238,6 +260,25 @@ describe('TimetableService', () => {
         BadRequestException,
       );
       expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('clears the legacy teacher_user_id when reassigning via teacherMembershipIds', async () => {
+      // Regression test: reassigning through the modern teacherMembershipIds
+      // path used to leave the legacy teacher_user_id column pointing at the
+      // slot's previous teacher. listForTeacher() then resurfaced the slot on
+      // that previous teacher's schedule too, showing as a phantom
+      // double-booking at the same day/period as their real slot.
+      repository.listEligibleTeacherMembershipIds.mockResolvedValue([8]);
+
+      await service.update(globalActor, '1', { teacherMembershipIds: [8] });
+
+      expect(repository.update).toHaveBeenCalledWith(
+        '1',
+        expect.objectContaining({ teacherUserId: null }),
+        globalActor.id,
+        expect.anything(),
+      );
+      expect(repository.replaceSlotTeachers).toHaveBeenCalledWith('1', [8], expect.anything());
     });
   });
 

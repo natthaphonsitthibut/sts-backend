@@ -85,13 +85,14 @@ describe('UserAuthService login policy', () => {
         must_change_password: false,
         temporary_password_expires_at: null,
         photo_storage_key: 'user-photos/77/profile.webp',
+        updated_at: '2026-08-10T06:30:00.000Z',
       }),
     );
 
     const result = await service.validateUser('student-temp', 'PASSWORD');
 
     expect(result).toMatchObject({
-      photo_url: '/api/users/me/photo?v=user-photos%2F77%2Fprofile.webp',
+      photo_url: '/api/users/me/photo?v=2026-08-10T06%3A30%3A00.000Z',
     });
     expect(result).not.toHaveProperty('photo_storage_key');
   });

@@ -86,6 +86,8 @@ export interface ClassroomTeacherAssignmentRow extends Record<string, unknown> {
 export interface ClassroomRosterRow extends Record<string, unknown> {
   student_uuid: string;
   student_number: string | null;
+  photo_storage_key: string | null;
+  photo_updated_at: string | Date | null;
   risk_tier: string | null;
   risk_severity: number | null;
   teacher_comment: string | null;
@@ -117,6 +119,8 @@ export interface ClassroomDailyAttendanceRow extends Record<string, unknown> {
 export interface ClassroomStudentAttendanceSummaryRow extends Record<string, unknown> {
   student_uuid: string;
   student_number: string | null;
+  photo_storage_key: string | null;
+  photo_updated_at: string | Date | null;
   first_name: string | null;
   last_name: string | null;
   present_count: number;

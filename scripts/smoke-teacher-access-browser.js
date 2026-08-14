@@ -100,6 +100,10 @@ async function evaluate(client, expression) {
   return result.result?.value;
 }
 
+async function bodyText(client) {
+  return String(await evaluate(client, 'document.body.innerText'));
+}
+
 async function navigate(client, url) {
   await client.call('Page.navigate', { url });
   await waitFor(
@@ -239,6 +243,7 @@ async function main() {
   const otpCapture = captureOtpCodes(app);
   let chrome;
   let lineAccountId = null;
+  let timetableSlotId = null;
 
   try {
     await assertSchemaPrerequisites(dataSource);
@@ -252,7 +257,13 @@ async function main() {
         firstName: 'Teacher Access',
         lastName: 'Smoke Admin',
         role: 'ADMIN',
-        permissions: ['manage-teacher-access', 'manage-school-structure', 'manage-curriculum'],
+        permissions: [
+          'manage-teacher-access',
+          'manage-school-structure',
+          'manage-curriculum',
+          'manage-timetable',
+          'attendance',
+        ],
         dataScope: { school_ids: [Number(initialSchool.id)] },
       }),
       teacherOne: await upsertUser(dataSource, {
@@ -307,6 +318,53 @@ async function main() {
       [fixture.classroom.id],
     );
     assert(fixtureClassroom, 'Teacher access classroom fixture was not persisted');
+    const [assignmentSubject] = await dataSource.query(
+      `SELECT subject_id FROM classroom_teacher_assignments WHERE id = $1`,
+      [fixture.subjectAssignments[0].id],
+    );
+    assert(assignmentSubject?.subject_id, 'Teacher access subject assignment was not persisted');
+    const todayDayOfWeek = new Date().getDay() || 7;
+    const [timetableSlot] = await dataSource.query(
+      `
+        INSERT INTO timetable_slots (
+          school_term_id, school_id, grade_level_id, room_no, classroom_id,
+          day_of_week, period, subject_id, created_by, updated_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 9, $7, $8, $8)
+        RETURNING id
+      `,
+      [
+        fixture.term.id,
+        fixture.term.school_id,
+        fixtureClassroom.grade_level_id,
+        fixture.classroom.roomNumber,
+        fixture.classroom.id,
+        todayDayOfWeek,
+        assignmentSubject.subject_id,
+        actors.admin.id,
+      ],
+    );
+    timetableSlotId = Number(timetableSlot.id);
+    const studentNumberSeed = String(Date.now()).slice(-8);
+    const fixtureStudentNumbers = [`66${studentNumberSeed}1`, `66${studentNumberSeed}2`];
+    await dataSource.query(
+      `
+        UPDATE student_term
+        SET student_number = CASE student_uuid
+          WHEN $1::uuid THEN $4
+          WHEN $2::uuid THEN $5
+          ELSE student_number
+        END
+        WHERE student_uuid = ANY($3::uuid[])
+      `,
+      [
+        fixture.students[0].studentUuid,
+        fixture.students[1].studentUuid,
+        fixture.students.map((student) => student.studentUuid),
+        fixtureStudentNumbers[0],
+        fixtureStudentNumbers[1],
+      ],
+    );
     for (const actor of Object.values(actors)) {
       await dataSource.query(`UPDATE users SET status = 'ACTIVE', data_scope = $2::jsonb WHERE id = $1`, [
         actor.id,
@@ -369,7 +427,31 @@ async function main() {
       sameSite: 'Lax',
     });
 
-    await navigate(client, `${FRONTEND_URL}/teacher-access`);
+    await navigate(client, `${FRONTEND_URL}/teacher-access#token=${grant.token}`);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'เลือกยืนยันผ่าน AraID หรือรับรหัสทางอีเมล',
+        ),
+      'Teacher verification method choice did not load',
+    );
+    const verificationChoice = await evaluate(
+      client,
+      `({
+        hasAraId: document.body.innerText.includes('AraID'),
+        hasEmail: document.body.innerText.includes('อีเมล'),
+        hasGuestProfile: Boolean(document.querySelector('[aria-label^="ผู้รับมอบหมาย"]')),
+      })`,
+    );
+    assert(
+      verificationChoice.hasAraId && verificationChoice.hasEmail,
+      `Teacher verification methods were incomplete: ${JSON.stringify(verificationChoice)}`,
+    );
+    assert(
+      !verificationChoice.hasGuestProfile,
+      'Teacher verification method choice rendered an unnecessary guest profile avatar',
+    );
+
     await evaluate(
       client,
       `sessionStorage.setItem('sts_teacher_link_session', ${JSON.stringify(
@@ -442,6 +524,185 @@ async function main() {
       'Teacher classroom color did not update consistently across subject cards',
     );
 
+    const teacherAssignmentPath = await evaluate(
+      client,
+      `document.querySelector('a[href^="/teacher-access/classes/"]')?.getAttribute('href') || null`,
+    );
+    assert(teacherAssignmentPath, 'Teacher classroom card did not expose its own route');
+    assert(teacherAssignmentPath.endsWith('/roster'), 'Teacher classroom card did not use roster');
+    const teacherAssignmentBase = teacherAssignmentPath.replace(/\/roster$/, '');
+    await evaluate(
+      client,
+      `document.querySelector('a[href=${JSON.stringify(teacherAssignmentPath)}]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `location.pathname === ${JSON.stringify(teacherAssignmentPath)}
+              && document.querySelector('[data-page-breadcrumb]')
+              && document.querySelector('a[aria-current="page"][href="/teacher-access"]')
+              && !document.querySelector('a[aria-current="page"][href="/teacher-access/timetable"]')`,
+          ),
+        ),
+      'Teacher classroom route did not preserve its breadcrumb/menu owner',
+    );
+    const teacherClassroomCrumbs = await evaluate(
+      client,
+      `[...document.querySelector('[data-page-breadcrumb]').querySelectorAll('a, [data-breadcrumb-current]')]
+        .map((node) => node.textContent.trim()).filter(Boolean)`,
+    );
+    assert(
+      teacherClassroomCrumbs.length === 2 && teacherClassroomCrumbs[0] === 'ห้องเรียนของฉัน',
+      `Teacher classroom breadcrumb was incorrect: ${teacherClassroomCrumbs.join(' > ')}`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'เช็คชื่อ')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `location.pathname === ${JSON.stringify(`${teacherAssignmentBase}/attendance`)}
+              && document.querySelector('table') && document.body.innerText.includes(${JSON.stringify(
+              fixtureStudentNumbers[0],
+            )})`,
+          ),
+        ),
+      'Teacher-link attendance table did not render the numbered roster',
+    );
+    const teacherAttendanceTable = await evaluate(
+      client,
+      `(() => {
+        const table = document.querySelector('table');
+        const firstStatusGroup = table.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        return {
+          headings: [...table.querySelectorAll('thead th')].map((cell) => cell.textContent.trim()),
+          studentNumberSort: table.querySelector('thead th:nth-child(3)')?.getAttribute('aria-sort'),
+          studentNumbers: [...table.querySelectorAll('tbody tr')].map(
+            (row) => row.cells[2]?.textContent.trim(),
+          ),
+          statuses: [...firstStatusGroup.querySelectorAll('button')].map((button) => ({
+            label: button.textContent.trim(),
+            pressed: button.getAttribute('aria-pressed'),
+          })),
+        };
+      })()`,
+    );
+    assert(
+      JSON.stringify(teacherAttendanceTable.headings) ===
+        JSON.stringify(['ลำดับ', 'รูปประจำตัว', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'สถานะการเข้าเรียน']),
+      `Teacher-link attendance headings drifted: ${teacherAttendanceTable.headings.join(' | ')}`,
+    );
+    assert(
+      teacherAttendanceTable.studentNumberSort === 'ascending' &&
+        JSON.stringify(teacherAttendanceTable.studentNumbers) === JSON.stringify(fixtureStudentNumbers),
+      `Teacher-link attendance did not default to ascending student number: ${JSON.stringify(teacherAttendanceTable)}`,
+    );
+    assert(
+      JSON.stringify(teacherAttendanceTable.statuses.map((item) => item.label)) ===
+        JSON.stringify(['มา', 'สาย', 'ลา', 'ขาด']) &&
+        teacherAttendanceTable.statuses[0]?.pressed === 'true',
+      `Teacher-link attendance status pills drifted: ${JSON.stringify(teacherAttendanceTable.statuses)}`,
+    );
+
+    await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}?tab=attendance`);
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) === `${teacherAssignmentBase}/attendance`,
+      'Legacy teacher classroom tab did not redirect to canonical attendance',
+    );
+
+    await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}/history`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `location.pathname === ${JSON.stringify(`${teacherAssignmentBase}/history/attendance`)}
+              && document.querySelector('[data-breadcrumb-current]')?.textContent.trim()
+                === 'ประวัติการเช็คชื่อ'`,
+          ),
+        ),
+      'Teacher attendance history did not use its distinct route/breadcrumb',
+    );
+    const teacherHistoryCrumbs = await evaluate(
+      client,
+      `[...document.querySelector('[data-page-breadcrumb]').querySelectorAll('a, [data-breadcrumb-current]')]
+        .map((node) => node.textContent.trim()).filter(Boolean)`,
+    );
+    assert(
+      teacherHistoryCrumbs.length === 3 && teacherHistoryCrumbs[0] === 'ห้องเรียนของฉัน',
+      `Teacher history breadcrumb was incorrect: ${teacherHistoryCrumbs.join(' > ')}`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'นำเข้าไฟล์')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) ===
+        `${teacherAssignmentBase}/history/imports`,
+      'Teacher imports history tab did not persist in the URL',
+    );
+    await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}/history/imports`);
+    await waitFor(
+      async () => (await bodyText(client)).includes('นำเข้าไฟล์'),
+      'Teacher imports history direct-open did not survive refresh navigation',
+    );
+    await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('button')).find((button) =>
+        button.innerText.includes('ย้อนกลับ'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `location.pathname === ${JSON.stringify(teacherAssignmentPath)}`)),
+      'Teacher history back action did not return to its classroom',
+    );
+
+    await navigate(
+      client,
+      `${FRONTEND_URL}${teacherAssignmentBase}/students/${fixture.students[0].studentUuid}`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `location.pathname.startsWith(${JSON.stringify(`${teacherAssignmentBase}/students/`)})
+              && document.querySelector('[data-breadcrumb-current]')?.textContent.trim()
+                === 'ข้อมูลนักเรียน'`,
+          ),
+        ),
+      'Teacher student profile did not use its classroom breadcrumb',
+    );
+    const teacherStudentCrumbs = await evaluate(
+      client,
+      `[...document.querySelector('[data-page-breadcrumb]').querySelectorAll('a, [data-breadcrumb-current]')]
+        .map((node) => node.textContent.trim()).filter(Boolean)`,
+    );
+    assert(
+      teacherStudentCrumbs.length === 3 && teacherStudentCrumbs[0] === 'ห้องเรียนของฉัน',
+      `Teacher student breadcrumb was incorrect: ${teacherStudentCrumbs.join(' > ')}`,
+    );
+    await evaluate(
+      client,
+      `Array.from(document.querySelectorAll('button')).find((button) =>
+        button.innerText.includes('ย้อนกลับ'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `location.pathname === ${JSON.stringify(teacherAssignmentPath)}`)),
+      'Teacher student back action did not return to its classroom',
+    );
+    await navigate(client, `${FRONTEND_URL}/teacher-access`);
+
     const authUser = {
       id: actors.admin.id,
       username: USERNAMES.admin,
@@ -449,7 +710,13 @@ async function main() {
       LastName: 'Smoke Admin',
       role: 'ADMIN',
       roles: ['ADMIN'],
-      permissions: ['manage-teacher-access', 'manage-school-structure', 'manage-curriculum'],
+      permissions: [
+        'manage-teacher-access',
+        'manage-school-structure',
+        'manage-curriculum',
+        'manage-timetable',
+        'attendance',
+      ],
       data_scope: { school_ids: [schoolId] },
       status: 'ACTIVE',
     };
@@ -467,7 +734,9 @@ async function main() {
     const directorBase = await cardSnapshot(client, classroomId);
     const directorHover = await hoverSnapshot(client, classroomId);
 
-    for (const key of ['cardClass', 'coverClass', 'gridClass', 'headerClass', 'sidebarClass']) {
+    // Guest teacher access intentionally has no expandable admin navigation;
+    // compare the classroom surface, not the two different navigation shells.
+    for (const key of ['cardClass', 'coverClass', 'gridClass', 'headerClass']) {
       assert(
         teacherBase[key] === directorBase[key],
         `Teacher/director classroom ${key} drifted`,
@@ -523,22 +792,154 @@ async function main() {
       'Teacher-link roster sort did not reach the server before pagination',
     );
 
-    // The LINE verification page is one static URL shared with every teacher,
-    // so this copy button is the only place the product hands it out. Without
-    // it an admin can see "ยังไม่ยืนยัน" and have no way to act on it.
+    // The toolbar issues one expiring group link, while the row action remains
+    // available for a teacher-scoped single-use invitation.
     const lineActions = await evaluate(
       client,
       `(() => {
-        const labels = [...document.querySelectorAll('button')].map((button) => button.textContent);
+        const unverifiedRow = [...document.querySelectorAll('tbody tr')].find((row) =>
+          row.querySelector('button[aria-label^="ปลดการเชื่อมต่อ LINE ของ"]')?.disabled,
+        );
+        unverifiedRow?.querySelector('button[aria-label^="เครื่องมือลิงก์ของ"]')?.click();
         return {
-          send: labels.some((text) => text.includes('ส่งลิงก์ทาง LINE') || text.includes('ส่งทาง LINE')),
-          copy: labels.some((text) => text.includes('คัดลอกลิงก์ยืนยัน LINE')),
+          rowFound: Boolean(unverifiedRow),
+          globalCreate: [...document.querySelectorAll('button')].some((button) =>
+            button.textContent.includes('สร้างลิงก์ยืนยัน LINE')),
+        };
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) =>
+              button.getClientRects().length > 0 &&
+              button.textContent.includes('ออกลิงก์ยืนยัน LINE'))`,
+          ),
+        ),
+      'The unverified teacher row did not expose a scoped LINE invitation action',
+    );
+    assert(
+      lineActions.rowFound && lineActions.globalCreate,
+      `LINE invitation scope is wrong: ${JSON.stringify(lineActions)}`,
+    );
+
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('สร้างลิงก์ยืนยัน LINE'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('[role="dialog"]')?.textContent.includes('กำหนดอายุลิงก์ยืนยัน LINE')`,
+          ),
+        ),
+      'Group LINE link scheduling dialog did not open',
+    );
+    const groupDialog = await evaluate(
+      client,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const buttons = [...dialog.querySelectorAll('button')];
+        return {
+          hasStart: dialog.textContent.includes('วันและเวลาเริ่ม'),
+          hasExpiry: dialog.textContent.includes('วันและเวลาหมดอายุ'),
+          hasDuration: dialog.textContent.includes('ระยะเวลา'),
+          hasDurationTime: dialog.textContent.includes('ชั่วโมง:นาที'),
+          equalFooterWidths: (() => {
+            const cancel = buttons.find((button) => button.textContent.trim() === 'ยกเลิก');
+            const create = buttons.find((button) => button.textContent.includes('สร้างลิงก์'));
+            return Boolean(cancel && create && Math.abs(
+              cancel.getBoundingClientRect().width - create.getBoundingClientRect().width,
+            ) < 1);
+          })(),
         };
       })()`,
     );
     assert(
-      lineActions.send === lineActions.copy,
-      `LINE actions are out of step: send=${lineActions.send}, copy=${lineActions.copy}`,
+      groupDialog.hasStart && groupDialog.hasExpiry && groupDialog.hasDuration &&
+        groupDialog.hasDurationTime && groupDialog.equalFooterWidths,
+      `Group LINE scheduling controls drifted: ${JSON.stringify(groupDialog)}`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('#line-group-duration-unit')?.parentElement?.querySelector('button')?.click()`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="option"]')]
+        .find((option) => option.textContent.trim() === 'วัน')
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`,
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#line-group-duration');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '12');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('#line-group-duration-unit')?.parentElement?.querySelector('button')?.click()`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="option"]')]
+        .find((option) => option.textContent.trim() === 'สัปดาห์')
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`,
+    );
+    const preservedDuration = await evaluate(
+      client,
+      `({
+        amount: document.querySelector('#line-group-duration')?.value,
+        unit: document.querySelector('#line-group-duration-unit')?.textContent.trim(),
+      })`,
+    );
+    assert(
+      preservedDuration.amount === '12' && preservedDuration.unit === 'สัปดาห์',
+      `Changing duration units rewrote the amount: ${JSON.stringify(preservedDuration)}`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.trim() === 'ยกเลิก')?.click()`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('สร้างลิงก์ยืนยัน LINE'))?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('[role="dialog"]')?.textContent.includes('กำหนดอายุลิงก์ยืนยัน LINE')`,
+          ),
+        ),
+      'Group LINE scheduling dialog did not reopen',
+    );
+    const resetDuration = await evaluate(
+      client,
+      `({
+        amount: document.querySelector('#line-group-duration')?.value,
+        unit: document.querySelector('#line-group-duration-unit')?.textContent.trim(),
+      })`,
+    );
+    assert(
+      resetDuration.amount === '1' && resetDuration.unit === 'สัปดาห์',
+      `Group LINE scheduling draft did not reset: ${JSON.stringify(resetDuration)}`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[role="dialog"] button')]
+        .find((button) => button.textContent.trim() === 'ยกเลิก')?.click()`,
     );
 
     const unlinkSnapshot = await evaluate(
@@ -546,6 +947,8 @@ async function main() {
       `(() => ({
         rowCount: [...document.querySelectorAll('tbody tr')]
           .filter((row) => row.getClientRects().length > 0).length,
+        avatarCount: [...document.querySelectorAll('[data-teacher-link-avatar]')]
+          .filter((avatar) => avatar.getClientRects().length > 0).length,
         actions: [...document.querySelectorAll('button[aria-label^="ปลดการเชื่อมต่อ LINE ของ"]')]
           .filter((button) => button.getClientRects().length > 0)
           .map((button) => ({
@@ -559,6 +962,10 @@ async function main() {
     assert(
       unlinkSnapshot.rowCount > 0 && unlinkActions.length === unlinkSnapshot.rowCount,
       `Every visible teacher row must render a LINE unlink icon: ${JSON.stringify(unlinkSnapshot)}`,
+    );
+    assert(
+      unlinkSnapshot.avatarCount === unlinkSnapshot.rowCount,
+      `Every visible teacher row must render a profile avatar: ${JSON.stringify(unlinkSnapshot)}`,
     );
     assert(
       unlinkActions.some((action) => action.disabled) &&
@@ -725,6 +1132,135 @@ async function main() {
       'MultiSelect Escape did not close and return focus to its trigger',
     );
 
+    const attendanceScope = {
+      school_ids: [schoolId],
+      grade_levels: [Number(fixtureClassroom.grade_level_id)],
+      room_ids: [fixture.classroom.roomNumber],
+    };
+    await dataSource.query(`UPDATE users SET data_scope = $2::jsonb WHERE id = $1`, [
+      actors.admin.id,
+      JSON.stringify(attendanceScope),
+    ]);
+    const attendanceUser = { ...authUser, data_scope: attendanceScope };
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(attendanceUser))})`,
+    );
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1366,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await navigate(client, `${FRONTEND_URL}/attendance/check-in`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('table') &&
+             document.body.innerText.includes(${JSON.stringify(fixtureStudentNumbers[0])}) &&
+             document.body.innerText.includes('บันทึกการเช็คชื่อ 2 คน')`,
+          ),
+        ),
+      'Authenticated attendance page did not render the fixture roster',
+    );
+    const systemAttendanceTable = await evaluate(
+      client,
+      `(() => {
+        const table = document.querySelector('table');
+        const firstStatusGroup = table.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        const statuses = [...firstStatusGroup.querySelectorAll('button')];
+        statuses[1].click();
+        return {
+          headings: [...table.querySelectorAll('thead th')].map((cell) => cell.textContent.trim()),
+          labels: statuses.map((button) => button.textContent.trim()),
+          studentNumberSort: table.querySelector('thead th:nth-child(3)')?.getAttribute('aria-sort'),
+          studentNumbers: [...table.querySelectorAll('tbody tr')].map(
+            (row) => row.cells[2]?.textContent.trim(),
+          ),
+        };
+      })()`,
+    );
+    assert(
+      JSON.stringify(systemAttendanceTable.headings) ===
+        JSON.stringify(['ลำดับ', 'รูปประจำตัว', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'สถานะการเข้าเรียน']),
+      `Authenticated attendance headings drifted: ${systemAttendanceTable.headings.join(' | ')}`,
+    );
+    assert(
+      systemAttendanceTable.studentNumberSort === 'ascending' &&
+        JSON.stringify(systemAttendanceTable.studentNumbers) === JSON.stringify(fixtureStudentNumbers),
+      `Authenticated attendance did not default to ascending student number: ${JSON.stringify(systemAttendanceTable)}`,
+    );
+    assert(
+      JSON.stringify(systemAttendanceTable.labels) === JSON.stringify(['มา', 'สาย', 'ลา', 'ขาด']),
+      `Authenticated attendance status pills drifted: ${systemAttendanceTable.labels.join(' | ')}`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('table [role="group"] button:nth-child(2)')
+              ?.getAttribute('aria-pressed') === 'true'`,
+          ),
+        ),
+      'Authenticated attendance status selection did not update',
+    );
+    const searchNarrowedAttendance = await evaluate(
+      client,
+      `(async () => {
+        const input = document.querySelector('input[placeholder="ค้นหา"]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(input, ${JSON.stringify(fixtureStudentNumbers[0])});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return document.querySelectorAll('tbody tr').length;
+      })()`,
+    );
+    assert(
+      searchNarrowedAttendance === 1,
+      `Authenticated attendance search returned ${searchNarrowedAttendance} rows instead of 1`,
+    );
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true,
+    });
+    const mobileAttendanceOverflow = await evaluate(
+      client,
+      `(() => {
+        const table = document.querySelector('table');
+        const scroller = table.parentElement;
+        return {
+          internal: scroller.scrollWidth > scroller.clientWidth,
+          page: document.documentElement.scrollWidth <= window.innerWidth + 1,
+        };
+      })()`,
+    );
+    assert(
+      mobileAttendanceOverflow.internal && mobileAttendanceOverflow.page,
+      `Authenticated attendance mobile overflow escaped its table: ${JSON.stringify(mobileAttendanceOverflow)}`,
+    );
+
+    await navigate(client, `${FRONTEND_URL}/line-link/result?status=success`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.body.innerText.includes('เชื่อมบัญชี LINE สำเร็จ')`,
+          ),
+        ),
+      'LINE link success result did not render',
+    );
+    const resultHasProfile = await evaluate(
+      client,
+      `Boolean(document.querySelector('header [aria-label^="ผู้รับมอบหมาย"]'))`,
+    );
+    assert(!resultHasProfile, 'LINE link result rendered an unnecessary guest profile avatar');
+
     console.log(
       JSON.stringify({
         status: 'teacher_access_browser_smoke_ok',
@@ -733,8 +1269,14 @@ async function main() {
           'teacher and director card hover transform and shadow are identical',
           'teacher card color updates every subject card for the shared classroom',
           'teacher-link roster sorting reaches the server',
-          'the LINE verification link is copyable wherever sending over LINE is offered',
+          'teacher-link and authenticated attendance default to ascending student number in the shared numbered roster',
+          'authenticated attendance search, status selection and mobile internal scrolling work',
+          'teacher-link classroom, history and student routes keep their breadcrumbs, menu owner and safe back targets',
+          'LINE invitations are scoped to unverified teacher rows with no global reusable URL',
+          'teacher-link roster renders one profile avatar per visible teacher',
           'LINE unlink icons stay visible, disable by verification state and refresh after unlink',
+          'teacher verification method choice offers AraID/email without a guest profile avatar',
+          'LINE link result omits the guest profile avatar',
           'curriculum MultiSelect filters as you type and supports ArrowDown, Enter and Escape',
         ],
       }),
@@ -744,6 +1286,9 @@ async function main() {
     await closeChrome(chrome);
     if (lineAccountId) {
       await dataSource.query(`DELETE FROM teacher_messaging_accounts WHERE id = $1`, [lineAccountId]);
+    }
+    if (timetableSlotId) {
+      await dataSource.query(`DELETE FROM timetable_slots WHERE id = $1`, [timetableSlotId]);
     }
     await cleanup(dataSource);
     await app.close();

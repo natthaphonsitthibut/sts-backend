@@ -38,15 +38,6 @@ export class FilesController {
     private readonly taskRepository: TaskRepository,
   ) {}
 
-  @RequirePermission('field-monitor')
-  @Get('field-follower-id-cards/:filename')
-  async getFieldFollowerIdCard(
-    @Param('filename') filename: string,
-    @Res() res: Response,
-  ): Promise<void> {
-    await this.sendStoredFile(filename, res);
-  }
-
   @Get('visit-attachments/:filename')
   async getVisitAttachment(
     @Param('filename') filename: string,

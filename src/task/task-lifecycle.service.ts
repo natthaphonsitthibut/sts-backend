@@ -207,7 +207,7 @@ export class TaskLifecycleService {
   private async assertSchoolWithinActorScope(
     actor: ActorContext,
     schoolId: number,
-    executor: QueryExecutor,
+    executor?: QueryExecutor,
   ): Promise<void> {
     const school = await this.taskRepository.findSchoolById(schoolId, executor);
     if (!school) {
@@ -306,22 +306,53 @@ export class TaskLifecycleService {
     }
   }
 
+  async listVisitAssignees(actor: ActorContext | undefined, studentUuid: string) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    this.taskPolicyService.assertCanCreateTask(currentActor, 'VISIT');
+
+    const student = await this.taskRepository.findStudentTermMetadata(studentUuid);
+    const schoolId = this.normalizeNumber(
+      student?.SchoolID_Onec as string | number | null | undefined,
+    );
+    if (schoolId === null) {
+      throw new BadRequestException('ไม่พบนักเรียนที่กำลังศึกษาอยู่ในระบบ');
+    }
+    await this.assertSchoolWithinActorScope(currentActor, schoolId);
+
+    return (await this.taskRepository.listVisitAssignees(studentUuid)).map((row) => ({
+      teacherUserId: Number(row.teacher_user_id),
+      displayName: row.display_name,
+      isHomeroom: row.is_homeroom === true,
+    }));
+  }
+
   async createTask(actor: ActorContext | undefined, data: CreateTaskDto, baseUrl: string) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     const taskType = clean(data.task_type) || clean(data.type) || 'VISIT';
-    const assigneeName = resolveAssigneeName({
+    let assigneeName = resolveAssigneeName({
       firstName: data.assigned_to_first_name,
       lastName: data.assigned_to_last_name,
       fullName: data.assigned_to_name,
     });
-    const assignedName = assigneeName.fullName;
-    const assignedEmail = clean(data.assigned_to_email);
+    let assignedName = assigneeName.fullName;
+    let assignedEmail = clean(data.assigned_to_email);
+    const selectedTeacherUserId = this.normalizeNumber(data.assigned_teacher_user_id);
 
-    if (!assignedName) {
+    if (!assignedName && selectedTeacherUserId === null) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
-    if (assigneeName.usesStructuredInput && (!assigneeName.firstName || !assigneeName.lastName)) {
+    if (
+      selectedTeacherUserId === null &&
+      assigneeName.usesStructuredInput &&
+      (!assigneeName.firstName || !assigneeName.lastName)
+    ) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
+    }
+    if (selectedTeacherUserId !== null && taskType !== 'VISIT') {
+      throw new BadRequestException('เลือกครูผู้รับมอบหมายได้เฉพาะลิงก์ติดตามนักเรียน');
+    }
+    if (selectedTeacherUserId !== null && !clean(data.student_id)) {
+      throw new BadRequestException('กรุณาเลือกนักเรียนก่อนเลือกครูผู้รับมอบหมาย');
     }
     if (taskType === 'LOGIN' && !assignedEmail) {
       throw new Error('assigned_to_email is required for LOGIN');
@@ -404,8 +435,6 @@ export class TaskLifecycleService {
     const auditTargetRoom = clean(data.target_room) || null;
     const subjectId = this.normalizeNumber(data.subject_id);
     const timetableSlotIds = this.normalizePositiveIntList(data.timetable_slot_ids);
-    const sourceFieldFollowerId = this.normalizeNumber(data.source_field_follower_id);
-    const campaignTargetId = this.normalizeNumber(data.campaign_target_id);
     const followUpRequestId = clean(data.follow_up_request_id) || null;
     const actorId = resolveAuditActorId(currentActor);
 
@@ -413,20 +442,6 @@ export class TaskLifecycleService {
     // still sending the old field is told rather than silently ignored.
     if (followUpRequestId) {
       throw new BadRequestException('ระบบไม่รองรับคำขอติดตามแล้ว กรุณาสร้างงานโดยตรง');
-    }
-
-    if ((sourceFieldFollowerId !== null || campaignTargetId !== null) && taskType !== 'VISIT') {
-      throw new BadRequestException(
-        'campaign follower assignment is only supported for VISIT tasks',
-      );
-    }
-    if (campaignTargetId !== null && sourceFieldFollowerId === null) {
-      throw new BadRequestException('source_field_follower_id is required with campaign_target_id');
-    }
-    if (sourceFieldFollowerId !== null && !assignedEmail) {
-      throw new BadRequestException(
-        'assigned_to_email is required when assigning a field follower',
-      );
     }
 
     try {
@@ -443,6 +458,25 @@ export class TaskLifecycleService {
         }
 
         if (taskType === 'VISIT') {
+          if (selectedTeacherUserId !== null) {
+            const studentUuid = clean(data.student_id);
+            const teacher = (
+              await this.taskRepository.listVisitAssignees(studentUuid!, executor)
+            ).find((candidate) => Number(candidate.teacher_user_id) === selectedTeacherUserId);
+            if (!teacher) {
+              throw new BadRequestException(
+                'ครูผู้รับมอบหมายต้องเป็นครูที่ปฏิบัติงานอยู่ในโรงเรียนของนักเรียน',
+              );
+            }
+            assignedName = teacher.display_name;
+            assignedEmail = clean(teacher.email);
+            assigneeName = {
+              fullName: teacher.display_name,
+              firstName: null,
+              lastName: null,
+              usesStructuredInput: false,
+            };
+          }
           const requestedCaseId = this.normalizeNumber(data.existing_case_id);
           if (
             requestedCaseId !== null &&
@@ -454,13 +488,20 @@ export class TaskLifecycleService {
           const existingCaseId = requestedCaseId ?? approvedFollowUpCaseId;
 
           if (existingCaseId) {
-            const existingCase = await this.taskRepository.findCaseById(
+            const existingCase = await this.taskRepository.lockCaseForVisitAssignment(
               existingCaseId,
-              executor,
               currentActor,
+              executor,
             );
             if (!existingCase) {
-              throw new Error('Case not found');
+              throw new BadRequestException('ไม่พบเคสที่ต้องการมอบหมาย');
+            }
+            const existingStatus = clean(existingCase.status)?.toUpperCase();
+            if (!['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND'].includes(existingStatus || '')) {
+              throw new BadRequestException('สถานะเคสนี้ไม่อนุญาตให้มอบหมายการติดตาม');
+            }
+            if (existingCase.has_live_assignment === true) {
+              throw new BadRequestException('เคสนี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว');
             }
             const existingCaseSchoolId = this.normalizeNumber(
               existingCase.school_id as string | number | null | undefined,
@@ -472,8 +513,12 @@ export class TaskLifecycleService {
             ) {
               throw new Error('target_school_id does not match case school');
             }
-            if (followUpRequestId && clean(existingCase.student_uuid) !== clean(data.student_id)) {
-              throw new BadRequestException('เคสเดิมไม่ตรงกับนักเรียนในคำขอติดตาม');
+            if (
+              clean(existingCase.student_uuid) &&
+              clean(data.student_id) &&
+              clean(existingCase.student_uuid) !== clean(data.student_id)
+            ) {
+              throw new BadRequestException('เคสเดิมไม่ตรงกับนักเรียนที่เลือก');
             }
             resolvedTargetSchoolId = resolvedTargetSchoolId ?? existingCaseSchoolId;
             caseId = existingCaseId;
@@ -520,27 +565,39 @@ export class TaskLifecycleService {
             );
             resolvedTargetSchoolId = resolvedTargetSchoolId ?? caseSchoolId;
 
-            caseId = await this.taskRepository.createCase(
-              {
-                studentName,
-                studentFirstName,
-                studentLastName,
-                studentSchool: clean(data.student_school),
-                studentAddress,
-                addressLine,
-                addressProvince,
-                addressDistrict,
-                addressSubDistrict,
-                postalCode,
-                studentLat: this.normalizeNumber(data.student_lat),
-                studentLng: this.normalizeNumber(data.student_lng),
-                reasonFlagged: clean(data.reason_flagged),
-                studentUuid,
-                schoolId: caseSchoolId,
-                createdBy: resolveAuditActorId(currentActor),
-              },
-              executor,
+            const activeCase = studentUuid
+              ? await this.taskRepository.findActiveCaseByStudentUuid(
+                  studentUuid,
+                  currentActor,
+                  executor,
+                )
+              : null;
+            const activeCaseId = this.normalizeNumber(
+              activeCase?.id as string | number | null | undefined,
             );
+            caseId =
+              activeCaseId ??
+              (await this.taskRepository.createCase(
+                {
+                  studentName,
+                  studentFirstName,
+                  studentLastName,
+                  studentSchool: clean(data.student_school),
+                  studentAddress,
+                  addressLine,
+                  addressProvince,
+                  addressDistrict,
+                  addressSubDistrict,
+                  postalCode,
+                  studentLat: this.normalizeNumber(data.student_lat),
+                  studentLng: this.normalizeNumber(data.student_lng),
+                  reasonFlagged: clean(data.reason_flagged),
+                  studentUuid,
+                  schoolId: caseSchoolId,
+                  createdBy: resolveAuditActorId(currentActor),
+                },
+                executor,
+              ));
 
             await this.taskRepository.updateCaseStatus(
               caseId,
@@ -586,7 +643,9 @@ export class TaskLifecycleService {
             tokenHash,
             tokenEncrypted,
             delegationDepth: 0,
-            assignedToName: assignedName,
+            // Both the legacy input validation and selected-teacher lookup above
+            // guarantee a name before a link can be persisted.
+            assignedToName: assignedName || '',
             assignedToFirstName: assigneeName.firstName,
             assignedToLastName: assigneeName.lastName,
             assignedToPhone: clean(data.assigned_to_phone),
@@ -595,6 +654,7 @@ export class TaskLifecycleService {
             opensAt,
             subject: clean(data.subject),
             delegationNote: null,
+            assignmentNote: clean(data.assignment_note),
             subjectId,
             // Email-assigned links require OTP (start unverified); links with no
             // email can't be OTP'd, so mark them pre-verified to skip the gate.
@@ -603,7 +663,6 @@ export class TaskLifecycleService {
             loginRole,
             loginPermissions,
             loginDataScope,
-            sourceFieldFollowerId,
           },
           executor,
         );
@@ -613,23 +672,6 @@ export class TaskLifecycleService {
           resolveAuditActorId(currentActor),
           executor,
         );
-        if (campaignTargetId !== null && sourceFieldFollowerId !== null && caseId !== null) {
-          const assigned = await this.taskRepository.assignFollowerCampaignTarget(
-            {
-              campaignTargetId,
-              sourceFieldFollowerId,
-              taskLinkId: linkId,
-              caseId,
-              actorId: resolveAuditActorId(currentActor),
-            },
-            executor,
-          );
-          if (!assigned) {
-            throw new BadRequestException(
-              'ไม่สามารถมอบหมายเคสนี้ได้ กรุณาโหลดข้อมูลล่าสุดแล้วลองใหม่',
-            );
-          }
-        }
       });
 
       if (!assignmentReused) {
@@ -653,7 +695,7 @@ export class TaskLifecycleService {
       }
       if (!assignmentReused && riskProfileStudentUuid) {
         await this.riskProfileService
-          ?.enqueueStudents([riskProfileStudentUuid], 'case-task-create')
+          ?.requestStudentRecalculation([riskProfileStudentUuid], 'case-task-create')
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(`Failed to enqueue case risk profile recalculation: ${message}`);

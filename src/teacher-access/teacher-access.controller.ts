@@ -13,6 +13,7 @@ import {
   Req,
   Res,
   UploadedFile,
+  UnauthorizedException,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -29,11 +30,13 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
+import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service';
 import { appConfig } from '../config/app.config';
 import { ThrottleTeacherAccess } from '../config/throttle.decorators';
 import {
   CreateTeacherAccessStudentCommentDto,
   IssueTeacherAccessGrantDto,
+  IssueTeacherLineGroupInvitationDto,
   RecordTeacherAccessExportDto,
   IssueTeacherAccessGrantsForTermDto,
   ListTeacherAccessGrantsDto,
@@ -41,7 +44,6 @@ import {
   RevokeTeacherAccessGrantDto,
   SendTeacherAccessGrantsDto,
   SaveTeacherAccessAttendanceDto,
-  SeedTeacherAccessAbsenceDemoDto,
   TeacherAccessAttendanceSlotsQueryDto,
   TeacherAccessAssignmentOptionsDto,
   TeacherAccessAttendanceHistoryQueryDto,
@@ -53,6 +55,7 @@ import {
   VerifyTeacherAccessOtpDto,
 } from './dto/teacher-access.dto';
 import {
+  TEACHER_ACCESS_ARAID_CHALLENGE_HEADER,
   TEACHER_ACCESS_SESSION_HEADER,
   TEACHER_ACCESS_TOKEN_HEADER,
 } from './teacher-access.constants';
@@ -125,6 +128,80 @@ export class TeacherAccessGrantController {
     return this.service.unlinkTeacherLineAccount(teacherMembershipId, actor);
   }
 
+  @Post('teacher-memberships/:teacherMembershipId/line-invitation')
+  issueLineInvitation(
+    @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.issueTeacherLineInvitation(teacherMembershipId, actor, baseUrl);
+  }
+
+  @Post('line-group-invitation')
+  issueLineGroupInvitation(
+    @Body() body: IssueTeacherLineGroupInvitationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.issueTeacherLineGroupInvitation(body, actor, baseUrl);
+  }
+
+  @Get('line-group-invitation')
+  getLineGroupInvitation(
+    @Query('schoolId', ParseIntPipe) schoolId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.getTeacherLineGroupInvitation(schoolId, actor, baseUrl);
+  }
+
+  @Patch('line-group-invitation/:invitationId')
+  updateLineGroupInvitation(
+    @Param('invitationId', ParseUUIDPipe) invitationId: string,
+    @Body() body: IssueTeacherLineGroupInvitationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.updateTeacherLineGroupInvitation(invitationId, body, actor, baseUrl);
+  }
+
+  @Post('line-group-invitation/:invitationId/revoke')
+  revokeLineGroupInvitation(
+    @Param('invitationId', ParseUUIDPipe) invitationId: string,
+    @Query('schoolId', ParseIntPipe) schoolId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.revokeTeacherLineGroupInvitation(invitationId, schoolId, actor);
+  }
+
+  @Post('teacher-memberships/:teacherMembershipId/line-invitation/revoke')
+  revokeLineInvitation(
+    @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.revokeTeacherLineInvitation(teacherMembershipId, actor);
+  }
+
+  @Get('teacher-memberships/:teacherMembershipId/photo')
+  async teacherRosterPhoto(
+    @Param('teacherMembershipId', ParseIntPipe) teacherMembershipId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.service.resolveTeacherRosterPhoto(teacherMembershipId, actor);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
   @Get(':grantId')
   detail(
     @Param('grantId', ParseUUIDPipe) grantId: string,
@@ -166,7 +243,12 @@ export class TeacherAccessGrantController {
 @Public()
 @Controller('api/teacher-access')
 export class PublicTeacherAccessController {
-  constructor(private readonly service: TeacherAccessService) {}
+  constructor(
+    private readonly service: TeacherAccessService,
+    private readonly araIdSessionCookie: AraIdSessionCookieService,
+    @Inject(appConfig.KEY)
+    private readonly runtimeConfig: ConfigType<typeof appConfig>,
+  ) {}
 
   private token(value: string | string[] | undefined): string {
     return Array.isArray(value) ? value[0] || '' : value || '';
@@ -189,6 +271,76 @@ export class PublicTeacherAccessController {
     @Body() body: VerifyTeacherAccessOtpDto,
   ) {
     return this.service.verifyOtp(this.token(rawToken), body.otp);
+  }
+
+  @Post('araid/verify')
+  @ThrottleTeacherAccess()
+  verifyAraId(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Req() request: Request,
+  ) {
+    const profileId = this.araIdSessionCookie.readProfileId(request.headers.cookie);
+    if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
+    return this.service.verifyAraId(this.token(rawToken), profileId);
+  }
+
+  @Post('araid/challenge')
+  @ThrottleTeacherAccess()
+  createAraIdChallenge(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.createAraIdChallenge(this.token(rawToken), baseUrl);
+  }
+
+  @Post('araid/challenge/begin')
+  @ThrottleTeacherAccess()
+  async beginAraIdChallenge(
+    @Headers(TEACHER_ACCESS_ARAID_CHALLENGE_HEADER)
+    rawChallenge: string | string[] | undefined,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const authorization = await this.service.beginAraIdChallenge(
+      this.token(rawChallenge),
+      this.araIdSessionCookie.readTeacherAccessAuthorization(request.headers.cookie) ?? undefined,
+    );
+    this.araIdSessionCookie.setTeacherAccessAuthorization(
+      response,
+      authorization.authorizationToken,
+      Math.max(1, Math.ceil((authorization.expiresAt.getTime() - Date.now()) / 1000)),
+    );
+    return {
+      success: true,
+      data: { expiresAt: authorization.expiresAt.toISOString() },
+    };
+  }
+
+  @Post('araid/challenge/approve')
+  @ThrottleTeacherAccess()
+  async approveAraIdChallenge(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const profileId = this.araIdSessionCookie.readProfileId(request.headers.cookie);
+    if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
+    const authorizationToken = this.araIdSessionCookie.readTeacherAccessAuthorization(
+      request.headers.cookie,
+    );
+    if (!authorizationToken) throw new UnauthorizedException('การยืนยัน AraID หมดอายุแล้ว');
+    const result = await this.service.approveAraIdChallenge(authorizationToken, profileId);
+    this.araIdSessionCookie.clearTeacherAccessAuthorization(response);
+    return result;
+  }
+
+  @Post('araid/challenge/status')
+  @ThrottleTeacherAccess()
+  pollAraIdChallenge(
+    @Headers(TEACHER_ACCESS_ARAID_CHALLENGE_HEADER)
+    rawChallenge: string | string[] | undefined,
+  ) {
+    return this.service.pollAraIdChallenge(this.token(rawChallenge));
   }
 
   @Get('context')
@@ -313,6 +465,28 @@ export class PublicTeacherAccessController {
     );
   }
 
+  @Get('student-photo')
+  @ThrottleTeacherAccess()
+  async studentPhoto(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Query() query: TeacherAccessStudentProfileQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.service.resolvePublicStudentPhoto(
+      this.token(rawToken),
+      query,
+      this.session(rawSession),
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
   @Get('student-subject-attendance')
   @ThrottleTeacherAccess()
   studentSubjectAttendance(
@@ -357,33 +531,5 @@ export class PublicTeacherAccessController {
     @Body() body: SaveTeacherAccessAttendanceDto,
   ) {
     return this.service.savePublicAttendance(this.token(rawToken), body, this.session(rawSession));
-  }
-
-  @Post('attendance-demo-absences')
-  @ThrottleTeacherAccess()
-  seedDemoAbsences(
-    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
-    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
-    @Body() body: SeedTeacherAccessAbsenceDemoDto,
-  ) {
-    return this.service.seedPublicAttendanceDemo(
-      this.token(rawToken),
-      body.assignmentId,
-      this.session(rawSession),
-    );
-  }
-
-  @Post('attendance-demo-absences/clear')
-  @ThrottleTeacherAccess()
-  clearAttendanceDemo(
-    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
-    @Headers(TEACHER_ACCESS_SESSION_HEADER) sessionToken: string | string[] | undefined,
-    @Body() body: SeedTeacherAccessAbsenceDemoDto,
-  ) {
-    return this.service.clearPublicAttendanceDemo(
-      this.token(rawToken),
-      body.assignmentId,
-      this.session(sessionToken),
-    );
   }
 }

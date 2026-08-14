@@ -37,4 +37,5 @@ export const TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY: TeacherAccessStepUpPolicy = 
 
 export const TEACHER_ACCESS_TOKEN_HEADER = 'x-teacher-access-token';
 export const TEACHER_ACCESS_SESSION_HEADER = 'x-teacher-access-session';
+export const TEACHER_ACCESS_ARAID_CHALLENGE_HEADER = 'x-teacher-access-araid-challenge';
 export const TEACHER_ACCESS_LINK_PATH = '/teacher-access';

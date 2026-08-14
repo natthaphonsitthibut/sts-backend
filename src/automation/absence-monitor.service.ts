@@ -181,7 +181,7 @@ export class AbsenceMonitorService {
 
           this.logger.log(`Existing case count for ${studentName}: ${existingCase ? 1 : 0}`);
 
-          const reason = `ขาดเรียนสะสม ${student.absent_days} วัน`;
+          const reason = `ขาดเรียนหลังปิดเคสล่าสุด ${student.absent_days} วัน`;
           const slaDueAt = this.addDays(new Date(), slaDays);
 
           if (existingCase) {
@@ -252,7 +252,7 @@ export class AbsenceMonitorService {
 
       if (riskProfileStudentUuids.size > 0) {
         await this.riskProfileService
-          ?.enqueueStudents([...riskProfileStudentUuids], 'case-auto-monitor')
+          ?.requestStudentRecalculation([...riskProfileStudentUuids], 'case-auto-monitor')
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(

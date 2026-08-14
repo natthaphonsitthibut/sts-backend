@@ -69,8 +69,12 @@ export interface AttendanceStudentRow extends Record<string, unknown> {
   room: string;
   school_id: number | string;
   school_name?: string | null;
-  total_late: number | string;
-  total_absent: number | string;
+  student_number: string | null;
+  photo_storage_key: string | null;
+  photo_updated_at: string | Date | null;
+  term_absent_days: number | string;
+  post_case_absent_days: number | string;
+  absence_reset_after_date: string | Date | null;
 }
 
 export interface AttendanceHistoryRow extends Record<string, unknown> {

@@ -55,6 +55,23 @@ describe('TimetableRepository', () => {
     expect(queries[0].params).toEqual([100, 42]);
   });
 
+  it('gates the legacy ts.teacher_user_id fallback behind a NOT EXISTS guard', async () => {
+    // Regression test: this fallback used to match unconditionally, so a slot
+    // reassigned to a new teacher via timetable_slot_teachers still surfaced
+    // on the *previous* teacher's schedule (via their stale legacy column) at
+    // the same day/period as their real slot — a phantom double-booking.
+    const { repository, queries } = buildRepository([]);
+    await repository.listForTeacher(42, 100);
+    const sql = queries[0].sql;
+    const userIdBranchStart = sql.indexOf('$2::integer IS NOT NULL');
+    const userIdBranch = sql.slice(userIdBranchStart);
+    const notExistsIndex = userIdBranch.indexOf('NOT EXISTS');
+    const legacyCheckIndex = userIdBranch.indexOf('ts.teacher_user_id = $2::integer');
+    expect(notExistsIndex).toBeGreaterThan(-1);
+    expect(legacyCheckIndex).toBeGreaterThan(-1);
+    expect(notExistsIndex).toBeLessThan(legacyCheckIndex);
+  });
+
   it('findById groups the teacher aggregates before returning a slot', async () => {
     const { repository, queries } = buildRepository([]);
     await repository.findById('25716');

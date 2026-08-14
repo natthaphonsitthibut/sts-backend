@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
@@ -40,6 +40,8 @@ const CURRENT_ENROLLMENT_JOIN = `
 
 @Injectable()
 export class AttendanceRepository {
+  private readonly logger = new Logger(AttendanceRepository.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly tokenEncryption: TokenEncryptionService,
@@ -50,8 +52,13 @@ export class AttendanceRepository {
   /** See TaskRepository.resolveMagicLink — same reconstruct-from-ciphertext logic. */
   private resolveMagicLink(tokenEncrypted: string | null | undefined): string | null {
     if (!tokenEncrypted) return null;
-    const token = this.tokenEncryption.decrypt(tokenEncrypted);
-    return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/task/${token}`;
+    try {
+      const token = this.tokenEncryption.decrypt(tokenEncrypted);
+      return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/task/${token}`;
+    } catch {
+      this.logger.warn('Unable to decrypt a stored task link; returning it as unavailable');
+      return null;
+    }
   }
 
   private async query<T extends Record<string, unknown>>(
@@ -205,22 +212,18 @@ export class AttendanceRepository {
         s."RoomID_Onec"::text as room,
         s."SchoolID_Onec" as school_id,
         sc.name as school_name,
-        (
-          SELECT COUNT(*)
-          FROM attendance a
-          WHERE a.student_uuid = s.student_uuid
-            AND a."AttendanceStatus" = 3
-        ) as total_late,
-        (
-          SELECT COUNT(*)
-          FROM attendance a
-          WHERE a.student_uuid = s.student_uuid
-            AND a."AttendanceStatus" = 2
-        ) as total_absent
+        s.student_number,
+        person.photo_storage_key,
+        person.updated_at AS photo_updated_at,
+        COALESCE(profile.term_absent_days, 0)::int AS term_absent_days,
+        COALESCE(profile.absent_days, 0)::int AS post_case_absent_days,
+        profile.absence_reset_after_date
       FROM student_term s
       ${CURRENT_ENROLLMENT_JOIN}
+      LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+      LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
     `;
     const params: unknown[] = [];
     const conditions: string[] = [];

@@ -38,6 +38,7 @@ import {
   TaskSubmissionEntity,
 } from './task.entities';
 import { RoleEntity, UserEntity } from './user.entities';
+import { AraIdIdentityRecordEntity, AraIdProfileEntity } from './araid.entities';
 
 export const DATABASE_ENTITIES = [
   SchoolEntity,
@@ -62,6 +63,8 @@ export const DATABASE_ENTITIES = [
   AttendanceSessionEntity,
   RoleEntity,
   UserEntity,
+  AraIdProfileEntity,
+  AraIdIdentityRecordEntity,
   RiskFactorEntity,
   AssistanceMeasureEntity,
   EducationalAreaEntity,
@@ -105,4 +108,6 @@ export {
   TaskLinkEntity,
   TaskSubmissionEntity,
   UserEntity,
+  AraIdProfileEntity,
+  AraIdIdentityRecordEntity,
 };

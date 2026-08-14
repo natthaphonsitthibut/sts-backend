@@ -53,6 +53,18 @@ export class SubmissionController {
     return normalized;
   }
 
+  private async cleanupStoredFiles(storageKeys: string[], context: string): Promise<void> {
+    const results = await Promise.allSettled(
+      storageKeys.map((storageKey) => this.storage.delete(storageKey)),
+    );
+    const failedCount = results.filter((result) => result.status === 'rejected').length;
+    if (failedCount > 0) {
+      this.logger.error(
+        `[submitReport] cleanup failed context=${context} failed=${failedCount} total=${storageKeys.length}`,
+      );
+    }
+  }
+
   @Post(':token/submit')
   @UseInterceptors(FilesInterceptor('photos', 5, multerConfig))
   async submitReport(
@@ -80,7 +92,7 @@ export class SubmissionController {
         photoPaths.push(`/uploads/${storageKey}`);
       }
     } catch (error) {
-      await Promise.allSettled(storedKeys.map((storageKey) => this.storage.delete(storageKey)));
+      await this.cleanupStoredFiles(storedKeys, 'attachment-processing');
       throw error;
     }
 
@@ -106,7 +118,7 @@ export class SubmissionController {
       updated_postal_code: body.updated_postal_code?.trim() || null,
       updated_lat: this.parseOptionalNumber(body.updated_lat),
       updated_lng: this.parseOptionalNumber(body.updated_lng),
-      photo_paths: JSON.stringify(photoPaths),
+      photo_paths: photoPaths.length > 0 ? JSON.stringify(photoPaths) : null,
       case_follow_up_decision: body.case_follow_up_decision,
       case_resolution_outcome_code: body.case_resolution_outcome_code,
     };
@@ -115,7 +127,7 @@ export class SubmissionController {
       const result = await this.taskService.saveTaskSubmission(token, data, sessionToken);
       return { ...result, success: true };
     } catch (err: unknown) {
-      await Promise.allSettled(storedKeys.map((storageKey) => this.storage.delete(storageKey)));
+      await this.cleanupStoredFiles(storedKeys, 'submission-rejected');
       if (err instanceof HttpException) {
         throw err;
       }

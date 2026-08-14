@@ -254,7 +254,7 @@ describe('SchoolStructureRepository scope', () => {
       limit: 10,
     });
     expect(runner.query).toHaveBeenCalledWith(
-      expect.stringContaining(`ESCAPE '\\'`),
+      expect.stringMatching(/person\.photo_storage_key[\s\S]*ESCAPE '\\'/),
       expect.arrayContaining(['%50\\%\\_ก%']),
       true,
     );

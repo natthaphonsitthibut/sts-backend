@@ -45,7 +45,7 @@ describe('AttendanceWriteService', () => {
       | 'getAlertTriggerType'
     >
   >;
-  let riskProfileService: { enqueueStudents: jest.Mock };
+  let riskProfileService: { requestStudentRecalculation: jest.Mock };
   let operationsRepository: jest.Mocked<
     Pick<
       AttendanceOperationsRepository,
@@ -67,7 +67,7 @@ describe('AttendanceWriteService', () => {
       listAttendanceStatuses: jest.fn().mockResolvedValue([]),
       getAlertTriggerType: jest.fn().mockResolvedValue('SCHEDULED'),
     };
-    riskProfileService = { enqueueStudents: jest.fn().mockResolvedValue(undefined) };
+    riskProfileService = { requestStudentRecalculation: jest.fn().mockResolvedValue(undefined) };
     operationsRepository = {
       findClassMetadata: jest.fn().mockResolvedValue(
         STUDENT_IDS.map((studentUuid) => ({
@@ -149,7 +149,10 @@ describe('AttendanceWriteService', () => {
       { id: 5, username: 'teacher', roles: ['TEACHER'], permissions: ['attendance'] },
     );
 
-    expect(riskProfileService.enqueueStudents).toHaveBeenCalledWith(STUDENT_IDS, 'attendance-save');
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
+      STUDENT_IDS,
+      'attendance-save',
+    );
   });
 
   it('rejects a stale partial roster before writing attendance', async () => {

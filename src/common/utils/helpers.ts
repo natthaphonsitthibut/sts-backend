@@ -21,6 +21,19 @@ export function maskName(name: string): string {
   return name.slice(0, 2) + '****';
 }
 
+/** Keeps only the requested local-part prefix so a recipient can recognise the address. */
+export function maskEmailAddress(
+  email: string,
+  visibleCharacters = 2,
+  fixedMaskCharacters?: number,
+): string {
+  const [localPart, domain] = email.trim().split('@');
+  if (!localPart || !domain) return '***';
+  const visible = localPart.slice(0, Math.max(0, visibleCharacters));
+  const maskCharacters = fixedMaskCharacters ?? localPart.length - visible.length;
+  return `${visible}${'*'.repeat(Math.max(maskCharacters, 1))}@${domain}`;
+}
+
 /** Escape LIKE/ILIKE wildcards so user input matches literally (pair with ESCAPE '\\'). */
 export function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (wildcard) => `\\${wildcard}`);
@@ -41,6 +54,15 @@ export function sanitize(str: string): string {
         }) as Record<string, string>
       )[c],
   );
+}
+
+/** Coerce a string/number to a trimmed string; anything else becomes ''. */
+export function normalizeScalar(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value).trim();
+  }
+
+  return '';
 }
 
 export function clean(str: any): string | null {

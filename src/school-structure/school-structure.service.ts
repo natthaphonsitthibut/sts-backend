@@ -20,6 +20,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { processImageUpload } from '../common/file-upload/visit-photo.util';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
 import {
   buildPaginationMeta,
   resolveLimit,
@@ -820,6 +821,9 @@ export class SchoolStructureService {
       data: rows.map((row) => ({
         studentUuid: row.student_uuid,
         studentNumber: row.student_number,
+        photoUrl: row.photo_storage_key
+          ? `/api/students/${encodeURIComponent(row.student_uuid)}/photo?v=${encodeMediaVersion(row.photo_updated_at)}`
+          : null,
         riskTier: row.risk_tier ?? 'NORMAL',
         riskSeverity: row.risk_severity ?? 0,
         teacherComment: row.teacher_comment,
@@ -1001,6 +1005,9 @@ export class SchoolStructureService {
       data: result.rows.map((row) => ({
         studentUuid: row.student_uuid,
         studentNumber: row.student_number,
+        photoUrl: row.photo_storage_key
+          ? `/api/students/${encodeURIComponent(row.student_uuid)}/photo?v=${encodeMediaVersion(row.photo_updated_at)}`
+          : null,
         firstName: row.first_name,
         lastName: row.last_name,
         presentCount: row.present_count,

@@ -51,5 +51,18 @@ describe('StudentsController', () => {
         'student-self',
       ]);
     }
+
+    const photoHandler = Object.getOwnPropertyDescriptor(
+      StudentsController.prototype,
+      'getStudentPhoto',
+    )?.value as () => unknown;
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, photoHandler)).toEqual([
+      'students',
+      'student-self',
+      'attendance',
+      'manage-school-structure',
+      'dashboard',
+      'review-cases',
+    ]);
   });
 });

@@ -9,10 +9,12 @@ import {
   Req,
   type RawBodyRequest,
   Res,
+  UnauthorizedException,
   ValidationPipe,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Public } from '../auth';
+import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service';
 import {
   ThrottleOtpRequest,
   ThrottleOtpVerify,
@@ -21,8 +23,11 @@ import {
 import {
   RequestTeacherLineOtpDto,
   StartTeacherLineAuthorizationDto,
+  TeacherLineAraIdChallengeTokenDto,
   TeacherLineCallbackDto,
+  TeacherLineInvitationTokenDto,
   VerifyTeacherLineOtpDto,
+  VerifyTeacherLineInvitationOtpDto,
 } from './dto/teacher-line.dto';
 import { TeacherLineService } from './teacher-line.service';
 
@@ -38,7 +43,10 @@ import { TeacherLineService } from './teacher-line.service';
 @Public()
 @Controller('api/line/link')
 export class TeacherLineController {
-  constructor(private readonly service: TeacherLineService) {}
+  constructor(
+    private readonly service: TeacherLineService,
+    private readonly araIdSessionCookie: AraIdSessionCookieService,
+  ) {}
 
   /** Lets the page hide the whole flow when the integration is switched off. */
   @Get('status')
@@ -51,7 +59,7 @@ export class TeacherLineController {
   async requestOtp(@Body() body: RequestTeacherLineOtpDto, @Req() request: Request) {
     return {
       success: true,
-      data: await this.service.requestOtp(body.email, request.ip ?? null),
+      data: await this.service.requestOtp(body.email, request.ip ?? null, body.token),
     };
   }
 
@@ -60,7 +68,113 @@ export class TeacherLineController {
   async verifyOtp(@Body() body: VerifyTeacherLineOtpDto, @Req() request: Request) {
     return {
       success: true,
-      data: await this.service.verifyOtp(body.email, body.code, request.ip ?? null),
+      data: await this.service.verifyOtp(body.email, body.code, request.ip ?? null, body.token),
+    };
+  }
+
+  @Post('araid/verify')
+  @ThrottleTeacherAccess()
+  async verifyAraId(@Body() body: TeacherLineInvitationTokenDto, @Req() request: Request) {
+    const profileId = this.araIdSessionCookie.readProfileId(request.headers.cookie);
+    if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
+    return {
+      success: true,
+      data: await this.service.verifyAraId(body.token, profileId),
+    };
+  }
+
+  @Post('araid/challenge')
+  @ThrottleTeacherAccess()
+  async createAraIdChallenge(@Body() body: TeacherLineInvitationTokenDto) {
+    return {
+      success: true,
+      data: await this.service.createAraIdChallenge(body.token),
+    };
+  }
+
+  @Post('araid/challenge/details')
+  @ThrottleTeacherAccess()
+  async getAraIdChallenge(@Body() body: TeacherLineAraIdChallengeTokenDto) {
+    return {
+      success: true,
+      data: await this.service.getAraIdChallenge(body.challengeToken),
+    };
+  }
+
+  @Post('araid/challenge/begin')
+  @ThrottleTeacherAccess()
+  async beginAraIdChallenge(
+    @Body() body: TeacherLineAraIdChallengeTokenDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const authorization = await this.service.beginAraIdChallenge(body.challengeToken);
+    this.araIdSessionCookie.setLineAuthorization(
+      response,
+      authorization.authorizationToken,
+      Math.max(1, Math.ceil((authorization.expiresAt.getTime() - Date.now()) / 1000)),
+    );
+    return {
+      success: true,
+      data: { expiresAt: authorization.expiresAt.toISOString() },
+    };
+  }
+
+  @Post('araid/challenge/approve')
+  @ThrottleTeacherAccess()
+  async approveAraIdChallenge(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const profileId = this.araIdSessionCookie.readProfileId(request.headers.cookie);
+    if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
+    const authorizationToken = this.araIdSessionCookie.readLineAuthorization(
+      request.headers.cookie,
+    );
+    if (!authorizationToken) throw new UnauthorizedException('การยืนยัน AraID หมดอายุแล้ว');
+    await this.service.approveAraIdChallenge(authorizationToken, profileId);
+    this.araIdSessionCookie.clearLineAuthorization(response);
+    return { success: true, data: { approved: true } };
+  }
+
+  @Post('araid/challenge/status')
+  @ThrottleTeacherAccess()
+  async pollAraIdChallenge(@Body() body: TeacherLineAraIdChallengeTokenDto) {
+    return {
+      success: true,
+      data: await this.service.pollAraIdChallenge(body.challengeToken),
+    };
+  }
+
+  @Post('group-invitation/resolve')
+  @ThrottleTeacherAccess()
+  async resolveGroupInvitation(@Body() body: TeacherLineInvitationTokenDto) {
+    return { success: true, data: await this.service.resolveGroupInvitation(body.token) };
+  }
+
+  @Post('invitation/resolve')
+  @ThrottleTeacherAccess()
+  async resolveInvitation(@Body() body: TeacherLineInvitationTokenDto) {
+    return { success: true, data: await this.service.resolveInvitation(body.token) };
+  }
+
+  @Post('invitation/otp/request')
+  @ThrottleOtpRequest()
+  async requestInvitationOtp(@Body() body: TeacherLineInvitationTokenDto, @Req() request: Request) {
+    return {
+      success: true,
+      data: await this.service.requestInvitationOtp(body.token, request.ip ?? null),
+    };
+  }
+
+  @Post('invitation/otp/verify')
+  @ThrottleOtpVerify()
+  async verifyInvitationOtp(
+    @Body() body: VerifyTeacherLineInvitationOtpDto,
+    @Req() request: Request,
+  ) {
+    return {
+      success: true,
+      data: await this.service.verifyInvitationOtp(body.token, body.code, request.ip ?? null),
     };
   }
 

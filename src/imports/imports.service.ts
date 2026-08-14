@@ -12,6 +12,7 @@ import * as xlsx from 'xlsx';
 import { hasPermission, type AuthenticatedRequestUser } from '../auth';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
+import { normalizeScalar } from '../common/utils/helpers';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -271,14 +272,6 @@ export class ImportsService {
     return Number(value);
   }
 
-  private normalizeScalar(value: unknown): string {
-    if (typeof value === 'string' || typeof value === 'number') {
-      return String(value).trim();
-    }
-
-    return '';
-  }
-
   private stringifyIdentifierValue(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') {
       return String(value);
@@ -288,11 +281,11 @@ export class ImportsService {
   }
 
   private normalizeNationalId(value: unknown): string {
-    return this.normalizeScalar(value).replace(/[^0-9]/g, '');
+    return normalizeScalar(value).replace(/[^0-9]/g, '');
   }
 
   private normalizePositiveInteger(value: unknown): string {
-    const normalized = this.normalizeScalar(value);
+    const normalized = normalizeScalar(value);
     if (!/^\d+$/.test(normalized)) {
       return '';
     }
@@ -306,7 +299,7 @@ export class ImportsService {
   }
 
   private maskDocumentIdentifier(value: unknown): string {
-    const normalized = this.normalizeScalar(value);
+    const normalized = normalizeScalar(value);
     return normalized ? maskPiiValue(normalized) : '-';
   }
 
@@ -331,13 +324,13 @@ export class ImportsService {
     knownGradeIds: ReadonlySet<number>,
     knownClassroomKeys?: ReadonlySet<string>,
   ): ImportQuarantineReason | null {
-    const gradeValue = this.normalizeScalar(row['GradeLevelID_Onec']);
+    const gradeValue = normalizeScalar(row['GradeLevelID_Onec']);
     if (gradeValue) {
       const gradeId = this.normalizePositiveInteger(gradeValue);
       if (!gradeId || !knownGradeIds.has(Number(gradeId))) return 'GRADE_NOT_FOUND';
     }
 
-    const roomValue = this.normalizeScalar(row['RoomID_Onec']);
+    const roomValue = normalizeScalar(row['RoomID_Onec']);
     if (roomValue && !this.normalizePositiveInteger(roomValue)) return 'ROOM_NOT_FOUND';
     if (knownClassroomKeys) {
       const classroomKey = this.classroomReferenceKey(row);
@@ -516,8 +509,8 @@ export class ImportsService {
     return changedFields.map((field) => ({
       field,
       label: QUARANTINE_FIELD_LABELS_TH[field] ?? field,
-      oldValue: this.normalizeScalar(originalValues[field]) || '-',
-      newValue: this.normalizeScalar(values[field]) || '-',
+      oldValue: normalizeScalar(originalValues[field]) || '-',
+      newValue: normalizeScalar(values[field]) || '-',
     }));
   }
 
@@ -526,13 +519,13 @@ export class ImportsService {
     return value.flatMap((item) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
       const detail = item as Record<string, unknown>;
-      const label = this.normalizeScalar(detail.label);
+      const label = normalizeScalar(detail.label);
       if (!label) return [];
       return [
         {
           label,
-          oldValue: this.normalizeScalar(detail.oldValue) || '-',
-          newValue: this.normalizeScalar(detail.newValue) || '-',
+          oldValue: normalizeScalar(detail.oldValue) || '-',
+          newValue: normalizeScalar(detail.newValue) || '-',
         },
       ];
     });
@@ -541,11 +534,11 @@ export class ImportsService {
   private toQuarantineLookupMap(rows: QuarantineLookupRow[]): Map<string, QuarantineLookupMeta> {
     return new Map(
       rows.map((row) => {
-        const variant = this.normalizeScalar(row.badge_variant) as QuarantineBadgeVariant;
+        const variant = normalizeScalar(row.badge_variant) as QuarantineBadgeVariant;
         return [
           String(row.code),
           {
-            label: this.normalizeScalar(row.label_th) || String(row.code),
+            label: normalizeScalar(row.label_th) || String(row.code),
             ...(variant ? { variant } : {}),
           },
         ];
@@ -621,13 +614,13 @@ export class ImportsService {
   ): string[] {
     if (!existing) return [];
     return PREVIEW_CHANGE_FIELDS.filter(({ column }) => {
-      const nextValue = this.normalizeScalar(incoming[column]);
-      return nextValue.length > 0 && nextValue !== this.normalizeScalar(existing[column]);
+      const nextValue = normalizeScalar(incoming[column]);
+      return nextValue.length > 0 && nextValue !== normalizeScalar(existing[column]);
     }).map(({ label }) => label);
   }
 
   private csvCell(value: unknown): string {
-    const text = this.normalizeScalar(value);
+    const text = normalizeScalar(value);
     const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
     return `"${safe.replace(/"/g, '""')}"`;
   }
@@ -728,10 +721,7 @@ export class ImportsService {
     return data.map((source, index) => ({
       rowNumber: index + 2,
       values: Object.fromEntries(
-        Object.entries(mapping).map(([field, header]) => [
-          field,
-          this.normalizeScalar(source[header]),
-        ]),
+        Object.entries(mapping).map(([field, header]) => [field, normalizeScalar(source[header])]),
       ),
     }));
   }
@@ -753,8 +743,8 @@ export class ImportsService {
     const startedOnHeader = mapping.startedOn;
     return data.map((row, index) => ({
       rowNumber: index + 2,
-      username: this.normalizeScalar(row[usernameHeader]).toLowerCase(),
-      startedOn: startedOnHeader ? this.normalizeScalar(row[startedOnHeader]) || null : null,
+      username: normalizeScalar(row[usernameHeader]).toLowerCase(),
+      startedOn: startedOnHeader ? normalizeScalar(row[startedOnHeader]) || null : null,
     }));
   }
 
@@ -1667,13 +1657,13 @@ export class ImportsService {
     }
 
     const fullNameHeader = mapping['FullName_Onec'];
-    const fullName = fullNameHeader ? this.normalizeScalar(row[fullNameHeader]) : '';
+    const fullName = fullNameHeader ? normalizeScalar(row[fullNameHeader]) : '';
     if (fullName) {
       const parts = fullName.split(/\s+/u).filter(Boolean);
-      if (!this.normalizeScalar(dbRow['FirstName_Onec'])) {
+      if (!normalizeScalar(dbRow['FirstName_Onec'])) {
         dbRow['FirstName_Onec'] = parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0];
       }
-      if (!this.normalizeScalar(dbRow['LastName_Onec'])) {
+      if (!normalizeScalar(dbRow['LastName_Onec'])) {
         dbRow['LastName_Onec'] = parts.length > 1 ? parts.at(-1) : null;
       }
     }
@@ -1701,9 +1691,9 @@ export class ImportsService {
   }): string {
     return JSON.stringify([
       this.normalizeNationalId(row.person_id),
-      this.normalizeScalar(row.academic_year),
-      this.normalizeScalar(row.semester),
-      this.normalizeScalar(row.school_id),
+      normalizeScalar(row.academic_year),
+      normalizeScalar(row.semester),
+      normalizeScalar(row.school_id),
     ]);
   }
 
@@ -1731,7 +1721,7 @@ export class ImportsService {
                   ? this.maskIdentifier(row[header])
                   : column === 'PassportNumber_Onec'
                     ? this.maskDocumentIdentifier(row[header])
-                    : this.normalizeScalar(row[header]).slice(0, 80),
+                    : normalizeScalar(row[header]).slice(0, 80),
               )
               .filter((value) => value.length > 0 && value !== '-'),
           ),
@@ -1786,7 +1776,7 @@ export class ImportsService {
         (allowedSubDistricts.size === 0 ||
           (school?.sub_district != null && allowedSubDistricts.has(school.sub_district)));
       const grade = Number(this.normalizePositiveInteger(row[mapping['GradeLevelID_Onec']]));
-      const room = this.normalizeScalar(row[mapping['RoomID_Onec']]);
+      const room = normalizeScalar(row[mapping['RoomID_Onec']]);
       if (
         !schoolAllowed ||
         (allowedGrades.size > 0 && !allowedGrades.has(grade)) ||
@@ -1817,7 +1807,7 @@ export class ImportsService {
           .map((row) => row[schoolIdCsvHeader])
           .filter(
             (value): value is string | number =>
-              value !== null && value !== undefined && this.normalizeScalar(value).length > 0,
+              value !== null && value !== undefined && normalizeScalar(value).length > 0,
           )
           .map((value) => Number(value))
           .filter((value) => Number.isInteger(value)),
@@ -1885,7 +1875,7 @@ export class ImportsService {
     const rawPersonIds = dbRows.map((row) =>
       validTarget === 'student_term'
         ? this.normalizeNationalId(row['PersonID_Onec'])
-        : this.normalizeScalar(row['PersonID_Onec']),
+        : normalizeScalar(row['PersonID_Onec']),
     );
     const nonBlankPersonIds = rawPersonIds.filter((value) => value.length > 0);
     const uniquePersonIds = [...new Set(nonBlankPersonIds)];
@@ -1958,12 +1948,12 @@ export class ImportsService {
     const sampleRows: ImportPreviewRow[] = dbRows
       .slice(0, IMPORT_PREVIEW_SAMPLE_LIMIT)
       .map((dbRow, index) => {
-        const personId = this.normalizeScalar(dbRow['PersonID_Onec']);
-        const schoolId = this.normalizeScalar(dbRow['SchoolID_Onec']);
+        const personId = normalizeScalar(dbRow['PersonID_Onec']);
+        const schoolId = normalizeScalar(dbRow['SchoolID_Onec']);
         const rowKey =
           validTarget === 'student_term'
             ? this.studentTermKey(dbRow)
-            : this.normalizeScalar(dbRow['PersonID_Onec']) || null;
+            : normalizeScalar(dbRow['PersonID_Onec']) || null;
         const issues: string[] = [];
         let action: ImportPreviewRow['action'] = 'insert';
         let changedFields: string[] = [];
@@ -2009,7 +1999,7 @@ export class ImportsService {
           seenKeys.add(rowKey);
         }
 
-        const gradeLevelId = this.normalizeScalar(dbRow['GradeLevelID_Onec']);
+        const gradeLevelId = normalizeScalar(dbRow['GradeLevelID_Onec']);
         if (validTarget === 'student_term' && rowKey && action === 'insert') {
           const personTermKey = JSON.stringify([
             this.normalizeNationalId(personId),
@@ -2024,7 +2014,7 @@ export class ImportsService {
             issues.push('พบคน/ปี/เทอมเดียวกันในโรงเรียนอื่น ระบบจะสร้าง enrollment snapshot ใหม่');
           }
         }
-        const studentStatusCode = this.normalizeScalar(dbRow['StudentStatusID_Onec']);
+        const studentStatusCode = normalizeScalar(dbRow['StudentStatusID_Onec']);
         const studentStatus = statusLabels.get(Number(studentStatusCode));
         if (studentStatusCode && !mappedStatusCodes.has(Number(studentStatusCode))) {
           issues.push('สถานะนักเรียนยังไม่ได้จับคู่');
@@ -2045,15 +2035,15 @@ export class ImportsService {
           action,
           issues,
           personIdMasked: this.maskIdentifier(dbRow['PersonID_Onec']),
-          firstName: this.normalizeScalar(dbRow['FirstName_Onec']) || '-',
-          lastName: this.normalizeScalar(dbRow['LastName_Onec']) || '-',
+          firstName: normalizeScalar(dbRow['FirstName_Onec']) || '-',
+          lastName: normalizeScalar(dbRow['LastName_Onec']) || '-',
           schoolId: schoolId || '-',
           schoolName: schoolNames.get(Number(schoolId)) ?? '-',
-          academicYear: this.normalizeScalar(dbRow['AcademicYear_Onec']) || '-',
-          semester: this.normalizeScalar(dbRow['Semester_Onec']) || '-',
+          academicYear: normalizeScalar(dbRow['AcademicYear_Onec']) || '-',
+          semester: normalizeScalar(dbRow['Semester_Onec']) || '-',
           gradeLevelId: gradeLevelId || '-',
           gradeLabel: gradeLabels.get(Number(gradeLevelId)) ?? '-',
-          roomId: this.normalizeScalar(dbRow['RoomID_Onec']) || '-',
+          roomId: normalizeScalar(dbRow['RoomID_Onec']) || '-',
           changedFields,
           hasDifferentSchoolSnapshot,
           studentStatusCode: studentStatusCode || '-',
@@ -2080,7 +2070,7 @@ export class ImportsService {
         rowsToQuarantine += 1;
         continue;
       }
-      const studentStatusCode = this.normalizeScalar(dbRow['StudentStatusID_Onec']);
+      const studentStatusCode = normalizeScalar(dbRow['StudentStatusID_Onec']);
       if (studentStatusCode && !mappedStatusCodes.has(Number(studentStatusCode))) {
         rowsToQuarantine += 1;
         continue;
@@ -2334,7 +2324,7 @@ export class ImportsService {
           const sourceRowNumber = index + 2;
 
           const personId = dbRow['PersonID_Onec'];
-          if (this.normalizeScalar(personId).length === 0) {
+          if (normalizeScalar(personId).length === 0) {
             await quarantine(dbRow, sourceRowNumber, 'BLANK_REQUIRED_IDENTITY');
             continue;
           }
@@ -2361,7 +2351,7 @@ export class ImportsService {
               await quarantine(dbRow, sourceRowNumber, 'IDENTIFIER_CONFLICT');
               continue;
             }
-            const statusCode = this.normalizeScalar(dbRow['StudentStatusID_Onec']);
+            const statusCode = normalizeScalar(dbRow['StudentStatusID_Onec']);
             if (statusCode && !knownStudentStatusCodes.has(Number(statusCode))) {
               await quarantine(dbRow, sourceRowNumber, 'UNMAPPED_STUDENT_STATUS');
               continue;
@@ -2660,12 +2650,11 @@ export class ImportsService {
     const reasonCode = String(row.reason_code);
     const statusCode = String(row.status);
     const reasonLabel =
-      this.normalizeScalar(row.reason_label) ||
-      this.quarantineLookup(lookups.reason, reasonCode).label;
+      normalizeScalar(row.reason_label) || this.quarantineLookup(lookups.reason, reasonCode).label;
     const statusMeta = this.quarantineLookup(lookups.status, statusCode, 'secondary');
     const resolution = this.quarantineResolution({ ...row, reason_label: reasonLabel }, lookups);
     const editableValues = Object.fromEntries(
-      resolution.editableFields.map((field) => [field, this.normalizeScalar(values[field])]),
+      resolution.editableFields.map((field) => [field, normalizeScalar(values[field])]),
     );
     return {
       id: String(row.id),
@@ -2678,26 +2667,24 @@ export class ImportsService {
       reasonCode,
       reasonLabel,
       status: statusCode,
-      statusLabel: this.normalizeScalar(row.status_label) || statusMeta.label,
+      statusLabel: normalizeScalar(row.status_label) || statusMeta.label,
       statusBadgeVariant:
-        (this.normalizeScalar(row.status_badge_variant) as QuarantineBadgeVariant) ||
+        (normalizeScalar(row.status_badge_variant) as QuarantineBadgeVariant) ||
         statusMeta.variant ||
         'secondary',
       target: String(row.target),
       student: {
         personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
         firstName:
-          this.normalizeScalar(values['FirstName_Onec']) ||
-          this.normalizeScalar(values['username']) ||
-          '-',
-        lastName: this.normalizeScalar(values['LastName_Onec']) || '-',
-        academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || '-',
-        semester: this.normalizeScalar(values['Semester_Onec']) || '-',
+          normalizeScalar(values['FirstName_Onec']) || normalizeScalar(values['username']) || '-',
+        lastName: normalizeScalar(values['LastName_Onec']) || '-',
+        academicYear: normalizeScalar(values['AcademicYear_Onec']) || '-',
+        semester: normalizeScalar(values['Semester_Onec']) || '-',
         province: typeof row.school_province === 'string' ? row.school_province : null,
-        gradeLevelId: this.normalizeScalar(values['GradeLevelID_Onec']) || null,
+        gradeLevelId: normalizeScalar(values['GradeLevelID_Onec']) || null,
         gradeLabel: typeof row.source_grade_label === 'string' ? row.source_grade_label : null,
-        roomId: this.normalizeScalar(values['RoomID_Onec']) || null,
-        studentStatusCode: this.normalizeScalar(values['StudentStatusID_Onec']) || null,
+        roomId: normalizeScalar(values['RoomID_Onec']) || null,
+        studentStatusCode: normalizeScalar(values['StudentStatusID_Onec']) || null,
         studentStatusLabel: this.importStatusLabel({
           label: typeof row.source_status_label === 'string' ? row.source_status_label : null,
           category:
@@ -2731,29 +2718,29 @@ export class ImportsService {
         : {};
     const reasonCode = String(row.reason_code);
     const studentName = [
-      this.normalizeScalar(values['FirstName_Onec']),
-      this.normalizeScalar(values['LastName_Onec']),
+      normalizeScalar(values['FirstName_Onec']),
+      normalizeScalar(values['LastName_Onec']),
     ]
       .filter(Boolean)
       .join(' ');
     return {
       studentName: studentName || '-',
       reasonLabel:
-        this.normalizeScalar(row.reason_label) ||
+        normalizeScalar(row.reason_label) ||
         (lookups ? this.quarantineLookup(lookups.reason, reasonCode).label : reasonCode),
       schoolName: typeof row.school_name === 'string' ? row.school_name : undefined,
       sourceRowNumber:
         row.source_row_number === null || row.source_row_number === undefined
           ? undefined
           : Number(row.source_row_number),
-      academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || undefined,
-      semester: this.normalizeScalar(values['Semester_Onec']) || undefined,
+      academicYear: normalizeScalar(values['AcademicYear_Onec']) || undefined,
+      semester: normalizeScalar(values['Semester_Onec']) || undefined,
       gradeRoom:
         [
           typeof row.source_grade_label === 'string'
             ? row.source_grade_label
-            : this.normalizeScalar(values['GradeLevelID_Onec']),
-          this.normalizeScalar(values['RoomID_Onec']),
+            : normalizeScalar(values['GradeLevelID_Onec']),
+          normalizeScalar(values['RoomID_Onec']),
         ]
           .filter(Boolean)
           .join(' / ') || undefined,
@@ -2763,7 +2750,7 @@ export class ImportsService {
           category:
             typeof row.source_status_category === 'string' ? row.source_status_category : null,
         }) ||
-        this.normalizeScalar(values['StudentStatusID_Onec']) ||
+        normalizeScalar(values['StudentStatusID_Onec']) ||
         undefined,
     };
   }
@@ -2835,7 +2822,7 @@ export class ImportsService {
         action: 'EDIT_FIELDS' as const,
         code: reasonCode,
         message:
-          this.normalizeScalar(row.reason_label) ||
+          normalizeScalar(row.reason_label) ||
           this.quarantineLookup(lookups.reason, reasonCode).label,
         editableFields,
       });
@@ -3022,8 +3009,7 @@ export class ImportsService {
         executor,
       );
       const changedFields = submittedFields.filter(
-        (field) =>
-          this.normalizeScalar(originalValues[field]) !== this.normalizeScalar(values[field]),
+        (field) => normalizeScalar(originalValues[field]) !== normalizeScalar(values[field]),
       );
       const changedFieldDetails = this.quarantineChangedFieldDetails(
         changedFields,
@@ -3191,20 +3177,20 @@ export class ImportsService {
         })),
         meta: { totalCount, visibleCount: candidates.length },
         importRow: {
-          firstName: this.normalizeScalar(values['FirstName_Onec']) || '-',
-          lastName: this.normalizeScalar(values['LastName_Onec']) || '-',
+          firstName: normalizeScalar(values['FirstName_Onec']) || '-',
+          lastName: normalizeScalar(values['LastName_Onec']) || '-',
           personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
           schoolName:
             typeof row.school_name === 'string'
               ? row.school_name
-              : this.normalizeScalar(values['SchoolID_Onec']) || '-',
+              : normalizeScalar(values['SchoolID_Onec']) || '-',
           province: typeof row.school_province === 'string' ? row.school_province : null,
           gradeLevelId: importGradeId ? Number(importGradeId) : null,
           gradeLevelLabel:
             typeof row.source_grade_label === 'string' ? row.source_grade_label : null,
-          roomId: this.normalizeScalar(values['RoomID_Onec']) || null,
-          academicYear: this.normalizeScalar(values['AcademicYear_Onec']) || null,
-          semester: this.normalizeScalar(values['Semester_Onec']) || null,
+          roomId: normalizeScalar(values['RoomID_Onec']) || null,
+          academicYear: normalizeScalar(values['AcademicYear_Onec']) || null,
+          semester: normalizeScalar(values['Semester_Onec']) || null,
           studentStatusCode: importStatusCode ? Number(importStatusCode) : null,
           studentStatusLabel:
             typeof row.source_status_label === 'string' ? row.source_status_label : null,
@@ -3258,24 +3244,24 @@ export class ImportsService {
           row.mapped_values && typeof row.mapped_values === 'object'
             ? (row.mapped_values as Record<string, unknown>)
             : {};
-        const reasonCode = this.normalizeScalar(row.reason_code);
-        const rowStatus = this.normalizeScalar(row.status);
+        const reasonCode = normalizeScalar(row.reason_code);
+        const rowStatus = normalizeScalar(row.status);
         return [
           row.source_row_number,
           row.batch_created_at instanceof Date
             ? row.batch_created_at.toISOString()
-            : this.normalizeScalar(row.batch_created_at),
+            : normalizeScalar(row.batch_created_at),
           row.batch_id,
-          this.normalizeScalar(values['FirstName_Onec']) || '-',
-          this.normalizeScalar(values['LastName_Onec']) || '-',
+          normalizeScalar(values['FirstName_Onec']) || '-',
+          normalizeScalar(values['LastName_Onec']) || '-',
           this.maskIdentifier(values['PersonID_Onec']),
           row.school_id,
           row.school_name,
-          this.normalizeScalar(values['AcademicYear_Onec']) || '-',
-          this.normalizeScalar(values['Semester_Onec']) || '-',
-          this.normalizeScalar(row.reason_label) ||
+          normalizeScalar(values['AcademicYear_Onec']) || '-',
+          normalizeScalar(values['Semester_Onec']) || '-',
+          normalizeScalar(row.reason_label) ||
             this.quarantineLookup(lookups.reason, reasonCode).label,
-          this.normalizeScalar(row.status_label) ||
+          normalizeScalar(row.status_label) ||
             this.quarantineLookup(lookups.status, rowStatus).label,
         ];
       }),
