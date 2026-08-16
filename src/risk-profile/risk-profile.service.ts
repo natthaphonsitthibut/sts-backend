@@ -16,6 +16,9 @@ import { RiskProfileRepository } from './risk-profile.repository';
 
 const DAILY_FULL_RECALC_CRON = '0 10 5 * * *';
 
+/** At or below this many students, recalculate inline so the change is visible at once. */
+const INLINE_RECALCULATION_LIMIT = 5;
+
 /** Debounce window: events for the same student inside it collapse into one drain. */
 const DRAIN_DELAY_MS = 2_000;
 /** Upper bound on students recalculated per drain, so one burst cannot monopolise PostgreSQL. */
@@ -118,13 +121,19 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
     if (uniqueStudentUuids.length === 0) {
       return;
     }
-    try {
-      await this.enqueueStudents(uniqueStudentUuids, reason);
-      return;
-    } catch (error) {
-      this.logger.warn(
-        `Risk profile queue unavailable (${this.errorMessage(error)}); recalculating ${uniqueStudentUuids.length} student(s) inline for ${reason}`,
-      );
+    // A teacher comment or a saved round is a change the person who made it
+    // expects to see straight away, and those touch a handful of students at
+    // most. Recalculate those inline; the debounced queue stays for the bulk
+    // paths, where waiting is fine and hammering PostgreSQL is not.
+    if (uniqueStudentUuids.length > INLINE_RECALCULATION_LIMIT) {
+      try {
+        await this.enqueueStudents(uniqueStudentUuids, reason);
+        return;
+      } catch (error) {
+        this.logger.warn(
+          `Risk profile queue unavailable (${this.errorMessage(error)}); recalculating ${uniqueStudentUuids.length} student(s) inline for ${reason}`,
+        );
+      }
     }
     const thresholds = await this.riskProfileRepository.getRiskThresholds();
     const result = await this.riskProfileRepository.recalculateStudents(

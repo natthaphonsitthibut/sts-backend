@@ -37,8 +37,10 @@ describe('RiskProfileRepository', () => {
     ]);
     expect(queries[0].sql).toContain('INSERT INTO student_risk_profiles');
     expect(queries[0].sql).toContain('WHERE s.student_uuid = ANY($2::uuid[])');
-    // Day verdict mirrors ประวัติการเข้าเรียน: ลา is unmeasured and มา/สาย attend.
-    expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0');
+    // The day verdict is no longer derived here: risk reads the shared
+    // attendance_day view so every screen counts the same day the same way.
+    expect(queries[0].sql).toContain('FROM attendance_day day');
+    expect(queries[0].sql).toContain('(day."AttendanceStatus" = 2) AS is_absent_day');
     expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
     expect(queries[0].sql).toContain('teacher_signal_summary');
     expect(queries[0].sql).toContain('FROM student_observations observation');

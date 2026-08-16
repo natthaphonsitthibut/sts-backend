@@ -592,10 +592,10 @@ async function assertCanonicalRouteNavigation(client) {
     ['/students', 'รายชื่อนักเรียน', '/students'],
     ['/students/history', 'ประวัติรายชื่อนักเรียน', '/students'],
     ['/students/export', 'ส่งออกข้อมูลนักเรียน', '/students'],
-    ['/attendance/roster', 'เช็คชื่อ', '/attendance'],
-    ['/attendance/check-in', 'เช็คชื่อ', '/attendance'],
-    ['/attendance/history', 'ประวัติการเช็คชื่อ', '/attendance'],
-    ['/attendance-links', 'จัดการลิงก์เช็คชื่อ', '/attendance-links'],
+    ['/attendance/roster', 'เช็กชื่อ', '/attendance'],
+    ['/attendance/check-in', 'เช็กชื่อ', '/attendance'],
+    ['/attendance/history', 'ประวัติการเช็กชื่อ', '/attendance'],
+    ['/attendance-links', 'จัดการลิงก์เช็กชื่อ', '/attendance-links'],
     ['/attendance-operations', 'ความครบถ้วน', '/attendance-operations'],
     ['/timetable/rooms', 'ตารางสอน', '/timetable'],
     ['/classrooms', 'ห้องเรียนทั้งหมด', '/classrooms'],
@@ -641,7 +641,34 @@ async function assertCanonicalRouteNavigation(client) {
         ),
       `Canonical breadcrumb/menu owner was incorrect for ${route}`,
     );
+    await assertSystemFont(client, route);
   }
+}
+
+/**
+ * Every visible element must render in the app's own face. A component that
+ * ships its own stack (or a control that falls back to the UA font) reads as a
+ * different product, so the sweep runs on every canonical route.
+ */
+async function assertSystemFont(client, route) {
+  const offenders = await evaluate(
+    client,
+    `(() => {
+      const found = new Set();
+      document.querySelectorAll('body *').forEach((node) => {
+        if (!node.getClientRects().length) return;
+        const family = getComputedStyle(node).fontFamily || '';
+        if (!family.includes('TH Sarabun PSK')) {
+          found.add(node.tagName.toLowerCase() + '.' + (node.className || '').toString().slice(0, 40) + ' :: ' + family);
+        }
+      });
+      return [...found].slice(0, 5);
+    })()`,
+  );
+  assert(
+    Array.isArray(offenders) && offenders.length === 0,
+    `${route} renders in another font: ${(offenders || []).join(' | ')}`,
+  );
 }
 
 async function assertManualCaseFlow(client, row, createdCaseIds) {
@@ -761,8 +788,11 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   const detailStatus = await evaluate(
     client,
     `(() => {
+      // The case header composes the workflow phase onto the status
+      // (\`รอมอบหมาย : ติดตาม\`), so match the status prefix rather than the
+      // bare label — the badge in the table is the one that stays short.
       const label = [...document.querySelectorAll('span')].find(
-        (node) => node.textContent?.trim() === 'รอมอบหมาย'
+        (node) => node.textContent?.trim().startsWith('รอมอบหมาย')
           && node.parentElement?.textContent?.includes('สถานะการติดตาม'),
       );
       if (!label) return null;
@@ -777,7 +807,7 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   );
   assert(detailStatus, 'case detail did not render the OPEN status text');
   assert(
-    detailStatus.text === 'รอมอบหมาย',
+    detailStatus.text === 'รอมอบหมาย : ติดตาม',
     `OPEN detail status used unexpected label ${detailStatus.text}`,
   );
   assert(
@@ -1172,7 +1202,7 @@ async function assertMobileFilterReset(client, expectedStudentName) {
 async function assertCollapsedGroupAccordion(client) {
   await navigate(client, `${FRONTEND_URL}/attendance`);
   await waitFor(
-    async () => (await bodyText(client)).includes('เช็คชื่อ'),
+    async () => (await bodyText(client)).includes('เช็กชื่อ'),
     'Attendance page did not render before sidebar verification',
   );
 
@@ -1201,7 +1231,7 @@ async function assertCollapsedGroupAccordion(client) {
     client,
     `(() => {
       const button = Array.from(document.querySelectorAll('aside button'))
-        .find((candidate) => candidate.innerText.includes('ระบบเช็คชื่อ'));
+        .find((candidate) => candidate.innerText.includes('ระบบเช็กชื่อ'));
       if (!button || button.getAttribute('aria-expanded') !== 'true') return false;
       button.click();
       return true;
@@ -1213,7 +1243,7 @@ async function assertCollapsedGroupAccordion(client) {
       evaluate(
         client,
         `(() => Array.from(document.querySelectorAll('aside button'))
-          .some((button) => button.innerText.includes('ระบบเช็คชื่อ')
+          .some((button) => button.innerText.includes('ระบบเช็กชื่อ')
             && button.getAttribute('aria-expanded') === 'false'))()`,
       ),
     'active attendance group could not be collapsed',
@@ -1222,7 +1252,7 @@ async function assertCollapsedGroupAccordion(client) {
     client,
     `(() => {
       const button = Array.from(document.querySelectorAll('aside button'))
-        .find((candidate) => candidate.innerText.includes('ระบบเช็คชื่อ'));
+        .find((candidate) => candidate.innerText.includes('ระบบเช็กชื่อ'));
       button?.click();
       return Boolean(button);
     })()`,
@@ -1260,11 +1290,13 @@ async function assertCollapsedGroupAccordion(client) {
   const collapsedState = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('aside button[aria-label="ระบบเช็คชื่อ"]');
+      const button = document.querySelector('aside button[aria-label="ระบบเช็กชื่อ"]');
+      const child = document.querySelector('aside a[href="/attendance"]');
       const main = document.querySelector('main');
       return {
-        active: button?.getAttribute('aria-current') === 'page',
+        parentActive: button?.getAttribute('aria-current') === 'page',
         background: button ? getComputedStyle(button).backgroundColor : null,
+        childActive: child?.getAttribute('aria-current') === 'page',
         mainLeft: main?.getBoundingClientRect().left ?? null,
         transitionDuration: document.querySelector('aside')
           ? getComputedStyle(document.querySelector('aside')).transitionDuration
@@ -1272,10 +1304,20 @@ async function assertCollapsedGroupAccordion(client) {
       };
     })()`,
   );
-  assert(collapsedState.active, 'collapsed sidebar did not mark the active attendance parent');
+  // Owner decision (2026-08-15): the active treatment belongs to the child menu
+  // item alone. The collapsed parent icon carries no active state — it is only a
+  // group toggle — so this asserts the absence on purpose.
   assert(
-    collapsedState.background === 'rgb(231, 237, 248)',
-    `collapsed attendance parent active surface drifted: ${collapsedState.background}`,
+    !collapsedState.parentActive,
+    'collapsed sidebar marked the group parent as the active page',
+  );
+  assert(
+    collapsedState.background === 'rgba(0, 0, 0, 0)',
+    `collapsed group parent picked up a surface colour: ${collapsedState.background}`,
+  );
+  assert(
+    collapsedState.childActive,
+    'the active child menu item lost its active state while the sidebar was collapsed',
   );
   assert(
     String(collapsedState.transitionDuration).includes('0.3s'),
@@ -1749,10 +1791,14 @@ async function main() {
       source: `
         (() => {
           const backendUrl = ${JSON.stringify(BACKEND_URL)};
+          // Keyed on the path, not on a port: the frontend's API base is baked
+          // in at build time, so a pinned port stops rewriting as soon as the
+          // frontend is served against a different backend.
           const rewrite = (url) => {
             if (typeof url !== 'string') return url;
             const parsed = new URL(url, window.location.origin);
-            return parsed.port === '3000' ? backendUrl + parsed.pathname + parsed.search : url;
+            if (!parsed.pathname.startsWith('/api/')) return url;
+            return backendUrl + parsed.pathname + parsed.search;
           };
           const originalFetch = window.fetch;
           window.fetch = (input, init) => originalFetch(

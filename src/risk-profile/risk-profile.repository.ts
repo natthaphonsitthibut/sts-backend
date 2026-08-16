@@ -160,19 +160,14 @@ export class RiskProfileRepository {
         -- when every measured period is unattended.
         classified_term_days AS (
           SELECT
-            a.student_uuid,
-            a."AttendanceDate"::date AS attendance_date,
-            COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late_records,
-            (
-              COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4) > 0
-              AND COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0
-            ) AS is_absent_day
-          FROM attendance a
-          JOIN selected_students s ON s.student_uuid = a.student_uuid
-          WHERE a."AcademicYear_Onec" = s.academic_year
-            AND a."Semester_Onec" = s.semester
-            AND a.session_kind = 'SUBJECT'
-          GROUP BY a.student_uuid, a."AttendanceDate"
+            day.student_uuid,
+            day."AttendanceDate" AS attendance_date,
+            day.late_periods AS late_records,
+            (day."AttendanceStatus" = 2) AS is_absent_day
+          FROM attendance_day day
+          JOIN selected_students s ON s.student_uuid = day.student_uuid
+          WHERE day."AcademicYear_Onec" = s.academic_year
+            AND day."Semester_Onec" = s.semester
         ),
         -- Keep the whole-term history independent from the operational reset.
         -- The post-case view uses the same day verdict, only with a date boundary.
@@ -359,7 +354,9 @@ export class RiskProfileRepository {
         ),
         -- Three tiers only: ขาดสะสมถึงเกณฑ์ = เสี่ยง, มีความคิดเห็นจากครู =
         -- เฝ้าระวัง, นอกนั้นปกติ. Absent days are cumulative, not a streak.
-        scored AS (
+        -- Which tiers exist and how they order is data in student_risk_tiers;
+        -- only the rule that picks one stays here.
+        tiered AS (
           SELECT
             metrics.*,
             CASE
@@ -367,13 +364,17 @@ export class RiskProfileRepository {
               WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'
               ELSE 'NORMAL'
             END AS risk_tier,
-            CASE
-              WHEN metrics.absent_days >= $1::int THEN 2
-              WHEN metrics.teacher_signal_count > 0 THEN 1
-              ELSE 0
-            END AS risk_severity,
             metrics.absent_days::numeric / NULLIF($1::numeric, 0) AS risk_score
           FROM metrics
+        ),
+        -- risk_severity is the tier's own sort_order, read from the catalogue
+        -- rather than restated here: the ladder is written once, and the
+        -- composite FK on (risk_tier, risk_severity) makes any other pairing
+        -- unstorable. The join is against three rows, once per run.
+        scored AS (
+          SELECT tiered.*, tier.sort_order AS risk_severity
+          FROM tiered
+          JOIN student_risk_tiers tier ON tier.code = tiered.risk_tier
         ),
         upserted AS (
           INSERT INTO student_risk_profiles (
