@@ -37,6 +37,38 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9255);
 
+/**
+ * Almost every failure here reads "the screen did not render X", which is the
+ * symptom, never the cause. The cause is usually that the app bounced to
+ * `/login`: this smoke runs its own backend on 127.0.0.1, so serving the
+ * frontend on `localhost` puts the session cookie on a different host, every
+ * API answers 401 and the client clears `sts_user`. Printing the URL and
+ * whether a user is still stored turns that into a one-line diagnosis.
+ */
+let trackedPage = null;
+
+function trackPage(client) {
+  trackedPage = client;
+}
+
+async function describePage() {
+  if (!trackedPage) return '';
+  try {
+    const state = await trackedPage.call('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        url: location.href,
+        signedIn: Boolean(localStorage.getItem('sts_user')),
+        text: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 160),
+      })`,
+      returnByValue: true,
+    });
+    const value = state.result && state.result.value;
+    return value ? `\n  page: ${value}` : '';
+  } catch {
+    return '';
+  }
+}
+
 async function waitFor(check, message, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
@@ -48,7 +80,8 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${lastError.message}` : message);
+  const reason = lastError ? `${message}: ${lastError.message}` : message;
+  throw new Error(`${reason}${await describePage()}`);
 }
 
 class CdpClient {
@@ -208,6 +241,7 @@ async function openChrome() {
   assert(target?.webSocketDebuggerUrl, 'Chrome page target was not available');
   const client = new CdpClient(target.webSocketDebuggerUrl);
   await client.connect();
+  trackPage(client);
   return { client, processRef, userDataDir };
 }
 
