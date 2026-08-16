@@ -162,20 +162,16 @@ export class HomeDashboardService {
 
     const sections = this.resolveSections(actor);
     const riskAreaDimension = this.resolveRiskAreaDimension(filters);
-    const [totalStudents, activeCases, watchStudents, casePipeline, riskAreaRows] =
-      await Promise.all([
-        this.repository.countStudents(actor, filters),
-        hasActorPermission(actor, 'review-cases')
-          ? this.repository.countActiveCases(actor, filters)
-          : Promise.resolve(0),
-        hasActorPermission(actor, 'dashboard')
-          ? this.repository.countHighRiskStudents(actor, filters)
-          : Promise.resolve(0),
-        hasActorPermission(actor, 'review-cases')
-          ? this.repository.getCasePipeline(actor, filters)
-          : Promise.resolve(null),
-        this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
-      ]);
+    const [totalStudents, watchStudents, casePipeline, riskAreaRows] = await Promise.all([
+      this.repository.countStudents(actor, filters),
+      hasActorPermission(actor, 'dashboard')
+        ? this.repository.countHighRiskStudents(actor, filters)
+        : Promise.resolve(0),
+      hasActorPermission(actor, 'review-cases')
+        ? this.repository.getCasePipeline(actor, filters)
+        : Promise.resolve(null),
+      this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
+    ]);
 
     const baseQuery = this.targetQuery(filters);
     const metrics: HomeDashboardMetric[] = [
@@ -199,21 +195,36 @@ export class HomeDashboardService {
       });
     }
     if (sections.includes('casePipeline')) {
+      const openCount = casePipeline?.OPEN ?? 0;
+      const inProgressCount = casePipeline?.IN_PROGRESS ?? 0;
+      const pendingReviewCount = casePipeline?.PENDING_REVIEW ?? 0;
+      const resolvedCount = casePipeline?.RESOLVED ?? 0;
+      const ongoingCount = openCount + inProgressCount + pendingReviewCount;
+      const totalCount = ongoingCount + resolvedCount;
+
       metrics.push({
-        key: 'activeCases',
-        label: 'นักเรียนที่รอติดตาม',
-        value: activeCases,
+        key: 'totalCases',
+        label: 'เคสทั้งหมด',
+        value: totalCount,
         targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'IN_PROGRESS' },
-        tone: activeCases > 0 ? 'warning' : 'success',
+        targetQuery: { ...baseQuery },
+        tone: 'default',
       });
       metrics.push({
-        key: 'pendingReview',
-        label: 'นักเรียนที่รอพิจารณา',
-        value: casePipeline?.PENDING_REVIEW ?? 0,
+        key: 'inProgressCases',
+        label: 'เคสที่กำลังดำเนินการ',
+        value: ongoingCount,
         targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'PENDING_REVIEW' },
-        tone: (casePipeline?.PENDING_REVIEW ?? 0) > 0 ? 'info' : 'success',
+        targetQuery: { ...baseQuery, status: 'OPEN,IN_PROGRESS,PENDING_REVIEW' },
+        tone: 'warning',
+      });
+      metrics.push({
+        key: 'resolvedCases',
+        label: 'เคสที่เสร็จสิ้น',
+        value: resolvedCount,
+        targetPath: '/cases',
+        targetQuery: { ...baseQuery, status: 'RESOLVED' },
+        tone: 'success',
       });
     }
 

@@ -357,7 +357,6 @@ export class HomeDashboardRepository {
         WHERE ${whereSql}
         GROUP BY ${selected.key}, ${selected.label}
         ORDER BY count DESC, label ASC
-        LIMIT 10
       `,
       scope.params,
     );
