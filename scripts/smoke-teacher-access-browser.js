@@ -798,10 +798,10 @@ async function main() {
             if (!row) return null;
             const style = getComputedStyle(row);
             return {
-              // The avatar falls back to initials when the student has no photo, so
-    // matching on <img> alone would pass or fail on fixture data rather than
-    // on whether the row renders an avatar at all.
-    hasAvatar: Boolean(row.querySelector('[data-slot="avatar"]')),
+              // The avatar falls back to initials when the student has no photo,
+              // so matching on the image element alone would pass or fail on
+              // fixture data rather than on whether the row renders an avatar.
+              hasAvatar: Boolean(row.querySelector('[data-slot="avatar"]')),
               showsStudentNumber: row.innerText.includes('รหัสประจำตัว'),
               hasTime: Boolean(row.querySelector('time')),
               tinted: style.backgroundColor !== 'rgb(255, 255, 255)'
@@ -1521,19 +1521,31 @@ async function main() {
       'Curriculum classroom MultiSelect did not become ready',
     );
     await evaluate(client, `document.querySelector('input[id^="classrooms-"]').focus()`);
-    await client.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown' });
-    await client.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown' });
     await waitFor(
       async () =>
         Boolean(
           await evaluate(
             client,
-            `document.querySelector('[role="listbox"]') &&
-             document.activeElement?.getAttribute('role') === 'option'`,
+            `document.activeElement === document.querySelector('input[id^="classrooms-"]')`,
           ),
         ),
-      'MultiSelect ArrowDown did not open and focus its first option',
+      'Curriculum classroom MultiSelect input did not take focus',
     );
+    // The panel opens from a React state update, so a key dispatched in the same
+    // frame as `focus()` can arrive before the handler is listening — that race
+    // made this check fail about one run in three. Press again while the panel
+    // is still closed instead of assuming a single press lands.
+    await waitFor(async () => {
+      const opened = await evaluate(
+        client,
+        `Boolean(document.querySelector('[role="listbox"]')) &&
+         document.activeElement?.getAttribute('role') === 'option'`,
+      );
+      if (opened) return true;
+      await client.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown' });
+      await client.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown' });
+      return false;
+    }, 'MultiSelect ArrowDown did not open and focus its first option');
     await client.call('Input.dispatchKeyEvent', {
       type: 'rawKeyDown',
       key: 'Enter',
