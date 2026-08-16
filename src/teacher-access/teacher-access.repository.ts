@@ -155,6 +155,23 @@ export class TeacherAccessRepository {
     return result.rows.length > 0;
   }
 
+  /**
+   * The school a classroom belongs to. Callers take `classroomId` from the
+   * client next to a `schoolId` they have already scope-checked, so the pair has
+   * to be verified before the classroom is used as a filter — otherwise a
+   * caller inside their own school can read another school's rows by naming its
+   * classroom.
+   */
+  async findClassroomSchoolId(classroomId: number): Promise<number | null> {
+    const result = await queryDataSource<{ school_id: number }>(
+      this.dataSource,
+      `SELECT school_id FROM school_classrooms WHERE id = $1 AND deleted_at IS NULL`,
+      [classroomId],
+    );
+    const row = result.rows[0];
+    return row ? Number(row.school_id) : null;
+  }
+
   async findActiveSchoolName(schoolId: number): Promise<string | null> {
     const result = await queryDataSource<{ name: string }>(
       this.dataSource,

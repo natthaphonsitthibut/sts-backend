@@ -126,6 +126,8 @@ type RepositoryMock = jest.Mocked<
     | 'getSystemSettingValue'
     | 'listAssignmentOptions'
     | 'listAttendanceDelegationAssignments'
+    | 'listAttendanceDelegationHistory'
+    | 'findClassroomSchoolId'
     | 'listActiveAttendanceDelegations'
     | 'listActiveTeacherMembershipsForSchool'
     | 'listMembershipsNeedingGrant'
@@ -177,6 +179,8 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
       ),
     listAssignmentOptions: jest.fn().mockResolvedValue([]),
     listAttendanceDelegationAssignments: jest.fn().mockResolvedValue([]),
+    listAttendanceDelegationHistory: jest.fn().mockResolvedValue([]),
+    findClassroomSchoolId: jest.fn().mockResolvedValue(10),
     listActiveAttendanceDelegations: jest.fn().mockResolvedValue([]),
     listActiveTeacherMembershipsForSchool: jest.fn().mockResolvedValue([]),
     listMembershipsNeedingGrant: jest.fn().mockResolvedValue([]),
@@ -1159,6 +1163,24 @@ describe('TeacherAccessService', () => {
       NotFoundException,
     );
     expect(teacherMessaging.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
+  });
+
+  // The scope check runs on `schoolId` while the query filters on `classroomId`.
+  // Without binding the two, an actor scoped to school 10 could read another
+  // school's delegation rows — which carry a live `accessUrl` into that class —
+  // simply by pairing their own school id with the other school's classroom.
+  it('refuses delegation history for a classroom outside the requested school', async () => {
+    const { service, repository } = createHarness();
+    repository.findClassroomSchoolId.mockResolvedValue(99);
+
+    await expect(
+      service.listAttendanceDelegationHistory(
+        { schoolId: 10, classroomId: 4242 },
+        ACTOR,
+        'https://sts.example.test',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.listAttendanceDelegationHistory).not.toHaveBeenCalled();
   });
 
   it('issues a per-teacher LINE invitation only after school scope validation', async () => {

@@ -191,6 +191,19 @@ export class TeacherAccessService {
   }
 
   /**
+   * `schoolId` is what the scope check runs against, but the queries filter on
+   * `classroomId`. Binding the two here keeps the scope check meaningful: a
+   * classroom from another school is not reachable by pairing it with a school
+   * the caller happens to be allowed to see.
+   */
+  private async assertClassroomInSchool(classroomId: number, schoolId: number): Promise<void> {
+    const classroomSchoolId = await this.repository.findClassroomSchoolId(classroomId);
+    if (classroomSchoolId !== schoolId) {
+      throw new NotFoundException('ไม่พบห้องเรียนในโรงเรียนนี้');
+    }
+  }
+
+  /**
    * The link-management screen owns a teacher's own term link. A delegation
    * grant (ATTENDANCE_ONLY) belongs to the class it stands in for and is closed
    * from the teacher's check-in page, so copying or rotating one from here would
@@ -1298,6 +1311,7 @@ export class TeacherAccessService {
     baseUrl: string,
   ) {
     await this.assertSchoolAccess(input.schoolId, actor);
+    await this.assertClassroomInSchool(input.classroomId, input.schoolId);
     const page = resolvePage(input.page);
     const limit = resolveLimit(input.limit);
     const rows = await this.repository.listAttendanceDelegationHistory({
