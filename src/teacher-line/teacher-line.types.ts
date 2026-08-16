@@ -46,6 +46,21 @@ export interface TeacherLineInvitationRow extends Record<string, unknown> {
   membership_deleted_at: string | Date | null;
 }
 
+export interface TeacherLineGroupInvitationRow extends Record<string, unknown> {
+  id: string;
+  school_id: number;
+  school_name: string;
+  token_hash: string;
+  token_encrypted: string;
+  issued_by: number;
+  issued_at: string | Date;
+  starts_at: string | Date;
+  expires_at: string | Date;
+  revoked_at: string | Date | null;
+  revoked_by: number | null;
+  revocation_reason: string | null;
+}
+
 /** Why a callback ended the way it did; drives which result screen is shown. */
 export type TeacherLineLinkOutcome =
   | 'SUCCESS'

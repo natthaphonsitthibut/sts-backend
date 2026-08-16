@@ -38,6 +38,21 @@ const INVITATION = {
   membership_deleted_at: null,
 };
 
+const GROUP_INVITATION = {
+  id: '22222222-2222-4222-8222-222222222222',
+  school_id: 7,
+  school_name: 'โรงเรียนทดสอบ',
+  token_hash: 'b'.repeat(64),
+  token_encrypted: `encrypted:${GROUP_TOKEN}`,
+  issued_by: 1,
+  issued_at: new Date(Date.now() - 60_000).toISOString(),
+  starts_at: new Date(Date.now() - 60_000).toISOString(),
+  expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+  revoked_at: null,
+  revoked_by: null,
+  revocation_reason: null,
+};
+
 function createHarness() {
   const repository = {
     withTransaction: jest.fn(async (operation: (runner: QueryRunner) => Promise<unknown>) =>
@@ -61,22 +76,13 @@ function createHarness() {
     findInvitationById: jest.fn().mockResolvedValue(INVITATION),
     revokeActiveInvitation: jest.fn().mockResolvedValue(true),
     consumeInvitation: jest.fn().mockResolvedValue(true),
+    createGroupInvitation: jest.fn().mockResolvedValue(GROUP_INVITATION),
+    findActiveGroupInvitationByTokenHash: jest.fn().mockResolvedValue(GROUP_INVITATION),
+    findActiveGroupInvitationForSchool: jest.fn().mockResolvedValue(GROUP_INVITATION),
+    updateActiveGroupInvitation: jest.fn().mockResolvedValue(true),
+    revokeActiveGroupInvitation: jest.fn().mockResolvedValue(true),
   };
   const sessionStore = {
-    createGroupInvitation: jest.fn().mockResolvedValue({
-      id: '22222222-2222-4222-8222-222222222222',
-      token: GROUP_TOKEN,
-    }),
-    readGroupInvitation: jest.fn().mockResolvedValue({
-      id: '22222222-2222-4222-8222-222222222222',
-      schoolId: 7,
-      schoolName: 'โรงเรียนทดสอบ',
-      startsAt: Date.now() - 60_000,
-      expiresAt: Date.now() + 86_400_000,
-    }),
-    readActiveGroupInvitation: jest.fn().mockResolvedValue(null),
-    updateGroupInvitation: jest.fn().mockResolvedValue(true),
-    revokeGroupInvitation: jest.fn().mockResolvedValue(true),
     createBindingSession: jest.fn().mockResolvedValue('binding-token'),
     readBindingSession: jest.fn().mockResolvedValue({
       teacherId: TEACHER.teacher_id,
@@ -109,6 +115,10 @@ function createHarness() {
     record: jest.fn().mockResolvedValue(undefined),
     recordAtomic: jest.fn().mockResolvedValue(undefined),
   };
+  const tokenEncryption = {
+    encrypt: jest.fn((value: string) => `encrypted:${value}`),
+    decrypt: jest.fn((value: string) => value.replace(/^encrypted:/, '')),
+  };
   const messaging = {
     isEnabled: jest.fn().mockReturnValue(true),
     buildAuthorizationUrl: jest.fn().mockReturnValue('https://access.line.me/authorize'),
@@ -123,6 +133,7 @@ function createHarness() {
   const service = new TeacherLineService(
     repository as unknown as TeacherLineRepository,
     sessionStore as never,
+    tokenEncryption as never,
     otpStore as never,
     emailService as never,
     auditLog as never,
@@ -143,6 +154,7 @@ function createHarness() {
     araIdService,
     araIdChallengeStore,
     messaging,
+    tokenEncryption,
   };
 }
 
@@ -152,20 +164,31 @@ describe('TeacherLineService', () => {
     const result = await service.issueGroupInvitation({
       schoolId: 7,
       schoolName: 'โรงเรียนทดสอบ',
+      issuedBy: 1,
       startsAt: new Date(Date.now()),
       expiresAt: new Date(Date.now() + 86_400_000),
       baseUrl: 'https://sts.test',
     });
 
-    expect(result.url).toContain(`/line-link#token=${GROUP_TOKEN}`);
+    expect(result.url).toContain('/line-link#token=');
     expect(result.schoolName).toBe('โรงเรียนทดสอบ');
     expect(result.url).not.toContain(TEACHER.email);
     expect(result.expiresAt).toBeTruthy();
   });
 
+  it('rebuilds an active shared URL from the persisted encrypted token', async () => {
+    const { service, tokenEncryption } = createHarness();
+
+    await expect(service.getActiveGroupInvitation(7, 'https://sts.test')).resolves.toMatchObject({
+      id: GROUP_INVITATION.id,
+      url: `https://sts.test/line-link#token=${GROUP_TOKEN}`,
+    });
+    expect(tokenEncryption.decrypt).toHaveBeenCalledWith(GROUP_INVITATION.token_encrypted);
+  });
+
   it('rejects group OTP requests after the shared link expires', async () => {
-    const { service, sessionStore, emailService } = createHarness();
-    sessionStore.readGroupInvitation.mockResolvedValue(null);
+    const { service, repository, emailService } = createHarness();
+    repository.findActiveGroupInvitationByTokenHash.mockResolvedValue(null);
 
     await expect(service.requestOtp(TEACHER.email, null, GROUP_TOKEN)).rejects.toBeInstanceOf(
       GoneException,
@@ -209,12 +232,12 @@ describe('TeacherLineService', () => {
   });
 
   it('creates a real expiring AraID QR and can restore its details after refresh', async () => {
-    const { service, araIdChallengeStore, sessionStore } = createHarness();
+    const { service, araIdChallengeStore, repository } = createHarness();
     const stored = {
       token: 'c'.repeat(43),
-      invitationId: '22222222-2222-4222-8222-222222222222',
-      schoolId: 7,
-      schoolName: 'โรงเรียนทดสอบ',
+      scope: 'teacher-line' as const,
+      subjectId: '22222222-2222-4222-8222-222222222222',
+      context: { schoolId: 7, schoolName: 'โรงเรียนทดสอบ' },
       referenceCode: 'A1B2C3',
       status: 'PENDING',
       entryExpiresAt: Date.now() + 90_000,
@@ -222,12 +245,11 @@ describe('TeacherLineService', () => {
     };
     araIdChallengeStore.create.mockResolvedValue(stored);
     araIdChallengeStore.read.mockResolvedValue(stored);
-    sessionStore.readActiveGroupInvitation.mockResolvedValue({
-      id: stored.invitationId,
-      schoolId: stored.schoolId,
-      schoolName: stored.schoolName,
-      startsAt: Date.now() - 60_000,
-      expiresAt: Date.now() + 86_400_000,
+    repository.findActiveGroupInvitationForSchool.mockResolvedValue({
+      ...GROUP_INVITATION,
+      id: stored.subjectId,
+      school_id: stored.context.schoolId,
+      school_name: stored.context.schoolName,
     });
 
     const created = await service.createAraIdChallenge(GROUP_TOKEN);
@@ -243,11 +265,11 @@ describe('TeacherLineService', () => {
   }, 15_000);
 
   it('claims an active QR before login so completion can outlive the entry window', async () => {
-    const { service, araIdChallengeStore, sessionStore } = createHarness();
+    const { service, araIdChallengeStore, repository } = createHarness();
     const challenge = {
-      invitationId: '22222222-2222-4222-8222-222222222222',
-      schoolId: 7,
-      schoolName: 'โรงเรียนทดสอบ',
+      scope: 'teacher-line' as const,
+      subjectId: '22222222-2222-4222-8222-222222222222',
+      context: { schoolId: 7, schoolName: 'โรงเรียนทดสอบ' },
       referenceCode: 'A1B2C3',
       status: 'PENDING',
       entryExpiresAt: Date.now() + 90_000,
@@ -258,11 +280,10 @@ describe('TeacherLineService', () => {
       authorizationToken: 'd'.repeat(43),
       expiresAt: Date.now() + 600_000,
     });
-    sessionStore.readActiveGroupInvitation.mockResolvedValue({
-      id: challenge.invitationId,
-      schoolId: 7,
-      startsAt: Date.now() - 60_000,
-      expiresAt: Date.now() + 86_400_000,
+    repository.findActiveGroupInvitationForSchool.mockResolvedValue({
+      ...GROUP_INVITATION,
+      id: challenge.subjectId,
+      school_id: 7,
     });
 
     await expect(service.beginAraIdChallenge('c'.repeat(43))).resolves.toMatchObject({
