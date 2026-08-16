@@ -8,6 +8,7 @@ const ARAID_COOKIE_NAME = 'araid_session';
 const ARAID_SESSION_PURPOSE = 'ARAID_SESSION';
 const ARAID_LINE_AUTHORIZATION_COOKIE_NAME = 'araid_line_authorization';
 const ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME = 'araid_teacher_access_authorization';
+const ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME = 'araid_task_link_authorization';
 
 interface AraIdSessionPayload {
   authenticatedAt?: number;
@@ -79,6 +80,23 @@ export class AraIdSessionCookieService {
 
   clearTeacherAccessAuthorization(response: Response): void {
     response.clearCookie(ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME, { path: '/' });
+  }
+
+  setTaskLinkAuthorization(response: Response, token: string, maxAgeSeconds: number): void {
+    this.setOpaqueAuthorization(
+      response,
+      ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME,
+      token,
+      maxAgeSeconds,
+    );
+  }
+
+  readTaskLinkAuthorization(cookieHeader: string | undefined): string | null {
+    return this.readCookie(cookieHeader, ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME);
+  }
+
+  clearTaskLinkAuthorization(response: Response): void {
+    response.clearCookie(ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME, { path: '/' });
   }
 
   readProfileId(cookieHeader: string | undefined): string | null {

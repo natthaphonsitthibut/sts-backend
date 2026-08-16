@@ -1,5 +1,4 @@
 import type { AuthRuntimeConfig } from '../config/auth.config';
-import type { EmailRuntimeConfig } from '../config/email.config';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
@@ -55,7 +54,6 @@ describe('TaskAccessService login-link usage', () => {
         sessionSecret: 'test-session-secret-at-least-16-chars',
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
-      { enabled: false, user: '' } as EmailRuntimeConfig,
       magicSessionStore as unknown as MagicSessionStoreService,
     );
   });
@@ -141,7 +139,6 @@ describe('TaskAccessService.getAdminLinkDetail own_only VISIT reviewer access', 
         sessionSecret: 'test-session-secret-at-least-16-chars',
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
-      { enabled: false, user: '' } as EmailRuntimeConfig,
       {} as MagicSessionStoreService,
     );
   });
@@ -187,7 +184,6 @@ describe('TaskAccessService scheduled link access', () => {
         sessionSecret: 'test-session-secret-at-least-16-chars',
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
-      { enabled: false, user: '' } as EmailRuntimeConfig,
       {
         issue: jest.fn().mockResolvedValue('session-token'),
         isVerified: jest.fn().mockResolvedValue(false),
@@ -227,7 +223,7 @@ describe('TaskAccessService home visit report context', () => {
   >;
   let magicSessionStore: jest.Mocked<Pick<MagicSessionStoreService, 'isVerified'>>;
 
-  function createService(emailEnabled: boolean): TaskAccessService {
+  function createService(): TaskAccessService {
     return new TaskAccessService(
       taskRepository as unknown as TaskRepository,
       {} as TaskPolicyService,
@@ -237,10 +233,6 @@ describe('TaskAccessService home visit report context', () => {
         sessionSecret: 'test-session-secret-at-least-16-chars',
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
-      {
-        enabled: emailEnabled,
-        user: emailEnabled ? 'sender@example.test' : '',
-      } as EmailRuntimeConfig,
       magicSessionStore as unknown as MagicSessionStoreService,
     );
   }
@@ -258,6 +250,7 @@ describe('TaskAccessService home visit report context', () => {
         delegation_depth: 0,
         max_delegation_depth: 0,
         assigned_to_name: 'ครูเยี่ยมบ้าน',
+        current_assignee_name: 'ครูชื่อปัจจุบัน',
         assigned_to_email: 'visitor@example.test',
       }),
       findCaseByTaskId: jest.fn().mockResolvedValue({
@@ -272,6 +265,7 @@ describe('TaskAccessService home visit report context', () => {
         postal_code: '10300',
         reason_flagged: 'ขาดเรียนต่อเนื่อง',
         status: 'IN_PROGRESS',
+        display_status_label: 'รอติดตาม : ติดตาม',
         academic_year: 2569,
         semester: 1,
         grade: 'ม.3',
@@ -311,13 +305,21 @@ describe('TaskAccessService home visit report context', () => {
   });
 
   it('returns class, structured address, and bounded history after the guest is authorized', async () => {
-    await expect(createService(false).getTaskByToken('public-token')).resolves.toMatchObject({
+    // Authorisation is a verified session, never a missing mail transport: the
+    // gate is unconditional, so an unconfigured SMTP must not be what unmasks a
+    // student. Email stays disabled here to prove the session alone opens it.
+    magicSessionStore.isVerified.mockResolvedValue(true);
+    await expect(
+      createService().getTaskByToken('public-token', 'verified-session'),
+    ).resolves.toMatchObject({
       student_name: 'เด็กหญิงทดสอบ',
       academic_year: 2569,
       semester: 1,
       student_grade: 'ม.3',
       student_room: '2',
       case_status: 'IN_PROGRESS',
+      case_display_status_label: 'รอติดตาม : ติดตาม',
+      assigned_to_name: 'ครูชื่อปัจจุบัน',
       address_province: 'กรุงเทพมหานคร',
       contact_channels: [
         {
@@ -340,7 +342,7 @@ describe('TaskAccessService home visit report context', () => {
   });
 
   it('does not expose report history before OTP verification', async () => {
-    const result = await createService(true).getTaskByToken('public-token');
+    const result = await createService().getTaskByToken('public-token');
 
     expect(result).toMatchObject({
       auth_required: true,
@@ -352,6 +354,59 @@ describe('TaskAccessService home visit report context', () => {
     expect(result).not.toHaveProperty('case_status');
     expect(taskRepository.listPublicCaseContactChannels).not.toHaveBeenCalled();
     expect(taskRepository.listPublicCaseFollowUpHistory).not.toHaveBeenCalled();
+  });
+
+  it('gates an assistance link behind OTP exactly like a follow-up link', async () => {
+    taskRepository.findTaskLinkByTokenHash.mockResolvedValue({
+      id: 'assist-link-1',
+      task_id: 'assist-task-1',
+      task_type: 'ASSIST',
+      status: 'ACTIVE',
+      expires_at: '2999-01-01T00:00:00.000Z',
+      admin_locked: 0,
+      otp_verified: 0,
+      assigned_to_name: 'ครูผู้ช่วยเหลือ',
+      assigned_to_email: 'teacher@example.test',
+    });
+    taskRepository.listTaskAssistanceMeasures = jest.fn().mockResolvedValue([]);
+
+    await expect(createService().getTaskByToken('public-token')).resolves.toMatchObject({
+      task_type: 'ASSIST',
+      auth_required: true,
+    });
+    // The student context must stay masked until the teacher verifies.
+    expect(taskRepository.listPublicCaseContactChannels).not.toHaveBeenCalled();
+  });
+
+  it('still demands identity when email cannot be delivered, because AraID remains', async () => {
+    // Regression guard: the gate used to switch itself off when SMTP was not
+    // configured, which turned every follow-up link on such a deployment into a
+    // single-factor link exposing a minor's address and phone.
+    const result = await createService().getTaskByToken('public-token');
+
+    expect(result).toMatchObject({
+      auth_required: true,
+      student_address: '*** (กรุณายืนยันตัวตน) ***',
+    });
+    expect(result).not.toHaveProperty('contact_channels');
+  });
+
+  it('still demands identity when the link has no email address on file', async () => {
+    taskRepository.findTaskLinkByTokenHash.mockResolvedValue({
+      id: 'visit-link-1',
+      task_id: 'visit-task-1',
+      task_type: 'VISIT',
+      status: 'ACTIVE',
+      expires_at: '2999-01-01T00:00:00.000Z',
+      admin_locked: 0,
+      otp_verified: 0,
+      assigned_to_name: 'ครูไม่มีอีเมล',
+      assigned_to_email: null,
+    });
+
+    await expect(createService().getTaskByToken('public-token')).resolves.toMatchObject({
+      auth_required: true,
+    });
   });
 });
 
@@ -392,7 +447,6 @@ describe('TaskAccessService OTP sessions', () => {
         otpMaxAttempts: 5,
         otpLockSeconds: 900,
       } as AuthRuntimeConfig,
-      { enabled: false, user: '' } as EmailRuntimeConfig,
       magicSessionStore as unknown as MagicSessionStoreService,
     );
   });
@@ -427,7 +481,6 @@ describe('TaskAccessService OTP challenge', () => {
         magicSessionTtlSeconds: 21_600,
         otpTtlSeconds: 600,
       } as AuthRuntimeConfig,
-      { enabled: true, user: 'mailer@example.test' } as EmailRuntimeConfig,
       {} as MagicSessionStoreService,
     );
 
@@ -496,7 +549,6 @@ describe('TaskAccessService admin link audit', () => {
         sessionSecret: 'test-session-secret-at-least-16-chars',
         magicSessionTtlSeconds: 21_600,
       } as AuthRuntimeConfig,
-      { enabled: false, user: '' } as EmailRuntimeConfig,
       {
         issue: jest.fn().mockResolvedValue('session-token'),
         isVerified: jest.fn().mockResolvedValue(false),

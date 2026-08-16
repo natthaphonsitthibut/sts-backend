@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  GoneException,
   HttpException,
   HttpStatus,
   Inject,
@@ -8,11 +10,12 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
+import * as QRCode from 'qrcode';
 import { authConfig } from '../config/auth.config';
-import { emailConfig } from '../config/email.config';
 import { clean, hashToken, maskEmailAddress } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -26,6 +29,11 @@ import {
   resolvePage,
 } from '../common/pagination/pagination.util';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
+import { AraIdChallengeStore, type AraIdChallengeScope } from '../araid/araid-challenge.store';
+import { AraIdService } from '../araid/araid.service';
+
+/** Every AraID challenge in this service belongs to a follow-up/assistance link. */
+const ARAID_SCOPE: AraIdChallengeScope = 'task-link';
 
 function maskName(name: string | null | undefined): string {
   if (!name) return '-';
@@ -49,10 +57,152 @@ export class TaskAccessService {
     private readonly auditLog: AuditLogService,
     @Inject(authConfig.KEY)
     private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
-    @Inject(emailConfig.KEY)
-    private readonly emailRuntimeConfig: ConfigType<typeof emailConfig>,
     private readonly magicSessionStore: MagicSessionStoreService,
+    private readonly araIdChallengeStore: AraIdChallengeStore,
+    private readonly araIdService: AraIdService,
   ) {}
+
+  /**
+   * A task link can be verified with AraID instead of the emailed OTP. The
+   * identity that may approve it is the teacher the link was issued to — read
+   * through `assigned_teacher_user_id`, never the denormalised email.
+   */
+  async createAraIdChallenge(token: string, baseUrl: string) {
+    const link = await this.findUsableLinkForVerification(token);
+    const challenge = await this.araIdChallengeStore.create(ARAID_SCOPE, String(link.id));
+    const verificationUrl = new URL('/araid/authorize', baseUrl);
+    verificationUrl.hash = `challenge=${encodeURIComponent(challenge.token)}&scope=${ARAID_SCOPE}`;
+    const qrDataUrl = await QRCode.toDataURL(verificationUrl.toString(), {
+      width: 320,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+    return {
+      success: true,
+      data: {
+        challengeToken: challenge.token,
+        verificationUrl: verificationUrl.toString(),
+        qrDataUrl,
+        referenceCode: challenge.referenceCode,
+        expiresAt: new Date(challenge.entryExpiresAt).toISOString(),
+      },
+    };
+  }
+
+  async beginTaskAraIdChallenge(challengeToken: string, existingAuthorizationToken?: string) {
+    if (existingAuthorizationToken) {
+      const resumed = await this.araIdChallengeStore.resume(
+        ARAID_SCOPE,
+        challengeToken,
+        existingAuthorizationToken,
+      );
+      if (resumed) {
+        return { authorizationToken: resumed.authorizationToken, expiresAt: resumed.expiresAt };
+      }
+    }
+    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
+    if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+    const authorization = await this.araIdChallengeStore.claim(ARAID_SCOPE, challengeToken);
+    if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
+    return authorization;
+  }
+
+  async approveTaskAraIdChallenge(
+    authorizationToken: string,
+    araIdProfileId: string,
+    authenticatedAt: number,
+  ) {
+    const authorization = await this.araIdChallengeStore.readAuthorization(
+      ARAID_SCOPE,
+      authorizationToken,
+    );
+    if (!authorization) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
+    if (authenticatedAt < authorization.minimumAuthenticatedAt) {
+      throw new UnauthorizedException('กรุณากรอก PIN AraID ใหม่เพื่อยืนยันลิงก์นี้');
+    }
+    await this.assertAraIdIdentityMatchesLink(authorization.challenge.subjectId, araIdProfileId);
+    if (!(await this.araIdChallengeStore.approveAuthorization(ARAID_SCOPE, authorizationToken))) {
+      throw new GoneException('คำขอยืนยัน AraID ถูกใช้หรือหมดอายุแล้ว');
+    }
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: null,
+      action: 'TASK_LINK_ARAID_VERIFY',
+      targetType: 'task_links',
+      targetId: authorization.challenge.subjectId,
+      metadata: { authMethod: 'ARAID_QR' },
+      ip: null,
+    });
+    return { success: true, data: { approved: true } };
+  }
+
+  async pollTaskAraIdChallenge(challengeToken: string) {
+    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
+    if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+    if (challenge.status === 'PENDING') {
+      return { success: true, data: { status: 'PENDING' as const } };
+    }
+    if (challenge.status === 'CLAIMED') {
+      return {
+        success: true,
+        data: {
+          status: 'IN_PROGRESS' as const,
+          expiresAt: new Date(challenge.expiresAt).toISOString(),
+        },
+      };
+    }
+    const consumed = await this.araIdChallengeStore.consumeApproved(ARAID_SCOPE, challengeToken);
+    if (!consumed) throw new GoneException('คำขอยืนยัน AraID ถูกใช้แล้ว');
+    const sessionToken = await this.magicSessionStore.issue(consumed.subjectId);
+    return { success: true, data: { status: 'APPROVED' as const, sessionToken } };
+  }
+
+  private async findUsableLinkForVerification(token: string): Promise<Record<string, unknown>> {
+    const trimmed = token.trim();
+    if (trimmed.length < 32 || trimmed.length > 256) {
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
+    }
+    const link = await this.taskRepository.findTaskLinkByTokenHash(hashToken(trimmed));
+    if (!link) throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
+    if (new Date(String(link.expires_at)) < new Date()) {
+      throw new GoneException('ลิงก์นี้หมดอายุแล้ว');
+    }
+    if (Number(link.admin_locked) === 1) {
+      throw new ForbiddenException('ลิงก์นี้ถูกระงับการใช้งาน');
+    }
+    if (link.status === 'COMPLETED') {
+      throw new ConflictException('ลิงก์นี้ถูกบันทึกเรียบร้อยแล้ว');
+    }
+    return link;
+  }
+
+  /**
+   * The AraID-verified citizen id must belong to the teacher the link was
+   * issued to. A link with no bound teacher (issued before that column existed)
+   * cannot be verified this way and stays on the emailed OTP.
+   */
+  private async assertAraIdIdentityMatchesLink(
+    linkId: string,
+    araIdProfileId: string,
+  ): Promise<void> {
+    const identity = await this.taskRepository.findTaskLinkAraIdIdentity(linkId);
+    const rawCitizenId = identity?.teacher_citizen_id;
+    const expected = typeof rawCitizenId === 'string' ? (clean(rawCitizenId) ?? '') : '';
+    if (!/^\d{13}$/.test(expected)) {
+      throw new ConflictException(
+        'ครูผู้รับมอบหมายยังไม่มีเลขบัตรประชาชนในระบบ กรุณายืนยันผ่านอีเมลแทน',
+      );
+    }
+    const verified = await this.araIdService.getVerifiedIdentityNumber(araIdProfileId);
+    const expectedBuffer = Buffer.from(expected);
+    const verifiedBuffer = Buffer.from(verified.trim());
+    const matches =
+      expectedBuffer.length === verifiedBuffer.length &&
+      crypto.timingSafeEqual(expectedBuffer, verifiedBuffer);
+    if (!matches) {
+      throw new ForbiddenException('AraID นี้ไม่ตรงกับครูผู้รับมอบหมายของลิงก์');
+    }
+  }
 
   async getTaskByToken(token: string, sessionToken?: string) {
     const tokenHash = hashToken(token);
@@ -81,19 +231,22 @@ export class TaskAccessService {
       return { error: 'Task already completed', status: 'COMPLETED' };
     }
 
-    const hasEmailForOtp =
-      typeof link.assigned_to_email === 'string' && link.assigned_to_email.trim().length > 0;
     const sessionVerified = !link.otp_verified
       ? await this.magicSessionStore.isVerified(String(link.id), sessionToken)
       : false;
 
-    // OTP is gated on email actually being deliverable — both the transport
-    // enabled AND a sender configured. Otherwise the OTP would only be logged
-    // (simulated) and the guest could never receive it, so fall back to no-OTP
-    // single-factor links instead of locking them out. (no hardcoded flag)
-    const otpEnabled =
-      this.emailRuntimeConfig.enabled && this.emailRuntimeConfig.user.trim().length > 0;
-    const authRequired = otpEnabled && hasEmailForOtp && !link.otp_verified && !sessionVerified;
+    // Every public link proves identity before it hands anything over — one
+    // rule shared with the teacher access link and the LINE verification link,
+    // both of which gate unconditionally.
+    //
+    // It deliberately does NOT depend on the mail transport. AraID is the other
+    // way through this gate, so tying the requirement to SMTP would silently
+    // drop a deployment without email configured to single-factor links that
+    // hand a minor's name, address and phone to anyone holding the URL. Whether
+    // the assigned teacher actually has a citizen id or a reachable mailbox is
+    // the school's data-entry problem: the attempt fails with a clear message
+    // instead of the gate disappearing.
+    const authRequired = !link.otp_verified && !sessionVerified;
 
     const result: Record<string, unknown> = {
       task_id: link.task_id,
@@ -105,7 +258,7 @@ export class TaskAccessService {
       target_grade: link.target_grade,
       target_room: link.target_room,
       target_school_id: link.target_school_id,
-      assigned_to_name: link.assigned_to_name,
+      assigned_to_name: link.current_assignee_name || link.assigned_to_name,
       assigned_to_first_name: link.assigned_to_first_name ?? null,
       assigned_to_last_name: link.assigned_to_last_name ?? null,
       status: link.status,
@@ -121,7 +274,16 @@ export class TaskAccessService {
       login_data_scope: link.login_data_scope || {},
     };
 
-    if (link.task_type === 'VISIT') {
+    if (link.task_type === 'ASSIST') {
+      // The measures were committed at assignment time; the report form shows
+      // them read-only rather than letting the reporter re-pick.
+      result.assistance_measures = await this.taskRepository.listTaskAssistanceMeasures(
+        String(link.task_id),
+      );
+      result.assistance_measure_detail = link.assistance_measure_detail ?? null;
+    }
+
+    if (link.task_type === 'VISIT' || link.task_type === 'ASSIST') {
       const caseData = await this.taskRepository.findCaseByTaskId(String(link.task_id));
 
       if (result.auth_required) {
@@ -150,6 +312,10 @@ export class TaskAccessService {
         result.student_lng = caseData?.student_lng || null;
         result.reason_flagged = caseData?.reason_flagged || null;
         result.case_status = caseData?.status || null;
+        // The card header reuses the composed workflow label so the guest form
+        // shows one of the five statuses (`รอติดตาม : ให้ความช่วยเหลือ`) rather
+        // than inventing a status of its own.
+        result.case_display_status_label = caseData?.display_status_label || null;
         result.academic_year = caseData?.academic_year || null;
         result.semester = caseData?.semester || null;
         result.student_grade = caseData?.grade || null;
@@ -171,7 +337,14 @@ export class TaskAccessService {
                 typeof row.assigned_to_name === 'string' ? row.assigned_to_name : null,
               visited_at: row.visited_at ?? null,
               submitted_at: row.submitted_at ?? null,
+              assignment_starts_at: row.assignment_starts_at ?? null,
+              assignment_ends_at: row.assignment_ends_at ?? null,
+              assignment_note: typeof row.assignment_note === 'string' ? row.assignment_note : null,
               cause_detail: typeof row.cause_detail === 'string' ? row.cause_detail : null,
+              follow_up_assessment_label:
+                typeof row.follow_up_assessment_label === 'string'
+                  ? row.follow_up_assessment_label
+                  : null,
               exception_label: typeof row.exception_label === 'string' ? row.exception_label : null,
             }))
           : [];

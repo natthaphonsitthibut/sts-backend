@@ -10,6 +10,8 @@ import { EmailModule } from '../common/email/email.module';
 import { CaseController } from './case.controller';
 import { CaseService } from './case.service';
 import { AutomationModule } from '../automation/automation.module';
+import { AraIdChallengeStore } from '../araid/araid-challenge.store';
+import { AraIdModule } from '../araid/araid.module';
 import { TaskRepository } from './task.repository';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
@@ -24,6 +26,7 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
 @Module({
   imports: [
+    AraIdModule,
     AutomationModule,
     AttendanceModule,
     NotificationsModule,
@@ -40,6 +43,7 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     CaseTrackingOptionsController,
   ],
   providers: [
+    AraIdChallengeStore,
     TaskRepository,
     TaskPolicyService,
     TaskLifecycleService,
