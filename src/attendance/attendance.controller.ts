@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -8,8 +9,13 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   AuthGuard,
   CurrentUser,
@@ -19,6 +25,15 @@ import {
   resolveActorDataScope,
   type AuthenticatedRequestUser,
 } from '../auth';
+import { AttendanceImportService } from './attendance-import.service';
+import { attendanceImportMulterOptions } from './attendance-import.multer';
+import {
+  ListAttendanceImportsDto,
+  ParseAttendanceImportDto,
+  RecordAttendanceImportDto,
+} from './dto/attendance-import.dto';
+import type { Response } from 'express';
+import { buildPaginationMeta } from '../common/pagination/pagination.util';
 import { AttendanceService } from './attendance.service';
 import {
   GetHistoryQueryDto,
@@ -48,6 +63,7 @@ export class AttendanceController {
   constructor(
     private readonly attendanceService: AttendanceService,
     private readonly attendanceOperationsService: AttendanceOperationsService,
+    private readonly attendanceImportService: AttendanceImportService,
   ) {}
 
   @Get('grade-levels')
@@ -155,6 +171,97 @@ export class AttendanceController {
       body.date,
       body.cleared_student_ids ?? [],
     );
+  }
+
+  // Reads a teacher-supplied spreadsheet into plain rows. It writes nothing and
+  // returns no student data, so the same 'attendance' permission that guards a
+  // check-in is the right gate; matching rows to the roster happens client-side
+  // and any resulting marks still go through the guarded write endpoints above.
+  @Post('import/parse')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  @UseInterceptors(FileInterceptor('file', attendanceImportMulterOptions))
+  async parseImport(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: ParseAttendanceImportDto,
+  ) {
+    if (file) {
+      return { data: this.attendanceImportService.parseUpload(file) };
+    }
+    if (!body.url) {
+      throw new BadRequestException('กรุณาเลือกไฟล์หรือใส่ลิงก์');
+    }
+    return { data: await this.attendanceImportService.parseUrl(body.url) };
+  }
+
+  // Provenance of an applied import: the file (or the link) that produced the
+  // marks, kept so ประวัติ → นำเข้าไฟล์ can show who imported what.
+  @Post('imports')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  @UseInterceptors(FileInterceptor('file', attendanceImportMulterOptions))
+  async recordImport(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: RecordAttendanceImportDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    const recorded = await this.attendanceImportService.recordApplied({
+      schoolId: body.schoolId,
+      schoolTermId: body.schoolTermId,
+      classroomId: body.classroomId,
+      attendanceDate: body.attendanceDate,
+      timetableSlotId: body.timetableSlotId ?? null,
+      subjectId: body.subjectId ?? null,
+      fileName: body.fileName,
+      sourceUrl: body.sourceUrl ?? null,
+      rowCount: body.rowCount,
+      appliedCount: body.appliedCount,
+      importedBy: actor.id,
+      importedByLabel:
+        [actor.FirstName, actor.LastName].filter(Boolean).join(' ').trim() || actor.username,
+      file,
+    });
+    return { data: recorded };
+  }
+
+  @Get('imports')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
+  async listImports(@Query() query: ListAttendanceImportsDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const result = await this.attendanceImportService.listApplied({
+      classroomId: query.classroomId,
+      subjectId: query.subjectId,
+      attendanceDate: query.attendanceDate,
+      search: query.search,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
+      page,
+      limit,
+    });
+    return {
+      data: result.rows,
+      meta: buildPaginationMeta(page, limit, result.totalCount),
+    };
+  }
+
+  @Get('imports/:id/file')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
+  async downloadImport(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('classroomId', ParseIntPipe) classroomId: number,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const { stream, fileName } = await this.attendanceImportService.openApplied(id, classroomId);
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(fileName)}"`,
+    );
+    return new StreamableFile(stream);
   }
 
   @Get('rooms')
