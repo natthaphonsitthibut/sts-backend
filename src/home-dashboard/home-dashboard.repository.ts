@@ -839,6 +839,103 @@ export class HomeDashboardRepository {
     };
   }
 
+  async getCauseCategoryDistribution(
+    actor: HomeDashboardActor,
+    filters: HomeDashboardFilters,
+  ): Promise<{ key: string; label: string; count: number }[]> {
+    const scope = this.buildCaseScopeQuery(actor, filters);
+    const whereSql = [
+      'c.deleted_at IS NULL',
+      'ts.deleted_at IS NULL',
+      'ts.cause_category IS NOT NULL',
+      scope.sql,
+    ]
+      .filter(Boolean)
+      .join(' AND ');
+    const result = await this.query<{
+      category: string;
+      count: number | string;
+    }>(
+      `
+        SELECT
+          ts.cause_category AS category,
+          COUNT(*)::int AS count
+        FROM task_submissions ts
+        JOIN task_links tl ON tl.id = ts.task_link_id
+        JOIN tasks t ON t.id = tl.task_id
+        JOIN cases c ON c.id = t.case_id
+        LEFT JOIN schools sc ON sc.id = c.school_id
+        ${whereSql ? `WHERE ${whereSql}` : ''}
+        GROUP BY ts.cause_category
+        ORDER BY count DESC
+      `,
+      scope.params,
+    );
+    return result.rows.map((row) => ({
+      key: row.category,
+      label: row.category,
+      count: toNumber(row.count),
+    }));
+  }
+
+  async getMonthlySuccessRates(
+    actor: HomeDashboardActor,
+    filters: HomeDashboardFilters,
+  ): Promise<{ month: string; opened: number; resolved: number }[]> {
+    const scope = this.buildCaseScopeQuery(actor, filters);
+    const result = await this.query<{
+      month: string;
+      opened: number | string;
+      resolved: number | string;
+    }>(
+      `
+        WITH months AS (
+          SELECT date_trunc('month', d)::date AS month_date
+          FROM generate_series(
+            date_trunc('month', CURRENT_DATE - INTERVAL '11 months'),
+            date_trunc('month', CURRENT_DATE),
+            '1 month'::interval
+          ) d
+        ),
+        opened_cases AS (
+          SELECT
+            date_trunc('month', c.created_at)::date AS month_date,
+            COUNT(*)::int AS count
+          FROM cases c
+          LEFT JOIN schools sc ON sc.id = c.school_id
+          WHERE c.deleted_at IS NULL
+          ${scope.sql ? `AND ${scope.sql}` : ''}
+          GROUP BY 1
+        ),
+        resolved_cases AS (
+          SELECT
+            date_trunc('month', c.updated_at)::date AS month_date,
+            COUNT(*)::int AS count
+          FROM cases c
+          LEFT JOIN schools sc ON sc.id = c.school_id
+          WHERE c.deleted_at IS NULL
+            AND c.status = 'RESOLVED'
+          ${scope.sql ? `AND ${scope.sql}` : ''}
+          GROUP BY 1
+        )
+        SELECT
+          to_char(m.month_date, 'YYYY-MM') AS month,
+          COALESCE(o.count, 0)::int AS opened,
+          COALESCE(r.count, 0)::int AS resolved
+        FROM months m
+        LEFT JOIN opened_cases o ON o.month_date = m.month_date
+        LEFT JOIN resolved_cases r ON r.month_date = m.month_date
+        ORDER BY m.month_date ASC
+      `,
+      scope.params,
+    );
+    return result.rows.map((row) => ({
+      month: row.month,
+      opened: toNumber(row.opened),
+      resolved: toNumber(row.resolved),
+    }));
+  }
+
   async getSchoolName(schoolId: number): Promise<string | null> {
     const result = await this.query<{ name: string | null }>(
       `

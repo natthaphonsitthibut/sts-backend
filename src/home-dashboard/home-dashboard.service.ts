@@ -162,7 +162,14 @@ export class HomeDashboardService {
 
     const sections = this.resolveSections(actor);
     const riskAreaDimension = this.resolveRiskAreaDimension(filters);
-    const [totalStudents, watchStudents, casePipeline, riskAreaRows] = await Promise.all([
+    const [
+      totalStudents,
+      watchStudents,
+      casePipeline,
+      riskAreaRows,
+      causeCategoryDistribution,
+      monthlySuccessRates,
+    ] = await Promise.all([
       this.repository.countStudents(actor, filters),
       hasActorPermission(actor, 'dashboard')
         ? this.repository.countHighRiskStudents(actor, filters)
@@ -171,6 +178,8 @@ export class HomeDashboardService {
         ? this.repository.getCasePipeline(actor, filters)
         : Promise.resolve(null),
       this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
+      this.repository.getCauseCategoryDistribution(actor, filters),
+      this.repository.getMonthlySuccessRates(actor, filters),
     ]);
 
     const baseQuery = this.targetQuery(filters);
@@ -251,6 +260,8 @@ export class HomeDashboardService {
           })),
         },
         casePipeline,
+        causeCategoryDistribution,
+        monthlySuccessRates,
       },
     };
   }

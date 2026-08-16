@@ -94,6 +94,8 @@ export interface HomeDashboardSummary {
     attentionItems: HomeDashboardAttentionItem[];
     riskAreaRanking: HomeDashboardRiskAreaRanking;
     casePipeline: HomeDashboardCasePipeline | null;
+    causeCategoryDistribution: { key: string; label: string; count: number }[];
+    monthlySuccessRates: { month: string; opened: number; resolved: number }[];
   };
 }
 
