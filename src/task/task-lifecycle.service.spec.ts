@@ -55,7 +55,11 @@ describe('TaskLifecycleService', () => {
         sub_district: 'ดุสิต',
       }),
       findStudentTermMetadata: jest.fn().mockResolvedValue(null),
-      listVisitAssignees: jest.fn().mockResolvedValue([]),
+      listVisitAssignees: jest
+        .fn()
+        .mockResolvedValue([
+          { teacher_user_id: 7, display_name: 'ครูผู้ติดตาม', email: null, is_homeroom: true },
+        ]),
       lockCaseForVisitAssignment: jest.fn().mockResolvedValue({
         id: 123,
         school_id: 10010002,
@@ -256,6 +260,9 @@ describe('TaskLifecycleService', () => {
           {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
+            assigned_teacher_user_id: 7,
+            assigned_teacher_user_id: 7,
+            assigned_teacher_user_id: 7,
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -283,6 +290,8 @@ describe('TaskLifecycleService', () => {
         {
           task_type: 'VISIT',
           assigned_to_name: 'ครูผู้ติดตาม',
+          assigned_teacher_user_id: 7,
+          assigned_teacher_user_id: 7,
           existing_case_id: '123',
           student_id: studentUuid,
           student_name: 'นักเรียนทดสอบ',
@@ -311,6 +320,9 @@ describe('TaskLifecycleService', () => {
           {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
+            assigned_teacher_user_id: 7,
+            assigned_teacher_user_id: 7,
+            assigned_teacher_user_id: 7,
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -334,6 +346,7 @@ describe('TaskLifecycleService', () => {
       {
         task_type: 'VISIT',
         assigned_to_name: 'ครูผู้ติดตาม',
+        assigned_teacher_user_id: 7,
         student_id: studentUuid,
         student_name: 'นักเรียนทดสอบ',
         target_school_id: 10010002,

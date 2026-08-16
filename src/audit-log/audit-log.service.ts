@@ -221,6 +221,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'expiresAt', label: 'หมดอายุ' },
     ],
   },
+  TEACHER_ACCESS_GRANT_UPDATE: {
+    domain: 'tasks',
+    label: 'แก้ไขลิงก์เข้าใช้งานครู',
+    detailKeys: [
+      { key: 'startsAt', label: 'เริ่มต้น' },
+      { key: 'endsAt', label: 'สิ้นสุด' },
+    ],
+  },
   TEACHER_ACCESS_GRANT_REVOKE: {
     domain: 'tasks',
     label: 'ยกเลิกลิงก์เข้าใช้งานครู',
@@ -261,6 +269,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   TEACHER_ACCESS_ARAID_VERIFY: {
     domain: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ครูสำเร็จ',
+    detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
+  },
+  TASK_LINK_ARAID_VERIFY: {
+    domain: 'tasks',
+    label: 'ยืนยัน AraID ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
   TEACHER_ACCESS_ARAID_FAILED: {
@@ -485,6 +498,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ส่งต่อหน่วยงาน',
     detailKeys: [{ key: 'completionOutcome', label: 'ผลการดำเนินการ' }],
   },
+  CASE_ASSIST: {
+    domain: 'cases',
+    label: 'ให้ความช่วยเหลือ',
+    detailKeys: [{ key: 'targetWorkflowPhase', label: 'ขั้นตอนถัดไป' }],
+  },
   CASE_AUTO_CANCEL: {
     domain: 'cases',
     label: 'ยกเลิกเคสอัตโนมัติ',
@@ -535,7 +553,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   ATTENDANCE_SUBMIT: {
     domain: 'attendance',
-    label: 'บันทึกการเช็คชื่อ',
+    label: 'บันทึกการเช็กชื่อ',
     detailKeys: [
       { key: 'attendanceDate', label: 'วันที่' },
       { key: 'recordedCount', label: 'บันทึกแล้ว' },
@@ -545,7 +563,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   ATTENDANCE_REOPEN: {
     domain: 'attendance',
-    label: 'เปิดรอบเช็คชื่อเพื่อแก้ไข',
+    label: 'เปิดรอบเช็กชื่อเพื่อแก้ไข',
     detailKeys: [
       { key: 'attendanceDate', label: 'วันที่' },
       { key: 'revision', label: 'ครั้งที่แก้ไข' },

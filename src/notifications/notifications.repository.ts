@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
 import type {
+  CaseStatusNotificationContext,
   NotificationCounts,
   NotificationFanOutInput,
   NotificationListFilters,
@@ -165,6 +166,91 @@ export class NotificationsRepository {
     return result.rows.map((row) => Number(row.recipient_user_id));
   }
 
+  async findCaseStatusNotificationContext(
+    caseId: number,
+  ): Promise<CaseStatusNotificationContext | null> {
+    const result = await this.query<{
+      reason_flagged: string | null;
+      latest_teacher_comment: string | null;
+      latest_absent_date: string | null;
+      assigned_teacher_name: string | null;
+      result_summary: string | null;
+      review_note: string | null;
+      review_summary: string | null;
+      completion_outcome_label: string | null;
+    }>(
+      `
+        SELECT
+          NULLIF(BTRIM(c.reason_flagged), '') AS reason_flagged,
+          NULLIF(BTRIM(latest_comment.comment_text), '') AS latest_teacher_comment,
+          latest_absence.attendance_date::text AS latest_absent_date,
+          NULLIF(BTRIM(latest_assignment.assigned_to_name), '') AS assigned_teacher_name,
+          NULLIF(BTRIM(c.result_summary), '') AS result_summary,
+          NULLIF(BTRIM(latest_review.review_note), '') AS review_note,
+          NULLIF(BTRIM(latest_review.review_summary), '') AS review_summary,
+          NULLIF(BTRIM(completion_outcome.label_th), '') AS completion_outcome_label
+        FROM cases c
+        LEFT JOIN student_term student
+          ON student.student_uuid = c.student_uuid
+        LEFT JOIN LATERAL (
+          SELECT comment.comment_text
+          FROM classroom_student_comments comment
+          WHERE comment.classroom_id = student.classroom_id
+            AND comment.person_uuid = student.person_uuid
+          ORDER BY comment.created_at DESC, comment.id DESC
+          LIMIT 1
+        ) latest_comment ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT attendance."AttendanceDate"::date AS attendance_date
+          FROM attendance
+          WHERE attendance.student_uuid = c.student_uuid
+            AND attendance.session_kind = 'SUBJECT'
+          GROUP BY attendance."AttendanceDate"::date
+          HAVING COUNT(*) FILTER (WHERE attendance."AttendanceStatus" <> 4) > 0
+             AND COUNT(*) FILTER (WHERE attendance."AttendanceStatus" IN (1, 3)) = 0
+          ORDER BY attendance."AttendanceDate"::date DESC
+          LIMIT 1
+        ) latest_absence ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT link.assigned_to_name
+          FROM tasks task
+          JOIN task_links link
+            ON link.task_id = task.id
+           AND link.deleted_at IS NULL
+          WHERE task.case_id = c.id
+            AND task.deleted_at IS NULL
+          ORDER BY (link.status = 'ACTIVE') DESC, link.created_at DESC, link.id DESC
+          LIMIT 1
+        ) latest_assignment ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT review.review_note, review.review_summary
+          FROM case_reviews review
+          WHERE review.case_id = c.id
+          ORDER BY review.reviewed_at DESC, review.id DESC
+          LIMIT 1
+        ) latest_review ON TRUE
+        LEFT JOIN case_completion_outcomes completion_outcome
+          ON completion_outcome.code = c.completion_outcome_code
+        WHERE c.id = $1
+          AND c.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [caseId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      reasonFlagged: row.reason_flagged,
+      latestTeacherComment: row.latest_teacher_comment,
+      latestAbsentDate: row.latest_absent_date,
+      assignedTeacherName: row.assigned_teacher_name,
+      resultSummary: row.result_summary,
+      reviewNote: row.review_note,
+      reviewSummary: row.review_summary,
+      completionOutcomeLabel: row.completion_outcome_label,
+    };
+  }
+
   async listForRecipient(
     recipientUserId: number,
     filters: NotificationListFilters,
@@ -184,7 +270,10 @@ export class NotificationsRepository {
           n.student_person_uuid,
           n.case_id,
           n.case_status_code,
-          n.student_name_masked,
+          COALESCE(
+            NULLIF(BTRIM(notification_case.student_name), ''),
+            n.student_name_masked
+          ) AS student_name_masked,
           n.reason_text,
           n.ref_entity,
           n.ref_id,
@@ -194,6 +283,7 @@ export class NotificationsRepository {
           COUNT(*) OVER ()::int AS total_count
         FROM notifications n
         LEFT JOIN notification_types nt ON nt.code = n.type_code
+        LEFT JOIN cases notification_case ON notification_case.id = n.case_id
         WHERE n.recipient_user_id = $1
           AND (
             $2::text = 'all'

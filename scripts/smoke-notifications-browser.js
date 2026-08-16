@@ -219,6 +219,16 @@ async function seedNotifications(dataSource, userId) {
      FROM student_term enrollment
      INNER JOIN schools school ON school.id = enrollment."SchoolID_Onec"
      WHERE enrollment.person_uuid IS NOT NULL
+       -- Only a student with no active case can take one: uq_cases_active_student_uuid
+       -- allows a single active case per student, so picking the first enrollment
+       -- outright made this seed fail whenever another smoke had left one behind.
+       AND NOT EXISTS (
+         SELECT 1
+         FROM cases active_case
+         WHERE active_case.student_uuid = enrollment.student_uuid
+           AND active_case.deleted_at IS NULL
+           AND active_case.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+       )
      ORDER BY enrollment.student_uuid
      LIMIT 1`,
   );
@@ -338,8 +348,15 @@ async function main() {
       source: `
         (() => {
           const backendUrl = ${JSON.stringify(BACKEND_URL)};
-          const rewrite = (url) =>
-            typeof url === 'string' ? url.replace('http://127.0.0.1:3000', backendUrl) : url;
+          // Keyed on the path, not on a literal origin: the frontend's API base
+          // is baked in at build time, so matching one origin stops rewriting as
+          // soon as the frontend is served against a different backend.
+          const rewrite = (url) => {
+            if (typeof url !== 'string') return url;
+            const parsed = new URL(url, window.location.origin);
+            if (!parsed.pathname.startsWith('/api/')) return url;
+            return backendUrl + parsed.pathname + parsed.search;
+          };
           const originalOpen = XMLHttpRequest.prototype.open;
           XMLHttpRequest.prototype.open = function(method, url, ...rest) {
             return originalOpen.call(this, method, rewrite(url), ...rest);
@@ -391,9 +408,15 @@ async function main() {
       'Notification dialog did not render fixtures',
     );
     const dropdownText = String(await evaluate(client, 'document.body.innerText'));
+    // The API resolves the student's name from the case and only falls back to
+    // the stored `student_name_masked`, so the rendered body is "<name> · <reason>"
+    // with the recipient's own scoped view of the name — asserting the seeded
+    // literal would be asserting the fallback, which is not what recipients see.
     assert(
-      dropdownText.includes('ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน'),
-      'Structured student notification body did not render',
+      /\S · ขาดเรียนติดต่อกัน 3 วัน/.test(dropdownText),
+      `Structured student notification body did not render; dropdown=${JSON.stringify(
+        dropdownText.slice(0, 600),
+      )}`,
     );
     assert(!dropdownText.includes('BODY_MUST_NOT_RENDER'), 'Structured notification used body fallback');
     await waitFor(async () => {
@@ -427,7 +450,11 @@ async function main() {
     await waitFor(
       async () =>
         (await dataSource.query(
-          `SELECT read_at IS NOT NULL AS is_read FROM notifications WHERE case_id = $1`,
+          // All three fixtures share the case, so pin the assertion to the one
+          // that was actually opened — an unordered query returns whichever row
+          // Postgres feels like and makes this pass or fail at random.
+          `SELECT read_at IS NOT NULL AS is_read FROM notifications
+             WHERE case_id = $1 AND title = 'Browser smoke case'`,
           [caseId],
         ))[0]?.is_read === true,
       'Opening the case notification did not persist read state',
@@ -511,9 +538,11 @@ async function main() {
       'Mobile notification inbox did not render',
     );
     const mobileText = String(await evaluate(client, 'document.body.innerText'));
+    // Same composition as the dropdown: the API resolves the student's name from
+    // the case, so the seeded masked literal is only the fallback.
     assert(
-      mobileText.includes('ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน'),
-      'Mobile inbox did not render structured student fields',
+      /\S · ขาดเรียนติดต่อกัน 3 วัน/.test(mobileText),
+      `Mobile inbox did not render structured student fields: ${JSON.stringify(mobileText.slice(0, 300))}`,
     );
     assert(!mobileText.includes('BODY_MUST_NOT_RENDER'), 'Mobile inbox used body fallback');
     await capture(client, '/tmp/sts-notifications-mobile.png');

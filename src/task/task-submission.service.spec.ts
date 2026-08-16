@@ -42,6 +42,9 @@ describe('TaskSubmissionService', () => {
       | 'assertResolutionOutcome'
       | 'getHomeVisitException'
       | 'getHomeVisitAssessment'
+      | 'getParentalStatus'
+      | 'getGuardianType'
+      | 'getResidenceEnvironments'
     >
   >;
 
@@ -85,6 +88,9 @@ describe('TaskSubmissionService', () => {
         code: 'NO_CONCERN',
         label: 'ไม่พบปัญหาเพิ่มเติม',
       }),
+      getParentalStatus: jest.fn().mockResolvedValue(null),
+      getGuardianType: jest.fn().mockResolvedValue(null),
+      getResidenceEnvironments: jest.fn().mockResolvedValue([]),
     };
 
     service = new TaskSubmissionService(

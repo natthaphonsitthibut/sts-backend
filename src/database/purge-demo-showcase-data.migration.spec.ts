@@ -31,6 +31,8 @@ describe('demo showcase purge migration', () => {
     for (const reason of [
       'ข้อมูลสาธิตความเสี่ยงทุกโรงเรียน',
       'ข้อมูลสาธิตความเสี่ยงโรงเรียน showcase',
+      // Historical data value written by an older migration — it stays spelled
+      // the old way because the rows it matches were written that way.
       'ข้อมูลสาธิตการเช็คชื่อย้อนหลัง',
     ]) {
       expect(source).toContain(reason);

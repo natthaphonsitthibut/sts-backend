@@ -9,11 +9,19 @@ describe('CaseTrackingOptionsService', () => {
     listCaseResolutionOutcomes: jest.fn(),
     listHomeVisitExceptionOptions: jest.fn(),
     listHomeVisitAssessmentOptions: jest.fn(),
+    listParentalStatusOptions: jest.fn(),
+    listGuardianTypeOptions: jest.fn(),
+    listResidenceEnvironmentOptions: jest.fn(),
     findCaseReviewAction: jest.fn(),
     findCaseFollowUpDecision: jest.fn(),
     findCaseResolutionOutcome: jest.fn(),
     findHomeVisitExceptionOption: jest.fn(),
     findHomeVisitAssessmentOption: jest.fn(),
+    findParentalStatusOption: jest.fn(),
+    findGuardianTypeOption: jest.fn(),
+    findResidenceEnvironmentOptions: jest.fn(),
+    listAssistanceMeasures: jest.fn(),
+    findAssistanceMeasures: jest.fn(),
   };
   const service = new CaseTrackingOptionsService(repository as unknown as TaskRepository);
 
@@ -37,6 +45,16 @@ describe('CaseTrackingOptionsService', () => {
         requires_resolution_outcome: false,
         required_permission_code: 'close-case',
       },
+      {
+        code: 'ASSIST',
+        label_th: 'ให้ความช่วยเหลือ',
+        target_case_status_code: 'OPEN',
+        completion_outcome_code: null,
+        requires_resolution_outcome: false,
+        required_permission_code: 'review-cases',
+        available_phase_code: 'FOLLOW_UP',
+        target_workflow_phase_code: 'ASSISTANCE',
+      },
     ]);
     repository.listCaseFollowUpDecisions.mockResolvedValue([
       {
@@ -59,6 +77,24 @@ describe('CaseTrackingOptionsService', () => {
     repository.listHomeVisitAssessmentOptions.mockResolvedValue([
       { code: 'CONTINUE_FOLLOW_UP', label_th: 'ควรติดตามต่อ' },
     ]);
+    repository.listParentalStatusOptions.mockResolvedValue([
+      { code: 'LIVING_TOGETHER', label_th: 'อยู่ด้วยกัน' },
+    ]);
+    repository.listGuardianTypeOptions.mockResolvedValue([
+      { code: 'OTHER', label_th: 'อื่น ๆ (ระบุในช่อง)', requires_detail: true },
+    ]);
+    repository.listResidenceEnvironmentOptions.mockResolvedValue([
+      {
+        code: 'NORMAL',
+        label_th: 'ปกติ / ไม่มีปัจจัยเสี่ยง',
+        is_exclusive: true,
+        requires_detail: false,
+      },
+    ]);
+    repository.listAssistanceMeasures.mockResolvedValue([
+      { code: 'SCHOLARSHIP', label_th: 'ให้ทุนการศึกษา', requires_detail: false },
+      { code: 'OTHER', label_th: 'อื่น ๆ (ระบุในช่อง)', requires_detail: true },
+    ]);
 
     await expect(service.getOptions()).resolves.toEqual({
       reviewActions: [
@@ -69,6 +105,8 @@ describe('CaseTrackingOptionsService', () => {
           targetStatus: 'RESOLVED',
           requiresResolutionOutcome: false,
           requiredPermission: 'review-cases',
+          availablePhaseCode: null,
+          targetWorkflowPhaseCode: null,
         },
         {
           code: 'CLOSE',
@@ -77,6 +115,18 @@ describe('CaseTrackingOptionsService', () => {
           targetStatus: 'RESOLVED',
           requiresResolutionOutcome: false,
           requiredPermission: 'close-case',
+          availablePhaseCode: null,
+          targetWorkflowPhaseCode: null,
+        },
+        {
+          code: 'ASSIST',
+          completionOutcomeCode: null,
+          label: 'ให้ความช่วยเหลือ',
+          targetStatus: 'OPEN',
+          requiresResolutionOutcome: false,
+          requiredPermission: 'review-cases',
+          availablePhaseCode: 'FOLLOW_UP',
+          targetWorkflowPhaseCode: 'ASSISTANCE',
         },
       ],
       followUpDecisions: [
@@ -86,6 +136,8 @@ describe('CaseTrackingOptionsService', () => {
           label: 'ส่งให้ตรวจผล',
           targetStatus: 'PENDING_REVIEW',
           requiresResolutionOutcome: false,
+          availablePhaseCode: null,
+          targetWorkflowPhaseCode: null,
         },
       ],
       resolutionOutcomes: [{ code: 'RETURNED_TO_SCHOOL', label: 'กลับมาเรียนแล้ว' }],
@@ -97,7 +149,83 @@ describe('CaseTrackingOptionsService', () => {
         },
       ],
       homeVisitAssessments: [{ code: 'CONTINUE_FOLLOW_UP', label: 'ควรติดตามต่อ' }],
+      parentalStatuses: [{ code: 'LIVING_TOGETHER', label: 'อยู่ด้วยกัน' }],
+      guardianTypes: [{ code: 'OTHER', label: 'อื่น ๆ (ระบุในช่อง)', requiresDetail: true }],
+      residenceEnvironments: [
+        {
+          code: 'NORMAL',
+          label: 'ปกติ / ไม่มีปัจจัยเสี่ยง',
+          isExclusive: true,
+          requiresDetail: false,
+        },
+      ],
+      assistanceMeasures: [
+        { code: 'SCHOLARSHIP', label: 'ให้ทุนการศึกษา', requiresDetail: false },
+        { code: 'OTHER', label: 'อื่น ๆ (ระบุในช่อง)', requiresDetail: true },
+      ],
     });
+  });
+
+  it('rejects an assistance assignment whose OTHER measure has no detail', async () => {
+    repository.findAssistanceMeasures.mockResolvedValue([
+      { code: 'OTHER', label_th: 'อื่น ๆ (ระบุในช่อง)', requires_detail: true },
+    ]);
+
+    await expect(service.getAssistanceMeasures(['OTHER'], null)).rejects.toThrow(
+      'กรุณาระบุรายละเอียดมาตรการการช่วยเหลือ',
+    );
+  });
+
+  it('rejects an assistance assignment with no measure picked', async () => {
+    await expect(service.getAssistanceMeasures([], null)).rejects.toThrow(
+      'กรุณาเลือกมาตรการการช่วยเหลืออย่างน้อยหนึ่งอย่าง',
+    );
+  });
+
+  it('rejects an exclusive residence environment mixed with risk factors', async () => {
+    repository.findResidenceEnvironmentOptions.mockResolvedValue([
+      {
+        code: 'NORMAL',
+        label_th: 'ปกติ / ไม่มีปัจจัยเสี่ยง',
+        is_exclusive: true,
+        requires_detail: false,
+      },
+      {
+        code: 'AREA_CRIME',
+        label_th: 'มีปัญหาอาชญากรรมในพื้นที่',
+        is_exclusive: false,
+        requires_detail: false,
+      },
+    ]);
+
+    await expect(
+      service.getResidenceEnvironments(['NORMAL', 'AREA_CRIME'], null),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('requires the free-text description when an option is flagged for it', async () => {
+    repository.findResidenceEnvironmentOptions.mockResolvedValue([
+      {
+        code: 'OTHER',
+        label_th: 'อื่น ๆ (ระบุในรายละเอียด)',
+        is_exclusive: false,
+        requires_detail: true,
+      },
+    ]);
+
+    await expect(service.getResidenceEnvironments(['OTHER'], null)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(
+      service.getResidenceEnvironments(['OTHER'], 'ติดถนนใหญ่ รถวิ่งเร็ว'),
+    ).resolves.toEqual([
+      {
+        code: 'OTHER',
+        label: 'อื่น ๆ (ระบุในรายละเอียด)',
+        isExclusive: false,
+        requiresDetail: true,
+      },
+    ]);
   });
 
   it('rejects values that are not present in the active catalogs', async () => {

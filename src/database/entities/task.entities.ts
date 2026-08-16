@@ -179,6 +179,18 @@ export class TaskSubmissionEntity {
   @Column({ name: 'follow_up_assessment_code', type: 'varchar', length: 40, nullable: true })
   followUpAssessmentCode!: string | null;
 
+  @Column({ name: 'parental_status_code', type: 'varchar', length: 40, nullable: true })
+  parentalStatusCode!: string | null;
+
+  @Column({ name: 'guardian_type_code', type: 'varchar', length: 40, nullable: true })
+  guardianTypeCode!: string | null;
+
+  @Column({ name: 'guardian_type_detail', type: 'varchar', length: 200, nullable: true })
+  guardianTypeDetail!: string | null;
+
+  @Column({ name: 'residence_environment_detail', type: 'text', nullable: true })
+  residenceEnvironmentDetail!: string | null;
+
   @Column({ name: 'cause_detail', type: 'text', nullable: true })
   causeDetail!: string | null;
 

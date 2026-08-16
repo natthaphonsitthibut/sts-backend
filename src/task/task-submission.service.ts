@@ -75,7 +75,7 @@ export class TaskSubmissionService {
    */
   private validateUsableLink(
     task: Awaited<ReturnType<TaskAccessService['getTaskByToken']>>,
-    expectedType: 'VISIT',
+    expectedTypes: ReadonlyArray<'VISIT' | 'ASSIST'>,
   ): Record<string, unknown> {
     if (!task) {
       throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
@@ -101,7 +101,7 @@ export class TaskSubmissionService {
       throw new BadRequestException(message);
     }
 
-    if (link.task_type !== expectedType) {
+    if (typeof link.task_type !== 'string' || !expectedTypes.includes(link.task_type as never)) {
       throw new ForbiddenException('ลิงก์นี้ไม่รองรับการบันทึกประเภทนี้');
     }
 
@@ -117,7 +117,7 @@ export class TaskSubmissionService {
     sessionToken?: string,
   ): Promise<Record<string, unknown>> {
     const task = await this.taskAccessService.getTaskByToken(token, sessionToken);
-    return this.validateUsableLink(task, 'VISIT');
+    return this.validateUsableLink(task, ['VISIT', 'ASSIST']);
   }
 
   private toScalarString(value: unknown): string | null {
@@ -226,9 +226,34 @@ export class TaskSubmissionService {
       const followUpAssessment = await this.caseTrackingOptions.getHomeVisitAssessment(
         this.toScalarString(data.follow_up_assessment_code)?.toUpperCase() ?? null,
       );
+      // An assistance round reports what help was given, not a home visit, so
+      // the household/visit questions do not apply to it.
+      const isAssistance = link.task_type === 'ASSIST';
       if (link.task_type === 'VISIT' && !followUpAssessment) {
         throw new BadRequestException('กรุณาเลือกผลประเมินหลังลงพื้นที่');
       }
+      const assistedAt = isAssistance ? (this.toScalarString(data.assisted_at) ?? null) : null;
+      const assistanceDetail = isAssistance
+        ? (this.toScalarString(data.assistance_detail) ?? null)
+        : null;
+      if (isAssistance && !assistedAt) {
+        throw new BadRequestException('กรุณาระบุวันที่และเวลาที่ให้ความช่วยเหลือ');
+      }
+      const parentalStatus = await this.caseTrackingOptions.getParentalStatus(
+        this.toScalarString(data.parental_status_code)?.toUpperCase() ?? null,
+      );
+      const guardianType = await this.caseTrackingOptions.getGuardianType(
+        this.toScalarString(data.guardian_type_code)?.toUpperCase() ?? null,
+      );
+      const guardianTypeDetail = this.toScalarString(data.guardian_type_detail);
+      if (guardianType?.requiresDetail && !guardianTypeDetail) {
+        throw new BadRequestException('กรุณาระบุผู้ปกครอง');
+      }
+      const residenceEnvironmentDetail = this.toScalarString(data.residence_environment_detail);
+      const residenceEnvironments = await this.caseTrackingOptions.getResidenceEnvironments(
+        (data.residence_environment_codes ?? []).map((code) => code.trim().toUpperCase()),
+        residenceEnvironmentDetail,
+      );
       const causeDetail = this.toScalarString(data.notes ?? data.cause_detail);
       if (homeVisitException?.code === 'STUDENT_NOT_FOUND' && !causeDetail) {
         throw new BadRequestException('กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน');
@@ -286,6 +311,13 @@ export class TaskSubmissionService {
             visitedAt,
             causeCategory: data.cause_category ?? null,
             followUpAssessmentCode: followUpAssessment?.code ?? null,
+            parentalStatusCode: parentalStatus?.code ?? null,
+            guardianTypeCode: guardianType?.code ?? null,
+            // A detail without a guardian type has nothing to qualify, and the
+            // DB CHECK rejects it — drop it instead of failing the submission.
+            guardianTypeDetail: guardianType ? guardianTypeDetail : null,
+            residenceEnvironmentCodes: residenceEnvironments.map((option) => option.code),
+            residenceEnvironmentDetail,
             causeDetail,
             recommendation: data.recommendation ?? null,
             photoPaths: data.photo_paths ?? null,
@@ -303,11 +335,17 @@ export class TaskSubmissionService {
             caseFollowUpDecision: studentNotFound ? null : (decision?.code ?? null),
             caseResolutionOutcomeCode:
               !studentNotFound && decision?.requiresResolutionOutcome ? resolutionOutcome : null,
+            assistedAt,
+            assistanceDetail,
           },
           executor,
         );
 
-        if (link.task_type === 'VISIT' && caseId !== null && targetCaseStatus) {
+        if (
+          (link.task_type === 'VISIT' || link.task_type === 'ASSIST') &&
+          caseId !== null &&
+          targetCaseStatus
+        ) {
           const nextSummary = causeDetail || homeVisitException?.label || 'บันทึกผลการลงพื้นที่';
           // When the visitor flags the home location as wrong, persist the
           // corrected coordinates to the case independently of the address TEXT —

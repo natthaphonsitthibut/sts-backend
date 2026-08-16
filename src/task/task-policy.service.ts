@@ -278,11 +278,11 @@ export class TaskPolicyService {
       throw new BadRequestException('ยกเลิกการสร้างลิงก์เข้าสู่ระบบแล้ว');
     }
 
-    // VISIT is the only creatable type left: per-classroom attendance links were
-    // retired in favour of per-teacher links (teacher_access_grants). Reject
-    // anything else here so the API answers 400 instead of tripping the
-    // chk_tasks_task_type constraint with a 500.
-    if (taskType !== 'VISIT') {
+    // VISIT (follow-up) and ASSIST (assistance round) are the only creatable
+    // types left: per-classroom attendance links were retired in favour of
+    // per-teacher links (teacher_access_grants). Reject anything else here so
+    // the API answers 400 instead of tripping the task_types FK with a 500.
+    if (taskType !== 'VISIT' && taskType !== 'ASSIST') {
       throw new BadRequestException('ประเภทลิงก์นี้ถูกยกเลิกแล้ว');
     }
 

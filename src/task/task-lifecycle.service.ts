@@ -9,6 +9,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { resolveAssigneeName } from './task-assignee-name';
@@ -24,6 +25,7 @@ export class TaskLifecycleService {
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
     private readonly tokenEncryption: TokenEncryptionService,
+    private readonly caseTrackingOptions: CaseTrackingOptionsService,
     private readonly notificationsService?: NotificationsService,
     private readonly riskProfileService?: RiskProfileService,
   ) {}
@@ -219,6 +221,16 @@ export class TaskLifecycleService {
     let assignedEmail = clean(data.assigned_to_email);
     const selectedTeacherUserId = this.normalizeNumber(data.assigned_teacher_user_id);
 
+    // A round for a student the system knows goes to a teacher in that student's
+    // school — there is no guest assignee any more, and recording the real user
+    // is what AraID verification depends on. A manual visit that opens a case
+    // for a student with no record yet has no roster to pick from, so it keeps
+    // the free-text assignee and stays on email OTP.
+    const requiresTeacherAssignee =
+      taskType === 'ASSIST' || (taskType === 'VISIT' && Boolean(clean(data.student_id)));
+    if (requiresTeacherAssignee && selectedTeacherUserId === null) {
+      throw new BadRequestException('กรุณาเลือกครูผู้รับมอบหมาย');
+    }
     if (!assignedName && selectedTeacherUserId === null) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
@@ -229,7 +241,7 @@ export class TaskLifecycleService {
     ) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
-    if (selectedTeacherUserId !== null && taskType !== 'VISIT') {
+    if (selectedTeacherUserId !== null && taskType !== 'VISIT' && taskType !== 'ASSIST') {
       throw new BadRequestException('เลือกครูผู้รับมอบหมายได้เฉพาะลิงก์ติดตามนักเรียน');
     }
     if (selectedTeacherUserId !== null && !clean(data.student_id)) {
@@ -239,6 +251,19 @@ export class TaskLifecycleService {
       throw new Error('assigned_to_email is required for LOGIN');
     }
     this.taskPolicyService.assertCanCreateTask(currentActor, taskType);
+
+    // Measures are picked when the assistance round is assigned, not when it is
+    // reported, so the report form can show them read-only.
+    const assistanceMeasureDetail = clean(data.assistance_measure_detail) || null;
+    const assistanceMeasures =
+      taskType === 'ASSIST'
+        ? await this.caseTrackingOptions.getAssistanceMeasures(
+            Array.isArray(data.assistance_measure_codes)
+              ? data.assistance_measure_codes.map((code) => String(code).trim())
+              : [],
+            assistanceMeasureDetail,
+          )
+        : [];
 
     const roleMap = taskType === 'LOGIN' ? await this.taskPolicyService.getRoleMap() : undefined;
     const loginRole = taskType === 'LOGIN' ? this.taskPolicyService.normalizeRole(data) : null;
@@ -316,7 +341,7 @@ export class TaskLifecycleService {
           resolvedTargetSchoolId = this.getSingleActorSchoolId(currentActor);
         }
 
-        if (taskType === 'VISIT') {
+        if (taskType === 'VISIT' || taskType === 'ASSIST') {
           if (selectedTeacherUserId !== null) {
             const studentUuid = clean(data.student_id);
             const teacher = (
@@ -351,6 +376,18 @@ export class TaskLifecycleService {
             const existingStatus = clean(existingCase.status)?.toUpperCase();
             if (!['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND'].includes(existingStatus || '')) {
               throw new BadRequestException('สถานะเคสนี้ไม่อนุญาตให้มอบหมายการติดตาม');
+            }
+            // A follow-up round and an assistance round are different work; the
+            // case phase decides which one may be assigned right now.
+            const existingPhase =
+              clean(existingCase.workflow_phase_code)?.toUpperCase() || 'FOLLOW_UP';
+            const requiredPhase = taskType === 'ASSIST' ? 'ASSISTANCE' : 'FOLLOW_UP';
+            if (existingPhase !== requiredPhase) {
+              throw new BadRequestException(
+                taskType === 'ASSIST'
+                  ? 'เคสนี้ยังไม่อยู่ในขั้นตอนให้ความช่วยเหลือ'
+                  : 'เคสนี้อยู่ในขั้นตอนให้ความช่วยเหลือ ไม่สามารถมอบหมายการติดตามได้',
+              );
             }
             if (existingCase.has_live_assignment === true) {
               throw new BadRequestException('เคสนี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว');
@@ -471,6 +508,10 @@ export class TaskLifecycleService {
             targetRoom: auditTargetRoom,
             targetSchoolId: resolvedTargetSchoolId,
             createdBy: resolveAuditActorId(currentActor),
+            assistanceMeasureCodes: assistanceMeasures.map((measure) => measure.code),
+            assistanceMeasureDetail: assistanceMeasures.some((measure) => measure.requiresDetail)
+              ? assistanceMeasureDetail
+              : null,
           },
           executor,
         );
@@ -488,6 +529,7 @@ export class TaskLifecycleService {
             assignedToLastName: assigneeName.lastName,
             assignedToPhone: clean(data.assigned_to_phone),
             assignedToEmail: assignedEmail,
+            assignedTeacherUserId: selectedTeacherUserId,
             expiresAt,
             opensAt,
             subject: clean(data.subject),

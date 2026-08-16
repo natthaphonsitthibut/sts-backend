@@ -66,6 +66,21 @@ export class CreateTaskDto {
   @Min(1)
   assigned_teacher_user_id?: number | null;
 
+  /**
+   * Assistance rounds only: which measures this assignment commits to. Picked
+   * here so the report form can render them read-only.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  assistance_measure_codes?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  assistance_measure_detail?: string | null;
+
   @IsOptional()
   expires_value?: string | number | null;
 
@@ -203,6 +218,42 @@ export class SaveTaskSubmissionDto {
   @IsString()
   @MaxLength(40)
   follow_up_assessment_code?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  parental_status_code?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  guardian_type_code?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  guardian_type_detail?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  residence_environment_codes?: string[] | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  residence_environment_detail?: string | null;
+
+  /** Assistance rounds only: when the help was actually given. */
+  @IsOptional()
+  @IsDateString()
+  assisted_at?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  assistance_detail?: string | null;
 
   @IsOptional()
   cause_detail?: string | null;

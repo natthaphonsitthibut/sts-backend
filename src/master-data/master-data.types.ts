@@ -1,6 +1,6 @@
 export const MASTER_DATA_TABLES = [
   'risk_factors',
-  'assistance_measures',
+  'assistance_measure_options',
   'educational_areas',
   'school_affiliations',
   'disability_types',

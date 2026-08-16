@@ -22,6 +22,22 @@ export interface NotificationCounts {
   unseenCount: number;
 }
 
+/**
+ * The small, presentation-safe snapshot needed to describe a case transition
+ * in a recipient's inbox. It is resolved once at fan-out time so historical
+ * notifications keep the context that was true when they were created.
+ */
+export interface CaseStatusNotificationContext {
+  reasonFlagged: string | null;
+  latestTeacherComment: string | null;
+  latestAbsentDate: string | null;
+  assignedTeacherName: string | null;
+  resultSummary: string | null;
+  reviewNote: string | null;
+  reviewSummary: string | null;
+  completionOutcomeLabel: string | null;
+}
+
 export const NOTIFICATION_READ_STATUSES = ['all', 'unread', 'read'] as const;
 export type NotificationReadStatus = (typeof NOTIFICATION_READ_STATUSES)[number];
 

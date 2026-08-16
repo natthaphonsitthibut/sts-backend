@@ -127,6 +127,33 @@ export class TaskService {
     return await this.taskAccessService.verifyOtp(token, otp);
   }
 
+  async createAraIdChallenge(token: string, baseUrl: string) {
+    return await this.taskAccessService.createAraIdChallenge(token, baseUrl);
+  }
+
+  async beginTaskAraIdChallenge(challengeToken: string, existingAuthorizationToken?: string) {
+    return await this.taskAccessService.beginTaskAraIdChallenge(
+      challengeToken,
+      existingAuthorizationToken,
+    );
+  }
+
+  async approveTaskAraIdChallenge(
+    authorizationToken: string,
+    araIdProfileId: string,
+    authenticatedAt: number,
+  ) {
+    return await this.taskAccessService.approveTaskAraIdChallenge(
+      authorizationToken,
+      araIdProfileId,
+      authenticatedAt,
+    );
+  }
+
+  async pollTaskAraIdChallenge(challengeToken: string) {
+    return await this.taskAccessService.pollTaskAraIdChallenge(challengeToken);
+  }
+
   async adminLockLink(
     actor: ActorContext | undefined,
     linkId: string,

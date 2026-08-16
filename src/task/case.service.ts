@@ -97,6 +97,7 @@ export class CaseService {
       status_label: this.normalizeText(row.status_label) || null,
       completion_outcome_code: this.normalizeText(row.completion_outcome_code) || null,
       completion_outcome_label: this.normalizeText(row.completion_outcome_label) || null,
+      workflow_phase_code: this.normalizeText(row.workflow_phase_code) || null,
       display_status_label:
         this.normalizeText(row.display_status_label) ||
         this.normalizeText(row.status_label) ||
@@ -111,6 +112,22 @@ export class CaseService {
     };
   }
 
+  /**
+   * The multi-choice answers on a round (residence environments, assistance
+   * measures) arrive as `json_agg` arrays — already ordered and labelled, so the
+   * response only has to drop anything malformed.
+   */
+  private mapCodeLabelList(value: unknown): Array<{ code: string; label: string }> {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry) => {
+      if (typeof entry !== 'object' || entry === null) return [];
+      const record = entry as Record<string, unknown>;
+      const code = this.normalizeText(record.code);
+      const label = this.normalizeText(record.label);
+      return code ? [{ code, label: label || code }] : [];
+    });
+  }
+
   private mapFollowUpRound(row: Record<string, unknown>) {
     const photoPaths = Array.isArray(row.photo_paths)
       ? JSON.stringify(row.photo_paths.filter((path): path is string => typeof path === 'string'))
@@ -118,6 +135,11 @@ export class CaseService {
     return {
       task_id: this.normalizeText(row.task_id),
       task_status: this.normalizeText(row.task_status),
+      task_type: this.normalizeText(row.task_type) || null,
+      assistance_measures: this.mapCodeLabelList(row.assistance_measures),
+      assistance_measure_detail: this.normalizeText(row.assistance_measure_detail) || null,
+      assisted_at: row.assisted_at ?? null,
+      assistance_detail: this.normalizeText(row.assistance_detail) || null,
       created_at: row.created_at ?? null,
       initial_assignee: this.normalizeText(row.initial_assignee) || null,
       assignment_starts_at: row.assignment_starts_at ?? null,
@@ -129,6 +151,13 @@ export class CaseService {
       cause_category: this.normalizeText(row.cause_category) || null,
       follow_up_assessment_code: this.normalizeText(row.follow_up_assessment_code) || null,
       follow_up_assessment_label: this.normalizeText(row.follow_up_assessment_label) || null,
+      parental_status_code: this.normalizeText(row.parental_status_code) || null,
+      parental_status_label: this.normalizeText(row.parental_status_label) || null,
+      guardian_type_code: this.normalizeText(row.guardian_type_code) || null,
+      guardian_type_label: this.normalizeText(row.guardian_type_label) || null,
+      guardian_type_detail: this.normalizeText(row.guardian_type_detail) || null,
+      residence_environments: this.mapCodeLabelList(row.residence_environments),
+      residence_environment_detail: this.normalizeText(row.residence_environment_detail) || null,
       cause_detail: this.normalizeText(row.cause_detail) || null,
       recommendation: this.normalizeText(row.recommendation) || null,
       visit_lat: row.visit_lat ?? null,
@@ -342,6 +371,13 @@ export class CaseService {
       if (!caseRecord) {
         throw new Error('Case not found');
       }
+      // An action pinned to a phase (ASSIST → FOLLOW_UP) must not be reachable
+      // from another phase, otherwise an assistance case could be sent into a
+      // second assistance round from the API even though the UI hides the button.
+      const currentPhase = this.normalizeText(caseRecord.workflow_phase_code) || 'FOLLOW_UP';
+      if (reviewAction.availablePhaseCode && reviewAction.availablePhaseCode !== currentPhase) {
+        throw new BadRequestException('การดำเนินการนี้ใช้กับขั้นตอนปัจจุบันของเคสไม่ได้');
+      }
       await this.taskRepository.withTransaction(async (executor) => {
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
@@ -349,6 +385,7 @@ export class CaseService {
           reviewAction.completionOutcomeCode,
           executor,
           currentActor,
+          reviewAction.targetWorkflowPhaseCode,
         );
         if (!transitioned) {
           throw new BadRequestException('เคสนี้ไม่ได้อยู่ในสถานะรอตรวจผลแล้ว');
@@ -377,12 +414,15 @@ export class CaseService {
             ? 'CASE_CLOSE'
             : reviewAction.code === 'REFER_AGENCY'
               ? 'CASE_REFER_AGENCY'
-              : 'CASE_REVIEW',
+              : reviewAction.code === 'ASSIST'
+                ? 'CASE_ASSIST'
+                : 'CASE_REVIEW',
         targetType: 'case',
         targetId: String(caseId),
         metadata: {
           reviewAction: reviewAction.code,
           completionOutcome: reviewAction.completionOutcomeCode,
+          targetWorkflowPhase: reviewAction.targetWorkflowPhaseCode,
           resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
         },
         ip: null,

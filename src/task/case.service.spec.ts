@@ -105,6 +105,8 @@ describe('CaseService', () => {
               requiresResolutionOutcome: false,
               completionOutcomeCode: 'REFERRED_AGENCY',
               requiredPermission: 'review-cases',
+              availablePhaseCode: null,
+              targetWorkflowPhaseCode: null,
             });
           }
           if (code === 'CLOSE') {
@@ -115,6 +117,20 @@ describe('CaseService', () => {
               requiresResolutionOutcome: false,
               completionOutcomeCode: 'CLOSED',
               requiredPermission: 'close-case',
+              availablePhaseCode: null,
+              targetWorkflowPhaseCode: null,
+            });
+          }
+          if (code === 'ASSIST') {
+            return Promise.resolve({
+              code,
+              label: 'ให้ความช่วยเหลือ',
+              targetStatus: 'OPEN',
+              requiresResolutionOutcome: false,
+              completionOutcomeCode: null,
+              requiredPermission: 'review-cases',
+              availablePhaseCode: 'FOLLOW_UP',
+              targetWorkflowPhaseCode: 'ASSISTANCE',
             });
           }
           throw new Error('การดำเนินการกับเคสไม่ถูกต้อง');
@@ -363,6 +379,7 @@ describe('CaseService', () => {
       'CLOSED',
       undefined,
       expect.objectContaining({ id: 1 }),
+      null,
     );
     expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -382,7 +399,44 @@ describe('CaseService', () => {
       reviewAction: 'CLOSE',
       completionOutcome: 'CLOSED',
       resolutionOutcome: null,
+      targetWorkflowPhase: null,
     });
+  });
+
+  it('sends a follow-up case into the assistance phase on ASSIST', async () => {
+    const result = await service.reviewCase(
+      10,
+      { review_action: 'ASSIST', review_note: 'ควรให้ทุนการศึกษา' },
+      buildActor(['review-cases']),
+    );
+
+    expect(result.case_status).toBe('OPEN');
+    expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
+      10,
+      'OPEN',
+      null,
+      undefined,
+      expect.objectContaining({ id: 1 }),
+      'ASSISTANCE',
+    );
+  });
+
+  it('refuses ASSIST on a case already in the assistance phase', async () => {
+    taskRepository.findCaseById.mockResolvedValueOnce({
+      id: 10,
+      student_name: 'นักเรียน ทดสอบ',
+      school_id: 10010002,
+      workflow_phase_code: 'ASSISTANCE',
+    });
+
+    await expect(
+      service.reviewCase(
+        10,
+        { review_action: 'ASSIST', review_note: 'ช่วยเหลือรอบสอง' },
+        buildActor(['review-cases']),
+      ),
+    ).rejects.toThrow('การดำเนินการนี้ใช้กับขั้นตอนปัจจุบันของเคสไม่ได้');
+    expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
   });
 
   it('rejects CLOSE without close-case permission before mutating', async () => {

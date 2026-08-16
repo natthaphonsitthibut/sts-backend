@@ -16,6 +16,7 @@ describe('TaskRepository', () => {
         assignedToLastName: null,
         assignedToPhone: null,
         assignedToEmail: 'teacher@example.test',
+        assignedTeacherUserId: 42,
         expiresAt: '2026-08-14T10:00:00.000Z',
         opensAt: '2026-08-13T10:00:00.000Z',
         subject: null,
@@ -32,10 +33,11 @@ describe('TaskRepository', () => {
 
     const [sql, params] = executor.query.mock.calls[0] as [string, unknown[]];
     expect(sql).toMatch(
-      /otp_verified,[\s\S]*created_by,[\s\S]*updated_by[\s\S]*\$14,[\s\S]*\$15,[\s\S]*\$15/,
+      /otp_verified,[\s\S]*created_by,[\s\S]*updated_by[\s\S]*\$15,[\s\S]*\$16,[\s\S]*\$16/,
     );
-    expect(params[13]).toBe(0);
-    expect(params[14]).toBe(460);
+    expect(params[9]).toBe(42);
+    expect(params[14]).toBe(0);
+    expect(params[15]).toBe(460);
   });
 
   it('checks visit attachments against the authenticated case scope', async () => {
@@ -226,10 +228,50 @@ describe('TaskRepository', () => {
     await repository.listCasesWithActiveLinks(undefined, { page: 1, limit: 20 });
 
     const listQuery = queries[1].sql;
-    expect(listQuery).toContain('latest_link.assigned_to_name AS latest_link_assigned_to');
+    expect(listQuery).toContain("WHEN c.status <> 'RESOLVED' THEN COALESCE(");
+    expect(listQuery).toContain('active_assignee_teacher.first_name');
+    expect(listQuery).toContain('latest_assignee_teacher.first_name');
+    expect(listQuery).toContain('ELSE latest_link.assigned_to_name');
     expect(listQuery).toContain('LEFT JOIN LATERAL (\n        SELECT latest_assignee_link.*');
     expect(listQuery).toContain('latest_assignee_link.deleted_at IS NULL');
     expect(listQuery).not.toContain("latest_assignee_link.status = 'ACTIVE'");
+  });
+
+  it('uses current teacher names only for live assignments and keeps history snapshots', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.findTaskLinkByTokenHash('token-hash');
+    await repository.listTasksByCase(41);
+    await repository.listPublicCaseFollowUpHistory(41);
+
+    const activeLinkQuery = queries[0].sql;
+    expect(activeLinkQuery).toContain('current_assignee_teacher.first_name');
+    expect(activeLinkQuery).toContain('current_assignee_user.username');
+    expect(activeLinkQuery).toContain('AS current_assignee_name');
+
+    const roundsQuery = queries[1].sql;
+    expect(roundsQuery).toContain("WHEN tl.status = 'ACTIVE' THEN COALESCE(");
+    expect(roundsQuery).toContain('current_assignee_teacher.first_name');
+    expect(roundsQuery).toContain('current_assignee_user.username');
+    expect(roundsQuery).toContain('ELSE tl.assigned_to_name');
+
+    const historyQuery = queries[2].sql;
+    expect(historyQuery).toContain('link.assigned_to_name');
+    expect(historyQuery).not.toContain('current_assignee_teacher');
+    expect(historyQuery).not.toContain('current_assignee_user');
   });
 
   it('returns a scoped student photo URL without exposing its storage key', async () => {

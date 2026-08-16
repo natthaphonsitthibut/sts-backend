@@ -624,6 +624,103 @@ async function selectCombobox(client, selector, label) {
   );
 }
 
+async function toggleMultiSelectOption(client, selector, label) {
+  const listboxSelector = `${selector}-listbox`;
+  await click(client, `document.querySelector(${JSON.stringify(selector)})`, `Multi select was not found: ${selector}`);
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const label = ${JSON.stringify(label)};
+            return [...document.querySelectorAll(${JSON.stringify(`${listboxSelector} li button`)})].some(
+              (button) => button.textContent.trim() === label
+            );
+          })()`,
+        ),
+      ),
+    `Multi select option did not render: ${label}`,
+  );
+  await click(
+    client,
+    `(() => {
+      const label = ${JSON.stringify(label)};
+      return [...document.querySelectorAll(${JSON.stringify(`${listboxSelector} li button`)})].find(
+        (button) => button.textContent.trim() === label
+      );
+    })()`,
+    `Multi select option was not found: ${label}`,
+  );
+}
+
+/**
+ * Fonts inside controls that only exist while open — the calendar, the hour and
+ * minute pickers, the assessment list and the chip dropdown. These are exactly
+ * the places a component could ship its own stack unnoticed, so each one is
+ * opened, scanned and closed again.
+ */
+async function assertOpenControlFonts(client) {
+  const controls = [
+    ['button[aria-label="วันที่ลงพื้นที่"]', '[role="dialog"][aria-label="เลือกวันที่"]', 'ปฏิทิน'],
+    ['button[aria-label="เวลาที่ลงพื้นที่"]', '[role="dialog"][aria-label="เลือกเวลา"]', 'ตัวเลือกเวลา'],
+    ['#follow-up-assessment', '#follow-up-assessment ~ ul, #follow-up-assessment-listbox', 'ผลการติดตาม'],
+    ['#residence-environment', '#residence-environment-listbox', 'สภาพแวดล้อม'],
+  ];
+
+  for (const [trigger, scope, label] of controls) {
+    // The first click can be swallowed by whatever popover is still open, so the
+    // trigger is pressed again when nothing appeared.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await click(client, `document.querySelector(${JSON.stringify(trigger)})`, `${label} trigger was not found`);
+      const opened = await evaluate(
+        client,
+        `Boolean(document.querySelector(${JSON.stringify(scope)}))`,
+      );
+      if (opened) break;
+    }
+    await waitFor(
+      async () => Boolean(await evaluate(client, `Boolean(document.querySelector(${JSON.stringify(scope)}))`)),
+      `${label} did not open for the font sweep`,
+    );
+    const offenders = await evaluate(
+      client,
+      `(() => {
+        const root = document.querySelector(${JSON.stringify(scope)});
+        if (!root) return ['missing'];
+        const found = new Set();
+        [root, ...root.querySelectorAll('*')].forEach((node) => {
+          const family = getComputedStyle(node).fontFamily || '';
+          if (!family.includes('TH Sarabun PSK')) {
+            found.add(node.tagName.toLowerCase() + ' :: ' + family);
+          }
+        });
+        return [...found].slice(0, 5);
+      })()`,
+    );
+    assert(
+      Array.isArray(offenders) && offenders.length === 0,
+      `${label} renders in another font: ${(offenders || []).join(' | ')}`,
+    );
+    await evaluate(
+      client,
+      `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+    );
+    await evaluate(client, `document.querySelector('h1')?.click()`);
+  }
+}
+
+function multiSelectChipsExpression(selector) {
+  return `(() => {
+    const input = document.querySelector(${JSON.stringify(selector)});
+    if (!input) return '';
+    return [...input.parentElement.querySelectorAll('span')]
+      .map((chip) => chip.firstChild?.textContent?.trim() || '')
+      .filter(Boolean)
+      .join('|');
+  })()`;
+}
+
 async function selectHomeVisitException(client, label) {
   await click(
     client,
@@ -821,6 +918,24 @@ async function verifyGuestOtp(client, createdLink, guestLink) {
   const smtpCapture = await startSmtpCapture();
   try {
     await navigate(client, guestLink, 'guest OTP gate');
+    // The gate now offers AraID or email; this smoke covers the email path.
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean([...document.querySelectorAll('button')]
+              .find((button) => button.textContent.trim().startsWith('อีเมล')))`,
+          ),
+        ),
+      'Guest task did not render the identity method choice',
+    );
+    await click(
+      client,
+      `(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim().startsWith('อีเมล')))()`,
+      'Email verification choice was not found',
+    );
     await waitFor(
       async () =>
         Boolean(
@@ -893,6 +1008,15 @@ async function assertSubmittedReport(dataSource, createdLink) {
         submission.home_visit_exception_code,
         submission.cause_category,
         submission.follow_up_assessment_code,
+        submission.parental_status_code,
+        submission.guardian_type_code,
+        submission.guardian_type_detail,
+        submission.residence_environment_detail,
+        (
+          SELECT string_agg(env.residence_environment_code, ',' ORDER BY env.residence_environment_code)
+          FROM task_submission_residence_environments env
+          WHERE env.task_submission_id = submission.id
+        ) AS residence_environment_codes,
         submission.cause_detail,
         submission.case_follow_up_decision,
         submission.photo_paths
@@ -923,6 +1047,22 @@ async function assertSubmittedReport(dataSource, createdLink) {
   assert(
     row.case_follow_up_decision === 'REQUEST_REVIEW',
     `Expected REQUEST_REVIEW, received ${row.case_follow_up_decision}`,
+  );
+  assert(
+    row.parental_status_code === 'DIVORCED',
+    `Expected DIVORCED parental status, received ${row.parental_status_code}`,
+  );
+  assert(
+    row.guardian_type_code === 'OTHER' && row.guardian_type_detail === 'พี่ชายของบิดา',
+    `Guardian answer was not persisted: ${row.guardian_type_code} / ${row.guardian_type_detail}`,
+  );
+  assert(
+    row.residence_environment_codes === 'AREA_CRIME,NEAR_DRUG_AREA',
+    `Expected both observed environments, received ${row.residence_environment_codes}`,
+  );
+  assert(
+    row.residence_environment_detail === 'มีบ้านร้างท้ายซอยและมีคนแปลกหน้าเข้าออก',
+    'Residence environment detail was not persisted',
   );
   const photoPaths = Array.isArray(row.photo_paths)
     ? row.photo_paths
@@ -1053,12 +1193,20 @@ async function main() {
         .find((button) => button.offsetParent !== null && button.textContent.includes('มอบหมาย')))()`,
       'Assignment submit button was not found',
     );
+    // The end time opens on the current time like the start time, so the date
+    // is the only part of the end window still missing at this point.
     await waitFor(
       async () =>
         String(await evaluate(client, 'document.body.innerText')).includes(
-          'กรุณาระบุ วันที่สิ้นสุด, เวลาสิ้นสุด',
+          'กรุณาระบุ วันที่สิ้นสุด',
+        ) &&
+        Boolean(
+          await evaluate(
+            client,
+            `/^\\d{2}:\\d{2}$/.test(document.querySelector('button[aria-label="เวลาสิ้นสุดมอบหมาย"]')?.textContent?.trim() || '')`,
+          ),
         ),
-      'Assignment form did not validate the missing end window',
+      'Assignment form did not validate the missing end date with a prefilled end time',
     );
     await setAssignmentEnd(client);
     await selectFirstVisitAssignee(client);
@@ -1148,6 +1296,42 @@ async function main() {
       },
       'Guest link did not open the report form with persisted visit details',
     );
+    assert(
+      String(await evaluate(client, 'document.body.innerText')).includes('รอติดตาม : ติดตาม'),
+      'Follow-up link did not show the same composed status and phase as the case',
+    );
+    // Autosave: what the visitor typed must survive leaving and reopening the
+    // link, otherwise a dropped connection loses the whole report.
+    await setInputValue(client, '#cause-detail', 'ร่างเยี่ยมบ้านที่ยังไม่ได้ส่ง');
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `new Promise((resolve) => {
+            const open = indexedDB.open('sts-visit-report-drafts', 1);
+            open.onsuccess = () => {
+              const tx = open.result.transaction('drafts', 'readonly');
+              const all = tx.objectStore('drafts').getAll();
+              all.onsuccess = () => resolve(all.result.some((row) =>
+                row.formValues && row.formValues.causeDetail === 'ร่างเยี่ยมบ้านที่ยังไม่ได้ส่ง'));
+              all.onerror = () => resolve(false);
+            };
+            open.onerror = () => resolve(false);
+          })`,
+        ),
+      'the home visit report draft was never written',
+    );
+    await navigate(client, `${FRONTEND_URL}/`, 'draft round trip');
+    await navigate(client, guestLink, 'guest link after draft round trip');
+    await waitFor(
+      async () =>
+        (await evaluate(client, `(document.querySelector('#cause-detail') || {}).value`)) ===
+        'ร่างเยี่ยมบ้านที่ยังไม่ได้ส่ง',
+      'the home visit report draft was not restored after reopening the link',
+    );
+    // Clear it again so the later validation steps see an empty detail field.
+    await setInputValue(client, '#cause-detail', '');
+
     await click(
       client,
       `document.querySelector('button[aria-label="ดูเบอร์ติดต่อนักเรียน"]')`,
@@ -1181,20 +1365,143 @@ async function main() {
       'Student-home map dialog close button was not found',
     );
     await captureScreenshot(client, process.env.SMOKE_SCREENSHOT_PATH);
+
+    // A multi-row selection is the case that used to break the layout: the chip
+    // box grew and dragged the right column out of step with the left one.
+    await toggleMultiSelectOption(client, '#residence-environment', 'อยู่ใกล้แหล่งสารเสพติด');
+    await toggleMultiSelectOption(client, '#residence-environment', 'อยู่ใกล้แหล่งมั่วสุม');
+    await toggleMultiSelectOption(client, '#residence-environment', 'มีความเสี่ยงด้านความรุนแรง');
+    await toggleMultiSelectOption(client, '#residence-environment', 'มีปัญหาอาชญากรรมในพื้นที่');
+    await evaluate(client, `document.body.click()`);
+    // Narrower desktop: the columns have to shrink here, so a field that refuses
+    // to go below its content width would push the page into sideways scroll.
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1280,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await captureScreenshot(client, process.env.SMOKE_LAYOUT_SCREENSHOT_PATH);
+
     const reportAlignment = await evaluate(
       client,
       `(() => {
-        const detail = document.querySelector('[data-visit-report-fields]')?.getBoundingClientRect();
-        const upload = document.querySelector('[data-visit-report-upload]')?.getBoundingClientRect();
+        const detailBox = document.querySelector('[data-visit-report-fields]');
+        const uploadBox = document.querySelector('[data-visit-report-context]');
+        const detail = detailBox?.getBoundingClientRect();
+        const upload = uploadBox?.getBoundingClientRect();
         const exceptions = document.querySelector('[data-home-visit-exceptions]')?.getBoundingClientRect();
         if (!detail || !upload || !exceptions) return null;
+        const overflowing = [detailBox, uploadBox].flatMap((column) => {
+          const bounds = column.getBoundingClientRect();
+          return [...column.children]
+            .filter((child) => child.getBoundingClientRect().right > bounds.right + 1)
+            .map((child) => child.className);
+        });
         return {
           topDelta: Math.abs(detail.top - upload.top),
           bottomDelta: Math.abs(detail.bottom - upload.bottom),
+          widthDelta: Math.abs(detail.width - upload.width),
+          pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          chipBoxHeight: Math.round(
+            document.querySelector('#residence-environment')?.parentElement?.getBoundingClientRect()
+              .height ?? 0,
+          ),
+          timeFieldHeight: Math.round(
+            document.querySelector('#visited-time')?.getBoundingClientRect().height ?? 0,
+          ),
+          // Every control has to render in the app's own face; a component that
+          // sets its own stack (chips, badges, pickers) would stand out.
+          foreignFonts: (() => {
+            const offenders = new Set();
+            document.querySelectorAll('form *').forEach((node) => {
+              const family = getComputedStyle(node).fontFamily || '';
+              if (!family.includes('TH Sarabun PSK')) {
+                offenders.add(node.tagName.toLowerCase() + ' :: ' + family);
+              }
+            });
+            return [...offenders].slice(0, 5);
+          })(),
+          probe: (() => {
+            const box = (selector) => {
+              const rect = document.querySelector(selector)?.getBoundingClientRect();
+              return rect ? [Math.round(rect.top), Math.round(rect.bottom)] : null;
+            };
+            return {
+              parentalLabel: box('label[for="parental-status"]'),
+              parentalInput: box('#parental-status'),
+              envLabel: box('label[for="residence-environment-detail"]'),
+              envArea: box('#residence-environment-detail'),
+              guardianInput: box('#guardian-type'),
+            };
+          })(),
+          envTopVsParental: Math.round(
+            (document.querySelector('#residence-environment-detail')?.getBoundingClientRect().top ?? 0) -
+              (document.querySelector('#parental-status')?.getBoundingClientRect().top ?? 0),
+          ),
+          envBottomVsGuardian: Math.round(
+            (document.querySelector('#residence-environment-detail')?.getBoundingClientRect().bottom ?? 0) -
+              (document.querySelector('#guardian-type')?.getBoundingClientRect().bottom ?? 0),
+          ),
+          dividerGaps: (() => {
+            const rule = [...document.querySelectorAll('form div')].find(
+              (node) => node.className.includes('bg-slate-200') && node.className.includes('h-px'),
+            );
+            const guardian = document.querySelector('#guardian-type')?.getBoundingClientRect();
+            const assessment = document
+              .querySelector('label[for="follow-up-assessment"]')
+              ?.getBoundingClientRect();
+            if (!rule || !guardian || !assessment) return null;
+            const line = rule.getBoundingClientRect();
+            return {
+              above: Math.round(line.top - guardian.bottom),
+              below: Math.round(assessment.top - line.bottom),
+            };
+          })(),
+          overflowing,
           exceptionsClearBoth: exceptions.top > Math.max(detail.bottom, upload.bottom),
           trackingStepTop: document.querySelector('[data-flow-step="2"]')?.getBoundingClientRect().top,
         };
       })()`,
+    );
+    assert(
+      reportAlignment && reportAlignment.foreignFonts.length === 0,
+      `A report control renders in another font: ${reportAlignment?.foreignFonts.join(' | ')}`,
+    );
+    await assertOpenControlFonts(client);
+    assert(
+      reportAlignment && reportAlignment.envTopVsParental === 0,
+      `Environment detail starts ${reportAlignment?.envTopVsParental}px off the parental status field`,
+    );
+    assert(
+      reportAlignment && reportAlignment.envBottomVsGuardian === 0,
+      `Environment detail ends ${reportAlignment?.envBottomVsGuardian}px off the guardian field`,
+    );
+    // The owner nudged the rule a couple of pixels below dead centre: the
+    // reserved error line above it reads as empty space, so a mathematically
+    // centred rule looks high. Keep it near the middle, not exactly on it.
+    assert(
+      reportAlignment?.dividerGaps &&
+        Math.abs(reportAlignment.dividerGaps.above - reportAlignment.dividerGaps.below) <= 6,
+      `The rule is far from the middle of the two blocks (${JSON.stringify(reportAlignment?.dividerGaps)})`,
+    );
+    assert(
+      reportAlignment && reportAlignment.widthDelta <= 1,
+      `Report columns are not the same width (${reportAlignment?.widthDelta}px apart)`,
+    );
+    assert(
+      reportAlignment && reportAlignment.overflowing.length === 0,
+      `A report field overflows its column: ${reportAlignment?.overflowing.join(' | ')}`,
+    );
+    assert(
+      reportAlignment && reportAlignment.pageOverflow <= 1,
+      `Report form scrolls sideways at 1280px (${reportAlignment?.pageOverflow}px wider than the viewport)`,
+    );
+    // Four picked factors must not make the field taller than the time picker
+    // beside it — that is what used to knock the column spacing out of rhythm.
+    assert(
+      reportAlignment && reportAlignment.chipBoxHeight === reportAlignment.timeFieldHeight,
+      `Environment picker is ${reportAlignment?.chipBoxHeight}px tall against ${reportAlignment?.timeFieldHeight}px for the time field`,
     );
     assert(reportAlignment, 'Report alignment elements were not rendered');
     assert(
@@ -1308,6 +1615,35 @@ async function main() {
       '#cause-detail',
       'เยี่ยมบ้านและพูดคุยกับผู้ปกครองแล้ว เห็นควรติดตามต่อ',
     );
+
+    // Household context: the guardian note stays locked until "อื่น ๆ", and the
+    // exclusive environment answer must clear any risk factor picked with it.
+    await selectCombobox(client, '#parental-status', 'หย่าร้าง');
+    assert(
+      Boolean(await evaluate(client, `document.querySelector('#guardian-type-detail')?.disabled`)),
+      'Guardian detail was editable before choosing อื่น ๆ',
+    );
+    await selectCombobox(client, '#guardian-type', 'อื่น ๆ (ระบุในช่อง)');
+    await waitFor(
+      async () =>
+        !(await evaluate(client, `document.querySelector('#guardian-type-detail')?.disabled`)),
+      'Guardian detail stayed locked after choosing อื่น ๆ',
+    );
+    await setInputValue(client, '#guardian-type-detail', 'พี่ชายของบิดา');
+    await toggleMultiSelectOption(client, '#residence-environment', 'ปกติ / ไม่มีปัจจัยเสี่ยง');
+    await toggleMultiSelectOption(client, '#residence-environment', 'อยู่ใกล้แหล่งสารเสพติด');
+    await toggleMultiSelectOption(client, '#residence-environment', 'มีปัญหาอาชญากรรมในพื้นที่');
+    await waitFor(
+      async () =>
+        (await evaluate(client, multiSelectChipsExpression('#residence-environment'))) ===
+        'อยู่ใกล้แหล่งสารเสพติด|มีปัญหาอาชญากรรมในพื้นที่',
+      'Exclusive environment option was not cleared by the risk factors',
+    );
+    await setInputValue(
+      client,
+      '#residence-environment-detail',
+      'มีบ้านร้างท้ายซอยและมีคนแปลกหน้าเข้าออก',
+    );
     await attachVisitEvidence(client);
     await click(
       client,
@@ -1345,6 +1681,23 @@ async function main() {
           text.includes('ปิดเคส');
       },
       'PENDING_REVIEW case did not render its attachment and separate review actions',
+    );
+    await waitFor(
+      async () => {
+        const values = await evaluate(
+          client,
+          `[...document.querySelectorAll('label')]
+            .filter((label) => ['สถานะของบิดา-มารดา', 'ผู้ปกครอง', 'ระบุผู้ปกครอง', 'สภาพแวดล้อมรอบที่พัก']
+              .includes(label.firstChild?.textContent?.trim()))
+            .map((label) => label.querySelector('input')?.value || '')
+            .join('|')`,
+        );
+        return (
+          String(values) ===
+          'หย่าร้าง|อื่น ๆ (ระบุในช่อง)|พี่ชายของบิดา|อยู่ใกล้แหล่งสารเสพติด, มีปัญหาอาชญากรรมในพื้นที่'
+        );
+      },
+      'Case step 2 did not mirror the household context captured in the report',
     );
     await click(
       client,

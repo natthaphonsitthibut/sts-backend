@@ -1,9 +1,12 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { maskName } from '../common/utils/helpers';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { NotificationsRepository } from './notifications.repository';
-import type { NotificationFanOutInput, NotificationListFilters } from './notifications.types';
+import type {
+  CaseStatusNotificationContext,
+  NotificationFanOutInput,
+  NotificationListFilters,
+} from './notifications.types';
 
 const CASE_STATUS_LABELS: Record<string, string> = {
   OPEN: 'รอมอบหมาย',
@@ -14,6 +17,64 @@ const CASE_STATUS_LABELS: Record<string, string> = {
 };
 const NOTIFICATION_RETENTION_DAYS = 90;
 const NOTIFICATION_RETENTION_CRON = '0 30 3 * * *';
+
+function text(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized || null;
+}
+
+function formatThaiDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+  return `${match[3]}/${match[2]}/${Number(match[1]) + 543}`;
+}
+
+function joinDetails(...parts: Array<string | null>): string | null {
+  const detail = parts.filter((part): part is string => Boolean(part)).join(' · ');
+  return detail || null;
+}
+
+function formatCaseStatusDetail(
+  status: string,
+  context: CaseStatusNotificationContext | null,
+): string | null {
+  const note = text(context?.latestTeacherComment);
+  const fallbackNote = formatThaiDate(context?.latestAbsentDate);
+  const followUpResult = text(context?.resultSummary) ?? text(context?.reviewSummary);
+  const reviewResult =
+    text(context?.reviewNote) ?? followUpResult ?? text(context?.completionOutcomeLabel);
+
+  switch (status) {
+    case 'OPEN':
+      return joinDetails(
+        text(context?.reasonFlagged)
+          ? `เหตุผลที่ขาด: ${text(context?.reasonFlagged)}`
+          : 'เหตุผลที่ขาด: ไม่ระบุ',
+        note ? `หมายเหตุ: ${note}` : fallbackNote ? `ขาดล่าสุด: ${fallbackNote}` : null,
+      );
+    case 'IN_PROGRESS':
+      return joinDetails(
+        text(context?.assignedTeacherName)
+          ? `มอบหมายให้: ${text(context?.assignedTeacherName)}`
+          : 'มอบหมายการติดตามแล้ว',
+        note ? `หมายเหตุ: ${note}` : null,
+      );
+    case 'PENDING_REVIEW':
+      return joinDetails(
+        followUpResult ? `ผลการติดตาม: ${followUpResult}` : 'ผลการติดตาม: รอผลการพิจารณา',
+        note ? `หมายเหตุ: ${note}` : null,
+      );
+    case 'RESOLVED':
+      return reviewResult ? `ผลการพิจารณา: ${reviewResult}` : 'ผลการพิจารณา: ดำเนินการเสร็จสิ้น';
+    case 'STUDENT_NOT_FOUND':
+      return reviewResult
+        ? `ผลการตรวจสอบ: ${reviewResult}`
+        : 'ผลการตรวจสอบ: ไม่พบนักเรียนตามข้อมูลที่ได้รับ';
+    default:
+      return null;
+  }
+}
 
 @Injectable()
 export class NotificationsService {
@@ -54,7 +115,16 @@ export class NotificationsService {
     const statusLabel = completionLabel
       ? `${baseStatusLabel} : ${completionLabel}`
       : baseStatusLabel;
-    const student = event.studentName ? maskName(event.studentName) : 'นักเรียน';
+    // Notification recipients have already passed permission and data-scope
+    // filtering in the repository, so show the student's real name here.
+    const student = event.studentName?.trim() || 'นักเรียน';
+    let context: CaseStatusNotificationContext | null = null;
+    try {
+      context = await this.notificationsRepository.findCaseStatusNotificationContext(event.caseId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Notification context lookup failed for case ${event.caseId}: ${message}`);
+    }
     return await this.fanOutSafely({
       typeCode: 'CASE_STATUS_CHANGED',
       title: `เคสเปลี่ยนสถานะ: ${statusLabel}`,
@@ -66,6 +136,7 @@ export class NotificationsService {
       refId: String(event.caseId),
       schoolId: event.schoolId,
       excludeUserId: event.actorUserId,
+      reasonText: formatCaseStatusDetail(event.nextStatus, context),
     });
   }
 
