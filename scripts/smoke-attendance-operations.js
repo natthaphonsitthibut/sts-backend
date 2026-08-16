@@ -413,7 +413,16 @@ async function main() {
       new Date(draftRow.marked_at) <= new Date(draftRow.RecordedAt),
       'marked_at must never be after RecordedAt',
     );
-    console.error('[smoke] draft autosave kept the session open');
+    // The row is stored so the teacher can leave and come back, but a round
+    // nobody submitted must not reach ประวัติ, the dashboard chart or the risk
+    // engine — all three read the day views.
+    const [draftDay] = await dataSource.query(
+      `SELECT count(*)::int AS total FROM attendance_day
+       WHERE student_uuid = $1 AND "AttendanceDate" = $2`,
+      [presentRecords[0].student_id, today],
+    );
+    assert(draftDay.total === 0, 'A draft round must not appear in attendance_day');
+    console.error('[smoke] draft autosave kept the session open and out of the day views');
 
     await request('POST', '/api/attendance/marks', 403, adminId, {
       records: [
@@ -444,7 +453,13 @@ async function main() {
     assert(initialSubmit.session.status === 'SUBMITTED', 'Initial submit did not lock session');
     assert(initialSubmit.session.revision === 1, 'Initial session revision must be one');
     const sessionId = initialSubmit.session.id;
-    console.error('[smoke] initial submit locked');
+    const [submittedDay] = await dataSource.query(
+      `SELECT count(*)::int AS total FROM attendance_day
+       WHERE student_uuid = $1 AND "AttendanceDate" = $2`,
+      [presentRecords[0].student_id, today],
+    );
+    assert(submittedDay.total === 1, 'A submitted round must appear in attendance_day');
+    console.error('[smoke] initial submit locked and reached the day views');
     await request('POST', '/api/attendance', 409, adminId, { records: presentRecords });
     // A submitted round rejects further autosaves the same way it rejects submits.
     await request('POST', '/api/attendance/marks', 409, adminId, {
