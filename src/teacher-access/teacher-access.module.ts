@@ -17,7 +17,7 @@ import {
   TeacherAccessGrantController,
 } from './teacher-access.controller';
 import { TeacherAccessRepository } from './teacher-access.repository';
-import { TeacherAccessAraIdChallengeStore } from './teacher-access-araid-challenge.store';
+import { AraIdChallengeStore } from '../araid/araid-challenge.store';
 import { TeacherAccessService } from './teacher-access.service';
 
 @Module({
@@ -37,7 +37,7 @@ import { TeacherAccessService } from './teacher-access.service';
     forwardRef(() => StudentObservationsModule),
   ],
   controllers: [TeacherAccessGrantController, PublicTeacherAccessController],
-  providers: [TeacherAccessRepository, TeacherAccessAraIdChallengeStore, TeacherAccessService],
+  providers: [TeacherAccessRepository, AraIdChallengeStore, TeacherAccessService],
   exports: [TeacherAccessService],
 })
 export class TeacherAccessModule {}

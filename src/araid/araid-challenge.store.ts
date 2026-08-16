@@ -2,10 +2,27 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { RedisClientService } from '../redis/redis-client.service';
 
+/**
+ * One AraID QR-approval mechanism for every flow that needs it.
+ *
+ * The teacher-access grant, the LINE invitation and the follow-up/assistance
+ * task link all approve the same way — issue a short-lived challenge, let the
+ * AraID app claim it, require a fresh PIN, then approve and hand back a session.
+ * Only the subject being approved differs, so it is a `scope` + `subjectId`
+ * here rather than a copy of this file per flow.
+ *
+ * `scope` is part of the Redis key, so a challenge minted for one flow can never
+ * be redeemed by another, and the existing per-flow keys stay byte-identical.
+ */
+export type AraIdChallengeScope = 'teacher-access' | 'teacher-line' | 'task-link';
+
 type ChallengeStatus = 'PENDING' | 'CLAIMED' | 'APPROVED';
 
 interface StoredChallenge {
-  grantId: string;
+  scope: AraIdChallengeScope;
+  subjectId: string;
+  /** Flow-specific display context (school, teacher name, binding token…). */
+  context: Record<string, unknown>;
   referenceCode: string;
   status: ChallengeStatus;
   entryExpiresAt: number;
@@ -15,48 +32,61 @@ interface StoredChallenge {
 interface StoredAuthorization {
   challengeKey: string;
   expiresAt: number;
+  /**
+   * The AraID session must have been PIN-authenticated after the challenge was
+   * claimed — an older session cannot approve it.
+   */
   minimumAuthenticatedAt: number;
 }
 
-export interface TeacherAccessAraIdChallenge extends StoredChallenge {
+export interface AraIdChallenge extends StoredChallenge {
   token: string;
 }
 
-export const TEACHER_ACCESS_ARAID_ENTRY_TTL_SECONDS = 90;
-export const TEACHER_ACCESS_ARAID_AUTHORIZATION_TTL_SECONDS = 10 * 60;
+export const ARAID_CHALLENGE_ENTRY_TTL_SECONDS = 90;
+export const ARAID_CHALLENGE_AUTHORIZATION_TTL_SECONDS = 10 * 60;
 
 @Injectable()
-export class TeacherAccessAraIdChallengeStore {
+export class AraIdChallengeStore {
   private readonly memory = new Map<string, StoredChallenge>();
   private readonly memoryAuthorizations = new Map<string, StoredAuthorization>();
 
   constructor(private readonly redisClientService: RedisClientService) {}
 
-  async create(grantId: string): Promise<TeacherAccessAraIdChallenge> {
+  async create(
+    scope: AraIdChallengeScope,
+    subjectId: string,
+    context: Record<string, unknown> = {},
+  ): Promise<AraIdChallenge> {
     const token = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + TEACHER_ACCESS_ARAID_ENTRY_TTL_SECONDS * 1000;
+    const expiresAt = Date.now() + ARAID_CHALLENGE_ENTRY_TTL_SECONDS * 1000;
     const stored: StoredChallenge = {
-      grantId,
+      scope,
+      subjectId,
+      context,
       referenceCode: randomBytes(4).toString('hex').slice(0, 6).toUpperCase(),
       status: 'PENDING',
       entryExpiresAt: expiresAt,
       expiresAt,
     };
-    const key = this.key(token);
+    const key = this.key(scope, token);
     const client = this.redisClientService.getClient();
     if (client) {
-      await client.set(key, JSON.stringify(stored), 'EX', TEACHER_ACCESS_ARAID_ENTRY_TTL_SECONDS);
+      await client.set(key, JSON.stringify(stored), 'EX', ARAID_CHALLENGE_ENTRY_TTL_SECONDS);
     } else {
       this.memory.set(key, stored);
     }
     return { token, ...stored };
   }
 
-  async claim(token: string): Promise<{ authorizationToken: string; expiresAt: number } | null> {
-    const challengeKey = this.key(token);
+  async claim(
+    scope: AraIdChallengeScope,
+    token: string,
+  ): Promise<{ authorizationToken: string; expiresAt: number } | null> {
+    const challengeKey = this.key(scope, token);
     const authorizationToken = randomBytes(32).toString('base64url');
-    const authorizationKey = this.authorizationKey(authorizationToken);
-    const expiresAt = Date.now() + TEACHER_ACCESS_ARAID_AUTHORIZATION_TTL_SECONDS * 1000;
+    const authorizationKey = this.authorizationKey(scope, authorizationToken);
+    const expiresAt = Date.now() + ARAID_CHALLENGE_AUTHORIZATION_TTL_SECONDS * 1000;
     const authorization: StoredAuthorization = {
       challengeKey,
       expiresAt,
@@ -64,9 +94,10 @@ export class TeacherAccessAraIdChallengeStore {
     };
     const client = this.redisClientService.getClient();
     if (!client) {
-      const stored = await this.read(token);
-      if (!stored || stored.status !== 'PENDING' || stored.entryExpiresAt <= Date.now())
+      const stored = await this.read(scope, token);
+      if (!stored || stored.status !== 'PENDING' || stored.entryExpiresAt <= Date.now()) {
         return null;
+      }
       this.memory.set(challengeKey, { ...stored, status: 'CLAIMED', expiresAt });
       this.memoryAuthorizations.set(authorizationKey, authorization);
       return { authorizationToken, expiresAt };
@@ -88,18 +119,19 @@ export class TeacherAccessAraIdChallengeStore {
       authorizationKey,
       String(Date.now()),
       String(expiresAt),
-      String(TEACHER_ACCESS_ARAID_AUTHORIZATION_TTL_SECONDS * 1000),
+      String(ARAID_CHALLENGE_AUTHORIZATION_TTL_SECONDS * 1000),
       JSON.stringify(authorization),
     );
     return Number(claimed) === 1 ? { authorizationToken, expiresAt } : null;
   }
 
   async resume(
+    scope: AraIdChallengeScope,
     token: string,
     authorizationToken: string,
   ): Promise<{ authorizationToken: string; expiresAt: number } | null> {
-    const challengeKey = this.key(token);
-    const authorizationKey = this.authorizationKey(authorizationToken);
+    const challengeKey = this.key(scope, token);
+    const authorizationKey = this.authorizationKey(scope, authorizationToken);
     const client = this.redisClientService.getClient();
     const raw = client
       ? await client.get(authorizationKey)
@@ -111,7 +143,7 @@ export class TeacherAccessAraIdChallengeStore {
       if (authorization.challengeKey !== challengeKey || authorization.expiresAt <= Date.now()) {
         return null;
       }
-      const challenge = await this.read(token);
+      const challenge = await this.read(scope, token);
       return challenge?.status === 'CLAIMED'
         ? { authorizationToken, expiresAt: authorization.expiresAt }
         : null;
@@ -121,9 +153,10 @@ export class TeacherAccessAraIdChallengeStore {
   }
 
   async readAuthorization(
+    scope: AraIdChallengeScope,
     authorizationToken: string,
   ): Promise<{ challenge: StoredChallenge; minimumAuthenticatedAt: number } | null> {
-    const authorizationKey = this.authorizationKey(authorizationToken);
+    const authorizationKey = this.authorizationKey(scope, authorizationToken);
     const client = this.redisClientService.getClient();
     const raw = client
       ? await client.get(authorizationKey)
@@ -145,6 +178,8 @@ export class TeacherAccessAraIdChallengeStore {
         typeof challengeRaw === 'string'
           ? (JSON.parse(challengeRaw) as StoredChallenge)
           : challengeRaw;
+      // A challenge minted for another flow must never satisfy this one.
+      if (challenge.scope !== scope) return null;
       return challenge.status === 'CLAIMED' && challenge.expiresAt > Date.now()
         ? { challenge, minimumAuthenticatedAt: authorization.minimumAuthenticatedAt }
         : null;
@@ -153,8 +188,16 @@ export class TeacherAccessAraIdChallengeStore {
     }
   }
 
-  async approveAuthorization(authorizationToken: string): Promise<boolean> {
-    const authorizationKey = this.authorizationKey(authorizationToken);
+  /**
+   * `result` is merged into the challenge context so the polling side can read
+   * back what approval produced (the LINE flow returns a binding token there).
+   */
+  async approveAuthorization(
+    scope: AraIdChallengeScope,
+    authorizationToken: string,
+    result: Record<string, unknown> = {},
+  ): Promise<boolean> {
+    const authorizationKey = this.authorizationKey(scope, authorizationToken);
     const client = this.redisClientService.getClient();
     if (!client) {
       const authorization = this.memoryAuthorizations.get(authorizationKey);
@@ -163,7 +206,11 @@ export class TeacherAccessAraIdChallengeStore {
       if (!challenge || challenge.status !== 'CLAIMED' || challenge.expiresAt <= Date.now()) {
         return false;
       }
-      this.memory.set(authorization.challengeKey, { ...challenge, status: 'APPROVED' });
+      this.memory.set(authorization.challengeKey, {
+        ...challenge,
+        context: { ...challenge.context, ...result },
+        status: 'APPROVED',
+      });
       this.memoryAuthorizations.delete(authorizationKey);
       return true;
     }
@@ -177,6 +224,11 @@ export class TeacherAccessAraIdChallengeStore {
         local value = cjson.decode(raw)
         if value.status ~= 'CLAIMED' then return 0 end
         value.status = 'APPROVED'
+        if ARGV[1] ~= '' then
+          local extra = cjson.decode(ARGV[1])
+          if value.context == nil then value.context = {} end
+          for field, entry in pairs(extra) do value.context[field] = entry end
+        end
         local ttl = redis.call('PTTL', auth.challengeKey)
         if ttl <= 0 then return 0 end
         redis.call('SET', auth.challengeKey, cjson.encode(value), 'PX', ttl)
@@ -185,12 +237,13 @@ export class TeacherAccessAraIdChallengeStore {
       `,
       1,
       authorizationKey,
+      Object.keys(result).length > 0 ? JSON.stringify(result) : '',
     );
     return Number(updated) === 1;
   }
 
-  async read(token: string): Promise<StoredChallenge | null> {
-    const key = this.key(token);
+  async read(scope: AraIdChallengeScope, token: string): Promise<StoredChallenge | null> {
+    const key = this.key(scope, token);
     const client = this.redisClientService.getClient();
     const raw = client ? await client.get(key) : this.memory.get(key);
     if (!raw) return null;
@@ -208,11 +261,14 @@ export class TeacherAccessAraIdChallengeStore {
     return stored;
   }
 
-  async consumeApproved(token: string): Promise<StoredChallenge | null> {
-    const key = this.key(token);
+  async consumeApproved(
+    scope: AraIdChallengeScope,
+    token: string,
+  ): Promise<StoredChallenge | null> {
+    const key = this.key(scope, token);
     const client = this.redisClientService.getClient();
     if (!client) {
-      const stored = await this.read(token);
+      const stored = await this.read(scope, token);
       if (!stored || stored.status !== 'APPROVED') return null;
       this.memory.delete(key);
       return stored;
@@ -237,11 +293,11 @@ export class TeacherAccessAraIdChallengeStore {
     }
   }
 
-  private key(token: string): string {
-    return `sts:teacher-access:araid:${createHash('sha256').update(token).digest('hex')}`;
+  private key(scope: AraIdChallengeScope, token: string): string {
+    return `sts:${scope}:araid:${createHash('sha256').update(token).digest('hex')}`;
   }
 
-  private authorizationKey(token: string): string {
-    return `sts:teacher-access:araid-auth:${createHash('sha256').update(token).digest('hex')}`;
+  private authorizationKey(scope: AraIdChallengeScope, token: string): string {
+    return `sts:${scope}:araid-auth:${createHash('sha256').update(token).digest('hex')}`;
   }
 }

@@ -8,7 +8,7 @@ import { MessagingModule } from '../common/messaging/messaging.module';
 import { OtpModule } from '../common/otp/otp.module';
 import { RedisModule } from '../redis/redis.module';
 import { TeacherLineController, TeacherLineWebhookController } from './teacher-line.controller';
-import { TeacherLineAraIdChallengeStore } from './teacher-line-araid-challenge.store';
+import { AraIdChallengeStore } from '../araid/araid-challenge.store';
 import { TeacherLineRepository } from './teacher-line.repository';
 import { TeacherLineService } from './teacher-line.service';
 import { TeacherLineSessionStore } from './teacher-line-session.store';
@@ -26,7 +26,7 @@ import { TeacherLineSessionStore } from './teacher-line-session.store';
   ],
   controllers: [TeacherLineController, TeacherLineWebhookController],
   providers: [
-    TeacherLineAraIdChallengeStore,
+    AraIdChallengeStore,
     TeacherLineRepository,
     TeacherLineService,
     TeacherLineSessionStore,
