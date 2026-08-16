@@ -159,6 +159,30 @@ export function resolveActorDataScope(
   return normalizeDataScope(actor.data_scope) || {};
 }
 
+/**
+ * Whether a scope reaches one classroom.
+ *
+ * An empty `grade_levels`/`room_ids` means "not confined at that level", which
+ * is how every scoped read already treats them — this only narrows an actor who
+ * was explicitly limited to grades or rooms, on top of the school check the
+ * caller has already done.
+ *
+ * Both sides are compared as strings on purpose: `data_scope` is JSON written by
+ * several code paths and the live data holds both `[1]` and `["1"]`, so a strict
+ * comparison silently denies a teacher whose own room is listed.
+ */
+export function isClassInScope(
+  scope: DataScope | undefined,
+  classroom: { gradeLevelId: number | string; roomId: number | string },
+): boolean {
+  const matches = (values: Array<number | string> | undefined, candidate: number | string) =>
+    !values?.length || values.map(String).includes(String(candidate));
+  return (
+    matches(scope?.grade_levels, classroom.gradeLevelId) &&
+    matches(scope?.room_ids, classroom.roomId)
+  );
+}
+
 export function hasAreaDataScope(value: unknown): boolean {
   const normalized = normalizeDataScope(value) || {};
   return (

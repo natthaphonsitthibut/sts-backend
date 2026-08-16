@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
+import { isClassInScope, resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { CalendarDayType, SchoolTermStatus } from './attendance-operations.types';
@@ -411,12 +411,8 @@ export class AttendanceOperationsService {
     roomId: number,
     actor?: AuthenticatedRequestUser,
   ): void {
-    const scope = resolveActorDataScope(actor);
-    if (scope?.grade_levels?.length && !scope.grade_levels.includes(gradeLevelId)) {
-      throw new ForbiddenException('ชั้นเรียนอยู่นอกขอบเขตของคุณ');
-    }
-    if (scope?.room_ids?.length && !scope.room_ids.map(String).includes(String(roomId))) {
-      throw new ForbiddenException('ห้องเรียนอยู่นอกขอบเขตของคุณ');
+    if (!isClassInScope(resolveActorDataScope(actor), { gradeLevelId, roomId })) {
+      throw new ForbiddenException('ชั้นเรียนหรือห้องเรียนอยู่นอกขอบเขตของคุณ');
     }
   }
 

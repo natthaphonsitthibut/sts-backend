@@ -18,6 +18,7 @@ import {
 import type { QueryRunner } from 'typeorm';
 import {
   hasAreaDataScope,
+  isClassInScope,
   isUnconfiguredDataScope,
   normalizeDataScope,
   type AuthenticatedRequestUser,
@@ -191,15 +192,27 @@ export class TeacherAccessService {
   }
 
   /**
-   * `schoolId` is what the scope check runs against, but the queries filter on
-   * `classroomId`. Binding the two here keeps the scope check meaningful: a
+   * `schoolId` is what the school check runs against, but the queries filter on
+   * `classroomId`. Binding the two here keeps that check meaningful — a
    * classroom from another school is not reachable by pairing it with a school
-   * the caller happens to be allowed to see.
+   * the caller happens to be allowed to see — and an actor confined to certain
+   * grades or rooms is held to them, the same way the attendance module does.
    */
-  private async assertClassroomInSchool(classroomId: number, schoolId: number): Promise<void> {
-    const classroomSchoolId = await this.repository.findClassroomSchoolId(classroomId);
-    if (classroomSchoolId !== schoolId) {
+  private async assertClassroomAccess(
+    classroomId: number,
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+  ): Promise<void> {
+    const classroom = await this.repository.findClassroomScope(classroomId);
+    if (!classroom || Number(classroom.school_id) !== schoolId) {
       throw new NotFoundException('ไม่พบห้องเรียนในโรงเรียนนี้');
+    }
+    const inScope = isClassInScope(this.resolveIssuerScope(actor), {
+      gradeLevelId: classroom.grade_level_id,
+      roomId: classroom.legacy_room_number,
+    });
+    if (!inScope) {
+      throw new ForbiddenException('ชั้นเรียนหรือห้องเรียนอยู่นอกขอบเขตของคุณ');
     }
   }
 
@@ -1185,6 +1198,7 @@ export class TeacherAccessService {
     baseUrl: string,
   ) {
     await this.assertSchoolAccess(input.schoolId, actor);
+    await this.assertClassroomAccess(input.classroomId, input.schoolId, actor);
     const assignments = await this.repository.listAttendanceDelegationAssignments(input);
     const teachers = await this.repository.listActiveTeacherMembershipsForSchool(input.schoolId);
     const activeDelegations = await this.repository.listActiveAttendanceDelegations(input);
@@ -1311,7 +1325,7 @@ export class TeacherAccessService {
     baseUrl: string,
   ) {
     await this.assertSchoolAccess(input.schoolId, actor);
-    await this.assertClassroomInSchool(input.classroomId, input.schoolId);
+    await this.assertClassroomAccess(input.classroomId, input.schoolId, actor);
     const page = resolvePage(input.page);
     const limit = resolveLimit(input.limit);
     const rows = await this.repository.listAttendanceDelegationHistory({

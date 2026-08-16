@@ -156,20 +156,31 @@ export class TeacherAccessRepository {
   }
 
   /**
-   * The school a classroom belongs to. Callers take `classroomId` from the
-   * client next to a `schoolId` they have already scope-checked, so the pair has
-   * to be verified before the classroom is used as a filter — otherwise a
-   * caller inside their own school can read another school's rows by naming its
-   * classroom.
+   * Where a classroom sits. Callers take `classroomId` from the client next to a
+   * `schoolId` they have already scope-checked, so the pair has to be verified
+   * before the classroom is used as a filter — otherwise a caller inside their
+   * own school can read another school's rows by naming its classroom — and the
+   * grade/room are what a class-confined actor is checked against.
    */
-  async findClassroomSchoolId(classroomId: number): Promise<number | null> {
-    const result = await queryDataSource<{ school_id: number }>(
+  async findClassroomScope(classroomId: number): Promise<{
+    school_id: number;
+    grade_level_id: number;
+    legacy_room_number: number;
+  } | null> {
+    const result = await queryDataSource<{
+      school_id: number;
+      grade_level_id: number;
+      legacy_room_number: number;
+    }>(
       this.dataSource,
-      `SELECT school_id FROM school_classrooms WHERE id = $1 AND deleted_at IS NULL`,
+      `
+        SELECT school_id, grade_level_id, legacy_room_number
+        FROM school_classrooms
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
       [classroomId],
     );
-    const row = result.rows[0];
-    return row ? Number(row.school_id) : null;
+    return result.rows[0] ?? null;
   }
 
   async findActiveSchoolName(schoolId: number): Promise<string | null> {

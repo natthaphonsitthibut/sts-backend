@@ -127,7 +127,7 @@ type RepositoryMock = jest.Mocked<
     | 'listAssignmentOptions'
     | 'listAttendanceDelegationAssignments'
     | 'listAttendanceDelegationHistory'
-    | 'findClassroomSchoolId'
+    | 'findClassroomScope'
     | 'listActiveAttendanceDelegations'
     | 'listActiveTeacherMembershipsForSchool'
     | 'listMembershipsNeedingGrant'
@@ -180,7 +180,9 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     listAssignmentOptions: jest.fn().mockResolvedValue([]),
     listAttendanceDelegationAssignments: jest.fn().mockResolvedValue([]),
     listAttendanceDelegationHistory: jest.fn().mockResolvedValue([]),
-    findClassroomSchoolId: jest.fn().mockResolvedValue(10),
+    findClassroomScope: jest
+      .fn()
+      .mockResolvedValue({ school_id: 10, grade_level_id: 103, legacy_room_number: 1 }),
     listActiveAttendanceDelegations: jest.fn().mockResolvedValue([]),
     listActiveTeacherMembershipsForSchool: jest.fn().mockResolvedValue([]),
     listMembershipsNeedingGrant: jest.fn().mockResolvedValue([]),
@@ -1171,7 +1173,11 @@ describe('TeacherAccessService', () => {
   // simply by pairing their own school id with the other school's classroom.
   it('refuses delegation history for a classroom outside the requested school', async () => {
     const { service, repository } = createHarness();
-    repository.findClassroomSchoolId.mockResolvedValue(99);
+    repository.findClassroomScope.mockResolvedValue({
+      school_id: 99,
+      grade_level_id: 103,
+      legacy_room_number: 1,
+    });
 
     await expect(
       service.listAttendanceDelegationHistory(
@@ -1180,6 +1186,27 @@ describe('TeacherAccessService', () => {
         'https://sts.example.test',
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.listAttendanceDelegationHistory).not.toHaveBeenCalled();
+  });
+
+  // A teacher confined to one room keeps `manage-teacher-access` inside their
+  // own school, so the school check alone would still hand them another room's
+  // delegation rows — each carrying a live link into that class.
+  it('refuses delegation history for a room outside a class-confined actor', async () => {
+    const { service, repository } = createHarness();
+    repository.findClassroomScope.mockResolvedValue({
+      school_id: 10,
+      grade_level_id: 103,
+      legacy_room_number: 8,
+    });
+
+    await expect(
+      service.listAttendanceDelegationHistory(
+        { schoolId: 10, classroomId: 4242 },
+        { ...ACTOR, data_scope: { school_ids: [10], room_ids: ['1'] } },
+        'https://sts.example.test',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
     expect(repository.listAttendanceDelegationHistory).not.toHaveBeenCalled();
   });
 
