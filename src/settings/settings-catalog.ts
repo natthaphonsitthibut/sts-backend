@@ -53,10 +53,10 @@ export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
     group: GROUP_ABSENCE_MONITOR,
     enumOptions: [
       { value: 'SCHEDULED', label: 'ตามเวลาที่กำหนด' },
-      { value: 'IMMEDIATE', label: 'ทันทีหลังบันทึกเช็คชื่อ' },
+      { value: 'IMMEDIATE', label: 'ทันทีหลังบันทึกเช็กชื่อ' },
     ],
     description:
-      'จังหวะรันตัวตรวจขาดเรียนอัตโนมัติ (SCHEDULED = รันวันละครั้งตามเวลาที่กำหนด, IMMEDIATE = รันทันทีทุกครั้งหลังบันทึกเช็คชื่อ)',
+      'จังหวะรันตัวตรวจขาดเรียนอัตโนมัติ (SCHEDULED = รันวันละครั้งตามเวลาที่กำหนด, IMMEDIATE = รันทันทีทุกครั้งหลังบันทึกเช็กชื่อ)',
   },
   {
     key: 'ALERT_SCHEDULE_TIME',
