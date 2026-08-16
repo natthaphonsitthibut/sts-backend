@@ -205,9 +205,16 @@ export class AttendanceController {
     @Body() body: RecordAttendanceImportDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
+    // The classroom is the scope authority: it decides the school and term the
+    // row is filed under, so a caller cannot file an import against a class
+    // outside their scope by naming a school of their own.
+    const classroom = await this.attendanceOperationsService.assertClassroomAccess(
+      body.classroomId,
+      actor,
+    );
     const recorded = await this.attendanceImportService.recordApplied({
-      schoolId: body.schoolId,
-      schoolTermId: body.schoolTermId,
+      schoolId: classroom.schoolId,
+      schoolTermId: classroom.schoolTermId,
       classroomId: body.classroomId,
       attendanceDate: body.attendanceDate,
       timetableSlotId: body.timetableSlotId ?? null,
@@ -227,7 +234,11 @@ export class AttendanceController {
   @Get('imports')
   @UseGuards(PermissionsGuard)
   @RequireAnyPermission('attendance', 'attendance-dashboard')
-  async listImports(@Query() query: ListAttendanceImportsDto) {
+  async listImports(
+    @Query() query: ListAttendanceImportsDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    await this.attendanceOperationsService.assertClassroomAccess(query.classroomId, actor);
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const result = await this.attendanceImportService.listApplied({
@@ -253,7 +264,11 @@ export class AttendanceController {
     @Param('id', ParseIntPipe) id: number,
     @Query('classroomId', ParseIntPipe) classroomId: number,
     @Res({ passthrough: true }) response: Response,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
+    // The stored sheet lists student ids and full names, so the classroom it
+    // belongs to has to be inside the actor's scope, not merely match the row.
+    await this.attendanceOperationsService.assertClassroomAccess(classroomId, actor);
     const { stream, fileName } = await this.attendanceImportService.openApplied(id, classroomId);
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');

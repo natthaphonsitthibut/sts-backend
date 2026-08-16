@@ -191,3 +191,94 @@ describe('AttendanceController access', () => {
     }
   });
 });
+
+describe('AttendanceController import scope', () => {
+  const actor = { id: 7, username: 'teacher' } as never;
+
+  function buildController(): {
+    controller: AttendanceController;
+    assertClassroomAccess: jest.Mock;
+    importService: {
+      recordApplied: jest.Mock;
+      listApplied: jest.Mock;
+      openApplied: jest.Mock;
+    };
+  } {
+    const assertClassroomAccess = jest
+      .fn()
+      .mockRejectedValue(new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ'));
+    const importService = {
+      recordApplied: jest.fn(),
+      listApplied: jest.fn(),
+      openApplied: jest.fn(),
+    };
+    const controller = new AttendanceController(
+      {} as never,
+      { assertClassroomAccess } as never,
+      importService as never,
+    );
+    return { controller, assertClassroomAccess, importService };
+  }
+
+  // The stored sheet carries student ids and names, so a classroom id from the
+  // query must be checked against the actor's scope — not merely matched.
+  it('refuses import history reads for a classroom outside the actor scope', async () => {
+    const { controller, assertClassroomAccess, importService } = buildController();
+
+    await expect(
+      controller.listImports({ classroomId: 4242, page: 1, limit: 10 }, actor),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(assertClassroomAccess).toHaveBeenCalledWith(4242, actor);
+    expect(importService.listApplied).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stored import download for a classroom outside the actor scope', async () => {
+    const { controller, importService } = buildController();
+
+    await expect(
+      controller.downloadImport(1, 4242, { setHeader: jest.fn() } as never, actor),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(importService.openApplied).not.toHaveBeenCalled();
+  });
+
+  it('refuses to file an import against a classroom outside the actor scope', async () => {
+    const { controller, importService } = buildController();
+
+    await expect(
+      controller.recordImport(
+        undefined,
+        {
+          classroomId: 4242,
+          attendanceDate: '2026-08-17',
+          fileName: 'roster.xlsx',
+          rowCount: 1,
+          appliedCount: 1,
+        },
+        actor,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(importService.recordApplied).not.toHaveBeenCalled();
+  });
+
+  it('files the import under the school and term of the classroom, not the request', async () => {
+    const { controller, assertClassroomAccess, importService } = buildController();
+    assertClassroomAccess.mockResolvedValue({ schoolId: 11, schoolTermId: 22 });
+    importService.recordApplied.mockResolvedValue({ id: '1' });
+
+    await controller.recordImport(
+      undefined,
+      {
+        classroomId: 4242,
+        attendanceDate: '2026-08-17',
+        fileName: 'roster.xlsx',
+        rowCount: 1,
+        appliedCount: 1,
+      },
+      { ...(actor as object), FirstName: 'ครู', LastName: 'ทดสอบ' } as never,
+    );
+
+    expect(importService.recordApplied).toHaveBeenCalledWith(
+      expect.objectContaining({ schoolId: 11, schoolTermId: 22, classroomId: 4242 }),
+    );
+  });
+});

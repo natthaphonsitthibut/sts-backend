@@ -231,8 +231,7 @@ async function main() {
         }),
         `เช็กชื่อ-${label.replace('/', '-')}-${today}.xlsx`,
       );
-      form.append('schoolId', String(school.id));
-      form.append('schoolTermId', String(room.school_term_id));
+      // School and term come from the classroom on the server side.
       form.append('classroomId', String(room.classroom_id));
       form.append('attendanceDate', today);
       form.append('fileName', `เช็กชื่อ-${label.replace('/', '-')}-${today}.xlsx`);

@@ -224,7 +224,38 @@ async function main() {
       [outsider.id],
     );
 
-    // 6. The public teacher-link route refuses an unknown token.
+    // 6. ประวัติการนำเข้าไฟล์ is scoped to the classroom, and the classroom is
+    // scoped to the actor. A teacher confined to one school must not be able to
+    // list — or download — another school's import sheets, which carry student
+    // ids and full names, by naming that school's classroom id.
+    const [foreignClassroom] = await dataSource.query(
+      `SELECT id FROM school_classrooms
+       WHERE school_id <> $1 AND deleted_at IS NULL
+       ORDER BY id LIMIT 1`,
+      [Number(school.id)],
+    );
+    assert(
+      foreignClassroom,
+      'Attendance import smoke requires a classroom in a second school to prove the scope check',
+    );
+    const foreignList = await fetch(
+      `${baseUrl}/api/attendance/imports?classroomId=${foreignClassroom.id}&page=1&limit=10`,
+      { headers: { cookie: teacherCookie } },
+    );
+    assert(
+      foreignList.status === 403,
+      `Import history of another school's classroom must be refused: ${foreignList.status}`,
+    );
+    const foreignDownload = await fetch(
+      `${baseUrl}/api/attendance/imports/1/file?classroomId=${foreignClassroom.id}`,
+      { headers: { cookie: teacherCookie } },
+    );
+    assert(
+      foreignDownload.status === 403,
+      `Import download of another school's classroom must be refused: ${foreignDownload.status}`,
+    );
+
+    // 7. The public teacher-link route refuses an unknown token.
     const unknownToken = await fetch(`${baseUrl}/api/teacher-access/attendance-import/parse`, {
       method: 'POST',
       headers: { 'x-teacher-access-token': 'a'.repeat(64) },
@@ -244,6 +275,7 @@ async function main() {
           'a URL host outside the allowlist is refused and named in the message',
           'a non-spreadsheet extension never reaches the parser',
           'the attendance permission gates the authenticated route',
+          'import history and file download refuse a classroom outside the actor scope',
           'the teacher-link route rejects an unknown grant token',
         ],
       }),

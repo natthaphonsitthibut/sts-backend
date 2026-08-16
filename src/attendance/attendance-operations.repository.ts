@@ -114,6 +114,33 @@ export class AttendanceOperationsRepository {
     return result.rows.length > 0;
   }
 
+  /**
+   * The school/grade/room a classroom sits in, so an endpoint that only receives
+   * a `classroomId` can still be scope-checked against the actor.
+   */
+  async findClassroomScope(classroomId: number): Promise<{
+    school_id: number;
+    school_term_id: number;
+    grade_level_id: number;
+    legacy_room_number: number;
+  } | null> {
+    const result = await queryDataSource<{
+      school_id: number;
+      school_term_id: number;
+      grade_level_id: number;
+      legacy_room_number: number;
+    }>(
+      this.dataSource,
+      `
+        SELECT school_id, school_term_id, grade_level_id, legacy_room_number
+        FROM school_classrooms
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
+      [classroomId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async listTerms(schoolId: number): Promise<SchoolTermRow[]> {
     const result = await queryDataSource<SchoolTermRow>(
       this.dataSource,

@@ -21,17 +21,12 @@ export class ParsePublicAttendanceImportDto extends ParseAttendanceImportDto {
   assignmentId?: number;
 }
 
+/**
+ * No `schoolId`/`schoolTermId`: the classroom already carries both, and reading
+ * them from the request would let a caller file an import under a school they
+ * are allowed to see while the class belongs to another one.
+ */
 export class RecordAttendanceImportDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  schoolId!: number;
-
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  schoolTermId!: number;
-
   @Type(() => Number)
   @IsInt()
   @Min(1)

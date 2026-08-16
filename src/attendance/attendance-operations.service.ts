@@ -370,6 +370,31 @@ export class AttendanceOperationsService {
     if (!allowed) throw new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ');
   }
 
+  /**
+   * Scope check for endpoints whose only class input is a `classroomId`: the
+   * classroom itself decides which school/grade/room the actor must be allowed
+   * to see, so nothing about the caller's own scope is taken from the request.
+   * Returns the resolved row so the caller can bind the rest of its payload to
+   * it instead of trusting a client-supplied school or term.
+   */
+  async assertClassroomAccess(
+    classroomId: number,
+    actor?: AuthenticatedRequestUser,
+  ): Promise<{ schoolId: number; schoolTermId: number }> {
+    const classroom = await this.repository.findClassroomScope(classroomId);
+    if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+    await this.assertSchoolAccess(Number(classroom.school_id), actor);
+    this.assertClassScope(
+      Number(classroom.grade_level_id),
+      Number(classroom.legacy_room_number),
+      actor,
+    );
+    return {
+      schoolId: Number(classroom.school_id),
+      schoolTermId: Number(classroom.school_term_id),
+    };
+  }
+
   private async assertCalendarAdmin(
     schoolId: number,
     actor?: AuthenticatedRequestUser,
