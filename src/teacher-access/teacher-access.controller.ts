@@ -1,8 +1,8 @@
 import {
   Body,
   Controller,
-  GoneException,
   Get,
+  GoneException,
   Headers,
   Inject,
   Param,
@@ -13,8 +13,8 @@ import {
   Query,
   Req,
   Res,
-  UploadedFile,
   UnauthorizedException,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -22,6 +22,8 @@ import type { ConfigType } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
+import { attendanceImportMulterOptions } from '../attendance/attendance-import.multer';
+import { ParsePublicAttendanceImportDto } from '../attendance/dto/attendance-import.dto';
 import {
   AuthGuard,
   CurrentUser,
@@ -36,24 +38,35 @@ import { appConfig } from '../config/app.config';
 import { ThrottleTeacherAccess } from '../config/throttle.decorators';
 import {
   CreateTeacherAccessStudentCommentDto,
+  IssuePublicTeacherAccessAttendanceDelegationDto,
+  IssueTeacherAccessAttendanceDelegationDto,
   IssueTeacherAccessGrantDto,
-  IssueTeacherLineGroupInvitationDto,
-  RecordTeacherAccessExportDto,
   IssueTeacherAccessGrantsForTermDto,
+  IssueTeacherLineGroupInvitationDto,
+  ListPublicTeacherAccessDelegationHistoryDto,
+  ListPublicTeacherAccessImportsDto,
+  ListTeacherAccessDelegationHistoryDto,
   ListTeacherAccessGrantsDto,
   ListTeacherLinkRosterDto,
+  PublicTeacherAccessAttendanceDelegationOptionsDto,
+  RecordPublicTeacherAccessImportDto,
+  RecordTeacherAccessExportDto,
+  RevokePublicTeacherAccessAttendanceDelegationDto,
   RevokeTeacherAccessGrantDto,
-  SendTeacherAccessGrantsDto,
   SaveTeacherAccessAttendanceDto,
   SaveTeacherAccessAttendanceMarksDto,
+  SendTeacherAccessGrantsDto,
+  TeacherAccessAssignmentOptionsDto,
+  TeacherAccessAssignmentQueryDto,
+  TeacherAccessAttendanceDelegationOptionsDto,
+  TeacherAccessAttendanceHistoryQueryDto,
   TeacherAccessAttendanceSessionQueryDto,
   TeacherAccessAttendanceSlotsQueryDto,
-  TeacherAccessAssignmentOptionsDto,
-  TeacherAccessAttendanceHistoryQueryDto,
   TeacherAccessRosterQueryDto,
-  TeacherAccessAssignmentQueryDto,
   TeacherAccessStudentProfileQueryDto,
   TeacherAccessStudentSubjectAttendanceQueryDto,
+  UpdatePublicTeacherAccessAttendanceDelegationDto,
+  UpdateTeacherAccessAttendanceDelegationDto,
   UpdateTeacherAccessClassroomCardDto,
   VerifyTeacherAccessOtpDto,
 } from './dto/teacher-access.dto';
@@ -121,6 +134,61 @@ export class TeacherAccessGrantController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listAssignmentOptions(query, actor);
+  }
+
+  @Get('attendance-delegation-options')
+  attendanceDelegationOptions(
+    @Query() query: TeacherAccessAttendanceDelegationOptionsDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.listAttendanceDelegationOptions(
+      query,
+      actor,
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
+  @Get('attendance-delegation-history')
+  attendanceDelegationHistory(
+    @Query() query: ListTeacherAccessDelegationHistoryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.listAttendanceDelegationHistory(
+      query,
+      actor,
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
+  @Post('attendance-delegations')
+  issueAttendanceDelegation(
+    @Body() body: IssueTeacherAccessAttendanceDelegationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.issueAttendanceDelegation(body, actor, baseUrl);
+  }
+
+  @Patch('attendance-delegations/:grantId')
+  updateAttendanceDelegation(
+    @Param('grantId', ParseUUIDPipe) grantId: string,
+    @Body() body: UpdateTeacherAccessAttendanceDelegationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.updateAttendanceDelegation(grantId, body, actor, baseUrl);
+  }
+
+  @Post('attendance-delegations/:grantId/revoke')
+  revokeAttendanceDelegation(
+    @Param('grantId', ParseUUIDPipe) grantId: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.revokeAttendanceDelegation(grantId, actor);
   }
 
   @Post('teacher-memberships/:teacherMembershipId/unlink-line')
@@ -354,6 +422,74 @@ export class PublicTeacherAccessController {
     return this.service.getPublicContext(this.token(rawToken), this.session(rawSession));
   }
 
+  @Get('attendance-delegation-options')
+  @ThrottleTeacherAccess()
+  attendanceDelegationOptions(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Query() query: PublicTeacherAccessAttendanceDelegationOptionsDto,
+    @Req() request: Request,
+  ) {
+    return this.service.listPublicAttendanceDelegationOptions(
+      this.token(rawToken),
+      query,
+      this.session(rawSession),
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
+  @Post('attendance-delegations')
+  @ThrottleTeacherAccess()
+  issueAttendanceDelegation(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Body() body: IssuePublicTeacherAccessAttendanceDelegationDto,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.issuePublicAttendanceDelegation(
+      this.token(rawToken),
+      body,
+      baseUrl,
+      this.session(rawSession),
+    );
+  }
+
+  @Patch('attendance-delegations/:grantId')
+  @ThrottleTeacherAccess()
+  updateAttendanceDelegation(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Param('grantId', ParseUUIDPipe) grantId: string,
+    @Body() body: UpdatePublicTeacherAccessAttendanceDelegationDto,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.updatePublicAttendanceDelegation(
+      this.token(rawToken),
+      grantId,
+      body,
+      this.session(rawSession),
+      baseUrl,
+    );
+  }
+
+  @Post('attendance-delegations/:grantId/revoke')
+  @ThrottleTeacherAccess()
+  revokeAttendanceDelegation(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Param('grantId', ParseUUIDPipe) grantId: string,
+    @Body() body: RevokePublicTeacherAccessAttendanceDelegationDto,
+  ) {
+    return this.service.revokePublicAttendanceDelegation(
+      this.token(rawToken),
+      grantId,
+      body.assignmentId,
+      this.session(rawSession),
+    );
+  }
+
   @Get('attendance-slots')
   @ThrottleTeacherAccess()
   attendanceSlots(
@@ -395,6 +531,52 @@ export class PublicTeacherAccessController {
     return this.service.listPublicAttendanceHistory(
       this.token(rawToken),
       query,
+      this.session(rawSession),
+    );
+  }
+
+  @Get('attendance-delegation-history')
+  @ThrottleTeacherAccess()
+  publicAttendanceDelegationHistory(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Query() query: ListPublicTeacherAccessDelegationHistoryDto,
+    @Req() request: Request,
+  ) {
+    return this.service.listPublicAttendanceDelegationHistory(
+      this.token(rawToken),
+      query,
+      this.session(rawSession),
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
+  @Get('attendance-imports')
+  @ThrottleTeacherAccess()
+  publicAttendanceImports(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Query() query: ListPublicTeacherAccessImportsDto,
+  ) {
+    return this.service.listPublicAttendanceImports(
+      this.token(rawToken),
+      query,
+      this.session(rawSession),
+    );
+  }
+
+  @Post('attendance-imports')
+  @ThrottleTeacherAccess()
+  @UseInterceptors(FileInterceptor('file', attendanceImportMulterOptions))
+  recordPublicAttendanceImport(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: RecordPublicTeacherAccessImportDto,
+  ) {
+    return this.service.recordPublicAttendanceImport(
+      this.token(rawToken),
+      { ...body, file },
       this.session(rawSession),
     );
   }
@@ -549,6 +731,23 @@ export class PublicTeacherAccessController {
     return this.service.savePublicAttendanceMarks(
       this.token(rawToken),
       body,
+      this.session(rawSession),
+    );
+  }
+
+  @Post('attendance-import/parse')
+  @ThrottleTeacherAccess()
+  @UseInterceptors(FileInterceptor('file', attendanceImportMulterOptions))
+  attendanceImportParse(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: ParsePublicAttendanceImportDto,
+  ) {
+    return this.service.parsePublicAttendanceImport(
+      this.token(rawToken),
+      body,
+      file,
       this.session(rawSession),
     );
   }

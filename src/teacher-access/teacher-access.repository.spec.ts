@@ -134,6 +134,57 @@ describe('TeacherAccessRepository', () => {
     );
   });
 
+  it('keeps delegation grants out of the teacher-link roster row', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listTeacherLinkRoster({
+      schoolId: 10,
+      schoolTermId: 21,
+      onDate: '2026-08-03',
+      page: 1,
+      limit: 20,
+    });
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /FROM teacher_access_grants access_grant[\s\S]*access_grant\.school_term_id = \$2[\s\S]*access_grant\.access_scope = 'FULL'[\s\S]*\) latest_grant ON TRUE/,
+      ),
+      [10, 21, '2026-08-03', null, 20, 0, null],
+      true,
+    );
+  });
+
+  it('keeps delegation grants out of the link delivery row', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listGrantsForDelivery({ schoolId: 10, schoolTermId: 21 });
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /FROM teacher_access_grants access_grant[\s\S]*access_grant\.access_scope = 'FULL'[\s\S]*\) latest_grant ON TRUE/,
+      ),
+      [10, 21, null],
+      true,
+    );
+  });
+
+  it('still issues a term link for a teacher who only holds a delegation', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listMembershipsNeedingGrant(
+      { schoolId: 10, schoolTermId: 21, onDate: '2026-08-03' },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /NOT EXISTS \([\s\S]*access_grant\.access_scope = 'FULL'[\s\S]*access_grant\.revoked_at IS NULL/,
+      ),
+      [10, 21, '2026-08-03', null],
+      true,
+    );
+  });
+
   it('narrows the teacher-link roster to teachers who verified LINE', async () => {
     const { repository, runner } = createRepository();
 

@@ -1324,7 +1324,7 @@ async function main() {
           'เข้าบางคาบ',
           'ไม่เข้าเรียน',
           'บันทึกเมื่อ',
-          'ผู้เช็คชื่อ',
+          'ผู้เช็กชื่อ',
         ];
         const missingLabels = requiredLabels.filter((label) => !body.includes(label));
         if (missingLabels.length > 0) {
@@ -1508,7 +1508,7 @@ async function main() {
     );
     const openedHistory = await evaluate(
       chrome.client,
-      `(() => { const button = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.textContent.includes('ประวัติการเช็คชื่อ')); if (!button) return false; button.click(); return true; })()`,
+      `(() => { const button = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.textContent.includes('ประวัติการเช็กชื่อ')); if (!button) return false; button.click(); return true; })()`,
     );
     assert(openedHistory, 'Classroom attendance-history tab was not available');
     await waitFor(
@@ -1545,7 +1545,7 @@ async function main() {
       `Array.from(document.querySelectorAll('th button')).map((button) => button.textContent.trim())`,
     );
     assert(
-      ['วันที่', 'ผู้เช็คชื่อ', 'จำนวนที่มา (คน)', 'จำนวนที่ขาด (คน)'].every((label) =>
+      ['วันที่', 'ผู้เช็กชื่อ', 'จำนวนที่มา (คน)', 'จำนวนที่ขาด (คน)'].every((label) =>
         dailySortHeaders.some((header) => header.includes(label)),
       ),
       'Daily attendance sortable headers were incomplete',
@@ -1590,18 +1590,18 @@ async function main() {
     assert(openedDailyDetail, 'Daily attendance drill-down button was not available');
     await waitFor(
       async () =>
-        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็คชื่อรายวัน') &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็กชื่อรายวัน') &&
         (await evaluate(chrome.client, 'document.body.innerText')).includes(studentNumber) &&
-        (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันที่เช็คชื่อ"]'))`)) &&
+        (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันที่เช็กชื่อ"]'))`)) &&
         (await evaluate(chrome.client, `Array.from(document.querySelectorAll('th button')).some((button) => button.textContent.includes('สถานะการเข้าเรียน'))`)),
       'Daily attendance drill-down did not render the student, date picker, and sortable headers',
     );
     await evaluate(chrome.client, `document.querySelector('[aria-label="กลับไปหน้าสรุป"]')?.click()`);
     await waitFor(
-      async () => await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="รูปแบบประวัติเช็คชื่อ"]'))`),
+      async () => await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="รูปแบบประวัติเช็กชื่อ"]'))`),
       'Attendance summary controls did not return after daily drill-down',
     );
-    await changeNativeSelect(chrome.client, 'รูปแบบประวัติเช็คชื่อ', 'STUDENT');
+    await changeNativeSelect(chrome.client, 'รูปแบบประวัติเช็กชื่อ', 'STUDENT');
     await waitFor(
       async () => await evaluate(chrome.client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="ดูประวัติของ ${importedStudentName}"]`)}))`),
       'Student attendance summary did not render',
@@ -1612,7 +1612,7 @@ async function main() {
     );
     await waitFor(
       async () =>
-        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็คชื่อรายคน') &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็กชื่อรายคน') &&
         (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันเริ่ม"]') && document.querySelector('[aria-label="วันจบ"]'))`)),
       'Student attendance drill-down or date range did not render',
     );

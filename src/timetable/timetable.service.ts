@@ -71,6 +71,7 @@ export class TimetableService {
       id: row.id,
       school_term_id: row.school_term_id,
       school_id: row.school_id,
+      classroom_id: row.classroom_id,
       grade_level_id: row.grade_level_id,
       grade_label: row.grade_label,
       room_no: row.room_no,

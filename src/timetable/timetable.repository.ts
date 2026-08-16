@@ -19,6 +19,7 @@ const SELECT_COLUMNS = `
   ts.id,
   ts.school_term_id,
   ts.school_id,
+  ts.classroom_id,
   ts.grade_level_id,
   gl.label AS grade_label,
   ts.room_no,
@@ -61,8 +62,19 @@ const FROM_JOIN = `
   LEFT JOIN teachers t ON t.id = stm.teacher_id AND t.teacher_status = 'ACTIVE' AND t.deleted_at IS NULL
 `;
 
+/** The one term a room's timetable is read against; `$1` is the school id. */
+const ACTIVE_TERM_FOR_SCHOOL = `(
+  SELECT term.id
+  FROM school_terms term
+  WHERE term.school_id = $1
+    AND term.status = 'ACTIVE'
+    AND term.deleted_at IS NULL
+  ORDER BY term.academic_year DESC, term.semester DESC
+  LIMIT 1
+)`;
+
 const GROUP_BY_SLOT_COLUMNS = `
-  GROUP BY ts.id, ts.school_term_id, ts.school_id, ts.grade_level_id, gl.label, ts.room_no, ts.day_of_week, ts.period, ts.subject_id, sub.code, sub.name_th, ts.created_at, ts.updated_at
+  GROUP BY ts.id, ts.school_term_id, ts.school_id, ts.classroom_id, ts.grade_level_id, gl.label, ts.room_no, ts.day_of_week, ts.period, ts.subject_id, sub.code, sub.name_th, ts.created_at, ts.updated_at
 `;
 
 interface CreateSlotInput {
@@ -149,6 +161,10 @@ export class TimetableRepository {
         SELECT ${SELECT_COLUMNS}
         ${FROM_JOIN}
         WHERE ts.school_id = $1 AND ts.grade_level_id = $2 AND ts.room_no = $3 AND ts.deleted_at IS NULL
+          -- A room keeps the timetable of every term it has ever had, and the
+          -- editor writes new slots against the active term. Without this the
+          -- check-in period list mixes last term's periods into today's.
+          AND ts.school_term_id = ${ACTIVE_TERM_FOR_SCHOOL}
         ${GROUP_BY_SLOT_COLUMNS}
         ORDER BY ts.day_of_week ASC, ts.period ASC
       `,

@@ -48,6 +48,14 @@ describe('TimetableRepository', () => {
     expect(queries[0].params).toEqual([1, 2, 3]);
   });
 
+  it('listForRoom reads only the active term, so last term never leaks into check-in', async () => {
+    const { repository, queries } = buildRepository([]);
+    await repository.listForRoom(1, 2, 3);
+    expect(queries[0].sql).toMatch(
+      /ts\.school_term_id = \([\s\S]*FROM school_terms term[\s\S]*term\.school_id = \$1[\s\S]*term\.status = 'ACTIVE'[\s\S]*LIMIT 1\s*\)/,
+    );
+  });
+
   it('listForTeacher filters by teacher_user_id and teacher_membership_id', async () => {
     const { repository, queries } = buildRepository([]);
     await repository.listForTeacher(42, 100);

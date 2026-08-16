@@ -962,6 +962,7 @@ export class SchoolStructureService {
           : 'date';
       const result = await this.repository.listClassroomDailyAttendance({
         classroomId,
+        subjectId: query.subjectId ?? null,
         date: query.date,
         search: query.search,
         sortBy,
@@ -994,6 +995,7 @@ export class SchoolStructureService {
         : 'name';
     const result = await this.repository.listClassroomStudentAttendance({
       classroomId,
+      subjectId: query.subjectId ?? null,
       date: query.date,
       search: query.search,
       sortBy,

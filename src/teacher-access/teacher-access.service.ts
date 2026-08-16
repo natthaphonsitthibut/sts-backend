@@ -38,8 +38,11 @@ import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { AutomationService } from '../automation/automation.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
+import { AttendanceImportService } from '../attendance/attendance-import.service';
 import { attendanceStatusFromCode } from '../attendance/attendance-status';
+import type { ParsePublicAttendanceImportDto } from '../attendance/dto/attendance-import.dto';
 import { StudentsService } from '../students/students.service';
+import { SchoolStructureRepository } from '../school-structure/school-structure.repository';
 import { StudentObservationsService } from '../student-observations/student-observations.service';
 import { TimetableService } from '../timetable/timetable.service';
 import { createSqlQueryExecutor } from '../database/sql-query';
@@ -64,6 +67,10 @@ import {
 } from './teacher-access.constants';
 import type {
   IssueTeacherAccessGrantDto,
+  IssueTeacherAccessAttendanceDelegationDto,
+  IssuePublicTeacherAccessAttendanceDelegationDto,
+  UpdateTeacherAccessAttendanceDelegationDto,
+  UpdatePublicTeacherAccessAttendanceDelegationDto,
   IssueTeacherAccessGrantsForTermDto,
   ListTeacherAccessGrantsDto,
   ListTeacherLinkRosterDto,
@@ -75,12 +82,18 @@ import { OtpStore } from '../common/otp/otp.store';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
 import { TeacherLineService } from '../teacher-line/teacher-line.service';
 import { TeacherAccessRepository, type TeacherGrantDeliveryRow } from './teacher-access.repository';
-import { TeacherAccessAraIdChallengeStore } from './teacher-access-araid-challenge.store';
+import { AraIdChallengeStore } from '../araid/araid-challenge.store';
+import type { AraIdChallengeScope } from '../araid/araid-challenge.store';
+
+/** Every AraID challenge in this service belongs to the teacher-access flow. */
+const ARAID_SCOPE: AraIdChallengeScope = 'teacher-access';
 import type {
   ActiveTeacherGrantContext,
   TeacherAccessAssignmentRow,
   TeacherAccessGrantDetail,
   TeacherAccessGrantRow,
+  TeacherAttendanceDelegationHistoryRow,
+  TeacherAttendanceDelegationRow,
 } from './teacher-access.types';
 
 /** Namespaces this feature's codes in the shared OTP store. */
@@ -101,7 +114,7 @@ function messageBody(teacherDisplayName: string, accessUrl: string): string {
   return [
     `สวัสดีครับ/ค่ะ คุณครู${teacherDisplayName}`,
     '',
-    'นี่คือลิงก์เช็คชื่อของคุณครูสำหรับภาคเรียนนี้',
+    'นี่คือลิงก์เช็กชื่อของคุณครูสำหรับภาคเรียนนี้',
     accessUrl,
     '',
     'ลิงก์นี้เป็นของคุณครูคนเดียว กรุณาอย่าส่งต่อให้ผู้อื่น',
@@ -127,6 +140,7 @@ export class TeacherAccessService {
     private readonly repository: TeacherAccessRepository,
     private readonly auditLog: AuditLogService,
     private readonly attendanceWriteService: AttendanceWriteService,
+    private readonly attendanceImport: AttendanceImportService,
     private readonly automationService: AutomationService,
     private readonly riskProfileService: RiskProfileService,
     private readonly tokenEncryption: TokenEncryptionService,
@@ -134,13 +148,14 @@ export class TeacherAccessService {
     private readonly otpStore: OtpStore,
     private readonly magicSessionStore: MagicSessionStoreService,
     private readonly araIdService: AraIdService,
-    private readonly araIdChallengeStore: TeacherAccessAraIdChallengeStore,
+    private readonly araIdChallengeStore: AraIdChallengeStore,
     @Inject(MESSAGING_PROVIDER)
     private readonly messaging: MessagingProvider,
     private readonly teacherMessaging: TeacherLineService,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
     private readonly studentsService: StudentsService,
+    private readonly schoolStructure: SchoolStructureRepository,
     private readonly timetableService: TimetableService,
     // Observations depend on teacher-access for the link flows, so the two
     // services reference each other — resolved lazily on this side.
@@ -175,6 +190,20 @@ export class TeacherAccessService {
     if (!allowed) throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
   }
 
+  /**
+   * The link-management screen owns a teacher's own term link. A delegation
+   * grant (ATTENDANCE_ONLY) belongs to the class it stands in for and is closed
+   * from the teacher's check-in page, so copying or rotating one from here would
+   * hand out a one-day stand-in link as if it were the teacher's login link.
+   */
+  private assertTermLinkGrant(row: TeacherAccessGrantRow): void {
+    if (row.access_scope === 'ATTENDANCE_ONLY') {
+      throw new ConflictException(
+        'ลิงก์นี้เป็นลิงก์มอบหมายการเช็กชื่อ ไม่ใช่ลิงก์ประจำภาคเรียนของครู',
+      );
+    }
+  }
+
   private grantStatus(row: TeacherAccessGrantRow): 'ACTIVE' | 'REVOKED' | 'EXPIRED' | 'SUSPENDED' {
     if (row.revoked_at) return 'REVOKED';
     if (new Date(row.expires_at).getTime() <= Date.now()) return 'EXPIRED';
@@ -205,6 +234,7 @@ export class TeacherAccessService {
       semester: row.semester,
       status: this.grantStatus(row),
       capabilities: row.capabilities,
+      accessScope: row.access_scope === 'ATTENDANCE_ONLY' ? 'ATTENDANCE_ONLY' : 'FULL',
       assignmentCount: Number(row.assignment_count),
       stepUpPolicy: row.step_up_policy,
       issuerName: row.issuer_name,
@@ -246,6 +276,30 @@ export class TeacherAccessService {
       effectiveOn: row.effective_on,
       effectiveUntil: row.effective_until,
       allowedActions,
+    };
+  }
+
+  private toAttendanceDelegation(row: TeacherAttendanceDelegationRow, baseUrl: string) {
+    if (!row.token_encrypted) throw new ConflictException('ลิงก์มอบหมายนี้ไม่สามารถแชร์ซ้ำได้');
+    let rawToken: string;
+    try {
+      rawToken = this.tokenEncryption.decrypt(row.token_encrypted);
+    } catch {
+      throw new ConflictException('ลิงก์มอบหมายนี้ไม่สามารถแชร์ซ้ำได้');
+    }
+    return {
+      grantId: row.grant_id,
+      teacherMembershipId: Number(row.teacher_membership_id),
+      teacherDisplayName: row.teacher_display_name,
+      assignmentId: Number(row.assignment_id),
+      assignmentKind: row.assignment_kind,
+      subjectName: row.subject_name,
+      timetableSlotId: row.timetable_slot_id ? Number(row.timetable_slot_id) : null,
+      period: row.timetable_slot_period,
+      attendanceDate: row.attendance_date,
+      startsAt: new Date(row.starts_at).toISOString(),
+      endsAt: new Date(row.ends_at).toISOString(),
+      accessUrl: this.buildAccessUrl(baseUrl, rawToken),
     };
   }
 
@@ -477,7 +531,7 @@ export class TeacherAccessService {
   }
 
   /**
-   * Bulk action behind "สร้างลิงก์เช็คชื่อ": issues one link per active teacher
+   * Bulk action behind "สร้างลิงก์เช็กชื่อ": issues one link per active teacher
    * who teaches this term and has no usable link yet. Teachers whose data blocks
    * an issue (no assignment, inactive membership) are reported as skipped rather
    * than failing the whole batch.
@@ -721,6 +775,7 @@ export class TeacherAccessService {
     const grant = await this.repository.findGrantById(grantId);
     if (!grant) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งานครู');
     await this.assertSchoolAccess(grant.school_id, actor);
+    this.assertTermLinkGrant(grant);
     if (this.grantStatus(grant) !== 'ACTIVE') {
       throw new ConflictException('คัดลอกได้เฉพาะลิงก์ที่ใช้งานอยู่');
     }
@@ -927,6 +982,7 @@ export class TeacherAccessService {
     const result = await this.teacherMessaging.issueGroupInvitation({
       schoolId: input.schoolId,
       schoolName,
+      issuedBy: actorId,
       startsAt: new Date(input.startsAt),
       expiresAt: new Date(input.expiresAt),
       baseUrl,
@@ -1000,7 +1056,11 @@ export class TeacherAccessService {
     const actorId = resolveAuditActorId(actor);
     if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ปิดลิงก์ยืนยัน LINE');
     await this.assertSchoolAccess(schoolId, actor);
-    const revoked = await this.teacherMessaging.revokeGroupInvitation(invitationId, schoolId);
+    const revoked = await this.teacherMessaging.revokeGroupInvitation(
+      invitationId,
+      schoolId,
+      actorId,
+    );
     if (!revoked) throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
     await this.auditLog.record({
       actorUserId: actorId,
@@ -1080,6 +1140,557 @@ export class TeacherAccessService {
     };
   }
 
+  /** Share link included only while the delegation can still be opened. */
+  private toDelegationHistoryEntry(row: TeacherAttendanceDelegationHistoryRow, baseUrl: string) {
+    let accessUrl: string | null = null;
+    if (row.token_encrypted && row.delegation_status === 'PENDING') {
+      try {
+        accessUrl = this.buildAccessUrl(baseUrl, this.tokenEncryption.decrypt(row.token_encrypted));
+      } catch {
+        accessUrl = null;
+      }
+    }
+    return {
+      grantId: row.grant_id,
+      assignmentId: Number(row.assignment_id),
+      teacherMembershipId: Number(row.teacher_membership_id),
+      issuedByName: row.issued_by_name,
+      teacherDisplayName: row.teacher_display_name,
+      subjectName: row.subject_name,
+      period: row.timetable_slot_period,
+      attendanceDate: row.attendance_date,
+      startsAt: new Date(row.starts_at).toISOString(),
+      endsAt: new Date(row.ends_at).toISOString(),
+      status: row.delegation_status,
+      accessUrl,
+    };
+  }
+
+  async listAttendanceDelegationOptions(
+    input: { schoolId: number; schoolTermId: number; classroomId: number; attendanceDate: string },
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    await this.assertSchoolAccess(input.schoolId, actor);
+    const assignments = await this.repository.listAttendanceDelegationAssignments(input);
+    const teachers = await this.repository.listActiveTeacherMembershipsForSchool(input.schoolId);
+    const activeDelegations = await this.repository.listActiveAttendanceDelegations(input);
+    const actorId = resolveAuditActorId(actor);
+    return {
+      data: {
+        assignments: assignments.map((assignment) => ({
+          id: Number(assignment.assignment_id),
+          assignmentKind: assignment.assignment_kind,
+          subjectId: assignment.subject_id,
+          subjectName: assignment.subject_name,
+          timetableSlotId: assignment.timetable_slot_id
+            ? Number(assignment.timetable_slot_id)
+            : null,
+          period: assignment.timetable_slot_period ?? null,
+        })),
+        teachers: teachers
+          .filter((teacher) => teacher.teacher_user_id !== actorId)
+          .map((teacher) => ({
+            teacherMembershipId: Number(teacher.teacher_membership_id),
+            teacherDisplayName: teacher.teacher_display_name,
+          })),
+        activeDelegations: activeDelegations.map((row) =>
+          this.toAttendanceDelegation(row, baseUrl),
+        ),
+      },
+    };
+  }
+
+  /** ประวัติการนำเข้าไฟล์ of the class a link opens. */
+  async listPublicAttendanceImports(
+    rawToken: string,
+    query: {
+      assignmentId: number;
+      attendanceDate?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    sessionToken?: string,
+  ) {
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId: query.assignmentId, sessionToken, operation: 'VIEW_ATTENDANCE_IMPORTS' },
+      async (context) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนของลิงก์');
+        const result = await this.attendanceImport.listApplied({
+          classroomId: Number(context.classroomId),
+          subjectId: context.subjectId ? Number(context.subjectId) : undefined,
+          attendanceDate: query.attendanceDate,
+          search: query.search?.trim() || undefined,
+          page,
+          limit,
+        });
+        return {
+          data: result.rows,
+          meta: buildPaginationMeta(page, limit, result.totalCount),
+        };
+      },
+    );
+  }
+
+  /** Records an import applied through a teacher link. */
+  async recordPublicAttendanceImport(
+    rawToken: string,
+    input: {
+      assignmentId: number;
+      attendanceDate: string;
+      timetableSlotId?: number;
+      fileName: string;
+      sourceUrl?: string;
+      rowCount: number;
+      appliedCount: number;
+      file?: Express.Multer.File;
+    },
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: input.assignmentId,
+        sessionToken,
+        operation: 'RECORD_ATTENDANCE_IMPORT',
+      },
+      async (context) => {
+        if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนของลิงก์');
+        const recorded = await this.attendanceImport.recordApplied({
+          schoolId: context.schoolId,
+          schoolTermId: Number(context.schoolTermId),
+          classroomId: Number(context.classroomId),
+          attendanceDate: input.attendanceDate,
+          timetableSlotId: input.timetableSlotId ?? null,
+          subjectId: context.subjectId ? Number(context.subjectId) : null,
+          fileName: input.fileName,
+          sourceUrl: input.sourceUrl ?? null,
+          rowCount: input.rowCount,
+          appliedCount: input.appliedCount,
+          // A link holder has no account row of their own to point at.
+          importedBy: context.teacherUserId,
+          importedByLabel: context.teacherDisplayName,
+          file: input.file,
+        });
+        return { data: recorded };
+      },
+    );
+  }
+
+  /** Delegation history of a class for the staff screen. */
+  async listAttendanceDelegationHistory(
+    input: {
+      schoolId: number;
+      classroomId: number;
+      subjectId?: number;
+      attendanceDate?: string;
+      search?: string;
+      sortBy?: 'date' | 'issuedBy' | 'teacher' | 'status';
+      sortDirection?: 'asc' | 'desc';
+      page?: number;
+      limit?: number;
+    },
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    await this.assertSchoolAccess(input.schoolId, actor);
+    const page = resolvePage(input.page);
+    const limit = resolveLimit(input.limit);
+    const rows = await this.repository.listAttendanceDelegationHistory({
+      classroomId: input.classroomId,
+      subjectId: input.subjectId,
+      attendanceDate: input.attendanceDate,
+      search: input.search?.trim() || undefined,
+      sortBy: input.sortBy,
+      sortDirection: input.sortDirection,
+      page,
+      limit,
+    });
+    return {
+      data: rows.map((row) => this.toDelegationHistoryEntry(row, baseUrl)),
+      meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+    };
+  }
+
+  /** The same history through a teacher link, scoped to the class it opens. */
+  async listPublicAttendanceDelegationHistory(
+    rawToken: string,
+    query: {
+      assignmentId: number;
+      attendanceDate?: string;
+      search?: string;
+      sortBy?: 'date' | 'issuedBy' | 'teacher' | 'status';
+      sortDirection?: 'asc' | 'desc';
+      page?: number;
+      limit?: number;
+    },
+    sessionToken: string | undefined,
+    baseUrl: string,
+  ) {
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: query.assignmentId,
+        sessionToken,
+        operation: 'VIEW_ATTENDANCE_DELEGATION_HISTORY',
+      },
+      async (context, queryRunner) => {
+        if (context.accessScope === 'ATTENDANCE_ONLY') {
+          throw new ForbiddenException('ลิงก์มอบหมายไม่มีประวัติการมอบหมาย');
+        }
+        if (!context.classroomId) {
+          throw new ForbiddenException('ไม่พบห้องเรียนสำหรับการมอบหมาย');
+        }
+        const rows = await this.repository.listAttendanceDelegationHistory(
+          {
+            classroomId: Number(context.classroomId),
+            // The link is opened on one subject, so its history answers about
+            // that subject without asking the teacher to pick it again.
+            subjectId: context.subjectId ? Number(context.subjectId) : undefined,
+            attendanceDate: query.attendanceDate,
+            search: query.search?.trim() || undefined,
+            // A teacher sees the delegations they handed out for this class.
+            assignmentTeacherMembershipId: Number(context.teacherMembershipId),
+            sortBy: query.sortBy,
+            sortDirection: query.sortDirection,
+            page,
+            limit,
+          },
+          queryRunner,
+        );
+        return {
+          data: rows.map((row) => this.toDelegationHistoryEntry(row, baseUrl)),
+          meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+        };
+      },
+    );
+  }
+
+  async issueAttendanceDelegation(
+    dto: IssueTeacherAccessAttendanceDelegationDto,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ออกลิงก์');
+    const { starts: startsAt, ends: endsAt } = this.resolveDelegationWindow({
+      endsOn: dto.endsOn,
+      endsAt: dto.endsAt,
+    });
+
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const term = await this.loadIssuableTerm(dto.schoolTermId, actor, queryRunner);
+      if (term.school_id !== dto.schoolId) {
+        throw new BadRequestException('โรงเรียนและภาคเรียนไม่ตรงกัน');
+      }
+      if (
+        !term.starts_on ||
+        dto.attendanceDate < term.starts_on ||
+        dto.attendanceDate > term.ends_on
+      ) {
+        throw new BadRequestException('วันที่เช็กชื่อต้องอยู่ในช่วงภาคเรียน');
+      }
+      const recipient = await this.repository.findMembershipForIssue(
+        dto.teacherMembershipId,
+        queryRunner,
+      );
+      if (
+        !recipient ||
+        recipient.school_id !== dto.schoolId ||
+        recipient.membership_status !== 'ACTIVE' ||
+        recipient.teacher_status !== 'ACTIVE'
+      ) {
+        throw new BadRequestException('ครูผู้ได้รับมอบหมายต้องเป็นครูที่เปิดใช้งานในโรงเรียนนี้');
+      }
+      if (recipient.teacher_user_id === actorId) {
+        throw new BadRequestException('ไม่สามารถมอบหมายการเช็กชื่อให้ตนเองได้');
+      }
+      if (
+        !(await this.repository.lockAttendanceDelegationAssignment(dto.assignmentId, queryRunner))
+      ) {
+        throw new BadRequestException('ห้องหรือรายวิชาที่เลือกไม่พร้อมสำหรับวันที่มอบหมาย');
+      }
+      const assignment = await this.repository.findAttendanceDelegationAssignment(
+        {
+          assignmentId: dto.assignmentId,
+          schoolId: dto.schoolId,
+          schoolTermId: dto.schoolTermId,
+          attendanceDate: dto.attendanceDate,
+          timetableSlotId: dto.timetableSlotId ?? null,
+        },
+        queryRunner,
+      );
+      if (!assignment) {
+        throw new ConflictException('วิชาหรือคาบนี้ถูกมอบหมายแล้ว');
+      }
+      if (
+        (assignment.assignment_kind === 'SUBJECT' && !dto.timetableSlotId) ||
+        (assignment.assignment_kind === 'HOMEROOM' && dto.timetableSlotId)
+      ) {
+        throw new BadRequestException('กรุณาเลือกรายวิชาและคาบที่ถูกต้อง');
+      }
+      const rawToken = generateToken();
+      const grantId = await this.repository.createAttendanceDelegationGrant(
+        {
+          teacherMembershipId: dto.teacherMembershipId,
+          schoolId: dto.schoolId,
+          schoolTermId: dto.schoolTermId,
+          tokenHash: hashToken(rawToken),
+          tokenEncrypted: this.tokenEncryption.encrypt(rawToken),
+          stepUpPolicy: TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY,
+          issuedBy: actorId,
+          startsAt,
+          endsAt,
+          expiresAt: endsAt,
+          attendanceDate: dto.attendanceDate,
+          timetableSlotId: dto.timetableSlotId ?? null,
+          assignment,
+          capability: this.attendanceCapability(assignment.assignment_kind),
+        },
+        queryRunner,
+      );
+      const detail = await this.repository.getGrantDetail(grantId, queryRunner);
+      if (!detail) throw new ConflictException('สร้างลิงก์มอบหมายการเช็กชื่อไม่สำเร็จ');
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'TEACHER_ACCESS_GRANT_ISSUE',
+          targetType: 'teacher_access_grants',
+          targetId: grantId,
+          metadata: {
+            schoolId: dto.schoolId,
+            teacherMembershipId: dto.teacherMembershipId,
+            assignmentId: dto.assignmentId,
+            attendanceDate: dto.attendanceDate,
+            startsAt: startsAt.toISOString(),
+            endsAt: endsAt.toISOString(),
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return {
+        data: {
+          ...this.toGrant(detail.grant),
+          accessUrl: this.buildAccessUrl(baseUrl, rawToken),
+        },
+      };
+    });
+  }
+
+  async listPublicAttendanceDelegationOptions(
+    rawToken: string,
+    input: { assignmentId: number; attendanceDate: string },
+    sessionToken: string | undefined,
+    baseUrl: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: input.assignmentId,
+        sessionToken,
+        operation: 'VIEW_ATTENDANCE_DELEGATION_OPTIONS',
+      },
+      async (context, queryRunner) => {
+        if (!context.classroomId) {
+          throw new ForbiddenException('ไม่พบห้องเรียนสำหรับการมอบหมาย');
+        }
+        const assignments = await this.repository.listAttendanceDelegationAssignments(
+          {
+            schoolId: context.schoolId,
+            schoolTermId: Number(context.schoolTermId),
+            classroomId: Number(context.classroomId),
+            teacherMembershipId: Number(context.teacherMembershipId),
+            attendanceDate: input.attendanceDate,
+          },
+          queryRunner,
+        );
+        const teachers = await this.repository.listActiveTeacherMembershipsForSchool(
+          context.schoolId,
+          queryRunner,
+        );
+        const activeDelegations = await this.repository.listActiveAttendanceDelegations(
+          {
+            schoolId: context.schoolId,
+            schoolTermId: Number(context.schoolTermId),
+            classroomId: Number(context.classroomId),
+            attendanceDate: input.attendanceDate,
+            assignmentTeacherMembershipId: Number(context.teacherMembershipId),
+          },
+          queryRunner,
+        );
+        return {
+          data: {
+            assignments: assignments.map((assignment) => ({
+              id: Number(assignment.assignment_id),
+              assignmentKind: assignment.assignment_kind,
+              subjectId: assignment.subject_id,
+              subjectName: assignment.subject_name,
+              timetableSlotId: assignment.timetable_slot_id
+                ? Number(assignment.timetable_slot_id)
+                : null,
+              period: assignment.timetable_slot_period ?? null,
+            })),
+            teachers: teachers
+              .filter(
+                (teacher) =>
+                  Number(teacher.teacher_membership_id) !== Number(context.teacherMembershipId),
+              )
+              .map((teacher) => ({
+                teacherMembershipId: Number(teacher.teacher_membership_id),
+                teacherDisplayName: teacher.teacher_display_name,
+              })),
+            activeDelegations: activeDelegations.map((row) =>
+              this.toAttendanceDelegation(row, baseUrl),
+            ),
+          },
+        };
+      },
+    );
+  }
+
+  async issuePublicAttendanceDelegation(
+    rawToken: string,
+    dto: IssuePublicTeacherAccessAttendanceDelegationDto,
+    baseUrl: string,
+    sessionToken?: string,
+  ) {
+    const { starts: startsAt, ends: endsAt } = this.resolveDelegationWindow({
+      endsOn: dto.endsOn,
+      endsAt: dto.endsAt,
+    });
+    return await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: dto.assignmentId,
+        sessionToken,
+        operation: 'ISSUE_ATTENDANCE_DELEGATION',
+        recordSuccessfulUse: false,
+      },
+      async (context, queryRunner) => {
+        if (!context.classroomId) {
+          throw new ForbiddenException('ไม่พบห้องเรียนสำหรับการมอบหมาย');
+        }
+        const term = await this.repository.findTermForIssue(
+          Number(context.schoolTermId),
+          queryRunner,
+        );
+        if (
+          !term ||
+          term.school_id !== context.schoolId ||
+          term.status !== 'ACTIVE' ||
+          !term.starts_on ||
+          !term.ends_on
+        ) {
+          throw new ForbiddenException('ภาคเรียนของลิงก์นี้ไม่พร้อมออกลิงก์มอบหมาย');
+        }
+        if (dto.attendanceDate < term.starts_on || dto.attendanceDate > term.ends_on) {
+          throw new BadRequestException('วันที่เช็กชื่อต้องอยู่ในช่วงภาคเรียน');
+        }
+        const recipient = await this.repository.findMembershipForIssue(
+          dto.teacherMembershipId,
+          queryRunner,
+        );
+        if (
+          !recipient ||
+          recipient.school_id !== context.schoolId ||
+          recipient.membership_status !== 'ACTIVE' ||
+          recipient.teacher_status !== 'ACTIVE'
+        ) {
+          throw new BadRequestException('ครูผู้ได้รับมอบหมายต้องเป็นครูที่เปิดใช้งานในโรงเรียนนี้');
+        }
+        if (dto.teacherMembershipId === Number(context.teacherMembershipId)) {
+          throw new BadRequestException('ไม่สามารถมอบหมายการเช็กชื่อให้ตนเองได้');
+        }
+        if (
+          !(await this.repository.lockAttendanceDelegationAssignment(dto.assignmentId, queryRunner))
+        ) {
+          throw new ForbiddenException('รายวิชาที่เลือกอยู่นอกขอบเขตของลิงก์ครู');
+        }
+        const assignment = await this.repository.findAttendanceDelegationAssignment(
+          {
+            assignmentId: dto.assignmentId,
+            schoolId: context.schoolId,
+            schoolTermId: Number(context.schoolTermId),
+            attendanceDate: dto.attendanceDate,
+            timetableSlotId: dto.timetableSlotId ?? null,
+          },
+          queryRunner,
+        );
+        if (
+          !assignment ||
+          Number(assignment.classroom_id) !== Number(context.classroomId) ||
+          Number(assignment.teacher_membership_id) !== Number(context.teacherMembershipId)
+        ) {
+          throw new ForbiddenException('รายวิชาที่เลือกอยู่นอกขอบเขตของลิงก์ครู');
+        }
+        if (
+          (assignment.assignment_kind === 'SUBJECT' && !dto.timetableSlotId) ||
+          (assignment.assignment_kind === 'HOMEROOM' && dto.timetableSlotId)
+        ) {
+          throw new BadRequestException('กรุณาเลือกรายวิชาและคาบที่ถูกต้อง');
+        }
+        const rawChildToken = generateToken();
+        const grantId = await this.repository.createAttendanceDelegationGrant(
+          {
+            teacherMembershipId: dto.teacherMembershipId,
+            schoolId: context.schoolId,
+            schoolTermId: Number(context.schoolTermId),
+            tokenHash: hashToken(rawChildToken),
+            tokenEncrypted: this.tokenEncryption.encrypt(rawChildToken),
+            stepUpPolicy: TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY,
+            // A teacher link may belong to a teacher without a normal user account;
+            // retain the original issuer FK and record the acting teacher in audit metadata.
+            issuedBy: context.issuerUserId,
+            startsAt,
+            endsAt,
+            expiresAt: endsAt,
+            attendanceDate: dto.attendanceDate,
+            timetableSlotId: dto.timetableSlotId ?? null,
+            assignment,
+            capability: this.attendanceCapability(assignment.assignment_kind),
+          },
+          queryRunner,
+        );
+        const detail = await this.repository.getGrantDetail(grantId, queryRunner);
+        if (!detail) throw new ConflictException('สร้างลิงก์มอบหมายการเช็กชื่อไม่สำเร็จ');
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: context.teacherUserId,
+            actorLabel: context.teacherDisplayName,
+            action: 'TEACHER_ACCESS_GRANT_ISSUE',
+            targetType: 'teacher_access_grants',
+            targetId: grantId,
+            metadata: {
+              schoolId: context.schoolId,
+              teacherMembershipId: dto.teacherMembershipId,
+              assignmentId: dto.assignmentId,
+              attendanceDate: dto.attendanceDate,
+              startsAt: startsAt.toISOString(),
+              endsAt: endsAt.toISOString(),
+              issuedViaGrantId: context.grantId,
+            },
+            ip: null,
+          },
+          queryRunner,
+        );
+        return {
+          data: {
+            ...this.toGrant(detail.grant),
+            accessUrl: this.buildAccessUrl(baseUrl, rawChildToken),
+          },
+        };
+      },
+    );
+  }
+
   async getGrant(grantId: string, actor: AuthenticatedRequestUser) {
     const detail = await this.repository.getGrantDetail(grantId);
     if (!detail) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งานครู');
@@ -1092,6 +1703,376 @@ export class TeacherAccessService {
     };
   }
 
+  /** Today in Bangkok, which is where a link's own dates default from. */
+  private bangkokToday(): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date());
+  }
+
+  /**
+   * A delegation link lives on its own clock, not the round's: attendance is
+   * checked for days that have already passed, so the link starts the moment it
+   * is issued and runs until the expiry the issuer picked (defaulting to the end
+   * of today). `attendanceDate` only says which round it covers.
+   */
+  private resolveDelegationWindow(input: { endsOn?: string; endsAt?: string; startsAt?: Date }): {
+    starts: Date;
+    ends: Date;
+  } {
+    const starts = input.startsAt ?? new Date();
+    const endsOn = input.endsOn ?? this.bangkokToday();
+    const ends = new Date(`${endsOn}T${input.endsAt ?? '23:59'}:00+07:00`);
+    if (!Number.isFinite(ends.getTime())) {
+      throw new BadRequestException('วันหรือเวลาหมดอายุลิงก์ไม่ถูกต้อง');
+    }
+    if (ends <= starts) {
+      throw new BadRequestException('วันและเวลาที่ลิงก์หมดอายุต้องอยู่หลังเวลาที่เริ่มใช้ลิงก์');
+    }
+    return { starts, ends };
+  }
+
+  /**
+   * Moving a delegation to another teacher is not an edit of the same link: the
+   * teacher who had it must lose access, and the new one needs a link of their
+   * own. So the old grant is closed and a fresh one is issued for the same round
+   * inside one transaction, and the caller gets the new URL back to hand over.
+   */
+  private async reassignAttendanceDelegation(
+    input: {
+      grantId: string;
+      teacherMembershipId: number;
+      schoolId: number;
+      startsAt: Date;
+      endsAt: Date;
+      issuedBy: number;
+      actorUserId: number | null;
+      actorLabel: string;
+      issuedViaGrantId?: string;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<{ grantId: string; rawToken: string }> {
+    const recipient = await this.repository.findMembershipForIssue(
+      input.teacherMembershipId,
+      queryRunner,
+    );
+    if (
+      !recipient ||
+      recipient.school_id !== input.schoolId ||
+      recipient.membership_status !== 'ACTIVE' ||
+      recipient.teacher_status !== 'ACTIVE'
+    ) {
+      throw new BadRequestException('ครูผู้ได้รับมอบหมายต้องเป็นครูที่เปิดใช้งานในโรงเรียนนี้');
+    }
+    const scope = await this.repository.findAttendanceDelegationScope(input.grantId, queryRunner);
+    const assignment = await this.repository.findRestrictedAttendanceAssignment(
+      input.grantId,
+      queryRunner,
+    );
+    if (!scope || !assignment) {
+      throw new NotFoundException('ไม่พบลิงก์มอบหมายการเช็กชื่อ');
+    }
+    if (Number(assignment.teacher_membership_id) === input.teacherMembershipId) {
+      throw new BadRequestException('ไม่สามารถมอบหมายการเช็กชื่อให้ตนเองได้');
+    }
+    await this.repository.revokeGrant(
+      input.grantId,
+      input.issuedBy,
+      'REASSIGNED_TO_ANOTHER_TEACHER',
+      queryRunner,
+    );
+    const rawToken = generateToken();
+    const reissuedGrantId = await this.repository.createAttendanceDelegationGrant(
+      {
+        teacherMembershipId: input.teacherMembershipId,
+        schoolId: input.schoolId,
+        schoolTermId: Number(scope.school_term_id),
+        tokenHash: hashToken(rawToken),
+        tokenEncrypted: this.tokenEncryption.encrypt(rawToken),
+        stepUpPolicy: TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY,
+        issuedBy: input.issuedBy,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        expiresAt: input.endsAt,
+        attendanceDate: scope.attendance_date,
+        timetableSlotId: scope.timetable_slot_id ? Number(scope.timetable_slot_id) : null,
+        assignment,
+        capability: this.attendanceCapability(assignment.assignment_kind),
+      },
+      queryRunner,
+    );
+    await this.auditLog.recordAtomic(
+      {
+        actorUserId: input.actorUserId,
+        actorLabel: input.actorLabel,
+        action: 'TEACHER_ACCESS_GRANT_ISSUE',
+        targetType: 'teacher_access_grants',
+        targetId: reissuedGrantId,
+        metadata: {
+          schoolId: input.schoolId,
+          teacherMembershipId: input.teacherMembershipId,
+          assignmentId: Number(scope.assignment_id),
+          attendanceDate: scope.attendance_date,
+          startsAt: input.startsAt.toISOString(),
+          endsAt: input.endsAt.toISOString(),
+          reassignedFromGrantId: input.grantId,
+          ...(input.issuedViaGrantId ? { issuedViaGrantId: input.issuedViaGrantId } : {}),
+        },
+        ip: null,
+      },
+      queryRunner,
+    );
+    return { grantId: reissuedGrantId, rawToken };
+  }
+
+  async updateAttendanceDelegation(
+    grantId: string,
+    dto: UpdateTeacherAccessAttendanceDelegationDto,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้แก้ไขลิงก์มอบหมาย');
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const detail = await this.repository.getGrantDetail(grantId, queryRunner, true);
+      if (
+        !detail ||
+        detail.grant.access_scope !== 'ATTENDANCE_ONLY' ||
+        !detail.grant.attendance_date
+      ) {
+        throw new NotFoundException('ไม่พบลิงก์มอบหมายการเช็กชื่อ');
+      }
+      if (detail.grant.school_id !== dto.schoolId) {
+        throw new BadRequestException('โรงเรียนของลิงก์มอบหมายไม่ตรงกัน');
+      }
+      await this.assertSchoolAccess(dto.schoolId, actor);
+      if (detail.grant.revoked_at || new Date(detail.grant.expires_at).getTime() <= Date.now()) {
+        throw new GoneException('ลิงก์มอบหมายถูกปิดหรือหมดอายุแล้ว');
+      }
+      // Editing never moves the start — the link has been usable since it was
+      // issued — so only its expiry is recomputed.
+      const scope = await this.repository.findAttendanceDelegationScope(grantId, queryRunner);
+      const window = this.resolveDelegationWindow({
+        endsOn: dto.endsOn,
+        endsAt: dto.endsAt,
+        startsAt: scope ? new Date(scope.starts_at) : undefined,
+      });
+      if (
+        dto.teacherMembershipId &&
+        dto.teacherMembershipId !== Number(detail.grant.teacher_membership_id)
+      ) {
+        const reissued = await this.reassignAttendanceDelegation(
+          {
+            grantId,
+            teacherMembershipId: dto.teacherMembershipId,
+            schoolId: dto.schoolId,
+            startsAt: window.starts,
+            endsAt: window.ends,
+            issuedBy: actorId,
+            actorUserId: actorId,
+            actorLabel: actor.username,
+          },
+          queryRunner,
+        );
+        return {
+          data: {
+            grantId: reissued.grantId,
+            startsAt: window.starts.toISOString(),
+            endsAt: window.ends.toISOString(),
+            accessUrl: this.buildAccessUrl(baseUrl, reissued.rawToken),
+          },
+        };
+      }
+      if (
+        !(await this.repository.updateAttendanceDelegationWindow(
+          grantId,
+          window.starts,
+          window.ends,
+          window.ends,
+          queryRunner,
+        ))
+      ) {
+        throw new GoneException('ลิงก์มอบหมายถูกปิดหรือหมดอายุแล้ว');
+      }
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'TEACHER_ACCESS_GRANT_UPDATE',
+          targetType: 'teacher_access_grants',
+          targetId: grantId,
+          metadata: { startsAt: window.starts.toISOString(), endsAt: window.ends.toISOString() },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return {
+        data: { grantId, startsAt: window.starts.toISOString(), endsAt: window.ends.toISOString() },
+      };
+    });
+  }
+
+  async updatePublicAttendanceDelegation(
+    rawToken: string,
+    grantId: string,
+    dto: UpdatePublicTeacherAccessAttendanceDelegationDto & { assignmentId: number },
+    sessionToken?: string,
+    baseUrl?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId: dto.assignmentId, sessionToken, operation: 'UPDATE_ATTENDANCE_DELEGATION' },
+      async (context, queryRunner) => {
+        if (context.accessScope === 'ATTENDANCE_ONLY') {
+          throw new ForbiddenException('ลิงก์มอบหมายไม่สามารถแก้ไขลิงก์อื่นได้');
+        }
+        const delegatedAssignment = await this.repository.findRestrictedAttendanceAssignment(
+          grantId,
+          queryRunner,
+        );
+        if (
+          !delegatedAssignment ||
+          Number(delegatedAssignment.classroom_id) !== Number(context.classroomId) ||
+          Number(delegatedAssignment.teacher_membership_id) !== Number(context.teacherMembershipId)
+        ) {
+          throw new NotFoundException('ไม่พบลิงก์มอบหมายการเช็กชื่อ');
+        }
+        const detail = await this.repository.getGrantDetail(grantId, queryRunner, true);
+        if (
+          !detail ||
+          detail.grant.access_scope !== 'ATTENDANCE_ONLY' ||
+          !detail.grant.attendance_date
+        ) {
+          throw new NotFoundException('ไม่พบลิงก์มอบหมายการเช็กชื่อ');
+        }
+        const scope = await this.repository.findAttendanceDelegationScope(grantId, queryRunner);
+        const window = this.resolveDelegationWindow({
+          endsOn: dto.endsOn,
+          endsAt: dto.endsAt,
+          startsAt: scope ? new Date(scope.starts_at) : undefined,
+        });
+        if (
+          dto.teacherMembershipId &&
+          dto.teacherMembershipId !== Number(detail.grant.teacher_membership_id)
+        ) {
+          if (dto.teacherMembershipId === Number(context.teacherMembershipId)) {
+            throw new BadRequestException('ไม่สามารถมอบหมายการเช็กชื่อให้ตนเองได้');
+          }
+          const reissued = await this.reassignAttendanceDelegation(
+            {
+              grantId,
+              teacherMembershipId: dto.teacherMembershipId,
+              schoolId: context.schoolId,
+              startsAt: window.starts,
+              endsAt: window.ends,
+              issuedBy: context.issuerUserId,
+              actorUserId: context.teacherUserId,
+              actorLabel: context.teacherDisplayName,
+              issuedViaGrantId: context.grantId,
+            },
+            queryRunner,
+          );
+          return {
+            data: {
+              grantId: reissued.grantId,
+              startsAt: window.starts.toISOString(),
+              endsAt: window.ends.toISOString(),
+              accessUrl: baseUrl ? this.buildAccessUrl(baseUrl, reissued.rawToken) : null,
+            },
+          };
+        }
+        if (
+          !(await this.repository.updateAttendanceDelegationWindow(
+            grantId,
+            window.starts,
+            window.ends,
+            window.ends,
+            queryRunner,
+          ))
+        ) {
+          throw new GoneException('ลิงก์มอบหมายถูกปิดหรือหมดอายุแล้ว');
+        }
+        return {
+          data: {
+            grantId,
+            startsAt: window.starts.toISOString(),
+            endsAt: window.ends.toISOString(),
+          },
+        };
+      },
+    );
+  }
+
+  async revokePublicAttendanceDelegation(
+    rawToken: string,
+    grantId: string,
+    assignmentId: number,
+    sessionToken?: string,
+  ) {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { assignmentId, sessionToken, operation: 'REVOKE_ATTENDANCE_DELEGATION' },
+      async (context, queryRunner) => {
+        if (context.accessScope === 'ATTENDANCE_ONLY') {
+          throw new ForbiddenException('ลิงก์มอบหมายไม่สามารถปิดลิงก์อื่นได้');
+        }
+        const delegatedAssignment = await this.repository.findRestrictedAttendanceAssignment(
+          grantId,
+          queryRunner,
+        );
+        if (
+          !delegatedAssignment ||
+          Number(delegatedAssignment.classroom_id) !== Number(context.classroomId) ||
+          Number(delegatedAssignment.teacher_membership_id) !== Number(context.teacherMembershipId)
+        ) {
+          throw new NotFoundException('ไม่พบลิงก์มอบหมายการเช็กชื่อ');
+        }
+        const detail = await this.repository.getGrantDetail(grantId, queryRunner, true);
+        if (!detail || detail.grant.access_scope !== 'ATTENDANCE_ONLY' || detail.grant.revoked_at) {
+          throw new GoneException('ลิงก์มอบหมายถูกปิดหรือหมดอายุแล้ว');
+        }
+        await this.repository.revokeGrant(
+          grantId,
+          context.teacherUserId ?? context.issuerUserId,
+          'REVOKED_BY_ASSIGNMENT_TEACHER',
+          queryRunner,
+        );
+        return { data: { grantId, revoked: true } };
+      },
+    );
+  }
+
+  async revokeAttendanceDelegation(grantId: string, actor: AuthenticatedRequestUser) {
+    const actorId = resolveAuditActorId(actor);
+    if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ปิดลิงก์มอบหมาย');
+    return await this.repository.withTransaction(async (queryRunner) => {
+      const detail = await this.repository.getGrantDetail(grantId, queryRunner, true);
+      if (!detail || detail.grant.access_scope !== 'ATTENDANCE_ONLY') {
+        throw new NotFoundException('ไม่พบลิงก์มอบหมายการเช็กชื่อ');
+      }
+      await this.assertSchoolAccess(detail.grant.school_id, actor);
+      if (detail.grant.revoked_at) {
+        throw new GoneException('ลิงก์มอบหมายถูกปิดหรือหมดอายุแล้ว');
+      }
+      await this.repository.revokeGrant(grantId, actorId, 'REVOKED_BY_SCHOOL_ADMIN', queryRunner);
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'TEACHER_ACCESS_GRANT_REVOKE',
+          targetType: 'teacher_access_grants',
+          targetId: grantId,
+          metadata: {
+            schoolId: detail.grant.school_id,
+            teacherName: detail.grant.teacher_display_name,
+            reason: 'REVOKED_BY_SCHOOL_ADMIN',
+          },
+          ip: null,
+        },
+        createSqlQueryExecutor(queryRunner),
+      );
+      return { data: { grantId, revoked: true } };
+    });
+  }
+
   async revokeGrant(grantId: string, reason: string, actor: AuthenticatedRequestUser) {
     const actorId = resolveAuditActorId(actor);
     if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ยกเลิกลิงก์');
@@ -1099,6 +2080,7 @@ export class TeacherAccessService {
       const current = await this.repository.getGrantDetail(grantId, queryRunner, true);
       if (!current) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งานครู');
       await this.assertSchoolAccess(current.grant.school_id, actor);
+      this.assertTermLinkGrant(current.grant);
       if (!current.grant.revoked_at) {
         await this.repository.revokeGrant(grantId, actorId, reason, queryRunner);
         await this.auditLog.recordAtomic(
@@ -1132,6 +2114,7 @@ export class TeacherAccessService {
       const current = await this.repository.getGrantDetail(grantId, queryRunner, true);
       if (!current) throw new NotFoundException('ไม่พบลิงก์เข้าใช้งานครู');
       await this.assertSchoolAccess(current.grant.school_id, actor);
+      this.assertTermLinkGrant(current.grant);
       if (this.grantStatus(current.grant) !== 'ACTIVE') {
         throw new ConflictException('หมุนได้เฉพาะลิงก์ที่เปิดใช้งาน');
       }
@@ -1168,7 +2151,16 @@ export class TeacherAccessService {
   }
 
   private assertGrantUsable(grant: TeacherAccessGrantRow): void {
-    if (grant.revoked_at) throw new GoneException('ลิงก์นี้ถูกยกเลิกแล้ว');
+    if (grant.revoked_at) {
+      // A delegation is closed by the teacher who handed it out, and the person
+      // holding it has no way to guess that — name the link so they know which
+      // one died and who to ask.
+      throw new GoneException(
+        grant.access_scope === 'ATTENDANCE_ONLY'
+          ? 'ลิงก์มอบหมายการเช็กชื่อนี้ถูกปิดแล้ว กรุณาติดต่อครูผู้มอบหมาย'
+          : 'ลิงก์นี้ถูกเพิกถอนแล้ว',
+      );
+    }
     if (new Date(grant.expires_at).getTime() <= Date.now()) {
       throw new GoneException('ลิงก์นี้หมดอายุแล้ว');
     }
@@ -1192,6 +2184,20 @@ export class TeacherAccessService {
       today > grant.term_ends_on
     ) {
       throw new ForbiddenException('ลิงก์นี้อยู่นอกช่วงภาคเรียน');
+    }
+    if (grant.access_scope === 'ATTENDANCE_ONLY') {
+      const startsAt = grant.attendance_starts_at ? new Date(grant.attendance_starts_at) : null;
+      const endsAt = grant.attendance_ends_at ? new Date(grant.attendance_ends_at) : null;
+      if (!startsAt || !endsAt || !grant.attendance_date) {
+        throw new ForbiddenException('ข้อมูลช่วงเวลาของลิงก์เช็กชื่อไม่ครบถ้วน');
+      }
+      const now = Date.now();
+      if (getBangkokDateString() !== grant.attendance_date || now < startsAt.getTime()) {
+        throw new ForbiddenException('ลิงก์เช็กชื่อยังไม่ถึงเวลาใช้งาน');
+      }
+      if (now >= endsAt.getTime()) {
+        throw new GoneException('ลิงก์เช็กชื่อหมดเวลาใช้งานแล้ว');
+      }
     }
   }
 
@@ -1221,7 +2227,8 @@ export class TeacherAccessService {
     if (
       assignment.school_id !== grant.school_id ||
       assignment.school_term_id !== grant.school_term_id ||
-      assignment.teacher_membership_id !== grant.teacher_membership_id
+      (grant.access_scope !== 'ATTENDANCE_ONLY' &&
+        assignment.teacher_membership_id !== grant.teacher_membership_id)
     ) {
       throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
     }
@@ -1232,7 +2239,7 @@ export class TeacherAccessService {
       (capability === 'HOMEROOM_ATTENDANCE' || capability === 'SUBJECT_ATTENDANCE') &&
       capability !== this.attendanceCapability(assignment.assignment_kind)
     ) {
-      throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+      throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็กชื่อใน assignment นี้');
     }
     if (capability === 'TEACHER_OBSERVATION' && assignment.assignment_kind !== 'SUBJECT') {
       throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์บันทึกข้อสังเกตใน assignment นี้');
@@ -1249,6 +2256,7 @@ export class TeacherAccessService {
       teacherUserId: detail.grant.teacher_user_id,
       teacherUsername: detail.grant.teacher_username,
       teacherDisplayName: detail.grant.teacher_display_name,
+      issuerUserId: detail.grant.issued_by,
       schoolId: detail.grant.school_id,
       schoolName: detail.grant.school_name,
       schoolTermId: detail.grant.school_term_id,
@@ -1258,6 +2266,8 @@ export class TeacherAccessService {
       classroomId: assignment?.classroom_id ?? null,
       subjectId: assignment?.subject_id ?? null,
       capabilities: detail.capabilities,
+      accessScope: detail.grant.access_scope === 'ATTENDANCE_ONLY' ? 'ATTENDANCE_ONLY' : 'FULL',
+      attendanceDate: detail.grant.attendance_date,
     };
   }
 
@@ -1286,18 +2296,44 @@ export class TeacherAccessService {
         deniedGrant = grant;
         this.assertGrantUsable(grant);
         await this.assertStepUpSatisfied(grant, options.sessionToken);
-        await this.repository.syncGrantScopeFromAssignments(
-          grant.id,
-          getBangkokDateString(),
-          queryRunner,
-        );
+        if (grant.access_scope === 'ATTENDANCE_ONLY') {
+          if (
+            ![
+              'VIEW_CONTEXT',
+              'VIEW_ROSTER',
+              'VIEW_ATTENDANCE_SLOTS',
+              'VIEW_ATTENDANCE_DRAFT',
+              'SUBMIT_ATTENDANCE_DRAFT',
+              'SUBMIT_ATTENDANCE',
+              'PARSE_ATTENDANCE_IMPORT',
+            ].includes(options.operation)
+          ) {
+            throw new ForbiddenException('ลิงก์นี้ใช้ได้เฉพาะการเช็กชื่อที่ได้รับมอบหมาย');
+          }
+        } else {
+          await this.repository.syncGrantScopeFromAssignments(
+            grant.id,
+            getBangkokDateString(),
+            queryRunner,
+          );
+        }
         const capabilities = await this.repository.listCapabilities(grant.id, queryRunner);
         if (options.capability && !capabilities.includes(options.capability)) {
           throw new ForbiddenException('ลิงก์นี้ไม่มี capability ที่ร้องขอ');
         }
         const assignment = options.assignmentId
-          ? await this.repository.findGrantAssignment(grant.id, options.assignmentId, queryRunner)
+          ? grant.access_scope === 'ATTENDANCE_ONLY'
+            ? await this.repository.findRestrictedAttendanceAssignment(grant.id, queryRunner)
+            : await this.repository.findGrantAssignment(grant.id, options.assignmentId, queryRunner)
           : null;
+        if (
+          grant.access_scope === 'ATTENDANCE_ONLY' &&
+          options.assignmentId &&
+          assignment &&
+          Number(assignment.assignment_id) !== options.assignmentId
+        ) {
+          throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
+        }
         if (options.assignmentId && !assignment) {
           throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
         }
@@ -1477,7 +2513,7 @@ export class TeacherAccessService {
     if (!/^\d{13}$/.test(grant.teacher_citizen_id?.trim() ?? '')) {
       throw new ConflictException('ครูเจ้าของลิงก์ยังไม่มีเลขบัตรประชาชนสำหรับยืนยันผ่าน AraID');
     }
-    const challenge = await this.araIdChallengeStore.create(grant.id);
+    const challenge = await this.araIdChallengeStore.create(ARAID_SCOPE, grant.id);
     const verificationUrl = new URL('/araid/authorize', baseUrl);
     verificationUrl.hash = `challenge=${encodeURIComponent(challenge.token)}`;
     const qrDataUrl = await QRCode.toDataURL(verificationUrl.toString(), {
@@ -1500,6 +2536,7 @@ export class TeacherAccessService {
   async beginAraIdChallenge(challengeToken: string, existingAuthorizationToken?: string) {
     if (existingAuthorizationToken) {
       const resumed = await this.araIdChallengeStore.resume(
+        ARAID_SCOPE,
         challengeToken,
         existingAuthorizationToken,
       );
@@ -1510,11 +2547,11 @@ export class TeacherAccessService {
         };
       }
     }
-    const challenge = await this.araIdChallengeStore.read(challengeToken);
+    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
     if (!challenge || challenge.status !== 'PENDING') {
       throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     }
-    const authorization = await this.araIdChallengeStore.claim(challengeToken);
+    const authorization = await this.araIdChallengeStore.claim(ARAID_SCOPE, challengeToken);
     if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     return {
       authorizationToken: authorization.authorizationToken,
@@ -1527,19 +2564,22 @@ export class TeacherAccessService {
     araIdProfileId: string,
     authenticatedAt: number,
   ) {
-    const authorization = await this.araIdChallengeStore.readAuthorization(authorizationToken);
+    const authorization = await this.araIdChallengeStore.readAuthorization(
+      ARAID_SCOPE,
+      authorizationToken,
+    );
     if (!authorization) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
     if (authenticatedAt < authorization.minimumAuthenticatedAt) {
       throw new UnauthorizedException('กรุณากรอก PIN AraID ใหม่เพื่อยืนยันลิงก์ครู');
     }
-    const grant = await this.repository.findGrantById(authorization.challenge.grantId);
-    if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกยกเลิกแล้ว');
+    const grant = await this.repository.findGrantById(authorization.challenge.subjectId);
+    if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกเพิกถอนแล้ว');
     this.assertGrantUsable(grant);
     if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
       throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
     }
     await this.assertAraIdIdentityMatchesGrant(grant, araIdProfileId);
-    if (!(await this.araIdChallengeStore.approveAuthorization(authorizationToken))) {
+    if (!(await this.araIdChallengeStore.approveAuthorization(ARAID_SCOPE, authorizationToken))) {
       throw new GoneException('คำขอยืนยัน AraID ถูกใช้หรือหมดอายุแล้ว');
     }
     await this.auditLog.record({
@@ -1555,7 +2595,7 @@ export class TeacherAccessService {
   }
 
   async pollAraIdChallenge(challengeToken: string) {
-    const challenge = await this.araIdChallengeStore.read(challengeToken);
+    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
     if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
     if (challenge.status === 'PENDING') {
       return { success: true, data: { status: 'PENDING' as const } };
@@ -1569,10 +2609,10 @@ export class TeacherAccessService {
         },
       };
     }
-    const consumed = await this.araIdChallengeStore.consumeApproved(challengeToken);
+    const consumed = await this.araIdChallengeStore.consumeApproved(ARAID_SCOPE, challengeToken);
     if (!consumed) throw new GoneException('คำขอยืนยัน AraID ถูกใช้แล้ว');
-    const grant = await this.repository.findGrantById(consumed.grantId);
-    if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกยกเลิกแล้ว');
+    const grant = await this.repository.findGrantById(consumed.subjectId);
+    if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกเพิกถอนแล้ว');
     this.assertGrantUsable(grant);
     const sessionToken = await this.magicSessionStore.issue(grant.id);
     return { success: true, data: { status: 'APPROVED' as const, sessionToken } };
@@ -1620,15 +2660,43 @@ export class TeacherAccessService {
     );
   }
 
+  private async findAssignmentForGrantContext(
+    context: ActiveTeacherGrantContext,
+    assignmentId: number,
+    queryRunner: QueryRunner,
+  ): Promise<TeacherAccessAssignmentRow | null> {
+    if (context.accessScope === 'ATTENDANCE_ONLY') {
+      const assignment = await this.repository.findRestrictedAttendanceAssignment(
+        context.grantId,
+        queryRunner,
+      );
+      return assignment && Number(assignment.assignment_id) === assignmentId ? assignment : null;
+    }
+    return await this.repository.findGrantAssignment(context.grantId, assignmentId, queryRunner);
+  }
+
+  private assertAttendanceDateAllowed(context: ActiveTeacherGrantContext, date: string): void {
+    if (context.accessScope === 'ATTENDANCE_ONLY' && context.attendanceDate !== date) {
+      throw new ForbiddenException('ลิงก์นี้ใช้เช็กชื่อได้เฉพาะวันที่ได้รับมอบหมาย');
+    }
+  }
+
   async getPublicContext(rawToken: string, sessionToken?: string) {
     return await this.withActiveGrantContext(
       rawToken,
       { sessionToken, operation: 'VIEW_CONTEXT' },
       async (context, queryRunner) => {
-        const assignments = await this.repository.listGrantAssignments(
-          context.grantId,
-          queryRunner,
-        );
+        const assignments =
+          context.accessScope === 'ATTENDANCE_ONLY'
+            ? [
+                await this.repository.findRestrictedAttendanceAssignment(
+                  context.grantId,
+                  queryRunner,
+                ),
+              ].filter(
+                (assignment): assignment is TeacherAccessAssignmentRow => assignment !== null,
+              )
+            : await this.repository.listGrantAssignments(context.grantId, queryRunner);
         const activeAssignments = assignments.filter((row) => this.assignmentActiveToday(row));
         if (activeAssignments.length === 0) {
           throw new ForbiddenException('ลิงก์นี้ไม่มี assignment ที่เปิดใช้งาน');
@@ -1643,6 +2711,7 @@ export class TeacherAccessService {
             academicYear: context.academicYear,
             semester: context.semester,
             capabilities: context.capabilities,
+            accessScope: context.accessScope,
             assignments: activeAssignments.map((row) =>
               this.toAssignment(row, context.capabilities),
             ),
@@ -1661,15 +2730,16 @@ export class TeacherAccessService {
       rawToken,
       { assignmentId: input.assignmentId, sessionToken, operation: 'VIEW_ATTENDANCE_SLOTS' },
       async (context, queryRunner) => {
-        const assignment = await this.repository.findGrantAssignment(
-          context.grantId,
+        this.assertAttendanceDateAllowed(context, input.date);
+        const assignment = await this.findAssignmentForGrantContext(
+          context,
           input.assignmentId,
           queryRunner,
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
         const capability = this.attendanceCapability(assignment.assignment_kind);
         if (!context.capabilities.includes(capability)) {
-          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็กชื่อใน assignment นี้');
         }
         if (assignment.assignment_kind !== 'SUBJECT') return { data: [] };
         if (!assignment.subject_id) {
@@ -1703,8 +2773,8 @@ export class TeacherAccessService {
       rawToken,
       { assignmentId, sessionToken, operation: 'VIEW_ROSTER' },
       async (context, queryRunner) => {
-        const assignment = await this.repository.findGrantAssignment(
-          context.grantId,
+        const assignment = await this.findAssignmentForGrantContext(
+          context,
           assignmentId,
           queryRunner,
         );
@@ -1795,27 +2865,48 @@ export class TeacherAccessService {
       throw new BadRequestException('วิชานี้ไม่มีคาบสอนในวันที่เลือก');
     }
     if (slots.length > 1) {
-      throw new BadRequestException('วิชานี้มีหลายคาบในวันที่เลือก กรุณาระบุคาบที่ต้องการเช็คชื่อ');
+      throw new BadRequestException('วิชานี้มีหลายคาบในวันที่เลือก กรุณาระบุคาบที่ต้องการเช็กชื่อ');
     }
     return Number(slots[0].id);
   }
 
-  /** Past attendance rounds of one class, for ประวัติการเช็คชื่อ. */
+  /** Past attendance rounds of one class, for ประวัติการเช็กชื่อ. */
+  /**
+   * The staff history, seen through a link: same repository, same day verdict,
+   * only scoped to the class the link opens and — for a subject card — to that
+   * subject, which is exactly what the ระบบ screen shows when an admin picks
+   * the same subject in its filter.
+   */
   async listPublicAttendanceHistory(
     rawToken: string,
     query: {
       assignmentId: number;
+      view?: 'DAILY' | 'STUDENT';
+      studentUuid?: string;
       page?: number;
       limit?: number;
       search?: string;
       attendanceDate?: string;
-      sortBy?: 'date' | 'recordedBy' | 'present' | 'late' | 'leave' | 'absent';
+      dateFrom?: string;
+      dateTo?: string;
+      sortBy?:
+        | 'date'
+        | 'time'
+        | 'recordedBy'
+        | 'studentNumber'
+        | 'name'
+        | 'status'
+        | 'present'
+        | 'late'
+        | 'leave'
+        | 'absent';
       sortOrder?: 'asc' | 'desc';
     },
     sessionToken?: string,
   ) {
     const page = resolvePage(query.page);
     const limit = resolveLimit(query.limit);
+    const sortDirection = query.sortOrder === 'asc' ? 'asc' : 'desc';
     return await this.withActiveGrantContext(
       rawToken,
       { assignmentId: query.assignmentId, sessionToken, operation: 'VIEW_ATTENDANCE_HISTORY' },
@@ -1827,36 +2918,112 @@ export class TeacherAccessService {
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
         if (!context.capabilities.includes(this.attendanceCapability(assignment.assignment_kind))) {
-          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์ดูประวัติการเช็คชื่อของห้องนี้');
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์ดูประวัติการเช็กชื่อของห้องนี้');
         }
-        const rows = await this.repository.listAttendanceHistory(
-          {
-            classroomId: Number(assignment.classroom_id),
-            sessionKind: assignment.assignment_kind === 'SUBJECT' ? 'SUBJECT' : 'DAILY',
-            subjectId: assignment.assignment_kind === 'SUBJECT' ? assignment.subject_id : null,
-            search: query.search?.trim() || undefined,
-            attendanceDate: query.attendanceDate,
-            sortBy: query.sortBy,
-            sortOrder: query.sortOrder,
+        const classroomId = Number(assignment.classroom_id);
+        const subjectId =
+          assignment.assignment_kind === 'SUBJECT' ? Number(assignment.subject_id) : null;
+        const search = query.search?.trim() || undefined;
+
+        if (query.studentUuid) {
+          const inRoster = await this.repository.isStudentInClassroom(
+            query.studentUuid,
+            classroomId,
+            queryRunner,
+          );
+          if (!inRoster) throw new ForbiddenException('นักเรียนอยู่นอก roster ของ assignment');
+          const days = await this.schoolStructure.listStudentAttendanceDays({
+            classroomId,
+            studentUuid: query.studentUuid,
+            date: query.attendanceDate,
+            dateFrom: query.dateFrom,
+            dateTo: query.dateTo,
+            search,
+            sortBy:
+              query.sortBy === 'time' || query.sortBy === 'recordedBy' || query.sortBy === 'status'
+                ? query.sortBy
+                : 'date',
+            sortDirection,
             page,
             limit,
-          },
-          queryRunner,
-        );
+          });
+          return {
+            data: days.rows.map((row) => ({
+              id: row.attendance_id,
+              date: row.attendance_date,
+              time: row.recorded_time,
+              recordedBy: row.recorded_by,
+              status: attendanceStatusFromCode(row.attendance_status),
+            })),
+            meta: buildPaginationMeta(page, limit, days.totalCount),
+          };
+        }
+
+        if (query.view === 'STUDENT') {
+          const students = await this.schoolStructure.listClassroomStudentAttendance({
+            classroomId,
+            subjectId,
+            date: query.attendanceDate,
+            search,
+            sortBy:
+              query.sortBy === 'studentNumber' ||
+              query.sortBy === 'status' ||
+              query.sortBy === 'present' ||
+              query.sortBy === 'late' ||
+              query.sortBy === 'leave' ||
+              query.sortBy === 'absent' ||
+              query.sortBy === 'name'
+                ? query.sortBy
+                : 'name',
+            sortDirection: query.sortOrder === 'desc' ? 'desc' : 'asc',
+            page,
+            limit,
+          });
+          return {
+            data: students.rows.map((row) => ({
+              studentUuid: row.student_uuid,
+              studentNumber: row.student_number,
+              // The photo itself is fetched through the link's own photo route.
+              hasPhoto: Boolean(row.photo_storage_key),
+              firstName: row.first_name,
+              lastName: row.last_name,
+              presentCount: row.present_count,
+              lateCount: row.late_count,
+              leaveCount: row.leave_count,
+              absentCount: row.absent_count,
+            })),
+            meta: buildPaginationMeta(page, limit, students.totalCount),
+          };
+        }
+
+        const daily = await this.schoolStructure.listClassroomDailyAttendance({
+          classroomId,
+          subjectId,
+          date: query.attendanceDate,
+          search,
+          sortBy:
+            query.sortBy === 'recordedBy' ||
+            query.sortBy === 'present' ||
+            query.sortBy === 'late' ||
+            query.sortBy === 'leave' ||
+            query.sortBy === 'absent' ||
+            query.sortBy === 'date'
+              ? query.sortBy
+              : 'date',
+          sortDirection,
+          page,
+          limit,
+        });
         return {
-          data: rows.map((row) => ({
-            sessionId: row.id,
+          data: daily.rows.map((row) => ({
             attendanceDate: row.attendance_date,
-            period: row.period,
-            status: row.status,
             recordedBy: row.recorded_by,
-            submittedAt: row.submitted_at ? new Date(row.submitted_at).toISOString() : null,
             presentCount: row.present_count,
             lateCount: row.late_count,
             leaveCount: row.leave_count,
             absentCount: row.absent_count,
           })),
-          meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
+          meta: buildPaginationMeta(page, limit, daily.totalCount),
         };
       },
     );
@@ -2110,18 +3277,39 @@ export class TeacherAccessService {
       async (context) => {
         const actor = this.grantActor(context);
         const scope = { school_ids: [context.schoolId] };
-        const [student, summary, cases, attendance, observations] = await Promise.all([
+        const [student, summary, cases, attendance, observations, comments] = await Promise.all([
           this.studentsService.findOne(input.studentUuid, actor, scope),
           this.studentsService.getStudentProfileSummary(input.studentUuid, actor, scope),
           this.studentsService.findCasesByStudentId(input.studentUuid, actor, scope),
           this.studentsService.findAttendanceByStudentId(input.studentUuid, actor, scope),
           this.studentObservations.list(input.studentUuid, { page: 1, limit: 20 }, actor),
+          // The comment button on the roster writes a classroom comment, so the
+          // profile has to read those too or a teacher's own note goes missing.
+          context.classroomId
+            ? this.repository.listStudentComments({
+                classroomId: Number(context.classroomId),
+                studentUuid: input.studentUuid,
+                limit: 20,
+              })
+            : Promise.resolve([]),
         ]);
         // getStudentProfileSummary answers the staff endpoint, so it ships its
         // own { success, data } envelope — unwrap it before nesting, otherwise
         // the profile screen reads summary.attendance off the envelope.
         return {
-          data: { student, summary: summary.data, cases, attendance, observations },
+          data: {
+            student,
+            summary: summary.data,
+            cases,
+            attendance,
+            observations,
+            comments: comments.map((comment) => ({
+              id: comment.id,
+              commentText: comment.comment_text,
+              authorName: comment.author_name,
+              createdAt: new Date(comment.created_at).toISOString(),
+            })),
+          },
         };
       },
     );
@@ -2197,6 +3385,39 @@ export class TeacherAccessService {
   }
 
   /**
+   * Reads an attendance spreadsheet for a teacher-link check-in. The grant is
+   * authorized first and the parse runs *outside* that transaction on purpose:
+   * a URL import performs an external HTTP request, which must not hold the
+   * grant row lock (and a database connection) while it waits.
+   */
+  async parsePublicAttendanceImport(
+    rawToken: string,
+    dto: ParsePublicAttendanceImportDto,
+    file: Express.Multer.File | undefined,
+    sessionToken?: string,
+  ) {
+    if (!file && !dto.url) {
+      throw new BadRequestException('กรุณาเลือกไฟล์หรือใส่ลิงก์');
+    }
+    await this.withActiveGrantContext(
+      rawToken,
+      {
+        assignmentId: dto.assignmentId,
+        sessionToken,
+        operation: 'PARSE_ATTENDANCE_IMPORT',
+        recordSuccessfulUse: false,
+      },
+      () => Promise.resolve(true),
+    );
+
+    return {
+      data: file
+        ? this.attendanceImport.parseUpload(file)
+        : await this.attendanceImport.parseUrl(dto.url as string),
+    };
+  }
+
+  /**
    * Autosave for a teacher-link check-in in progress. Same capability, same
    * assignment and same roster bound as the final submit — the only difference
    * is that this may carry part of the class and does not close the round.
@@ -2207,7 +3428,7 @@ export class TeacherAccessService {
     sessionToken?: string,
   ) {
     if (dto.date > getBangkokDateString()) {
-      throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าได้');
+      throw new BadRequestException('ไม่สามารถเช็กชื่อล่วงหน้าได้');
     }
     // Same envelope as savePublicAttendance so the two write paths look alike
     // to the client.
@@ -2220,16 +3441,17 @@ export class TeacherAccessService {
         recordSuccessfulUse: false,
       },
       async (context, queryRunner) => {
+        this.assertAttendanceDateAllowed(context, dto.date);
         if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
-        const assignment = await this.repository.findGrantAssignment(
-          context.grantId,
+        const assignment = await this.findAssignmentForGrantContext(
+          context,
           dto.assignmentId,
           queryRunner,
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
         const capability = this.attendanceCapability(assignment.assignment_kind);
         if (!context.capabilities.includes(capability)) {
-          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็กชื่อใน assignment นี้');
         }
         const timetableSlotId = await this.resolveAttendanceSlotId(assignment, dto, queryRunner);
         const allowedStudentIds = await this.repository.listRosterIds(
@@ -2266,7 +3488,12 @@ export class TeacherAccessService {
    */
   async getPublicAttendanceSession(
     rawToken: string,
-    query: { assignmentId: number; date: string; timetableSlotId?: number },
+    query: {
+      assignmentId: number;
+      date: string;
+      timetableSlotId?: number;
+      preflightOnly?: boolean;
+    },
     sessionToken?: string,
   ) {
     return await this.withActiveGrantContext(
@@ -2278,17 +3505,28 @@ export class TeacherAccessService {
         recordSuccessfulUse: false,
       },
       async (context, queryRunner) => {
+        this.assertAttendanceDateAllowed(context, query.date);
         if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
-        const assignment = await this.repository.findGrantAssignment(
-          context.grantId,
+        const assignment = await this.findAssignmentForGrantContext(
+          context,
           query.assignmentId,
           queryRunner,
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
         if (!context.capabilities.includes(this.attendanceCapability(assignment.assignment_kind))) {
-          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์ดูรอบเช็คชื่อของห้องนี้');
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์ดูรอบเช็กชื่อของห้องนี้');
         }
         const classroomId = Number(context.classroomId);
+        if (assignment.legacy_room_number === null) {
+          throw new ConflictException('ห้องเรียนนี้ยังไม่มีเลขห้องสำหรับตรวจสอบปฏิทิน');
+        }
+        const calendar = await this.attendanceWriteService.getCalendarAvailabilityForClassroom({
+          schoolId: assignment.school_id,
+          gradeLabel: assignment.grade_label,
+          roomNo: assignment.legacy_room_number,
+          date: query.date,
+        });
+        if (query.preflightOnly) return { data: { calendar } };
         const sessionKind = assignment.assignment_kind === 'SUBJECT' ? 'SUBJECT' : 'DAILY';
         // A subject class with several periods a day needs the caller to say
         // which one; resolveAttendanceSlotId raises the same errors the write
@@ -2312,6 +3550,7 @@ export class TeacherAccessService {
           : [];
         return {
           data: {
+            calendar,
             expectedRosterCount: roster.length,
             session: session
               ? {
@@ -2341,7 +3580,7 @@ export class TeacherAccessService {
     sessionToken?: string,
   ) {
     if (dto.date > getBangkokDateString()) {
-      throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าได้');
+      throw new BadRequestException('ไม่สามารถเช็กชื่อล่วงหน้าได้');
     }
     let affectedStudentIds: string[] = [];
     let calendarConfigured = false;
@@ -2353,16 +3592,17 @@ export class TeacherAccessService {
         operation: 'SUBMIT_ATTENDANCE',
       },
       async (context, queryRunner) => {
+        this.assertAttendanceDateAllowed(context, dto.date);
         if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
-        const assignment = await this.repository.findGrantAssignment(
-          context.grantId,
+        const assignment = await this.findAssignmentForGrantContext(
+          context,
           dto.assignmentId,
           queryRunner,
         );
         if (!assignment) throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
         const capability = this.attendanceCapability(assignment.assignment_kind);
         if (!context.capabilities.includes(capability)) {
-          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็คชื่อใน assignment นี้');
+          throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็กชื่อใน assignment นี้');
         }
         const timetableSlotId = await this.resolveAttendanceSlotId(assignment, dto, queryRunner);
         const allowedStudentIds = await this.repository.listRosterIds(

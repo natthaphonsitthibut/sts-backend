@@ -372,6 +372,13 @@ export class ListClassroomAttendanceHistoryDto extends PaginationQueryDto {
   @IsIn(['DAILY', 'STUDENT'])
   view!: 'DAILY' | 'STUDENT';
 
+  /** Narrows the history to one subject, so it reads like that teacher's own. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  subjectId?: number;
+
   @IsOptional()
   @IsUUID()
   studentUuid?: string;

@@ -26,6 +26,10 @@ export class StatusCatalogRepository {
                sort_order
         FROM case_workflow_statuses WHERE is_active = TRUE AND deleted_at IS NULL
         UNION ALL
+        SELECT 'STUDENT_RISK_TIER', code::text, NULL, NULL, label_th, badge_variant, summary_tone,
+               sort_order
+        FROM student_risk_tiers WHERE is_active = TRUE AND deleted_at IS NULL
+        UNION ALL
         SELECT 'USER_ACCOUNT_STATUS', code::text, NULL, NULL, label_th, badge_variant, NULL,
                sort_order
         FROM user_account_statuses WHERE is_active = TRUE AND deleted_at IS NULL
@@ -67,7 +71,7 @@ export class StatusCatalogRepository {
         UNION ALL
         SELECT 'IMPORT_QUARANTINE_RESOLUTION', code::text, NULL, NULL, label_th, badge_variant,
                NULL, sort_order
-        FROM student_import_quarantine_resolution_states WHERE deleted_at IS NULL
+        FROM student_import_quarantine_resolution_statuses WHERE deleted_at IS NULL
         UNION ALL
         SELECT domain_code, code::text, NULL, NULL, label_th, badge_variant, summary_tone,
                sort_order

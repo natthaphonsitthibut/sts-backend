@@ -1205,6 +1205,7 @@ export class SchoolStructureRepository {
 
   async listClassroomDailyAttendance(input: {
     classroomId: number;
+    subjectId?: number | null;
     date?: string;
     search?: string;
     sortBy: 'date' | 'recordedBy' | 'present' | 'late' | 'leave' | 'absent';
@@ -1213,11 +1214,22 @@ export class SchoolStructureRepository {
     limit: number;
   }): Promise<{ rows: ClassroomDailyAttendanceRow[]; totalCount: number }> {
     const params: unknown[] = [input.classroomId];
+    // `= ANY(ARRAY(...))` rather than a join: the array is an InitPlan, so the
+    // filter reaches the view's grouping column instead of running after the
+    // whole view is aggregated.
     const conditions = [
-      'enrollment.classroom_id = $1',
-      'enrollment.deleted_at IS NULL',
-      `attendance.session_kind = 'DAILY'`,
+      `attendance.student_uuid = ANY(ARRAY(
+        SELECT enrolled.student_uuid FROM student_term enrolled
+        WHERE enrolled.classroom_id = $1 AND enrolled.deleted_at IS NULL
+      ))`,
     ];
+    // One subject reads the same day verdict as the whole day, only narrowed —
+    // which is exactly what that subject's teacher sees through their link.
+    const source = input.subjectId ? 'attendance_subject_day' : 'attendance_day';
+    if (input.subjectId) {
+      params.push(input.subjectId);
+      conditions.push(`attendance.subject_id = $${params.length}`);
+    }
     if (input.date) {
       params.push(input.date);
       conditions.push(`attendance."AttendanceDate" = $${params.length}`);
@@ -1241,8 +1253,7 @@ export class SchoolStructureRepository {
       this.dataSource,
       `
         SELECT COUNT(DISTINCT attendance."AttendanceDate")::int AS total_count
-        FROM attendance
-        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
+        FROM ${source} attendance
         WHERE ${where}
       `,
       params,
@@ -1267,8 +1278,7 @@ export class SchoolStructureRepository {
           COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LATE})::int AS late_count,
           COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LEAVE})::int AS leave_count,
           COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
-        FROM attendance
-        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
+        FROM ${source} attendance
         LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
         WHERE ${where}
         GROUP BY attendance."AttendanceDate"
@@ -1282,6 +1292,7 @@ export class SchoolStructureRepository {
 
   async listClassroomStudentAttendance(input: {
     classroomId: number;
+    subjectId?: number | null;
     date?: string;
     search?: string;
     sortBy: 'studentNumber' | 'name' | 'status' | 'present' | 'late' | 'leave' | 'absent';
@@ -1296,10 +1307,15 @@ export class SchoolStructureRepository {
       conditions.push(enrolledStudentSearchCondition(params.length));
     }
     const attendanceJoinParams: unknown[] = [];
+    let attendanceSubjectCondition = '';
+    if (input.subjectId) {
+      attendanceJoinParams.push(input.subjectId);
+      attendanceSubjectCondition = ` AND attendance.subject_id = $${params.length + attendanceJoinParams.length}`;
+    }
     let attendanceDateCondition = '';
     if (input.date) {
       attendanceJoinParams.push(input.date);
-      attendanceDateCondition = ` AND attendance."AttendanceDate" = $${params.length + 1}`;
+      attendanceDateCondition = ` AND attendance."AttendanceDate" = $${params.length + attendanceJoinParams.length}`;
     }
     const allParams = [...params, ...attendanceJoinParams];
     const where = conditions.join(' AND ');
@@ -1335,9 +1351,9 @@ export class SchoolStructureRepository {
           COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
         FROM student_term enrollment
         LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
-        LEFT JOIN attendance
+        LEFT JOIN ${input.subjectId ? 'attendance_subject_day' : 'attendance_day'} attendance
           ON attendance.student_uuid = enrollment.student_uuid
-         AND attendance.session_kind = 'DAILY'
+         ${attendanceSubjectCondition}
          ${attendanceDateCondition}
         WHERE ${where}
         GROUP BY enrollment.student_uuid, person.photo_storage_key, person.updated_at
@@ -1366,7 +1382,6 @@ export class SchoolStructureRepository {
       'enrollment.classroom_id = $1',
       'enrollment.student_uuid = $2',
       'enrollment.deleted_at IS NULL',
-      `attendance.session_kind = 'DAILY'`,
     ];
     if (input.date) {
       params.push(input.date);
@@ -1397,7 +1412,7 @@ export class SchoolStructureRepository {
       this.dataSource,
       `
         SELECT COUNT(*)::int AS total_count
-        FROM attendance
+        FROM attendance_day attendance
         JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
         WHERE ${where}
       `,
@@ -1419,7 +1434,7 @@ export class SchoolStructureRepository {
             '-'
           ) AS recorded_by,
           attendance."AttendanceStatus"::int AS attendance_status
-        FROM attendance
+        FROM attendance_day attendance
         JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
         LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
         WHERE ${where}

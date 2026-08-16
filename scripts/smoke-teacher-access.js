@@ -200,6 +200,27 @@ async function cleanup(dataSource) {
   }
 
   if (adminId) {
+    // Before the classroom: a slot keeps an FK to the room it is taught in, and
+    // any round recorded against that slot keeps an FK to the slot. Slot
+    // teachers cascade with the slot.
+    await dataSource.query(
+      `
+        DELETE FROM attendance
+        WHERE session_id IN (
+          SELECT id FROM attendance_sessions
+          WHERE timetable_slot_id IN (SELECT id FROM timetable_slots WHERE created_by = $1)
+        )
+      `,
+      [adminId],
+    );
+    await dataSource.query(
+      `
+        DELETE FROM attendance_sessions
+        WHERE timetable_slot_id IN (SELECT id FROM timetable_slots WHERE created_by = $1)
+      `,
+      [adminId],
+    );
+    await dataSource.query(`DELETE FROM timetable_slots WHERE created_by = $1`, [adminId]);
     await dataSource.query(
       `DELETE FROM classroom_teacher_assignments WHERE created_by = $1`,
       [adminId],
@@ -446,9 +467,57 @@ async function createFixture(dataSource, actors) {
     calendarCreated = inserted.length === 1;
   }
 
+  // The teacher pages open on today, so today has to be a school day and the
+  // subject card needs a period of its own — otherwise every attendance view
+  // renders an empty state and the browser smoke can never reach the roster.
+  const [today] = await dataSource.query(
+    `SELECT (now() AT TIME ZONE 'Asia/Bangkok')::date::text AS day,
+            EXTRACT(ISODOW FROM (now() AT TIME ZONE 'Asia/Bangkok')::date)::int AS iso_dow`,
+  );
+  await dataSource.query(
+    `
+      INSERT INTO school_calendar_days (
+        school_term_id, calendar_date, day_type, reason, source, created_by, updated_by
+      )
+      VALUES ($1, $2::date, 'SCHOOL_DAY', $3, 'MANUAL', $4, $4)
+      ON CONFLICT (school_term_id, calendar_date) DO UPDATE
+      SET day_type = 'SCHOOL_DAY', updated_by = EXCLUDED.updated_by
+    `,
+    [term.id, today.day, CALENDAR_REASON, actors.admin.id],
+  );
+  const [timetableSlot] = await dataSource.query(
+    `
+      INSERT INTO timetable_slots (
+        school_term_id, school_id, grade_level_id, room_no, day_of_week, period,
+        subject_id, classroom_id, created_by, updated_by
+      )
+      VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $8)
+      RETURNING id
+    `,
+    [
+      term.id,
+      term.school_id,
+      grade.id,
+      roomNumber,
+      today.iso_dow,
+      subject.id,
+      classroom.id,
+      actors.admin.id,
+    ],
+  );
+  await dataSource.query(
+    `
+      INSERT INTO timetable_slot_teachers (timetable_slot_id, teacher_membership_id, created_by)
+      VALUES ($1, $2, $3)
+    `,
+    [timetableSlot.id, teacherMemberships[0].id, actors.admin.id],
+  );
+
   return {
     term,
     schoolB,
+    attendanceToday: today.day,
+    timetableSlotId: Number(timetableSlot.id),
     classroom: { id: Number(classroom.id), roomNumber },
     teacherMemberships,
     homeroomAssignmentId: Number(homeroomAssignment.id),
@@ -723,11 +792,96 @@ async function main() {
     );
     assert(auditRawCount === 0, 'Raw teacher token was persisted in audit metadata');
 
+    // 4b. A delegation link is a one-day stand-in for someone else's class. It is
+    //     always newer than the term link, so the roster row, the copy action and
+    //     the bulk issue must all keep pointing at the teacher's own link.
+    const teacherTwoGrantId = rowFor(afterIssue.payload, fixture.teacherMemberships[1].id).grantId;
+    // Delegations only exist for a day the assignment is already effective on,
+    // and the fixture assignment starts today.
+    const delegationDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const delegation = await request(
+      baseUrl,
+      'POST',
+      '/api/teacher-access-grants/attendance-delegations',
+      201,
+      {
+        headers: { cookie: adminCookie },
+        body: {
+          schoolId: Number(fixture.term.school_id),
+          schoolTermId: termId,
+          teacherMembershipId: fixture.teacherMemberships[1].id,
+          assignmentId: fixture.homeroomAssignmentId,
+          attendanceDate: delegationDate,
+          startsAt: '00:01',
+          endsAt: '23:59',
+        },
+      },
+    );
+    const delegationGrantId = delegation.payload?.data?.grantId ?? delegation.payload?.data?.id;
+    assert(delegationGrantId, 'Attendance delegation was not issued');
+    const afterDelegation = await request(baseUrl, 'GET', rosterUrl, 200, {
+      headers: { cookie: adminCookie },
+    });
+    const delegateRow = rowFor(afterDelegation.payload, fixture.teacherMemberships[1].id);
+    assert(
+      delegateRow.grantId === teacherTwoGrantId && delegateRow.linkStatus === 'ACTIVE',
+      'A delegation link hijacked the teacher row on the link-management screen',
+    );
+    // The screen must not be able to copy, rotate or revoke a delegation either.
+    await request(baseUrl, 'GET', `/api/teacher-access-grants/${delegationGrantId}/link`, 409, {
+      headers: { cookie: adminCookie },
+    });
+    await request(baseUrl, 'POST', `/api/teacher-access-grants/${delegationGrantId}/rotate`, 409, {
+      headers: { cookie: adminCookie },
+    });
+    const bulkWithDelegation = await request(
+      baseUrl,
+      'POST',
+      '/api/teacher-access-grants/bulk',
+      201,
+      { headers: { cookie: adminCookie }, body: { schoolTermId: termId } },
+    );
+    assert(
+      Number(bulkWithDelegation.payload?.data?.issued) === 0,
+      'Bulk issue reacted to a delegation link instead of the term links',
+    );
+    await request(
+      baseUrl,
+      'POST',
+      `/api/teacher-access-grants/attendance-delegations/${delegationGrantId}/revoke`,
+      201,
+      { headers: { cookie: adminCookie } },
+    );
+    const closedDelegation = await request(baseUrl, 'GET', '/api/teacher-access/context', 410, {
+      token: extractToken(delegation.payload?.data?.accessUrl),
+    });
+    assert(
+      String(closedDelegation.payload?.message || '').includes('ลิงก์มอบหมายการเช็กชื่อนี้ถูกปิดแล้ว'),
+      'A closed delegation link does not say which link died',
+    );
+    assert(
+      rowFor(
+        (await request(baseUrl, 'GET', rosterUrl, 200, { headers: { cookie: adminCookie } }))
+          .payload,
+        fixture.teacherMemberships[1].id,
+      ).linkStatus === 'ACTIVE',
+      'A closed delegation link left the teacher row looking revoked',
+    );
+
     // 5. Nothing is readable before the OTP is verified.
-    await request(baseUrl, 'GET', '/api/teacher-access/context', 401, { token: grantOne.token });
-    await request(baseUrl, 'GET', '/api/teacher-access/context', 404, {
+    const beforeOtp = await request(baseUrl, 'GET', '/api/teacher-access/context', 401, {
+      token: grantOne.token,
+    });
+    const unknownToken = await request(baseUrl, 'GET', '/api/teacher-access/context', 404, {
       token: tamperToken(grantOne.token),
     });
+    // The token rides in a header the HTTP cache key ignores, so a cacheable
+    // answer on this URL gets replayed for the next link opened in that tab.
+    assert(
+      beforeOtp.response.headers.get('cache-control') === 'no-store' &&
+        unknownToken.response.headers.get('cache-control') === 'no-store',
+      'Guest link responses must not be storable by the browser cache',
+    );
 
     const teacherOneEmail = `${USERNAMES.teacherOne}@sts-smoke.invalid`;
     const sessionOne = await verifiedSession(baseUrl, grantOne.token, otpCapture, teacherOneEmail);
@@ -738,6 +892,10 @@ async function main() {
       token: grantOne.token,
       headers: sessionHeaders,
     });
+    assert(
+      context.response.headers.get('cache-control') === 'no-store',
+      'A verified link read must not be storable by the browser cache either',
+    );
     assert(
       context.payload?.data?.teacherDisplayName.includes('Teacher One'),
       'Verified context did not identify teacher one',
@@ -972,6 +1130,7 @@ async function main() {
           'issuing for picked rows only covers those rows and explains the skips',
           'bulk issue fills the gaps and leaves existing links alone',
           'copy link returns the issued token from ciphertext, storage stays hash-only',
+          'a delegation link never takes over the teacher row, copy, rotate or bulk issue',
           'guest reads are refused until the emailed OTP is verified',
           'wrong OTP rejected; verified session unlocks context, roster and attendance',
           attendanceChecked ? 'attendance write and history read back the same round' : null,

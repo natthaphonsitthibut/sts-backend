@@ -913,7 +913,7 @@ async function main() {
           hasOwnData: text.includes('ข้อมูลตัวเอง'),
           hasTimetable: text.includes('ตารางเรียน'),
           hasHome: text.includes('หน้าหลัก'),
-          hasAttendanceGroup: text.includes('ระบบเช็คชื่อ')
+          hasAttendanceGroup: text.includes('ระบบเช็กชื่อ')
         };
       })()`,
     );
