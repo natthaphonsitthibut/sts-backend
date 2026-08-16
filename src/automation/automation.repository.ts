@@ -58,12 +58,20 @@ export class AutomationRepository {
    * count as attended, and a day is ขาด only when every measured record that day
    * is unattended. Days need not be consecutive.
    */
+  /**
+   * `studentUuids` narrows the sweep to the students a caller just touched. A
+   * check-in can only move its own class's counts, so the save path passes them
+   * and skips scanning every enrolment in the country; the nightly job passes
+   * nothing and still sweeps everyone.
+   */
   async listCumulativeAbsentStudents(
     thresholdDays: number,
     asOfDate: string,
     executor?: QueryExecutor,
+    studentUuids?: readonly string[],
   ): Promise<CumulativeAbsentStudentRow[]> {
     const queryExecutor = this.getExecutor(executor);
+    const scopedUuids = studentUuids && studentUuids.length > 0 ? [...studentUuids] : null;
     const result = await queryExecutor.query<CumulativeAbsentStudentRow>(
       `
         WITH current_enrollments AS (
@@ -111,6 +119,7 @@ export class AutomationRepository {
           LEFT JOIN resolved_case_baselines baseline
             ON baseline.student_uuid = a.student_uuid
           WHERE a.student_uuid IS NOT NULL
+            AND ($3::uuid[] IS NULL OR a.student_uuid = ANY($3::uuid[]))
             AND a.session_kind = 'SUBJECT'
             AND a."AttendanceDate"::date <= $2::date
             AND a."AttendanceDate"::date > COALESCE(baseline.reset_after_date, '-infinity'::date)
@@ -146,7 +155,7 @@ export class AutomationRepository {
         JOIN student_term s ON r.student_uuid = s.student_uuid
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       `,
-      [thresholdDays, asOfDate],
+      [thresholdDays, asOfDate, scopedUuids],
     );
 
     return result.rows;
@@ -187,8 +196,12 @@ export class AutomationRepository {
     return result.rows.map((row) => row.student_uuid);
   }
 
-  async listOpenAbsenceCases(executor?: QueryExecutor): Promise<OpenAbsenceCaseRow[]> {
+  async listOpenAbsenceCases(
+    executor?: QueryExecutor,
+    studentUuids?: readonly string[],
+  ): Promise<OpenAbsenceCaseRow[]> {
     const queryExecutor = this.getExecutor(executor);
+    const scopedUuids = studentUuids && studentUuids.length > 0 ? [...studentUuids] : null;
     const result = await queryExecutor.query<OpenAbsenceCaseRow>(
       `
         SELECT id, student_name, student_uuid, school_id
@@ -196,8 +209,9 @@ export class AutomationRepository {
         WHERE status = 'OPEN'
           AND deleted_at IS NULL
           AND reason_flagged LIKE ANY($1::text[])
+          AND ($2::uuid[] IS NULL OR student_uuid = ANY($2::uuid[]))
       `,
-      [[...ABSENCE_CASE_REASON_PREFIXES]],
+      [[...ABSENCE_CASE_REASON_PREFIXES], scopedUuids],
     );
 
     return result.rows;

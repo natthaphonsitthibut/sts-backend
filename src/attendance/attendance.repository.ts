@@ -292,6 +292,10 @@ export class AttendanceRepository {
     let query = `
       SELECT
         a.*,
+        -- The roster is keyed by student and every reader of this list asks what
+        -- a given student got, so the student is this row's identity; the table
+        -- itself has no id column.
+        a.student_uuid::text as id,
         a."SchoolID_Onec" as school_id,
         (s."FirstName_Onec" || ' ' || s."LastName_Onec") as name,
         COALESCE(gl.label, 'ไม่ทราบ') as grade,

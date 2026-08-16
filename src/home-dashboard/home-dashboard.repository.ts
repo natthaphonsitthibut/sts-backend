@@ -525,14 +525,14 @@ export class HomeDashboardRepository {
           COUNT(*) FILTER (WHERE a."AttendanceStatus" = 2)::int AS absent,
           COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late,
           COUNT(*)::int AS total
-        FROM attendance a
+        -- One row per student per day, derived from that day's periods, so the
+        -- chart and the risk engine answer "came to school" the same way.
+        FROM attendance_day a
         JOIN student_term s ON s.student_uuid = a.student_uuid
         ${CURRENT_ENROLLMENT_JOIN}
         LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         WHERE a."AttendanceDate" BETWEEN $1::date AND $2::date
-          AND COALESCE(a.session_kind, 'DAILY') = 'DAILY'
-          AND COALESCE(a."Period", 1) = 1
           ${whereSql ? `AND ${whereSql}` : ''}
         GROUP BY a."AttendanceDate"
         ORDER BY a."AttendanceDate" ASC
@@ -625,7 +625,9 @@ export class HomeDashboardRepository {
            AND s."RoomID_Onec" = sess.room_id
           ${CURRENT_ENROLLMENT_JOIN}
           WHERE sess.deleted_at IS NULL
-            AND sess.session_kind = 'DAILY'
+            -- Any round of today that is still short of its roster: attendance
+            -- is taken per period now, so counting only the homeroom round hid
+            -- every unfinished subject period.
             AND sess.attendance_date = $1::date
             AND sess.expected_roster_count > 0
             AND sess.recorded_count < sess.expected_roster_count
@@ -666,7 +668,7 @@ export class HomeDashboardRepository {
           SELECT
             'attendance-incomplete' AS id,
             'ATTENDANCE_INCOMPLETE' AS kind,
-            'เช็คชื่อวันนี้ยังไม่ครบ' AS label,
+            'เช็กชื่อวันนี้ยังไม่ครบ' AS label,
             'มีห้องเรียนที่เริ่มบันทึกแล้วแต่จำนวนไม่ครบ roster' AS reason,
             count,
             oldest AS age_label,

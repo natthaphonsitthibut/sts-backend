@@ -18,7 +18,7 @@ export class AutomationService implements OnModuleInit {
     await this.automationSchedulerService.refreshDynamicCron();
   }
 
-  async checkConsecutiveAbsences() {
-    return await this.absenceMonitorService.checkConsecutiveAbsences();
+  async checkConsecutiveAbsences(studentUuids?: readonly string[]) {
+    return await this.absenceMonitorService.checkConsecutiveAbsences(studentUuids);
   }
 }

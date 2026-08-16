@@ -208,7 +208,7 @@ export class AttendanceOperationsService {
 
   async reopenSession(sessionId: string, reason: string, actor?: AuthenticatedRequestUser) {
     const session = await this.repository.findSessionById(sessionId);
-    if (!session) throw new NotFoundException('ไม่พบรอบเช็คชื่อ');
+    if (!session) throw new NotFoundException('ไม่พบรอบเช็กชื่อ');
     await this.assertSchoolAccess(session.school_id, actor);
     this.assertClassScope(session.grade_level_id, session.room_id, actor);
     const updated = await this.repository.withTransaction(async (executor) => {

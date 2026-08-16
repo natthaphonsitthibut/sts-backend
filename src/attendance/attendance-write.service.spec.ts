@@ -724,7 +724,7 @@ describe('AttendanceWriteService draft marks', () => {
 
   it('refuses to draft into a voided round', async () => {
     await expect(draft([STUDENT_IDS[0]], { status: 'VOIDED' })).rejects.toThrow(
-      'รอบเช็คชื่อนี้ถูกยกเลิกแล้ว',
+      'รอบเช็กชื่อนี้ถูกยกเลิกแล้ว',
     );
   });
 

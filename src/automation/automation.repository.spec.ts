@@ -19,7 +19,9 @@ describe('AutomationRepository', () => {
     await repository.listCumulativeAbsentStudents(3, '2026-06-27');
 
     expect(queries).toHaveLength(1);
-    expect(queries[0].params).toEqual([3, '2026-06-27']);
+    // No student list = sweep everyone, which the query reads as a NULL scope.
+    expect(queries[0].params).toEqual([3, '2026-06-27', null]);
+    expect(queries[0].sql).toContain('($3::uuid[] IS NULL OR a.student_uuid = ANY($3::uuid[]))');
     expect(queries[0].sql).toContain('GROUP BY a.student_uuid, a."AttendanceDate"');
     // ลา (4) is not measured; มา/สาย count as attended.
     expect(queries[0].sql).toContain('COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4)');
@@ -34,6 +36,26 @@ describe('AutomationRepository', () => {
     );
     // Days no longer have to be consecutive.
     expect(queries[0].sql).not.toContain('streak');
+  });
+
+  it('narrows the sweep to the students a caller passes', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+    const repository = new AutomationRepository(dataSource as never);
+
+    await repository.listCumulativeAbsentStudents(3, '2026-06-27', undefined, [
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+
+    expect(queries[0].params).toEqual([3, '2026-06-27', ['11111111-1111-4111-8111-111111111111']]);
   });
 
   it('does not treat managed draft terms as evaluable legacy attendance', async () => {

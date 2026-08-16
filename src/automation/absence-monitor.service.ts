@@ -77,7 +77,12 @@ export class AbsenceMonitorService {
     return new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
   }
 
-  async checkConsecutiveAbsences(): Promise<NewCase[]> {
+  /**
+   * `studentUuids` limits the pass to those students. Saving a round only moves
+   * the counts of the class that was just checked, so the save path scopes the
+   * pass to it and stays fast; the scheduled job runs unscoped.
+   */
+  async checkConsecutiveAbsences(studentUuids?: readonly string[]): Promise<NewCase[]> {
     this.logger.log('Starting CRON Job: Checking cumulative absences...');
 
     // One rule opens a case: cumulative absent days reaching the เสี่ยง
@@ -102,6 +107,7 @@ export class AbsenceMonitorService {
           thresholdDays,
           asOfDate,
           executor,
+          studentUuids,
         );
 
         const absentUuidSet = new Set(
@@ -109,7 +115,10 @@ export class AbsenceMonitorService {
             .map((student) => this.normalizeText(student.student_uuid))
             .filter((uuid) => uuid.length > 0),
         );
-        const openCases = await this.automationRepository.listOpenAbsenceCases(executor);
+        const openCases = await this.automationRepository.listOpenAbsenceCases(
+          executor,
+          studentUuids,
+        );
         const evaluableUuidSet = new Set(
           await this.automationRepository.listEvaluableStudentUuids(
             openCases

@@ -42,7 +42,7 @@ const TEACHER_SCOPE = {
   school_ids: [SCHOOL.id],
 };
 // TEACHER default permissions -> Thai catalog labels shown in the review dialog.
-const TEACHER_PERMISSION_LABELS = ['หน้าหลัก', 'รายชื่อนักเรียน', 'เช็คชื่อ'];
+const TEACHER_PERMISSION_LABELS = ['หน้าหลัก', 'รายชื่อนักเรียน', 'เช็กชื่อ'];
 const ALL_PERMISSIONS = [...VALID_PERMISSION_IDS];
 
 function assert(condition, message) {

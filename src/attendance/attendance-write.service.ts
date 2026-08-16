@@ -46,6 +46,34 @@ export class AttendanceWriteService {
     private readonly riskProfileService?: RiskProfileService,
   ) {}
 
+  /**
+   * Read-only calendar preflight for attendance entry points that do not have
+   * an authenticated user scope (for example, a verified teacher access link).
+   * The caller has already established classroom scope before reaching here.
+   */
+  async getCalendarAvailabilityForClassroom(input: {
+    schoolId: number;
+    gradeLabel: string;
+    roomNo: number;
+    date: string;
+    timetableSlotId?: number;
+  }): Promise<{ calendarConfigured: boolean; canRecord: boolean; dayType: string | null }> {
+    const context = await this.attendanceOperationsRepository.findSessionContext(
+      input.schoolId,
+      input.gradeLabel,
+      input.roomNo,
+      input.date,
+      input.timetableSlotId,
+    );
+    const calendarConfigured = context.term?.status === 'ACTIVE';
+    const dayType = context.calendarDay?.day_type ?? null;
+    return {
+      calendarConfigured,
+      canRecord: !calendarConfigured || dayType === 'SCHOOL_DAY',
+      dayType,
+    };
+  }
+
   async saveAttendance(
     records: AttendanceSaveRecordInput[],
     actor?: AuthenticatedRequestUser,
@@ -58,7 +86,7 @@ export class AttendanceWriteService {
     }
 
     if (date && date > getBangkokDateString()) {
-      throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าสำหรับวันที่ในอนาคตได้');
+      throw new BadRequestException('ไม่สามารถเช็กชื่อล่วงหน้าสำหรับวันที่ในอนาคตได้');
     }
 
     const result = await this.attendanceOperationsRepository.withTransaction(
@@ -88,7 +116,9 @@ export class AttendanceWriteService {
 
     if (triggerType === 'IMMEDIATE' && result.calendarConfigured) {
       this.logger.log('Attendance saved. Trigger Type is IMMEDIATE. Executing absence check...');
-      newCases = await this.automationService.checkConsecutiveAbsences();
+      // Only this round's students can have moved, so the pass is scoped to them
+      // instead of re-sweeping every enrolment while the teacher waits.
+      newCases = await this.automationService.checkConsecutiveAbsences(result.affectedStudentIds);
     }
 
     return {
@@ -150,7 +180,7 @@ export class AttendanceWriteService {
         row.semester === first.semester,
     );
     if (!sameClass) {
-      throw new BadRequestException('บันทึกเช็คชื่อได้ครั้งละหนึ่งห้องและหนึ่งภาคเรียน');
+      throw new BadRequestException('บันทึกเช็กชื่อได้ครั้งละหนึ่งห้องและหนึ่งภาคเรียน');
     }
 
     const rosterIds = await this.attendanceOperationsRepository.listRosterIds(first, executor);
@@ -250,7 +280,7 @@ export class AttendanceWriteService {
       throw new ConflictException('รอบนี้ส่งแล้ว กรุณาเปิดแก้ไขพร้อมระบุเหตุผลก่อน');
     }
     if (session.status === 'VOIDED') {
-      throw new ConflictException('รอบเช็คชื่อนี้ถูกยกเลิกแล้ว');
+      throw new ConflictException('รอบเช็กชื่อนี้ถูกยกเลิกแล้ว');
     }
 
     return {
@@ -272,7 +302,7 @@ export class AttendanceWriteService {
     clearedStudentIds: string[] = [],
   ) {
     if (date && date > getBangkokDateString()) {
-      throw new BadRequestException('ไม่สามารถเช็คชื่อล่วงหน้าสำหรับวันที่ในอนาคตได้');
+      throw new BadRequestException('ไม่สามารถเช็กชื่อล่วงหน้าสำหรับวันที่ในอนาคตได้');
     }
 
     return await this.attendanceOperationsRepository.withTransaction(
@@ -574,7 +604,7 @@ export class AttendanceWriteService {
     );
     const slot = result.rows[0];
     if (!slot) {
-      throw new BadRequestException('ไม่พบคาบเรียนที่จะเช็คชื่อ');
+      throw new BadRequestException('ไม่พบคาบเรียนที่จะเช็กชื่อ');
     }
 
     if (

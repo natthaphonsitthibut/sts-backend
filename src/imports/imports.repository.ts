@@ -589,7 +589,7 @@ export class ImportsRepository {
     const result = await queryExecutor.query<QuarantineLookupRow>(
       `
         SELECT code, label_th, badge_variant
-        FROM student_import_quarantine_resolution_states
+        FROM student_import_quarantine_resolution_statuses
         ORDER BY sort_order, code
       `,
     );

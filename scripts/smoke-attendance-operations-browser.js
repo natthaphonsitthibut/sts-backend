@@ -380,7 +380,7 @@ async function assertAttendancePage(client, expectedManage, label) {
   await navigate(client, `${FRONTEND_URL}/attendance-operations`);
   try {
     await waitFor(
-      async () => (await bodyText(client)).includes('ตรวจสถานะเช็คชื่อรายวัน'),
+      async () => (await bodyText(client)).includes('ตรวจสถานะเช็กชื่อรายวัน'),
       `${label} attendance operations page did not render`,
     );
   } catch (error) {
@@ -469,7 +469,7 @@ async function main() {
     await navigate(client, `${FRONTEND_URL}/attendance-operations`);
     await waitFor(
       async () =>
-        (await bodyText(client)).includes('ตรวจสถานะเช็คชื่อรายวัน') &&
+        (await bodyText(client)).includes('ตรวจสถานะเช็กชื่อรายวัน') &&
         (await bodyText(client)).includes('เพิ่มภาคเรียน'),
       'Mobile calendar-admin attendance operations page did not render',
     );
