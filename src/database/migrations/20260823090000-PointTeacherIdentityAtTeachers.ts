@@ -65,19 +65,50 @@ export class PointTeacherIdentityAtTeachers20260823090000 implements MigrationIn
     // else keeps its "RecordedBy" text, which the readers still fall back to —
     // guessing an identity onto an attendance record would be worse than showing
     // the raw handle it was written with.
+    //
+    // Production has more than a million attendance rows and enforces a
+    // per-statement timeout. Build one migration-only lookup index, then update
+    // in bounded batches so the identical backfill cannot become one oversized
+    // statement. The index is removed after the backfill.
     await queryRunner.query(`
-      UPDATE attendance record
-      SET recorded_by_teacher_id = resolved.teacher_id
-      FROM (
-        SELECT usr.username, min(teacher.id) AS teacher_id, count(*) AS matches
-        FROM users usr
-        JOIN teachers teacher ON teacher.linked_user_id = usr.id AND teacher.deleted_at IS NULL
-        GROUP BY usr.username
-        HAVING count(*) = 1
-      ) resolved
-      WHERE record."RecordedBy" = resolved.username
-        AND record.recorded_by_teacher_id IS NULL
+      CREATE INDEX tmp_20260823_attendance_recorded_by_backfill
+      ON attendance ("RecordedBy")
+      WHERE recorded_by_teacher_id IS NULL AND "RecordedBy" IS NOT NULL
     `);
+    const resolvedTeachers = (await queryRunner.query(`
+      SELECT usr.username, min(teacher.id)::text AS teacher_id
+      FROM users usr
+      JOIN teachers teacher ON teacher.linked_user_id = usr.id AND teacher.deleted_at IS NULL
+      GROUP BY usr.username
+      HAVING count(*) = 1
+      ORDER BY usr.username
+    `)) as Array<{ username: string; teacher_id: string }>;
+    for (const resolved of resolvedTeachers) {
+      let updatedRows: number;
+      do {
+        const result = (await queryRunner.query(
+          `
+            WITH candidates AS (
+              SELECT ctid
+              FROM attendance
+              WHERE "RecordedBy" = $1
+                AND recorded_by_teacher_id IS NULL
+              LIMIT 20000
+            ), updated AS (
+              UPDATE attendance record
+              SET recorded_by_teacher_id = $2
+              FROM candidates
+              WHERE record.ctid = candidates.ctid
+              RETURNING 1
+            )
+            SELECT COUNT(*)::int AS updated_rows FROM updated
+          `,
+          [resolved.username, resolved.teacher_id],
+        )) as Array<{ updated_rows: number }>;
+        updatedRows = Number(result[0]?.updated_rows ?? 0);
+      } while (updatedRows > 0);
+    }
+    await queryRunner.query(`DROP INDEX tmp_20260823_attendance_recorded_by_backfill`);
 
     // The classroom history screens read the day views, not the table, so the
     // new column has to travel with them or those screens keep resolving names
