@@ -41,7 +41,7 @@ async function main() {
       classroom.school_term_id::text AS school_term_id,
       homeroom.id::text AS assignment_id,
       homeroom.teacher_membership_id::text AS owner_membership_id,
-      owner_account.id AS owner_user_id,
+      owner_membership.teacher_id AS owner_teacher_id,
       admin_account.id AS admin_user_id,
       (
         SELECT membership.id
@@ -64,7 +64,6 @@ async function main() {
      AND homeroom.deleted_at IS NULL
     JOIN school_teacher_memberships owner_membership
       ON owner_membership.id = homeroom.teacher_membership_id
-    LEFT JOIN users owner_account ON owner_account.id = owner_membership.teacher_user_id
     -- Whoever the school would really use: an account that holds the permission
     -- the endpoint requires and can see this school.
     JOIN users admin_account

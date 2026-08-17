@@ -172,7 +172,7 @@ async function navigate(client, url) {
 async function upsertFixture(dataSource, passwordHash) {
   const permissions = [
     'home',
-    'review-cases',
+    'dashboard',
     'import-data',
     'attendance-dashboard',
   ];

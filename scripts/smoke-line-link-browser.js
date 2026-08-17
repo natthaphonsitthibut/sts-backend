@@ -364,9 +364,9 @@ async function main() {
     assert(school && issuer, 'The invitation smoke requires one school and one issuing user');
     const [membership] = await dataSource.query(
       `INSERT INTO school_teacher_memberships (
-         school_id, teacher_user_id, teacher_id, membership_status, created_by, updated_by
+         school_id, teacher_id, membership_status, created_by, updated_by
        )
-       VALUES ($1, NULL, $2, 'ACTIVE', $3, $3)
+       VALUES ($1, $2, 'ACTIVE', $3, $3)
        RETURNING id`,
       [school.id, teacher.id, issuer.id],
     );

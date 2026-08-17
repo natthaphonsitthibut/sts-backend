@@ -185,7 +185,7 @@ async function markCalendarDay(dataSource, termId, date, dayType, reason, actorI
   );
 }
 
-async function createSession(dataSource, fixture, date, actor, roster) {
+async function createSession(dataSource, fixture, date, teacher, accountId, roster) {
   const session = await queryOne(
     dataSource,
     `
@@ -215,7 +215,7 @@ async function createSession(dataSource, fixture, date, actor, roster) {
       fixture.room_id,
       date,
       roster.length,
-      actor.id,
+      accountId,
     ],
   );
   await dataSource.query(
@@ -223,10 +223,10 @@ async function createSession(dataSource, fixture, date, actor, roster) {
       INSERT INTO attendance (
         student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
         "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
-        "AttendanceStatus", "RecordedAt", "RecordedBy", session_id,
-        created_by, updated_by
+        "AttendanceStatus", "RecordedAt", "RecordedBy", recorded_by_teacher_id,
+        session_id, created_by, updated_by
       )
-      SELECT input.student_uuid::uuid, $2, $3, $4, $5, $6, $7, 1, 1, now(), $8, $9, $10, $10
+      SELECT input.student_uuid::uuid, $2, $3, $4, $5, $6, $7, 1, 1, now(), $8, $9, $10, $11, $11
       FROM UNNEST($1::uuid[]) AS input(student_uuid)
       ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY'
       DO UPDATE SET
@@ -238,6 +238,7 @@ async function createSession(dataSource, fixture, date, actor, roster) {
         "AttendanceStatus" = EXCLUDED."AttendanceStatus",
         "RecordedAt" = now(),
         "RecordedBy" = EXCLUDED."RecordedBy",
+        recorded_by_teacher_id = EXCLUDED.recorded_by_teacher_id,
         session_id = EXCLUDED.session_id,
         created_by = EXCLUDED.created_by,
         updated_by = EXCLUDED.updated_by
@@ -250,9 +251,10 @@ async function createSession(dataSource, fixture, date, actor, roster) {
       fixture.academic_year,
       fixture.semester,
       date,
-      actor.username,
+      teacher.username,
+      teacher.id,
       session.id,
-      actor.id,
+      accountId,
     ],
   );
   return session.id;
@@ -287,7 +289,8 @@ async function main() {
     const attendanceActor = await queryOne(
       dataSource,
       `
-        SELECT teacher.id, teacher.username
+        SELECT teacher.id,
+               TRIM(teacher.first_name || ' ' || teacher.last_name) AS username
         FROM school_classrooms classroom
         JOIN classroom_teacher_assignments assignment
           ON assignment.classroom_id = classroom.id
@@ -299,11 +302,10 @@ async function main() {
          AND membership.school_id = assignment.school_id
          AND membership.membership_status = 'ACTIVE'
          AND membership.deleted_at IS NULL
-        JOIN users teacher
-          ON teacher.id = membership.teacher_user_id
-         AND teacher.role = 'TEACHER'
-         AND teacher.status = 'ACTIVE'
-         AND teacher.data_origin_code = 'DEMO'
+        JOIN teachers teacher
+          ON teacher.id = membership.teacher_id
+         AND teacher.teacher_status = 'ACTIVE'
+         AND teacher.deleted_at IS NULL
         WHERE classroom.school_term_id = $1
           AND classroom.school_id = $2
           AND classroom.grade_level_id = $3
@@ -388,10 +390,10 @@ async function main() {
         `,
         [fixture.term_id, missingCalendarDate, structuralActor.id],
       );
-      await createSession(manager, fixture, holidayDate, attendanceActor, roster);
-      await createSession(manager, fixture, cancelledDate, attendanceActor, roster);
-      await createSession(manager, fixture, missingCalendarDate, attendanceActor, roster);
-      await createSession(manager, fixture, outOfTermDate, attendanceActor, roster);
+      await createSession(manager, fixture, holidayDate, attendanceActor, structuralActor.id, roster);
+      await createSession(manager, fixture, cancelledDate, attendanceActor, structuralActor.id, roster);
+      await createSession(manager, fixture, missingCalendarDate, attendanceActor, structuralActor.id, roster);
+      await createSession(manager, fixture, outOfTermDate, attendanceActor, structuralActor.id, roster);
     });
 
     console.log(JSON.stringify({

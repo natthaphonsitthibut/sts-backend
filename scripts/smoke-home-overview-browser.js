@@ -486,14 +486,7 @@ async function main() {
         username: `${USERNAME_PREFIX}_admin`,
         firstName: 'Home Admin',
         role: 'ADMIN',
-        permissions: [
-          'home',
-          'dashboard',
-          'attendance-dashboard',
-          'review-cases',
-          'students',
-          'export-data',
-        ],
+        permissions: ['home', 'dashboard', 'attendance-dashboard', 'students', 'export-data'],
         dataScope: { global: true },
         expectations: {
           attendance: true,
@@ -508,7 +501,7 @@ async function main() {
         label: 'attendance-only',
         username: `${USERNAME_PREFIX}_attendance`,
         firstName: 'Home Attendance',
-        role: 'TEACHER',
+        role: 'DIRECTOR',
         permissions: ['home', 'attendance-dashboard'],
         dataScope: { global: true },
         expectations: {
@@ -525,7 +518,7 @@ async function main() {
         username: `${USERNAME_PREFIX}_reviewer`,
         firstName: 'Home Reviewer',
         role: 'ADMIN',
-        permissions: ['home', 'review-cases'],
+        permissions: ['home', 'dashboard'],
         dataScope: { global: true },
         expectations: {
           attendance: false,
@@ -561,7 +554,7 @@ async function main() {
       label: 'school-scoped',
       username: `${USERNAME_PREFIX}_school_scoped`,
       firstName: 'Home School Scope',
-      role: 'TEACHER',
+      role: 'DIRECTOR',
       permissions: ['home'],
       dataScope: { school_ids: [Number(scopeSchools[0].id)] },
       expectations: {

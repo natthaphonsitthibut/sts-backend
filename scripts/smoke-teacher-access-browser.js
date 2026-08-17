@@ -318,6 +318,18 @@ async function hoverSnapshot(client, classroomId) {
   return await cardSnapshot(client, classroomId);
 }
 
+const DIRECTOR_PERMISSIONS = [
+  // ห้องเรียนทั้งหมด is its own page since the permission collapse; it used to
+  // ride on จัดการภาคเรียนและห้องเรียน, and the walk below opens it.
+  'attendance',
+  'classrooms',
+  'manage-curriculum',
+  'manage-school-structure',
+  'manage-teacher-access',
+  'manage-teachers',
+  'timetable',
+];
+
 async function main() {
   const frontendProbe = await fetch(FRONTEND_URL).catch(() => null);
   assert(frontendProbe?.ok, `Start the smoke frontend at ${FRONTEND_URL} before running`);
@@ -358,30 +370,7 @@ async function main() {
         firstName: 'Teacher Access',
         lastName: 'Smoke Admin',
         role: 'ADMIN',
-        permissions: [
-          'manage-teacher-access',
-          'manage-teachers',
-          'manage-school-structure',
-          'manage-curriculum',
-          'manage-timetable',
-          'attendance',
-        ],
-        dataScope: { school_ids: [Number(initialSchool.id)] },
-      }),
-      teacherOne: await upsertUser(dataSource, {
-        username: USERNAMES.teacherOne,
-        firstName: 'Teacher One',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
-        dataScope: { school_ids: [Number(initialSchool.id)] },
-      }),
-      teacherTwo: await upsertUser(dataSource, {
-        username: USERNAMES.teacherTwo,
-        firstName: 'Teacher Two',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
+        permissions: DIRECTOR_PERMISSIONS,
         dataScope: { school_ids: [Number(initialSchool.id)] },
       }),
     };
@@ -1061,10 +1050,11 @@ async function main() {
     );
     assert(
       // The row marked ขาด before the bulk action must keep it, proving the
-      // fill only touches students with no answer.
+      // fill only touches students with no answer. The control shows one
+      // selection; how many statuses it offers is the catalog's business, so
+      // this counts the pressed button instead of pinning the button count.
       afterMarkAll.firstRowMark === 'P_ABSENT' &&
-        JSON.stringify(afterMarkAll.firstRowPressed) ===
-          JSON.stringify(['false', 'false', 'true', 'false']),
+        afterMarkAll.firstRowPressed.filter((pressed) => pressed === 'true').length === 1,
       `"มาทั้งหมด" must not overwrite an explicit mark: ${JSON.stringify(afterMarkAll)}`,
     );
 
@@ -1170,14 +1160,7 @@ async function main() {
       LastName: 'Smoke Admin',
       role: 'ADMIN',
       roles: ['ADMIN'],
-      permissions: [
-        'manage-teacher-access',
-        'manage-teachers',
-        'manage-school-structure',
-        'manage-curriculum',
-        'manage-timetable',
-        'attendance',
-      ],
+      permissions: DIRECTOR_PERMISSIONS,
       data_scope: { school_ids: [schoolId] },
       status: 'ACTIVE',
     };

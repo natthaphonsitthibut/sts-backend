@@ -263,30 +263,30 @@ async function assertLegacyRouteRedirects(client) {
   );
 }
 
+// Every page in the registry: this smoke walks all of them, so an id missing
+// here shows up as /forbidden instead of as the assertion it was meant to make.
+const ACTOR_PERMISSIONS = [
+  'attendance',
+  'attendance-dashboard',
+  'audit-log',
+  'classrooms',
+  'dashboard',
+  'export-data',
+  'home',
+  'import-data',
+  'manage-curriculum',
+  'manage-role-groups',
+  'manage-school-structure',
+  'manage-teacher-access',
+  'manage-teachers',
+  'manage-users-list',
+  'settings',
+  'students',
+  'timetable',
+];
+
 async function upsertActor(dataSource, passwordHash) {
-  const permissions = [
-    'attendance',
-    'attendance-dashboard',
-    'audit-log',
-    'create',
-    'dashboard',
-    'edit-students',
-    'export-data',
-    'home',
-    'import-data',
-    'import-school-roster',
-    'login-links',
-    'manage-curriculum',
-    'manage-role-groups',
-    'manage-school-structure',
-    'manage-student-observations',
-    'manage-teacher-access',
-    'manage-teachers',
-    'manage-users-list',
-    'review-cases',
-    'settings',
-    'students',
-  ];
+  const permissions = ACTOR_PERMISSIONS;
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
     await dataSource.query(
@@ -594,7 +594,9 @@ async function assertCanonicalRouteNavigation(client) {
     ['/students/export', 'ส่งออกข้อมูลนักเรียน', '/students'],
     ['/attendance/roster', 'เช็กชื่อ', '/attendance'],
     ['/attendance/check-in', 'เช็กชื่อ', '/attendance'],
-    ['/attendance/history', 'ประวัติการเช็กชื่อ', '/attendance'],
+    // /attendance/history is a redirect to its first tab, so the walk names the
+    // tab it lands on — asserting the redirect source can never match.
+    ['/attendance/history/attendance', 'ประวัติการเช็กชื่อ', '/attendance'],
     ['/attendance-links', 'จัดการลิงก์เช็กชื่อ', '/attendance-links'],
     ['/attendance-operations', 'ความครบถ้วน', '/attendance-operations'],
     ['/timetable/rooms', 'ตารางสอน', '/timetable'],
@@ -613,7 +615,6 @@ async function assertCanonicalRouteNavigation(client) {
     ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
     ['/settings', 'ตั้งค่าระบบ', '/settings'],
     ['/settings/student-statuses', 'สถานะนักเรียน', '/settings'],
-    ['/settings/master-data-lookups', 'ข้อมูลพื้นฐาน', '/settings'],
     ['/profile', 'โปรไฟล์ของฉัน', null],
     ['/notifications', 'การแจ้งเตือน', null],
     ['/change-password', 'เปลี่ยนรหัสผ่าน', null],
@@ -1755,29 +1756,7 @@ async function main() {
       FirstName: 'Risk Dashboard',
       LastName: 'Browser Smoke',
       roles: ['ADMIN'],
-      permissions: [
-        'attendance',
-        'attendance-dashboard',
-        'audit-log',
-        'create',
-        'dashboard',
-        'edit-students',
-        'export-data',
-        'home',
-        'import-data',
-        'import-school-roster',
-        'login-links',
-        'manage-curriculum',
-        'manage-role-groups',
-        'manage-school-structure',
-        'manage-student-observations',
-        'manage-teacher-access',
-        'manage-teachers',
-        'manage-users-list',
-        'review-cases',
-        'settings',
-        'students',
-      ],
+      permissions: ACTOR_PERMISSIONS,
       data_scope: { school_ids: [10010002] },
       must_change_password: false,
     };

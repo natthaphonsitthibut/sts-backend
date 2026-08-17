@@ -47,19 +47,19 @@ async function main() {
       const [actor] = await manager.query(
         `
           SELECT
-            id,
-            trim(concat_ws(' ', "FirstName", "LastName")) AS display_name,
-            email
-          FROM users
-          WHERE role = 'TEACHER'
-            AND status = 'ACTIVE'
-            AND data_origin_code = 'DEMO'
-            AND email IS NOT NULL
-            AND data_scope @> jsonb_build_object(
-              'school_ids',
-              jsonb_build_array($1::int)
-            )
-          ORDER BY id
+            teacher.id,
+            TRIM(teacher.first_name || ' ' || teacher.last_name) AS display_name,
+            teacher.email
+          FROM teachers teacher
+          JOIN school_teacher_memberships membership
+            ON membership.teacher_id = teacher.id
+           AND membership.school_id = $1::int
+           AND membership.membership_status = 'ACTIVE'
+           AND membership.deleted_at IS NULL
+          WHERE teacher.teacher_status = 'ACTIVE'
+            AND teacher.deleted_at IS NULL
+            AND teacher.email IS NOT NULL
+          ORDER BY teacher.id
           LIMIT 1
         `,
         [caseRecord.school_id],
@@ -154,7 +154,7 @@ async function main() {
           linkId,
           'ผู้ปกครองมีภาระงานต่างพื้นที่ นักเรียนขาดผู้ดูแลเรื่องการเดินทางบางวัน',
           'ประสานครูที่ปรึกษาและผู้ปกครอง วางตารางรับส่งและติดตามการมาเรียน 30 วัน',
-          actor.id,
+          creator.id,
         ],
       );
       await manager.query(
@@ -164,7 +164,7 @@ async function main() {
               updated_by = $2
           WHERE task_link_id = $1
         `,
-        [linkId, actor.id],
+        [linkId, creator.id],
       );
     });
 

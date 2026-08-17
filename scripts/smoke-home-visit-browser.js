@@ -576,9 +576,6 @@ async function findStudentFixture(dataSource) {
             ON teacher.id = membership.teacher_id
            AND teacher.teacher_status = 'ACTIVE'
            AND teacher.deleted_at IS NULL
-          JOIN users teacher_user
-            ON teacher_user.id = membership.teacher_user_id
-           AND teacher_user.status = 'ACTIVE'
           WHERE membership.school_id = s."SchoolID_Onec"
             AND membership.membership_status = 'ACTIVE'
             AND membership.deleted_at IS NULL
@@ -1114,7 +1111,7 @@ async function main() {
       username: CREATOR_USERNAME,
       passwordHash: await passwordService.hash(`HomeVisitCreator-${suffix}-Password`),
       firstName: 'Home Visit Creator',
-      permissions: ['home', 'create', 'review-cases', 'close-case', 'manage-student-observations'],
+      permissions: ['home', 'dashboard', 'students'],
     });
     const noCreate = await upsertUser(dataSource, {
       username: NO_CREATE_USERNAME,
@@ -1154,10 +1151,10 @@ async function main() {
       client,
       browserUser(creator, CREATOR_USERNAME, [
         'home',
-        'create',
-        'review-cases',
-        'close-case',
-        'manage-student-observations',
+        'dashboard',
+        'dashboard',
+        'dashboard',
+        'students',
       ]),
       createSessionCookie(sessionCookieService, creator.id),
     );
@@ -1754,7 +1751,7 @@ async function main() {
       assigned_to_name: '',
       assigned_to_first_name: '',
       assigned_to_last_name: '',
-      assigned_teacher_user_id: visitAssigneesResult.body.data[0].teacherUserId,
+      assigned_teacher_id: Number(visitAssigneesResult.body.data[0].teacherId),
       expires_value: 1,
       expires_unit: 'days',
       opens_at: assignmentStart.toISOString(),

@@ -50,7 +50,7 @@ async function request(baseUrl, method, path, expectedStatus, options = {}) {
 }
 
 async function upsertActor(dataSource, passwordHash) {
-  const permissions = JSON.stringify(['manage-timetable']);
+  const permissions = JSON.stringify(['timetable']);
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
     USERNAME,
   ]);

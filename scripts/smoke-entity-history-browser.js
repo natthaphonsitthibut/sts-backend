@@ -23,9 +23,9 @@ const CHROME_PATH =
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9237);
 const ADMIN_USERNAME = 'entity_history_browser_admin';
 const ALL_PERMISSIONS = [
-  'home', 'dashboard', 'students', 'edit-students', 'review-cases', 'close-case',
-  'forward-case', 'student-self', 'create', 'import-data', 'attendance-dashboard',
-  'attendance', 'manage-users-list', 'manage-users-hard-delete',
+  'home', 'dashboard', 'students', 'students', 'dashboard', 'dashboard',
+  'dashboard', 'student-self', 'dashboard', 'import-data', 'attendance-dashboard',
+  'attendance', 'manage-users-list', 'manage-users-list',
   'manage-role-groups', 'login-links', 'settings',
   'audit-log',
 ];

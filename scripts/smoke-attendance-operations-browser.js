@@ -39,7 +39,7 @@ const USERS = {
   calendarAdmin: {
     username: 'attendance_operations_browser_calendar_admin',
     firstName: 'Attendance Calendar Admin',
-    permissions: ['home', 'attendance-dashboard', 'manage-attendance-calendar'],
+    permissions: ['home', 'attendance-dashboard'],
   },
 };
 

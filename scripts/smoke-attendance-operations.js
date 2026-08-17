@@ -251,12 +251,7 @@ async function main() {
        RETURNING id`,
       [
         allowedUsername,
-        JSON.stringify([
-          'home',
-          'attendance',
-          'attendance-dashboard',
-          'manage-attendance-calendar',
-        ]),
+        JSON.stringify(['home', 'attendance', 'attendance-dashboard']),
         JSON.stringify({ school_ids: [fixture.school_id] }),
       ],
     );
@@ -267,10 +262,10 @@ async function main() {
       `INSERT INTO users
          (username, password, status, permissions, "FirstName", "LastName", role, data_scope, data_origin_code)
        VALUES ($1, 'NOT_A_LOGIN_CREDENTIAL', 'ACTIVE', '["home"]'::jsonb,
-         'Attendance', 'Smoke', 'TEACHER', $2::jsonb, 'AUTOMATED_TEST')
+         'Attendance', 'Smoke', 'DIRECTOR', $2::jsonb, 'AUTOMATED_TEST')
        ON CONFLICT (username) DO UPDATE SET
          status = 'ACTIVE', permissions = '["home"]'::jsonb,
-         role = 'TEACHER', data_scope = EXCLUDED.data_scope, data_origin_code = 'AUTOMATED_TEST'
+         role = 'DIRECTOR', data_scope = EXCLUDED.data_scope, data_origin_code = 'AUTOMATED_TEST'
        RETURNING id`,
       [deniedUsername, JSON.stringify({ school_ids: [fixture.school_id] })],
     );

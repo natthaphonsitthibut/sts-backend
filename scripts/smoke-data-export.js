@@ -337,10 +337,10 @@ async function main() {
       'students',
       'dashboard',
       'attendance-dashboard',
-      'review-cases',
+      'dashboard',
       'import-data',
       'manage-school-structure',
-      'manage-student-observations',
+      'students',
     ]);
     const deniedId = await upsertActor(dataSource, 'data_export_smoke_denied', ['students']);
 

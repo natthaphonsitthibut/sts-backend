@@ -473,21 +473,14 @@ async function main() {
       firstName: 'School Structure',
       lastName: 'Browser Smoke',
       role: 'DIRECTOR',
-      permissions: [
-        'home',
-        'students',
-        'manage-school-structure',
-        'import-data',
-        'import-school-roster',
-        'export-data',
-      ],
+      permissions: ['home', 'students', 'manage-school-structure', 'import-data', 'export-data'],
       dataScope: { school_ids: [schoolA.id] },
     });
     await upsertUser(dataSource, hash, {
       username: TEACHER_USERNAME,
       firstName: TEACHER_FIRST_NAME,
       lastName: TEACHER_LAST_NAME,
-      role: 'TEACHER',
+      role: 'DIRECTOR',
       permissions: ['attendance'],
       dataScope: { school_ids: [schoolA.id] },
     });

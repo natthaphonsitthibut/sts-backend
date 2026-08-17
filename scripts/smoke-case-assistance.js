@@ -65,7 +65,7 @@ async function main() {
     );
     assert(enrollment, 'need one canonical student whose classroom has a teacher');
 
-    const permissions = JSON.stringify(['create', 'review-cases', 'close-case', 'students']);
+    const permissions = JSON.stringify(['dashboard', 'students']);
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -83,7 +83,7 @@ async function main() {
       FirstName: 'Assistance',
       LastName: 'Smoke',
       roles: ['ADMIN'],
-      permissions: ['create', 'review-cases', 'close-case', 'students'],
+      permissions: ['dashboard', 'students'],
       data_scope: { school_ids: [Number(enrollment.school_id)] },
     };
 
@@ -184,7 +184,7 @@ async function main() {
       reviewer,
       {
         task_type: 'ASSIST',
-        assigned_teacher_user_id: Number(assignees[0].teacher_user_id),
+        assigned_teacher_id: Number(assignees[0].teacher_id),
         assistance_measure_codes: ['SCHOLARSHIP', 'OTHER'],
         assistance_measure_detail: 'ประสานกองทุนของโรงเรียน',
         existing_case_id: String(caseId),

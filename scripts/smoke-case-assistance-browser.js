@@ -51,7 +51,8 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await wait(250);
   }
-  throw new Error(lastError ? `${message}: ${lastError.message}` : message);
+  const text = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${text}: ${lastError.message}` : text);
 }
 
 async function openChrome() {
@@ -203,7 +204,7 @@ async function main() {
     );
     assert(enrollment, 'need one canonical student whose classroom has a teacher');
 
-    const permissions = ['home', 'dashboard', 'students', 'create', 'review-cases', 'close-case'];
+    const permissions = ['home', 'dashboard', 'students'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -298,8 +299,25 @@ async function main() {
       `step 2 is not labelled ติดตาม: ${stepTitles}`,
     );
 
-    const followUpButtons = await client.evaluate(
-      `[...document.querySelectorAll('button')].map((button) => button.textContent.trim()).join('|')`,
+    const buttonLabels = async () =>
+      await client.evaluate(
+        `[...document.querySelectorAll('button')].map((button) => button.textContent.trim()).join('|')`,
+      );
+
+    // The review buttons come from the tracking-options query, which resolves
+    // after the step cards paint — reading the labels once catches the page
+    // mid-flight and reports a missing button that arrives a moment later.
+    const waitForButton = async (label, message) => {
+      await waitFor(
+        async () => (await buttonLabels()).includes(label),
+        async () => `${message}: ${await buttonLabels()}`,
+      );
+      return buttonLabels();
+    };
+
+    const followUpButtons = await waitForButton(
+      'ให้ความช่วยเหลือ',
+      'follow-up review is missing the ให้ความช่วยเหลือ button',
     );
     assert(
       followUpButtons.includes('ให้ความช่วยเหลือ'),
@@ -370,7 +388,7 @@ async function main() {
       },
       {
         task_type: 'ASSIST',
-        assigned_teacher_user_id: Number(assignees[0].teacher_user_id),
+        assigned_teacher_id: Number(assignees[0].teacher_id),
         assistance_measure_codes: ['SCHOLARSHIP'],
         existing_case_id: String(caseId),
         student_id: enrollment.student_uuid,
@@ -674,8 +692,9 @@ async function main() {
       async () => await client.evaluate(`document.body.innerText.includes('การช่วยเหลือ')`),
       'assistance review step did not render',
     );
-    const assistanceButtons = await client.evaluate(
-      `[...document.querySelectorAll('button')].map((button) => button.textContent.trim()).join('|')`,
+    const assistanceButtons = await waitForButton(
+      'ปิดเคส',
+      'assistance review lost ปิดเคส',
     );
     assert(
       !assistanceButtons.split('|').includes('ให้ความช่วยเหลือ'),
