@@ -45,7 +45,8 @@ describe('retired account migration history safety', () => {
     expect(source).not.toContain('WHERE actor_user_id IN (SELECT id FROM users WHERE role');
     expect(source).toContain('DISABLE TRIGGER');
     expect(source).toContain('ENABLE TRIGGER');
-    expect(source).toContain("DELETE FROM users WHERE role = '");
+    expect(source).toContain('DELETE FROM users');
+    expect(source).toMatch(/WHERE role = '(STUDENT|TEACHER)'/);
   });
 
   it('snapshots legacy teacher observation authors instead of deleting their observations', () => {
@@ -65,7 +66,26 @@ describe('retired account migration history safety', () => {
       source.indexOf('const blockingForeignKeys'),
     );
     expect(source.indexOf('const blockingForeignKeys')).toBeLessThan(
-      source.indexOf("DELETE FROM users WHERE role = 'TEACHER'"),
+      source.indexOf('DELETE FROM users account'),
+    );
+    expect(source).toContain('pg_relation_size(c.conrelid) >= 8388608');
+    expect(source).toContain("WHERE account.role = 'TEACHER'");
+    expect(source).toContain('if (!referenced[0]?.needed) continue');
+    expect(source).toContain('LIMIT 10');
+    expect(source).toContain('SELECT COUNT(*)::int AS deleted_rows FROM deleted');
+  });
+
+  it('detaches large attendance actor FKs in committed reusable batches', () => {
+    const source = readMigration('20260823110000-DetachRetiredTeacherAttendanceActors.ts');
+
+    expect(source).toContain('transaction = false');
+    expect(source).toContain('VACUUM (ANALYZE) attendance');
+    expect(source).toContain('LIMIT 20000');
+    expect(source).toContain(
+      "WHEN record.created_by IN (SELECT id FROM users WHERE role = 'TEACHER') THEN NULL",
+    );
+    expect(source).toContain(
+      "WHEN record.updated_by IN (SELECT id FROM users WHERE role = 'TEACHER') THEN NULL",
     );
   });
 

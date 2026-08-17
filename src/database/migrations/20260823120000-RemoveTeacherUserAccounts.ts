@@ -27,11 +27,11 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  *      in the timetable rework; one row still used it).
  *   4. The accounts and the `TEACHER` role are deleted.
  *
- * On the temporary indexes: `users` is the target of hundreds of foreign keys,
- * many without an index on the referencing column. Both the blocker audit and
- * `ON DELETE SET NULL` would otherwise rescan child tables once per account.
- * Indexes created here exist only for this migration and are dropped again;
- * permanent attendance audit-FK indexes come from 20260821180000.
+ * On the temporary indexes: `users` is the target of hundreds of foreign keys.
+ * Creating an index for every one exhausted production storage, so only large
+ * unindexed child tables that actually reference a TEACHER account are indexed.
+ * Small tables are cheaper to scan; permanent attendance audit-FK indexes come
+ * from 20260821180000.
  *
  * On audit/PII history: their immutable triggers refuse the `ON DELETE SET NULL`
  * update requested by their own actor foreign keys. The guards are suspended
@@ -308,9 +308,9 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
       await queryRunner.query(`DELETE FROM ${table} WHERE ${predicate}`);
     }
 
-    // Index before both the blocker audit and account DELETE. The audit itself
-    // joins every blocking FK to users and can time out on a large unindexed
-    // child table before the DELETE is ever reached.
+    // Index only large child tables that actually reference a teacher account.
+    // Indexing every users FK consumed the remaining production disk even when
+    // most columns contained no teacher ids.
     const unindexedForeignKeys = (await queryRunner.query(`
       SELECT DISTINCT c.conrelid::regclass::text AS table_name, a.attname AS column_name
       FROM pg_constraint c
@@ -318,6 +318,7 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
       WHERE c.contype = 'f'
         AND c.confrelid = 'users'::regclass
+        AND pg_relation_size(c.conrelid) >= 8388608
         AND NOT EXISTS (
           SELECT 1 FROM pg_index i
           JOIN pg_attribute ia ON ia.attrelid = i.indrelid AND ia.attnum = i.indkey[0]
@@ -325,13 +326,24 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
         )
       ORDER BY 1, 2
     `)) as Array<{ table_name: string; column_name: string }>;
-    const createdIndexes = unindexedForeignKeys.map((foreignKey, position) => ({
-      name: `tmp_teacher_account_drop_${position}`,
-      table: foreignKey.table_name,
-      column: foreignKey.column_name,
-    }));
-    for (const index of createdIndexes) {
+    const createdIndexes: Array<{ name: string; table: string; column: string }> = [];
+    for (const foreignKey of unindexedForeignKeys) {
+      const referenced = (await queryRunner.query(`
+        SELECT EXISTS (
+          SELECT 1
+          FROM ${foreignKey.table_name} child
+          JOIN users account ON account.id = child."${foreignKey.column_name}"
+          WHERE account.role = 'TEACHER'
+        ) AS needed
+      `)) as Array<{ needed: boolean }>;
+      if (!referenced[0]?.needed) continue;
+      const index = {
+        name: `tmp_teacher_account_drop_${createdIndexes.length}`,
+        table: foreignKey.table_name,
+        column: foreignKey.column_name,
+      };
       await queryRunner.query(`CREATE INDEX "${index.name}" ON ${index.table} ("${index.column}")`);
+      createdIndexes.push(index);
     }
 
     try {
@@ -380,7 +392,25 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
         await queryRunner.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
       }
       try {
-        await queryRunner.query(`DELETE FROM users WHERE role = 'TEACHER'`);
+        let deletedRows: number;
+        do {
+          const result = (await queryRunner.query(`
+            WITH candidates AS (
+              SELECT id
+              FROM users
+              WHERE role = 'TEACHER'
+              ORDER BY id
+              LIMIT 10
+            ), deleted AS (
+              DELETE FROM users account
+              USING candidates
+              WHERE account.id = candidates.id
+              RETURNING 1
+            )
+            SELECT COUNT(*)::int AS deleted_rows FROM deleted
+          `)) as Array<{ deleted_rows: number }>;
+          deletedRows = Number(result[0]?.deleted_rows ?? 0);
+        } while (deletedRows > 0);
       } finally {
         for (const [table, trigger] of [...immutableHistoryTriggers].reverse()) {
           await queryRunner.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
