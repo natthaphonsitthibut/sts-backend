@@ -16,11 +16,17 @@ describe('AuditLogController', () => {
       'audit-log',
       'import-data',
       'students',
+      // The link detail screen embeds the panel and is guarded by รายงานสถานะ
+      // นักเรียน; it must not be `home`, which every account holds.
+      'dashboard',
     ]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, getByIdHandler)).toEqual([
       'audit-log',
       'import-data',
       'students',
+      // The link detail screen embeds the panel and is guarded by รายงานสถานะ
+      // นักเรียน; it must not be `home`, which every account holds.
+      'dashboard',
     ]);
   });
 });
