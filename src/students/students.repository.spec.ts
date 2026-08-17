@@ -139,6 +139,11 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain('JOIN attendance_record_statuses status');
     expect(queries[0]).toContain('LEFT JOIN subjects subject');
     expect(queries[0]).toContain('LEFT JOIN teachers recorder');
+    expect(queries[0]).toContain(
+      'LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"',
+    );
+    expect(queries[0]).toContain('recorder_user."FirstName"');
+    expect(queries[0]).toContain('recorder_user."LastName"');
     expect(queries[0]).toContain('AS recorded_by');
   });
 

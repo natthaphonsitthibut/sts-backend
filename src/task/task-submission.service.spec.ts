@@ -41,7 +41,7 @@ describe('TaskSubmissionService', () => {
       | 'getFollowUpDecision'
       | 'assertResolutionOutcome'
       | 'getHomeVisitException'
-      | 'getHomeVisitAssessment'
+      | 'getFollowUpProblemCategory'
       | 'getParentalStatus'
       | 'getGuardianType'
       | 'getResidenceEnvironments'
@@ -84,9 +84,10 @@ describe('TaskSubmissionService', () => {
       ),
       assertResolutionOutcome: jest.fn((code: string | null) => Promise.resolve(code)),
       getHomeVisitException: jest.fn().mockResolvedValue(null),
-      getHomeVisitAssessment: jest.fn().mockResolvedValue({
-        code: 'NO_CONCERN',
-        label: 'ไม่พบปัญหาเพิ่มเติม',
+      getFollowUpProblemCategory: jest.fn().mockResolvedValue({
+        code: 'HEALTH',
+        label: 'ปัญหาด้านสุขภาพ',
+        guidance: 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ',
       }),
       getParentalStatus: jest.fn().mockResolvedValue(null),
       getGuardianType: jest.fn().mockResolvedValue(null),
@@ -128,14 +129,14 @@ describe('TaskSubmissionService', () => {
       task_type: 'VISIT',
       case_id: 10,
     });
-    trackingOptions.getHomeVisitAssessment.mockResolvedValueOnce(null);
+    trackingOptions.getFollowUpProblemCategory.mockResolvedValueOnce(null);
 
     await expect(
       service.saveTaskSubmission('public-token', {
         notes: 'ลงพื้นที่แล้ว',
         case_follow_up_decision: 'REQUEST_REVIEW',
       }),
-    ).rejects.toThrow('กรุณาเลือกผลประเมินหลังลงพื้นที่');
+    ).rejects.toThrow('กรุณาเลือกหัวข้อปัญหาของผลการติดตาม');
     expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
   });
 
@@ -156,7 +157,7 @@ describe('TaskSubmissionService', () => {
     });
 
     await service.saveTaskSubmission('public-token', {
-      cause_category: 'ATTENDANCE',
+      follow_up_problem_category_code: 'ACADEMIC',
       notes: 'พบผู้ปกครองแล้ว',
       case_follow_up_decision: 'REQUEST_REVIEW',
     });
@@ -165,6 +166,7 @@ describe('TaskSubmissionService', () => {
       expect.objectContaining({
         caseFollowUpDecision: 'REQUEST_REVIEW',
         caseResolutionOutcomeCode: null,
+        followUpProblemCategoryCode: 'HEALTH',
       }),
       undefined,
     );

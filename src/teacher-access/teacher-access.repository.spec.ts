@@ -247,4 +247,27 @@ describe('TeacherAccessRepository', () => {
       true,
     );
   });
+
+  it('stores a required problem category and description for a student comment', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.createStudentComment(
+      {
+        classroomId: 41,
+        studentUuid: '00000000-0000-4000-8000-000000000001',
+        problemCategory: 'ACADEMIC',
+        problemDescription: 'เรียนไม่ทันบทเรียน',
+        authoredByTeacherId: 12,
+      },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /INSERT INTO classroom_student_comments[\s\S]*problem_category_code[\s\S]*problem_description[\s\S]*RETURNING id, problem_category_code, problem_description/,
+      ),
+      [41, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'เรียนไม่ทันบทเรียน', 12],
+      true,
+    );
+  });
 });

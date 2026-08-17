@@ -22,6 +22,10 @@ import {
   ATTENDANCE_SELECTION_STATUS_VALUES,
   type AttendanceSelectionStatus,
 } from '../../attendance/attendance-status';
+import {
+  CLASSROOM_STUDENT_PROBLEM_CATEGORIES,
+  type ClassroomStudentProblemCategory,
+} from '../../school-structure/classroom-student-comment.constants';
 
 const trimText = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
@@ -572,11 +576,14 @@ export class CreateTeacherAccessStudentCommentDto {
   @IsUUID()
   studentUuid!: string;
 
+  @IsIn(CLASSROOM_STUDENT_PROBLEM_CATEGORIES)
+  problemCategory!: ClassroomStudentProblemCategory;
+
   @Transform(trimText)
   @IsString()
   @MinLength(1)
   @MaxLength(2000)
-  commentText!: string;
+  problemDescription!: string;
 }
 
 export class TeacherAccessStudentProfileQueryDto {

@@ -175,7 +175,10 @@ export class ObservationReviewsService {
     return {
       id: row.id,
       studentTermId: row.student_uuid,
-      comment: row.comment,
+      problemCategory: row.problem_category_code,
+      problemCategoryLabel: row.problem_category_label,
+      problemCategoryGuidance: row.problem_category_guidance,
+      problemDescription: row.problem_description,
       authorDisplayName: row.author_display_name,
       commentedAt: new Date(row.commented_at).toISOString(),
     };
@@ -254,7 +257,10 @@ export class ObservationReviewsService {
         schoolName: row.school_name,
         gradeLabel: row.grade_label,
         roomNo: row.room_no,
-        comment: row.comment,
+        problemCategory: row.problem_category_code,
+        problemCategoryLabel: row.problem_category_label,
+        problemCategoryGuidance: row.problem_category_guidance,
+        problemDescription: row.problem_description,
         authorDisplayName: row.author_display_name,
         commentedAt: new Date(row.commented_at).toISOString(),
       })),

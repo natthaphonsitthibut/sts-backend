@@ -8,7 +8,7 @@ describe('CaseTrackingOptionsService', () => {
     listCaseFollowUpDecisions: jest.fn(),
     listCaseResolutionOutcomes: jest.fn(),
     listHomeVisitExceptionOptions: jest.fn(),
-    listHomeVisitAssessmentOptions: jest.fn(),
+    listFollowUpProblemCategoryOptions: jest.fn(),
     listParentalStatusOptions: jest.fn(),
     listGuardianTypeOptions: jest.fn(),
     listResidenceEnvironmentOptions: jest.fn(),
@@ -16,7 +16,7 @@ describe('CaseTrackingOptionsService', () => {
     findCaseFollowUpDecision: jest.fn(),
     findCaseResolutionOutcome: jest.fn(),
     findHomeVisitExceptionOption: jest.fn(),
-    findHomeVisitAssessmentOption: jest.fn(),
+    findFollowUpProblemCategoryOption: jest.fn(),
     findParentalStatusOption: jest.fn(),
     findGuardianTypeOption: jest.fn(),
     findResidenceEnvironmentOptions: jest.fn(),
@@ -74,8 +74,12 @@ describe('CaseTrackingOptionsService', () => {
         requires_updated_address: true,
       },
     ]);
-    repository.listHomeVisitAssessmentOptions.mockResolvedValue([
-      { code: 'CONTINUE_FOLLOW_UP', label_th: 'ควรติดตามต่อ' },
+    repository.listFollowUpProblemCategoryOptions.mockResolvedValue([
+      {
+        code: 'HEALTH',
+        label_th: 'ปัญหาด้านสุขภาพ',
+        guidance_th: 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ',
+      },
     ]);
     repository.listParentalStatusOptions.mockResolvedValue([
       { code: 'LIVING_TOGETHER', label_th: 'อยู่ด้วยกัน' },
@@ -148,7 +152,13 @@ describe('CaseTrackingOptionsService', () => {
           requiresUpdatedAddress: true,
         },
       ],
-      homeVisitAssessments: [{ code: 'CONTINUE_FOLLOW_UP', label: 'ควรติดตามต่อ' }],
+      followUpProblemCategories: [
+        {
+          code: 'HEALTH',
+          label: 'ปัญหาด้านสุขภาพ',
+          guidance: 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ',
+        },
+      ],
       parentalStatuses: [{ code: 'LIVING_TOGETHER', label: 'อยู่ด้วยกัน' }],
       guardianTypes: [{ code: 'OTHER', label: 'อื่น ๆ (ระบุในช่อง)', requiresDetail: true }],
       residenceEnvironments: [

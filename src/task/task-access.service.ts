@@ -336,9 +336,13 @@ export class TaskAccessService {
               assignment_ends_at: row.assignment_ends_at ?? null,
               assignment_note: typeof row.assignment_note === 'string' ? row.assignment_note : null,
               cause_detail: typeof row.cause_detail === 'string' ? row.cause_detail : null,
-              follow_up_assessment_label:
-                typeof row.follow_up_assessment_label === 'string'
-                  ? row.follow_up_assessment_label
+              follow_up_problem_category_label:
+                typeof row.follow_up_problem_category_label === 'string'
+                  ? row.follow_up_problem_category_label
+                  : null,
+              follow_up_problem_category_guidance:
+                typeof row.follow_up_problem_category_guidance === 'string'
+                  ? row.follow_up_problem_category_guidance
                   : null,
               exception_label: typeof row.exception_label === 'string' ? row.exception_label : null,
             }))

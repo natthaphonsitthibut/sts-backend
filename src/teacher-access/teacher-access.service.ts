@@ -44,6 +44,7 @@ import { attendanceStatusFromCode } from '../attendance/attendance-status';
 import type { ParsePublicAttendanceImportDto } from '../attendance/dto/attendance-import.dto';
 import { StudentsService } from '../students/students.service';
 import { SchoolStructureRepository } from '../school-structure/school-structure.repository';
+import type { ClassroomStudentProblemCategory } from '../school-structure/classroom-student-comment.constants';
 import { StudentObservationsService } from '../student-observations/student-observations.service';
 import { TimetableService } from '../timetable/timetable.service';
 import { createSqlQueryExecutor } from '../database/sql-query';
@@ -2723,6 +2724,7 @@ export class TeacherAccessService {
         if (activeAssignments.length === 0) {
           throw new ForbiddenException('ลิงก์นี้ไม่มี assignment ที่เปิดใช้งาน');
         }
+        const problemCategories = await this.schoolStructure.listStudentProblemCategories();
         return {
           data: {
             grantId: context.grantId,
@@ -2734,6 +2736,7 @@ export class TeacherAccessService {
             semester: context.semester,
             capabilities: context.capabilities,
             accessScope: context.accessScope,
+            problemCategories,
             assignments: activeAssignments.map((row) =>
               this.toAssignment(row, context.capabilities),
             ),
@@ -3107,7 +3110,12 @@ export class TeacherAccessService {
   /** Writes the หมายเหตุ shown on both the teacher and the staff roster. */
   async createPublicStudentComment(
     rawToken: string,
-    input: { assignmentId: number; studentUuid: string; commentText: string },
+    input: {
+      assignmentId: number;
+      studentUuid: string;
+      problemCategory: ClassroomStudentProblemCategory;
+      problemDescription: string;
+    },
     sessionToken?: string,
   ) {
     return await this.withActiveGrantContext(
@@ -3124,7 +3132,8 @@ export class TeacherAccessService {
           {
             classroomId: Number(context.classroomId),
             studentUuid: input.studentUuid,
-            commentText: input.commentText,
+            problemCategory: input.problemCategory,
+            problemDescription: input.problemDescription,
             authoredByTeacherId: Number(context.teacherId),
           },
           queryRunner,
@@ -3137,7 +3146,15 @@ export class TeacherAccessService {
           .catch(() => {
             this.logger.warn(`Unable to refresh risk profile for student ${input.studentUuid}`);
           });
-        return { data: { id: created.id, commentText: created.comment_text } };
+        return {
+          data: {
+            id: created.id,
+            problemCategory: created.problem_category_code,
+            problemCategoryLabel: created.problem_category_label,
+            problemCategoryGuidance: created.problem_category_guidance,
+            problemDescription: created.problem_description,
+          },
+        };
       },
     );
   }
@@ -3331,7 +3348,10 @@ export class TeacherAccessService {
             observations,
             comments: comments.map((comment) => ({
               id: comment.id,
-              commentText: comment.comment_text,
+              problemCategory: comment.problem_category_code,
+              problemCategoryLabel: comment.problem_category_label,
+              problemCategoryGuidance: comment.problem_category_guidance,
+              problemDescription: comment.problem_description,
               authorName: comment.author_name,
               createdAt: new Date(comment.created_at).toISOString(),
             })),

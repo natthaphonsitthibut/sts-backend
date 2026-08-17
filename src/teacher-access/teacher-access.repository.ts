@@ -1076,18 +1076,32 @@ export class TeacherAccessRepository {
     input: { classroomId: number; studentUuid: string; limit: number },
     queryRunner?: QueryRunner,
   ): Promise<
-    Array<{ id: string; comment_text: string; created_at: string | Date; author_name: string }>
+    Array<{
+      id: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
+      created_at: string | Date;
+      author_name: string;
+    }>
   > {
     const result = await this.executor(queryRunner).query<{
       id: string;
-      comment_text: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
       created_at: string | Date;
       author_name: string;
     }>(
       `
         SELECT
           comment.id::text,
-          comment.comment_text,
+          comment.problem_category_code,
+          problem_category.label_th AS problem_category_label,
+          problem_category.guidance_th AS problem_category_guidance,
+          comment.problem_description,
           comment.created_at,
           COALESCE(
             NULLIF(TRIM(COALESCE(teacher.first_name, '') || ' ' ||
@@ -1101,6 +1115,8 @@ export class TeacherAccessRepository {
         JOIN student_term enrollment ON enrollment.person_uuid = comment.person_uuid
         LEFT JOIN users author ON author.id = comment.authored_by_user_id
         LEFT JOIN teachers teacher ON teacher.id = comment.authored_by_teacher_id
+        JOIN classroom_student_problem_categories problem_category
+          ON problem_category.code = comment.problem_category_code
         WHERE comment.classroom_id = $1
           AND enrollment.student_uuid = $2
         ORDER BY comment.created_at DESC
@@ -1771,6 +1787,7 @@ export class TeacherAccessRepository {
             SELECT STRING_AGG(
               DISTINCT COALESCE(
                 NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+                NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
                 CASE
                   WHEN record."RecordedBy" LIKE '%@%' THEN NULL
                   ELSE NULLIF(record."RecordedBy", '')
@@ -1781,6 +1798,7 @@ export class TeacherAccessRepository {
             )
             FROM attendance record
             LEFT JOIN teachers recorder ON recorder.id = record.recorded_by_teacher_id
+            LEFT JOIN users recorder_user ON recorder_user.username = record."RecordedBy"
             WHERE record.session_id = session.id
             ) AS recorded_by,
             COUNT(*) FILTER (WHERE record."AttendanceStatus" = 1)::int AS present_count,
@@ -1826,25 +1844,59 @@ export class TeacherAccessRepository {
     input: {
       classroomId: number;
       studentUuid: string;
-      commentText: string;
+      problemCategory: string;
+      problemDescription: string;
       authoredByTeacherId: number;
     },
     queryRunner: QueryRunner,
-  ): Promise<{ id: string; comment_text: string } | null> {
-    const result = await this.executor(queryRunner).query<{ id: string; comment_text: string }>(
+  ): Promise<{
+    id: string;
+    problem_category_code: string;
+    problem_category_label: string;
+    problem_category_guidance: string | null;
+    problem_description: string;
+  } | null> {
+    const result = await this.executor(queryRunner).query<{
+      id: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
+    }>(
       `
-        INSERT INTO classroom_student_comments (
-          classroom_id, person_uuid, comment_text, authored_by_teacher_id
+        WITH inserted AS (
+          INSERT INTO classroom_student_comments (
+            classroom_id,
+            person_uuid,
+            problem_category_code,
+            problem_description,
+            authored_by_teacher_id
+          )
+          SELECT $1, enrollment.person_uuid, $3, $4, $5
+          FROM student_term enrollment
+          WHERE enrollment.student_uuid = $2
+            AND enrollment.classroom_id = $1
+            AND enrollment.deleted_at IS NULL
+            AND enrollment.person_uuid IS NOT NULL
+          RETURNING id, problem_category_code, problem_description
         )
-        SELECT $1, enrollment.person_uuid, $3, $4
-        FROM student_term enrollment
-        WHERE enrollment.student_uuid = $2
-          AND enrollment.classroom_id = $1
-          AND enrollment.deleted_at IS NULL
-          AND enrollment.person_uuid IS NOT NULL
-        RETURNING id::text, comment_text
+        SELECT
+          inserted.id::text,
+          inserted.problem_category_code,
+          category.label_th AS problem_category_label,
+          category.guidance_th AS problem_category_guidance,
+          inserted.problem_description
+        FROM inserted
+        JOIN classroom_student_problem_categories category
+          ON category.code = inserted.problem_category_code
       `,
-      [input.classroomId, input.studentUuid, input.commentText, input.authoredByTeacherId],
+      [
+        input.classroomId,
+        input.studentUuid,
+        input.problemCategory,
+        input.problemDescription,
+        input.authoredByTeacherId,
+      ],
     );
     return result.rows[0] ?? null;
   }

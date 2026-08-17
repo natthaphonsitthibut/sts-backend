@@ -77,7 +77,10 @@ export interface ClassroomCommentListRow extends Record<string, unknown> {
   school_name: string | null;
   grade_label: string | null;
   room_no: string | null;
-  comment: string;
+  problem_category_code: string;
+  problem_category_label: string;
+  problem_category_guidance: string | null;
+  problem_description: string;
   author_display_name: string;
   commented_at: Date | string;
   total_count?: number | string;
@@ -86,7 +89,10 @@ export interface ClassroomCommentListRow extends Record<string, unknown> {
 export interface StudentClassroomCommentRow extends Record<string, unknown> {
   id: string;
   student_uuid: string;
-  comment: string;
+  problem_category_code: string;
+  problem_category_label: string;
+  problem_category_guidance: string | null;
+  problem_description: string;
   author_display_name: string;
   commented_at: Date | string;
   total_count?: number | string;

@@ -52,6 +52,7 @@ describe('ObservationReviewsRepository', () => {
 
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('comment.problem_description');
     expect(queries[0].sql).toContain('enrollment.classroom_id = comment.classroom_id');
     expect(queries[0].sql).toContain('COUNT(*) OVER (PARTITION BY comment.person_uuid)');
     expect(queries[0].sql).toContain('ROW_NUMBER() OVER');
@@ -71,6 +72,8 @@ describe('ObservationReviewsRepository', () => {
     );
 
     expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('comment.problem_category');
+    expect(queries[0].sql).toContain('comment.problem_description');
     expect(queries[0].sql).toContain('enrollment.classroom_id = comment.classroom_id');
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('enrollment.student_uuid = $1');

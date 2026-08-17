@@ -194,7 +194,10 @@ export class TeacherWatchlistResponseDto {
 export class StudentClassroomCommentResponseDto {
   id!: string;
   studentTermId!: string;
-  comment!: string;
+  problemCategory!: string;
+  problemCategoryLabel!: string;
+  problemCategoryGuidance!: string | null;
+  problemDescription!: string;
   authorDisplayName!: string;
   commentedAt!: string;
 }

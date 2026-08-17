@@ -849,33 +849,37 @@ export class HomeDashboardRepository {
     const whereSql = [
       'c.deleted_at IS NULL',
       'ts.deleted_at IS NULL',
-      'ts.cause_category IS NOT NULL',
+      'ts.follow_up_problem_category_code IS NOT NULL',
       scope.sql,
     ]
       .filter(Boolean)
       .join(' AND ');
     const result = await this.query<{
       category: string;
+      category_label: string;
       count: number | string;
     }>(
       `
         SELECT
-          ts.cause_category AS category,
+          ts.follow_up_problem_category_code AS category,
+          problem_category.label_th AS category_label,
           COUNT(*)::int AS count
         FROM task_submissions ts
         JOIN task_links tl ON tl.id = ts.task_link_id
         JOIN tasks t ON t.id = tl.task_id
         JOIN cases c ON c.id = t.case_id
+        JOIN follow_up_problem_categories problem_category
+          ON problem_category.code = ts.follow_up_problem_category_code
         LEFT JOIN schools sc ON sc.id = c.school_id
         ${whereSql ? `WHERE ${whereSql}` : ''}
-        GROUP BY ts.cause_category
+        GROUP BY ts.follow_up_problem_category_code, problem_category.label_th
         ORDER BY count DESC
       `,
       scope.params,
     );
     return result.rows.map((row) => ({
       key: row.category,
-      label: row.category,
+      label: row.category_label,
       count: toNumber(row.count),
     }));
   }

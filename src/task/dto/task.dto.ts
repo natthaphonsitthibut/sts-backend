@@ -212,12 +212,9 @@ export class SaveTaskSubmissionDto {
   visited_at?: string | null;
 
   @IsOptional()
-  cause_category?: string | null;
-
-  @IsOptional()
   @IsString()
-  @MaxLength(40)
-  follow_up_assessment_code?: string | null;
+  @MaxLength(32)
+  follow_up_problem_category_code?: string | null;
 
   @IsOptional()
   @IsString()

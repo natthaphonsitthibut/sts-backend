@@ -274,6 +274,13 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     revokeInvitation: jest.fn().mockResolvedValue(true),
   };
   const schoolStructure = {
+    listStudentProblemCategories: jest.fn().mockResolvedValue([
+      {
+        code: 'ACADEMIC',
+        label: 'ปัญหาด้านการเรียน',
+        guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+      },
+    ]),
     listClassroomDailyAttendance: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
     listClassroomStudentAttendance: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
     listStudentAttendanceDays: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
@@ -402,6 +409,13 @@ describe('TeacherAccessService', () => {
       schoolId: 10,
       schoolTermId: '21',
       capabilities: ['HOMEROOM_ATTENDANCE'],
+      problemCategories: [
+        {
+          code: 'ACADEMIC',
+          label: 'ปัญหาด้านการเรียน',
+          guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+        },
+      ],
     });
     expect(result.data).not.toHaveProperty('token');
     expect(repository.findGrantByTokenHashForUpdate).toHaveBeenCalled();

@@ -1486,7 +1486,31 @@ async function main() {
         dialogActionStyles?.confirmColor === 'rgb(255, 255, 255)',
       `Classroom dialog confirm action was not blue with white text: ${JSON.stringify(dialogActionStyles)}`,
     );
-    await evaluate(chrome.client, `document.querySelector('#classroom-student-comment')?.focus()`);
+    assert(
+      await evaluate(
+        chrome.client,
+        `Boolean(document.querySelector('#classroom-student-problem-category')) &&
+         Boolean(document.querySelector('#classroom-student-problem-description')) &&
+         Boolean(Array.from(document.querySelectorAll('button')).find((item) =>
+           item.textContent.includes('บันทึกข้อมูล'))?.disabled)`,
+      ),
+      'Problem category/description fields or required-state validation were missing',
+    );
+    await evaluate(
+      chrome.client,
+      `(() => {
+        const select = document.querySelector('#classroom-student-problem-category');
+        if (!select) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+        setter.call(select, 'ACADEMIC');
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('#classroom-student-problem-description')?.focus()`,
+    );
     await chrome.client.call('Input.insertText', { text: 'ติดตามจาก browser smoke' });
     const savedComment = await evaluate(
       chrome.client,
@@ -1498,6 +1522,27 @@ async function main() {
         !(await evaluate(chrome.client, 'document.body.innerText')).includes('กำลังบันทึก') &&
         (await evaluate(chrome.client, 'document.body.innerText')).includes('ติดตามจาก browser smoke'),
       'Latest classroom student comment did not render in the note column',
+    );
+    await navigate(
+      chrome.client,
+      `${FRONTEND_URL}/students/${importedStudent.studentUuid}?smoke=${Date.now()}`,
+    );
+    await waitFor(
+      async () => {
+        const body = await evaluate(chrome.client, 'document.body.innerText');
+        return body.includes(
+          'หัวข้อปัญหา: ปัญหาด้านการเรียน (เช่น หมดไฟ, เรียนไม่ทัน)',
+        ) && body.includes('คำอธิบาย: ติดตามจาก browser smoke');
+      },
+      'Student profile did not render the saved problem category and description',
+    );
+    await navigate(
+      chrome.client,
+      `${FRONTEND_URL}/classrooms/${classroom.id}?smoke=${Date.now()}`,
+    );
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes(studentNumber),
+      'Classroom detail did not return after comment profile verification',
     );
     const openedHistory = await evaluate(
       chrome.client,

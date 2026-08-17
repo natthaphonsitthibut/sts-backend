@@ -266,9 +266,9 @@ export class StudentObservationsRepository {
           author.username
         ) AS author_username,
         COALESCE(
-          observation.observer_display_name,
           NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
           NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
+          observation.observer_display_name,
           author.username
         )
           AS author_display_name,

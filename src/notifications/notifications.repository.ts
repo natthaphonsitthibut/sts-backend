@@ -181,7 +181,7 @@ export class NotificationsRepository {
       `
         SELECT
           NULLIF(BTRIM(c.reason_flagged), '') AS reason_flagged,
-          NULLIF(BTRIM(latest_comment.comment_text), '') AS latest_teacher_comment,
+          NULLIF(BTRIM(latest_comment.problem_description), '') AS latest_teacher_comment,
           latest_absence.attendance_date::text AS latest_absent_date,
           NULLIF(BTRIM(latest_assignment.assigned_to_name), '') AS assigned_teacher_name,
           NULLIF(BTRIM(c.result_summary), '') AS result_summary,
@@ -192,7 +192,7 @@ export class NotificationsRepository {
         LEFT JOIN student_term student
           ON student.student_uuid = c.student_uuid
         LEFT JOIN LATERAL (
-          SELECT comment.comment_text
+          SELECT comment.problem_description
           FROM classroom_student_comments comment
           WHERE comment.classroom_id = student.classroom_id
             AND comment.person_uuid = student.person_uuid

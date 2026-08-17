@@ -52,6 +52,13 @@ import { SchoolStructureService } from './school-structure.service';
 export class SchoolStructureController {
   constructor(private readonly service: SchoolStructureService) {}
 
+  @Get('student-problem-categories')
+  @RequirePermission()
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
+  listStudentProblemCategories() {
+    return this.service.listStudentProblemCategories();
+  }
+
   @Get('schools')
   @RequirePermission()
   @RequireAnyPermission(

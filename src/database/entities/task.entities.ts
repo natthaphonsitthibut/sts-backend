@@ -156,11 +156,8 @@ export class TaskSubmissionEntity {
   @Column({ name: 'visited_at', type: 'timestamptz', nullable: true })
   visitedAt!: Date | null;
 
-  @Column({ name: 'cause_category', type: 'text', nullable: true })
-  causeCategory!: string | null;
-
-  @Column({ name: 'follow_up_assessment_code', type: 'varchar', length: 40, nullable: true })
-  followUpAssessmentCode!: string | null;
+  @Column({ name: 'follow_up_problem_category_code', type: 'varchar', length: 32, nullable: true })
+  followUpProblemCategoryCode!: string | null;
 
   @Column({ name: 'parental_status_code', type: 'varchar', length: 40, nullable: true })
   parentalStatusCode!: string | null;

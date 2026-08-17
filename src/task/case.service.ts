@@ -148,9 +148,12 @@ export class CaseService {
       link_count: this.normalizeNumber(row.link_count) ?? 0,
       submitted_at: row.submitted_at ?? null,
       visited_at: row.visited_at ?? null,
-      cause_category: this.normalizeText(row.cause_category) || null,
-      follow_up_assessment_code: this.normalizeText(row.follow_up_assessment_code) || null,
-      follow_up_assessment_label: this.normalizeText(row.follow_up_assessment_label) || null,
+      follow_up_problem_category_code:
+        this.normalizeText(row.follow_up_problem_category_code) || null,
+      follow_up_problem_category_label:
+        this.normalizeText(row.follow_up_problem_category_label) || null,
+      follow_up_problem_category_guidance:
+        this.normalizeText(row.follow_up_problem_category_guidance) || null,
       parental_status_code: this.normalizeText(row.parental_status_code) || null,
       parental_status_label: this.normalizeText(row.parental_status_label) || null,
       guardian_type_code: this.normalizeText(row.guardian_type_code) || null,

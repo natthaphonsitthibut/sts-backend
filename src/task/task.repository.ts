@@ -145,8 +145,7 @@ interface TaskSubmissionInput {
   visitLat: number | null;
   visitLng: number | null;
   visitedAt: string | null;
-  causeCategory: string | null;
-  followUpAssessmentCode: string | null;
+  followUpProblemCategoryCode: string | null;
   parentalStatusCode: string | null;
   guardianTypeCode: string | null;
   guardianTypeDetail: string | null;
@@ -800,7 +799,7 @@ export class TaskRepository {
         person.updated_at AS student_photo_updated_at,
         person_contact.phone AS student_phone,
         COALESCE(
-          latest_comment.comment_text,
+          latest_comment.problem_description,
           c.reason_flagged
         ) AS teacher_comment,
         latest_task.id AS task_id
@@ -815,7 +814,7 @@ export class TaskRepository {
       LEFT JOIN student_person_contact person_contact ON person_contact.person_uuid = student.person_uuid
       LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
       LEFT JOIN LATERAL (
-        SELECT comment.comment_text
+        SELECT comment.problem_description
         FROM classroom_student_comments comment
         WHERE comment.classroom_id = student.classroom_id
           AND comment.person_uuid = student.person_uuid
@@ -1208,7 +1207,8 @@ export class TaskRepository {
         link.opens_at AS assignment_starts_at,
         link.expires_at AS assignment_ends_at,
         link.assignment_note,
-        assessment.label_th AS follow_up_assessment_label,
+        problem_category.label_th AS follow_up_problem_category_label,
+        problem_category.guidance_th AS follow_up_problem_category_guidance,
         exception.label_th AS exception_label
       FROM tasks task
       JOIN task_links link
@@ -1217,8 +1217,8 @@ export class TaskRepository {
       JOIN task_submissions submission
         ON submission.task_link_id = link.id
         AND submission.deleted_at IS NULL
-      LEFT JOIN follow_up_result_options assessment
-        ON assessment.code = submission.follow_up_assessment_code
+      LEFT JOIN follow_up_problem_categories problem_category
+        ON problem_category.code = submission.follow_up_problem_category_code
       LEFT JOIN home_visit_exception_options exception
         ON exception.code = submission.home_visit_exception_code
       WHERE task.case_id = $1
@@ -1390,9 +1390,9 @@ export class TaskRepository {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
-        submission.cause_category,
-        submission.follow_up_assessment_code,
-        assessment.label_th AS follow_up_assessment_label,
+        submission.follow_up_problem_category_code,
+        problem_category.label_th AS follow_up_problem_category_label,
+        problem_category.guidance_th AS follow_up_problem_category_guidance,
         submission.parental_status_code,
         parental_status.label_th AS parental_status_label,
         submission.guardian_type_code,
@@ -1407,9 +1407,8 @@ export class TaskRepository {
         submission.visit_lng,
         submission.photo_paths
       FROM task_submissions submission
-      LEFT JOIN follow_up_result_options assessment
-        ON assessment.code = submission.follow_up_assessment_code
-        AND assessment.deleted_at IS NULL
+      LEFT JOIN follow_up_problem_categories problem_category
+        ON problem_category.code = submission.follow_up_problem_category_code
       LEFT JOIN parental_status_options parental_status
         ON parental_status.code = submission.parental_status_code
         AND parental_status.deleted_at IS NULL
@@ -1457,8 +1456,7 @@ export class TaskRepository {
         visit_lat,
         visit_lng,
         visited_at,
-        cause_category,
-        follow_up_assessment_code,
+        follow_up_problem_category_code,
         parental_status_code,
         guardian_type_code,
         guardian_type_detail,
@@ -1484,7 +1482,7 @@ export class TaskRepository {
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27
+        $21, $22, $23, $24, $25, $26
       )
       RETURNING id
     `,
@@ -1493,8 +1491,7 @@ export class TaskRepository {
         data.visitLat,
         data.visitLng,
         data.visitedAt,
-        data.causeCategory,
-        data.followUpAssessmentCode,
+        data.followUpProblemCategoryCode,
         data.parentalStatusCode,
         data.guardianTypeCode,
         data.guardianTypeDetail,
@@ -2541,7 +2538,7 @@ export class TaskRepository {
           latest_case_link.token_encrypted AS latest_case_link_token_encrypted,
           latest_comment.id AS latest_comment_id,
           COALESCE(
-            latest_comment.comment_text,
+            latest_comment.problem_description,
             CASE
               WHEN profile.absence_reset_after_date IS NULL
                 THEN CONCAT('ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0), ' วัน')
@@ -2584,7 +2581,7 @@ export class TaskRepository {
           LIMIT 1
         ) latest_case_link ON TRUE
         LEFT JOIN LATERAL (
-          SELECT comment.id, comment.comment_text
+          SELECT comment.id, comment.problem_description
           FROM classroom_student_comments comment
           WHERE comment.classroom_id = s.classroom_id
             AND comment.person_uuid = s.person_uuid
@@ -2824,9 +2821,9 @@ export class TaskRepository {
         (SELECT COUNT(*) FROM task_links WHERE task_id = t.id AND deleted_at IS NULL) AS link_count,
         latest_submission.submitted_at,
         latest_submission.visited_at,
-        latest_submission.cause_category,
-        latest_submission.follow_up_assessment_code,
-        latest_submission.follow_up_assessment_label,
+        latest_submission.follow_up_problem_category_code,
+        latest_submission.follow_up_problem_category_label,
+        latest_submission.follow_up_problem_category_guidance,
         latest_submission.parental_status_code,
         latest_submission.parental_status_label,
         latest_submission.guardian_type_code,
@@ -2860,8 +2857,9 @@ export class TaskRepository {
        AND current_assignee_teacher.deleted_at IS NULL
       LEFT JOIN LATERAL (
         SELECT submission.submitted_at, submission.visited_at,
-               submission.cause_category, submission.follow_up_assessment_code,
-               assessment.label_th AS follow_up_assessment_label,
+               submission.follow_up_problem_category_code,
+               problem_category.label_th AS follow_up_problem_category_label,
+               problem_category.guidance_th AS follow_up_problem_category_guidance,
                submission.parental_status_code,
                parental_status.label_th AS parental_status_label,
                submission.guardian_type_code,
@@ -2883,9 +2881,8 @@ export class TaskRepository {
                submission.assistance_detail
         FROM task_links round_link
         JOIN task_submissions submission ON submission.task_link_id = round_link.id
-        LEFT JOIN follow_up_result_options assessment
-          ON assessment.code = submission.follow_up_assessment_code
-          AND assessment.deleted_at IS NULL
+        LEFT JOIN follow_up_problem_categories problem_category
+          ON problem_category.code = submission.follow_up_problem_category_code
         LEFT JOIN parental_status_options parental_status
           ON parental_status.code = submission.parental_status_code
           AND parental_status.deleted_at IS NULL
@@ -3065,11 +3062,11 @@ export class TaskRepository {
     return result.rows;
   }
 
-  async listHomeVisitAssessmentOptions(): Promise<QueryResultRow[]> {
+  async listFollowUpProblemCategoryOptions(): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(`
-      SELECT code, label_th
-      FROM follow_up_result_options
-      WHERE is_active = TRUE AND deleted_at IS NULL
+      SELECT code, label_th, guidance_th
+      FROM follow_up_problem_categories
+      WHERE is_active = TRUE
       ORDER BY sort_order, code
     `);
     return result.rows;
@@ -3144,12 +3141,12 @@ export class TaskRepository {
     return result.rows;
   }
 
-  async findHomeVisitAssessmentOption(code: string): Promise<QueryResultRow | null> {
+  async findFollowUpProblemCategoryOption(code: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
-      SELECT code, label_th
-      FROM follow_up_result_options
-      WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
+      SELECT code, label_th, guidance_th
+      FROM follow_up_problem_categories
+      WHERE code = $1 AND is_active = TRUE
       LIMIT 1
     `,
       [code],

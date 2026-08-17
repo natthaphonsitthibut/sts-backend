@@ -123,8 +123,7 @@ export class SubmissionController {
     const causeDetail = body.cause_detail || body.notes || '';
     const addressChanged = this.parseBoolean(body.address_changed);
     const data = {
-      cause_category: body.cause_category,
-      follow_up_assessment_code: body.follow_up_assessment_code,
+      follow_up_problem_category_code: body.follow_up_problem_category_code,
       parental_status_code: this.parseOptionCode(
         body.parental_status_code,
         'สถานะของบิดา-มารดาไม่ถูกต้อง',

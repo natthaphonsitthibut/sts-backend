@@ -20,6 +20,7 @@ import type {
   StructureStatus,
   TeacherAssignmentKind,
 } from './school-structure.types';
+import type { ClassroomStudentProblemCategoryOption } from './classroom-student-comment.constants';
 
 /**
  * Free-text match on an enrolled student (school-owned number or full name).
@@ -39,9 +40,15 @@ function recorderSearchCondition(paramIndex: number): string {
   return `(
     COALESCE(attendance."RecordedBy", '') ILIKE $${paramIndex} ESCAPE '\\'
     OR EXISTS (
-      SELECT 1 FROM users recorder_search
-      WHERE recorder_search.id = attendance.recorded_by_teacher_id
-        AND CONCAT_WS(' ', recorder_search."FirstName", recorder_search."LastName")
+      SELECT 1 FROM teachers recorder_teacher_search
+      WHERE recorder_teacher_search.id = attendance.recorded_by_teacher_id
+        AND CONCAT_WS(' ', recorder_teacher_search.first_name, recorder_teacher_search.last_name)
+              ILIKE $${paramIndex} ESCAPE '\\'
+    )
+    OR EXISTS (
+      SELECT 1 FROM users recorder_user_search
+      WHERE recorder_user_search.username = attendance."RecordedBy"
+        AND CONCAT_WS(' ', recorder_user_search."FirstName", recorder_user_search."LastName")
               ILIKE $${paramIndex} ESCAPE '\\'
     )
   )`;
@@ -1066,7 +1073,7 @@ export class SchoolStructureRepository {
     const orderBy = {
       studentNumber: `enrollment.student_number`,
       name: `enrollment."FirstName_Onec"`,
-      comment: `latest_comment.comment_text`,
+      comment: `latest_comment.problem_description`,
       status: `COALESCE(profile.risk_severity, 0)`,
     }[input.sortBy];
     const offset = (input.page - 1) * input.limit;
@@ -1091,7 +1098,7 @@ export class SchoolStructureRepository {
           person.updated_at AS photo_updated_at,
           profile.risk_tier,
           profile.risk_severity,
-          latest_comment.comment_text AS teacher_comment,
+          latest_comment.problem_description AS teacher_comment,
           enrollment."FirstName_Onec" AS first_name,
           enrollment."LastName_Onec" AS last_name,
           enrollment.student_status_code,
@@ -1107,7 +1114,7 @@ export class SchoolStructureRepository {
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = enrollment.student_uuid
         LEFT JOIN LATERAL (
-          SELECT comment.comment_text
+          SELECT comment.problem_description
           FROM classroom_student_comments comment
           WHERE comment.classroom_id = classroom.id
             AND comment.person_uuid = enrollment.person_uuid
@@ -1126,31 +1133,55 @@ export class SchoolStructureRepository {
   async createStudentComment(
     classroomId: number,
     studentUuid: string,
-    commentText: string,
+    problemCategory: string,
+    problemDescription: string,
     authoredByUserId: number,
     queryRunner: QueryRunner,
-  ): Promise<{ id: string; comment_text: string; created_at: Date } | null> {
+  ): Promise<{
+    id: string;
+    problem_category_code: string;
+    problem_category_label: string;
+    problem_category_guidance: string | null;
+    problem_description: string;
+    created_at: Date;
+  } | null> {
     const result = await createSqlQueryExecutor(queryRunner).query<{
       id: string;
-      comment_text: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
       created_at: Date;
     }>(
       `
-        INSERT INTO classroom_student_comments (
-          classroom_id,
-          person_uuid,
-          comment_text,
-          authored_by_user_id
+        WITH inserted AS (
+          INSERT INTO classroom_student_comments (
+            classroom_id,
+            person_uuid,
+            problem_category_code,
+            problem_description,
+            authored_by_user_id
+          )
+          SELECT $1, enrollment.person_uuid, $3, $4, $5
+          FROM student_term enrollment
+          WHERE enrollment.student_uuid = $2
+            AND enrollment.classroom_id = $1
+            AND enrollment.deleted_at IS NULL
+            AND enrollment.person_uuid IS NOT NULL
+          RETURNING id, problem_category_code, problem_description, created_at
         )
-        SELECT $1, enrollment.person_uuid, $3, $4
-        FROM student_term enrollment
-        WHERE enrollment.student_uuid = $2
-          AND enrollment.classroom_id = $1
-          AND enrollment.deleted_at IS NULL
-          AND enrollment.person_uuid IS NOT NULL
-        RETURNING id::text, comment_text, created_at
+        SELECT
+          inserted.id::text,
+          inserted.problem_category_code,
+          category.label_th AS problem_category_label,
+          category.guidance_th AS problem_category_guidance,
+          inserted.problem_description,
+          inserted.created_at
+        FROM inserted
+        JOIN classroom_student_problem_categories category
+          ON category.code = inserted.problem_category_code
       `,
-      [classroomId, studentUuid, commentText, authoredByUserId],
+      [classroomId, studentUuid, problemCategory, problemDescription, authoredByUserId],
     );
     return result.rows[0] ?? null;
   }
@@ -1218,6 +1249,7 @@ export class SchoolStructureRepository {
           STRING_AGG(
             DISTINCT COALESCE(
               NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+              NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
               CASE
                 WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
                 ELSE NULLIF(attendance."RecordedBy", '')
@@ -1232,6 +1264,7 @@ export class SchoolStructureRepository {
           COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
         FROM ${source} attendance
         LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
+        LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE ${where}
         GROUP BY attendance."AttendanceDate"
         ORDER BY ${orderBy} ${direction}, attendance."AttendanceDate" DESC
@@ -1379,6 +1412,7 @@ export class SchoolStructureRepository {
           TO_CHAR(attendance."RecordedAt" AT TIME ZONE 'Asia/Bangkok', 'HH24:MI:SS') AS recorded_time,
           COALESCE(
             NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
             CASE
               WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
               ELSE NULLIF(attendance."RecordedBy", '')
@@ -1389,6 +1423,7 @@ export class SchoolStructureRepository {
         FROM attendance_day attendance
         JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
         LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
+        LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE ${where}
         ORDER BY ${orderBy} ${direction}, attendance."AttendanceID" ${direction}
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}
@@ -1396,5 +1431,20 @@ export class SchoolStructureRepository {
       [...params, input.limit, offset],
     );
     return { rows: rows.rows, totalCount: count.rows[0]?.total_count ?? 0 };
+  }
+
+  async listStudentProblemCategories(): Promise<ClassroomStudentProblemCategoryOption[]> {
+    const result = await queryDataSource<{
+      code: ClassroomStudentProblemCategoryOption['code'];
+      label: string;
+      guidance: string | null;
+    }>(
+      this.dataSource,
+      `SELECT code, label_th AS label, guidance_th AS guidance
+       FROM classroom_student_problem_categories
+       WHERE is_active = TRUE
+       ORDER BY sort_order, code`,
+    );
+    return result.rows;
   }
 }

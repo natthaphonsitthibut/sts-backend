@@ -28,9 +28,10 @@ export interface HomeVisitExceptionOption {
   requiresUpdatedAddress: boolean;
 }
 
-export interface HomeVisitAssessmentOption {
+export interface FollowUpProblemCategoryOption {
   code: string;
   label: string;
+  guidance: string | null;
 }
 
 export interface ParentalStatusOption {
@@ -90,7 +91,7 @@ export class CaseTrackingOptionsService {
       followUpDecisions,
       resolutionOutcomes,
       homeVisitExceptions,
-      homeVisitAssessments,
+      followUpProblemCategories,
       parentalStatuses,
       guardianTypes,
       residenceEnvironments,
@@ -100,7 +101,7 @@ export class CaseTrackingOptionsService {
       this.taskRepository.listCaseFollowUpDecisions(),
       this.taskRepository.listCaseResolutionOutcomes(),
       this.taskRepository.listHomeVisitExceptionOptions(),
-      this.taskRepository.listHomeVisitAssessmentOptions(),
+      this.taskRepository.listFollowUpProblemCategoryOptions(),
       this.taskRepository.listParentalStatusOptions(),
       this.taskRepository.listGuardianTypeOptions(),
       this.taskRepository.listResidenceEnvironmentOptions(),
@@ -121,9 +122,10 @@ export class CaseTrackingOptionsService {
         label: this.stringValue(row.label_th),
         requiresUpdatedAddress: row.requires_updated_address === true,
       })),
-      homeVisitAssessments: homeVisitAssessments.map((row) => ({
+      followUpProblemCategories: followUpProblemCategories.map((row) => ({
         code: this.stringValue(row.code),
         label: this.stringValue(row.label_th),
+        guidance: typeof row.guidance_th === 'string' ? row.guidance_th : null,
       })),
       parentalStatuses: parentalStatuses.map((row) => this.mapParentalStatus(row)),
       guardianTypes: guardianTypes.map((row) => this.mapGuardianType(row)),
@@ -252,13 +254,16 @@ export class CaseTrackingOptionsService {
     };
   }
 
-  async getHomeVisitAssessment(code: string | null): Promise<HomeVisitAssessmentOption | null> {
+  async getFollowUpProblemCategory(
+    code: string | null,
+  ): Promise<FollowUpProblemCategoryOption | null> {
     if (!code) return null;
-    const row = await this.taskRepository.findHomeVisitAssessmentOption(code);
-    if (!row) throw new BadRequestException('ผลประเมินหลังลงพื้นที่ไม่ถูกต้อง');
+    const row = await this.taskRepository.findFollowUpProblemCategoryOption(code);
+    if (!row) throw new BadRequestException('หัวข้อปัญหาของผลการติดตามไม่ถูกต้อง');
     return {
       code: this.stringValue(row.code),
       label: this.stringValue(row.label_th),
+      guidance: typeof row.guidance_th === 'string' ? row.guidance_th : null,
     };
   }
 }

@@ -20,7 +20,7 @@ export function rosterProfileJoinsSql(alias: string): string {
       LEFT JOIN student_person person ON person.person_uuid = ${alias}.person_uuid
       LEFT JOIN student_risk_profiles risk ON risk.student_uuid = ${alias}.student_uuid
       LEFT JOIN LATERAL (
-        SELECT comment.comment_text
+        SELECT comment.problem_description
         FROM classroom_student_comments comment
         WHERE comment.classroom_id = ${alias}.classroom_id
           AND comment.person_uuid = ${alias}.person_uuid
@@ -41,6 +41,6 @@ export function rosterProfileColumnsSql(alias: string): string {
         ${alias}."LastName_Onec" AS last_name,
         ${alias}.classroom_id,
         risk.risk_tier,
-        latest_comment.comment_text AS teacher_comment
+        latest_comment.problem_description AS teacher_comment
     `;
 }

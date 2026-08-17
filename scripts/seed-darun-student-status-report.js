@@ -383,11 +383,12 @@ async function main() {
 
         await manager.query(
           `UPDATE classroom_student_comments
-           SET comment_text = $3
+           SET problem_description = $3,
+               problem_category_code = 'ACADEMIC'
            WHERE classroom_id = $1
              AND person_uuid = $2::uuid
              AND authored_by_user_id = $4
-             AND comment_text = $5`,
+             AND problem_description = $5`,
           [
             student.classroom_id,
             student.person_uuid,
@@ -399,14 +400,15 @@ async function main() {
 
         await manager.query(
           `INSERT INTO classroom_student_comments (
-             classroom_id, person_uuid, comment_text, authored_by_user_id
+             classroom_id, person_uuid, problem_category_code,
+             problem_description, authored_by_user_id
            )
-           SELECT $1, $2::uuid, $3, $4
+           SELECT $1, $2::uuid, 'ACADEMIC', $3, $4
            WHERE NOT EXISTS (
              SELECT 1 FROM classroom_student_comments
              WHERE classroom_id = $1
                AND person_uuid = $2::uuid
-               AND comment_text = $3
+               AND problem_description = $3
                AND authored_by_user_id = $4
            )`,
           [
@@ -522,11 +524,11 @@ async function main() {
         if (scenario.status !== 'IN_PROGRESS') {
           await manager.query(
             `INSERT INTO task_submissions (
-               task_link_id, cause_category, cause_detail, recommendation,
+               task_link_id, follow_up_problem_category_code, cause_detail, recommendation,
                case_follow_up_decision, home_visit_exception_code,
                submitted_at, created_by, updated_by
              )
-             SELECT $1, 'FAMILY', $2, $3, 'REQUEST_REVIEW', $4, now() - interval '1 day', $5, $5
+             SELECT $1, 'OTHER', $2, $3, 'REQUEST_REVIEW', $4, now() - interval '1 day', $5, $5
              WHERE NOT EXISTS (SELECT 1 FROM task_submissions WHERE task_link_id = $1)`,
             [
               linkId,
@@ -571,14 +573,15 @@ async function main() {
       for (const [index, student] of watchStudents.entries()) {
         await manager.query(
           `INSERT INTO classroom_student_comments (
-             classroom_id, person_uuid, comment_text, authored_by_user_id
+             classroom_id, person_uuid, problem_category_code,
+             problem_description, authored_by_user_id
            )
-           SELECT $1, $2::uuid, $3, $4
+           SELECT $1, $2::uuid, 'ACADEMIC', $3, $4
            WHERE NOT EXISTS (
              SELECT 1 FROM classroom_student_comments
              WHERE classroom_id = $1
                AND person_uuid = $2::uuid
-               AND comment_text = $3
+               AND problem_description = $3
                AND authored_by_user_id = $4
            )`,
           [student.classroom_id, student.person_uuid, WATCH_COMMENTS[index], student.teacher_user_id],

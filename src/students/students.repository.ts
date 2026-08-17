@@ -860,6 +860,7 @@ export class StudentsRepository {
           attendance."RecordedAt" AS recorded_at,
           COALESCE(
             NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
             CASE
               WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
               ELSE NULLIF(attendance."RecordedBy", '')
@@ -880,6 +881,7 @@ export class StudentsRepository {
         LEFT JOIN subjects subject
           ON subject.id = COALESCE(session.subject_id, slot.subject_id)
         LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
+        LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE s.student_uuid = $1
           AND attendance."AttendanceDate" = $2::date
         ORDER BY attendance."Period" ASC, attendance."AttendanceID" ASC

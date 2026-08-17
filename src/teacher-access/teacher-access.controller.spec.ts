@@ -29,6 +29,7 @@ describe('Teacher access controller security metadata', () => {
     'createAraIdChallenge',
     'approveAraIdChallenge',
     'pollAraIdChallenge',
+    'createStudentComment',
   ] as const)('marks public %s access as public but IP-throttled', (methodName) => {
     const handler = Object.getOwnPropertyDescriptor(
       PublicTeacherAccessController.prototype,

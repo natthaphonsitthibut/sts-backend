@@ -85,7 +85,10 @@ describe('SchoolStructureService', () => {
       listRoster: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
       createStudentComment: jest.fn().mockResolvedValue({
         id: '91',
-        comment_text: 'ควรติดตามการส่งงาน',
+        problem_category_code: 'ACADEMIC',
+        problem_category_label: 'ปัญหาด้านการเรียน',
+        problem_category_guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+        problem_description: 'ควรติดตามการส่งงาน',
         created_at: new Date('2026-08-01T03:00:00.000Z'),
       }),
       listClassroomDailyAttendance: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
@@ -333,15 +336,26 @@ describe('SchoolStructureService', () => {
       service.createStudentComment(
         11,
         studentUuid,
-        { commentText: 'ควรติดตามการส่งงาน' },
+        {
+          problemCategory: 'ACADEMIC',
+          problemDescription: 'ควรติดตามการส่งงาน',
+        },
         SCHOOL_ACTOR,
       ),
     ).resolves.toMatchObject({
-      data: { id: '91', studentUuid, teacherComment: 'ควรติดตามการส่งงาน' },
+      data: {
+        id: '91',
+        studentUuid,
+        problemCategory: 'ACADEMIC',
+        problemCategoryLabel: 'ปัญหาด้านการเรียน',
+        problemCategoryGuidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+        problemDescription: 'ควรติดตามการส่งงาน',
+      },
     });
     expect(repository.createStudentComment).toHaveBeenCalledWith(
       11,
       studentUuid,
+      'ACADEMIC',
       'ควรติดตามการส่งงาน',
       SCHOOL_ACTOR.id,
       expect.anything(),
@@ -355,7 +369,8 @@ describe('SchoolStructureService', () => {
           schoolId: 1001,
           classroomId: 11,
           studentUuid,
-          commentLength: 'ควรติดตามการส่งงาน'.length,
+          problemCategory: 'ACADEMIC',
+          descriptionLength: 'ควรติดตามการส่งงาน'.length,
         },
       }),
       expect.anything(),
@@ -371,7 +386,7 @@ describe('SchoolStructureService', () => {
       service.createStudentComment(
         11,
         '00000000-0000-4000-8000-000000000099',
-        { commentText: 'ทดสอบ' },
+        { problemCategory: 'OTHER', problemDescription: 'ทดสอบ' },
         SCHOOL_ACTOR,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);

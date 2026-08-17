@@ -1003,39 +1003,54 @@ export const HOME_VISIT_REPORT_DETAILS_SQL = `
 `;
 
 export const HOME_VISIT_ASSESSMENT_SQL = `
-  CREATE TABLE IF NOT EXISTS follow_up_result_options (
-    code VARCHAR(40) PRIMARY KEY,
+  CREATE TABLE IF NOT EXISTS follow_up_problem_categories (
+    code VARCHAR(32) PRIMARY KEY,
     label_th VARCHAR(120) NOT NULL,
+    guidance_th VARCHAR(200),
     sort_order SMALLINT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_home_visit_assessment_label CHECK (length(btrim(label_th)) > 0),
-    CONSTRAINT chk_home_visit_assessment_sort_order CHECK (sort_order >= 0)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_follow_up_problem_categories_code
+      CHECK (code = UPPER(BTRIM(code)) AND CHAR_LENGTH(code) BETWEEN 1 AND 32),
+    CONSTRAINT chk_follow_up_problem_categories_label
+      CHECK (label_th = BTRIM(label_th) AND CHAR_LENGTH(label_th) BETWEEN 1 AND 120),
+    CONSTRAINT chk_follow_up_problem_categories_guidance
+      CHECK (
+        guidance_th IS NULL OR (
+          guidance_th = BTRIM(guidance_th)
+          AND CHAR_LENGTH(guidance_th) BETWEEN 1 AND 200
+        )
+      ),
+    CONSTRAINT chk_follow_up_problem_categories_sort_order CHECK (sort_order >= 0)
   );
-  ${auditUpdatedAtTriggerSql('follow_up_result_options')}
-  INSERT INTO follow_up_result_options (code, label_th, sort_order)
+  ${auditUpdatedAtTriggerSql('follow_up_problem_categories')}
+  INSERT INTO follow_up_problem_categories (code, label_th, guidance_th, sort_order)
   VALUES
-    ('NO_CONCERN', 'ไม่พบปัญหาเพิ่มเติม', 10),
-    ('CONTINUE_FOLLOW_UP', 'ควรติดตามต่อ', 20),
-    ('URGENT_SUPPORT', 'ต้องช่วยเหลือเร่งด่วน', 30),
-    ('REFER_SUPPORT', 'ควรส่งต่อหน่วยงานหรือผู้เชี่ยวชาญ', 40)
+    ('HEALTH', 'ปัญหาด้านสุขภาพ', 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ', 10),
+    ('SOCIAL_INTEGRATION', 'ปัญหาด้านการเข้าสังคม', 'เช่น ถูกเพื่อนกลั่นแกล้ง', 20),
+    ('ACADEMIC', 'ปัญหาด้านการเรียน', 'เช่น หมดไฟ, เรียนไม่ทัน', 30),
+    ('EMOTIONAL', 'ปัญหาด้านอารมณ์', 'เช่น เบื่อหน่าย, เครียด, ซึมเศร้า', 40),
+    ('FINANCIAL', 'ปัญหาด้านการเงิน', 'เช่น ไม่มีอุปกรณ์การเรียน/เครื่องแบบ', 50),
+    ('OTHER', 'อื่น ๆ', 'ระบุในคำอธิบาย', 60)
   ON CONFLICT (code) DO NOTHING;
 
   ALTER TABLE task_submissions
-    ADD COLUMN IF NOT EXISTS follow_up_assessment_code VARCHAR(40);
-  DO $home_visit_assessment_fks$
+    DROP COLUMN IF EXISTS cause_category,
+    ADD COLUMN IF NOT EXISTS follow_up_problem_category_code VARCHAR(32);
+  DO $follow_up_problem_category_fks$
   BEGIN
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint
-      WHERE conname = 'fk_task_submissions_follow_up_assessment'
+      WHERE conname = 'fk_task_submissions_follow_up_problem_category'
     ) THEN
       ALTER TABLE task_submissions
-        ADD CONSTRAINT fk_task_submissions_follow_up_assessment
-        FOREIGN KEY (follow_up_assessment_code)
-        REFERENCES follow_up_result_options(code)
+        ADD CONSTRAINT fk_task_submissions_follow_up_problem_category
+        FOREIGN KEY (follow_up_problem_category_code)
+        REFERENCES follow_up_problem_categories(code)
         ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
-  END $home_visit_assessment_fks$;
+  END $follow_up_problem_category_fks$;
 `;
 
 /**

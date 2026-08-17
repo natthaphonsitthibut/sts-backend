@@ -223,14 +223,14 @@ export class TaskSubmissionService {
       );
       const studentNotFound = homeVisitException?.code === 'STUDENT_NOT_FOUND';
       const targetCaseStatus = studentNotFound ? 'STUDENT_NOT_FOUND' : decision?.targetStatus;
-      const followUpAssessment = await this.caseTrackingOptions.getHomeVisitAssessment(
-        this.toScalarString(data.follow_up_assessment_code)?.toUpperCase() ?? null,
+      const followUpProblemCategory = await this.caseTrackingOptions.getFollowUpProblemCategory(
+        this.toScalarString(data.follow_up_problem_category_code)?.toUpperCase() ?? null,
       );
       // An assistance round reports what help was given, not a home visit, so
       // the household/visit questions do not apply to it.
       const isAssistance = link.task_type === 'ASSIST';
-      if (link.task_type === 'VISIT' && !followUpAssessment) {
-        throw new BadRequestException('กรุณาเลือกผลประเมินหลังลงพื้นที่');
+      if (link.task_type === 'VISIT' && !followUpProblemCategory) {
+        throw new BadRequestException('กรุณาเลือกหัวข้อปัญหาของผลการติดตาม');
       }
       const assistedAt = isAssistance ? (this.toScalarString(data.assisted_at) ?? null) : null;
       const assistanceDetail = isAssistance
@@ -309,8 +309,7 @@ export class TaskSubmissionService {
             visitLat: this.normalizeNumber(data.visit_lat),
             visitLng: this.normalizeNumber(data.visit_lng),
             visitedAt,
-            causeCategory: data.cause_category ?? null,
-            followUpAssessmentCode: followUpAssessment?.code ?? null,
+            followUpProblemCategoryCode: followUpProblemCategory?.code ?? null,
             parentalStatusCode: parentalStatus?.code ?? null,
             guardianTypeCode: guardianType?.code ?? null,
             // A detail without a guardian type has nothing to qualify, and the

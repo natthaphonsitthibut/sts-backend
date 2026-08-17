@@ -145,11 +145,49 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_user_classroom_favorites_order
     ON user_classroom_favorites (user_id, created_at DESC, classroom_id);
 
+  CREATE TABLE IF NOT EXISTS classroom_student_problem_categories (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    guidance_th VARCHAR(200),
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_classroom_student_problem_categories_code
+      CHECK (code = UPPER(BTRIM(code)) AND CHAR_LENGTH(code) BETWEEN 1 AND 32),
+    CONSTRAINT chk_classroom_student_problem_categories_label
+      CHECK (label_th = BTRIM(label_th) AND CHAR_LENGTH(label_th) BETWEEN 1 AND 120),
+    CONSTRAINT chk_classroom_student_problem_categories_guidance
+      CHECK (
+        guidance_th IS NULL OR (
+          guidance_th = BTRIM(guidance_th)
+          AND CHAR_LENGTH(guidance_th) BETWEEN 1 AND 200
+        )
+      ),
+    CONSTRAINT chk_classroom_student_problem_categories_sort_order CHECK (sort_order >= 0)
+  );
+  DROP TRIGGER IF EXISTS trg_classroom_student_problem_categories_set_updated_at
+    ON classroom_student_problem_categories;
+  CREATE TRIGGER trg_classroom_student_problem_categories_set_updated_at
+    BEFORE UPDATE ON classroom_student_problem_categories
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+  INSERT INTO classroom_student_problem_categories (
+    code, label_th, guidance_th, sort_order
+  ) VALUES
+    ('HEALTH', 'ปัญหาด้านสุขภาพ', 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ', 10),
+    ('SOCIAL_INTEGRATION', 'ปัญหาด้านการเข้าสังคม', 'เช่น ถูกเพื่อนกลั่นแกล้ง', 20),
+    ('ACADEMIC', 'ปัญหาด้านการเรียน', 'เช่น หมดไฟ, เรียนไม่ทัน', 30),
+    ('EMOTIONAL', 'ปัญหาด้านอารมณ์', 'เช่น เบื่อหน่าย, เครียด, ซึมเศร้า', 40),
+    ('FINANCIAL', 'ปัญหาด้านการเงิน', 'เช่น ไม่มีอุปกรณ์การเรียน/เครื่องแบบ', 50),
+    ('OTHER', 'อื่น ๆ', 'ระบุในคำอธิบาย', 60)
+  ON CONFLICT (code) DO NOTHING;
+
   CREATE TABLE IF NOT EXISTS classroom_student_comments (
     id BIGSERIAL PRIMARY KEY,
     classroom_id BIGINT NOT NULL,
     person_uuid UUID NOT NULL,
-    comment_text TEXT NOT NULL,
+    problem_category_code VARCHAR(32) NOT NULL,
+    problem_description TEXT NOT NULL,
     authored_by_user_id INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_classroom_student_comments_classroom
@@ -161,10 +199,13 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT fk_classroom_student_comments_author
       FOREIGN KEY (authored_by_user_id) REFERENCES users(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_classroom_student_comments_text
+    CONSTRAINT fk_classroom_student_comments_problem_category
+      FOREIGN KEY (problem_category_code) REFERENCES classroom_student_problem_categories(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_classroom_student_comments_description
       CHECK (
-        comment_text = BTRIM(comment_text)
-        AND CHAR_LENGTH(comment_text) BETWEEN 1 AND 2000
+        problem_description = BTRIM(problem_description)
+        AND CHAR_LENGTH(problem_description) BETWEEN 1 AND 2000
       )
   );
   CREATE INDEX IF NOT EXISTS idx_classroom_student_comments_latest

@@ -48,6 +48,7 @@ import {
   type FileStorageAdapter,
 } from '../files/storage/file-storage.types';
 import { SchoolStructureRepository } from './school-structure.repository';
+import type { ClassroomStudentProblemCategory } from './classroom-student-comment.constants';
 import type {
   ClassroomTeacherAssignmentRow,
   SchoolClassroomRow,
@@ -854,7 +855,8 @@ export class SchoolStructureService {
       const comment = await this.repository.createStudentComment(
         classroomId,
         studentUuid,
-        dto.commentText,
+        dto.problemCategory,
+        dto.problemDescription,
         actorId,
         queryRunner,
       );
@@ -872,7 +874,8 @@ export class SchoolStructureService {
             schoolId: classroom.school_id,
             classroomId,
             studentUuid,
-            commentLength: dto.commentText.length,
+            problemCategory: dto.problemCategory,
+            descriptionLength: dto.problemDescription.length,
           },
           ip: null,
         },
@@ -893,7 +896,10 @@ export class SchoolStructureService {
       data: {
         id: created.id,
         studentUuid,
-        teacherComment: created.comment_text,
+        problemCategory: created.problem_category_code as ClassroomStudentProblemCategory,
+        problemCategoryLabel: created.problem_category_label,
+        problemCategoryGuidance: created.problem_category_guidance,
+        problemDescription: created.problem_description,
         createdAt: created.created_at,
       },
     };
@@ -1015,5 +1021,9 @@ export class SchoolStructureService {
       })),
       meta: buildPaginationMeta(page, limit, result.totalCount),
     };
+  }
+
+  async listStudentProblemCategories() {
+    return { data: await this.repository.listStudentProblemCategories() };
   }
 }

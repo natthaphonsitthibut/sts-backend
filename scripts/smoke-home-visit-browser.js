@@ -1003,8 +1003,7 @@ async function assertSubmittedReport(dataSource, createdLink) {
         c.status AS case_status,
         submission.visited_at,
         submission.home_visit_exception_code,
-        submission.cause_category,
-        submission.follow_up_assessment_code,
+        submission.follow_up_problem_category_code,
         submission.parental_status_code,
         submission.guardian_type_code,
         submission.guardian_type_detail,
@@ -1038,8 +1037,8 @@ async function assertSubmittedReport(dataSource, createdLink) {
   assert(row.visited_at, 'Home visit report did not persist visited_at');
   assert(row.home_visit_exception_code === null, 'Normal visit unexpectedly stored an exception');
   assert(
-    row.follow_up_assessment_code === 'CONTINUE_FOLLOW_UP',
-    `Expected CONTINUE_FOLLOW_UP assessment, received ${row.follow_up_assessment_code}`,
+    row.follow_up_problem_category_code === 'ACADEMIC',
+    `Expected ACADEMIC problem category, received ${row.follow_up_problem_category_code}`,
   );
   assert(
     row.case_follow_up_decision === 'REQUEST_REVIEW',
@@ -1579,7 +1578,11 @@ async function main() {
         !(await evaluate(client, `Boolean(document.querySelector('#updated-address-province'))`)),
       'Switching to student-not-found did not hide the updated address form',
     );
-    await selectCombobox(client, '#follow-up-assessment', 'ควรติดตามต่อ');
+    await selectCombobox(
+      client,
+      '#follow-up-assessment',
+      'ปัญหาด้านการเรียน (เช่น หมดไฟ, เรียนไม่ทัน)',
+    );
     await click(
       client,
       `document.querySelector('button[type="submit"]')`,
@@ -1606,7 +1609,11 @@ async function main() {
         Boolean(await evaluate(client, `Boolean(document.querySelector('#visited-time'))`)),
       'Mobile guest home visit report did not render',
     );
-    await selectCombobox(client, '#follow-up-assessment', 'ควรติดตามต่อ');
+    await selectCombobox(
+      client,
+      '#follow-up-assessment',
+      'ปัญหาด้านการเรียน (เช่น หมดไฟ, เรียนไม่ทัน)',
+    );
     await setInputValue(
       client,
       '#cause-detail',
@@ -1781,7 +1788,11 @@ async function main() {
       'Student-not-found report form did not render',
     );
     await selectHomeVisitException(client, 'ไม่พบนักเรียน');
-    await selectCombobox(client, '#follow-up-assessment', 'ควรติดตามต่อ');
+    await selectCombobox(
+      client,
+      '#follow-up-assessment',
+      'ปัญหาด้านการเรียน (เช่น หมดไฟ, เรียนไม่ทัน)',
+    );
     await setInputValue(
       client,
       '#cause-detail',

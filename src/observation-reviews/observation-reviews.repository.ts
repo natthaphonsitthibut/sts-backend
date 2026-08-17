@@ -468,7 +468,7 @@ export class ObservationReviewsRepository {
            enrollment.classroom_id::text,
            enrollment."RoomID_Onec" AS room_no,
            comment.id::text AS latest_comment_id,
-           comment.comment_text AS latest_comment,
+           comment.problem_description AS latest_comment,
            COALESCE(
              NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
              NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
@@ -534,7 +534,10 @@ export class ObservationReviewsRepository {
       `SELECT
          comment.id::text,
          enrollment.student_uuid::text,
-         comment.comment_text AS comment,
+         comment.problem_category_code,
+         problem_category.label_th AS problem_category_label,
+         problem_category.guidance_th AS problem_category_guidance,
+         comment.problem_description,
          COALESCE(
            NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
            NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
@@ -553,6 +556,8 @@ export class ObservationReviewsRepository {
        JOIN schools school ON school.id = enrollment."SchoolID_Onec"
        LEFT JOIN users author ON author.id = comment.authored_by_user_id
        LEFT JOIN teachers author_teacher ON author_teacher.id = comment.authored_by_teacher_id
+       JOIN classroom_student_problem_categories problem_category
+         ON problem_category.code = comment.problem_category_code
        WHERE enrollment.student_uuid = $1
          AND enrollment.deleted_at IS NULL
          ${scopeCondition}
@@ -592,7 +597,7 @@ export class ObservationReviewsRepository {
       const searchIndex = params.length;
       conditions.push(
         `(CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec") ILIKE $${searchIndex} ESCAPE '\\'
-          OR comment.comment_text ILIKE $${searchIndex} ESCAPE '\\')`,
+          OR comment.problem_description ILIKE $${searchIndex} ESCAPE '\\')`,
       );
     }
     params.push(filters.limit);
@@ -609,7 +614,10 @@ export class ObservationReviewsRepository {
          school.name AS school_name,
          grade.label AS grade_label,
          enrollment."RoomID_Onec"::text AS room_no,
-         comment.comment_text AS comment,
+         comment.problem_category_code,
+         problem_category.label_th AS problem_category_label,
+         problem_category.guidance_th AS problem_category_guidance,
+         comment.problem_description,
          COALESCE(
            NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
            NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
@@ -629,6 +637,8 @@ export class ObservationReviewsRepository {
        LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
        LEFT JOIN users author ON author.id = comment.authored_by_user_id
        LEFT JOIN teachers author_teacher ON author_teacher.id = comment.authored_by_teacher_id
+       JOIN classroom_student_problem_categories problem_category
+         ON problem_category.code = comment.problem_category_code
        WHERE ${conditions.join(' AND ')}
        ORDER BY comment.created_at DESC, comment.id DESC
        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,

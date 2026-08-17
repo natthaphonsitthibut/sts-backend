@@ -143,10 +143,10 @@ async function main() {
       );
       await manager.query(
         `INSERT INTO task_submissions (
-           task_link_id, cause_category, cause_detail, recommendation,
+           task_link_id, follow_up_problem_category_code, cause_detail, recommendation,
            address_changed, submitted_at, created_by, updated_by
          )
-         SELECT $1, 'FAMILY', $2, $3, FALSE, NOW() - INTERVAL '1 day', $4, $4
+         SELECT $1, 'OTHER', $2, $3, FALSE, NOW() - INTERVAL '1 day', $4, $4
          WHERE NOT EXISTS (
            SELECT 1 FROM task_submissions WHERE task_link_id = $1
          )`,
