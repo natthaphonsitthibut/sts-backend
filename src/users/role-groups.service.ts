@@ -81,15 +81,13 @@ export class RoleGroupsService {
     const roleMap = new Map(schoolDefinitions.map((definition) => [definition.name, definition]));
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
 
-    let visible = definitions.filter(
-      (role) =>
-        this.usersPolicyService.canManageRole(actorRole, role.name, roleMap) &&
-        this.usersPolicyService.canGrantPermissions(
-          currentActor.permissions || [],
-          role.default_permissions || [],
-          actorRole,
-          roleMap,
-        ),
+    let visible = definitions.filter((role) =>
+      this.usersPolicyService.canGrantPermissions(
+        currentActor.permissions || [],
+        role.default_permissions || [],
+        actorRole,
+        roleMap,
+      ),
     );
 
     const search = options.searchTerm?.trim().toLocaleLowerCase('th');
@@ -141,12 +139,6 @@ export class RoleGroupsService {
     }
 
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
-    const actorRank = this.usersPolicyService.getRoleRank(actorRole, roleMap);
-    if (payload.rank > actorRank || (payload.rank === actorRank && actorRole !== 'ADMIN')) {
-      throw new ForbiddenException(
-        'ไม่สามารถสร้างกลุ่มเมนูที่มีลำดับสิทธิ์สูงกว่าหรือเทียบเท่าตนเองได้',
-      );
-    }
     if (
       !this.usersPolicyService.canGrantPermissions(
         currentActor.permissions || [],
@@ -183,7 +175,14 @@ export class RoleGroupsService {
     const schoolId = await this.assertScopedRoleAccess(currentActor, existingRole);
 
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
-    if (!this.usersPolicyService.canManageRole(actorRole, existingRole.name, roleMap)) {
+    if (
+      !this.usersPolicyService.canGrantPermissions(
+        currentActor.permissions || [],
+        existingRole.default_permissions || [],
+        actorRole,
+        roleMap,
+      )
+    ) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการกลุ่มเมนูนี้');
     }
     const payload = this.usersPolicyService.normalizeRoleGroupPayload(data, existingRole);
@@ -191,10 +190,6 @@ export class RoleGroupsService {
       await this.usersRepository.schoolRoleLabelExists(schoolId, payload.label, existingRole.name)
     ) {
       throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในโรงเรียนแล้ว');
-    }
-    const actorRank = this.usersPolicyService.getRoleRank(actorRole, roleMap);
-    if (payload.rank > actorRank || (payload.rank === actorRank && actorRole !== 'ADMIN')) {
-      throw new ForbiddenException('ไม่สามารถกำหนดลำดับสิทธิ์สูงกว่าหรือเทียบเท่าตนเองได้');
     }
     if (
       !this.usersPolicyService.canGrantPermissions(
@@ -228,14 +223,18 @@ export class RoleGroupsService {
     await this.assertScopedRoleAccess(currentActor, existingRole);
 
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
-    if (!this.usersPolicyService.canManageRole(actorRole, existingRole.name, roleMap)) {
+    if (
+      !this.usersPolicyService.canGrantPermissions(
+        currentActor.permissions || [],
+        existingRole.default_permissions || [],
+        actorRole,
+        roleMap,
+      )
+    ) {
       throw new ForbiddenException('ไม่มีสิทธิ์ลบกลุ่มเมนูนี้');
     }
     if ((existingRole.user_count || 0) > 0) {
       throw new ForbiddenException('ไม่สามารถลบกลุ่มเมนูที่ยังมีผู้ใช้งานอยู่ได้');
-    }
-    if ((existingRole.login_link_count || 0) > 0) {
-      throw new ForbiddenException('ไม่สามารถลบกลุ่มเมนูที่ยังถูกใช้งานในลิงก์เข้าสู่ระบบได้');
     }
 
     await this.usersRepository.deleteRole(existingRole.name);

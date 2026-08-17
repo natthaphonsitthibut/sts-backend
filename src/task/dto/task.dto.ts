@@ -64,7 +64,7 @@ export class CreateTaskDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  assigned_teacher_user_id?: number | null;
+  assigned_teacher_id?: number | null;
 
   /**
    * Assistance rounds only: which measures this assignment commits to. Picked

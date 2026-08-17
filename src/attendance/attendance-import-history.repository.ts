@@ -121,8 +121,6 @@ export class AttendanceImportHistoryRepository {
           -- Prefer the person's real name; the stored label is the fallback for
           -- imports made through a link, where there is no account row.
           COALESCE(
-            NULLIF(TRIM(COALESCE(teacher.first_name, '') || ' ' ||
-                        COALESCE(teacher.last_name, '')), ''),
             NULLIF(TRIM(COALESCE(importer."FirstName", '') || ' ' ||
                         COALESCE(importer."LastName", '')), ''),
             NULLIF(import_file.imported_by_label, ''),
@@ -137,11 +135,6 @@ export class AttendanceImportHistoryRepository {
         LEFT JOIN timetable_slots timetable_slot
           ON timetable_slot.id = import_file.timetable_slot_id
         LEFT JOIN users importer ON importer.id = import_file.imported_by
-        LEFT JOIN school_teacher_memberships importer_membership
-          ON importer_membership.teacher_user_id = importer.id
-         AND importer_membership.school_id = import_file.school_id
-         AND importer_membership.deleted_at IS NULL
-        LEFT JOIN teachers teacher ON teacher.id = importer_membership.teacher_id
         WHERE ${conditions.join(' AND ')}
         ORDER BY ${sortColumn} ${direction}, import_file.imported_at DESC
         LIMIT $${params.length - 1} OFFSET $${params.length}

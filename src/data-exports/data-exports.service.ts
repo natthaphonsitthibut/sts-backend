@@ -951,7 +951,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         SELECT s.student_uuid::text, s."FirstName_Onec" AS first_name, s."LastName_Onec" AS last_name,
                sc.name AS school_name, gl.label AS grade, s."RoomID_Onec"::text AS room,
                profile.risk_tier, profile.consecutive_absent_days, profile.term_absent_days,
-               profile.absent_days AS post_case_absent_days, profile.absence_reset_after_date,
+               profile.absent_days_since_case_reset AS absent_days_since_case_reset, profile.absence_reset_after_date,
                profile.late_count, profile.weighted_attendance_percent, profile.open_case_count,
                profile.profile_calculated_at
         FROM student_term s
@@ -979,7 +979,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'risk_tier',
         'consecutive_absent_days',
         'term_absent_days',
-        'post_case_absent_days',
+        'absent_days_since_case_reset',
         'absence_reset_after_date',
         'late_count',
         'weighted_attendance_percent',
@@ -1190,7 +1190,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         SELECT membership.id::text AS cursor_membership_id,
                school.name AS school_name,
                COALESCE(
-                 NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+                 NULLIF(TRIM(teacher.first_name || ' ' || teacher.last_name), ''),
                  'ไม่ระบุชื่อ'
                ) AS teacher_name,
                membership.membership_status,
@@ -1198,7 +1198,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
                membership.ended_on::text
         FROM school_teacher_memberships membership
         JOIN schools school ON school.id = membership.school_id
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
         WHERE ${conditions.filter(Boolean).join(' AND ')}
         ORDER BY membership.id
         LIMIT $${params.length}
@@ -1345,7 +1345,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
                classroom.room_code,
                classroom.room_name,
                COALESCE(
-                 NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
+                 NULLIF(TRIM(teacher.first_name || ' ' || teacher.last_name), ''),
                  'ไม่ระบุชื่อ'
                ) AS teacher_name,
                subject.code AS subject_code,
@@ -1361,7 +1361,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
         LEFT JOIN subjects subject ON subject.id = assignment.subject_id
         WHERE ${conditions.filter(Boolean).join(' AND ')}
         ORDER BY assignment.id

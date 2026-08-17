@@ -16,7 +16,7 @@ describe('TaskRepository', () => {
         assignedToLastName: null,
         assignedToPhone: null,
         assignedToEmail: 'teacher@example.test',
-        assignedTeacherUserId: 42,
+        assignedTeacherId: 42,
         expiresAt: '2026-08-14T10:00:00.000Z',
         opensAt: '2026-08-13T10:00:00.000Z',
         subject: null,
@@ -24,9 +24,6 @@ describe('TaskRepository', () => {
         subjectId: null,
         otpVerified: 0,
         createdBy: 460,
-        loginRole: null,
-        loginPermissions: [],
-        loginDataScope: {},
       },
       executor,
     );
@@ -114,7 +111,7 @@ describe('TaskRepository', () => {
         id: 7,
         username: 'director',
         roles: ['DIRECTOR'],
-        permissions: ['review-cases'],
+        permissions: ['dashboard'],
         data_scope: { school_ids: [101], grade_levels: [6], room_ids: ['2'] },
       },
       executor as never,
@@ -259,19 +256,16 @@ describe('TaskRepository', () => {
 
     const activeLinkQuery = queries[0].sql;
     expect(activeLinkQuery).toContain('current_assignee_teacher.first_name');
-    expect(activeLinkQuery).toContain('current_assignee_user.username');
     expect(activeLinkQuery).toContain('AS current_assignee_name');
 
     const roundsQuery = queries[1].sql;
     expect(roundsQuery).toContain("WHEN tl.status = 'ACTIVE' THEN COALESCE(");
     expect(roundsQuery).toContain('current_assignee_teacher.first_name');
-    expect(roundsQuery).toContain('current_assignee_user.username');
     expect(roundsQuery).toContain('ELSE tl.assigned_to_name');
 
     const historyQuery = queries[2].sql;
     expect(historyQuery).toContain('link.assigned_to_name');
     expect(historyQuery).not.toContain('current_assignee_teacher');
-    expect(historyQuery).not.toContain('current_assignee_user');
   });
 
   it('returns a scoped student photo URL without exposing its storage key', async () => {
@@ -347,7 +341,7 @@ describe('TaskRepository', () => {
               grade: 'ม.1',
               room: '1',
               consecutive_absent_days: 5,
-              absent_days: 6,
+              absent_days_since_case_reset: 6,
               term_absent_days: 9,
               absence_reset_after_date: '2026-08-01',
               late_count: 1,

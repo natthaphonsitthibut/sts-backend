@@ -79,7 +79,7 @@ describe('RiskProfileRepository', () => {
     expect(sql).toContain('RETURNING student_uuid');
     for (const column of [
       'consecutive_absent_days',
-      'absent_days',
+      'absent_days_since_case_reset',
       'term_absent_days',
       'absence_reset_after_date',
       'late_count',
@@ -131,7 +131,7 @@ describe('RiskProfileRepository', () => {
     await repository.recalculateAll(THRESHOLDS);
 
     const sql = queries[0].sql.replace(/\s+/g, ' ');
-    expect(sql).toContain("WHEN metrics.absent_days >= $1::int THEN 'HIGH'");
+    expect(sql).toContain("WHEN metrics.absent_days_since_case_reset >= $1::int THEN 'HIGH'");
     expect(sql).toContain("WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'");
     expect(sql).toContain("ELSE 'NORMAL'");
     expect(sql).not.toContain("'MEDIUM'");

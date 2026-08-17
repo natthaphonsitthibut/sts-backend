@@ -16,7 +16,7 @@ describe('AttendanceReadService', () => {
           photo_storage_key: 'student-photos/person/profile.webp',
           photo_updated_at: '2026-08-10T06:30:00.000Z',
           term_absent_days: 4,
-          post_case_absent_days: 1,
+          absent_days_since_case_reset: 1,
           absence_reset_after_date: '2026-08-01',
         },
       ]),
@@ -32,7 +32,7 @@ describe('AttendanceReadService', () => {
     expect(result.data[0]).toMatchObject({
       student_number: '66000001',
       term_absent_days: 4,
-      post_case_absent_days: 1,
+      absent_days_since_case_reset: 1,
       absence_reset_after_date: '2026-08-01',
       photo_url:
         '/api/students/00000000-0000-4000-8000-000000000001/photo?v=2026-08-10T06%3A30%3A00.000Z',

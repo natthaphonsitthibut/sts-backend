@@ -126,7 +126,7 @@ export class AutomationRepository {
           GROUP BY a.student_uuid, a."AttendanceDate"
         ),
         candidates AS (
-          SELECT student_uuid, COUNT(*)::int AS absent_days
+          SELECT student_uuid, COUNT(*)::int AS absent_days_since_case_reset
           FROM classified_days
           WHERE is_absent_day
             AND NOT EXISTS (
@@ -140,7 +140,7 @@ export class AutomationRepository {
         )
         SELECT
           r.student_uuid,
-          r.absent_days,
+          r.absent_days_since_case_reset,
           s."FirstName_Onec" AS first_name_onec,
           s."LastName_Onec" AS last_name_onec,
           s."SchoolID_Onec" AS school_id_onec,

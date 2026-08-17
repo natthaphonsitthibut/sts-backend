@@ -21,12 +21,12 @@ export interface AuditSoftDeleteColumns {
 
 /**
  * Resolve the actor id for `*_by` columns. Returns the id ONLY for a real,
- * persisted local user. External / magic-link / mock-ThaID actors are not rows
+ * persisted local user. External and magic-link actors are not rows
  * in `users` (and may carry a synthetic/negative id), so they resolve to null
  * to keep the FK to users(id) valid.
  */
 export function resolveAuditActorId(actor?: ActorContext | null): number | null {
-  if (!actor || actor.virtual_login) {
+  if (!actor) {
     return null;
   }
   return Number.isInteger(actor.id) && actor.id > 0 ? actor.id : null;

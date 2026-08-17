@@ -9,7 +9,7 @@ describe('TaskReadService', () => {
       id: 1,
       username: 'reviewer',
       roles: ['DIRECTOR'],
-      permissions: ['review-cases'],
+      permissions: ['dashboard'],
       data_scope: {},
     };
     const taskRepository = {

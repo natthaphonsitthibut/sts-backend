@@ -32,7 +32,7 @@ export interface ImportCatalogTargetDefinition {
   target: ImportCatalogTarget;
   version: typeof IMPORT_CATALOG_VERSION;
   label: string;
-  capability: 'import-data' | 'import-school-roster';
+  capability: 'import-data';
   allowed: boolean;
   dependencyOrder: number;
   dependsOn: readonly ImportCatalogTarget[];
@@ -81,12 +81,17 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
     target: 'school_teacher_membership',
     version: IMPORT_CATALOG_VERSION,
     label: 'รายชื่อครูของโรงเรียน',
-    capability: 'import-school-roster',
+    capability: 'import-data',
     dependencyOrder: 10,
     dependsOn: [],
     canonicalContext: [SCHOOL_CONTEXT],
     fields: [
-      field('username', 'ชื่อผู้ใช้ครู', true, ['ชื่อผู้ใช้', 'บัญชีผู้ใช้', 'บัญชีครู']),
+      field('citizenId', 'เลขประจำตัวประชาชนครู', true, [
+        'เลขบัตรประชาชน',
+        'เลขประจำตัวประชาชน',
+        'citizenId',
+        'nationalId',
+      ]),
       field(
         'startedOn',
         'วันที่เริ่มปฏิบัติงาน',
@@ -100,7 +105,7 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
     target: 'school_classroom',
     version: IMPORT_CATALOG_VERSION,
     label: 'ห้องเรียน',
-    capability: 'import-school-roster',
+    capability: 'import-data',
     dependencyOrder: 20,
     dependsOn: ['school_teacher_membership'],
     canonicalContext: [SCHOOL_CONTEXT, TERM_CONTEXT],
@@ -129,16 +134,16 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
     target: 'classroom_teacher_assignment',
     version: IMPORT_CATALOG_VERSION,
     label: 'การมอบหมายครูประจำห้อง',
-    capability: 'import-school-roster',
+    capability: 'import-data',
     dependencyOrder: 30,
     dependsOn: ['school_teacher_membership', 'school_classroom'],
     canonicalContext: [SCHOOL_CONTEXT, TERM_CONTEXT, CLASSROOM_CONTEXT],
     fields: [
       field(
-        'username',
-        'ชื่อผู้ใช้ครู',
+        'citizenId',
+        'เลขประจำตัวประชาชนครู',
         true,
-        ['ชื่อผู้ใช้', 'บัญชีผู้ใช้', 'บัญชีครู'],
+        ['เลขบัตรประชาชน', 'เลขประจำตัวประชาชน', 'citizenId', 'nationalId'],
         'string',
         'school_teacher_memberships',
       ),

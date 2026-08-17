@@ -392,6 +392,7 @@ export class AttendanceWriteService {
         period: sessionContext.period,
         sessionKind: sessionContext.kind,
         recordedBy: context.recorder,
+        recordedByTeacherId: context.recorderTeacherId ?? null,
         sessionId: session.id,
         metadata: {
           SchoolID_Onec: first.school_id,
@@ -497,6 +498,7 @@ export class AttendanceWriteService {
           period: sessionContext.period,
           sessionKind: sessionContext.kind,
           recordedBy: context.recorder,
+          recordedByTeacherId: context.recorderTeacherId ?? null,
           sessionId: session.id,
           metadata: {
             SchoolID_Onec: metadata.school_id,

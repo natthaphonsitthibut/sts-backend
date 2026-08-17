@@ -7,7 +7,7 @@ const ACTOR: AuthenticatedRequestUser = {
   id: 11,
   username: 'school-admin',
   roles: ['ADMIN'],
-  permissions: ['import-data', 'import-school-roster'],
+  permissions: ['import-data', 'import-data'],
   data_scope: { global: true },
 };
 
@@ -71,17 +71,19 @@ describe('canonical import catalog', () => {
     },
   );
 
-  it('fails closed when the actor lacks the capability required by the target', async () => {
+  // Teacher and student imports share the นำเข้าข้อมูล page, so the check that
+  // still matters is an actor who does not hold that page at all.
+  it('fails closed for an actor without the นำเข้าข้อมูล permission', async () => {
     const service = new ImportsService({} as never, { recordAtomic: jest.fn() } as never);
 
     await expect(
       service.previewCatalogImport(
-        importFile([{ username: 'teacher-a' }]),
+        importFile([{ citizenId: '1100000000011' }]),
         'school_teacher_membership',
         '{}',
         {
           ...ACTOR,
-          permissions: ['import-data'],
+          permissions: ['students'],
         },
         { schoolId: 1001 },
       ),
@@ -162,7 +164,7 @@ describe('canonical import catalog', () => {
     };
     const service = new ImportsService(repository as never, { recordAtomic: jest.fn() } as never);
     const preview = await service.previewCatalogImport(
-      importFile([{ username: 'teacher-other-school', assignmentKind: 'HOMEROOM' }]),
+      importFile([{ citizenId: '1100000000099', assignmentKind: 'HOMEROOM' }]),
       'classroom_teacher_assignment',
       '{}',
       ACTOR,

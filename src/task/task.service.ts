@@ -14,7 +14,7 @@ import { TaskReadService } from './task-read.service';
 import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
-import type { CaseListFilters, LoginLinkListFilters } from './task.repository';
+import type { CaseListFilters } from './task.repository';
 import type { ActorContext, RiskDashboardFilters } from './task.types';
 
 @Injectable()
@@ -88,14 +88,6 @@ export class TaskService {
     void login_data_scope;
     void otp_verified;
     return safe;
-  }
-
-  async verifyMagicLogin(token: string, sessionToken?: string) {
-    return await this.taskAccessService.verifyMagicLogin(token, sessionToken);
-  }
-
-  async getLoginLinks(actor?: ActorContext, filters: Partial<LoginLinkListFilters> = {}) {
-    return await this.taskAccessService.getLoginLinks(actor, filters);
   }
 
   async findCaseForActor(caseId: number, actor?: ActorContext) {

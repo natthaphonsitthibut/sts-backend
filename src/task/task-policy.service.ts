@@ -4,12 +4,12 @@ import {
   getRoleScopeValidationError,
   ROLE_BASELINES,
   ROLE_LABELS,
-  ROLE_RANKS,
   VALID_PERMISSION_IDS,
   type RoleScopeMode,
   type RoleScopePolicy,
 } from '../auth/permissions.constants';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
+import { canManageRole, roleReachesFurtherThanActor } from '../auth/role-authority';
 import { TaskRepository } from './task.repository';
 import type { ActorContext, DataScope, NormalizedDataScope, RoleDefinition } from './task.types';
 
@@ -63,19 +63,6 @@ export class TaskPolicyService {
   async getRoleMap(): Promise<Map<string, RoleDefinition>> {
     const definitions = await this.getRoleDefinitions();
     return new Map(definitions.map((definition) => [definition.name, definition]));
-  }
-
-  getRoleRank(role?: string | null, roleMap?: Map<string, RoleDefinition>): number {
-    if (!role) {
-      return 0;
-    }
-
-    const dbRank = roleMap?.get(role)?.rank;
-    if (typeof dbRank === 'number' && dbRank > 0) {
-      return dbRank;
-    }
-
-    return roleMap ? 0 : ROLE_RANKS[role] || 0;
   }
 
   getRoleLabel(role?: string | null, roleMap?: Map<string, RoleDefinition>): string {
@@ -155,23 +142,13 @@ export class TaskPolicyService {
     return requestedRole.trim();
   }
 
+  /** See `canManageRole` in auth/role-authority — the rule lives there. */
   canManageRole(
     actorRole?: string | null,
     targetRole?: string | null,
     roleMap?: Map<string, RoleDefinition>,
   ): boolean {
-    const actorRank = this.getRoleRank(actorRole, roleMap);
-    const targetRank = this.getRoleRank(targetRole, roleMap);
-
-    if (targetRank > actorRank) {
-      return false;
-    }
-
-    if (targetRank === actorRank && actorRole !== 'ADMIN') {
-      return false;
-    }
-
-    return true;
+    return canManageRole(actorRole, targetRole, roleMap ?? new Map());
   }
 
   isScopeGlobal(scope: unknown): boolean {
@@ -274,19 +251,15 @@ export class TaskPolicyService {
   }
 
   assertCanCreateTask(actor: ActorContext, taskType: string): void {
-    if (taskType === 'LOGIN') {
-      throw new BadRequestException('ยกเลิกการสร้างลิงก์เข้าสู่ระบบแล้ว');
-    }
-
-    // VISIT (follow-up) and ASSIST (assistance round) are the only creatable
-    // types left: per-classroom attendance links were retired in favour of
-    // per-teacher links (teacher_access_grants). Reject anything else here so
-    // the API answers 400 instead of tripping the task_types FK with a 500.
+    // VISIT (follow-up) and ASSIST (assistance round) are the only types there
+    // are: per-classroom attendance links moved to teacher_access_grants and the
+    // magic-login link was retired. Reject anything else here so the API answers
+    // 400 instead of tripping the task_types FK with a 500.
     if (taskType !== 'VISIT' && taskType !== 'ASSIST') {
       throw new BadRequestException('ประเภทลิงก์นี้ถูกยกเลิกแล้ว');
     }
 
-    if (!this.hasPermission(actor, 'create')) {
+    if (!this.hasPermission(actor, 'dashboard')) {
       throw new ForbiddenException('ไม่มีสิทธิ์สร้างรายการนี้');
     }
   }
@@ -299,16 +272,16 @@ export class TaskPolicyService {
     const currentRoleMap = roleMap || (await this.getRoleMap());
     const actorRole = this.getPrimaryRole({ roles: actor.roles });
     const requestedRole = this.normalizeRole(data);
-    const actorRank = this.getRoleRank(actorRole, currentRoleMap);
-    const requestedRank = this.getRoleRank(requestedRole, currentRoleMap);
     const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+    const requestedDefinition = currentRoleMap.get(requestedRole);
 
-    if (requestedRank === 0) {
+    if (!requestedDefinition) {
       throw new ForbiddenException(`ไม่สามารถกำหนดตำแหน่ง ${requestedRole} ได้`);
     }
 
-    if (requestedRank > actorRank || (requestedRank === actorRank && actorRole !== 'ADMIN')) {
-      throw new ForbiddenException('ไม่สามารถกำหนดตำแหน่งสูงกว่าหรือเทียบเท่าตำแหน่งของตนเองได้');
+    const reachesFurther = roleReachesFurtherThanActor(actorRole, requestedRole, currentRoleMap);
+    if (reachesFurther || (requestedRole === actorRole && actorRole !== 'ADMIN')) {
+      throw new ForbiddenException('ไม่สามารถกำหนดตำแหน่งที่เข้าถึงหน้าที่ตนเองไม่มีได้');
     }
 
     const requestedPermissions = this.normalizePermissionList(
@@ -406,12 +379,8 @@ export class TaskPolicyService {
   ): boolean {
     const taskType = typeof link.task_type === 'string' ? link.task_type.trim() : '';
 
-    if (taskType === 'LOGIN') {
-      return false;
-    }
-
     if (taskType === 'VISIT') {
-      if (!this.hasPermission(actor, 'review-cases')) {
+      if (!this.hasPermission(actor, 'dashboard')) {
         return false;
       }
 

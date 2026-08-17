@@ -34,7 +34,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 7,
           username: 'case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['review-cases'],
+          permissions: ['dashboard'],
           data_scope: { school_ids: [10010002] },
         },
         {
@@ -52,7 +52,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 9,
           username: 'own-case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['review-cases'],
+          permissions: ['dashboard'],
           data_scope: { own_only: true },
         },
         {
@@ -71,7 +71,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 9,
           username: 'own-case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['review-cases'],
+          permissions: ['dashboard'],
           data_scope: { own_only: true },
         },
         {
@@ -83,7 +83,7 @@ describe('TaskPolicyService data scope policy', () => {
     ).toBe(false);
   });
 
-  it('rejects visit link management without review-cases permission', () => {
+  it('admits visit link management to the รายงานสถานะนักเรียน page', () => {
     expect(
       service.canManageAdminLink(
         {
@@ -98,6 +98,6 @@ describe('TaskPolicyService data scope policy', () => {
           target_school_id: 10010002,
         },
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

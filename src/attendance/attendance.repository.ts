@@ -218,7 +218,7 @@ export class AttendanceRepository {
         person.photo_storage_key,
         person.updated_at AS photo_updated_at,
         COALESCE(risk.term_absent_days, 0)::int AS term_absent_days,
-        COALESCE(risk.absent_days, 0)::int AS post_case_absent_days,
+        COALESCE(risk.absent_days_since_case_reset, 0)::int AS absent_days_since_case_reset,
         risk.absence_reset_after_date
       FROM student_term s
       ${CURRENT_ENROLLMENT_JOIN}
@@ -511,9 +511,10 @@ export class AttendanceRepository {
           "Period",
           "AttendanceStatus",
           "RecordedBy",
+          recorded_by_teacher_id,
           session_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
       [
         data.studentUuid,
@@ -526,6 +527,7 @@ export class AttendanceRepository {
         data.period,
         data.statusCode,
         data.recordedBy,
+        data.recordedByTeacherId ?? null,
         data.sessionId,
       ],
     );
@@ -562,6 +564,7 @@ export class AttendanceRepository {
       period: number;
       sessionKind?: 'DAILY' | 'SUBJECT';
       recordedBy: string;
+      recordedByTeacherId?: number | null;
       sessionId: string;
       metadata: StudentAttendanceMetadataRow;
     },
@@ -589,6 +592,7 @@ export class AttendanceRepository {
           "RecordedAt",
           marked_at,
           "RecordedBy",
+          recorded_by_teacher_id,
           session_id
         )
         SELECT
@@ -605,6 +609,7 @@ export class AttendanceRepository {
           now(),
           input.marked_at,
           $11,
+          $14,
           $12
         FROM UNNEST($1::uuid[], $2::smallint[], $13::timestamptz[])
           AS input(student_uuid, status_code, marked_at)
@@ -618,6 +623,7 @@ export class AttendanceRepository {
           "RecordedAt" = now(),
           marked_at = EXCLUDED.marked_at,
           "RecordedBy" = EXCLUDED."RecordedBy",
+          recorded_by_teacher_id = EXCLUDED.recorded_by_teacher_id,
           session_id = EXCLUDED.session_id
       `,
       [
@@ -634,6 +640,7 @@ export class AttendanceRepository {
         input.recordedBy,
         input.sessionId,
         input.markedAt,
+        input.recordedByTeacherId ?? null,
       ],
     );
   }

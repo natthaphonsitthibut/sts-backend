@@ -79,16 +79,13 @@ describe('AttendanceController access', () => {
         'students',
         'manage-school-structure',
         'import-data',
-        'import-school-roster',
         'export-data',
       ]);
       expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
       expect(() =>
         guard.canActivate(contextWithPermissions(method, ['manage-teacher-access'])),
       ).toThrow(ForbiddenException);
-      expect(guard.canActivate(contextWithPermissions(method, ['import-school-roster']))).toBe(
-        true,
-      );
+      expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
       expect(guard.canActivate(contextWithPermissions(method, ['export-data']))).toBe(true);
       expect(() => guard.canActivate(contextWithPermissions(method, ['home']))).toThrow(
         ForbiddenException,
@@ -142,14 +139,13 @@ describe('AttendanceController access', () => {
     for (const method of calendarReadMethods) {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'attendance-dashboard',
-        'manage-attendance-calendar',
       ]);
       expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
         true,
       );
-      expect(
-        guard.canActivate(contextWithPermissions(method, ['manage-attendance-calendar'])),
-      ).toBe(true);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
+        true,
+      );
       expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
         ForbiddenException,
       );
@@ -157,10 +153,8 @@ describe('AttendanceController access', () => {
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTerms'))).toEqual([
       'attendance-dashboard',
-      'manage-attendance-calendar',
       'manage-school-structure',
       'import-data',
-      'import-school-roster',
     ]);
     expect(
       guard.canActivate(contextWithPermissions('listTerms', ['manage-school-structure'])),
@@ -171,7 +165,7 @@ describe('AttendanceController access', () => {
     expect(guard.canActivate(contextWithPermissions('listTerms', ['import-data']))).toBe(true);
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('upsertTerm'))).toEqual([
-      'manage-attendance-calendar',
+      'attendance-dashboard',
       'manage-school-structure',
     ]);
     expect(
@@ -180,11 +174,11 @@ describe('AttendanceController access', () => {
 
     for (const method of calendarWriteMethods) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([
-        'manage-attendance-calendar',
+        'attendance-dashboard',
       ]);
-      expect(
-        guard.canActivate(contextWithPermissions(method, ['manage-attendance-calendar'])),
-      ).toBe(true);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
+        true,
+      );
       expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
         ForbiddenException,
       );

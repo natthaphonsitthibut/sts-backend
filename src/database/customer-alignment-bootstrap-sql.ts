@@ -1084,22 +1084,19 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     AND NOT (default_permissions ? 'manage-school-structure');
 
   UPDATE roles
-  SET default_permissions = default_permissions || '["import-school-roster"]'::jsonb
+  SET default_permissions = default_permissions || '["import-data"]'::jsonb
   WHERE name IN ('ADMIN', 'DIRECTOR')
-    AND NOT (default_permissions ? 'import-school-roster');
+    AND NOT (default_permissions ? 'import-data');
 
   UPDATE roles
   SET default_permissions = default_permissions || '["manage-teacher-access"]'::jsonb
   WHERE name IN ('ADMIN', 'DIRECTOR')
     AND NOT (default_permissions ? 'manage-teacher-access');
 
+  -- Teacher comments live on the รายชื่อนักเรียน page since the permission
+  -- catalogue collapsed to one id per page; the separate observation ids are gone.
   UPDATE roles
-  SET default_permissions = default_permissions || '["manage-student-observations"]'::jsonb
+  SET default_permissions = default_permissions || '["students"]'::jsonb
   WHERE name IN ('ADMIN', 'DIRECTOR')
-    AND NOT (default_permissions ? 'manage-student-observations');
-
-  UPDATE roles
-  SET default_permissions = default_permissions || '["student-observations"]'::jsonb
-  WHERE name = 'TEACHER'
-    AND NOT (default_permissions ? 'student-observations');
+    AND NOT (default_permissions ? 'students');
 `;

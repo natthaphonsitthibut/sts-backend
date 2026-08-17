@@ -67,7 +67,7 @@ export interface ClassroomImportReferenceRow extends Record<string, unknown> {
 
 export interface AssignmentTeacherReferenceRow extends Record<string, unknown> {
   membership_id: string;
-  username: string;
+  citizen_id: string;
 }
 
 export interface ClassroomAssignmentReferenceRow extends Record<string, unknown> {
@@ -229,21 +229,22 @@ export class ImportsRepository {
 
   async findAssignmentTeacherReferences(
     schoolId: number,
-    usernames: string[],
+    citizenIds: string[],
     executor?: QueryExecutor,
   ): Promise<AssignmentTeacherReferenceRow[]> {
-    if (usernames.length === 0) return [];
+    if (citizenIds.length === 0) return [];
     const result = await this.getExecutor(executor).query<AssignmentTeacherReferenceRow>(
-      `SELECT membership.id::text AS membership_id, lower(teacher.username) AS username
+      `SELECT membership.id::text AS membership_id, teacher.citizen_id
        FROM school_teacher_memberships membership
-       JOIN users teacher
-         ON teacher.id = membership.teacher_user_id
-        AND teacher.status = 'ACTIVE'
+       JOIN teachers teacher
+         ON teacher.id = membership.teacher_id
+        AND teacher.teacher_status = 'ACTIVE'
+        AND teacher.deleted_at IS NULL
        WHERE membership.school_id = $1
          AND membership.membership_status = 'ACTIVE'
          AND membership.deleted_at IS NULL
-         AND lower(teacher.username) = ANY($2::text[])`,
-      [schoolId, usernames.map((username) => username.toLowerCase())],
+         AND teacher.citizen_id = ANY($2::text[])`,
+      [schoolId, citizenIds],
     );
     return result.rows;
   }
@@ -310,43 +311,30 @@ export class ImportsRepository {
   }
 
   async findTeacherImportCandidates(
-    usernames: string[],
+    citizenIds: string[],
     schoolId: number,
     executor?: QueryExecutor,
   ): Promise<TeacherImportCandidateRow[]> {
-    if (usernames.length === 0) return [];
+    if (citizenIds.length === 0) return [];
     const result = await this.getExecutor(executor).query<TeacherImportCandidateRow>(
       `
         SELECT
-          teacher.id AS user_id,
-          teacher.username,
-          COALESCE(
-            NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
-            teacher.username
-          ) AS display_name,
-          (
-            teacher.status = 'ACTIVE'
-            AND teacher.role = 'TEACHER'
-            AND EXISTS (
-              SELECT 1
-              FROM jsonb_array_elements_text(
-                COALESCE(teacher.data_scope -> 'school_ids', '[]'::jsonb)
-              ) AS scope_school(id)
-              WHERE scope_school.id = $2::text
-            )
-          ) AS is_eligible,
+          teacher.id::text AS teacher_id,
+          teacher.citizen_id,
+          TRIM(teacher.first_name || ' ' || teacher.last_name) AS display_name,
+          (teacher.teacher_status = 'ACTIVE' AND teacher.deleted_at IS NULL) AS is_eligible,
           EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
             WHERE membership.school_id = $2::int
-              AND membership.teacher_user_id = teacher.id
+              AND membership.teacher_id = teacher.id
               AND membership.membership_status = 'ACTIVE'
               AND membership.deleted_at IS NULL
           ) AS is_active_member
-        FROM users teacher
-        WHERE lower(teacher.username) = ANY($1::text[])
+        FROM teachers teacher
+        WHERE teacher.citizen_id = ANY($1::text[])
       `,
-      [usernames.map((username) => username.toLowerCase()), schoolId],
+      [citizenIds, schoolId],
     );
     return result.rows;
   }
@@ -354,7 +342,7 @@ export class ImportsRepository {
   async insertTeacherImportMembership(
     input: {
       schoolId: number;
-      teacherUserId: number;
+      teacherId: number;
       startedOn: string | null;
       actorUserId: number | null;
     },
@@ -363,15 +351,15 @@ export class ImportsRepository {
     const result = await executor.query<{ id: string }>(
       `
         INSERT INTO school_teacher_memberships (
-          school_id, teacher_user_id, started_on, created_by, updated_by
+          school_id, teacher_id, started_on, created_by, updated_by
         )
         VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), $4, $4)
-        ON CONFLICT (school_id, teacher_user_id)
+        ON CONFLICT (school_id, teacher_id)
           WHERE membership_status = 'ACTIVE' AND deleted_at IS NULL
         DO NOTHING
         RETURNING id::text
       `,
-      [input.schoolId, input.teacherUserId, input.startedOn, input.actorUserId],
+      [input.schoolId, input.teacherId, input.startedOn, input.actorUserId],
     );
     return result.rows[0]?.id ?? null;
   }

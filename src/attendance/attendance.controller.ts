@@ -87,7 +87,6 @@ export class AttendanceController {
     'students',
     'manage-school-structure',
     'import-data',
-    'import-school-roster',
     'export-data',
   )
   async getSchools(
@@ -295,13 +294,7 @@ export class AttendanceController {
 
   @Get('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission(
-    'attendance-dashboard',
-    'manage-attendance-calendar',
-    'manage-school-structure',
-    'import-data',
-    'import-school-roster',
-  )
+  @RequireAnyPermission('attendance-dashboard', 'manage-school-structure', 'import-data')
   async listTerms(
     @Query() query: ListSchoolTermsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -311,7 +304,7 @@ export class AttendanceController {
 
   @Post('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('manage-attendance-calendar', 'manage-school-structure')
+  @RequireAnyPermission('attendance-dashboard', 'manage-school-structure')
   async upsertTerm(
     @Body() body: UpsertSchoolTermDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -321,7 +314,7 @@ export class AttendanceController {
 
   @Post('terms/:termId/calendar/generate')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-attendance-calendar')
+  @RequirePermission('attendance-dashboard')
   async generateCalendar(
     @Param('termId', ParseIntPipe) termId: number,
     @Body() body: GenerateSchoolCalendarDto,
@@ -332,7 +325,7 @@ export class AttendanceController {
 
   @Get('calendar')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard', 'manage-attendance-calendar')
+  @RequireAnyPermission('attendance-dashboard')
   async listCalendar(
     @Query() query: ListSchoolCalendarQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -342,7 +335,7 @@ export class AttendanceController {
 
   @Patch('calendar-days/:calendarDayId')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-attendance-calendar')
+  @RequirePermission('attendance-dashboard')
   async updateCalendarDay(
     @Param('calendarDayId', ParseIntPipe) calendarDayId: number,
     @Body() body: UpdateSchoolCalendarDayDto,

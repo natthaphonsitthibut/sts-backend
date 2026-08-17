@@ -39,7 +39,7 @@ export interface ActiveAbsenceCaseRow extends Record<string, unknown> {
 
 export interface CumulativeAbsentStudentRow extends Record<string, unknown> {
   student_uuid: string;
-  absent_days: number;
+  absent_days_since_case_reset: number;
   first_name_onec: string | null;
   last_name_onec: string | null;
   school_id_onec: number | null;

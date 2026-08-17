@@ -437,7 +437,7 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-users-list', 'manage-users-hard-delete')
+  @RequirePermission('manage-users-list')
   @Delete(':id')
   async deleteUser(
     @Param('id', ParseIntPipe) id: number,

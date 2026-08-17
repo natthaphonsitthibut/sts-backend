@@ -169,9 +169,9 @@ function escapeSqlLiteral(value: string): string {
 const SYSTEM_ROLE_BASELINE_SQL = SYSTEM_ROLE_DEFINITIONS.map(
   (role) => `
   INSERT INTO roles (
-    name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+    name, label, default_permissions, scope_mode, scope_policy, is_assignable, is_system
   )
-  VALUES ('${escapeSqlLiteral(role.name)}', '${escapeSqlLiteral(role.label)}', ${role.rank}, '${escapeSqlLiteral(JSON.stringify(role.default_permissions))}'::jsonb, '${escapeSqlLiteral(role.scope_mode)}', '${role.scope_policy}', ${role.is_assignable ? 'TRUE' : 'FALSE'}, ${role.is_system ? 'TRUE' : 'FALSE'})
+  VALUES ('${escapeSqlLiteral(role.name)}', '${escapeSqlLiteral(role.label)}', '${escapeSqlLiteral(JSON.stringify(role.default_permissions))}'::jsonb, '${escapeSqlLiteral(role.scope_mode)}', '${role.scope_policy}', ${role.is_assignable ? 'TRUE' : 'FALSE'}, ${role.is_system ? 'TRUE' : 'FALSE'})
   ON CONFLICT (name) DO NOTHING;`,
 ).join('\n');
 
@@ -180,14 +180,13 @@ const SCHOOL_ROLE_GROUP_BASELINE_SQL = `
     VALUES
       ('ADMIN', 'ผู้ดูแลระบบ', 'ADMIN', NULL::TEXT),
       ('EXECUTIVE', 'ผู้บริหาร', 'EXECUTIVE', NULL::TEXT),
-      ('ADMIN_SCHOOL', 'ผู้ดูแลระบบประจำโรงเรียน', 'ADMIN_SCHOOL', 'ADMIN'),
       ('DIRECTOR', 'ผู้อำนวยการ', 'DIRECTOR', NULL::TEXT)
   ),
   template_roles AS (
-    SELECT template.template_key, template.label, source_role.rank, source_role.default_permissions
+    SELECT template.template_key, template.label, source_role.default_permissions
     FROM templates template
     JOIN LATERAL (
-      SELECT role_record.rank, role_record.default_permissions
+      SELECT role_record.default_permissions
       FROM roles role_record
       WHERE role_record.school_id IS NULL
         AND role_record.name IN (
@@ -199,13 +198,12 @@ const SCHOOL_ROLE_GROUP_BASELINE_SQL = `
     ) source_role ON TRUE
   )
   INSERT INTO roles (
-    name, label, rank, default_permissions, scope_mode, scope_policy,
+    name, label, default_permissions, scope_mode, scope_policy,
     is_assignable, is_system, school_id
   )
   SELECT
     'S' || school.id || '_BASE_' || template.template_key,
     template.label,
-    template.rank,
     template.default_permissions,
     'school',
     'ASSIGNABLE',
@@ -335,72 +333,6 @@ export const AUDIT_RETROFIT_SQL = `
  * this SQL because the feature is retired by a later migration.
  */
 export const STUDENT_ACCOUNT_BATCH_TABLES_SQL = `
-  CREATE TABLE IF NOT EXISTS student_account_batch_job (
-    id UUID PRIMARY KEY,
-    status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    scope_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
-    total_candidates INTEGER NOT NULL DEFAULT 0,
-    processed_count INTEGER NOT NULL DEFAULT 0,
-    created_count INTEGER NOT NULL DEFAULT 0,
-    skipped_count INTEGER NOT NULL DEFAULT 0,
-    failed_count INTEGER NOT NULL DEFAULT 0,
-    error_summary TEXT,
-    started_at TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-
-  DO $sabj_status$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'chk_student_account_batch_job_status'
-    ) THEN
-      ALTER TABLE student_account_batch_job
-        ADD CONSTRAINT chk_student_account_batch_job_status
-        CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'INTERRUPTED', 'CANCELED'));
-    END IF;
-  END $sabj_status$;
-
-  CREATE INDEX IF NOT EXISTS idx_student_account_batch_job_status
-    ON student_account_batch_job (status);
-  CREATE INDEX IF NOT EXISTS idx_student_account_batch_job_created_by
-    ON student_account_batch_job (created_by, created_at DESC);
-
-  DROP TRIGGER IF EXISTS trg_student_account_batch_job_set_updated_at ON student_account_batch_job;
-  CREATE TRIGGER trg_student_account_batch_job_set_updated_at
-    BEFORE UPDATE ON student_account_batch_job
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-  CREATE TABLE IF NOT EXISTS student_account_batch_job_item (
-    id BIGSERIAL PRIMARY KEY,
-    job_id UUID NOT NULL REFERENCES student_account_batch_job(id) ON DELETE CASCADE,
-    person_uuid UUID NOT NULL,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    username VARCHAR(64),
-    detail JSONB,
-    status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
-    error_code VARCHAR(64),
-    processed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-
-  DO $sabji_status$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'chk_student_account_batch_job_item_status'
-    ) THEN
-      ALTER TABLE student_account_batch_job_item
-        ADD CONSTRAINT chk_student_account_batch_job_item_status
-        CHECK (status IN ('PENDING', 'CREATED', 'SKIPPED', 'FAILED'));
-    END IF;
-  END $sabji_status$;
-
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_student_account_batch_job_item_person
-    ON student_account_batch_job_item (job_id, person_uuid);
-  CREATE INDEX IF NOT EXISTS idx_student_account_batch_job_item_status
-    ON student_account_batch_job_item (job_id, status);
 `;
 
 export const DATA_EXPORT_TABLES_SQL = `
@@ -804,8 +736,8 @@ export const CASE_TRACKING_DECISION_TABLES_SQL = `
     code, label_th, target_case_status_code, completion_outcome_code, requires_resolution_outcome,
     required_permission_code, sort_order
   ) VALUES
-    ('REFER_AGENCY', 'ส่งต่อหน่วยงาน', 'RESOLVED', 'REFERRED_AGENCY', FALSE, 'review-cases', 10),
-    ('CLOSE', 'ปิดเคส', 'RESOLVED', 'CLOSED', FALSE, 'close-case', 20)
+    ('REFER_AGENCY', 'ส่งต่อหน่วยงาน', 'RESOLVED', 'REFERRED_AGENCY', FALSE, 'dashboard', 10),
+    ('CLOSE', 'ปิดเคส', 'RESOLVED', 'CLOSED', FALSE, 'dashboard', 20)
   ON CONFLICT (code) DO UPDATE SET
     label_th = EXCLUDED.label_th,
     target_case_status_code = EXCLUDED.target_case_status_code,
@@ -1241,7 +1173,7 @@ export const CASE_ASSISTANCE_PHASE_SQL = `
     requires_resolution_outcome, required_permission_code, sort_order,
     available_phase_code, target_workflow_phase_code
   ) VALUES
-    ('ASSIST', 'ให้ความช่วยเหลือ', 'OPEN', NULL, FALSE, 'review-cases', 5,
+    ('ASSIST', 'ให้ความช่วยเหลือ', 'OPEN', NULL, FALSE, 'dashboard', 5,
      'FOLLOW_UP', 'ASSISTANCE')
   ON CONFLICT (code) DO UPDATE SET
     label_th = EXCLUDED.label_th,
@@ -1823,7 +1755,7 @@ export const NOTIFICATION_TABLES_SQL = `
 
   INSERT INTO notification_types (code, label_th, required_permission, sort_order)
   VALUES
-    ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'review-cases', 10)
+    ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'dashboard', 10)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS notifications (
@@ -1843,7 +1775,7 @@ export const NOTIFICATION_TABLES_SQL = `
       CONSTRAINT fk_notifications_case_status
       REFERENCES case_workflow_statuses(code)
       ON DELETE RESTRICT ON UPDATE CASCADE,
-    student_name_masked TEXT,
+    student_name_snapshot TEXT,
     reason_text TEXT,
     ref_entity VARCHAR(32),
     ref_id TEXT,
@@ -1854,12 +1786,12 @@ export const NOTIFICATION_TABLES_SQL = `
     CONSTRAINT chk_notifications_student_context CHECK (
       (
         type_code = 'CASE_STATUS_CHANGED'
-        AND student_name_masked IS NOT NULL
-        AND length(trim(student_name_masked)) > 0
+        AND student_name_snapshot IS NOT NULL
+        AND length(trim(student_name_snapshot)) > 0
       )
       OR (
         type_code <> 'CASE_STATUS_CHANGED'
-        AND student_name_masked IS NULL
+        AND student_name_snapshot IS NULL
         AND reason_text IS NULL
       )
     ),
@@ -2131,7 +2063,6 @@ export const DATABASE_BASELINE_SQL = `
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     label TEXT NOT NULL,
-    rank INTEGER NOT NULL DEFAULT 0,
     default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
     scope_mode TEXT NOT NULL DEFAULT 'flexible',
     scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE',
@@ -2140,7 +2071,6 @@ export const DATABASE_BASELINE_SQL = `
     school_id INTEGER
   );
 
-  ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
@@ -2167,8 +2097,8 @@ export const DATABASE_BASELINE_SQL = `
     END IF;
   END $roles_school_scope$;
 
-  CREATE INDEX IF NOT EXISTS idx_roles_school_rank_name
-    ON roles (school_id, rank DESC, name)
+  CREATE INDEX IF NOT EXISTS idx_roles_school_name
+    ON roles (school_id, name)
     WHERE school_id IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_school_label_ci
     ON roles (school_id, LOWER(BTRIM(label)))
@@ -2266,7 +2196,6 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "permissions" JSONB DEFAULT '[]';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "role" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "data_scope" JSONB DEFAULT '{}'::jsonb;
-  ALTER TABLE users ADD COLUMN IF NOT EXISTS person_uuid UUID;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_issued_at TIMESTAMP WITH TIME ZONE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_expires_at TIMESTAMP WITH TIME ZONE;
@@ -2318,7 +2247,6 @@ export const DATABASE_BASELINE_SQL = `
   -- attendance.student_uuid for the migrated live DB.
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_uuid UUID;
   ALTER TABLE attendance ADD COLUMN IF NOT EXISTS student_uuid UUID;
-  ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
@@ -2390,9 +2318,6 @@ export const DATABASE_BASELINE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_task_links_assigned_teacher
     ON task_links(assigned_teacher_user_id)
     WHERE assigned_teacher_user_id IS NOT NULL;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_role TEXT;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_permissions JSONB DEFAULT '[]'::jsonb;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMP WITH TIME ZONE;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS assignment_note TEXT;
   ALTER TABLE task_links DROP CONSTRAINT IF EXISTS chk_task_links_assignment_note_length;
@@ -2462,7 +2387,7 @@ export const DATABASE_BASELINE_SQL = `
     academic_year INTEGER NOT NULL,
     semester INTEGER NOT NULL,
     consecutive_absent_days INTEGER NOT NULL DEFAULT 0,
-    absent_days INTEGER NOT NULL DEFAULT 0,
+    absent_days_since_case_reset INTEGER NOT NULL DEFAULT 0,
     term_absent_days INTEGER NOT NULL DEFAULT 0
       CONSTRAINT chk_student_risk_profiles_term_absent_days
       CHECK (term_absent_days >= 0),
@@ -2609,25 +2534,6 @@ export const DATABASE_BASELINE_SQL = `
       CHECK (status IN ('ACTIVE', 'DISABLED'));
     END IF;
   END $users_lifecycle_constraints$;
-
-  DO $users_person_fk$
-  BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'student_person')
-      AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_person') THEN
-      ALTER TABLE users
-      ADD CONSTRAINT fk_users_person
-      FOREIGN KEY (person_uuid) REFERENCES student_person(person_uuid)
-      ON DELETE RESTRICT;
-    END IF;
-  END $users_person_fk$;
-
-  CREATE INDEX IF NOT EXISTS idx_users_person_uuid ON users (person_uuid);
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_users_active_student_person
-    ON users (person_uuid)
-    WHERE person_uuid IS NOT NULL AND role = 'STUDENT' AND status = 'ACTIVE';
-
-  ALTER TABLE users
-  ALTER COLUMN role SET DEFAULT 'TEACHER';
 
   ALTER TABLE users
   ALTER COLUMN role SET NOT NULL;
@@ -2859,7 +2765,7 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
     await executor.query(
       `
         INSERT INTO roles (
-          name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+          name, label, default_permissions, scope_mode, scope_policy, is_assignable, is_system
         )
         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
         ON CONFLICT (name) DO NOTHING
@@ -2867,7 +2773,6 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
       [
         role.name,
         role.label,
-        role.rank,
         JSON.stringify(role.default_permissions),
         role.scope_mode,
         role.scope_policy,
@@ -2881,18 +2786,16 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
         UPDATE roles
         SET
           label = $2,
-          rank = $3,
-          default_permissions = $4::jsonb,
-          scope_mode = $5,
-          scope_policy = $6,
-          is_assignable = $7,
-          is_system = $8
+          default_permissions = $3::jsonb,
+          scope_mode = $4,
+          scope_policy = $5,
+          is_assignable = $6,
+          is_system = $7
         WHERE name = $1
       `,
       [
         role.name,
         role.label,
-        role.rank,
         JSON.stringify(role.default_permissions),
         role.scope_mode,
         role.scope_policy,

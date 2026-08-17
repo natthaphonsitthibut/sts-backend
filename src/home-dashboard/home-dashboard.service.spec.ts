@@ -7,7 +7,7 @@ const baseActor: HomeDashboardActor = {
   id: 1,
   username: 'admin',
   roles: ['ADMIN'],
-  permissions: ['home', 'dashboard', 'attendance-dashboard', 'review-cases', 'students'],
+  permissions: ['home', 'dashboard', 'attendance-dashboard', 'dashboard', 'students'],
   data_scope: { school_ids: [10010002] },
 };
 

@@ -61,7 +61,7 @@ export class CaseService {
     actor: AuthenticatedRequestUser,
     requiredPermission: string,
   ): void {
-    if (!this.taskPolicyService.hasPermission(actor, 'review-cases')) {
+    if (!this.taskPolicyService.hasPermission(actor, 'dashboard')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
     }
 
@@ -205,7 +205,7 @@ export class CaseService {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     if (
       isRestrictedExecutive(currentActor) ||
-      !this.taskPolicyService.hasPermission(currentActor, 'review-cases')
+      !this.taskPolicyService.hasPermission(currentActor, 'dashboard')
     ) {
       throw new ForbiddenException('ไม่มีสิทธิ์เปิดเคสนักเรียน');
     }
@@ -276,7 +276,7 @@ export class CaseService {
     if (result.created) {
       const mapped = this.mapCaseDetail(
         detail,
-        this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+        this.taskPolicyService.hasPermission(currentActor, 'students'),
       );
       await this.auditLog.record({
         actorUserId: resolveAuditActorId(currentActor),
@@ -307,7 +307,7 @@ export class CaseService {
       created: result.created,
       data: this.mapCaseDetail(
         detail,
-        this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+        this.taskPolicyService.hasPermission(currentActor, 'students'),
       ),
     };
   }
@@ -331,7 +331,7 @@ export class CaseService {
       data: {
         ...this.mapCaseDetail(
           detail,
-          this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+          this.taskPolicyService.hasPermission(currentActor, 'students'),
         ),
         follow_up_rounds: rounds.map((round) => this.mapFollowUpRound(round)),
         reviews: reviews.map((review) => this.mapCaseReview(review)),

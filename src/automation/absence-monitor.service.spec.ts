@@ -10,7 +10,7 @@ function buildAbsentStudent(
 ): CumulativeAbsentStudentRow {
   return {
     student_uuid: 'student-uuid-1',
-    absent_days: 3,
+    absent_days_since_case_reset: 3,
     first_name_onec: 'สมชาย',
     last_name_onec: 'ใจดี',
     school_id_onec: 10010002,
@@ -142,7 +142,7 @@ describe('AbsenceMonitorService', () => {
       return Promise.resolve(values[key] ?? null);
     });
     automationRepository.listCumulativeAbsentStudents.mockResolvedValue([
-      buildAbsentStudent({ absent_days: 7 }),
+      buildAbsentStudent({ absent_days_since_case_reset: 7 }),
     ]);
 
     const result = await service.checkConsecutiveAbsences();

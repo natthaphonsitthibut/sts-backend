@@ -9,6 +9,6 @@ describe('CaseController', () => {
       ?.value as () => unknown;
 
     expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([AuthGuard, PermissionsGuard]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['review-cases']);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['dashboard']);
   });
 });

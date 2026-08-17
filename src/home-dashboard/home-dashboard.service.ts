@@ -79,7 +79,7 @@ export class HomeDashboardService {
     if (hasActorPermission(actor, 'dashboard')) {
       sections.push('riskDistribution');
     }
-    if (hasActorPermission(actor, 'review-cases')) {
+    if (hasActorPermission(actor, 'dashboard')) {
       sections.push('casePipeline', 'caseMovement');
     }
     return sections;
@@ -174,7 +174,7 @@ export class HomeDashboardService {
       hasActorPermission(actor, 'dashboard')
         ? this.repository.countHighRiskStudents(actor, filters)
         : Promise.resolve(0),
-      hasActorPermission(actor, 'review-cases')
+      hasActorPermission(actor, 'dashboard')
         ? this.repository.getCasePipeline(actor, filters)
         : Promise.resolve(null),
       this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),

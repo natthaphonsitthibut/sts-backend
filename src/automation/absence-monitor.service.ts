@@ -190,7 +190,7 @@ export class AbsenceMonitorService {
 
           this.logger.log(`Existing case count for ${studentName}: ${existingCase ? 1 : 0}`);
 
-          const reason = `ขาดเรียนหลังปิดเคสล่าสุด ${student.absent_days} วัน`;
+          const reason = `ขาดเรียนหลังปิดเคสล่าสุด ${student.absent_days_since_case_reset} วัน`;
           const slaDueAt = this.addDays(new Date(), slaDays);
 
           if (existingCase) {

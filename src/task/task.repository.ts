@@ -74,30 +74,6 @@ interface RiskDashboardSummaryRow extends QueryResultRow, RiskDashboardSummary {
   case_student_not_found_count?: number | string;
 }
 
-export interface LoginLinkListFilters {
-  actorRole: string | null;
-  actorRank: number;
-  actorScope?: DataScope;
-  status?: string;
-  searchTerm?: string;
-  province?: string;
-  district?: string;
-  subDistrict?: string;
-  schoolId?: number;
-  gradeLevelId?: number;
-  room?: string;
-  page?: number;
-  limit?: number;
-}
-
-export interface LoginLinkSummary {
-  total: number;
-  active: number;
-  locked: number;
-  expired: number;
-  scheduled: number;
-}
-
 interface CreateCaseInput {
   studentName: string;
   studentFirstName: string | null;
@@ -146,7 +122,7 @@ interface CreateTaskLinkInput {
    * verified citizen id against this user, so it must be the authoritative
    * reference — not the denormalised name/email beside it.
    */
-  assignedTeacherUserId: number | null;
+  assignedTeacherId: number | null;
   expiresAt: string;
   /** Optional future open time; null = usable immediately. */
   opensAt: string | null;
@@ -155,13 +131,10 @@ interface CreateTaskLinkInput {
   subjectId: number | null;
   otpVerified: number;
   createdBy: number | null;
-  loginRole: string | null;
-  loginPermissions: string[];
-  loginDataScope: DataScope | Record<string, unknown>;
 }
 
 export interface VisitAssigneeRow extends QueryResultRow {
-  teacher_user_id: number | string;
+  teacher_id: string;
   display_name: string;
   email: string | null;
   is_homeroom: boolean;
@@ -467,7 +440,7 @@ export class TaskRepository {
         id,
         name,
         label,
-        rank,
+        sort_order,
         default_permissions,
         scope_mode,
         scope_policy,
@@ -475,14 +448,13 @@ export class TaskRepository {
         is_system
       FROM roles
       WHERE is_assignable = TRUE
-      ORDER BY rank DESC, name ASC
+      ORDER BY sort_order DESC, name ASC
     `);
 
     return result.rows.map((row: QueryResultRow) => ({
       id: Number(row.id),
       name: normalizeScalar(row.name),
       label: normalizeScalar(row.label),
-      rank: Number(row.rank) || 0,
       default_permissions: Array.isArray(row.default_permissions)
         ? row.default_permissions.filter(
             (permission: unknown): permission is string =>
@@ -741,12 +713,9 @@ export class TaskRepository {
           LIMIT 1
         )
         SELECT
-          membership.teacher_user_id,
-          COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          ) AS display_name,
-          teacher.email,
+          membership.teacher_id::text AS teacher_id,
+          TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS display_name,
+          teacher_person.email,
           EXISTS (
             SELECT 1
             FROM classroom_teacher_assignments assignment
@@ -765,15 +734,9 @@ export class TaskRepository {
           ON teacher_person.id = membership.teacher_id
          AND teacher_person.teacher_status = 'ACTIVE'
          AND teacher_person.deleted_at IS NULL
-        JOIN users teacher
-          ON teacher.id = membership.teacher_user_id
-         AND teacher.status = 'ACTIVE'
         ORDER BY
           is_homeroom DESC,
-          COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          ) COLLATE "th-x-icu",
+          TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) COLLATE "th-x-icu",
           membership.id
       `,
       [studentUuid],
@@ -1089,7 +1052,7 @@ export class TaskRepository {
         assigned_to_last_name,
         assigned_to_phone,
         assigned_to_email,
-        assigned_teacher_user_id,
+        assigned_teacher_id,
         expires_at,
         subject,
         assignment_note,
@@ -1097,9 +1060,6 @@ export class TaskRepository {
         otp_verified,
         created_by,
         updated_by,
-        login_role,
-        login_permissions,
-        login_data_scope,
         opens_at
       )
       VALUES (
@@ -1120,10 +1080,7 @@ export class TaskRepository {
         $15,
         $16,
         $16,
-        $17,
-        $18,
-        $19,
-        $20
+        $17
       )
     `,
       [
@@ -1136,30 +1093,15 @@ export class TaskRepository {
         data.assignedToLastName,
         data.assignedToPhone,
         data.assignedToEmail,
-        data.assignedTeacherUserId,
+        data.assignedTeacherId,
         data.expiresAt,
         data.subject,
         data.assignmentNote,
         data.subjectId,
         data.otpVerified,
         data.createdBy,
-        data.loginRole,
-        JSON.stringify(data.loginPermissions),
-        JSON.stringify(data.loginDataScope),
         data.opensAt,
       ],
-    );
-  }
-
-  async markLoginLinkUsed(linkId: string): Promise<void> {
-    await this.query(
-      `
-        UPDATE task_links
-        SET first_used_at = COALESCE(first_used_at, NOW())
-        WHERE id = $1
-          AND first_used_at IS NULL
-      `,
-      [linkId],
     );
   }
 
@@ -1170,7 +1112,6 @@ export class TaskRepository {
         tl.*,
         COALESCE(
           NULLIF(TRIM(current_assignee_teacher.first_name || ' ' || current_assignee_teacher.last_name), ''),
-          current_assignee_user.username,
           tl.assigned_to_name
         ) AS current_assignee_name,
         t.task_type,
@@ -1183,10 +1124,8 @@ export class TaskRepository {
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       LEFT JOIN schools s ON s.id = t.target_school_id
-      LEFT JOIN users current_assignee_user
-        ON current_assignee_user.id = tl.assigned_teacher_user_id
       LEFT JOIN teachers current_assignee_teacher
-        ON current_assignee_teacher.linked_user_id = current_assignee_user.id
+        ON current_assignee_teacher.id = tl.assigned_teacher_id
        AND current_assignee_teacher.deleted_at IS NULL
       WHERE tl.token_hash = $1
         AND tl.deleted_at IS NULL
@@ -1344,195 +1283,6 @@ export class TaskRepository {
     return result.rows;
   }
 
-  async listLoginLinksPaginated(
-    filters: LoginLinkListFilters,
-  ): Promise<{ rows: QueryResultRow[]; totalCount: number; summary: LoginLinkSummary }> {
-    const params: unknown[] = [];
-    const policyConditions: string[] = [
-      `t.task_type = 'LOGIN'`,
-      `tl.deleted_at IS NULL`,
-      `t.deleted_at IS NULL`,
-    ];
-    const linkStateSql = `
-      CASE
-        WHEN tl.expires_at <= NOW() THEN 'EXPIRED'
-        WHEN tl.admin_locked = 1 THEN 'LOCKED'
-        WHEN tl.opens_at IS NOT NULL AND tl.opens_at > NOW() THEN 'SCHEDULED'
-        ELSE 'ACTIVE'
-      END
-    `;
-    const roleRankSql = 'COALESCE(r.rank, 0)';
-    const scopeSql = `COALESCE(tl.login_data_scope::jsonb, '{}'::jsonb)`;
-
-    params.push(filters.actorRank);
-    const actorRankPlaceholder = params.length;
-    params.push(filters.actorRole);
-    const actorRolePlaceholder = params.length;
-    policyConditions.push(`
-      (
-        ${roleRankSql} < $${actorRankPlaceholder}
-        OR ($${actorRolePlaceholder} = 'ADMIN' AND ${roleRankSql} = $${actorRankPlaceholder})
-      )
-    `);
-
-    const scopeQuery = this.buildJsonScopeSubsetQuery(
-      scopeSql,
-      filters.actorScope,
-      params.length + 1,
-    );
-    if (scopeQuery.sql) {
-      policyConditions.push(scopeQuery.sql);
-      params.push(...scopeQuery.params);
-    }
-
-    const policyParamCount = params.length;
-    const filteredConditions = [...policyConditions];
-    if (filters.status && filters.status !== 'ALL') {
-      params.push(filters.status);
-      filteredConditions.push(`${linkStateSql} = $${params.length}`);
-    }
-
-    if (filters.searchTerm) {
-      params.push(`%${filters.searchTerm}%`);
-      const searchPlaceholder = params.length;
-      filteredConditions.push(`
-        (
-          tl.assigned_to_name ILIKE $${searchPlaceholder}
-          OR tl.assigned_to_email ILIKE $${searchPlaceholder}
-          OR tl.login_role ILIKE $${searchPlaceholder}
-          OR r.label ILIKE $${searchPlaceholder}
-          OR CASE (${linkStateSql})
-            WHEN 'LOCKED' THEN 'ปิดใช้งาน'
-            WHEN 'EXPIRED' THEN 'หมดอายุ'
-            ELSE 'ใช้งาน'
-          END ILIKE $${searchPlaceholder}
-        )
-      `);
-    }
-
-    const addLoginScopeFilter = (
-      jsonKey: keyof Omit<DataScope, 'own_only'>,
-      value: string,
-    ): void => {
-      params.push(value);
-      filteredConditions.push(`
-        jsonb_typeof(${scopeSql} -> '${jsonKey}') = 'array'
-        AND EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements_text(${scopeSql} -> '${jsonKey}') AS filter_scope(value)
-          WHERE filter_scope.value = $${params.length}
-        )
-      `);
-    };
-
-    if (filters.province) {
-      addLoginScopeFilter('provinces', filters.province);
-    }
-    if (filters.district) {
-      addLoginScopeFilter('districts', filters.district);
-    }
-    if (filters.subDistrict) {
-      addLoginScopeFilter('sub_districts', filters.subDistrict);
-    }
-    if (filters.schoolId) {
-      addLoginScopeFilter('school_ids', String(filters.schoolId));
-    }
-    if (filters.gradeLevelId) {
-      addLoginScopeFilter('grade_levels', String(filters.gradeLevelId));
-    }
-    if (filters.room) {
-      addLoginScopeFilter('room_ids', filters.room);
-    }
-
-    const fromSql = `
-      FROM task_links tl
-      JOIN tasks t ON t.id = tl.task_id
-      LEFT JOIN roles r ON r.name = COALESCE(NULLIF(TRIM(tl.login_role), ''), 'TEACHER')
-    `;
-    const policyWhereSql = `WHERE ${policyConditions.join(' AND ')}`;
-    const filteredWhereSql = `WHERE ${filteredConditions.join(' AND ')}`;
-
-    const summaryResult = await this.query<QueryResultRow>(
-      `
-      SELECT
-        COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE link_state = 'ACTIVE')::int AS active,
-        COUNT(*) FILTER (WHERE link_state = 'LOCKED')::int AS locked,
-        COUNT(*) FILTER (WHERE link_state = 'EXPIRED')::int AS expired,
-        COUNT(*) FILTER (WHERE link_state = 'SCHEDULED')::int AS scheduled
-      FROM (
-        SELECT ${linkStateSql} AS link_state
-        ${fromSql}
-        ${policyWhereSql}
-      ) scoped_login_links
-    `,
-      params.slice(0, policyParamCount),
-    );
-
-    const countResult = await this.query<CountRow>(
-      `SELECT COUNT(*)::int AS count ${fromSql} ${filteredWhereSql}`,
-      params,
-    );
-    const totalCount = Number.parseInt(String(countResult.rows[0]?.count || '0'), 10);
-
-    const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
-    const page = filters.page && filters.page > 0 ? filters.page : 1;
-    const offset = (page - 1) * limit;
-    const selectParams = [...params, limit, offset];
-    const limitPlaceholder = selectParams.length - 1;
-    const offsetPlaceholder = selectParams.length;
-
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        tl.id,
-        tl.task_id,
-        tl.assigned_to_name,
-        tl.assigned_to_email,
-        tl.expires_at,
-        tl.status,
-        tl.token_encrypted,
-        tl.admin_locked,
-        tl.login_role,
-        tl.login_permissions,
-        tl.login_data_scope,
-        tl.first_used_at,
-        tl.created_by,
-        r.label AS login_role_label,
-        t.created_at,
-        ${linkStateSql} AS link_state
-      ${fromSql}
-      ${filteredWhereSql}
-      ORDER BY t.created_at DESC, tl.id DESC
-      LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
-    `,
-      selectParams,
-    );
-
-    const summaryRow = summaryResult.rows[0] || {};
-    return {
-      rows: result.rows.map(({ token_encrypted, ...row }) => ({
-        ...row,
-        magic_link: this.resolveMagicLink(token_encrypted as string | null),
-      })),
-      totalCount,
-      summary: {
-        total: Number(summaryRow.total || 0),
-        active: Number(summaryRow.active || 0),
-        locked: Number(summaryRow.locked || 0),
-        expired: Number(summaryRow.expired || 0),
-        scheduled: Number(summaryRow.scheduled || 0),
-      },
-    };
-  }
-
-  /**
-   * Soft-delete the task and its links in one transaction so accountability
-   * history survives for audit
-   * and recovery (was a hard `DELETE FROM tasks` that cascade-purged links).
-   * task_submissions are FK-protected and hidden via their join to a live link.
-   * Idempotent via `deleted_at IS NULL`; returns rows affected on the task.
-   */
   async deleteTask(taskId: string, actorId?: number | null): Promise<QueryResultLike> {
     return await this.withTransaction(async (executor) => {
       await executor.query(
@@ -2144,11 +1894,7 @@ export class TaskRepository {
         tl.admin_locked,
         tl.admin_lock_reason,
         tl.subject,
-        tl.login_role,
-        tl.login_permissions,
-        tl.login_data_scope,
         tl.first_used_at,
-        r.label AS login_role_label,
         t.created_at,
         t.task_type,
         COALESCE(
@@ -2165,7 +1911,6 @@ export class TaskRepository {
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
       LEFT JOIN schools s ON s.id = t.target_school_id
-      LEFT JOIN roles r ON r.name = COALESCE(NULLIF(TRIM(tl.login_role), ''), 'TEACHER')
       LEFT JOIN cases c ON c.id = t.case_id
       LEFT JOIN student_term link_enrollment
         ON link_enrollment.student_uuid = c.student_uuid
@@ -2343,7 +2088,6 @@ export class TaskRepository {
         tl.expires_at AS active_link_expires_at,
         COALESCE(
           NULLIF(TRIM(active_assignee_teacher.first_name || ' ' || active_assignee_teacher.last_name), ''),
-          active_assignee_user.username,
           tl.assigned_to_name
         ) AS active_link_assigned_to,
         latest_link.id AS latest_link_id,
@@ -2351,8 +2095,7 @@ export class TaskRepository {
         CASE
           WHEN c.status <> 'RESOLVED' THEN COALESCE(
             NULLIF(TRIM(latest_assignee_teacher.first_name || ' ' || latest_assignee_teacher.last_name), ''),
-            latest_assignee_user.username,
-            latest_link.assigned_to_name
+              latest_link.assigned_to_name
           )
           ELSE latest_link.assigned_to_name
         END AS latest_link_assigned_to,
@@ -2422,15 +2165,11 @@ export class TaskRepository {
         ORDER BY latest_assignee_link.created_at DESC, latest_assignee_link.id DESC
         LIMIT 1
       ) latest_link ON true
-      LEFT JOIN users active_assignee_user
-        ON active_assignee_user.id = tl.assigned_teacher_user_id
       LEFT JOIN teachers active_assignee_teacher
-        ON active_assignee_teacher.linked_user_id = active_assignee_user.id
+        ON active_assignee_teacher.id = tl.assigned_teacher_id
        AND active_assignee_teacher.deleted_at IS NULL
-      LEFT JOIN users latest_assignee_user
-        ON latest_assignee_user.id = latest_link.assigned_teacher_user_id
       LEFT JOIN teachers latest_assignee_teacher
-        ON latest_assignee_teacher.linked_user_id = latest_assignee_user.id
+        ON latest_assignee_teacher.id = latest_link.assigned_teacher_id
        AND latest_assignee_teacher.deleted_at IS NULL
       ${whereSql}
       ORDER BY c.created_at DESC, c.id DESC, t.id DESC NULLS LAST
@@ -2781,7 +2520,7 @@ export class TaskRepository {
           s."RoomID_Onec"::text AS room,
           sc.name AS school_name,
           COALESCE(profile.consecutive_absent_days, 0)::int AS consecutive_absent_days,
-          COALESCE(profile.absent_days, 0)::int AS absent_days,
+          COALESCE(profile.absent_days_since_case_reset, 0)::int AS absent_days_since_case_reset,
           COALESCE(profile.term_absent_days, 0)::int AS term_absent_days,
           profile.absence_reset_after_date,
           COALESCE(profile.late_count, 0)::int AS late_count,
@@ -2808,7 +2547,7 @@ export class TaskRepository {
                 THEN CONCAT('ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0), ' วัน')
               ELSE CONCAT(
                 'ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0),
-                ' วัน · หลังปิดเคสล่าสุด ', COALESCE(profile.absent_days, 0), ' วัน'
+                ' วัน · หลังปิดเคสล่าสุด ', COALESCE(profile.absent_days_since_case_reset, 0), ' วัน'
               )
             END
           ) AS teacher_comment,
@@ -2969,7 +2708,7 @@ export class TaskRepository {
           grade,
           room,
           consecutive_absent_days,
-          absent_days,
+          absent_days_since_case_reset,
           term_absent_days,
           absence_reset_after_date,
           late_count,
@@ -3075,8 +2814,7 @@ export class TaskRepository {
         CASE
           WHEN tl.status = 'ACTIVE' THEN COALESCE(
             NULLIF(TRIM(current_assignee_teacher.first_name || ' ' || current_assignee_teacher.last_name), ''),
-            current_assignee_user.username,
-            tl.assigned_to_name
+              tl.assigned_to_name
           )
           ELSE tl.assigned_to_name
         END AS initial_assignee,
@@ -3117,10 +2855,8 @@ export class TaskRepository {
         latest_submission.assistance_detail
       FROM tasks t
       LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.deleted_at IS NULL
-      LEFT JOIN users current_assignee_user
-        ON current_assignee_user.id = tl.assigned_teacher_user_id
       LEFT JOIN teachers current_assignee_teacher
-        ON current_assignee_teacher.linked_user_id = current_assignee_user.id
+        ON current_assignee_teacher.id = tl.assigned_teacher_id
        AND current_assignee_teacher.deleted_at IS NULL
       LEFT JOIN LATERAL (
         SELECT submission.submitted_at, submission.visited_at,
@@ -3233,20 +2969,20 @@ export class TaskRepository {
 
   /**
    * The identity AraID verification must match: the citizen id of the teacher
-   * this link was issued to. Resolved through `assigned_teacher_user_id`, never
-   * the denormalised email — `users.email` has no unique index.
+   * this link was issued to. Resolved through `assigned_teacher_id`, never the
+   * denormalised email — an email is not a unique identity.
    */
   async findTaskLinkAraIdIdentity(linkId: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
         link.id AS link_id,
-        link.assigned_teacher_user_id,
+        link.assigned_teacher_id,
         link.assigned_to_name,
         teacher.citizen_id AS teacher_citizen_id
       FROM task_links link
       LEFT JOIN teachers teacher
-        ON teacher.linked_user_id = link.assigned_teacher_user_id
+        ON teacher.id = link.assigned_teacher_id
        AND teacher.deleted_at IS NULL
       WHERE link.id = $1 AND link.deleted_at IS NULL
       LIMIT 1
