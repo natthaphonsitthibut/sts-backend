@@ -33,16 +33,14 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * scan `attendance` (991k rows) 890 times. The indexes exist only for the
  * duration of the DELETE and only those created here are dropped again.
  *
- * On the audit rows: `trg_audit_log_immutable` refuses the UPDATE its own
- * foreign key asks for, so the 1,032 entries naming a teacher account are
- * deleted instead, with the guard lifted for exactly that one statement and put
- * back in a `finally`. This is deliberate history deletion, allowed here because
- * the owner confirmed (2026-08-17) the dataset is demo traffic; the same
- * statement against real audit data would not be acceptable.
+ * On audit/PII history: their immutable triggers refuse the `ON DELETE SET NULL`
+ * update requested by their own actor foreign keys. The guards are suspended
+ * only around the account DELETE so the actor reference can become NULL; the
+ * history rows themselves are retained.
  *
  * `down()` restores the schema — columns, constraints and the role definition —
- * so the previous code runs again. It cannot restore the deleted accounts or
- * their log entries, and it does not pretend to.
+ * so the previous code runs again. It cannot restore the deleted login accounts,
+ * but their immutable audit/PII history remains available with a null actor id.
  */
 export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterface {
   name = 'RemoveTeacherUserAccounts20260823120000';
@@ -119,23 +117,68 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
           OR (author_kind = 'TEACHER_ACCESS' AND author_user_id IS NULL)
         )
     `);
-    // One demo observation was written while its teacher still had a login:
-    // author_kind = 'USER' pointing at a teacher account. There is no shape for
-    // it after the move — 'TEACHER_ACCESS' needs a grant it never had — and the
-    // foreign key is RESTRICT, so it cannot simply be orphaned. It goes with the
-    // account that wrote it.
+    // Preserve observations written by a retired teacher account. Their author
+    // name becomes the immutable snapshot once the login row is removed.
     await queryRunner.query(`
-      DELETE FROM student_observation_revisions
-      WHERE observation_id IN (
-        SELECT id FROM student_observations
-        WHERE author_kind = 'USER'
-          AND author_user_id IN (SELECT id FROM users WHERE role = 'TEACHER')
-      )
+      ALTER TABLE student_observations
+        DROP CONSTRAINT IF EXISTS chk_student_observations_task_link_context,
+        DROP CONSTRAINT IF EXISTS chk_student_observations_author_user
     `);
     await queryRunner.query(`
-      DELETE FROM student_observations
-      WHERE author_kind = 'USER'
-        AND author_user_id IN (SELECT id FROM users WHERE role = 'TEACHER')
+      UPDATE student_observations observation
+      SET observer_display_name = COALESCE(
+            NULLIF(TRIM(CONCAT_WS(' ', author."FirstName", author."LastName")), ''),
+            author.username
+          ),
+          author_user_id = NULL
+      FROM users author
+      WHERE author.id = observation.author_user_id
+        AND observation.author_kind = 'USER'
+        AND author.role = 'TEACHER'
+    `);
+    await queryRunner.query(`
+      ALTER TABLE student_observations
+        ADD CONSTRAINT chk_student_observations_task_link_context
+        CHECK (
+          (
+            source_task_link_id IS NULL
+            AND source_timetable_slot_id IS NULL
+            AND (
+              observer_display_name IS NULL
+              OR (author_kind = 'USER' AND author_user_id IS NULL)
+            )
+          )
+          OR (
+            author_kind = 'USER'
+            AND source_task_link_id IS NOT NULL
+            AND source_teacher_access_grant_id IS NULL
+            AND author_teacher_membership_id IS NULL
+            AND source_assignment_id IS NULL
+            AND observer_display_name IS NOT NULL
+          )
+        )
+    `);
+    await queryRunner.query(`
+      ALTER TABLE student_observations
+        ADD CONSTRAINT chk_student_observations_author_user
+        CHECK (
+          (author_kind = 'USER' AND (author_user_id IS NOT NULL OR observer_display_name IS NOT NULL))
+          OR (author_kind = 'TEACHER_ACCESS' AND author_user_id IS NULL)
+        )
+    `);
+    await queryRunner.query(`
+      ALTER TABLE student_observation_revisions
+        ADD COLUMN changed_by_display_name VARCHAR(200)
+    `);
+    await queryRunner.query(`
+      UPDATE student_observation_revisions revision
+      SET changed_by_display_name = COALESCE(
+            NULLIF(TRIM(CONCAT_WS(' ', author."FirstName", author."LastName")), ''),
+            author.username
+          )
+      FROM users author
+      WHERE author.id = revision.changed_by_user_id
+        AND author.role = 'TEACHER'
     `);
     await queryRunner.query(`
       ALTER TABLE student_observation_revisions ALTER COLUMN changed_by_user_id DROP NOT NULL
@@ -148,7 +191,18 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
     await queryRunner.query(`
       ALTER TABLE student_observation_revisions
         ADD CONSTRAINT chk_student_observation_revisions_changed_by
-        CHECK (num_nonnulls(changed_by_user_id, source_teacher_access_grant_id) >= 1)
+        CHECK (
+          num_nonnulls(
+            changed_by_user_id,
+            source_teacher_access_grant_id,
+            changed_by_display_name
+          ) >= 1
+        ),
+        ADD CONSTRAINT chk_student_observation_revisions_changed_by_display_name
+        CHECK (
+          changed_by_display_name IS NULL
+          OR CHAR_LENGTH(BTRIM(changed_by_display_name)) BETWEEN 1 AND 200
+        )
     `);
 
     // 3. The teacher imports keyed off a login username. Teachers are matched by
@@ -314,28 +368,22 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
     }
 
     try {
-      // Three tables refuse to be rewritten. `audit_log` has to be cleared
-      // because its rows name the accounts; `pii_access_events` and
-      // `pii_export_events` have to be cleared because their own foreign keys
-      // ask for an `ON DELETE SET NULL` that their guard then refuses — the
-      // account delete fails outright without this.
-      for (const [table, trigger] of [
+      // Let the actor FKs null their references while retaining immutable rows.
+      const immutableHistoryTriggers = [
         ['audit_log', 'trg_audit_log_immutable'],
         ['pii_access_events', 'trg_pii_access_events_immutable'],
         ['pii_export_events', 'trg_pii_export_events_immutable'],
-      ]) {
+      ] as const;
+      for (const [table, trigger] of immutableHistoryTriggers) {
         await queryRunner.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
-        try {
-          await queryRunner.query(`
-            DELETE FROM ${table}
-            WHERE actor_user_id IN (SELECT id FROM users WHERE role = 'TEACHER')
-          `);
-        } finally {
+      }
+      try {
+        await queryRunner.query(`DELETE FROM users WHERE role = 'TEACHER'`);
+      } finally {
+        for (const [table, trigger] of [...immutableHistoryTriggers].reverse()) {
           await queryRunner.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
         }
       }
-
-      await queryRunner.query(`DELETE FROM users WHERE role = 'TEACHER'`);
     } finally {
       for (const index of createdIndexes) {
         await queryRunner.query(`DROP INDEX IF EXISTS "${index.name}"`);
@@ -508,7 +556,8 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
 
     await queryRunner.query(`
       ALTER TABLE student_observation_revisions
-        DROP CONSTRAINT IF EXISTS chk_student_observation_revisions_changed_by
+        DROP CONSTRAINT IF EXISTS chk_student_observation_revisions_changed_by,
+        DROP CONSTRAINT IF EXISTS chk_student_observation_revisions_changed_by_display_name
     `);
     await queryRunner.query(`
       DELETE FROM student_observation_revisions WHERE changed_by_user_id IS NULL
@@ -517,14 +566,38 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
       ALTER TABLE student_observation_revisions ALTER COLUMN changed_by_user_id SET NOT NULL
     `);
     await queryRunner.query(`
+      ALTER TABLE student_observation_revisions
+        DROP COLUMN IF EXISTS changed_by_display_name
+    `);
+    await queryRunner.query(`
       ALTER TABLE student_observations
-        DROP CONSTRAINT IF EXISTS chk_student_observations_author_user
+        DROP CONSTRAINT IF EXISTS chk_student_observations_author_user,
+        DROP CONSTRAINT IF EXISTS chk_student_observations_task_link_context
     `);
     await queryRunner.query(`
       DELETE FROM student_observations WHERE author_user_id IS NULL
     `);
     await queryRunner.query(`
       ALTER TABLE student_observations ALTER COLUMN author_user_id SET NOT NULL
+    `);
+    await queryRunner.query(`
+      ALTER TABLE student_observations
+        ADD CONSTRAINT chk_student_observations_task_link_context
+        CHECK (
+          (
+            source_task_link_id IS NULL
+            AND source_timetable_slot_id IS NULL
+            AND observer_display_name IS NULL
+          )
+          OR (
+            author_kind = 'USER'
+            AND source_task_link_id IS NOT NULL
+            AND source_teacher_access_grant_id IS NULL
+            AND author_teacher_membership_id IS NULL
+            AND source_assignment_id IS NULL
+            AND observer_display_name IS NOT NULL
+          )
+        )
     `);
 
     await queryRunner.query(`

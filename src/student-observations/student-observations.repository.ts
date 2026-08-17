@@ -499,14 +499,24 @@ export class StudentObservationsRepository {
                revision.concern_level, revision.comment, revision.comment_required,
                revision.observed_at, revision.behavior_tag_ids,
                revision.changed_by_user_id,
-               COALESCE(NULLIF(trim(concat_ws(' ', actor."FirstName", actor."LastName")), ''), actor.username)
-                 AS changed_by_display_name,
+               COALESCE(
+                 revision.changed_by_display_name,
+                 NULLIF(trim(concat_ws(' ', actor."FirstName", actor."LastName")), ''),
+                 actor.username,
+                 NULLIF(trim(concat_ws(' ', source_teacher.first_name, source_teacher.last_name)), ''),
+                 'ผู้บันทึกเดิม'
+               ) AS changed_by_display_name,
                revision.source_teacher_access_grant_id::text,
                revision.change_reason, revision.changed_at,
                COUNT(*) OVER()::int AS total_count
         FROM student_observation_revisions revision
         JOIN observation_dimensions dimension ON dimension.id = revision.observation_dimension_id
-        JOIN users actor ON actor.id = revision.changed_by_user_id
+        LEFT JOIN users actor ON actor.id = revision.changed_by_user_id
+        LEFT JOIN teacher_access_grants source_grant
+          ON source_grant.id = revision.source_teacher_access_grant_id
+        LEFT JOIN school_teacher_memberships source_membership
+          ON source_membership.id = source_grant.teacher_membership_id
+        LEFT JOIN teachers source_teacher ON source_teacher.id = source_membership.teacher_id
         WHERE revision.observation_id = $1
         ORDER BY revision.revision_number DESC
         LIMIT $2 OFFSET $3

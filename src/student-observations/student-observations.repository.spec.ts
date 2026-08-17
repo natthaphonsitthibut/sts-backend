@@ -165,9 +165,11 @@ describe('StudentObservationsRepository', () => {
     const { repository, rawQuery, runner } = createHarness();
     await repository.listRevisions('51', 2, 10, runner);
 
-    expect(String(rawQuery.mock.calls[0][0])).toMatch(
-      /COUNT\(\*\) OVER\(\).*LIMIT \$2 OFFSET \$3/s,
-    );
+    const sql = String(rawQuery.mock.calls[0][0]);
+    expect(sql).toMatch(/COUNT\(\*\) OVER\(\).*LIMIT \$2 OFFSET \$3/s);
+    expect(sql).toContain('LEFT JOIN users actor');
+    expect(sql).toContain('revision.changed_by_display_name');
+    expect(sql).toContain('LEFT JOIN teacher_access_grants source_grant');
     expect(rawQuery.mock.calls[0][1]).toEqual(['51', 10, 10]);
   });
 });

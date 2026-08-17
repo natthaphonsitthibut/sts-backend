@@ -43,6 +43,17 @@ describe('ObservationReviewsRepository', () => {
     expect(queries[0].sql).not.toContain('UPDATE student_risk_profiles');
   });
 
+  it('keeps teacher-link observations visible after their login account is retired', async () => {
+    const { repository, queries } = buildRepository();
+
+    await repository.listTeacherObservationReports({ school_ids: [101] }, { page: 1, limit: 20 });
+
+    expect(queries[0].sql).toContain(
+      'LEFT JOIN users author ON author.id = observation.author_user_id',
+    );
+    expect(queries[0].sql).toContain('observation.observer_display_name');
+  });
+
   it('lists one latest classroom comment per currently enrolled student within actor scope', async () => {
     const { repository, queries } = buildRepository();
     await repository.listTeacherWatchlist(

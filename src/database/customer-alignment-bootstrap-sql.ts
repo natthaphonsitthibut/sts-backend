@@ -747,7 +747,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     student_uuid UUID NOT NULL,
     school_id INTEGER NOT NULL,
     author_kind VARCHAR(24) NOT NULL,
-    author_user_id INTEGER NOT NULL,
+    author_user_id INTEGER,
     author_teacher_membership_id BIGINT,
     source_teacher_access_grant_id UUID,
     source_assignment_id BIGINT,
@@ -804,6 +804,11 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
           AND source_assignment_id IS NOT NULL
         )
       ),
+    CONSTRAINT chk_student_observations_author_user
+      CHECK (
+        (author_kind = 'USER' AND (author_user_id IS NOT NULL OR observer_display_name IS NOT NULL))
+        OR (author_kind = 'TEACHER_ACCESS' AND author_user_id IS NULL)
+      ),
     CONSTRAINT chk_student_observations_observer_display_name
       CHECK (
         observer_display_name IS NULL
@@ -814,7 +819,10 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
         (
           source_task_link_id IS NULL
           AND source_timetable_slot_id IS NULL
-          AND observer_display_name IS NULL
+          AND (
+            observer_display_name IS NULL
+            OR (author_kind = 'USER' AND author_user_id IS NULL)
+          )
         )
         OR (
           author_kind = 'USER'
@@ -873,7 +881,8 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     comment_required BOOLEAN NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL,
     behavior_tag_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    changed_by_user_id INTEGER NOT NULL,
+    changed_by_user_id INTEGER,
+    changed_by_display_name VARCHAR(200),
     source_teacher_access_grant_id UUID,
     change_reason VARCHAR(500),
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -899,6 +908,19 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
       CHECK (
         (concern_level <> 'CONCERN' AND comment_required = FALSE)
         OR (comment IS NOT NULL AND length(trim(comment)) > 0)
+      ),
+    CONSTRAINT chk_student_observation_revisions_changed_by
+      CHECK (
+        num_nonnulls(
+          changed_by_user_id,
+          source_teacher_access_grant_id,
+          changed_by_display_name
+        ) >= 1
+      ),
+    CONSTRAINT chk_student_observation_revisions_changed_by_display_name
+      CHECK (
+        changed_by_display_name IS NULL
+        OR CHAR_LENGTH(BTRIM(changed_by_display_name)) BETWEEN 1 AND 200
       ),
     CONSTRAINT chk_student_observation_revisions_tag_ids
       CHECK (jsonb_typeof(behavior_tag_ids) = 'array'),

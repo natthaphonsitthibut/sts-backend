@@ -96,7 +96,7 @@ export interface StudentObservationRevisionRow extends Record<string, unknown> {
   comment_required: boolean;
   observed_at: string | Date;
   behavior_tag_ids: string[];
-  changed_by_user_id: number;
+  changed_by_user_id: number | null;
   changed_by_display_name: string;
   source_teacher_access_grant_id: string | null;
   change_reason: string | null;

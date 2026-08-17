@@ -369,7 +369,7 @@ export class ObservationReviewsRepository {
            observation.comment,
            observation.observed_at
          FROM student_observations observation
-         JOIN users author ON author.id = observation.author_user_id
+         LEFT JOIN users author ON author.id = observation.author_user_id
          JOIN observation_dimensions dimension
            ON dimension.id = observation.observation_dimension_id
          JOIN student_term enrollment
