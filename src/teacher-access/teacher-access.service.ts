@@ -2233,7 +2233,7 @@ export class TeacherAccessService {
     sessionToken: string | undefined,
   ): Promise<void> {
     if (grant.step_up_policy === 'NONE') return;
-    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'ARAID') {
       throw new ForbiddenException('ลิงก์นี้ต้องยืนยันตัวตนเพิ่มเติม');
     }
     const verified = await this.magicSessionStore.isVerified(grant.id, sessionToken);
@@ -2508,7 +2508,7 @@ export class TeacherAccessService {
 
   async verifyAraId(rawToken: string, araIdProfileId: string) {
     const grant = await this.findUsableGrantForVerification(rawToken);
-    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'ARAID') {
       throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
     }
 
@@ -2529,7 +2529,7 @@ export class TeacherAccessService {
 
   async createAraIdChallenge(rawToken: string, baseUrl: string) {
     const grant = await this.findUsableGrantForVerification(rawToken);
-    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'ARAID') {
       throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
     }
     if (!/^\d{13}$/.test(grant.teacher_citizen_id?.trim() ?? '')) {
@@ -2597,7 +2597,7 @@ export class TeacherAccessService {
     const grant = await this.repository.findGrantById(authorization.challenge.subjectId);
     if (!grant) throw new GoneException('ลิงก์เข้าใช้งานถูกเพิกถอนแล้ว');
     this.assertGrantUsable(grant);
-    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'THAID') {
+    if (grant.step_up_policy !== 'EMAIL_OTP' && grant.step_up_policy !== 'ARAID') {
       throw new BadRequestException('ลิงก์นี้ไม่ได้ใช้การยืนยันตัวตนผ่าน AraID');
     }
     await this.assertAraIdIdentityMatchesGrant(grant, araIdProfileId);
@@ -3277,7 +3277,10 @@ export class TeacherAccessService {
       id: 0,
       teacher_membership_id: Number(context.teacherMembershipId),
       username: context.teacherDisplayName,
-      roles: ['TEACHER'],
+      // No role either: `TEACHER` was a row in `roles` and is not one any more,
+      // and naming a role that does not exist would invite a lookup that returns
+      // nothing. The permission below is what these services actually check.
+      roles: [],
       permissions: ['students'],
       data_scope: { school_ids: [context.schoolId] },
     };

@@ -1315,8 +1315,8 @@ describe('TeacherAccessService', () => {
     expect(magicSessionStore.issue).not.toHaveBeenCalled();
   });
 
-  it('accepts AraID for a THAID step-up policy', async () => {
-    const { service } = createHarness({ step_up_policy: 'THAID' });
+  it('accepts AraID for an ARAID step-up policy', async () => {
+    const { service } = createHarness({ step_up_policy: 'ARAID' });
 
     await expect(
       service.verifyAraId(

@@ -570,7 +570,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT chk_teacher_access_grants_token_hash
       CHECK (token_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT chk_teacher_access_grants_step_up
-      CHECK (step_up_policy IN ('NONE', 'EMAIL_OTP', 'THAID')),
+      CHECK (step_up_policy IN ('NONE', 'EMAIL_OTP', 'ARAID')),
     CONSTRAINT chk_teacher_access_grants_validity
       CHECK (expires_at > issued_at),
     CONSTRAINT chk_teacher_access_grants_revocation

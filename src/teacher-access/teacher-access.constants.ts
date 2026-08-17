@@ -21,7 +21,7 @@ export const TEACHER_ACCESS_ATTENDANCE_CAPABILITY = {
 export const TEACHER_ACCESS_NO_ASSIGNMENT_REASON =
   'ยังไม่มีห้องหรือรายวิชาในภาคเรียนนี้ — กำหนดครูประจำชั้นที่หน้าโครงสร้างโรงเรียน หรือเพิ่มครูผู้สอนในรายวิชาที่หน้าหลักสูตรก่อน';
 
-export const TEACHER_ACCESS_STEP_UP_POLICIES = ['NONE', 'EMAIL_OTP', 'THAID'] as const;
+export const TEACHER_ACCESS_STEP_UP_POLICIES = ['NONE', 'EMAIL_OTP', 'ARAID'] as const;
 export type TeacherAccessStepUpPolicy = (typeof TEACHER_ACCESS_STEP_UP_POLICIES)[number];
 
 export const TEACHER_ACCESS_EXPIRY_POLICIES = ['TERM_END', 'ASSIGNMENT_END'] as const;
