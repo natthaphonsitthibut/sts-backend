@@ -28,7 +28,7 @@ export class EmailService {
     code: string,
     expiresInMinutes = 10,
   ): Promise<{ success: boolean; provider: string }> {
-    if (!this.config.enabled || !this.config.user) {
+    if (!this.config.enabled) {
       if (this.config.logSimulatedOtp) {
         this.logger.warn(`[SIMULATED_EMAIL_OTP] code=${code} expiresInMinutes=${expiresInMinutes}`);
       } else {
@@ -37,6 +37,9 @@ export class EmailService {
         );
       }
       return { success: true, provider: 'SIMULATOR' };
+    }
+    if (!this.config.user) {
+      throw new Error('Email delivery is enabled but EMAIL_USER is not configured');
     }
 
     const content = this.buildOtpContent(code, expiresInMinutes);

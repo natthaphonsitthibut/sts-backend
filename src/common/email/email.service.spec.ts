@@ -50,4 +50,26 @@ describe('EmailService', () => {
     expect(logged).not.toContain('123456');
     warn.mockRestore();
   });
+
+  it('fails closed when delivery is enabled without a sender account', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = new EmailService({
+      enabled: true,
+      logSimulatedOtp: false,
+      host: 'smtp.example.invalid',
+      port: 587,
+      user: '',
+      pass: '',
+      from: 'noreply@example.invalid',
+      oauthClientId: '',
+      oauthClientSecret: '',
+      oauthRefreshToken: '',
+    });
+
+    await expect(service.sendOTP('teacher@example.invalid', '123456')).rejects.toThrow(
+      'EMAIL_USER is not configured',
+    );
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });

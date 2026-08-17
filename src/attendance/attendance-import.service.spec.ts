@@ -21,7 +21,11 @@ const CONFIG: AttendanceImportRuntimeConfig = {
 };
 
 function createService(overrides: Partial<AttendanceImportRuntimeConfig> = {}) {
-  return new AttendanceImportService({ ...CONFIG, ...overrides });
+  return new AttendanceImportService(
+    { ...CONFIG, ...overrides },
+    { record: jest.fn(), list: jest.fn(), findForDownload: jest.fn() } as never,
+    { save: jest.fn(), open: jest.fn() } as never,
+  );
 }
 
 function workbookBuffer(rows: unknown[][]): Buffer {
@@ -35,6 +39,70 @@ function upload(buffer: Buffer, originalname = 'attendance.xlsx'): Express.Multe
 }
 
 describe('AttendanceImportService', () => {
+  describe('recordApplied', () => {
+    function createRecordService() {
+      const history = { record: jest.fn().mockResolvedValue({ id: '41' }) };
+      const storage = { save: jest.fn(), open: jest.fn() };
+      return {
+        history,
+        storage,
+        service: new AttendanceImportService(CONFIG, history as never, storage as never),
+      };
+    }
+
+    const input = {
+      schoolId: 1,
+      schoolTermId: 2,
+      classroomId: 3,
+      attendanceDate: '2026-08-18',
+      timetableSlotId: null,
+      subjectId: null,
+      fileName: 'attendance.xlsx',
+      rowCount: 10,
+      appliedCount: 9,
+      importedBy: 4,
+      importedByLabel: 'ผู้ใช้ ทดสอบ',
+    };
+
+    it('validates an applied URL again instead of trusting the preview request', async () => {
+      const { service, history } = createRecordService();
+
+      await expect(
+        service.recordApplied({ ...input, sourceUrl: 'javascript:alert(1)' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(history.record).not.toHaveBeenCalled();
+    });
+
+    it('stores only a normalized allowlisted HTTPS URL', async () => {
+      const { service, history } = createRecordService();
+
+      await service.recordApplied({
+        ...input,
+        sourceUrl: ' https://docs.google.com/spreadsheets/d/abc123/edit ',
+      });
+
+      expect(history.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceUrl: 'https://docs.google.com/spreadsheets/d/abc123/edit',
+        }),
+      );
+    });
+
+    it('rejects a request that claims both file and URL provenance', async () => {
+      const { service, history, storage } = createRecordService();
+
+      await expect(
+        service.recordApplied({
+          ...input,
+          sourceUrl: 'https://docs.google.com/spreadsheets/d/abc123/edit',
+          file: upload(workbookBuffer([['student']])),
+        }),
+      ).rejects.toThrow(/อย่างใดอย่างหนึ่ง/);
+      expect(history.record).not.toHaveBeenCalled();
+      expect(storage.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('parseUpload', () => {
     it('reads headers and trimmed rows from the first sheet', () => {
       const sheet = createService().parseUpload(

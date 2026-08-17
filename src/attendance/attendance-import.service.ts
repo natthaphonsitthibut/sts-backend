@@ -57,6 +57,10 @@ export class AttendanceImportService {
       file?: Express.Multer.File;
     },
   ): Promise<{ id: string }> {
+    const normalizedSourceUrl = input.sourceUrl ? this.normalizeSourceUrl(input.sourceUrl) : null;
+    if (input.file?.buffer?.length && normalizedSourceUrl) {
+      throw new BadRequestException('เลือกต้นทางเป็นไฟล์หรือลิงก์อย่างใดอย่างหนึ่ง');
+    }
     let storageKey: string | null = null;
     let fileSizeBytes: number | null = null;
     if (input.file?.buffer?.length) {
@@ -68,11 +72,12 @@ export class AttendanceImportService {
       fileSizeBytes = input.file.buffer.byteLength;
       await this.storage.save(input.file.buffer, storageKey);
     }
-    if (!storageKey && !input.sourceUrl) {
+    if (!storageKey && !normalizedSourceUrl) {
       throw new BadRequestException('ต้องมีไฟล์หรือลิงก์ต้นทางอย่างน้อยหนึ่งอย่าง');
     }
     return await this.history.record({
       ...input,
+      sourceUrl: normalizedSourceUrl,
       storageKey,
       fileSizeBytes,
     });
@@ -196,6 +201,12 @@ export class AttendanceImportService {
       throw new BadRequestException('ลิงก์ไม่ถูกต้อง');
     }
     return url;
+  }
+
+  private normalizeSourceUrl(rawUrl: string): string {
+    const url = this.parseHttpsUrl(rawUrl);
+    this.assertHostAllowed(url);
+    return url.toString();
   }
 
   private isOneDriveHost(hostname: string): boolean {

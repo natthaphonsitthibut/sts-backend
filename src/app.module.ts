@@ -22,6 +22,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { StudentsModule } from './students/students.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { appConfig } from './config/app.config';
+import { araIdConfig } from './config/araid.config';
 import { attendanceImportConfig } from './config/attendance-import.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
@@ -59,6 +60,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
       isGlobal: true,
       load: [
         appConfig,
+        araIdConfig,
         attendanceImportConfig,
         authConfig,
         databaseConfig,

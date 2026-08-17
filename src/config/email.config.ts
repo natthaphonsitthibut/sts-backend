@@ -29,9 +29,10 @@ function parsePort(value: string | undefined, fallback: number): number {
 
 export function getEmailConfigFromEnv(): EmailRuntimeConfig {
   const nodeEnv = (process.env.NODE_ENV || 'development').trim().toLowerCase();
+  const enabled = parseBoolean(process.env.EMAIL_ENABLED);
   return {
-    enabled: parseBoolean(process.env.EMAIL_ENABLED),
-    logSimulatedOtp: nodeEnv !== 'production',
+    enabled,
+    logSimulatedOtp: nodeEnv === 'development' && !enabled,
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port: parsePort(process.env.EMAIL_PORT, 587),
     user: process.env.EMAIL_USER || '',
