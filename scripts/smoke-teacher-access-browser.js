@@ -558,7 +558,9 @@ async function main() {
       `({
         hasAraId: document.body.innerText.includes('AraID'),
         hasEmail: document.body.innerText.includes('อีเมล'),
-        hasGuestProfile: Boolean(document.querySelector('[aria-label^="ผู้รับมอบหมาย"]')),
+        hasGuestProfile: Boolean(
+          document.querySelector('[aria-label^="เปิดเมนูบัญชีผู้ใช้"]'),
+        ),
       })`,
     );
     assert(
@@ -666,6 +668,60 @@ async function main() {
         ),
       'Teacher classroom route did not preserve its breadcrumb/menu owner',
     );
+
+    // The link header carries the same identity popover as the signed-in shell,
+    // showing who the link belongs to and offering neither of the two actions a
+    // link cannot honour.
+    const hasProfileTrigger = await evaluate(
+      client,
+      `(() => {
+        const trigger = document.querySelector('header [aria-label^="เปิดเมนูบัญชีผู้ใช้"]');
+        if (!trigger) return false;
+        trigger.click();
+        return true;
+      })()`,
+    );
+    assert(hasProfileTrigger, 'Teacher link header has no profile control');
+    // The panel mounts on the next render, so reading it in the click's own tick
+    // would report it missing every time.
+    await waitFor(
+      async () => await evaluate(client, `Boolean(document.querySelector('#header-profile-menu'))`),
+      'Teacher link header profile did not open',
+    );
+    const linkProfile = await evaluate(
+      client,
+      `(() => {
+        const panel = document.querySelector('#header-profile-menu');
+        const photo = panel.querySelector('[data-slot="avatar"]');
+        const lines = photo ? photo.parentElement.lastElementChild : null;
+        const photoBox = photo ? photo.getBoundingClientRect() : null;
+        const linesBox = lines ? lines.getBoundingClientRect() : null;
+        return {
+          text: panel.innerText,
+          items: [...panel.querySelectorAll('[role="menuitem"]')].map((item) =>
+            item.innerText.trim(),
+          ),
+          photoCenter: photoBox ? photoBox.y + photoBox.height / 2 : null,
+          linesCenter: linesBox ? linesBox.y + linesBox.height / 2 : null,
+        };
+      })()`,
+    );
+    // The photo is centred against the three identity lines rather than pinned to
+    // the name, which is what the reference layout shows.
+    assert(
+      linkProfile.photoCenter !== null &&
+        Math.abs(linkProfile.photoCenter - linkProfile.linesCenter) <= 1.5,
+      `Teacher link profile photo is not centred on its text: ${JSON.stringify(linkProfile)}`,
+    );
+    assert(
+      linkProfile.text.includes('สังกัด:') && linkProfile.text.includes('ตำแหน่ง: คุณครู'),
+      `Teacher link profile is missing สังกัด/ตำแหน่ง: ${JSON.stringify(linkProfile)}`,
+    );
+    assert(
+      linkProfile.items.length === 0,
+      `Teacher link profile must offer no actions: ${JSON.stringify(linkProfile.items)}`,
+    );
+    await evaluate(client, `document.body.click(), true`);
     // The breadcrumb container mounts before its links do, so this has to wait
     // for the crumbs themselves instead of reading them one tick too early.
     const readClassroomCrumbs = async () =>
@@ -1940,7 +1996,7 @@ async function main() {
     );
     const resultHasProfile = await evaluate(
       client,
-      `Boolean(document.querySelector('header [aria-label^="ผู้รับมอบหมาย"]'))`,
+      `Boolean(document.querySelector('header [aria-label^="เปิดเมนูบัญชีผู้ใช้"]'))`,
     );
     assert(!resultHasProfile, 'LINE link result rendered an unnecessary guest profile avatar');
 
@@ -1966,6 +2022,7 @@ async function main() {
           'teacher-link classroom, history and student routes keep their breadcrumbs, menu owner and safe back targets',
           'LINE invitations are scoped to unverified teacher rows with no global reusable URL',
           'QR scan lists the student with avatar, student number and time, carrying status as colour rather than a pill',
+          'teacher-link header opens the shared profile popover with no link-less actions',
           'teacher-link roster renders one profile avatar per visible teacher',
           'teacher-link roster avatar opens the matching teacher record',
           'LINE unlink icons stay visible, disable by verification state and refresh after unlink',

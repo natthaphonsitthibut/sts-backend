@@ -213,6 +213,31 @@ async function main() {
       'The login page still mentions ThaID');
     checked.push(`login page offers "${button}" and no ThaID`);
 
+    // The label sat at the top of the 48px button because a `block` class beat
+    // the base button's `inline-flex`, which is what centres it.
+    const labelBox = await evaluate(client, `(() => {
+      const target = [...document.querySelectorAll('button')]
+        .find((element) => (element.textContent || '').includes('AraID'));
+      const label = [...target.querySelectorAll('span')]
+        .find((node) => node.textContent.trim().startsWith('เข้าสู่ระบบด้วย AraID'));
+      const outer = target.getBoundingClientRect();
+      const inner = (label || target).getBoundingClientRect();
+      return {
+        display: getComputedStyle(target).display,
+        buttonCenter: outer.y + outer.height / 2,
+        labelCenter: inner.y + inner.height / 2,
+      };
+    })()`);
+    assert(
+      labelBox.display.includes('flex'),
+      `The AraID button must stay a flex box to centre its label: ${JSON.stringify(labelBox)}`,
+    );
+    assert(
+      Math.abs(labelBox.buttonCenter - labelBox.labelCenter) <= 1.5,
+      `The AraID button label is not vertically centred: ${JSON.stringify(labelBox)}`,
+    );
+    checked.push('its label is vertically centred in the button');
+
     await evaluate(client, `(() => {
       const target = [...document.querySelectorAll('button')]
         .find((element) => (element.textContent || '').includes('AraID'));
@@ -228,7 +253,18 @@ async function main() {
       text: document.body.innerText.slice(0, 400),
     }))()`);
     assert(panel.hasQr, 'No QR image on the panel');
-    checked.push('clicking it renders a QR panel with a reference code');
+
+    // The QR is the whole screen, the way entering a guest link is: the password
+    // form it replaces must be gone rather than sitting above it.
+    const replacedLogin = await evaluate(client, `({
+      hasPasswordField: Boolean(document.querySelector('input[type="password"]')),
+      hasLoginHeading: document.body.innerText.includes('เข้าสู่ระบบ STS'),
+    })`);
+    assert(
+      !replacedLogin.hasPasswordField && !replacedLogin.hasLoginHeading,
+      `The QR screen must replace the login card, not stack under it: ${JSON.stringify(replacedLogin)}`,
+    );
+    checked.push('clicking it replaces the login page with a full-screen QR');
 
     // The panel polls while the phone is being used. This is where the flow used
     // to die: these endpoints shared the OTP bucket (10 per minute) against a
