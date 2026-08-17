@@ -68,4 +68,20 @@ describe('retired account migration history safety', () => {
       source.indexOf("DELETE FROM users WHERE role = 'TEACHER'"),
     );
   });
+
+  it('backfills attendance teacher identity in indexed bounded batches', () => {
+    const source = readMigration('20260823090000-PointTeacherIdentityAtTeachers.ts');
+    const temporaryIndex = 'tmp_20260823_attendance_recorded_by_backfill';
+
+    expect(source).toContain(`CREATE INDEX ${temporaryIndex}`);
+    expect(source).toContain('LIMIT 20000');
+    expect(source).toContain('do {');
+    expect(source).toContain(`DROP INDEX ${temporaryIndex}`);
+    expect(source.indexOf(`CREATE INDEX ${temporaryIndex}`)).toBeLessThan(
+      source.indexOf('WITH candidates AS'),
+    );
+    expect(source.indexOf('WITH candidates AS')).toBeLessThan(
+      source.indexOf(`DROP INDEX ${temporaryIndex}`),
+    );
+  });
 });
