@@ -45,7 +45,7 @@ import type {
 } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository, type UserListFilters } from './users.repository';
-import type { ActorContext, DataScope, QueryExecutor } from './users.types';
+import type { ActorContext } from './users.types';
 
 interface LifecycleAuditMeta {
   ip?: string | null;
@@ -55,7 +55,9 @@ interface LifecycleAuditMeta {
 
 const SUPER_ADMIN_ROLE = 'ADMIN';
 export const TEMP_PASSWORD_TTL_DAYS = 7;
-const HARD_DELETE_PERMISSION = 'manage-users-hard-delete';
+// Deleting an account for good is work done on the จัดการผู้ใช้งาน page, so it
+// rides on that page's permission rather than a separate one.
+const HARD_DELETE_PERMISSION = 'manage-users-list';
 const USERNAME_ALREADY_USED_MESSAGE = 'ชื่อผู้ใช้งานนี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น';
 
 function cleanNullableText(value: unknown): string | null {
@@ -173,58 +175,6 @@ export class UsersService {
       });
     }
     return await this.getUserById(id, actor);
-  }
-
-  private resolveTeacherSchoolIds(role: string, scope: DataScope): number[] {
-    if (role !== 'TEACHER') {
-      return [];
-    }
-    const schoolIds = normalizeNumericScopeValues(scope.school_ids);
-    if (schoolIds.length === 0) {
-      throw new BadRequestException('กรุณาเลือกโรงเรียนสังกัดสำหรับบัญชีครู');
-    }
-    return schoolIds;
-  }
-
-  private async reconcileTeacherMemberships(
-    userId: number,
-    schoolIds: number[],
-    actor: ActorContext,
-    executor: QueryExecutor,
-  ): Promise<void> {
-    if (schoolIds.length > 0) {
-      const schools = await this.usersRepository.findSchoolNamesByIds(schoolIds, executor);
-      if (schools.length !== schoolIds.length) {
-        throw new BadRequestException('โรงเรียนสังกัดของบัญชีครูไม่ถูกต้อง');
-      }
-    }
-    const result = await this.usersRepository.reconcileTeacherMemberships(
-      {
-        teacherUserId: userId,
-        schoolIds,
-        actorUserId: resolveAuditActorId(actor),
-      },
-      executor,
-    );
-    if (result.activatedSchoolIds.length === 0 && result.endedSchoolIds.length === 0) {
-      return;
-    }
-    await this.auditLog.recordAtomic(
-      {
-        actorUserId: resolveAuditActorId(actor),
-        actorLabel: actor.username,
-        action: 'MASTER_DATA_EDIT',
-        targetType: 'school_teacher_memberships',
-        targetId: String(userId),
-        metadata: {
-          op: 'sync-from-user',
-          activatedSchoolIds: result.activatedSchoolIds,
-          endedSchoolIds: result.endedSchoolIds,
-        },
-        ip: null,
-      },
-      executor,
-    );
   }
 
   async revealUserAddress(
@@ -345,14 +295,13 @@ export class UsersService {
     const actorRole = this.usersPolicyService.getPrimaryRole({
       roles: currentActor.roles,
     });
-    const actorRank = this.usersPolicyService.getRoleRank(actorRole, roleMap);
     const page = resolvePage(filters.page);
     const limit = resolveLimit(filters.limit);
     const { rows, totalCount, lifecycleStatusCounts } =
       await this.usersRepository.listUsersPaginated({
         actorId: currentActor.id,
         actorRole,
-        actorRank,
+        actorPermissions: currentActor.permissions || [],
         actorScope: currentActor.data_scope,
         excludeRole: filters.excludeRole,
         sortBy: filters.sortBy,
@@ -406,13 +355,6 @@ export class UsersService {
       throw new ForbiddenException('ไม่มีสิทธิ์เข้าถึงข้อมูลผู้ใช้งานนี้');
     }
 
-    const isStudent = user.roles?.includes('STUDENT');
-    const [studentUuid, resolvedNationalId] = isStudent
-      ? await Promise.all([
-          this.usersRepository.findCurrentStudentUuidByUserId(user.id),
-          this.usersRepository.findResolvedNationalIdByUserId(user.id),
-        ])
-      : [null, user.PersonID_Onec ?? null];
     const {
       photo_storage_key: photoStorageKey,
       role_default_permissions: _roleDefaultPermissions,
@@ -424,9 +366,9 @@ export class UsersService {
       photo_url: photoStorageKey
         ? `/api/users/${user.id}/photo?v=${encodeMediaVersion(user.updated_at)}`
         : null,
-      PersonID_Onec: normalizeNationalIdValue(resolvedNationalId) || null,
+      PersonID_Onec: normalizeNationalIdValue(user.PersonID_Onec ?? null) || null,
     };
-    return studentUuid ? { ...resolvedUser, student_uuid: studentUuid } : resolvedUser;
+    return resolvedUser;
   }
 
   async getUserDetailById(id: number, actor?: ActorContext) {
@@ -435,8 +377,6 @@ export class UsersService {
       return null;
     }
 
-    const studentUuid =
-      'student_uuid' in user && typeof user.student_uuid === 'string' ? user.student_uuid : null;
     const [schoolLabels, gradeLevelLabels] = await Promise.all([
       this.usersRepository.findSchoolNamesByIds(
         normalizeNumericScopeValues(user.data_scope?.school_ids),
@@ -489,7 +429,6 @@ export class UsersService {
       deactivation_reason_code: user.deactivation_reason_code ?? null,
       deactivation_note: user.deactivation_note ?? null,
       created_at: user.created_at ?? null,
-      student_uuid: studentUuid,
       has_profile_location: hasProfileLocation,
       data_scope_labels: {
         schools: schoolLabels,
@@ -572,14 +511,6 @@ export class UsersService {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
     }
     const user = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
-    const isStudent = user.roles?.includes('STUDENT') ?? false;
-    const [studentUuid, studentContact, resolvedNationalId] = isStudent
-      ? await Promise.all([
-          this.usersRepository.findCurrentStudentUuidByUserId(user.id),
-          this.usersRepository.findStudentPersonContactByUserId(user.id),
-          this.usersRepository.findResolvedNationalIdByUserId(user.id),
-        ])
-      : [null, null, user.PersonID_Onec ?? null];
     const [schoolLabels, gradeLevelLabels] = await Promise.all([
       this.usersRepository.findSchoolNamesByIds(
         normalizeNumericScopeValues(user.data_scope?.school_ids),
@@ -595,13 +526,10 @@ export class UsersService {
       photo_url: user.photo_storage_key
         ? `/api/users/me/photo?v=${encodeMediaVersion(user.updated_at)}`
         : null,
-      PersonID_Onec: normalizeNationalIdValue(resolvedNationalId) || null,
-      phone: studentContact?.has_canonical_contact ? studentContact.phone : (user.phone ?? null),
-      email: studentContact?.has_canonical_contact ? studentContact.email : (user.email ?? null),
-      line_id: studentContact?.has_canonical_contact
-        ? studentContact.line_id
-        : (user.line_id ?? null),
-      student_uuid: studentUuid,
+      PersonID_Onec: normalizeNationalIdValue(user.PersonID_Onec ?? null) || null,
+      phone: user.phone ?? null,
+      email: user.email ?? null,
+      line_id: user.line_id ?? null,
       data_scope_labels: {
         schools: schoolLabels,
         gradeLevels: gradeLevelLabels,
@@ -619,13 +547,6 @@ export class UsersService {
     }
 
     const existingUser = this.usersPolicyService.hydrateUserPermissions(existingRow, roleMap);
-    const isStudent = existingUser.roles?.includes('STUDENT') ?? false;
-    const studentContact = isStudent
-      ? await this.usersRepository.findStudentPersonContactByUserId(currentActor.id)
-      : null;
-    if (isStudent && !studentContact) {
-      throw new BadRequestException('บัญชีนักเรียนยังไม่ได้เชื่อมกับข้อมูลบุคคล');
-    }
     const firstName =
       data.FirstName !== undefined ? cleanNullableText(data.FirstName) : existingUser.FirstName;
     const lastName =
@@ -647,23 +568,11 @@ export class UsersService {
     }
 
     const phone =
-      data.phone !== undefined
-        ? cleanNullableText(data.phone)
-        : studentContact?.has_canonical_contact
-          ? studentContact.phone
-          : (existingUser.phone ?? null);
+      data.phone !== undefined ? cleanNullableText(data.phone) : (existingUser.phone ?? null);
     const email =
-      data.email !== undefined
-        ? cleanNullableText(data.email)
-        : studentContact?.has_canonical_contact
-          ? studentContact.email
-          : (existingUser.email ?? null);
+      data.email !== undefined ? cleanNullableText(data.email) : (existingUser.email ?? null);
     const lineId =
-      data.line_id !== undefined
-        ? cleanNullableText(data.line_id)
-        : studentContact?.has_canonical_contact
-          ? studentContact.line_id
-          : (existingUser.line_id ?? null);
+      data.line_id !== undefined ? cleanNullableText(data.line_id) : (existingUser.line_id ?? null);
     const profileUpdate = {
       id: currentActor.id,
       firstName,
@@ -716,21 +625,7 @@ export class UsersService {
       updatedBy: resolveAuditActorId(currentActor),
     };
 
-    await this.usersRepository.withTransaction(async (executor) => {
-      await this.usersRepository.updateOwnProfile(profileUpdate, executor);
-      if (studentContact) {
-        await this.usersRepository.upsertStudentPersonContact(
-          {
-            personUuid: studentContact.person_uuid,
-            phone,
-            email,
-            lineId,
-            updatedBy: resolveAuditActorId(currentActor),
-          },
-          executor,
-        );
-      }
-    });
+    await this.usersRepository.updateOwnProfile(profileUpdate);
 
     return await this.getOwnProfile(currentActor);
   }
@@ -750,8 +645,6 @@ export class UsersService {
         roleMap,
       );
       const primaryRole = this.usersPolicyService.normalizeRole(data);
-      const teacherSchoolIds = this.resolveTeacherSchoolIds(primaryRole, persistedScope);
-
       const usesTemporaryPassword = data.password == null;
       const password = data.password ?? this.passwordService.generateTempPassword();
       if ((data.address_latitude == null) !== (data.address_longitude == null)) {
@@ -780,7 +673,6 @@ export class UsersService {
             firstName: data.FirstName,
             lastName: data.LastName,
             personIdOnec: data.PersonID_Onec,
-            personUuid: null,
             phone: data.phone || null,
             email: data.email || null,
             affiliation: data.affiliation || null,
@@ -805,12 +697,6 @@ export class UsersService {
             temporaryPasswordExpiresAt,
             createdBy: resolveAuditActorId(currentActor),
           },
-          executor,
-        );
-        await this.reconcileTeacherMemberships(
-          createdUserId,
-          teacherSchoolIds,
-          currentActor,
           executor,
         );
         return createdUserId;
@@ -884,8 +770,6 @@ export class UsersService {
       );
 
       const primaryRole = requestedRole;
-      const teacherSchoolIds = this.resolveTeacherSchoolIds(primaryRole, persistedScope);
-
       await this.usersRepository.withTransaction(async (executor) => {
         if (
           data.username !== undefined &&
@@ -972,7 +856,6 @@ export class UsersService {
           },
           executor,
         );
-        await this.reconcileTeacherMemberships(id, teacherSchoolIds, currentActor, executor);
       });
 
       return { success: true };
@@ -1259,13 +1142,12 @@ export class UsersService {
     return definitions.filter(
       (role) =>
         role.name === actorRole ||
-        (this.usersPolicyService.canManageRole(actorRole, role.name, roleMap) &&
-          this.usersPolicyService.canGrantPermissions(
-            actor.permissions || [],
-            role.default_permissions || [],
-            actorRole,
-            roleMap,
-          )),
+        this.usersPolicyService.canGrantPermissions(
+          actor.permissions || [],
+          role.default_permissions || [],
+          actorRole,
+          roleMap,
+        ),
     );
   }
 

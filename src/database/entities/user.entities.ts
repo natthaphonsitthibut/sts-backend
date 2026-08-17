@@ -11,9 +11,6 @@ export class RoleEntity {
   @Column({ name: 'label', type: 'text' })
   label!: string;
 
-  @Column({ name: 'rank', type: 'integer', default: 0 })
-  rank!: number;
-
   @Column({
     name: 'default_permissions',
     type: 'jsonb',

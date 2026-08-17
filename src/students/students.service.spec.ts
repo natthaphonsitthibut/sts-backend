@@ -271,7 +271,7 @@ describe('StudentsService', () => {
     await service.update(
       student.student_uuid,
       { FirstName_Onec: 'สมศรี' },
-      { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['edit-students'] },
+      { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['students'] },
       { school_ids: [10010002] },
     );
 
@@ -325,28 +325,6 @@ describe('StudentsService', () => {
     expect(result.resolved_home_lat).toBe(18.8);
     expect(result.resolved_home_lng).toBe(99.0);
     expect(result.is_approximate_home_location).toBe(true);
-  });
-
-  it('keeps student-self attendance limited to the actor own enrollment', async () => {
-    const studentUuid = '00000000-0000-4000-8000-000000000001';
-    const actor = {
-      id: 50,
-      username: 'student.self',
-      roles: [],
-      permissions: ['student-self'],
-      data_scope: { own_only: true },
-      virtual_login: true,
-      auth_source: 'THAID_MOCK' as const,
-      student_uuid: studentUuid,
-      person_uuid: '10000000-0000-4000-8000-000000000001',
-    };
-    studentsRepository.listAttendanceByStudentId.mockResolvedValue([]);
-
-    await expect(service.findAttendanceByStudentId(studentUuid, actor)).resolves.toEqual([]);
-    expect(studentsRepository.listAttendanceByStudentId).toHaveBeenCalledWith(
-      studentUuid,
-      undefined,
-    );
   });
 
   it('returns current-term GPA, cumulative GPAX, and attendance rate from persisted rows', async () => {
@@ -453,65 +431,9 @@ describe('StudentsService', () => {
     });
   });
 
-  it('lets a student self-edit contact and guardians but never enrollment fields', async () => {
-    const studentUuid = '00000000-0000-4000-8000-000000000001';
-    const personUuid = '10000000-0000-4000-8000-000000000001';
-    const actor = {
-      id: 50,
-      username: 'student.self',
-      roles: [],
-      permissions: ['student-self'],
-      data_scope: { own_only: true },
-      virtual_login: true,
-      auth_source: 'THAID_MOCK' as const,
-      student_uuid: studentUuid,
-      person_uuid: personUuid,
-    };
-    studentsRepository.findStudentById.mockResolvedValue({
-      student_uuid: studentUuid,
-      PersonID_Onec: 'masked',
-    });
-    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
-    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(personUuid);
-    studentsRepository.findStudentPersonContact.mockResolvedValue(null);
-
-    await expect(
-      service.update(studentUuid, { FirstName_Onec: 'ใหม่' }, actor),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(studentsRepository.updateStudentByUuid).not.toHaveBeenCalled();
-
-    await service.update(
-      studentUuid,
-      {
-        contact: { phone: '0812345678' },
-        guardians: [
-          { relation: 'MOTHER', full_name: 'สมหญิง ใจดี', phone: '0898765432', is_primary: true },
-        ],
-      },
-      actor,
-    );
-
-    expect(studentsRepository.updateStudentPersonContacts).toHaveBeenCalledWith(
-      personUuid,
-      { phone: '0812345678' },
-      [
-        {
-          relation: 'MOTHER',
-          first_name: 'สมหญิง',
-          last_name: 'ใจดี',
-          full_name: 'สมหญิง ใจดี',
-          phone: '0898765432',
-          is_primary: true,
-        },
-      ],
-      null,
-    );
-    expect(studentsRepository.updateStudentByUuid).not.toHaveBeenCalled();
-  });
-
   it('rejects a GUARDIAN row without relation_note and duplicate primary contacts', async () => {
     const studentUuid = '00000000-0000-4000-8000-000000000001';
-    const staff = { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['edit-students'] };
+    const staff = { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['students'] };
     studentsRepository.findStudentById.mockResolvedValue({
       student_uuid: studentUuid,
       PersonID_Onec: 'masked',
@@ -557,7 +479,7 @@ describe('StudentsService', () => {
     await service.update(
       studentUuid,
       { contact: { phone: '0812345678' } },
-      { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['edit-students'] },
+      { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['students'] },
     );
     expect(studentsRepository.updateStudentPersonContacts).toHaveBeenCalledWith(
       '10000000-0000-4000-8000-000000000001',
@@ -565,26 +487,5 @@ describe('StudentsService', () => {
       undefined,
       5,
     );
-  });
-
-  it('denies student-self detail for another canonical person', async () => {
-    const requestedUuid = '00000000-0000-4000-8000-000000000002';
-    const actor = {
-      id: 50,
-      username: 'student.self',
-      roles: [],
-      permissions: ['student-self'],
-      data_scope: { own_only: true },
-      virtual_login: true,
-      auth_source: 'THAID_MOCK' as const,
-      student_uuid: '00000000-0000-4000-8000-000000000001',
-      person_uuid: '10000000-0000-4000-8000-000000000001',
-    };
-    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(
-      '10000000-0000-4000-8000-000000000002',
-    );
-
-    await expect(service.findOne(requestedUuid, actor)).rejects.toBeInstanceOf(NotFoundException);
-    expect(studentsRepository.findStudentById).not.toHaveBeenCalled();
   });
 });

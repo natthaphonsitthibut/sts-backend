@@ -14,7 +14,7 @@ describe('GeoController', () => {
 
     expect(classGuards).toEqual([AuthGuard, PermissionsGuard]);
     expect(methodGuards).toContain(ThrottlerGuard);
-    expect(permissions).toEqual(['create']);
+    expect(permissions).toEqual(['dashboard']);
   });
 
   it('allows authenticated profile geocoding without the create permission', () => {

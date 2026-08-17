@@ -170,9 +170,9 @@ async function main() {
       username: teacherUsername,
       passwordHash: teacherPasswordHash,
       firstName: 'Account',
-      lastName: 'Lifecycle Teacher',
+      lastName: 'Lifecycle Staff',
       permissions: ['home', 'attendance'],
-      role: 'TEACHER',
+      role: 'DIRECTOR',
       dataScope: { school_ids: [10010002] },
     });
 

@@ -1,6 +1,26 @@
 import { UsersRepository } from './users.repository';
 
 describe('UsersRepository user list queries', () => {
+  it('selects role usage without a trailing select-list comma', async () => {
+    const queries: string[] = [];
+    const repository = new UsersRepository({
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn().mockImplementation((sql: string) => {
+          queries.push(sql);
+          return Promise.resolve({ records: [], affected: 0 });
+        }),
+      }),
+    } as never);
+
+    await repository.listRoleRows(true, 10010009);
+
+    expect(queries[0]).toContain(
+      'COALESCE(u.user_count, 0)::int AS user_count\n          FROM roles r',
+    );
+  });
+
   it('applies requested user sorting before pagination', async () => {
     const queries: string[] = [];
     const repository = new UsersRepository({
@@ -17,14 +37,14 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'ADMIN',
-      actorRank: 5,
+      actorPermissions: ['home', 'manage-users-list'],
       sortBy: 'affiliation',
       sortOrder: 'asc',
     });
 
     expect(queries[2]).toContain("ORDER BY COALESCE(u.affiliation, '') ASC, u.id ASC");
-    expect(queries[2]).toContain('teacher_membership_attention_required');
-    expect(queries[2]).toContain("active_membership.membership_status = 'ACTIVE'");
+    expect(queries[2]).toContain('OR r.name = $2');
+    expect(queries[2]).toContain("default_permissions, '[]'::jsonb) <@ $3::jsonb");
   });
 
   it('filters rows by lifecycle status without narrowing summary counts', async () => {
@@ -49,7 +69,7 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'ADMIN',
-      actorRank: 5,
+      actorPermissions: ['home', 'manage-users-list'],
       accountStatus: 'ACTIVE',
     });
 

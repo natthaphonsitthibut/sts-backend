@@ -7,7 +7,7 @@ export interface NotificationRow extends Record<string, unknown> {
   student_person_uuid: string | null;
   case_id: number | null;
   case_status_code: string;
-  student_name_masked: string | null;
+  student_name_snapshot: string | null;
   reason_text: string | null;
   ref_entity: string | null;
   ref_id: string | null;
@@ -54,7 +54,7 @@ export interface NotificationFanOutInput {
   caseId?: number | null;
   caseStatusCode: string;
   studentUuid?: string | null;
-  studentNameMasked?: string | null;
+  studentNameSnapshot?: string | null;
   reasonText?: string | null;
   refEntity?: string | null;
   refId?: string | null;

@@ -83,7 +83,7 @@ export class StudentsController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('edit-students')
+  @RequirePermission('students')
   @Post()
   async create(
     @Body() createStudentDto: CreateStudentDto,
@@ -125,7 +125,7 @@ export class StudentsController {
   }
 
   @Get('attendance/:id')
-  @RequireAnyPermission('students', 'student-self')
+  @RequirePermission('students')
   findAttendanceByStudentId(
     @Param('id') id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -134,7 +134,7 @@ export class StudentsController {
   }
 
   @Get(':id/profile-summary')
-  @RequireAnyPermission('students', 'student-self')
+  @RequirePermission('students')
   getStudentProfileSummary(
     @Param('id') id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -143,7 +143,7 @@ export class StudentsController {
   }
 
   @Get(':id/attendance-subjects')
-  @RequireAnyPermission('students', 'student-self')
+  @RequirePermission('students')
   getStudentSubjectAttendance(
     @Param('id') id: string,
     @Query() query: GetStudentSubjectAttendanceQueryDto,
@@ -158,23 +158,28 @@ export class StudentsController {
   }
 
   @Get(':id')
-  @RequireAnyPermission('students', 'student-self')
+  @RequirePermission('students')
   findOne(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findOne(id, actor, resolveActorDataScope(actor));
   }
 
   /**
-   * Profile photo read. Served through the app so the student scope check runs
+   * Profile photo read. Served through the app so the scoped access check runs
    * before the bytes do; the adapter hands back a short-lived signed URL.
+   *
+   * A student's avatar appears on เช็กชื่อ, ห้องเรียนทั้งหมด, รายงานสถานะนักเรียน,
+   * เคส and รายชื่อนักเรียน, so it is reachable from every one of those pages —
+   * the rule the owner picked on 2026-08-17. Narrowing this to `students` alone
+   * would leave a group built around เช็กชื่อ with a roster of broken images.
+   * The data scope, not the page, still decides *which* students.
    */
   @Get(':id/photo')
   @RequireAnyPermission(
     'students',
-    'student-self',
     'attendance',
-    'manage-school-structure',
+    'classrooms',
     'dashboard',
-    'review-cases',
+    'manage-school-structure',
   )
   async getStudentPhoto(
     @Param('id') id: string,
@@ -196,9 +201,7 @@ export class StudentsController {
     res.sendFile(result.filePath);
   }
 
-  // Students may replace their own photo; staff need the edit permission. The
-  // service still runs assertOwnStudentAccess for a student actor.
-  @RequireAnyPermission('edit-students', 'student-self')
+  @RequirePermission('students')
   @Patch(':id/photo')
   @UseInterceptors(FileInterceptor('photo', multerConfig))
   async updateStudentPhoto(
@@ -221,11 +224,9 @@ export class StudentsController {
     return result;
   }
 
-  // Reveal a masked PII group (national id / passport) for one student. Staff
-  // need `students`; student self-access uses `student-self` and is still
-  // limited by assertOwnStudentAccess in the service.
+  // Reveal a masked PII group (national id / passport) for one student.
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequireAnyPermission('students', 'student-self')
+  @RequirePermission('students')
   @Post(':id/pii-reveal')
   revealPii(
     @Param('id') id: string,
@@ -240,10 +241,8 @@ export class StudentsController {
     });
   }
 
-  // Students may PATCH their own record too, but the service restricts an
-  // own-only student actor to contact/guardian fields (never name/address).
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequireAnyPermission('edit-students', 'student-self')
+  @RequirePermission('students')
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -262,7 +261,7 @@ export class StudentsController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('edit-students')
+  @RequirePermission('students')
   @Delete(':id')
   async remove(
     @Param('id') id: string,

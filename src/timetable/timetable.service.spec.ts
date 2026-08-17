@@ -14,9 +14,7 @@ describe('TimetableService', () => {
       | 'listForTeacher'
       | 'listDistinctSubjectsForRoom'
       | 'listTeacherCandidatesForSchool'
-      | 'isActiveTeacherForSchool'
       | 'listEligibleTeacherMembershipIds'
-      | 'resolveStudentRoom'
       | 'findById'
       | 'create'
       | 'update'
@@ -72,34 +70,21 @@ describe('TimetableService', () => {
     id: 3,
     username: 'admin1',
     roles: ['ADMIN'],
-    permissions: ['manage-timetable'],
+    permissions: ['timetable'],
     data_scope: { global: true },
   };
-  const studentActor = {
-    id: 4,
-    username: 'student1',
-    roles: ['STUDENT'],
-    permissions: ['student-self'],
-    data_scope: { own_only: true },
-    student_uuid: '30000000-0000-4000-8000-000000000149',
-  };
-
   beforeEach(() => {
     repository = {
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       listForRoom: jest.fn().mockResolvedValue([slotRow()]),
-      listForTeacher: jest.fn().mockResolvedValue([slotRow({ teacher_user_id: 3 })]),
+      listForTeacher: jest.fn().mockResolvedValue([slotRow()]),
       listDistinctSubjectsForRoom: jest
         .fn()
         .mockResolvedValue([{ subject_id: 5, code: 'MATH101', name_th: 'คณิตศาสตร์' }]),
       listTeacherCandidatesForSchool: jest
         .fn()
         .mockResolvedValue([{ id: 8, display_name: 'ครูสมชาย ใจดี' }]),
-      isActiveTeacherForSchool: jest.fn().mockResolvedValue(true),
       listEligibleTeacherMembershipIds: jest.fn().mockResolvedValue([]),
-      resolveStudentRoom: jest
-        .fn()
-        .mockResolvedValue({ school_id: 10010002, grade_level_id: 423, room_no: 1 }),
       findById: jest.fn().mockResolvedValue(slotRow()),
       create: jest.fn().mockResolvedValue({ id: '1' }),
       update: jest.fn().mockResolvedValue(undefined),
@@ -184,14 +169,11 @@ describe('TimetableService', () => {
         dayOfWeek: 1,
         period: 1,
         subjectId: 5,
-        teacherUserId: 99,
         teacherMembershipIds: [8],
       });
 
-      expect(repository.create).toHaveBeenCalledWith(
-        expect.objectContaining({ teacherUserId: null }),
-        expect.anything(),
-      );
+      const [createInput] = repository.create.mock.calls[0] as [Record<string, unknown>];
+      expect(createInput).not.toHaveProperty('teacherUserId');
       expect(repository.replaceSlotTeachers).toHaveBeenCalledWith('1', [8], expect.anything());
     });
 
@@ -226,26 +208,6 @@ describe('TimetableService', () => {
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
-    it('rejects a teacher who is not an active member of the selected school', async () => {
-      repository.isActiveTeacherForSchool.mockResolvedValue(false);
-
-      await expect(
-        service.create(globalActor, {
-          schoolTermId: 1,
-          schoolId: 10010002,
-          gradeLevelId: 423,
-          roomNo: 1,
-          dayOfWeek: 1,
-          period: 1,
-          subjectId: 5,
-          teacherUserId: 99,
-        }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(repository.create).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('update', () => {
     it('rejects a stale teacher membership instead of saving it', async () => {
       await expect(
         service.update(globalActor, '1', { teacherMembershipIds: [8] }),
@@ -253,28 +215,19 @@ describe('TimetableService', () => {
       expect(repository.replaceSlotTeachers).not.toHaveBeenCalled();
     });
 
-    it('rejects a teacher who is not an active member of the slot school', async () => {
-      repository.isActiveTeacherForSchool.mockResolvedValue(false);
-
-      await expect(service.update(globalActor, '1', { teacherUserId: 99 })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-      expect(repository.update).not.toHaveBeenCalled();
-    });
-
-    it('clears the legacy teacher_user_id when reassigning via teacherMembershipIds', async () => {
+    it('clears the slot teacher pointer when reassigning via teacherMembershipIds', async () => {
       // Regression test: reassigning through the modern teacherMembershipIds
-      // path used to leave the legacy teacher_user_id column pointing at the
-      // slot's previous teacher. listForTeacher() then resurfaced the slot on
-      // that previous teacher's schedule too, showing as a phantom
-      // double-booking at the same day/period as their real slot.
+      // path used to leave the slot's own teacher pointer on the previous
+      // teacher, which could resurface the slot on that teacher's
+      // schedule too, showing as a phantom double-booking at the same
+      // day/period as their real slot.
       repository.listEligibleTeacherMembershipIds.mockResolvedValue([8]);
 
       await service.update(globalActor, '1', { teacherMembershipIds: [8] });
 
       expect(repository.update).toHaveBeenCalledWith(
         '1',
-        expect.objectContaining({ teacherUserId: null }),
+        expect.objectContaining({ clearLegacyTeacher: true }),
         globalActor.id,
         expect.anything(),
       );
@@ -293,53 +246,22 @@ describe('TimetableService', () => {
     });
   });
 
-  describe('getMySchedule', () => {
-    it('a student always sees their own room, ignoring filters', async () => {
-      const studentActor = {
+  describe('getTeacherSchedule', () => {
+    it('returns only the periods the link holder teaches', async () => {
+      const result = await service.getTeacherSchedule({
         ...globalActor,
-        roles: ['STUDENT'],
-        student_uuid: 'stu-1',
-        data_scope: {},
-      };
-      const result = await service.getMySchedule(studentActor, { schoolId: 1 });
-
-      expect(repository.resolveStudentRoom).toHaveBeenCalledWith('stu-1');
-      expect(repository.listForRoom).toHaveBeenCalledWith(10010002, 423, 1);
-      expect(result.data).toHaveLength(1);
-    });
-
-    it('a student with no resolvable room gets an empty schedule, not an error', async () => {
-      repository.resolveStudentRoom.mockResolvedValue(null);
-      const studentActor = {
-        ...globalActor,
-        roles: ['STUDENT'],
-        student_uuid: 'stu-1',
-        data_scope: {},
-      };
-      const result = await service.getMySchedule(studentActor, {});
-      expect(result).toEqual({ success: true, data: [] });
-    });
-
-    it('mine=true returns only the periods the actor teaches', async () => {
-      const result = await service.getMySchedule(globalActor, { mine: true });
-      expect(repository.listForTeacher).toHaveBeenCalledWith(globalActor.id, null);
-      expect(result.data).toHaveLength(1);
-    });
-
-    it('requires explicit school/grade/room filters for the staff view', async () => {
-      await expect(service.getMySchedule(globalActor, {})).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-    });
-
-    it('applies scope-enforced listForRoom for the explicit staff view', async () => {
-      const result = await service.getMySchedule(globalActor, {
-        schoolId: 10010002,
-        gradeLevelId: 423,
-        roomNo: 1,
+        teacher_membership_id: 42,
       });
-      expect(repository.isSchoolInScope).toHaveBeenCalled();
+      expect(repository.listForTeacher).toHaveBeenCalledWith(42);
+      expect(repository.listForRoom).not.toHaveBeenCalled();
       expect(result.data).toHaveLength(1);
+    });
+
+    it('asks for nothing when the actor carries no membership', async () => {
+      // A staff actor has no membership; passing null keeps the repository's
+      // own guard the single place that decides "no membership, no slots".
+      await service.getTeacherSchedule(globalActor);
+      expect(repository.listForTeacher).toHaveBeenCalledWith(null);
     });
   });
 
@@ -460,23 +382,6 @@ describe('TimetableService', () => {
       await expect(service.listPeriodTimes(globalActor, 999)).rejects.toBeInstanceOf(
         ForbiddenException,
       );
-      expect(repository.listPeriodTimesForSchool).not.toHaveBeenCalled();
-    });
-
-    it('allows a student to read period times for their own enrolled school', async () => {
-      await service.listPeriodTimes(studentActor, 10010002);
-
-      expect(repository.resolveStudentRoom).toHaveBeenCalledWith(studentActor.student_uuid);
-      expect(repository.isSchoolInScope).not.toHaveBeenCalled();
-      expect(repository.listPeriodTimesForSchool).toHaveBeenCalledWith(10010002);
-    });
-
-    it('rejects a student reading period times for another school', async () => {
-      await expect(service.listPeriodTimes(studentActor, 999)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
-
-      expect(repository.resolveStudentRoom).toHaveBeenCalledWith(studentActor.student_uuid);
       expect(repository.listPeriodTimesForSchool).not.toHaveBeenCalled();
     });
   });

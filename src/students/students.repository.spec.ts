@@ -138,19 +138,8 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain('attendance."AttendanceDate" = $2::date');
     expect(queries[0]).toContain('JOIN attendance_record_statuses status');
     expect(queries[0]).toContain('LEFT JOIN subjects subject');
-    expect(queries[0]).toContain('LEFT JOIN users recorder');
+    expect(queries[0]).toContain('LEFT JOIN teachers recorder');
     expect(queries[0]).toContain('AS recorded_by');
-  });
-
-  it('derives the linked account lifecycle instead of exposing raw ACTIVE status', async () => {
-    const queries: string[] = [];
-    const repository = createRepositoryWithQueryCapture(queries);
-
-    await repository.findStudentAccountByPersonUuid('10000000-0000-4000-8000-000000000001');
-
-    expect(queries).toHaveLength(1);
-    expect(queries[0]).toContain("THEN 'TEMP_PASSWORD_EXPIRED'");
-    expect(queries[0]).toContain('temporary_password_expires_at <= NOW()');
   });
 
   it('loads the persisted risk tier with student detail and defaults missing profiles to normal', async () => {

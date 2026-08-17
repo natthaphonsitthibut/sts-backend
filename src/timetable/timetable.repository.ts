@@ -28,7 +28,6 @@ const SELECT_COLUMNS = `
   ts.subject_id,
   sub.code AS subject_code,
   sub.name_th AS subject_name_th,
-  MAX(stm.teacher_user_id) AS teacher_user_id,
   ARRAY_REMOVE(ARRAY_AGG(DISTINCT stm.id), NULL) AS teacher_membership_ids,
   STRING_AGG(
     DISTINCT NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
@@ -54,7 +53,7 @@ const FROM_JOIN = `
       stm.id = tst.teacher_membership_id
       OR (
            NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
-           AND (stm.id = cta.teacher_membership_id OR stm.id = ts.teacher_membership_id OR (stm.teacher_user_id = ts.teacher_user_id AND ts.teacher_user_id IS NOT NULL))
+           AND (stm.id = cta.teacher_membership_id OR stm.id = ts.teacher_membership_id)
          )
     )
    AND stm.membership_status = 'ACTIVE'
@@ -85,7 +84,6 @@ interface CreateSlotInput {
   dayOfWeek: number;
   period: number;
   subjectId: number;
-  teacherUserId: number | null;
   actorId: number | null;
 }
 
@@ -173,36 +171,34 @@ export class TimetableRepository {
     return result.rows;
   }
 
-  async listForTeacher(
-    teacherUserId: number | null,
-    teacherMembershipId?: number | null,
-  ): Promise<TimetableSlotRow[]> {
+  /**
+   * Every period this membership teaches, for the teacher's own link view.
+   *
+   * `timetable_slot_teachers` is the modern assignment; the slot's own pointer
+   * and the classroom assignment are only consulted when no row exists there,
+   * or a slot reassigned to someone else would surface on both schedules.
+   */
+  async listForTeacher(teacherMembershipId: number | null): Promise<TimetableSlotRow[]> {
+    // A NULL membership must match nothing: the query would otherwise match
+    // every slot whose own pointers are also NULL.
+    if (teacherMembershipId === null) return [];
     const result = await queryDataSource<TimetableSlotRow>(
       this.dataSource,
       `
         SELECT ${SELECT_COLUMNS}
         ${FROM_JOIN}
         WHERE (
-          ($1::bigint IS NOT NULL AND (
-            tst.teacher_membership_id = $1::bigint 
-            OR (
-              NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
-              AND (ts.teacher_membership_id = $1::bigint OR cta.teacher_membership_id = $1::bigint)
-            )
-          ))
-          OR ($2::integer IS NOT NULL AND $2::integer <> 0 AND (
+          tst.teacher_membership_id = $1::bigint
+          OR (
             NOT EXISTS (SELECT 1 FROM timetable_slot_teachers WHERE timetable_slot_id = ts.id)
-            AND (
-              ts.teacher_user_id = $2::integer
-              OR cta.teacher_membership_id IN (SELECT id FROM school_teacher_memberships WHERE teacher_user_id = $2::integer AND deleted_at IS NULL)
-            )
-          ))
+            AND (ts.teacher_membership_id = $1::bigint OR cta.teacher_membership_id = $1::bigint)
+          )
         )
           AND ts.deleted_at IS NULL
         ${GROUP_BY_SLOT_COLUMNS}
         ORDER BY ts.day_of_week ASC, ts.period ASC
       `,
-      [teacherMembershipId ?? null, teacherUserId ?? null],
+      [teacherMembershipId],
     );
     return result.rows;
   }
@@ -248,7 +244,6 @@ export class TimetableRepository {
     const params: unknown[] = [schoolId];
     const joins: string[] = [
       `JOIN teachers t ON t.id = membership.teacher_id AND t.deleted_at IS NULL`,
-      `LEFT JOIN users u ON u.id = membership.teacher_user_id`,
     ];
     const conditions: string[] = [
       `membership.school_id = $1`,
@@ -313,48 +308,6 @@ export class TimetableRepository {
     return result.rows;
   }
 
-  async isActiveTeacherForSchool(
-    teacherUserId: number,
-    schoolId: number,
-    queryRunner?: QueryRunner,
-  ): Promise<boolean> {
-    const sql = `
-      SELECT 1
-      FROM school_teacher_memberships membership
-      JOIN users teacher ON teacher.id = membership.teacher_user_id
-      WHERE membership.teacher_user_id = $1
-        AND membership.school_id = $2
-        AND membership.membership_status = 'ACTIVE'
-        AND membership.deleted_at IS NULL
-        AND teacher.status = 'ACTIVE'
-        AND teacher.role = 'TEACHER'
-      LIMIT 1
-    `;
-    const result = queryRunner
-      ? await createSqlQueryExecutor(queryRunner).query(sql, [teacherUserId, schoolId])
-      : await queryDataSource(this.dataSource, sql, [teacherUserId, schoolId]);
-    return result.rows.length > 0;
-  }
-
-  async resolveStudentRoom(
-    studentUuid: string,
-  ): Promise<{ school_id: number; grade_level_id: number; room_no: number } | null> {
-    const result = await queryDataSource<{
-      school_id: number;
-      grade_level_id: number;
-      room_no: number;
-    }>(
-      this.dataSource,
-      `
-        SELECT s."SchoolID_Onec" AS school_id, s."GradeLevelID_Onec" AS grade_level_id, s."RoomID_Onec" AS room_no
-        FROM student_term s
-        WHERE s.student_uuid = $1
-      `,
-      [studentUuid],
-    );
-    return result.rows[0] ?? null;
-  }
-
   async findById(id: string, queryRunner?: QueryRunner): Promise<TimetableSlotRow | null> {
     const sql = `
       SELECT ${SELECT_COLUMNS}
@@ -376,9 +329,9 @@ export class TimetableRepository {
       `
         INSERT INTO timetable_slots (
           school_term_id, school_id, grade_level_id, room_no, day_of_week, period,
-          subject_id, teacher_user_id, created_by, updated_by
+          subject_id, created_by, updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
         RETURNING id
       `,
       [
@@ -389,7 +342,6 @@ export class TimetableRepository {
         input.dayOfWeek,
         input.period,
         input.subjectId,
-        input.teacherUserId,
         input.actorId,
       ],
     );
@@ -478,7 +430,7 @@ export class TimetableRepository {
 
   async update(
     id: string,
-    values: { subjectId?: number; teacherUserId?: number | null },
+    values: { subjectId?: number; clearLegacyTeacher?: boolean },
     actorId: number | null,
     queryRunner: QueryRunner,
   ): Promise<void> {
@@ -486,18 +438,11 @@ export class TimetableRepository {
       `
         UPDATE timetable_slots
         SET subject_id = COALESCE($2, subject_id),
-            teacher_user_id = CASE WHEN $3 THEN $4 ELSE teacher_user_id END,
             teacher_membership_id = CASE WHEN $3 THEN NULL ELSE teacher_membership_id END,
-            updated_by = $5
+            updated_by = $4
         WHERE id = $1
       `,
-      [
-        id,
-        values.subjectId ?? null,
-        'teacherUserId' in values,
-        values.teacherUserId ?? null,
-        actorId,
-      ],
+      [id, values.subjectId ?? null, values.clearLegacyTeacher === true, actorId],
     );
   }
 

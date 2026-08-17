@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
-import { isStudentAccountActor, resolveActorDataScope } from '../auth';
+import { resolveActorDataScope } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import type {
@@ -80,7 +80,6 @@ export class TimetableService {
       subject_id: row.subject_id,
       subject_code: row.subject_code,
       subject_name_th: row.subject_name_th,
-      teacher_user_id: row.teacher_user_id,
       teacher_membership_ids: (row.teacher_membership_ids ?? []).map(Number),
       teacher_name: row.teacher_name,
     };
@@ -92,22 +91,6 @@ export class TimetableService {
   ): Promise<void> {
     const allowed = await this.repository.isSchoolInScope(schoolId, resolveActorDataScope(actor));
     if (!allowed) throw new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ');
-  }
-
-  private async assertPeriodTimesReadAccess(
-    schoolId: number,
-    actor: AuthenticatedRequestUser,
-  ): Promise<void> {
-    if (isStudentAccountActor(actor)) {
-      const room = actor.student_uuid
-        ? await this.repository.resolveStudentRoom(actor.student_uuid)
-        : null;
-      if (!room || room.school_id !== schoolId) {
-        throw new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ');
-      }
-      return;
-    }
-    await this.assertSchoolAccess(schoolId, actor);
   }
 
   private assertClassScope(
@@ -204,43 +187,16 @@ export class TimetableService {
   }
 
   /**
-   * Role-aware "my schedule" view — a student always sees their own room
-   * (resolved via current enrollment, ignoring any filters); a caller passing
-   * `mine=true` sees only the periods they teach; everyone else gets the
-   * explicit school/grade/room filters applied through their own data_scope.
+   * The periods one teacher teaches, read through their access link.
+   *
+   * Only `TeacherAccessService.getPublicTeacherSchedule` calls this. It used to
+   * be a two-mode `getMySchedule` behind `GET /timetable/my-schedule`, whose
+   * other mode was `listForRoom` under another name and whose route no client
+   * called once teachers stopped having accounts.
    */
-  async getMySchedule(
-    actor: AuthenticatedRequestUser,
-    filters: { schoolId?: number; gradeLevelId?: number; roomNo?: number; mine?: boolean },
-  ) {
-    if (isStudentAccountActor(actor) && actor.student_uuid) {
-      const room = await this.repository.resolveStudentRoom(actor.student_uuid);
-      if (!room) {
-        return { success: true, data: [] };
-      }
-      const rows = await this.repository.listForRoom(
-        room.school_id,
-        room.grade_level_id,
-        room.room_no,
-      );
-      return { success: true, data: rows.map((row) => this.toResponse(row)) };
-    }
-
-    if (filters.mine) {
-      const teacherUserId = actor.id && actor.id > 0 ? actor.id : null;
-      const teacherMembershipId = actor.teacher_membership_id ?? null;
-      const rows = await this.repository.listForTeacher(teacherUserId, teacherMembershipId);
-      return { success: true, data: rows.map((row) => this.toResponse(row)) };
-    }
-
-    if (
-      filters.schoolId === undefined ||
-      filters.gradeLevelId === undefined ||
-      filters.roomNo === undefined
-    ) {
-      throw new BadRequestException('กรุณาระบุโรงเรียน ชั้น และห้อง');
-    }
-    return await this.listForRoom(actor, filters.schoolId, filters.gradeLevelId, filters.roomNo);
+  async getTeacherSchedule(actor: AuthenticatedRequestUser) {
+    const rows = await this.repository.listForTeacher(actor.teacher_membership_id ?? null);
+    return { success: true, data: rows.map((row) => this.toResponse(row)) };
   }
 
   async create(actor: AuthenticatedRequestUser, dto: CreateTimetableSlotDto) {
@@ -250,16 +206,6 @@ export class TimetableService {
 
     try {
       return await this.repository.withTransaction(async (queryRunner) => {
-        if (
-          dto.teacherUserId != null &&
-          !(await this.repository.isActiveTeacherForSchool(
-            dto.teacherUserId,
-            dto.schoolId,
-            queryRunner,
-          ))
-        ) {
-          throw new BadRequestException('ผู้สอนไม่ใช่ครูที่ใช้งานของโรงเรียนนี้');
-        }
         const created = await this.repository.create(
           {
             schoolTermId: dto.schoolTermId,
@@ -269,11 +215,6 @@ export class TimetableService {
             dayOfWeek: dto.dayOfWeek,
             period: dto.period,
             subjectId: dto.subjectId,
-            // The join table is authoritative whenever the modern payload is
-            // present. Do not persist a second, potentially conflicting legacy
-            // pointer even if an older client sends both fields.
-            teacherUserId:
-              dto.teacherMembershipIds !== undefined ? null : (dto.teacherUserId ?? null),
             actorId,
           },
           queryRunner,
@@ -334,28 +275,16 @@ export class TimetableService {
     const actorId = resolveAuditActorId(actor);
 
     return await this.repository.withTransaction(async (queryRunner) => {
-      if (
-        dto.teacherUserId != null &&
-        !(await this.repository.isActiveTeacherForSchool(
-          dto.teacherUserId,
-          existing.school_id,
-          queryRunner,
-        ))
-      ) {
-        throw new BadRequestException('ผู้สอนไม่ใช่ครูที่ใช้งานของโรงเรียนนี้');
-      }
-      // Reassigning teacherMembershipIds must also clear the legacy teacher_user_id
-      // / teacher_membership_id columns on the slot — otherwise a stale pointer to
-      // the previous teacher lingers and listForTeacher()'s legacy-fallback match
-      // resurfaces this slot on their schedule alongside their real one, showing
-      // as a phantom double-booking at the same day/period.
-      const clearingLegacyTeacherColumns =
-        'teacherUserId' in dto || dto.teacherMembershipIds !== undefined;
+      // Reassigning teacherMembershipIds must also clear the slot's own
+      // teacher_membership_id — otherwise a stale pointer to the previous
+      // teacher lingers and a fallback match could resurface this
+      // slot on their schedule alongside their real one, showing as a phantom
+      // double-booking at the same day/period.
       await this.repository.update(
         id,
         {
           subjectId: dto.subjectId,
-          ...(clearingLegacyTeacherColumns ? { teacherUserId: dto.teacherUserId ?? null } : {}),
+          clearLegacyTeacher: dto.teacherMembershipIds !== undefined,
         },
         actorId,
         queryRunner,
@@ -433,7 +362,7 @@ export class TimetableService {
   }
 
   async listPeriodTimes(actor: AuthenticatedRequestUser, schoolId: number) {
-    await this.assertPeriodTimesReadAccess(schoolId, actor);
+    await this.assertSchoolAccess(schoolId, actor);
     const rows = await this.repository.listPeriodTimesForSchool(schoolId);
     return { success: true, data: rows.map((row) => this.toPeriodTimeResponse(row)) };
   }

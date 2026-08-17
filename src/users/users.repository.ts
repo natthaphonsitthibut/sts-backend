@@ -19,7 +19,6 @@ interface CreateUserRecordInput {
   firstName: string;
   lastName: string;
   personIdOnec: string;
-  personUuid?: string | null;
   phone: string | null;
   email: string | null;
   affiliation: string | null;
@@ -96,14 +95,6 @@ interface UpdateOwnProfileRecordInput {
   updatedBy: number | null;
 }
 
-interface StudentOwnProfileContactRow extends Record<string, unknown> {
-  person_uuid: string;
-  has_canonical_contact: boolean;
-  phone: string | null;
-  email: string | null;
-  line_id: string | null;
-}
-
 interface DeactivateUserInput {
   id: number;
   actorId: number | null;
@@ -123,7 +114,6 @@ interface UserReferenceExistsRow extends Record<string, unknown> {
 interface CreateRoleRecordInput {
   name: string;
   label: string;
-  rank: number;
   default_permissions: string[];
   scope_mode: string;
   scope_policy: string;
@@ -133,7 +123,8 @@ interface CreateRoleRecordInput {
 export interface UserListFilters {
   actorId: number;
   actorRole: string | null;
-  actorRank: number;
+  /** Pages the actor holds — a role is manageable only if it reaches no further. */
+  actorPermissions: string[];
   actorScope?: DataScope;
   excludeRole?: string;
   sortBy?: 'name' | 'role' | 'affiliation';
@@ -270,19 +261,7 @@ export class UsersRepository {
 
   private readonly userSelectSql = `
     SELECT
-      ${this.userFieldsSql},
-      (
-        EXISTS (
-          SELECT 1 FROM school_teacher_memberships membership
-          WHERE membership.teacher_user_id = u.id
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM school_teacher_memberships active_membership
-          WHERE active_membership.teacher_user_id = u.id
-            AND active_membership.membership_status = 'ACTIVE'
-            AND active_membership.deleted_at IS NULL
-        )
-      ) AS teacher_membership_attention_required
+      ${this.userFieldsSql}
     FROM users u
     LEFT JOIN roles r ON r.name = u.role
   `;
@@ -400,40 +379,28 @@ export class UsersRepository {
             r.id,
             r.name,
             r.label,
-            r.rank,
             r.default_permissions,
             r.scope_mode,
             r.scope_policy,
             r.is_assignable,
             r.is_system,
             r.school_id,
-            COALESCE(u.user_count, 0)::int AS user_count,
-            COALESCE(tl.login_link_count, 0)::int AS login_link_count
+            COALESCE(u.user_count, 0)::int AS user_count
           FROM roles r
           LEFT JOIN (
             SELECT role, COUNT(*) AS user_count
             FROM users
             GROUP BY role
           ) u ON u.role = r.name
-          LEFT JOIN (
-            SELECT tl.login_role, COUNT(*) AS login_link_count
-            FROM task_links tl
-            JOIN tasks t ON t.id = tl.task_id
-            WHERE tl.login_role IS NOT NULL
-              AND tl.deleted_at IS NULL
-              AND t.deleted_at IS NULL
-            GROUP BY tl.login_role
-          ) tl ON tl.login_role = r.name
           WHERE r.is_assignable = TRUE
             ${schoolCondition}
-          ORDER BY r.rank DESC, r.name ASC
+          ORDER BY r.is_system DESC, r.name ASC
         `
       : `
           SELECT
             r.id,
             r.name,
             r.label,
-            r.rank,
             r.default_permissions,
             r.scope_mode,
             r.scope_policy,
@@ -443,7 +410,7 @@ export class UsersRepository {
           FROM roles r
           WHERE r.is_assignable = TRUE
             ${schoolCondition}
-          ORDER BY r.rank DESC, r.name ASC
+          ORDER BY r.is_system DESC, r.name ASC
         `;
 
     const result = await this.query<RoleRow>(sql, typeof schoolId === 'number' ? [schoolId] : []);
@@ -503,24 +470,28 @@ export class UsersRepository {
   }> {
     const params: unknown[] = [];
     const conditions: string[] = [];
-    const roleRankSql = 'COALESCE(r.rank, 0)';
     const scopeSql = `COALESCE(u.data_scope::jsonb, '{}'::jsonb)`;
 
     params.push(filters.actorId);
     const actorIdPlaceholder = params.length;
-    params.push(filters.actorRank);
-    const actorRankPlaceholder = params.length;
     params.push(filters.actorRole);
     const actorRolePlaceholder = params.length;
 
-    const manageConditions: string[] = [
-      `
-        (
-          ${roleRankSql} < $${actorRankPlaceholder}
-          OR ($${actorRolePlaceholder} = 'ADMIN' AND ${roleRankSql} = $${actorRankPlaceholder})
-        )
-      `,
-    ];
+    // A row is manageable when its role reaches no page the actor lacks. A
+    // wildcard holder manages everyone, which is what '*' has always meant.
+    const hasWildcard = filters.actorPermissions.some(
+      (permission) => permission === '*' || permission === 'ALL',
+    );
+    const manageConditions: string[] = [];
+    if (!hasWildcard) {
+      params.push(JSON.stringify(filters.actorPermissions));
+      manageConditions.push(
+        `(
+          COALESCE(r.default_permissions, '[]'::jsonb) <@ $${params.length}::jsonb
+          OR r.name = $${actorRolePlaceholder}
+        )`,
+      );
+    }
     const scopeQuery = this.buildJsonScopeSubsetQuery(
       scopeSql,
       filters.actorScope,
@@ -706,80 +677,6 @@ export class UsersRepository {
   }
 
   /** Resolve a student identifier from its canonical person when the user mirror is blank. */
-  async findResolvedNationalIdByUserId(id: number): Promise<string | null> {
-    const result = await this.query<{ person_id: string | null }>(
-      `
-        SELECT COALESCE(
-          NULLIF(btrim(u."PersonID_Onec"), ''),
-          enrollment."PersonID_Onec"
-        ) AS person_id
-        FROM users u
-        LEFT JOIN LATERAL (
-          SELECT s."PersonID_Onec"
-          FROM student_term s
-          WHERE s.person_uuid = u.person_uuid
-          ORDER BY s."AcademicYear_Onec" DESC NULLS LAST,
-            s."Semester_Onec" DESC NULLS LAST,
-            s.created_at DESC NULLS LAST
-          LIMIT 1
-        ) enrollment ON true
-        WHERE u.id = $1
-      `,
-      [id],
-    );
-    return result.rows[0]?.person_id ?? null;
-  }
-
-  async findStudentPersonContactByUserId(
-    id: number,
-    executor?: QueryExecutor,
-  ): Promise<StudentOwnProfileContactRow | null> {
-    const result = await this.getExecutor(executor).query<StudentOwnProfileContactRow>(
-      `
-        SELECT u.person_uuid,
-               (contact.person_uuid IS NOT NULL) AS has_canonical_contact,
-               contact.phone,
-               contact.email,
-               contact.line_id
-        FROM users u
-        LEFT JOIN student_person_contact contact ON contact.person_uuid = u.person_uuid
-        WHERE u.id = $1
-          AND u.role = 'STUDENT'
-          AND u.person_uuid IS NOT NULL
-      `,
-      [id],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async upsertStudentPersonContact(
-    data: {
-      personUuid: string;
-      phone: string | null;
-      email: string | null;
-      lineId: string | null;
-      updatedBy: number | null;
-    },
-    executor?: QueryExecutor,
-  ): Promise<void> {
-    await this.getExecutor(executor).query(
-      `
-        INSERT INTO student_person_contact (
-          person_uuid, phone, email, line_id, created_by, updated_by
-        )
-        VALUES ($1, $2, $3, $4, $5, $5)
-        ON CONFLICT (person_uuid) DO UPDATE
-        SET phone = EXCLUDED.phone,
-            email = EXCLUDED.email,
-            line_id = EXCLUDED.line_id,
-            updated_by = EXCLUDED.updated_by,
-            deleted_at = NULL,
-            deleted_by = NULL
-      `,
-      [data.personUuid, data.phone, data.email, data.lineId, data.updatedBy],
-    );
-  }
-
   async insertUserAddressAccessEvent(input: {
     actorUserId: number;
     actorRoles: string[];
@@ -958,14 +855,13 @@ export class UsersRepository {
           permissions,
           role,
           data_scope,
-          person_uuid,
           must_change_password,
           temporary_password_issued_at,
           temporary_password_expires_at,
           created_by,
           updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $29)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $28)
         RETURNING id
       `,
       [
@@ -993,7 +889,6 @@ export class UsersRepository {
         JSON.stringify(data.permissions),
         data.role,
         JSON.stringify(data.dataScope),
-        data.personUuid ?? null,
         data.mustChangePassword,
         data.temporaryPasswordIssuedAt ?? null,
         data.temporaryPasswordExpiresAt ?? null,
@@ -1002,58 +897,6 @@ export class UsersRepository {
     );
 
     return result.rows[0].id;
-  }
-
-  async reconcileTeacherMemberships(
-    input: {
-      teacherUserId: number;
-      schoolIds: number[];
-      actorUserId: number | null;
-    },
-    executor: QueryExecutor,
-  ): Promise<{ activatedSchoolIds: number[]; endedSchoolIds: number[] }> {
-    const result = await executor.query<{
-      activated_school_ids: number[] | null;
-      ended_school_ids: number[] | null;
-    }>(
-      `
-        WITH ended AS (
-          UPDATE school_teacher_memberships
-          SET membership_status = 'INACTIVE',
-              ended_on = COALESCE(ended_on, CURRENT_DATE),
-              updated_by = $3
-          WHERE teacher_user_id = $1
-            AND membership_status = 'ACTIVE'
-            AND deleted_at IS NULL
-            AND NOT (school_id = ANY($2::int[]))
-          RETURNING school_id
-        ), activated AS (
-          INSERT INTO school_teacher_memberships (
-            school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
-          )
-          SELECT school_id, $1, 'ACTIVE', CURRENT_DATE, $3, $3
-          FROM unnest($2::int[]) AS requested(school_id)
-          WHERE NOT EXISTS (
-            SELECT 1
-            FROM school_teacher_memberships membership
-            WHERE membership.school_id = requested.school_id
-              AND membership.teacher_user_id = $1
-              AND membership.membership_status = 'ACTIVE'
-              AND membership.deleted_at IS NULL
-          )
-          ON CONFLICT DO NOTHING
-          RETURNING school_id
-        )
-        SELECT
-          (SELECT array_agg(school_id ORDER BY school_id) FROM activated) AS activated_school_ids,
-          (SELECT array_agg(school_id ORDER BY school_id) FROM ended) AS ended_school_ids
-      `,
-      [input.teacherUserId, input.schoolIds, input.actorUserId],
-    );
-    return {
-      activatedSchoolIds: result.rows[0]?.activated_school_ids ?? [],
-      endedSchoolIds: result.rows[0]?.ended_school_ids ?? [],
-    };
   }
 
   async deactivateUser(data: DeactivateUserInput, executor?: QueryExecutor): Promise<boolean> {
@@ -1315,23 +1158,6 @@ export class UsersRepository {
     return result.rows[0] || null;
   }
 
-  async findCurrentStudentUuidByUserId(userId: number): Promise<string | null> {
-    const result = await this.query<{ student_uuid: string }>(
-      `
-      SELECT current_enrollment.selected_student_uuid AS student_uuid
-      FROM users u
-      JOIN student_current_enrollment_resolution current_enrollment
-        ON current_enrollment.person_uuid = u.person_uuid
-       AND current_enrollment.resolution_state = 'ACTIVE'
-      WHERE u.id = $1
-        AND u.role = 'STUDENT'
-        AND u.status = 'ACTIVE'
-    `,
-      [userId],
-    );
-    return result.rows[0]?.student_uuid ?? null;
-  }
-
   async listPlaintextPasswordUsers(): Promise<Array<{ id: number; password: string }>> {
     const result = await this.query<{ id: number; password: string }>(
       `SELECT id, password FROM users WHERE password NOT LIKE '$2%'`,
@@ -1394,17 +1220,16 @@ export class UsersRepository {
     const result = await queryExecutor.query<RoleRow>(
       `
         INSERT INTO roles (
-          name, label, rank, default_permissions, scope_mode, scope_policy,
+          name, label, default_permissions, scope_mode, scope_policy,
           is_assignable, is_system, school_id
         )
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6, TRUE, FALSE, $7)
-        RETURNING id, name, label, rank, default_permissions, scope_mode,
+        VALUES ($1, $2, $3::jsonb, $4, $5, TRUE, FALSE, $6)
+        RETURNING id, name, label, default_permissions, scope_mode,
           scope_policy, is_assignable, is_system, school_id
       `,
       [
         data.name,
         data.label,
-        data.rank,
         JSON.stringify(data.default_permissions),
         data.scope_mode,
         data.scope_policy,
@@ -1425,18 +1250,16 @@ export class UsersRepository {
       `
         UPDATE roles
         SET label = $2,
-            rank = $3,
-            default_permissions = $4::jsonb,
-            scope_mode = $5,
-            scope_policy = $6
+            default_permissions = $3::jsonb,
+            scope_mode = $4,
+            scope_policy = $5
         WHERE name = $1
-        RETURNING id, name, label, rank, default_permissions, scope_mode,
+        RETURNING id, name, label, default_permissions, scope_mode,
           scope_policy, is_assignable, is_system, school_id
       `,
       [
         name,
         data.label,
-        data.rank,
         JSON.stringify(data.default_permissions),
         data.scope_mode,
         data.scope_policy,

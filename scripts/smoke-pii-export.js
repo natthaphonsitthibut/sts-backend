@@ -22,8 +22,8 @@ const PERSON_UUID = '20000000-0000-4000-8000-000000000001';
 const STUDENT_UUID = '20000000-0000-4000-8000-000000000002';
 const STUDENT_PERSON_ID = '1234567890123';
 const SCHOOL_ID = 10010002;
-const GRADE_LEVEL_ID = 6;
-const ROOM_ID = 1;
+const ACADEMIC_YEAR = 2569;
+const SEMESTER = 1;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -128,6 +128,29 @@ async function upsertStudentFixture(dataSource) {
   const [school] = await dataSource.query(`SELECT id FROM schools WHERE id = $1`, [SCHOOL_ID]);
   assert(school, `Smoke school ${SCHOOL_ID} is missing`);
 
+  // An enrolment must land in a classroom that exists — the
+  // `resolve_student_term_structure_refs` trigger refuses anything else — so the
+  // grade and room come from the school's own structure instead of being pinned
+  // to ids that a seed change can retire.
+  const [classroom] = await dataSource.query(
+    `SELECT classroom.grade_level_id, classroom.legacy_room_number
+     FROM school_classrooms classroom
+     JOIN school_terms term ON term.id = classroom.school_term_id
+     WHERE term.school_id = $1
+       AND term.academic_year = $2
+       AND term.semester = $3
+       AND term.deleted_at IS NULL
+       AND classroom.classroom_status = 'ACTIVE'
+       AND classroom.deleted_at IS NULL
+     ORDER BY classroom.grade_level_id, classroom.legacy_room_number
+     LIMIT 1`,
+    [SCHOOL_ID, ACADEMIC_YEAR, SEMESTER],
+  );
+  assert(
+    classroom,
+    `Smoke school ${SCHOOL_ID} has no active classroom in ${ACADEMIC_YEAR}/${SEMESTER}`,
+  );
+
   await dataSource.query(
     `
       INSERT INTO student_person (person_uuid, identity_status)
@@ -149,7 +172,7 @@ async function upsertStudentFixture(dataSource) {
       )
       VALUES (
         $1::uuid, $2::uuid, $3, 'AA123456', 'Smoke', 'PII Export', $4, $5,
-        $6, 10, 2569, 1, 'กรุงเทพมหานคร', 'ดอนเมือง', 'สีกัน', '10210', NULL, NULL
+        $6, 10, $7, $8, 'กรุงเทพมหานคร', 'ดอนเมือง', 'สีกัน', '10210', NULL, NULL
       )
       ON CONFLICT (student_uuid) DO UPDATE
       SET person_uuid = EXCLUDED.person_uuid,
@@ -170,7 +193,16 @@ async function upsertStudentFixture(dataSource) {
           deleted_at = NULL,
           deleted_by = NULL
     `,
-    [STUDENT_UUID, PERSON_UUID, STUDENT_PERSON_ID, SCHOOL_ID, GRADE_LEVEL_ID, ROOM_ID],
+    [
+      STUDENT_UUID,
+      PERSON_UUID,
+      STUDENT_PERSON_ID,
+      SCHOOL_ID,
+      classroom.grade_level_id,
+      classroom.legacy_room_number,
+      ACADEMIC_YEAR,
+      SEMESTER,
+    ],
   );
 
   const [current] = await dataSource.query(
@@ -305,7 +337,16 @@ async function main() {
     assert(downloaded.text.includes('export_id'), 'CSV watermark missing export id label');
     assert(downloaded.text.includes(requestId), 'CSV watermark missing export id value');
     assert(downloaded.text.includes('VERIFY_DATA'), 'CSV watermark missing purpose');
-    assert(downloaded.text.includes('••••0123'), 'CSV must contain masked national id');
+    // Masking hides the whole value, separators included — a visible suffix
+    // would leak both digits and the document format (see maskPiiValue).
+    assert(
+      downloaded.text.includes('•'.repeat(STUDENT_PERSON_ID.length)),
+      `CSV must carry a fully masked national id: ${downloaded.text.slice(0, 600)}`,
+    );
+    assert(
+      !downloaded.text.includes(STUDENT_PERSON_ID.slice(-4)),
+      'CSV must not leave the last digits of the national id readable',
+    );
     assert(!downloaded.text.includes(STUDENT_PERSON_ID), 'CSV leaked full national id');
 
     await requestText(

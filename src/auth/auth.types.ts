@@ -18,20 +18,11 @@ export interface AuthenticatedRequestUser {
   roles: string[];
   permissions: string[];
   data_scope?: DataScope;
-  virtual_login?: boolean;
   PersonID_Onec?: string;
-  // Opaque surrogate id for a virtual-login student — what the client uses to
-  // address its own record (keeps the national id off the wire). This is the
-  // *current enrollment* snapshot id.
-  student_uuid?: string;
-  // Canonical person id (stable across terms/schools). Carried alongside
-  // student_uuid so own-access spans all of this person's enrollments, not just
-  // the current snapshot. Optional during the B2 transition.
-  person_uuid?: string;
   FirstName?: string | null;
   LastName?: string | null;
   affiliation?: string | null;
-  auth_source?: 'LOCAL' | 'MAGIC_LINK' | 'THAID_MOCK';
+  auth_source?: 'LOCAL' | 'MAGIC_LINK';
 }
 
 export type ActorContext = AuthenticatedRequestUser;
@@ -46,24 +37,6 @@ export type AuthenticatedRequest = Request & {
 
 export type RequestWithUser = AuthenticatedRequest;
 export type RequestWithActor = AuthenticatedRequest;
-
-/** True only for the signed, own-record virtual student identity. */
-export function isStudentSelfActor(
-  actor?: AuthenticatedRequestUser | null,
-): actor is AuthenticatedRequestUser {
-  return Boolean(
-    actor?.auth_source === 'THAID_MOCK' &&
-    actor.virtual_login === true &&
-    actor.student_uuid &&
-    actor.permissions.includes('student-self') &&
-    actor.data_scope?.own_only,
-  );
-}
-
-/** Supports both persisted student accounts and accountless Mock ThaID sessions. */
-export function isStudentAccountActor(actor?: AuthenticatedRequestUser | null): boolean {
-  return Boolean(actor?.roles.includes('STUDENT') || isStudentSelfActor(actor));
-}
 
 /**
  * Trim, dedupe, and stringify a raw scope array (e.g. an actor's `provinces`

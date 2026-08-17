@@ -30,10 +30,6 @@ export class UserAuthService {
       return null;
     }
 
-    if (user.role === 'STUDENT' || user.roles?.includes('STUDENT') === true) {
-      return null;
-    }
-
     if (this.isTemporaryPasswordExpired(user)) {
       return null;
     }

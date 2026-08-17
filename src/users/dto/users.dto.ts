@@ -385,10 +385,6 @@ export class CreateRoleGroupDto {
   @IsNotEmpty()
   label!: string;
 
-  @Type(() => Number)
-  @IsInt()
-  rank!: number;
-
   @IsOptional()
   @IsArray()
   default_permissions?: string[];

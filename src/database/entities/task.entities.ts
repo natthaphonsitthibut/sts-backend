@@ -135,23 +135,6 @@ export class TaskLinkEntity {
   @Column({ name: 'created_by', type: 'integer', nullable: true })
   createdBy!: number | null;
 
-  @Column({ name: 'login_role', type: 'text', nullable: true })
-  loginRole!: string | null;
-
-  @Column({
-    name: 'login_permissions',
-    type: 'jsonb',
-    default: () => "'[]'::jsonb",
-  })
-  loginPermissions!: string[];
-
-  @Column({
-    name: 'login_data_scope',
-    type: 'jsonb',
-    default: () => "'{}'::jsonb",
-  })
-  loginDataScope!: Record<string, unknown>;
-
   @Column({ name: 'first_used_at', type: 'timestamptz', nullable: true })
   firstUsedAt!: Date | null;
 }

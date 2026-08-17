@@ -34,24 +34,6 @@ import { TimetableService } from './timetable.service';
 export class TimetableController {
   constructor(private readonly timetableService: TimetableService) {}
 
-  // Any authenticated user reads their own schedule — the service resolves
-  // student/teacher/staff visibility internally (see getMySchedule).
-  @Get('my-schedule')
-  async mySchedule(
-    @CurrentUser() actor: AuthenticatedRequestUser,
-    @Query('schoolId') schoolId?: string,
-    @Query('gradeLevelId') gradeLevelId?: string,
-    @Query('roomNo') roomNo?: string,
-    @Query('mine') mine?: string,
-  ) {
-    return await this.timetableService.getMySchedule(actor, {
-      schoolId: schoolId !== undefined ? Number(schoolId) : undefined,
-      gradeLevelId: gradeLevelId !== undefined ? Number(gradeLevelId) : undefined,
-      roomNo: roomNo !== undefined ? Number(roomNo) : undefined,
-      mine: mine === 'true',
-    });
-  }
-
   // Combobox source for the attendance-link create form — any authenticated
   // user within their own scope, not gated behind manage-timetable.
   @Get('subjects-for-room')
@@ -78,7 +60,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Post('period-times/generate')
   async generatePeriodTimes(
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -88,7 +70,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Patch('period-times/override')
   async overridePeriodTime(
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -98,7 +80,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('manage-timetable', 'manage-school-structure')
+  @RequireAnyPermission('timetable', 'manage-school-structure')
   @Get('teachers')
   async teachers(
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -115,7 +97,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Get('slots')
   async listSlots(
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -130,7 +112,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Post('slots')
   async create(
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -140,7 +122,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Patch('slots/:id')
   async update(
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -151,7 +133,7 @@ export class TimetableController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Delete('slots/:id')
   async remove(@CurrentUser() actor: AuthenticatedRequestUser, @Param('id') id: string) {
     return await this.timetableService.remove(actor, id);

@@ -217,55 +217,6 @@ describe('UsersService', () => {
     expect(result.data[0]).not.toHaveProperty('photo_storage_key');
   });
 
-  it('creates the teacher account and school membership in one transaction', async () => {
-    usersRepository.reconcileTeacherMemberships.mockResolvedValueOnce({
-      activatedSchoolIds: [10010002],
-      endedSchoolIds: [],
-    });
-
-    await expect(
-      service.createUser(actor, {
-        username: 'teacher.one',
-        FirstName: 'ครู',
-        LastName: 'หนึ่ง',
-        PersonID_Onec: '1234567890123',
-        role: 'TEACHER',
-        roles: ['TEACHER'],
-        permissions: ['attendance'],
-        status: 'ACTIVE',
-        data_scope: { school_ids: [10010002] },
-      }),
-    ).resolves.toMatchObject({ success: true, userId: 77 });
-
-    expect(usersRepository.reconcileTeacherMemberships).toHaveBeenCalledWith(
-      {
-        teacherUserId: 77,
-        schoolIds: [10010002],
-        actorUserId: actor.id,
-      },
-      executor,
-    );
-    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'MASTER_DATA_EDIT',
-        targetType: 'school_teacher_memberships',
-      }),
-      executor,
-    );
-    expect(usersRepository.createUser).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mustChangePassword: true,
-      }),
-      executor,
-    );
-    expect(usersRepository.createUser.mock.calls[0][0].temporaryPasswordIssuedAt).toBeInstanceOf(
-      Date,
-    );
-    expect(usersRepository.createUser.mock.calls[0][0].temporaryPasswordExpiresAt).toBeInstanceOf(
-      Date,
-    );
-  });
-
   it('creates an immediately active account when the administrator supplies a password', async () => {
     const result = await service.createUser(actor, {
       username: 'teacher.with-password',
@@ -365,55 +316,6 @@ describe('UsersService', () => {
     ).rejects.toBe(databaseError);
   });
 
-  it('rejects a teacher account without an explicit school affiliation', async () => {
-    await expect(
-      service.createUser(actor, {
-        username: 'teacher.no-school',
-        FirstName: 'ครู',
-        LastName: 'ไม่มีโรงเรียน',
-        PersonID_Onec: '1234567890123',
-        role: 'TEACHER',
-        roles: ['TEACHER'],
-        permissions: ['attendance'],
-        status: 'ACTIVE',
-        data_scope: { provinces: ['เชียงใหม่'] },
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-
-    expect(usersRepository.withTransaction).not.toHaveBeenCalled();
-  });
-
-  it('keeps the teacher role and reconciles memberships when only the school scope changes', async () => {
-    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
-      id: 77,
-      username: 'teacher.one',
-      FirstName: 'ครู',
-      LastName: 'หนึ่ง',
-      PersonID_Onec: '1234567890123',
-      role: 'TEACHER',
-      roles: ['TEACHER'],
-      permissions: ['attendance'],
-      status: 'ACTIVE',
-      data_scope: { school_ids: [10010002] },
-    } as never);
-    usersRepository.findSchoolNamesByIds.mockResolvedValueOnce([
-      { id: 10010003, name: 'โรงเรียนใหม่' },
-    ]);
-
-    await expect(
-      service.updateUser(actor, 77, { data_scope: { school_ids: [10010003] } }),
-    ).resolves.toEqual({ success: true });
-
-    expect(usersRepository.updateUser).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 77, role: 'TEACHER', dataScope: { school_ids: [10010003] } }),
-      executor,
-    );
-    expect(usersRepository.reconcileTeacherMemberships).toHaveBeenCalledWith(
-      { teacherUserId: 77, schoolIds: [10010003], actorUserId: actor.id },
-      executor,
-    );
-  });
-
   it('authorizes a partial teacher update against the existing school scope', async () => {
     usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
       id: 77,
@@ -446,40 +348,6 @@ describe('UsersService', () => {
         id: 77,
         firstName: 'ครูแก้ไข',
         dataScope: { school_ids: [10010002] },
-      }),
-      executor,
-    );
-  });
-
-  it('ends teacher memberships when the account changes to a non-teacher role', async () => {
-    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
-      id: 77,
-      username: 'teacher.one',
-      FirstName: 'ครู',
-      LastName: 'หนึ่ง',
-      PersonID_Onec: '1234567890123',
-      role: 'TEACHER',
-      roles: ['TEACHER'],
-      permissions: ['attendance'],
-      status: 'ACTIVE',
-      data_scope: { school_ids: [10010002] },
-    } as never);
-    usersRepository.reconcileTeacherMemberships.mockResolvedValueOnce({
-      activatedSchoolIds: [],
-      endedSchoolIds: [10010002],
-    });
-
-    await expect(
-      service.updateUser(actor, 77, { role: 'ADMIN', data_scope: { global: true } }),
-    ).resolves.toEqual({ success: true });
-
-    expect(usersRepository.reconcileTeacherMemberships).toHaveBeenCalledWith(
-      { teacherUserId: 77, schoolIds: [], actorUserId: actor.id },
-      executor,
-    );
-    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targetType: 'school_teacher_memberships',
       }),
       executor,
     );
@@ -565,9 +433,8 @@ describe('UsersService', () => {
   it('reveals a managed user national id only after an audited reason', async () => {
     usersRepository.findOwnProfileById.mockResolvedValueOnce({
       id: 77,
-      PersonID_Onec: '',
+      PersonID_Onec: '1-2345-67890-12-3',
     });
-    usersRepository.findResolvedNationalIdByUserId.mockResolvedValueOnce('1-2345-67890-12-3');
     usersRepository.hasActiveUserNationalIdReveal.mockResolvedValueOnce(false);
 
     const result = await service.revealUserNationalId(
@@ -686,122 +553,6 @@ describe('UsersService', () => {
         addressLongitude: 100.9847,
         updatedBy: 77,
       }),
-      executor,
-    );
-  });
-
-  it('writes a student self-profile contact to the canonical person row', async () => {
-    const selfActor = { ...actor, id: 77, roles: ['STUDENT'], permissions: ['student-self'] };
-    usersRepository.findOwnProfileById.mockResolvedValue({ id: 77 } as never);
-    usersRepository.findStudentPersonContactByUserId.mockResolvedValue({
-      person_uuid: '11111111-1111-4111-8111-111111111111',
-      has_canonical_contact: true,
-      phone: '0811111111',
-      email: null,
-      line_id: null,
-    });
-    usersPolicyService.hydrateUserPermissions.mockReturnValue({
-      id: 77,
-      username: 'student-one',
-      FirstName: 'สมชาย',
-      LastName: 'ใจดี',
-      phone: null,
-      email: null,
-      affiliation: 'โรงเรียนทดสอบ',
-      line_id: null,
-      address_latitude: null,
-      address_longitude: null,
-      roles: ['STUDENT'],
-      permissions: ['student-self'],
-      status: 'ACTIVE',
-      data_scope: { own_only: true },
-    });
-
-    await service.updateOwnProfile(selfActor, { phone: '0822222222', line_id: 'student.line' });
-
-    expect(usersRepository.upsertStudentPersonContact).toHaveBeenCalledWith(
-      {
-        personUuid: '11111111-1111-4111-8111-111111111111',
-        phone: '0822222222',
-        email: null,
-        lineId: 'student.line',
-        updatedBy: 77,
-      },
-      executor,
-    );
-  });
-
-  it('does not restore cleared canonical contact from legacy user columns', async () => {
-    const selfActor = { ...actor, id: 77, roles: ['STUDENT'], permissions: ['student-self'] };
-    usersRepository.findOwnProfileById.mockResolvedValue({ id: 77 } as never);
-    usersRepository.findStudentPersonContactByUserId.mockResolvedValue({
-      person_uuid: '11111111-1111-4111-8111-111111111111',
-      has_canonical_contact: true,
-      phone: null,
-      email: null,
-      line_id: null,
-    });
-    usersPolicyService.hydrateUserPermissions.mockReturnValue({
-      id: 77,
-      username: 'student-one',
-      FirstName: 'สมชาย',
-      LastName: 'ใจดี',
-      phone: '0999999999',
-      email: 'legacy@example.test',
-      affiliation: null,
-      line_id: 'legacy.line',
-      address_latitude: null,
-      address_longitude: null,
-      roles: ['STUDENT'],
-      permissions: ['student-self'],
-      status: 'ACTIVE',
-      data_scope: { own_only: true },
-    });
-
-    await service.updateOwnProfile(selfActor, { affiliation: 'โรงเรียนทดสอบ' });
-
-    expect(usersRepository.upsertStudentPersonContact).toHaveBeenCalledWith(
-      expect.objectContaining({ phone: null, email: null, lineId: null }),
-      executor,
-    );
-  });
-
-  it('preserves legacy contact when a linked student has no canonical row yet', async () => {
-    const selfActor = { ...actor, id: 77, roles: ['STUDENT'], permissions: ['student-self'] };
-    usersRepository.findOwnProfileById.mockResolvedValue({ id: 77 } as never);
-    usersRepository.findStudentPersonContactByUserId.mockResolvedValue({
-      person_uuid: '11111111-1111-4111-8111-111111111111',
-      has_canonical_contact: false,
-      phone: null,
-      email: null,
-      line_id: null,
-    });
-    usersPolicyService.hydrateUserPermissions.mockReturnValue({
-      id: 77,
-      username: 'student-one',
-      FirstName: 'สมชาย',
-      LastName: 'ใจดี',
-      phone: '0999999999',
-      email: 'legacy@example.test',
-      affiliation: null,
-      line_id: 'legacy.line',
-      address_latitude: null,
-      address_longitude: null,
-      roles: ['STUDENT'],
-      permissions: ['student-self'],
-      status: 'ACTIVE',
-      data_scope: { own_only: true },
-    });
-
-    await service.updateOwnProfile(selfActor, { affiliation: 'โรงเรียนทดสอบ' });
-
-    expect(usersRepository.upsertStudentPersonContact).toHaveBeenCalledWith(
-      expect.objectContaining({
-        phone: '0999999999',
-        email: 'legacy@example.test',
-        lineId: 'legacy.line',
-      }),
-      executor,
     );
   });
 
@@ -875,8 +626,12 @@ describe('UsersService', () => {
     expect(usersRepository.withTransaction).not.toHaveBeenCalled();
   });
 
-  it('blocks hard delete without the break-glass permission', async () => {
-    await expect(service.deleteUser(actor, 77)).rejects.toBeInstanceOf(ForbiddenException);
+  // Deleting for good rides on the จัดการผู้ใช้งาน permission now, so an actor
+  // without that page — not without a separate break-glass right — is refused.
+  it('blocks hard delete for an actor without the จัดการผู้ใช้งาน page', async () => {
+    await expect(
+      service.deleteUser({ ...actor, permissions: ['students'] }, 77),
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(usersRepository.listUserOperationalReferences).not.toHaveBeenCalled();
     expect(usersRepository.deleteUser).not.toHaveBeenCalled();
@@ -884,7 +639,7 @@ describe('UsersService', () => {
 
   it('blocks hard delete of an active account', async () => {
     await expect(
-      service.deleteUser({ ...actor, permissions: ['manage-users-hard-delete'] }, 77),
+      service.deleteUser({ ...actor, permissions: ['manage-users-list'] }, 77),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(usersRepository.listUserOperationalReferences).not.toHaveBeenCalled();
@@ -906,7 +661,7 @@ describe('UsersService', () => {
     ]);
 
     await expect(
-      service.deleteUser({ ...actor, permissions: ['manage-users-hard-delete'] }, 77),
+      service.deleteUser({ ...actor, permissions: ['manage-users-list'] }, 77),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(usersRepository.listUserOperationalReferences).toHaveBeenCalledWith(77, executor);
@@ -924,10 +679,7 @@ describe('UsersService', () => {
       data_scope: { school_ids: [10010002] },
     });
 
-    const result = await service.deleteUser(
-      { ...actor, permissions: ['manage-users-hard-delete'] },
-      77,
-    );
+    const result = await service.deleteUser({ ...actor, permissions: ['manage-users-list'] }, 77);
 
     expect(usersRepository.listUserOperationalReferences).toHaveBeenCalledWith(77, executor);
     expect(usersRepository.deleteUser).toHaveBeenCalledWith(77, executor);

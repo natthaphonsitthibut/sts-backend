@@ -99,7 +99,7 @@ export class NotificationsRepository {
       `
         INSERT INTO notifications
           (recipient_user_id, type_code, title, body, ref_entity, ref_id,
-           student_person_uuid, case_id, case_status_code, student_name_masked, reason_text)
+           student_person_uuid, case_id, case_status_code, student_name_snapshot, reason_text)
         SELECT
           u.id,
           nt.code,
@@ -131,7 +131,6 @@ export class NotificationsRepository {
         WHERE nt.code = $1
           AND nt.is_enabled IS TRUE
           AND u.status = 'ACTIVE'
-          AND u.role IS DISTINCT FROM 'STUDENT'
           AND u.data_origin_code <> 'AUTOMATED_TEST'
           AND ($6::int IS NULL OR u.id <> $6::int)
           AND NOT (u.id = ANY($14::int[]))
@@ -157,7 +156,7 @@ export class NotificationsRepository {
         input.roomId === null || input.roomId === undefined ? null : String(input.roomId),
         input.caseId ?? null,
         input.studentUuid ?? null,
-        input.studentNameMasked ?? null,
+        input.studentNameSnapshot ?? null,
         input.reasonText ?? null,
         input.excludeUserIds ?? [],
         input.caseStatusCode,
@@ -272,8 +271,8 @@ export class NotificationsRepository {
           n.case_status_code,
           COALESCE(
             NULLIF(BTRIM(notification_case.student_name), ''),
-            n.student_name_masked
-          ) AS student_name_masked,
+            n.student_name_snapshot
+          ) AS student_name_snapshot,
           n.reason_text,
           n.ref_entity,
           n.ref_id,

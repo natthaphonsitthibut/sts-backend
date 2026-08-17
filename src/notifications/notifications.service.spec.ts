@@ -34,7 +34,7 @@ describe('NotificationsService', () => {
         caseId: 11,
         caseStatusCode: 'RESOLVED',
         title: 'เคสเปลี่ยนสถานะ: เสร็จสิ้น : ปิดเคส',
-        studentNameMasked: 'เด็กชาย ทดสอบระบบ',
+        studentNameSnapshot: 'เด็กชาย ทดสอบระบบ',
         excludeUserId: 4,
         reasonText: 'ผลการพิจารณา: เห็นควรปิดเคส',
       }),

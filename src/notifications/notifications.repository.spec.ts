@@ -32,13 +32,15 @@ describe('NotificationsRepository', () => {
         schoolId: 10010002,
         caseId: 17,
         caseStatusCode: 'IN_PROGRESS',
-        studentNameMasked: 'ด***ม',
+        // The stored copy is the real name — masking never happened here, which
+        // is why the column stopped calling itself masked.
+        studentNameSnapshot: 'เด็กหญิง ทดสอบ',
         reasonText: 'ขาดเรียนติดต่อกัน 3 วัน',
       }),
     ).resolves.toEqual([42]);
 
     const { params, sql } = getLastQuery();
-    expect(sql).toContain('case_id, case_status_code, student_name_masked');
+    expect(sql).toContain('case_id, case_status_code, student_name_snapshot');
     expect(sql).toContain('u.permissions ? nt.required_permission');
     expect(sql).toContain("u.data_origin_code <> 'AUTOMATED_TEST'");
     expect(params?.at(14)).toBe('IN_PROGRESS');

@@ -22,7 +22,6 @@ export interface RoleDefinition {
   id: number;
   name: string;
   label: string;
-  rank: number;
   default_permissions: string[];
   scope_mode: RoleScopeMode;
   scope_policy: RoleScopePolicy;
@@ -30,7 +29,6 @@ export interface RoleDefinition {
   is_system: boolean;
   school_id?: number | null;
   user_count?: number;
-  login_link_count?: number;
 }
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
@@ -49,7 +47,6 @@ export interface RoleRow extends Record<string, unknown> {
   id: number;
   name: string;
   label: string;
-  rank: number;
   default_permissions: unknown;
   scope_mode: unknown;
   scope_policy: unknown;
@@ -57,7 +54,6 @@ export interface RoleRow extends Record<string, unknown> {
   is_system: boolean;
   school_id?: number | null;
   user_count?: number;
-  login_link_count?: number;
 }
 
 export interface HydratableUserRow extends Record<string, unknown> {
@@ -99,5 +95,4 @@ export interface HydratableUserRow extends Record<string, unknown> {
   role_default_permissions?: unknown;
   password?: string;
   student_uuid?: string;
-  teacher_membership_attention_required?: boolean;
 }
