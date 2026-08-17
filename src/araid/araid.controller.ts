@@ -15,14 +15,11 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import {
-  AuthGuard,
-  CurrentUser,
-  Public,
-  RequireRoles,
-  RolesGuard,
-  type AuthenticatedRequestUser,
-} from '../auth';
+import { AuthGuard, RolesGuard } from '../auth/auth.guard';
+import type { AuthenticatedRequestUser } from '../auth/auth.types';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { Public } from '../auth/public.decorator';
+import { RequireRoles } from '../auth/permissions.decorator';
 import { ThrottleLogin } from '../config/throttle.decorators';
 import { AraIdSessionCookieService } from './araid-session-cookie.service';
 import { AraIdService } from './araid.service';

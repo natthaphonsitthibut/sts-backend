@@ -14,7 +14,7 @@ import { RedisClientService } from '../redis/redis-client.service';
  * `scope` is part of the Redis key, so a challenge minted for one flow can never
  * be redeemed by another, and the existing per-flow keys stay byte-identical.
  */
-export type AraIdChallengeScope = 'teacher-access' | 'teacher-line' | 'task-link';
+export type AraIdChallengeScope = 'teacher-access' | 'teacher-line' | 'task-link' | 'admin-login';
 
 type ChallengeStatus = 'PENDING' | 'CLAIMED' | 'APPROVED';
 

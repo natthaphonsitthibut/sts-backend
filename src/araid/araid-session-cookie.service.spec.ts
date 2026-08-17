@@ -16,7 +16,6 @@ describe('AraIdSessionCookieService', () => {
     cookieSecure: false,
     cookieSameSite: 'lax',
     tokenTtlSeconds: 43_200,
-    thaidMode: 'mock',
   };
   const jwtService = new JwtService({
     secret: config.jwtSecret,

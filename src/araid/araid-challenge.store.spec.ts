@@ -66,6 +66,14 @@ describe('AraIdChallengeStore', () => {
     ).resolves.toBe(false);
   });
 
+  it('keeps an admin login challenge separate from every link flow', async () => {
+    const store = buildStore();
+    const challenge = await store.create('admin-login', 'admin-login');
+
+    await expect(store.read('teacher-access', challenge.token)).resolves.toBeNull();
+    await expect(store.claim('task-link', challenge.token)).resolves.toBeNull();
+  });
+
   it('merges the approval result into the context for the polling side', async () => {
     const store = buildStore();
     const challenge = await store.create('teacher-line', 'invitation-1', { schoolId: 10010002 });

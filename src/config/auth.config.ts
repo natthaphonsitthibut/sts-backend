@@ -5,7 +5,7 @@ export type CookieSameSite = 'lax' | 'strict' | 'none';
 export interface AuthRuntimeConfig {
   /** Secret for signing the admin session JWT (httpOnly cookie). */
   jwtSecret: string;
-  /** Secret for the magic-link / virtual-student signed tokens (HMAC). */
+  /** Secret for the magic-link signed tokens (HMAC). */
   sessionSecret: string;
   /** Lifetime of an OTP-verified magic session before re-verification is required. */
   magicSessionTtlSeconds: number;
@@ -19,7 +19,6 @@ export interface AuthRuntimeConfig {
   cookieSecure: boolean;
   cookieSameSite: CookieSameSite;
   tokenTtlSeconds: number;
-  thaidMode: string;
 }
 
 /**
@@ -63,7 +62,6 @@ export function getAuthConfigFromEnv(): AuthRuntimeConfig {
     cookieSecure: (process.env.AUTH_COOKIE_SECURE || '').trim().toLowerCase() === 'true',
     cookieSameSite: parseSameSite(process.env.AUTH_COOKIE_SAMESITE),
     tokenTtlSeconds: parsePositiveInt(process.env.AUTH_TOKEN_TTL_SECONDS, 60 * 60 * 12),
-    thaidMode: (process.env.THAID_MODE || 'mock').trim().toLowerCase(),
   };
 }
 
