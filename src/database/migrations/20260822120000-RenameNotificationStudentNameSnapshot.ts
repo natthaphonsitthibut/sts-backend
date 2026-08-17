@@ -24,7 +24,35 @@ export class RenameNotificationStudentNameSnapshot20260822120000 implements Migr
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
-      ALTER TABLE notifications RENAME COLUMN student_name_masked TO student_name_snapshot
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'notifications'
+            AND column_name = 'student_name_masked'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'notifications'
+            AND column_name = 'student_name_snapshot'
+        ) THEN
+          ALTER TABLE notifications
+            RENAME COLUMN student_name_masked TO student_name_snapshot;
+        ELSIF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'notifications'
+            AND column_name = 'student_name_masked'
+        ) AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'notifications'
+            AND column_name = 'student_name_snapshot'
+        ) THEN
+          UPDATE notifications
+          SET student_name_snapshot = COALESCE(student_name_snapshot, student_name_masked)
+          WHERE student_name_snapshot IS NULL;
+
+          ALTER TABLE notifications DROP COLUMN student_name_masked;
+        END IF;
+      END $$
     `);
   }
 

@@ -42,8 +42,34 @@ export class NormalizeLookupTableNames20260817120000 implements MigrationInterfa
     );
 
     await queryRunner.query(`
-      ALTER TABLE student_import_quarantine_resolution_states
-        RENAME TO student_import_quarantine_resolution_statuses
+      DO $$
+      BEGIN
+        IF to_regclass('public.student_import_quarantine_resolution_states') IS NOT NULL
+          AND to_regclass('public.student_import_quarantine_resolution_statuses') IS NULL THEN
+          ALTER TABLE student_import_quarantine_resolution_states
+            RENAME TO student_import_quarantine_resolution_statuses;
+        ELSIF to_regclass('public.student_import_quarantine_resolution_states') IS NOT NULL
+          AND to_regclass('public.student_import_quarantine_resolution_statuses') IS NOT NULL THEN
+          INSERT INTO student_import_quarantine_resolution_statuses (
+            code, label_th, badge_variant, sort_order, created_at, updated_at,
+            created_by, updated_by
+          )
+          SELECT code, label_th, badge_variant, sort_order, created_at, updated_at,
+                 created_by, updated_by
+          FROM student_import_quarantine_resolution_states
+          ON CONFLICT (code) DO UPDATE
+          SET label_th = EXCLUDED.label_th,
+              badge_variant = EXCLUDED.badge_variant,
+              sort_order = EXCLUDED.sort_order,
+              updated_at = GREATEST(
+                student_import_quarantine_resolution_statuses.updated_at,
+                EXCLUDED.updated_at
+              ),
+              updated_by = EXCLUDED.updated_by;
+
+          DROP TABLE student_import_quarantine_resolution_states;
+        END IF;
+      END $$
     `);
 
     // The risk ladder collapsed to NORMAL/WATCH/HIGH in

@@ -198,6 +198,7 @@ export const MIGRATION_BASELINE_202603_SQL = `
   CREATE TABLE IF NOT EXISTS task_links (
     id TEXT PRIMARY KEY,
     task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    parent_link_id TEXT REFERENCES task_links(id),
     token_hash TEXT NOT NULL UNIQUE,
     magic_link TEXT,
     assigned_to_name TEXT,
