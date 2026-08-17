@@ -32,10 +32,6 @@ export class RemoveRetiredStudentAccounts20260821180000 implements MigrationInte
       CREATE INDEX IF NOT EXISTS idx_attendance_updated_by_user_id
       ON attendance (updated_by)
     `);
-    await queryRunner.query(`
-      CREATE INDEX IF NOT EXISTS idx_attendance_deleted_by_user_id
-      ON attendance (deleted_by)
-    `);
 
     // Three immutable tables refuse the `ON DELETE SET NULL` update requested by
     // their own actor FK. Suspend only those guards while PostgreSQL nulls the
@@ -67,7 +63,6 @@ export class RemoveRetiredStudentAccounts20260821180000 implements MigrationInte
       VALUES ('STUDENT', 'นักเรียน', '[]'::jsonb, 'flexible', 'OWN_ONLY', FALSE, TRUE)
       ON CONFLICT (name) DO NOTHING
     `);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_attendance_deleted_by_user_id`);
     await queryRunner.query(`DROP INDEX IF EXISTS idx_attendance_updated_by_user_id`);
     await queryRunner.query(`DROP INDEX IF EXISTS idx_attendance_created_by_user_id`);
   }
