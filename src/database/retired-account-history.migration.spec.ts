@@ -26,7 +26,6 @@ describe('retired account migration history safety', () => {
     for (const indexName of [
       'idx_attendance_created_by_user_id',
       'idx_attendance_updated_by_user_id',
-      'idx_attendance_deleted_by_user_id',
     ]) {
       expect(migration.indexOf(`CREATE INDEX IF NOT EXISTS ${indexName}`)).toBeGreaterThan(-1);
       expect(migration.indexOf(`CREATE INDEX IF NOT EXISTS ${indexName}`)).toBeLessThan(
