@@ -95,7 +95,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     label: 'ผู้อำนวยการ',
     // Every page a director works in. The retired action-level ids
     // (edit-students, close-case, manage-timetable, …) are covered by the page
-    // they lived on — see PERMISSION_ID_REPLACEMENTS.
+    // they lived on — see 20260821090000-CollapsePermissionsToPages.
     default_permissions: [
       'home',
       'dashboard',
@@ -126,19 +126,6 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
-    is_system: true,
-  },
-  {
-    // Teachers reach the system through their access link, not a login — the
-    // last teacher sign-in was 2026-07-19. The row survives because it is the
-    // identity 991k attendance records point at, but it is no longer a menu
-    // group: nothing to assign, and not offered when picking one.
-    name: 'TEACHER',
-    label: 'คุณครู',
-    default_permissions: [],
-    scope_mode: 'flexible',
-    scope_policy: 'ASSIGNABLE',
-    is_assignable: false,
     is_system: true,
   },
 ];
