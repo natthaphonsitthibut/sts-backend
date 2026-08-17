@@ -71,8 +71,6 @@ export const PERMISSION_CATALOG = collectLeafPermissions(PERMISSION_MENU_ITEMS);
 
 export const VALID_PERMISSION_IDS = PERMISSION_CATALOG.map((item) => item.id);
 
-export const GRANT_EXEMPT_PERMISSION_IDS: string[] = [];
-
 // Where each retired permission ended up when the catalog collapsed to one
 // permission per page (2026-08-17) is recorded — and executed — by migration
 // 20260821090000-CollapsePermissionsToPages. Keeping a second copy here as an

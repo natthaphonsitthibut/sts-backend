@@ -1,6 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import {
-  GRANT_EXEMPT_PERMISSION_IDS,
   ROLE_BASELINES,
   ROLE_LABELS,
   VALID_PERMISSION_IDS,
@@ -245,9 +244,7 @@ export class UsersPolicyService {
       return true;
     }
 
-    return targetPermissions
-      .filter((permission) => !GRANT_EXEMPT_PERMISSION_IDS.includes(permission))
-      .every((permission) => grantablePermissions.includes(permission));
+    return targetPermissions.every((permission) => grantablePermissions.includes(permission));
   }
 
   resolveDisplayPermissions(

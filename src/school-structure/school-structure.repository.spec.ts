@@ -378,7 +378,8 @@ describe('SchoolStructureRepository scope', () => {
       [42, '2026-07-14', 10, 0],
       true,
     );
-    expect(runner.query.mock.calls.at(-1)?.[0]).toContain(
+    const lastCall = (runner.query.mock.calls as Array<[string, unknown[], boolean]>).at(-1);
+    expect(lastCall?.[0]).toContain(
       'LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"',
     );
   });

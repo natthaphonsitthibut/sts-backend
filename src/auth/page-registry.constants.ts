@@ -20,7 +20,6 @@ export interface AppPageDefinition {
   id: string;
   /** Exactly what the sidebar shows. */
   title: string;
-  route: string;
   /** Sidebar section header, or null for a top-level entry. */
   group: string | null;
 }
@@ -32,62 +31,54 @@ export const APP_PAGE_GROUPS = {
 } as const;
 
 export const APP_PAGES: AppPageDefinition[] = [
-  { id: 'home', title: 'หน้าหลัก', route: '/', group: null },
-  { id: 'dashboard', title: 'รายงานสถานะนักเรียน', route: '/student-risk-report', group: null },
-  { id: 'students', title: 'รายชื่อนักเรียน', route: '/students', group: null },
-  { id: 'classrooms', title: 'ห้องเรียนทั้งหมด', route: '/classrooms', group: null },
+  { id: 'home', title: 'หน้าหลัก', group: null },
+  { id: 'dashboard', title: 'รายงานสถานะนักเรียน', group: null },
+  { id: 'students', title: 'รายชื่อนักเรียน', group: null },
+  { id: 'classrooms', title: 'ห้องเรียนทั้งหมด', group: null },
   {
     id: 'manage-school-structure',
     title: 'จัดการภาคเรียนและห้องเรียน',
-    route: '/school-structure',
     group: APP_PAGE_GROUPS.data,
   },
   {
     id: 'manage-curriculum',
     title: 'จัดการข้อมูลหลักสูตร',
-    route: '/curriculum',
     group: APP_PAGE_GROUPS.data,
   },
-  { id: 'import-data', title: 'นำเข้าข้อมูล', route: '/import-data', group: APP_PAGE_GROUPS.data },
-  { id: 'export-data', title: 'ส่งออกข้อมูล', route: '/data-exports', group: APP_PAGE_GROUPS.data },
+  { id: 'import-data', title: 'นำเข้าข้อมูล', group: APP_PAGE_GROUPS.data },
+  { id: 'export-data', title: 'ส่งออกข้อมูล', group: APP_PAGE_GROUPS.data },
   {
     id: 'attendance-dashboard',
     title: 'ความครบถ้วน',
-    route: '/attendance-operations',
     group: APP_PAGE_GROUPS.data,
   },
-  { id: 'attendance', title: 'เช็กชื่อ', route: '/attendance', group: APP_PAGE_GROUPS.attendance },
+  { id: 'attendance', title: 'เช็กชื่อ', group: APP_PAGE_GROUPS.attendance },
   {
     id: 'manage-teacher-access',
     title: 'จัดการลิงก์เช็กชื่อ',
-    route: '/attendance-links',
     group: APP_PAGE_GROUPS.attendance,
   },
   {
     id: 'timetable',
     title: 'ตารางสอน',
-    route: '/timetable',
     group: APP_PAGE_GROUPS.attendance,
   },
   {
     id: 'manage-users-list',
     title: 'จัดการผู้ใช้งาน',
-    route: '/manage-users',
     group: APP_PAGE_GROUPS.users,
   },
   {
     id: 'manage-teachers',
     title: 'จัดการข้อมูลคุณครู',
-    route: '/manage-teachers',
     group: APP_PAGE_GROUPS.users,
   },
   {
     id: 'manage-role-groups',
     title: 'จัดการกลุ่มเมนู',
-    route: '/manage-role-groups',
     group: APP_PAGE_GROUPS.users,
   },
-  { id: 'settings', title: 'ตั้งค่าระบบ', route: '/settings', group: null },
+  { id: 'settings', title: 'ตั้งค่าระบบ', group: null },
 ];
 
 /**

@@ -231,10 +231,10 @@ export class SchoolStructureController {
     return this.service.listRoster(query, actor);
   }
 
-  // The comment dialog is opened from both the classroom page and เช็กชื่อ.
+  // The comment dialog is opened from the classroom, เช็กชื่อ and student pages.
   @Post('classrooms/:classroomId/students/:studentUuid/comments')
   @RequirePermission()
-  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance')
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
   createStudentComment(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @Param('studentUuid', ParseUUIDPipe) studentUuid: string,
