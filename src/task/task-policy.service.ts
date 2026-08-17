@@ -148,7 +148,7 @@ export class TaskPolicyService {
     targetRole?: string | null,
     roleMap?: Map<string, RoleDefinition>,
   ): boolean {
-    return canManageRole(actorRole, targetRole, roleMap ?? new Map());
+    return canManageRole(actorRole, targetRole, roleMap ?? new Map<string, RoleDefinition>());
   }
 
   isScopeGlobal(scope: unknown): boolean {
