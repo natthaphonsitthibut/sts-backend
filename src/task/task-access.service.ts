@@ -21,13 +21,9 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
 import { TaskPolicyService } from './task-policy.service';
-import { TaskRepository, type LoginLinkListFilters } from './task.repository';
-import { getTaskErrorMessage, type ActorContext } from './task.types';
-import {
-  buildPaginationMeta,
-  resolveLimit,
-  resolvePage,
-} from '../common/pagination/pagination.util';
+import type { ActorContext } from './task.types';
+import { TaskRepository } from './task.repository';
+import {} from '../common/pagination/pagination.util';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 import { AraIdChallengeStore, type AraIdChallengeScope } from '../araid/araid-challenge.store';
 import { AraIdService } from '../araid/araid.service';
@@ -65,7 +61,7 @@ export class TaskAccessService {
   /**
    * A task link can be verified with AraID instead of the emailed OTP. The
    * identity that may approve it is the teacher the link was issued to — read
-   * through `assigned_teacher_user_id`, never the denormalised email.
+   * through `assigned_teacher_id`, never the denormalised email.
    */
   async createAraIdChallenge(token: string, baseUrl: string) {
     const link = await this.findUsableLinkForVerification(token);
@@ -227,7 +223,7 @@ export class TaskAccessService {
       return { error: 'Link not yet open', status: 'SCHEDULED' };
     }
 
-    if (link.status === 'COMPLETED' && link.task_type !== 'LOGIN') {
+    if (link.status === 'COMPLETED') {
       return { error: 'Task already completed', status: 'COMPLETED' };
     }
 
@@ -269,7 +265,6 @@ export class TaskAccessService {
       subject: link.subject,
       school_name: link.school_name,
       auth_required: authRequired,
-      login_role: link.login_role || null,
       login_permissions: link.login_permissions || [],
       login_data_scope: link.login_data_scope || {},
     };
@@ -352,105 +347,6 @@ export class TaskAccessService {
     }
 
     return result;
-  }
-
-  async verifyMagicLogin(token: string, sessionToken?: string) {
-    try {
-      const link = await this.getTaskByToken(token, sessionToken);
-      if (!link) {
-        throw new Error('ไม่พบข้อมูลลิงก์หรือลิงก์ไม่ถูกต้อง');
-      }
-      if ('error' in link && link.error) {
-        throw new Error(getTaskErrorMessage(link.error));
-      }
-      if (link.task_type !== 'LOGIN') {
-        throw new Error('ลิงก์นี้ไม่ใช่ลิงก์เข้าสู่ระบบ');
-      }
-
-      if (link.auth_required) {
-        return {
-          otp_required: true,
-          email: link.assigned_to_email,
-          expires_at: link.expires_at,
-          assigned_to_name: link.assigned_to_name,
-        };
-      }
-
-      const email = typeof link.assigned_to_email === 'string' ? link.assigned_to_email : '';
-      if (!email) {
-        throw new Error('ลิงก์นี้ไม่มีข้อมูลอีเมลผู้ใช้งานที่เชื่อมโยง');
-      }
-
-      const roleMap = await this.taskPolicyService.getRoleMap();
-      const resolvedRole =
-        typeof link.login_role === 'string' && link.login_role.trim().length > 0
-          ? link.login_role.trim()
-          : 'TEACHER';
-      const resolvedPermissions = this.taskPolicyService.resolveEffectivePermissions(
-        resolvedRole,
-        link.login_permissions,
-        roleMap,
-      );
-      const resolvedScope = this.taskPolicyService.normalizeScope(link.login_data_scope);
-      await this.taskRepository.markLoginLinkUsed(String(link.link_id));
-
-      return {
-        id: this.buildVirtualUserId(String(link.link_id)),
-        username: email,
-        FirstName: link.assigned_to_name || 'ผู้ใช้ผ่านลิงก์',
-        LastName: null,
-        email,
-        affiliation: 'External Link',
-        status: 'ACTIVE',
-        role: resolvedRole,
-        permissions: resolvedPermissions,
-        roles: [resolvedRole],
-        labels: [this.taskPolicyService.getRoleLabel(resolvedRole, roleMap) || resolvedRole],
-        data_scope: resolvedScope,
-        virtual_login: true,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`verifyMagicLogin error: ${message}`);
-      throw err;
-    }
-  }
-
-  async getLoginLinks(actor?: ActorContext, filters: Partial<LoginLinkListFilters> = {}) {
-    try {
-      const currentActor = this.taskPolicyService.ensureActor(actor);
-      const roleMap = await this.taskPolicyService.getRoleMap();
-      const actorRole = this.taskPolicyService.getPrimaryRole({ roles: currentActor.roles });
-      const actorRank = this.taskPolicyService.getRoleRank(actorRole, roleMap);
-      const page = resolvePage(filters.page);
-      const limit = resolveLimit(filters.limit);
-      const { rows, totalCount, summary } = await this.taskRepository.listLoginLinksPaginated({
-        actorRole,
-        actorRank,
-        actorScope: currentActor.data_scope,
-        status: filters.status,
-        searchTerm: filters.searchTerm,
-        province: filters.province,
-        district: filters.district,
-        subDistrict: filters.subDistrict,
-        schoolId: filters.schoolId,
-        gradeLevelId: filters.gradeLevelId,
-        room: filters.room,
-        page,
-        limit,
-      });
-
-      return {
-        success: true,
-        data: rows,
-        meta: buildPaginationMeta(page, limit, totalCount),
-        summary,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`getLoginLinks error: ${message}`);
-      throw err;
-    }
   }
 
   async requestOtp(token: string) {
@@ -581,8 +477,8 @@ export class TaskAccessService {
       if (!link) {
         throw new Error('Link not found');
       }
-      if (link.task_type !== 'LOGIN' && link.task_type !== 'VISIT') {
-        throw new Error('Only VISIT and LOGIN links can be changed by admin');
+      if (link.task_type !== 'VISIT' && link.task_type !== 'ASSIST') {
+        throw new Error('Only VISIT and ASSIST links can be changed by admin');
       }
       if (link.status !== 'ACTIVE') {
         throw new Error('Only ACTIVE links can be changed by admin');
@@ -626,7 +522,6 @@ export class TaskAccessService {
             grade: link.target_grade,
             room: link.target_room,
             reason: normalizedReason,
-            scope: link.task_type === 'LOGIN' ? link.login_data_scope : undefined,
           },
           ip: null,
         });
@@ -654,7 +549,6 @@ export class TaskAccessService {
           schoolId: link.target_school_id,
           grade: link.target_grade,
           room: link.target_room,
-          scope: link.task_type === 'LOGIN' ? link.login_data_scope : undefined,
         },
         ip: null,
       });

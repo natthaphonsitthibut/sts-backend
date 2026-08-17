@@ -93,7 +93,6 @@ export const AUDIT_LOG_DOMAINS = [
   'student_accounts',
   'imports',
   'users',
-  'login_links',
   'students',
   'cases',
   'tasks',
@@ -103,7 +102,7 @@ export const AUDIT_LOG_DOMAINS = [
 
 export type AuditLogDomain = (typeof AUDIT_LOG_DOMAINS)[number];
 
-export const AUDIT_LOG_TASK_TYPES = ['ATTENDANCE', 'VISIT', 'LOGIN'] as const;
+export const AUDIT_LOG_TASK_TYPES = ['VISIT', 'ASSIST'] as const;
 
 export type AuditLogTaskType = (typeof AUDIT_LOG_TASK_TYPES)[number];
 

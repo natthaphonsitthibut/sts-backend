@@ -474,12 +474,12 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     detailKeys: [{ key: 'schoolId', label: 'รหัสโรงเรียน' }],
   },
   LINK_LOCK: {
-    domain: 'login_links',
+    domain: 'tasks',
     label: 'ปิดลิงก์',
     detailKeys: [{ key: 'taskType', label: 'ประเภทลิงก์' }],
   },
   LINK_UNLOCK: {
-    domain: 'login_links',
+    domain: 'tasks',
     label: 'เปิดลิงก์อีกครั้ง',
     detailKeys: [{ key: 'taskType', label: 'ประเภทลิงก์' }],
   },
@@ -645,16 +645,22 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
 };
 
+/**
+ * Which page's permission opens each slice of the log. `student_accounts` and
+ * `student_accounts` covers a retired feature whose permission id left the
+ * catalogue years of migrations ago — its history is read from the page that owns
+ * that subject today, rather than being unreachable because it names a permission
+ * nobody can hold.
+ */
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
-  student_accounts: ['manage-student-accounts'],
+  student_accounts: ['manage-users-list'],
   imports: ['import-data'],
   users: ['manage-users-list'],
-  login_links: ['login-links'],
   students: ['students'],
-  cases: ['review-cases'],
-  tasks: ['create', 'review-cases', 'attendance-dashboard'],
+  cases: ['dashboard'],
+  tasks: ['dashboard', 'attendance-dashboard'],
   attendance: ['attendance', 'attendance-dashboard'],
-  timetable: ['manage-timetable'],
+  timetable: ['timetable'],
 };
 
 const LINK_HISTORY_ACTIONS: AuditAction[] = [
@@ -666,9 +672,8 @@ const LINK_HISTORY_ACTIONS: AuditAction[] = [
 ];
 
 const LINK_HISTORY_DOMAINS: Record<AuditLogTaskType, AuditLogDomain> = {
-  ATTENDANCE: 'tasks',
   VISIT: 'tasks',
-  LOGIN: 'login_links',
+  ASSIST: 'tasks',
 };
 
 @Injectable()

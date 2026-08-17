@@ -1,7 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
-import { finalizePersistedDataScope } from '../auth/auth.types';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
@@ -203,7 +202,7 @@ export class TaskLifecycleService {
     await this.assertSchoolWithinActorScope(currentActor, schoolId);
 
     return (await this.taskRepository.listVisitAssignees(studentUuid)).map((row) => ({
-      teacherUserId: Number(row.teacher_user_id),
+      teacherId: row.teacher_id,
       displayName: row.display_name,
       isHomeroom: row.is_homeroom === true,
     }));
@@ -219,36 +218,33 @@ export class TaskLifecycleService {
     });
     let assignedName = assigneeName.fullName;
     let assignedEmail = clean(data.assigned_to_email);
-    const selectedTeacherUserId = this.normalizeNumber(data.assigned_teacher_user_id);
+    const selectedTeacherId = this.normalizeNumber(data.assigned_teacher_id);
 
     // A round for a student the system knows goes to a teacher in that student's
-    // school — there is no guest assignee any more, and recording the real user
-    // is what AraID verification depends on. A manual visit that opens a case
+    // school — there is no guest assignee any more, and recording the real
+    // teacher is what AraID verification depends on. A manual visit that opens a case
     // for a student with no record yet has no roster to pick from, so it keeps
     // the free-text assignee and stays on email OTP.
     const requiresTeacherAssignee =
       taskType === 'ASSIST' || (taskType === 'VISIT' && Boolean(clean(data.student_id)));
-    if (requiresTeacherAssignee && selectedTeacherUserId === null) {
+    if (requiresTeacherAssignee && selectedTeacherId === null) {
       throw new BadRequestException('กรุณาเลือกครูผู้รับมอบหมาย');
     }
-    if (!assignedName && selectedTeacherUserId === null) {
+    if (!assignedName && selectedTeacherId === null) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
     if (
-      selectedTeacherUserId === null &&
+      selectedTeacherId === null &&
       assigneeName.usesStructuredInput &&
       (!assigneeName.firstName || !assigneeName.lastName)
     ) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
-    if (selectedTeacherUserId !== null && taskType !== 'VISIT' && taskType !== 'ASSIST') {
+    if (selectedTeacherId !== null && taskType !== 'VISIT' && taskType !== 'ASSIST') {
       throw new BadRequestException('เลือกครูผู้รับมอบหมายได้เฉพาะลิงก์ติดตามนักเรียน');
     }
-    if (selectedTeacherUserId !== null && !clean(data.student_id)) {
+    if (selectedTeacherId !== null && !clean(data.student_id)) {
       throw new BadRequestException('กรุณาเลือกนักเรียนก่อนเลือกครูผู้รับมอบหมาย');
-    }
-    if (taskType === 'LOGIN' && !assignedEmail) {
-      throw new Error('assigned_to_email is required for LOGIN');
     }
     this.taskPolicyService.assertCanCreateTask(currentActor, taskType);
 
@@ -264,33 +260,6 @@ export class TaskLifecycleService {
             assistanceMeasureDetail,
           )
         : [];
-
-    const roleMap = taskType === 'LOGIN' ? await this.taskPolicyService.getRoleMap() : undefined;
-    const loginRole = taskType === 'LOGIN' ? this.taskPolicyService.normalizeRole(data) : null;
-    const loginPermissions =
-      taskType === 'LOGIN'
-        ? this.taskPolicyService.normalizePermissionList(data.permissions ?? data.mock_permissions)
-        : [];
-    // Persist LOGIN scopes with an explicit nationwide marker: scoped reads
-    // fail closed on an empty scope, so a confirmed-nationwide link must be
-    // stored as global:true rather than an empty object.
-    const loginDataScope =
-      taskType === 'LOGIN'
-        ? finalizePersistedDataScope(this.taskPolicyService.normalizeScope(data.data_scope))
-        : {};
-
-    if (taskType === 'LOGIN') {
-      await this.taskPolicyService.assertAssignableLoginPayload(
-        currentActor,
-        {
-          ...data,
-          role: loginRole,
-          permissions: loginPermissions,
-          data_scope: loginDataScope,
-        },
-        roleMap,
-      );
-    }
 
     const taskId = crypto.randomUUID();
     const token = generateToken();
@@ -337,16 +306,16 @@ export class TaskLifecycleService {
 
         if (inputTargetSchoolId !== null) {
           await this.assertSchoolWithinActorScope(currentActor, inputTargetSchoolId, executor);
-        } else if (taskType !== 'LOGIN') {
+        } else {
           resolvedTargetSchoolId = this.getSingleActorSchoolId(currentActor);
         }
 
         if (taskType === 'VISIT' || taskType === 'ASSIST') {
-          if (selectedTeacherUserId !== null) {
+          if (selectedTeacherId !== null) {
             const studentUuid = clean(data.student_id);
             const teacher = (
               await this.taskRepository.listVisitAssignees(studentUuid!, executor)
-            ).find((candidate) => Number(candidate.teacher_user_id) === selectedTeacherUserId);
+            ).find((candidate) => Number(candidate.teacher_id) === selectedTeacherId);
             if (!teacher) {
               throw new BadRequestException(
                 'ครูผู้รับมอบหมายต้องเป็นครูที่ปฏิบัติงานอยู่ในโรงเรียนของนักเรียน',
@@ -529,7 +498,7 @@ export class TaskLifecycleService {
             assignedToLastName: assigneeName.lastName,
             assignedToPhone: clean(data.assigned_to_phone),
             assignedToEmail: assignedEmail,
-            assignedTeacherUserId: selectedTeacherUserId,
+            assignedTeacherId: selectedTeacherId,
             expiresAt,
             opensAt,
             subject: clean(data.subject),
@@ -539,9 +508,6 @@ export class TaskLifecycleService {
             // email can't be OTP'd, so mark them pre-verified to skip the gate.
             otpVerified: assignedEmail ? 0 : 1,
             createdBy: resolveAuditActorId(currentActor),
-            loginRole,
-            loginPermissions,
-            loginDataScope,
           },
           executor,
         );
@@ -560,7 +526,6 @@ export class TaskLifecycleService {
             grade: auditTargetGrade,
             room: auditTargetRoom,
             caseId: auditCaseId,
-            scope: taskType === 'LOGIN' ? loginDataScope : undefined,
           },
           ip: null,
         });

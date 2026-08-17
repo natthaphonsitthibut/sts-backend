@@ -16,7 +16,7 @@ function buildActor(): AuthenticatedRequestUser {
     id: 7,
     username: 'case-admin',
     roles: ['ADMIN'],
-    permissions: ['create'],
+    permissions: ['dashboard'],
     data_scope: { school_ids: [10010002] },
   };
 }
@@ -58,7 +58,7 @@ describe('TaskLifecycleService', () => {
       listVisitAssignees: jest
         .fn()
         .mockResolvedValue([
-          { teacher_user_id: 7, display_name: 'ครูผู้ติดตาม', email: null, is_homeroom: true },
+          { teacher_id: '7', display_name: 'ครูผู้ติดตาม', email: null, is_homeroom: true },
         ]),
       lockCaseForVisitAssignment: jest.fn().mockResolvedValue({
         id: 123,
@@ -92,13 +92,13 @@ describe('TaskLifecycleService', () => {
     taskRepository.findStudentTermMetadata.mockResolvedValue({ SchoolID_Onec: 10010002 });
     taskRepository.listVisitAssignees.mockResolvedValue([
       {
-        teacher_user_id: 42,
+        teacher_id: '42',
         display_name: 'ครูประจำชั้น',
         email: 'homeroom@example.test',
         is_homeroom: true,
       },
       {
-        teacher_user_id: 43,
+        teacher_id: '43',
         display_name: 'ครูในโรงเรียน',
         email: 'teacher@example.test',
         is_homeroom: false,
@@ -106,8 +106,8 @@ describe('TaskLifecycleService', () => {
     ]);
 
     await expect(service.listVisitAssignees(buildActor(), studentUuid)).resolves.toEqual([
-      { teacherUserId: 42, displayName: 'ครูประจำชั้น', isHomeroom: true },
-      { teacherUserId: 43, displayName: 'ครูในโรงเรียน', isHomeroom: false },
+      { teacherId: '42', displayName: 'ครูประจำชั้น', isHomeroom: true },
+      { teacherId: '43', displayName: 'ครูในโรงเรียน', isHomeroom: false },
     ]);
     expect(taskRepository.listVisitAssignees).toHaveBeenCalledWith(studentUuid);
   });
@@ -115,7 +115,7 @@ describe('TaskLifecycleService', () => {
   it('allows a selected school teacher without an email address', async () => {
     taskRepository.listVisitAssignees.mockResolvedValue([
       {
-        teacher_user_id: 42,
+        teacher_id: '42',
         display_name: 'ครูประจำชั้น',
         email: null,
         is_homeroom: true,
@@ -130,7 +130,7 @@ describe('TaskLifecycleService', () => {
         student_name: 'นักเรียนทดสอบ',
         target_school_id: 10010002,
         existing_case_id: '123',
-        assigned_teacher_user_id: 42,
+        assigned_teacher_id: '42',
       },
       'https://app.example.invalid',
     );
@@ -260,9 +260,9 @@ describe('TaskLifecycleService', () => {
           {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
-            assigned_teacher_user_id: 7,
-            assigned_teacher_user_id: 7,
-            assigned_teacher_user_id: 7,
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -290,8 +290,8 @@ describe('TaskLifecycleService', () => {
         {
           task_type: 'VISIT',
           assigned_to_name: 'ครูผู้ติดตาม',
-          assigned_teacher_user_id: 7,
-          assigned_teacher_user_id: 7,
+          assigned_teacher_id: '7',
+          assigned_teacher_id: '7',
           existing_case_id: '123',
           student_id: studentUuid,
           student_name: 'นักเรียนทดสอบ',
@@ -320,9 +320,9 @@ describe('TaskLifecycleService', () => {
           {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
-            assigned_teacher_user_id: 7,
-            assigned_teacher_user_id: 7,
-            assigned_teacher_user_id: 7,
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -346,7 +346,7 @@ describe('TaskLifecycleService', () => {
       {
         task_type: 'VISIT',
         assigned_to_name: 'ครูผู้ติดตาม',
-        assigned_teacher_user_id: 7,
+        assigned_teacher_id: '7',
         student_id: studentUuid,
         student_name: 'นักเรียนทดสอบ',
         target_school_id: 10010002,

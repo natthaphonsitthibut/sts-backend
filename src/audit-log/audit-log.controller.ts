@@ -3,19 +3,25 @@ import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
-  RequirePermission,
+  RequireAnyPermission,
   type AuthenticatedRequestUser,
 } from '../auth';
 import { AuditLogService } from './audit-log.service';
 import { GetAuditLogActionsQueryDto, GetAuditLogQueryDto } from './dto/audit-log.dto';
 
+/**
+ * บันทึกการใช้งาน is a panel, not a page: it is embedded in นำเข้าข้อมูล,
+ * รายชื่อนักเรียน and the link detail screen. Each of those pages can read it,
+ * plus the standalone `audit-log` permission for anyone who should see the log
+ * without owning those pages.
+ */
 @UseGuards(AuthGuard, PermissionsGuard)
 @Controller('api/audit-log')
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
 
   @Get('actions')
-  @RequirePermission('audit-log')
+  @RequireAnyPermission('audit-log', 'import-data', 'students')
   getActions(
     @Query() query: GetAuditLogActionsQueryDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -24,13 +30,13 @@ export class AuditLogController {
   }
 
   @Get(':id')
-  @RequirePermission('audit-log')
+  @RequireAnyPermission('audit-log', 'import-data', 'students')
   async getById(@Param('id') id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
     return await this.auditLogService.getById(actor, id);
   }
 
   @Get()
-  @RequirePermission('audit-log')
+  @RequireAnyPermission('audit-log', 'import-data', 'students')
   async list(@Query() query: GetAuditLogQueryDto, @CurrentUser() actor: AuthenticatedRequestUser) {
     return await this.auditLogService.list(actor, {
       ...query,
