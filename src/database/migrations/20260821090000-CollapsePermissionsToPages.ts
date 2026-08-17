@@ -172,18 +172,9 @@ export class CollapsePermissionsToPages20260821090000 implements MigrationInterf
       WHERE username = 'newnew'
     `);
 
-    // Student accounts were retired in 20260802150000 and the rows left behind
-    // are all disabled with no attendance history, so they can go — except the
-    // ones that appear in `audit_log`. That table is append-only by trigger, so
-    // the `ON DELETE SET NULL` the foreign key would perform is itself refused;
-    // deleting those rows would mean rewriting history to erase an account.
-    // They stay, credential-less and unassignable, and the log keeps naming who
-    // did what.
-    await queryRunner.query(`
-      DELETE FROM users
-      WHERE role = 'STUDENT'
-        AND NOT EXISTS (SELECT 1 FROM audit_log WHERE audit_log.actor_user_id = users.id)
-    `);
+    // Account deletion belongs to 20260821180000-RemoveRetiredStudentAccounts.
+    // Keeping it out of this permission migration avoids firing every users FK
+    // while the attendance audit columns still lack supporting indexes.
 
     // No assignable group may be empty: an operator picking it would grant
     // nothing at all.

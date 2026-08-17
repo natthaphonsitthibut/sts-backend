@@ -27,11 +27,11 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  *      in the timetable rework; one row still used it).
  *   4. The accounts and the `TEACHER` role are deleted.
  *
- * On the temporary indexes: `users` is the target of 260 foreign keys and 242 of
- * them have no index on the referencing column. `ON DELETE SET NULL` runs one
- * statement per deleted row per key, so deleting 445 accounts would sequentially
- * scan `attendance` (991k rows) 890 times. The indexes exist only for the
- * duration of the DELETE and only those created here are dropped again.
+ * On the temporary indexes: `users` is the target of hundreds of foreign keys,
+ * many without an index on the referencing column. Both the blocker audit and
+ * `ON DELETE SET NULL` would otherwise rescan child tables once per account.
+ * Indexes created here exist only for this migration and are dropped again;
+ * permanent attendance audit-FK indexes come from 20260821180000.
  *
  * On audit/PII history: their immutable triggers refuse the `ON DELETE SET NULL`
  * update requested by their own actor foreign keys. The guards are suspended
@@ -308,42 +308,9 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
       await queryRunner.query(`DELETE FROM ${table} WHERE ${predicate}`);
     }
 
-    // Anything still pointing at a teacher account with a blocking rule would
-    // fail below as a bare foreign-key error naming a constraint. Name it here
-    // instead, with the table, column and row count.
-    const blockingForeignKeys = (await queryRunner.query(`
-      SELECT DISTINCT c.conrelid::regclass::text AS table_name, a.attname AS column_name
-      FROM pg_constraint c
-      JOIN unnest(c.conkey) k(attnum) ON TRUE
-      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
-      WHERE c.contype = 'f'
-        AND c.confrelid = 'users'::regclass
-        AND c.confdeltype IN ('r', 'a')
-      ORDER BY 1, 2
-    `)) as Array<{ table_name: string; column_name: string }>;
-    const blockers: string[] = [];
-    for (const foreignKey of blockingForeignKeys) {
-      const counted = (await queryRunner.query(`
-        SELECT COUNT(*)::text AS count
-        FROM ${foreignKey.table_name} blocked
-        JOIN users account ON account.id = blocked."${foreignKey.column_name}"
-        WHERE account.role = 'TEACHER'
-      `)) as Array<{ count: string }>;
-      const rows = Number(counted[0]?.count ?? 0);
-      if (rows > 0) {
-        blockers.push(`${foreignKey.table_name}.${foreignKey.column_name} (${rows} rows)`);
-      }
-    }
-    if (blockers.length > 0) {
-      throw new Error(
-        'RemoveTeacherUserAccounts: these columns still point at a teacher account ' +
-          `with a blocking delete rule: ${blockers.join(', ')}. ` +
-          'Repoint or clear them before running this migration.',
-      );
-    }
-
-    // 6. The accounts themselves. Index first, delete, then take the indexes
-    //    back out — see the header note on the 242 unindexed foreign keys.
+    // Index before both the blocker audit and account DELETE. The audit itself
+    // joins every blocking FK to users and can time out on a large unindexed
+    // child table before the DELETE is ever reached.
     const unindexedForeignKeys = (await queryRunner.query(`
       SELECT DISTINCT c.conrelid::regclass::text AS table_name, a.attname AS column_name
       FROM pg_constraint c
@@ -368,6 +335,41 @@ export class RemoveTeacherUserAccounts20260823120000 implements MigrationInterfa
     }
 
     try {
+      // Anything still pointing at a teacher account with a blocking rule would
+      // fail below as a bare foreign-key error naming a constraint. Name it here
+      // instead, with the table, column and row count.
+      const blockingForeignKeys = (await queryRunner.query(`
+        SELECT DISTINCT c.conrelid::regclass::text AS table_name, a.attname AS column_name
+        FROM pg_constraint c
+        JOIN unnest(c.conkey) k(attnum) ON TRUE
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+        WHERE c.contype = 'f'
+          AND c.confrelid = 'users'::regclass
+          AND c.confdeltype IN ('r', 'a')
+        ORDER BY 1, 2
+      `)) as Array<{ table_name: string; column_name: string }>;
+      const blockers: string[] = [];
+      for (const foreignKey of blockingForeignKeys) {
+        const counted = (await queryRunner.query(`
+          SELECT COUNT(*)::text AS count
+          FROM ${foreignKey.table_name} blocked
+          JOIN users account ON account.id = blocked."${foreignKey.column_name}"
+          WHERE account.role = 'TEACHER'
+        `)) as Array<{ count: string }>;
+        const rows = Number(counted[0]?.count ?? 0);
+        if (rows > 0) {
+          blockers.push(`${foreignKey.table_name}.${foreignKey.column_name} (${rows} rows)`);
+        }
+      }
+      if (blockers.length > 0) {
+        throw new Error(
+          'RemoveTeacherUserAccounts: these columns still point at a teacher account ' +
+            `with a blocking delete rule: ${blockers.join(', ')}. ` +
+            'Repoint or clear them before running this migration.',
+        );
+      }
+
+      // 6. The accounts themselves.
       // Let the actor FKs null their references while retaining immutable rows.
       const immutableHistoryTriggers = [
         ['audit_log', 'trg_audit_log_immutable'],
