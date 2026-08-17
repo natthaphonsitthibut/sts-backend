@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -8,8 +9,13 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   AuthGuard,
   CurrentUser,
@@ -19,14 +25,23 @@ import {
   resolveActorDataScope,
   type AuthenticatedRequestUser,
 } from '../auth';
+import { AttendanceImportService } from './attendance-import.service';
+import { attendanceImportMulterOptions } from './attendance-import.multer';
+import {
+  ListAttendanceImportsDto,
+  ParseAttendanceImportDto,
+  RecordAttendanceImportDto,
+} from './dto/attendance-import.dto';
+import type { Response } from 'express';
+import { buildPaginationMeta } from '../common/pagination/pagination.util';
 import { AttendanceService } from './attendance.service';
 import {
-  GetAttendanceTasksQueryDto,
   GetHistoryQueryDto,
   GetRoomsQueryDto,
   GetSchoolsQueryDto,
   GetStudentsQueryDto,
   SaveAttendanceDto,
+  SaveAttendanceMarksDto,
 } from './dto/attendance.dto';
 import { resolveLimit, resolvePage } from '../common/pagination/pagination.util';
 import { AttendanceOperationsService } from './attendance-operations.service';
@@ -48,6 +63,7 @@ export class AttendanceController {
   constructor(
     private readonly attendanceService: AttendanceService,
     private readonly attendanceOperationsService: AttendanceOperationsService,
+    private readonly attendanceImportService: AttendanceImportService,
   ) {}
 
   @Get('grade-levels')
@@ -71,7 +87,6 @@ export class AttendanceController {
     'students',
     'manage-school-structure',
     'import-data',
-    'import-school-roster',
     'export-data',
   )
   async getSchools(
@@ -139,31 +154,128 @@ export class AttendanceController {
     );
   }
 
-  @Get('tasks')
+  // Same permission as the final submit: a draft is still an attendance write,
+  // it just does not close the round. Scope is enforced server-side as usual.
+  @Post('marks')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard')
-  async getAttendanceTasks(
-    @Query() query: GetAttendanceTasksQueryDto,
+  @RequirePermission('attendance')
+  async saveAttendanceMarks(
+    @Body() body: SaveAttendanceMarksDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    const scope = resolveActorDataScope(actor);
-    // Opt-in pagination: the dashboard sends `page` and gets the paginated
-    // envelope; legacy callers (no page) still get the full array.
-    if (query.page === undefined) {
-      return await this.attendanceService.getAttendanceTasks(scope);
+    return await this.attendanceService.saveDraftMarks(
+      body.records ?? [],
+      actor,
+      body.timetable_slot_id,
+      body.date,
+      body.cleared_student_ids ?? [],
+    );
+  }
+
+  // Reads a teacher-supplied spreadsheet into plain rows. It writes nothing and
+  // returns no student data, so the same 'attendance' permission that guards a
+  // check-in is the right gate; matching rows to the roster happens client-side
+  // and any resulting marks still go through the guarded write endpoints above.
+  @Post('import/parse')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  @UseInterceptors(FileInterceptor('file', attendanceImportMulterOptions))
+  async parseImport(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: ParseAttendanceImportDto,
+  ) {
+    if (file) {
+      return { data: this.attendanceImportService.parseUpload(file) };
     }
-    return await this.attendanceService.getAttendanceTasksPaginated(scope, {
-      page: resolvePage(query.page),
-      limit: resolveLimit(query.limit),
-      searchTerm: query.searchTerm?.trim() || undefined,
-      status: query.status,
-      province: query.province?.trim() || undefined,
-      district: query.district?.trim() || undefined,
-      subDistrict: query.subDistrict?.trim() || undefined,
-      schoolId: query.schoolId,
-      grade: query.grade?.trim() || undefined,
-      room: query.room?.trim() || undefined,
+    if (!body.url) {
+      throw new BadRequestException('กรุณาเลือกไฟล์หรือใส่ลิงก์');
+    }
+    return { data: await this.attendanceImportService.parseUrl(body.url) };
+  }
+
+  // Provenance of an applied import: the file (or the link) that produced the
+  // marks, kept so ประวัติ → นำเข้าไฟล์ can show who imported what.
+  @Post('imports')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  @UseInterceptors(FileInterceptor('file', attendanceImportMulterOptions))
+  async recordImport(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: RecordAttendanceImportDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    // The classroom is the scope authority: it decides the school and term the
+    // row is filed under, so a caller cannot file an import against a class
+    // outside their scope by naming a school of their own.
+    const classroom = await this.attendanceOperationsService.assertClassroomAccess(
+      body.classroomId,
+      actor,
+    );
+    const recorded = await this.attendanceImportService.recordApplied({
+      schoolId: classroom.schoolId,
+      schoolTermId: classroom.schoolTermId,
+      classroomId: body.classroomId,
+      attendanceDate: body.attendanceDate,
+      timetableSlotId: body.timetableSlotId ?? null,
+      subjectId: body.subjectId ?? null,
+      fileName: body.fileName,
+      sourceUrl: body.sourceUrl ?? null,
+      rowCount: body.rowCount,
+      appliedCount: body.appliedCount,
+      importedBy: actor.id,
+      importedByLabel:
+        [actor.FirstName, actor.LastName].filter(Boolean).join(' ').trim() || actor.username,
+      file,
     });
+    return { data: recorded };
+  }
+
+  @Get('imports')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
+  async listImports(
+    @Query() query: ListAttendanceImportsDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    await this.attendanceOperationsService.assertClassroomAccess(query.classroomId, actor);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const result = await this.attendanceImportService.listApplied({
+      classroomId: query.classroomId,
+      subjectId: query.subjectId,
+      attendanceDate: query.attendanceDate,
+      search: query.search,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
+      page,
+      limit,
+    });
+    return {
+      data: result.rows,
+      meta: buildPaginationMeta(page, limit, result.totalCount),
+    };
+  }
+
+  @Get('imports/:id/file')
+  @UseGuards(PermissionsGuard)
+  @RequireAnyPermission('attendance', 'attendance-dashboard')
+  async downloadImport(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('classroomId', ParseIntPipe) classroomId: number,
+    @Res({ passthrough: true }) response: Response,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    // The stored sheet lists student ids and full names, so the classroom it
+    // belongs to has to be inside the actor's scope, not merely match the row.
+    await this.attendanceOperationsService.assertClassroomAccess(classroomId, actor);
+    const { stream, fileName } = await this.attendanceImportService.openApplied(id, classroomId);
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(fileName)}"`,
+    );
+    return new StreamableFile(stream);
   }
 
   @Get('rooms')
@@ -182,13 +294,7 @@ export class AttendanceController {
 
   @Get('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission(
-    'attendance-dashboard',
-    'manage-attendance-calendar',
-    'manage-school-structure',
-    'import-data',
-    'import-school-roster',
-  )
+  @RequireAnyPermission('attendance-dashboard', 'manage-school-structure', 'import-data')
   async listTerms(
     @Query() query: ListSchoolTermsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -198,7 +304,7 @@ export class AttendanceController {
 
   @Post('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('manage-attendance-calendar', 'manage-school-structure')
+  @RequireAnyPermission('attendance-dashboard', 'manage-school-structure')
   async upsertTerm(
     @Body() body: UpsertSchoolTermDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -208,7 +314,7 @@ export class AttendanceController {
 
   @Post('terms/:termId/calendar/generate')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-attendance-calendar')
+  @RequirePermission('attendance-dashboard')
   async generateCalendar(
     @Param('termId', ParseIntPipe) termId: number,
     @Body() body: GenerateSchoolCalendarDto,
@@ -219,7 +325,7 @@ export class AttendanceController {
 
   @Get('calendar')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard', 'manage-attendance-calendar')
+  @RequireAnyPermission('attendance-dashboard')
   async listCalendar(
     @Query() query: ListSchoolCalendarQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -229,7 +335,7 @@ export class AttendanceController {
 
   @Patch('calendar-days/:calendarDayId')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-attendance-calendar')
+  @RequirePermission('attendance-dashboard')
   async updateCalendarDay(
     @Param('calendarDayId', ParseIntPipe) calendarDayId: number,
     @Body() body: UpdateSchoolCalendarDayDto,

@@ -1,5 +1,10 @@
 import { TEACHER_ACCESS_NO_ASSIGNMENT_REASON } from './teacher-access.constants';
-import { ForbiddenException, GoneException, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  GoneException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 import type { AuthenticatedRequestUser } from '../auth';
 import { hashToken } from '../common/utils/helpers';
@@ -17,7 +22,7 @@ const TODAY = getBangkokDateString(NOW);
 const GRANT: TeacherAccessGrantRow = {
   id: '11111111-1111-4111-8111-111111111111',
   teacher_membership_id: '12',
-  teacher_user_id: 44,
+  teacher_id: '7',
   teacher_username: 'teacher.one',
   teacher_display_name: 'ครู หนึ่ง',
   teacher_email: 'teacher.one@sts-demo.ac.th',
@@ -38,6 +43,10 @@ const GRANT: TeacherAccessGrantRow = {
   term_ends_on: TODAY,
   token_hash: hashToken('valid-token-value-that-is-at-least-thirty-two-characters'),
   token_encrypted: 'v1:cipher',
+  access_scope: 'FULL',
+  attendance_date: null,
+  attendance_starts_at: null,
+  attendance_ends_at: null,
   step_up_policy: 'NONE',
   issued_by: 1,
   issuer_name: 'admin',
@@ -105,14 +114,22 @@ type RepositoryMock = jest.Mocked<
     | 'findGrantByTokenHashForUpdate'
     | 'listCapabilities'
     | 'findGrantAssignment'
+    | 'findRestrictedAttendanceAssignment'
     | 'isStudentInClassroom'
     | 'touchGrant'
     | 'listGrantAssignments'
     | 'listRoster'
     | 'listRosterIds'
+    | 'findAttendanceSessionForClassroom'
+    | 'listAttendanceMarksForSession'
     | 'getAlertTriggerType'
     | 'getSystemSettingValue'
     | 'listAssignmentOptions'
+    | 'listAttendanceDelegationAssignments'
+    | 'listAttendanceDelegationHistory'
+    | 'findClassroomScope'
+    | 'listActiveAttendanceDelegations'
+    | 'listActiveTeacherMembershipsForSchool'
     | 'listMembershipsNeedingGrant'
     | 'listGrantsForDelivery'
     | 'describeMembershipsForGrant'
@@ -146,11 +163,14 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     findGrantByTokenHashForUpdate: jest.fn().mockResolvedValue(grant),
     listCapabilities: jest.fn().mockResolvedValue(grant.capabilities),
     findGrantAssignment: jest.fn().mockResolvedValue(ASSIGNMENT),
+    findRestrictedAttendanceAssignment: jest.fn().mockResolvedValue(ASSIGNMENT),
     isStudentInClassroom: jest.fn().mockResolvedValue(true),
     touchGrant: jest.fn(),
     listGrantAssignments: jest.fn().mockResolvedValue([ASSIGNMENT]),
     listRoster: jest.fn().mockResolvedValue([]),
     listRosterIds: jest.fn().mockResolvedValue([]),
+    findAttendanceSessionForClassroom: jest.fn().mockResolvedValue(null),
+    listAttendanceMarksForSession: jest.fn().mockResolvedValue([]),
     getAlertTriggerType: jest.fn().mockResolvedValue('DAILY'),
     getSystemSettingValue: jest
       .fn()
@@ -158,6 +178,13 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
         Promise.resolve(key === 'TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY' ? 'TERM_END' : 'NONE'),
       ),
     listAssignmentOptions: jest.fn().mockResolvedValue([]),
+    listAttendanceDelegationAssignments: jest.fn().mockResolvedValue([]),
+    listAttendanceDelegationHistory: jest.fn().mockResolvedValue([]),
+    findClassroomScope: jest
+      .fn()
+      .mockResolvedValue({ school_id: 10, grade_level_id: 103, legacy_room_number: 1 }),
+    listActiveAttendanceDelegations: jest.fn().mockResolvedValue([]),
+    listActiveTeacherMembershipsForSchool: jest.fn().mockResolvedValue([]),
     listMembershipsNeedingGrant: jest.fn().mockResolvedValue([]),
     listGrantsForDelivery: jest.fn().mockResolvedValue([]),
     describeMembershipsForGrant: jest.fn().mockResolvedValue([]),
@@ -178,7 +205,14 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     recordAtomic: jest.fn().mockResolvedValue(undefined),
     record: jest.fn().mockResolvedValue(undefined),
   };
-  const attendance = { saveAttendanceWithinTransaction: jest.fn() };
+  const attendance = {
+    getCalendarAvailabilityForClassroom: jest.fn().mockResolvedValue({
+      calendarConfigured: true,
+      canRecord: true,
+      dayType: 'SCHOOL_DAY',
+    }),
+    saveAttendanceWithinTransaction: jest.fn(),
+  };
   const automation = { checkConsecutiveAbsences: jest.fn().mockResolvedValue([]) };
   const risk = { requestStudentRecalculation: jest.fn().mockResolvedValue(undefined) };
   const tokenEncryption = {
@@ -239,15 +273,35 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     }),
     revokeInvitation: jest.fn().mockResolvedValue(true),
   };
+  const schoolStructure = {
+    listStudentProblemCategories: jest.fn().mockResolvedValue([
+      {
+        code: 'ACADEMIC',
+        label: 'ปัญหาด้านการเรียน',
+        guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+      },
+    ]),
+    listClassroomDailyAttendance: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
+    listClassroomStudentAttendance: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
+    listStudentAttendanceDays: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
+  };
   const studentsService = {
     resolveStudentPhoto: jest
       .fn()
       .mockResolvedValue({ kind: 'local', filePath: '/tmp/student-profile.webp' }),
   };
+  const attendanceImport = {
+    parseUpload: jest.fn().mockReturnValue({ rows: [] }),
+    parseUrl: jest.fn().mockResolvedValue({ rows: [] }),
+  };
+  const studentObservations = {
+    list: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+  };
   const service = new TeacherAccessService(
     repository as unknown as TeacherAccessRepository,
     auditLog as never,
     attendance as never,
+    attendanceImport as never,
     automation as never,
     risk as never,
     tokenEncryption as never,
@@ -260,7 +314,9 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
     teacherMessaging as never,
     storage as never,
     studentsService as never,
+    schoolStructure as never,
     {} as never,
+    studentObservations as never,
   );
   return {
     service,
@@ -353,6 +409,13 @@ describe('TeacherAccessService', () => {
       schoolId: 10,
       schoolTermId: '21',
       capabilities: ['HOMEROOM_ATTENDANCE'],
+      problemCategories: [
+        {
+          code: 'ACADEMIC',
+          label: 'ปัญหาด้านการเรียน',
+          guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+        },
+      ],
     });
     expect(result.data).not.toHaveProperty('token');
     expect(repository.findGrantByTokenHashForUpdate).toHaveBeenCalled();
@@ -413,7 +476,7 @@ describe('TeacherAccessService', () => {
       studentUuid,
       expect.objectContaining({
         teacher_membership_id: Number(GRANT.teacher_membership_id),
-        permissions: ['students', 'student-observations'],
+        permissions: ['students'],
       }),
       { school_ids: [GRANT.school_id] },
     );
@@ -498,6 +561,56 @@ describe('TeacherAccessService', () => {
         () => Promise.resolve(undefined),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('limits an attendance-only grant to its assigned roster operation', async () => {
+    const { service, repository } = createHarness({
+      access_scope: 'ATTENDANCE_ONLY',
+      attendance_date: TODAY,
+      attendance_starts_at: PAST,
+      attendance_ends_at: FUTURE,
+    });
+    repository.findRestrictedAttendanceAssignment.mockResolvedValue({
+      ...ASSIGNMENT,
+      teacher_membership_id: '99',
+    });
+
+    await expect(
+      service.withActiveGrantContext(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31, operation: 'VIEW_ROSTER' },
+        (context) => Promise.resolve(context.accessScope),
+      ),
+    ).resolves.toBe('ATTENDANCE_ONLY');
+
+    await expect(
+      service.withActiveGrantContext(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { operation: 'VIEW_MY_TIMETABLE' },
+        () => Promise.resolve(undefined),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  // Importing a file is one of the ways a delegated teacher fills in the roster
+  // they were given, so the restricted scope has to allow the parse operation
+  // without widening anything else.
+  it('lets an attendance-only grant read an attendance import file', async () => {
+    const { service, repository } = createHarness({
+      access_scope: 'ATTENDANCE_ONLY',
+      attendance_date: TODAY,
+      attendance_starts_at: PAST,
+      attendance_ends_at: FUTURE,
+    });
+    repository.findRestrictedAttendanceAssignment.mockResolvedValue(ASSIGNMENT);
+
+    await expect(
+      service.withActiveGrantContext(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31, operation: 'PARSE_ATTENDANCE_IMPORT' },
+        (context) => Promise.resolve(context.accessScope),
+      ),
+    ).resolves.toBe('ATTENDANCE_ONLY');
   });
 
   it('denies an inactive classroom assignment', async () => {
@@ -599,6 +712,40 @@ describe('TeacherAccessService', () => {
     expect(attendance.saveAttendanceWithinTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it('returns calendar preflight without requiring a subject slot', async () => {
+    const { service, attendance, repository } = createHarness();
+    attendance.getCalendarAvailabilityForClassroom.mockResolvedValue({
+      calendarConfigured: true,
+      canRecord: false,
+      dayType: 'HOLIDAY',
+    });
+
+    await expect(
+      service.getPublicAttendanceSession(
+        'valid-token-value-that-is-at-least-thirty-two-characters',
+        { assignmentId: 31, date: TODAY, preflightOnly: true },
+      ),
+    ).resolves.toMatchObject({
+      data: {
+        calendar: {
+          calendarConfigured: true,
+          canRecord: false,
+          dayType: 'HOLIDAY',
+        },
+      },
+    });
+    expect(repository.findAttendanceSessionForClassroom).not.toHaveBeenCalled();
+  });
+
+  it('refuses to revoke a full teacher link as an attendance delegation', async () => {
+    const { service, repository } = createHarness();
+
+    await expect(service.revokeAttendanceDelegation(GRANT.id, ACTOR)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(repository.revokeGrant).not.toHaveBeenCalled();
+  });
+
   it("lists only the signed-in teacher's scheduled subject periods", async () => {
     const { service, repository } = createHarness({ capabilities: ['SUBJECT_ATTENDANCE'] });
     repository.findGrantAssignment.mockResolvedValue({
@@ -642,7 +789,7 @@ describe('TeacherAccessService', () => {
     repository.findMembershipForIssue.mockResolvedValue({
       id: '12',
       school_id: 10,
-      teacher_user_id: 44,
+      teacher_id: '7',
       membership_status: 'ACTIVE',
       teacher_status: 'ACTIVE',
     });
@@ -681,13 +828,46 @@ describe('TeacherAccessService', () => {
     repository.findMembershipForIssue.mockResolvedValue({
       id: '12',
       school_id: 10,
-      teacher_user_id: 44,
+      teacher_id: '7',
       membership_status: 'ACTIVE',
       teacher_status: 'ACTIVE',
     });
     repository.listAssignmentOptions.mockResolvedValue([ASSIGNMENT]);
     repository.createGrant.mockResolvedValue(GRANT.id);
   }
+
+  it('returns active attendance delegations with their usable link', async () => {
+    const { service, repository } = createHarness();
+    repository.listActiveAttendanceDelegations.mockResolvedValue([
+      {
+        grant_id: '22222222-2222-4222-8222-222222222222',
+        teacher_membership_id: '13',
+        teacher_display_name: 'ครูผู้รับมอบหมาย',
+        assignment_id: '31',
+        assignment_kind: 'HOMEROOM',
+        subject_name: null,
+        timetable_slot_id: null,
+        timetable_slot_period: null,
+        attendance_date: TODAY,
+        starts_at: '2026-08-15T01:00:00.000Z',
+        ends_at: '2026-08-15T02:00:00.000Z',
+        token_encrypted: 'v1:delegation-token',
+      },
+    ]);
+
+    const result = await service.listAttendanceDelegationOptions(
+      { schoolId: 10, schoolTermId: 21, classroomId: 41, attendanceDate: TODAY },
+      ACTOR,
+      'https://sts.example.test',
+    );
+
+    expect(result.data.activeDelegations).toEqual([
+      expect.objectContaining({
+        grantId: '22222222-2222-4222-8222-222222222222',
+        accessUrl: 'https://sts.example.test/teacher-access#token=delegation-token',
+      }),
+    ]);
+  });
 
   it('issues an email-OTP link that covers every assignment of the teacher', async () => {
     const { service, repository, tokenEncryption } = createHarness();
@@ -896,7 +1076,7 @@ describe('TeacherAccessService', () => {
       id: '12',
       school_id: 10,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
@@ -928,7 +1108,7 @@ describe('TeacherAccessService', () => {
       id: '12',
       school_id: 99,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
@@ -942,13 +1122,56 @@ describe('TeacherAccessService', () => {
     expect(teacherMessaging.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
   });
 
+  // The scope check runs on `schoolId` while the query filters on `classroomId`.
+  // Without binding the two, an actor scoped to school 10 could read another
+  // school's delegation rows — which carry a live `accessUrl` into that class —
+  // simply by pairing their own school id with the other school's classroom.
+  it('refuses delegation history for a classroom outside the requested school', async () => {
+    const { service, repository } = createHarness();
+    repository.findClassroomScope.mockResolvedValue({
+      school_id: 99,
+      grade_level_id: 103,
+      legacy_room_number: 1,
+    });
+
+    await expect(
+      service.listAttendanceDelegationHistory(
+        { schoolId: 10, classroomId: 4242 },
+        ACTOR,
+        'https://sts.example.test',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.listAttendanceDelegationHistory).not.toHaveBeenCalled();
+  });
+
+  // A teacher confined to one room keeps `manage-teacher-access` inside their
+  // own school, so the school check alone would still hand them another room's
+  // delegation rows — each carrying a live link into that class.
+  it('refuses delegation history for a room outside a class-confined actor', async () => {
+    const { service, repository } = createHarness();
+    repository.findClassroomScope.mockResolvedValue({
+      school_id: 10,
+      grade_level_id: 103,
+      legacy_room_number: 8,
+    });
+
+    await expect(
+      service.listAttendanceDelegationHistory(
+        { schoolId: 10, classroomId: 4242 },
+        { ...ACTOR, data_scope: { school_ids: [10], room_ids: ['1'] } },
+        'https://sts.example.test',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.listAttendanceDelegationHistory).not.toHaveBeenCalled();
+  });
+
   it('issues a per-teacher LINE invitation only after school scope validation', async () => {
     const { service, repository, teacherMessaging, auditLog } = createHarness();
     repository.findMembershipForIssue.mockResolvedValue({
       id: '12',
       school_id: 10,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
@@ -979,7 +1202,7 @@ describe('TeacherAccessService', () => {
       id: '12',
       school_id: 10,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: null,
       membership_status: 'ACTIVE',
@@ -1106,8 +1329,8 @@ describe('TeacherAccessService', () => {
     expect(magicSessionStore.issue).not.toHaveBeenCalled();
   });
 
-  it('accepts AraID for a THAID step-up policy', async () => {
-    const { service } = createHarness({ step_up_policy: 'THAID' });
+  it('accepts AraID for an ARAID step-up policy', async () => {
+    const { service } = createHarness({ step_up_policy: 'ARAID' });
 
     await expect(
       service.verifyAraId(
@@ -1125,7 +1348,7 @@ describe('TeacherAccessService', () => {
       'https://sts.test',
     );
 
-    expect(araIdChallengeStore.create).toHaveBeenCalledWith(GRANT.id);
+    expect(araIdChallengeStore.create).toHaveBeenCalledWith('teacher-access', GRANT.id);
     expect(result.data.verificationUrl).toContain('/araid/authorize#challenge=challenge-token');
     expect(result.data.verificationUrl).not.toContain('1234567890123');
     expect(result.data.qrDataUrl).toMatch(/^data:image\/png;base64,/);
@@ -1136,14 +1359,17 @@ describe('TeacherAccessService', () => {
       step_up_policy: 'EMAIL_OTP',
     });
     araIdChallengeStore.readAuthorization.mockResolvedValue({
-      grantId: GRANT.id,
-      referenceCode: 'ABC123',
-      status: 'CLAIMED',
-      expiresAt: Date.now() + 60_000,
+      challenge: {
+        grantId: GRANT.id,
+        referenceCode: 'ABC123',
+        status: 'CLAIMED',
+        expiresAt: Date.now() + 60_000,
+      },
+      minimumAuthenticatedAt: 1,
     });
 
     await expect(
-      service.approveAraIdChallenge('challenge-token', 'araid-profile-id'),
+      service.approveAraIdChallenge('challenge-token', 'araid-profile-id', Date.now()),
     ).resolves.toMatchObject({ data: { approved: true } });
 
     araIdChallengeStore.read.mockResolvedValue({
@@ -1162,6 +1388,23 @@ describe('TeacherAccessService', () => {
       data: { status: 'APPROVED', sessionToken: 'ms_session' },
     });
     expect(magicSessionStore.issue).toHaveBeenCalledWith(GRANT.id);
+  });
+
+  it('rejects a session authenticated before the AraID challenge was claimed', async () => {
+    const { service, araIdChallengeStore } = createHarness({ step_up_policy: 'EMAIL_OTP' });
+    araIdChallengeStore.readAuthorization.mockResolvedValue({
+      challenge: {
+        grantId: GRANT.id,
+        referenceCode: 'ABC123',
+        status: 'CLAIMED',
+        expiresAt: Date.now() + 60_000,
+      },
+      minimumAuthenticatedAt: Date.now(),
+    });
+
+    await expect(
+      service.approveAraIdChallenge('challenge-token', 'araid-profile-id', Date.now() - 1),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('resumes the same claimed AraID challenge after returning from login', async () => {
@@ -1219,6 +1462,37 @@ describe('TeacherAccessService', () => {
       'data.teacherDisplayName',
       'ครู หนึ่ง',
     );
+  });
+
+  it('refuses to manage a delegation grant from the teacher-link screen', async () => {
+    const { service, repository } = createHarness({
+      access_scope: 'ATTENDANCE_ONLY',
+      attendance_date: TODAY,
+    });
+
+    await expect(service.getGrantLink(GRANT.id, ACTOR, 'https://sts.example')).rejects.toThrow(
+      'ลิงก์มอบหมายการเช็กชื่อ',
+    );
+    await expect(service.rotateGrant(GRANT.id, ACTOR, 'https://sts.example')).rejects.toThrow(
+      'ลิงก์มอบหมายการเช็กชื่อ',
+    );
+    await expect(service.revokeGrant(GRANT.id, 'เทส', ACTOR)).rejects.toThrow(
+      'ลิงก์มอบหมายการเช็กชื่อ',
+    );
+    expect(repository.rotateGrantToken).not.toHaveBeenCalled();
+    expect(repository.revokeGrant).not.toHaveBeenCalled();
+  });
+
+  it('names the delegation when a closed delegation link is opened', async () => {
+    const { service } = createHarness({
+      access_scope: 'ATTENDANCE_ONLY',
+      attendance_date: TODAY,
+      revoked_at: PAST,
+    });
+
+    await expect(
+      service.getPublicContext('valid-token-value-that-is-at-least-thirty-two-characters'),
+    ).rejects.toThrow('ลิงก์มอบหมายการเช็กชื่อนี้ถูกปิดแล้ว');
   });
 
   it('serializes public use and revoke through the repository transaction boundary', async () => {

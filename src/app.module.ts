@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { NoStoreMiddleware } from './common/middleware/no-store.middleware';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -21,6 +22,8 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { StudentsModule } from './students/students.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { appConfig } from './config/app.config';
+import { araIdConfig } from './config/araid.config';
+import { attendanceImportConfig } from './config/attendance-import.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
 import { emailConfig } from './config/email.config';
@@ -57,6 +60,8 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
       isGlobal: true,
       load: [
         appConfig,
+        araIdConfig,
+        attendanceImportConfig,
         authConfig,
         databaseConfig,
         emailConfig,
@@ -87,7 +92,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
           { name: 'login', ttl: config.login.ttlMs, limit: config.login.limit },
           { name: 'otpRequest', ttl: config.otpRequest.ttlMs, limit: config.otpRequest.limit },
           { name: 'otpVerify', ttl: config.otpVerify.ttlMs, limit: config.otpVerify.limit },
-          { name: 'mockLogin', ttl: config.mockLogin.ttlMs, limit: config.mockLogin.limit },
+          { name: 'araidLogin', ttl: config.araidLogin.ttlMs, limit: config.araidLogin.limit },
           { name: 'geocode', ttl: config.geocode.ttlMs, limit: config.geocode.limit },
           {
             name: 'followerApplication',
@@ -140,4 +145,8 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(NoStoreMiddleware).forRoutes('*');
+  }
+}

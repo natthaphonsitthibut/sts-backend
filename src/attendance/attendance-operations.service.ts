@@ -6,25 +6,19 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
-import { resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
-import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
-import { NotificationsService } from '../notifications/notifications.service';
+import { isClassInScope, resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { CalendarDayType, SchoolTermStatus } from './attendance-operations.types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_TERM_DAYS = 401;
-const INCOMPLETE_ATTENDANCE_CRON = '0 30 4 * * *';
-
 @Injectable()
 export class AttendanceOperationsService {
   private readonly logger = new Logger(AttendanceOperationsService.name);
 
   constructor(
     private readonly repository: AttendanceOperationsRepository,
-    private readonly notificationsService?: NotificationsService,
     private readonly riskProfileService?: RiskProfileService,
   ) {}
 
@@ -33,46 +27,6 @@ export class AttendanceOperationsService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to enqueue calendar risk profile recalculation: ${message}`);
     });
-  }
-
-  /**
-   * Notify staff who check attendance (permission `attendance`, in the session's
-   * school/grade/room scope) when a past-date session was left incomplete — some
-   * of the roster was never recorded. Claimed-and-flagged once per session.
-   * `now` is injectable for tests. Best-effort; never blocks the cron.
-   */
-  async remindIncompleteSessions(now = new Date()): Promise<{ notified: number }> {
-    const sessions = await this.repository.claimIncompleteSessions(now);
-    let notified = 0;
-    for (const session of sessions) {
-      await this.notificationsService?.notifyAttendanceIncomplete({
-        sessionId: session.id,
-        schoolId: session.school_id,
-        gradeLevel: session.grade_level_id,
-        roomId: session.room_id,
-        attendanceDate: session.attendance_date,
-        expected: session.expected_roster_count,
-        recorded: session.recorded_count,
-      });
-      notified += 1;
-    }
-    if (notified > 0) {
-      this.logger.log(`Sent ${notified} incomplete-attendance reminder(s).`);
-    }
-    return { notified };
-  }
-
-  @Cron(INCOMPLETE_ATTENDANCE_CRON, {
-    timeZone: BANGKOK_TIME_ZONE,
-    name: 'incomplete_attendance_reminder',
-  })
-  async runIncompleteAttendanceReminders(): Promise<void> {
-    try {
-      await this.remindIncompleteSessions();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Incomplete attendance reminder job failed: ${message}`);
-    }
   }
 
   async listTerms(schoolId: number, actor?: AuthenticatedRequestUser) {
@@ -254,7 +208,7 @@ export class AttendanceOperationsService {
 
   async reopenSession(sessionId: string, reason: string, actor?: AuthenticatedRequestUser) {
     const session = await this.repository.findSessionById(sessionId);
-    if (!session) throw new NotFoundException('ไม่พบรอบเช็คชื่อ');
+    if (!session) throw new NotFoundException('ไม่พบรอบเช็กชื่อ');
     await this.assertSchoolAccess(session.school_id, actor);
     this.assertClassScope(session.grade_level_id, session.room_id, actor);
     const updated = await this.repository.withTransaction(async (executor) => {
@@ -265,6 +219,10 @@ export class AttendanceOperationsService {
         executor,
       );
       if (reopened) {
+        const baselineStatuses = await this.repository.listSessionAttendanceStatuses(
+          sessionId,
+          executor,
+        );
         await this.repository.recordSessionAudit(
           {
             action: 'ATTENDANCE_REOPEN',
@@ -278,6 +236,10 @@ export class AttendanceOperationsService {
               attendanceDate: reopened.attendance_date,
               revision: reopened.revision,
               reason: reason.trim(),
+              baselineStatuses: baselineStatuses.map((row) => ({
+                studentUuid: row.student_uuid,
+                statusCode: row.attendance_status,
+              })),
             },
           },
           executor,
@@ -408,6 +370,31 @@ export class AttendanceOperationsService {
     if (!allowed) throw new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ');
   }
 
+  /**
+   * Scope check for endpoints whose only class input is a `classroomId`: the
+   * classroom itself decides which school/grade/room the actor must be allowed
+   * to see, so nothing about the caller's own scope is taken from the request.
+   * Returns the resolved row so the caller can bind the rest of its payload to
+   * it instead of trusting a client-supplied school or term.
+   */
+  async assertClassroomAccess(
+    classroomId: number,
+    actor?: AuthenticatedRequestUser,
+  ): Promise<{ schoolId: number; schoolTermId: number }> {
+    const classroom = await this.repository.findClassroomScope(classroomId);
+    if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+    await this.assertSchoolAccess(Number(classroom.school_id), actor);
+    this.assertClassScope(
+      Number(classroom.grade_level_id),
+      Number(classroom.legacy_room_number),
+      actor,
+    );
+    return {
+      schoolId: Number(classroom.school_id),
+      schoolTermId: Number(classroom.school_term_id),
+    };
+  }
+
   private async assertCalendarAdmin(
     schoolId: number,
     actor?: AuthenticatedRequestUser,
@@ -424,12 +411,8 @@ export class AttendanceOperationsService {
     roomId: number,
     actor?: AuthenticatedRequestUser,
   ): void {
-    const scope = resolveActorDataScope(actor);
-    if (scope?.grade_levels?.length && !scope.grade_levels.includes(gradeLevelId)) {
-      throw new ForbiddenException('ชั้นเรียนอยู่นอกขอบเขตของคุณ');
-    }
-    if (scope?.room_ids?.length && !scope.room_ids.map(String).includes(String(roomId))) {
-      throw new ForbiddenException('ห้องเรียนอยู่นอกขอบเขตของคุณ');
+    if (!isClassInScope(resolveActorDataScope(actor), { gradeLevelId, roomId })) {
+      throw new ForbiddenException('ชั้นเรียนหรือห้องเรียนอยู่นอกขอบเขตของคุณ');
     }
   }
 

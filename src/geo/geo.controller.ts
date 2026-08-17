@@ -10,7 +10,7 @@ export class GeoController {
   constructor(private readonly geoService: GeoService) {}
 
   @ThrottleGeocode()
-  @RequirePermission('create')
+  @RequirePermission('dashboard')
   @Get('geocode')
   async geocode(@Query() query: GeocodeQueryDto) {
     return await this.geoService.geocodeAddress(query.address, query.language);

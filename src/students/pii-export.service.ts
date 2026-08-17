@@ -100,11 +100,18 @@ export class PiiExportService {
     }
   }
 
-  private async assertApprover(actor: AuthenticatedRequestUser, request: PiiExportRequestRow) {
-    const roleMap = await this.taskPolicyService.getRoleMap();
+  /**
+   * Approving a PII export is bound to the ผู้ดูแลระบบ role, not to a numeric
+   * rank and not to a permission. A permission can be handed out by editing a
+   * role group, and directors are usually the ones *requesting* an export — if
+   * they could also approve, the second pair of eyes would be a colleague at the
+   * same school rather than an independent one. Refusing self-approval below
+   * only works because requester and approver are different roles to begin with.
+   */
+  private assertApprover(actor: AuthenticatedRequestUser, request: PiiExportRequestRow): void {
     const role = this.taskPolicyService.getPrimaryRole(actor);
-    if (role !== 'ADMIN' || this.taskPolicyService.getRoleRank(role, roleMap) < 5) {
-      throw new ForbiddenException('ต้องเป็นผู้ดูแลระบบระดับ 5 เพื่ออนุมัติคำขอส่งออก');
+    if (role !== 'ADMIN') {
+      throw new ForbiddenException('ต้องเป็นผู้ดูแลระบบเพื่ออนุมัติคำขอส่งออก');
     }
     if (actor.id === request.requester_user_id) {
       throw new ForbiddenException('ไม่สามารถอนุมัติคำขอของตนเองได้');
@@ -208,9 +215,7 @@ export class PiiExportService {
     actor: AuthenticatedRequestUser,
     query: { status?: string; page?: number; limit?: number },
   ) {
-    const roleMap = await this.taskPolicyService.getRoleMap();
-    const role = this.taskPolicyService.getPrimaryRole(actor);
-    const isApprover = role === 'ADMIN' && this.taskPolicyService.getRoleRank(role, roleMap) >= 5;
+    const isApprover = this.taskPolicyService.getPrimaryRole(actor) === 'ADMIN';
     const page = Math.max(query.page ?? 1, 1);
     const limit = Math.min(Math.max(query.limit ?? 20, 1), 50);
     const { rows, totalCount } = await this.repository.listRequests({
@@ -250,7 +255,7 @@ export class PiiExportService {
     if (!request) {
       throw new NotFoundException('ไม่พบคำขอส่งออกข้อมูล');
     }
-    await this.assertApprover(actor, request);
+    this.assertApprover(actor, request);
     if (request.status !== 'PENDING') {
       throw new BadRequestException('คำขอนี้ไม่อยู่ในสถานะรออนุมัติ');
     }
@@ -297,7 +302,7 @@ export class PiiExportService {
     if (!request) {
       throw new NotFoundException('ไม่พบคำขอส่งออกข้อมูล');
     }
-    await this.assertApprover(actor, request);
+    this.assertApprover(actor, request);
     if (request.status !== 'PENDING') {
       throw new BadRequestException('คำขอนี้ไม่อยู่ในสถานะรออนุมัติ');
     }

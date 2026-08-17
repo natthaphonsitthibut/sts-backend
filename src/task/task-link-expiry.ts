@@ -1,8 +1,7 @@
 /**
  * Single ceiling for how long any magic link may stay usable, whether the
- * lifetime arrives as a duration (create) or as an explicit deadline (create
- * with an assignment window, or delegation). One constant keeps the two entry
- * points from drifting into different link-lifetime policies.
+ * lifetime arrives as a duration or explicit assignment deadline. One constant
+ * keeps all home-visit link creation paths on the same policy.
  */
 export const MAX_LINK_LIFETIME_HOURS = 2160;
 

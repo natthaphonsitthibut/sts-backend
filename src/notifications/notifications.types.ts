@@ -6,7 +6,8 @@ export interface NotificationRow extends Record<string, unknown> {
   body: string | null;
   student_person_uuid: string | null;
   case_id: number | null;
-  student_name_masked: string | null;
+  case_status_code: string;
+  student_name_snapshot: string | null;
   reason_text: string | null;
   ref_entity: string | null;
   ref_id: string | null;
@@ -22,6 +23,25 @@ export interface NotificationCounts {
 }
 
 /**
+ * The small, presentation-safe snapshot needed to describe a case transition
+ * in a recipient's inbox. It is resolved once at fan-out time so historical
+ * notifications keep the context that was true when they were created.
+ */
+export interface CaseStatusNotificationContext {
+  reasonFlagged: string | null;
+  latestTeacherComment: string | null;
+  latestAbsentDate: string | null;
+  assignedTeacherName: string | null;
+  resultSummary: string | null;
+  reviewNote: string | null;
+  reviewSummary: string | null;
+  completionOutcomeLabel: string | null;
+}
+
+export const NOTIFICATION_READ_STATUSES = ['all', 'unread', 'read'] as const;
+export type NotificationReadStatus = (typeof NOTIFICATION_READ_STATUSES)[number];
+
+/**
  * Context describing where an event happened, used to resolve which users are
  * allowed to be notified. Every attribute the recipient's data_scope narrows
  * on must be provided; a missing attribute fails closed for users whose scope
@@ -32,8 +52,9 @@ export interface NotificationFanOutInput {
   title: string;
   body?: string | null;
   caseId?: number | null;
+  caseStatusCode: string;
   studentUuid?: string | null;
-  studentNameMasked?: string | null;
+  studentNameSnapshot?: string | null;
   reasonText?: string | null;
   refEntity?: string | null;
   refId?: string | null;
@@ -41,26 +62,12 @@ export interface NotificationFanOutInput {
   gradeLevel?: string | number | null;
   roomId?: string | number | null;
   excludeUserId?: number | null;
-  /**
-   * Recipients that already received another notification for the same event.
-   * One action can legitimately raise two notification types with different
-   * required permissions; this keeps a user who holds both from being told the
-   * same thing twice.
-   */
   excludeUserIds?: number[] | null;
-}
-
-export interface DirectNotificationInput {
-  recipientUserId: number;
-  typeCode: string;
-  title: string;
-  body?: string | null;
-  refEntity?: string | null;
-  refId?: string | null;
 }
 
 export interface NotificationListFilters {
   unreadOnly?: boolean;
+  status?: NotificationReadStatus;
   page?: number;
   limit?: number;
 }

@@ -52,12 +52,18 @@ import { SchoolStructureService } from './school-structure.service';
 export class SchoolStructureController {
   constructor(private readonly service: SchoolStructureService) {}
 
+  @Get('student-problem-categories')
+  @RequirePermission()
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
+  listStudentProblemCategories() {
+    return this.service.listStudentProblemCategories();
+  }
+
   @Get('schools')
   @RequirePermission()
   @RequireAnyPermission(
     'manage-school-structure',
     'import-data',
-    'import-school-roster',
     'manage-role-groups',
     'manage-teachers',
   )
@@ -67,7 +73,7 @@ export class SchoolStructureController {
 
   @Get('classrooms')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure', 'import-data', 'import-school-roster')
+  @RequireAnyPermission('manage-school-structure', 'import-data')
   listClassrooms(
     @Query() query: ListSchoolClassroomsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -77,7 +83,7 @@ export class SchoolStructureController {
 
   @Get('classrooms/options')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure', 'import-data', 'import-school-roster')
+  @RequireAnyPermission('manage-school-structure', 'import-data')
   listClassroomOptions(
     @Query() query: ListSchoolClassroomOptionsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -86,6 +92,8 @@ export class SchoolStructureController {
   }
 
   @Get('classrooms/:classroomId')
+  @RequirePermission()
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance')
   getClassroom(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -223,7 +231,10 @@ export class SchoolStructureController {
     return this.service.listRoster(query, actor);
   }
 
+  // The comment dialog is opened from the classroom, เช็กชื่อ and student pages.
   @Post('classrooms/:classroomId/students/:studentUuid/comments')
+  @RequirePermission()
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
   createStudentComment(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @Param('studentUuid', ParseUUIDPipe) studentUuid: string,
@@ -233,8 +244,10 @@ export class SchoolStructureController {
     return this.service.createStudentComment(classroomId, studentUuid, body, actor);
   }
 
+  // Roster export is offered on the classroom page and on เช็กชื่อ.
   @Post('classrooms/:classroomId/export-events')
-  @RequirePermission('manage-school-structure', 'export-data')
+  @RequirePermission()
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'export-data', 'attendance')
   authorizeClassroomExport(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @Body() body: AuthorizeClassroomExportDto,
@@ -244,6 +257,8 @@ export class SchoolStructureController {
   }
 
   @Get('classrooms/:classroomId/attendance-history')
+  @RequirePermission()
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance')
   listClassroomAttendanceHistory(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @Query() query: ListClassroomAttendanceHistoryDto,

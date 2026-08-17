@@ -4,16 +4,15 @@ import type {
 } from './teacher-access.constants';
 
 export type TeacherAccessGrantStatus = 'ACTIVE' | 'REVOKED' | 'EXPIRED' | 'SUSPENDED';
+export type TeacherAccessScope = 'FULL' | 'ATTENDANCE_ONLY';
 
 export interface TeacherAccessGrantRow extends Record<string, unknown> {
   id: string;
   teacher_membership_id: string;
-  teacher_user_id: number | null;
-  teacher_username: string;
+  teacher_id: string;
   teacher_display_name: string;
   teacher_email: string | null;
   teacher_citizen_id: string | null;
-  teacher_data_origin_code: string | null;
   teacher_status: string;
   membership_status: 'ACTIVE' | 'INACTIVE';
   membership_deleted_at: string | Date | null;
@@ -29,6 +28,10 @@ export interface TeacherAccessGrantRow extends Record<string, unknown> {
   term_ends_on: string | null;
   token_hash: string;
   token_encrypted: string | null;
+  access_scope: TeacherAccessScope;
+  attendance_date: string | null;
+  attendance_starts_at: string | Date | null;
+  attendance_ends_at: string | Date | null;
   step_up_policy: TeacherAccessStepUpPolicy;
   issued_by: number;
   issuer_name: string;
@@ -67,8 +70,42 @@ export interface TeacherAccessAssignmentRow extends Record<string, unknown> {
   subject_id: number | null;
   subject_code: string | null;
   subject_name: string | null;
+  timetable_slot_id?: string | null;
+  timetable_slot_period?: number | null;
   effective_on: string | null;
   effective_until: string | null;
+}
+
+export interface TeacherAttendanceDelegationRow extends Record<string, unknown> {
+  grant_id: string;
+  teacher_membership_id: string;
+  teacher_display_name: string;
+  assignment_id: string;
+  assignment_kind: 'HOMEROOM' | 'SUBJECT';
+  subject_name: string | null;
+  timetable_slot_id: string | null;
+  timetable_slot_period: number | null;
+  attendance_date: string;
+  starts_at: string | Date;
+  ends_at: string | Date;
+  token_encrypted: string | null;
+}
+
+/** A delegation as the history screens list it, in any state. */
+export interface TeacherAttendanceDelegationHistoryRow extends Record<string, unknown> {
+  grant_id: string;
+  assignment_id: string;
+  teacher_membership_id: string;
+  issued_by_name: string;
+  teacher_display_name: string;
+  subject_name: string | null;
+  timetable_slot_period: number | null;
+  attendance_date: string;
+  starts_at: string | Date;
+  ends_at: string | Date;
+  delegation_status: 'PENDING' | 'COMPLETED' | 'REVOKED' | 'EXPIRED';
+  token_encrypted: string | null;
+  total_count: number;
 }
 
 export interface TeacherAccessRosterRow extends Record<string, unknown> {
@@ -107,9 +144,10 @@ export interface TeacherAccessGrantDetail {
 export interface ActiveTeacherGrantContext {
   grantId: string;
   teacherMembershipId: string;
-  teacherUserId: number | null;
-  teacherUsername: string;
+  /** `teachers.id` — the identity an attendance row is attributed to. */
+  teacherId: string;
   teacherDisplayName: string;
+  issuerUserId: number;
   schoolId: number;
   schoolName: string;
   schoolTermId: string;
@@ -119,4 +157,6 @@ export interface ActiveTeacherGrantContext {
   classroomId: string | null;
   subjectId: number | null;
   capabilities: TeacherAccessCapability[];
+  accessScope: TeacherAccessScope;
+  attendanceDate: string | null;
 }

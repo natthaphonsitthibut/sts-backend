@@ -18,6 +18,10 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
+import {
+  CLASSROOM_STUDENT_PROBLEM_CATEGORIES,
+  type ClassroomStudentProblemCategory,
+} from '../classroom-student-comment.constants';
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const trimText = ({ value }: { value: unknown }): unknown =>
@@ -236,7 +240,7 @@ export class CreateSchoolTeacherMembershipDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  teacherUserId!: number;
+  teacherId!: number;
 
   @IsOptional()
   @IsString()
@@ -293,11 +297,14 @@ export class ListClassroomAssignmentsDto {
 }
 
 export class CreateClassroomStudentCommentDto {
+  @IsIn(CLASSROOM_STUDENT_PROBLEM_CATEGORIES)
+  problemCategory!: ClassroomStudentProblemCategory;
+
   @Transform(trimText)
   @IsString()
   @MinLength(1)
   @MaxLength(2000)
-  commentText!: string;
+  problemDescription!: string;
 }
 
 export class AuthorizeClassroomExportDto {
@@ -371,6 +378,13 @@ export class ListClassroomRosterDto extends PaginationQueryDto {
 export class ListClassroomAttendanceHistoryDto extends PaginationQueryDto {
   @IsIn(['DAILY', 'STUDENT'])
   view!: 'DAILY' | 'STUDENT';
+
+  /** Narrows the history to one subject, so it reads like that teacher's own. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  subjectId?: number;
 
   @IsOptional()
   @IsUUID()

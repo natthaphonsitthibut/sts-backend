@@ -19,7 +19,7 @@ const BACKEND_URL = process.env.SMOKE_BACKEND_URL || 'http://127.0.0.1:3000';
 const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5174';
 const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const DEBUG_PORT = 9231;
+const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9231);
 const USERNAME = 'notifications_browser_smoke';
 
 function assert(condition, message) {
@@ -93,7 +93,7 @@ class CdpClient {
       const pending = this.pending.get(message.id);
       if (!pending) return;
       this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message));
+      if (message.error) pending.reject(new Error(`${pending.method}: ${message.error.message}`));
       else pending.resolve(message.result || {});
     });
   }
@@ -101,7 +101,7 @@ class CdpClient {
   call(method, params = {}) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, method });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -172,9 +172,8 @@ async function navigate(client, url) {
 async function upsertFixture(dataSource, passwordHash) {
   const permissions = [
     'home',
-    'review-cases',
+    'dashboard',
     'import-data',
-    'manage-student-accounts',
     'attendance-dashboard',
   ];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
@@ -209,7 +208,7 @@ async function upsertFixture(dataSource, passwordHash) {
   return created.id;
 }
 
-async function seedNotifications(dataSource, userId, refPrefix) {
+async function seedNotifications(dataSource, userId) {
   const [enrollment] = await dataSource.query(
     `SELECT
        enrollment.student_uuid,
@@ -220,6 +219,16 @@ async function seedNotifications(dataSource, userId, refPrefix) {
      FROM student_term enrollment
      INNER JOIN schools school ON school.id = enrollment."SchoolID_Onec"
      WHERE enrollment.person_uuid IS NOT NULL
+       -- Only a student with no active case can take one: uq_cases_active_student_uuid
+       -- allows a single active case per student, so picking the first enrollment
+       -- outright made this seed fail whenever another smoke had left one behind.
+       AND NOT EXISTS (
+         SELECT 1
+         FROM cases active_case
+         WHERE active_case.student_uuid = enrollment.student_uuid
+           AND active_case.deleted_at IS NULL
+           AND active_case.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+       )
      ORDER BY enrollment.student_uuid
      LIMIT 1`,
   );
@@ -242,20 +251,17 @@ async function seedNotifications(dataSource, userId, refPrefix) {
   await dataSource.query(
     `INSERT INTO notifications
        (recipient_user_id, type_code, title, body, ref_entity, ref_id, created_at,
-        student_person_uuid, case_id, student_name_masked, reason_text)
+        student_person_uuid, case_id, case_status_code, student_name_masked, reason_text)
      VALUES
-       ($1, 'CASE_SLA_BREACHED', 'Browser smoke case', 'BODY_MUST_NOT_RENDER', 'case', $2, now(),
-        $5, $6, 'ด.ช. ทด****', 'ขาดเรียนติดต่อกัน 3 วัน'),
-       ($1, 'IMPORT_COMPLETED', 'Browser smoke import', 'Import completed', 'import', $3,
-        now() - interval '1 minute', NULL, NULL, NULL, NULL),
-       ($1, 'STUDENT_ACCOUNT_BATCH_COMPLETED', 'Browser smoke account batch',
-        'Account batch completed', 'student-account-batch', $4, now() - interval '2 minutes',
-        NULL, NULL, NULL, NULL)`,
+       ($1, 'CASE_STATUS_CHANGED', 'Browser smoke case', 'BODY_MUST_NOT_RENDER', 'case', $2, now(),
+        $3, $4, 'OPEN', 'ด.ช. ทด****', 'ขาดเรียนติดต่อกัน 3 วัน'),
+       ($1, 'CASE_STATUS_CHANGED', 'Browser smoke review', 'Review pending', 'case', $2,
+        now() - interval '1 minute', $3, $4, 'PENDING_REVIEW', 'ด.ช. ทด****', NULL),
+       ($1, 'CASE_STATUS_CHANGED', 'Browser smoke completed', 'Completed', 'case', $2,
+        now() - interval '2 minutes', $3, $4, 'RESOLVED', 'ด.ช. ทด****', NULL)`,
     [
       userId,
       String(caseRecord.id),
-      `${refPrefix}-import`,
-      `${refPrefix}-account`,
       enrollment.person_uuid,
       caseRecord.id,
     ],
@@ -322,7 +328,6 @@ async function main() {
   const dataSource = app.get(DataSource);
   const passwordService = app.get(PasswordService);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const refPrefix = `browser-smoke-${suffix}`;
   const password = `Browser-${suffix}-Password`;
   let chrome;
   let userId;
@@ -331,7 +336,7 @@ async function main() {
   try {
     userId = await upsertFixture(dataSource, await passwordService.hash(password));
     await dataSource.query(`DELETE FROM notifications WHERE recipient_user_id = $1`, [userId]);
-    caseId = await seedNotifications(dataSource, userId, refPrefix);
+    caseId = await seedNotifications(dataSource, userId);
     const session = await login(password);
 
     chrome = await openChrome();
@@ -343,8 +348,15 @@ async function main() {
       source: `
         (() => {
           const backendUrl = ${JSON.stringify(BACKEND_URL)};
-          const rewrite = (url) =>
-            typeof url === 'string' ? url.replace('http://127.0.0.1:3000', backendUrl) : url;
+          // Keyed on the path, not on a literal origin: the frontend's API base
+          // is baked in at build time, so matching one origin stops rewriting as
+          // soon as the frontend is served against a different backend.
+          const rewrite = (url) => {
+            if (typeof url !== 'string') return url;
+            const parsed = new URL(url, window.location.origin);
+            if (!parsed.pathname.startsWith('/api/')) return url;
+            return backendUrl + parsed.pathname + parsed.search;
+          };
           const originalOpen = XMLHttpRequest.prototype.open;
           XMLHttpRequest.prototype.open = function(method, url, ...rest) {
             return originalOpen.call(this, method, rewrite(url), ...rest);
@@ -375,7 +387,7 @@ async function main() {
         async () =>
           await evaluate(
             client,
-            `Boolean(document.querySelector('button[aria-label*="รายการแจ้งเตือน (ใหม่ 3 รายการ)"]'))`,
+            `Boolean(document.querySelector('button[aria-label*="รายการแจ้งเตือน (ยังไม่อ่าน 3 รายการ)"]'))`,
           ),
         'Notification bell did not show unseen count 3',
       );
@@ -392,13 +404,19 @@ async function main() {
       `document.querySelector('button[aria-label*="รายการแจ้งเตือน"]')?.click()`,
     );
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('Browser smoke import'),
-      'Notification dropdown did not render fixtures',
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('Browser smoke case'),
+      'Notification dialog did not render fixtures',
     );
     const dropdownText = String(await evaluate(client, 'document.body.innerText'));
+    // The API resolves the student's name from the case and only falls back to
+    // the stored `student_name_masked`, so the rendered body is "<name> · <reason>"
+    // with the recipient's own scoped view of the name — asserting the seeded
+    // literal would be asserting the fallback, which is not what recipients see.
     assert(
-      dropdownText.includes('ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน'),
-      'Structured student notification body did not render',
+      /\S · ขาดเรียนติดต่อกัน 3 วัน/.test(dropdownText),
+      `Structured student notification body did not render; dropdown=${JSON.stringify(
+        dropdownText.slice(0, 600),
+      )}`,
     );
     assert(!dropdownText.includes('BODY_MUST_NOT_RENDER'), 'Structured notification used body fallback');
     await waitFor(async () => {
@@ -413,24 +431,79 @@ async function main() {
     await evaluate(
       client,
       `[...document.querySelectorAll('button')]
-        .find((button) => button.textContent.includes('แสดงรายการแจ้งเตือนทั้งหมด'))?.click()`,
+        .find((button) => button.textContent.includes('Browser smoke case'))?.click()`,
     );
     await waitFor(
       async () =>
-        (await evaluate(client, 'location.pathname')) === '/notifications' &&
-        (await evaluate(client, 'location.search')) === '?status=all' &&
-        String(await evaluate(client, 'document.body.innerText')).includes('Browser smoke account batch'),
-      'Full notification inbox did not render',
+        String(await evaluate(client, 'document.body.innerText')).includes('ไปยังหน้าที่เกี่ยวข้อง'),
+      'Notification item did not expand with its related-page action',
     );
     await evaluate(
       client,
       `[...document.querySelectorAll('button')]
-        .find((button) => button.textContent.includes('ยังไม่อ่าน'))?.click()`,
+        .find((button) => button.textContent.trim() === 'ไปยังหน้าที่เกี่ยวข้อง')?.click()`,
     );
     await waitFor(
-      async () => (await evaluate(client, 'location.search')) === '?status=unread',
-      'Unread notification filter did not persist in the URL',
+      async () => (await evaluate(client, 'location.pathname')) === `/cases/${caseId}`,
+      'Case notification did not deep-link to the case detail',
     );
+    await waitFor(
+      async () =>
+        (await dataSource.query(
+          // All three fixtures share the case, so pin the assertion to the one
+          // that was actually opened — an unordered query returns whichever row
+          // Postgres feels like and makes this pass or fail at random.
+          `SELECT read_at IS NOT NULL AS is_read FROM notifications
+             WHERE case_id = $1 AND title = 'Browser smoke case'`,
+          [caseId],
+        ))[0]?.is_read === true,
+      'Opening the case notification did not persist read state',
+    );
+
+    await navigate(client, `${FRONTEND_URL}/`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('button[aria-label*="รายการแจ้งเตือน"]'))`,
+          ),
+        ),
+      'Notification bell did not render after related-page navigation',
+    );
+    await evaluate(
+      client,
+      `document.querySelector('button[aria-label*="รายการแจ้งเตือน"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) =>
+              button.textContent.trim() === 'อ่านแล้ว')`,
+          ),
+        ),
+      'Notification dialog did not reopen',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'อ่านแล้ว')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) =>
+              button.textContent.includes('Browser smoke case'))`,
+          ),
+        ),
+      'Read notification filter did not render the read case notification',
+    );
+    await capture(client, '/tmp/sts-notifications-desktop.png');
+
     await navigate(client, `${FRONTEND_URL}/notifications?status=unread`);
     await waitFor(
       async () =>
@@ -441,7 +514,7 @@ async function main() {
               button.textContent.includes('ยังไม่อ่าน') && button.getAttribute('aria-selected') === 'true')`,
           ),
         ),
-      'Unread notification direct-open did not restore the active filter',
+      'Unread notification inbox filter did not restore from the URL',
     );
     await evaluate(
       client,
@@ -450,26 +523,8 @@ async function main() {
     );
     await waitFor(
       async () => (await evaluate(client, 'location.search')) === '?status=all',
-      'All notification filter did not restore its canonical URL',
+      'All notification inbox filter did not restore its canonical URL',
     );
-    await capture(client, '/tmp/sts-notifications-desktop.png');
-
-    await evaluate(
-      client,
-      `[...document.querySelectorAll('button')]
-        .find((button) => button.textContent.includes('Browser smoke import'))?.click()`,
-    );
-    await waitFor(
-      async () => (await evaluate(client, 'location.pathname')) === '/import-data/history',
-      'Import notification did not deep-link to history',
-    );
-    await waitFor(async () => {
-      const [row] = await dataSource.query(
-        `SELECT read_at IS NOT NULL AS is_read FROM notifications WHERE ref_id = $1`,
-        [`${refPrefix}-import`],
-      );
-      return row?.is_read === true;
-    }, 'Opening the import notification did not persist read state');
 
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390,
@@ -483,15 +538,17 @@ async function main() {
       'Mobile notification inbox did not render',
     );
     const mobileText = String(await evaluate(client, 'document.body.innerText'));
+    // Same composition as the dropdown: the API resolves the student's name from
+    // the case, so the seeded masked literal is only the fallback.
     assert(
-      mobileText.includes('ด.ช. ทด**** · ขาดเรียนติดต่อกัน 3 วัน'),
-      'Mobile inbox did not render structured student fields',
+      /\S · ขาดเรียนติดต่อกัน 3 วัน/.test(mobileText),
+      `Mobile inbox did not render structured student fields: ${JSON.stringify(mobileText.slice(0, 300))}`,
     );
     assert(!mobileText.includes('BODY_MUST_NOT_RENDER'), 'Mobile inbox used body fallback');
     await capture(client, '/tmp/sts-notifications-mobile.png');
 
     console.log(
-      'notification browser smoke passed (bell seen, inbox desktop/mobile, import deep-link/read)',
+      'notification browser smoke passed (bell dialog, read filter, inbox desktop/mobile, case deep-link/read)',
     );
   } finally {
     await closeChrome(chrome);
@@ -512,6 +569,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(errorMessage(error));
+  console.error(error?.stack || errorMessage(error));
   process.exitCode = 1;
 });

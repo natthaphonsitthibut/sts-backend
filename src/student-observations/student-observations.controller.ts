@@ -29,10 +29,8 @@ import {
 import {
   CreatePublicStudentObservationDto,
   CreateStudentObservationDto,
-  CreateTaskLinkStudentObservationDto,
   ListStudentObservationsQueryDto,
   PublicStudentObservationQueryDto,
-  TaskLinkStudentObservationQueryDto,
   PublicObservationRevisionsQueryDto,
   UpdateObservationCatalogItemDto,
   UpdatePublicStudentObservationDto,
@@ -41,7 +39,7 @@ import {
 import { StudentObservationsService } from './student-observations.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequireAnyPermission('student-observations', 'manage-student-observations')
+@RequireAnyPermission('students')
 @Controller('api/students/:studentTermId/observations')
 export class StudentObservationsController {
   constructor(private readonly service: StudentObservationsService) {}
@@ -85,47 +83,8 @@ export class StudentObservationsController {
   }
 }
 
-@Public()
-@Controller('api/tasks/:token/observations')
-export class PublicTaskLinkStudentObservationsController {
-  constructor(private readonly service: StudentObservationsService) {}
-
-  private session(value: string | string[] | undefined): string {
-    return Array.isArray(value) ? value[0] || '' : value || '';
-  }
-
-  @Get('catalog')
-  @ThrottleTeacherAccess()
-  catalog(
-    @Param('token') token: string,
-    @Headers('x-magic-session') rawSession: string | string[] | undefined,
-  ) {
-    return this.service.getCatalogWithTaskLink(token, this.session(rawSession));
-  }
-
-  @Post()
-  @ThrottleTeacherAccess()
-  create(
-    @Param('token') token: string,
-    @Headers('x-magic-session') rawSession: string | string[] | undefined,
-    @Body() body: CreateTaskLinkStudentObservationDto,
-  ) {
-    return this.service.createWithTaskLink(token, this.session(rawSession), body);
-  }
-
-  @Get()
-  @ThrottleTeacherAccess()
-  list(
-    @Param('token') token: string,
-    @Headers('x-magic-session') rawSession: string | string[] | undefined,
-    @Query() query: TaskLinkStudentObservationQueryDto,
-  ) {
-    return this.service.listWithTaskLink(token, this.session(rawSession), query);
-  }
-}
-
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequireAnyPermission('student-observations', 'manage-student-observations')
+@RequireAnyPermission('students')
 @Controller('api/student-observations/catalog')
 export class StudentObservationCatalogController {
   constructor(private readonly service: StudentObservationsService) {}
@@ -136,7 +95,7 @@ export class StudentObservationCatalogController {
   }
 
   @Patch('dimensions/:id')
-  @RequirePermission('manage-student-observations')
+  @RequirePermission('students')
   updateDimension(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateObservationCatalogItemDto,
@@ -146,7 +105,7 @@ export class StudentObservationCatalogController {
   }
 
   @Patch('tags/:id')
-  @RequirePermission('manage-student-observations')
+  @RequirePermission('students')
   updateTag(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateObservationCatalogItemDto,

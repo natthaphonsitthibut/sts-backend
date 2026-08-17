@@ -62,14 +62,19 @@ async function main() {
           homeroom_teachers AS (
             SELECT DISTINCT ON (ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no)
               ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no,
-              teacher.id AS teacher_user_id
+              teacher.id AS teacher_id,
+              TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_name
             FROM timetable_slots ts
-            JOIN users teacher
-              ON teacher.id = ts.teacher_user_id
-             AND teacher.role = 'TEACHER'
-             AND teacher.status = 'ACTIVE'
-             AND teacher.data_origin_code = 'DEMO'
-            WHERE ts.deleted_at IS NULL AND ts.period = 1 AND ts.teacher_user_id IS NOT NULL
+            JOIN timetable_slot_teachers tst ON tst.timetable_slot_id = ts.id
+            JOIN school_teacher_memberships membership
+              ON membership.id = tst.teacher_membership_id
+             AND membership.membership_status = 'ACTIVE'
+             AND membership.deleted_at IS NULL
+            JOIN teachers teacher
+              ON teacher.id = membership.teacher_id
+             AND teacher.teacher_status = 'ACTIVE'
+             AND teacher.deleted_at IS NULL
+            WHERE ts.deleted_at IS NULL AND ts.period = 1
             ORDER BY ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no, ts.day_of_week
           )
           INSERT INTO attendance_sessions (
@@ -79,8 +84,7 @@ async function main() {
           )
           SELECT rd.term_id, rd.school_id, rd.grade_level_id, rd.room_id, rd.attendance_date,
             1, 'DAILY', 'SUBMITTED', rd.roster_count, rd.roster_count,
-            rd.attendance_date + TIME '15:00', ht.teacher_user_id,
-            ht.teacher_user_id, ht.teacher_user_id
+            rd.attendance_date + TIME '15:00', NULL, NULL, NULL
           FROM room_days rd
           JOIN homeroom_teachers ht ON ht.school_term_id = rd.term_id
             AND ht.school_id = rd.school_id AND ht.grade_level_id = rd.grade_level_id
@@ -137,12 +141,34 @@ async function main() {
             WHERE st.deleted_at IS NULL AND st.student_uuid IS NOT NULL
               AND EXISTS (SELECT 1 FROM grade_levels g WHERE g.id = st."GradeLevelID_Onec")
           ),
+          homeroom_teachers AS (
+            SELECT DISTINCT ON (ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no)
+              ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no,
+              teacher.id AS teacher_id,
+              TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_name
+            FROM timetable_slots ts
+            JOIN timetable_slot_teachers tst ON tst.timetable_slot_id = ts.id
+            JOIN school_teacher_memberships membership
+              ON membership.id = tst.teacher_membership_id
+             AND membership.membership_status = 'ACTIVE'
+             AND membership.deleted_at IS NULL
+            JOIN teachers teacher
+              ON teacher.id = membership.teacher_id
+             AND teacher.teacher_status = 'ACTIVE'
+             AND teacher.deleted_at IS NULL
+            WHERE ts.deleted_at IS NULL AND ts.period = 1
+            ORDER BY ts.school_term_id, ts.school_id, ts.grade_level_id, ts.room_no, ts.day_of_week
+          ),
           roster_days AS (
             SELECT sd.term_id, sd.attendance_date, r.school_id, r.academic_year, r.semester,
-              r.grade_level_id, r.room_id, r.student_uuid
+              r.grade_level_id, r.room_id, r.student_uuid,
+              ht.teacher_id, ht.teacher_name
             FROM school_days sd
             JOIN roster r ON r.school_id = sd.school_id
               AND r.academic_year = sd.academic_year AND r.semester = sd.semester
+            JOIN homeroom_teachers ht ON ht.school_term_id = sd.term_id
+              AND ht.school_id = r.school_id AND ht.grade_level_id = r.grade_level_id
+              AND ht.room_no = r.room_id
           ),
           scored AS (
             SELECT rd.*,
@@ -167,24 +193,24 @@ async function main() {
           INSERT INTO attendance (
             student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
             "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
-            "AttendanceStatus", "RecordedAt", "RecordedBy", session_id,
-            created_by, updated_by
+            "AttendanceStatus", "RecordedAt", "RecordedBy", recorded_by_teacher_id,
+            session_id, created_by, updated_by
           )
           SELECT s.student_uuid, s.school_id, s.grade_level_id, s.room_id,
             s.academic_year, s.semester, s.attendance_date, 1,
             s.attendance_status, s.attendance_date + TIME '15:00',
-            recorder.username, sess.id, sess.submitted_by, sess.submitted_by
+            s.teacher_name, s.teacher_id, sess.id, NULL, NULL
           FROM statused s
           JOIN attendance_sessions sess ON sess.school_term_id = s.term_id
             AND sess.grade_level_id = s.grade_level_id AND sess.room_id = s.room_id
             AND sess.attendance_date = s.attendance_date AND sess.period = 1
             AND sess.session_kind = 'DAILY'
-          JOIN users recorder ON recorder.id = sess.submitted_by
           ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY'
           DO UPDATE SET
             "AttendanceStatus" = EXCLUDED."AttendanceStatus",
             "RecordedAt" = EXCLUDED."RecordedAt",
             "RecordedBy" = EXCLUDED."RecordedBy",
+            recorded_by_teacher_id = EXCLUDED.recorded_by_teacher_id,
             session_id = EXCLUDED.session_id,
             created_by = EXCLUDED.created_by,
             updated_by = EXCLUDED.updated_by
@@ -286,16 +312,13 @@ async function main() {
           SELECT day.term_id, day.school_id, slot.grade_level_id, slot.room_no,
             day.attendance_date, slot.period, 'SUBJECT', slot.subject_id, slot.id,
             'SUBMITTED', roster.roster_count, roster.roster_count,
-            day.attendance_date + TIME '15:00', slot.teacher_user_id,
-            slot.teacher_user_id, slot.teacher_user_id
+            day.attendance_date + TIME '15:00', NULL, NULL, NULL
           FROM school_days day
           JOIN timetable_slots slot ON slot.school_term_id = day.term_id
             AND slot.school_id = day.school_id
             AND slot.day_of_week = EXTRACT(ISODOW FROM day.attendance_date)::int
             AND slot.deleted_at IS NULL
             AND slot.subject_id IS NOT NULL
-            AND slot.teacher_user_id IS NOT NULL
-          JOIN users teacher ON teacher.id = slot.teacher_user_id AND teacher.status = 'ACTIVE'
           JOIN roster_counts roster ON roster.school_id = day.school_id
             AND roster.academic_year = day.academic_year
             AND roster.semester = day.semester
@@ -323,8 +346,9 @@ async function main() {
           SELECT session.id AS session_id, session.school_id, session.grade_level_id,
             session.room_id, session.attendance_date, session.period,
             student.student_uuid, student."AcademicYear_Onec" AS academic_year,
-            student."Semester_Onec" AS semester, teacher.username AS recorded_by,
-            session.submitted_by
+            student."Semester_Onec" AS semester,
+            TRIM(teacher.first_name || ' ' || teacher.last_name) AS recorded_by,
+            teacher.id AS recorded_by_teacher_id
           FROM attendance_sessions session
           JOIN school_terms term ON term.id = session.school_term_id
           JOIN student_term student ON student."SchoolID_Onec" = session.school_id
@@ -333,7 +357,15 @@ async function main() {
             AND student."GradeLevelID_Onec" = session.grade_level_id
             AND student."RoomID_Onec"::int = session.room_id
             AND student.deleted_at IS NULL
-          JOIN users teacher ON teacher.id = session.submitted_by
+          JOIN timetable_slot_teachers tst ON tst.timetable_slot_id = session.timetable_slot_id
+          JOIN school_teacher_memberships membership
+            ON membership.id = tst.teacher_membership_id
+           AND membership.membership_status = 'ACTIVE'
+           AND membership.deleted_at IS NULL
+          JOIN teachers teacher
+            ON teacher.id = membership.teacher_id
+           AND teacher.teacher_status = 'ACTIVE'
+           AND teacher.deleted_at IS NULL
           WHERE session.session_kind = 'SUBJECT'
             AND session.status = 'SUBMITTED'
             AND session.deleted_at IS NULL
@@ -349,8 +381,8 @@ async function main() {
         INSERT INTO attendance (
           student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
           "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
-          "AttendanceStatus", "RecordedAt", "RecordedBy", session_id,
-          session_kind, created_by, updated_by
+          "AttendanceStatus", "RecordedAt", "RecordedBy", recorded_by_teacher_id,
+          session_id, session_kind, created_by, updated_by
         )
         SELECT student_uuid, school_id, grade_level_id, room_id, academic_year,
           semester, attendance_date, period,
@@ -360,8 +392,8 @@ async function main() {
             WHEN subject_roll < 16 THEN 4
             ELSE 1
           END,
-          attendance_date + TIME '15:00', recorded_by, session_id,
-          'SUBJECT', submitted_by, submitted_by
+          attendance_date + TIME '15:00', recorded_by, recorded_by_teacher_id,
+          session_id, 'SUBJECT', NULL, NULL
         FROM scored
         ON CONFLICT (student_uuid, "AttendanceDate", "Period")
           WHERE session_kind = 'SUBJECT'
@@ -369,6 +401,7 @@ async function main() {
           "AttendanceStatus" = EXCLUDED."AttendanceStatus",
           "RecordedAt" = EXCLUDED."RecordedAt",
           "RecordedBy" = EXCLUDED."RecordedBy",
+          recorded_by_teacher_id = EXCLUDED.recorded_by_teacher_id,
           session_id = EXCLUDED.session_id,
           created_by = EXCLUDED.created_by,
           updated_by = EXCLUDED.updated_by

@@ -16,7 +16,7 @@ export class StatsController {
 
   @Get('cases')
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
+  @RequirePermission('dashboard')
   async getCases(
     @Query() query: GetCasesQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,

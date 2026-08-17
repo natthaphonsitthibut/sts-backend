@@ -8,10 +8,18 @@ const ARAID_COOKIE_NAME = 'araid_session';
 const ARAID_SESSION_PURPOSE = 'ARAID_SESSION';
 const ARAID_LINE_AUTHORIZATION_COOKIE_NAME = 'araid_line_authorization';
 const ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME = 'araid_teacher_access_authorization';
+const ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME = 'araid_task_link_authorization';
+const ARAID_ADMIN_LOGIN_AUTHORIZATION_COOKIE_NAME = 'araid_admin_login_authorization';
 
 interface AraIdSessionPayload {
+  authenticatedAt?: number;
   sub?: string;
   purpose?: string;
+}
+
+export interface AraIdSessionIdentity {
+  authenticatedAt: number;
+  profileId: string;
 }
 
 @Injectable()
@@ -23,7 +31,11 @@ export class AraIdSessionCookieService {
   ) {}
 
   setSession(response: Response, profileId: string): void {
-    const token = this.jwtService.sign({ sub: profileId, purpose: ARAID_SESSION_PURPOSE });
+    const token = this.jwtService.sign({
+      sub: profileId,
+      purpose: ARAID_SESSION_PURPOSE,
+      authenticatedAt: Date.now(),
+    });
     response.cookie(ARAID_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: this.config.cookieSameSite,
@@ -71,13 +83,53 @@ export class AraIdSessionCookieService {
     response.clearCookie(ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME, { path: '/' });
   }
 
+  setTaskLinkAuthorization(response: Response, token: string, maxAgeSeconds: number): void {
+    this.setOpaqueAuthorization(
+      response,
+      ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME,
+      token,
+      maxAgeSeconds,
+    );
+  }
+
+  readTaskLinkAuthorization(cookieHeader: string | undefined): string | null {
+    return this.readCookie(cookieHeader, ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME);
+  }
+
+  clearTaskLinkAuthorization(response: Response): void {
+    response.clearCookie(ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME, { path: '/' });
+  }
+
+  setAdminLoginAuthorization(response: Response, token: string, maxAgeSeconds: number): void {
+    this.setOpaqueAuthorization(
+      response,
+      ARAID_ADMIN_LOGIN_AUTHORIZATION_COOKIE_NAME,
+      token,
+      maxAgeSeconds,
+    );
+  }
+
+  readAdminLoginAuthorization(cookieHeader: string | undefined): string | null {
+    return this.readCookie(cookieHeader, ARAID_ADMIN_LOGIN_AUTHORIZATION_COOKIE_NAME);
+  }
+
+  clearAdminLoginAuthorization(response: Response): void {
+    response.clearCookie(ARAID_ADMIN_LOGIN_AUTHORIZATION_COOKIE_NAME, { path: '/' });
+  }
+
   readProfileId(cookieHeader: string | undefined): string | null {
+    return this.readSessionIdentity(cookieHeader)?.profileId ?? null;
+  }
+
+  readSessionIdentity(cookieHeader: string | undefined): AraIdSessionIdentity | null {
     const token = this.readCookie(cookieHeader, ARAID_COOKIE_NAME);
     if (!token) return null;
     try {
       const payload = this.jwtService.verify<AraIdSessionPayload>(token);
-      return payload.purpose === ARAID_SESSION_PURPOSE && typeof payload.sub === 'string'
-        ? payload.sub
+      return payload.purpose === ARAID_SESSION_PURPOSE &&
+        typeof payload.sub === 'string' &&
+        typeof payload.authenticatedAt === 'number'
+        ? { profileId: payload.sub, authenticatedAt: payload.authenticatedAt }
         : null;
     } catch {
       return null;

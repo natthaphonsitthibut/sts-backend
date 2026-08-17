@@ -5,11 +5,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { isRestrictedExecutive } from '../auth/permissions.constants';
 import type { ConfigType } from '@nestjs/config';
-import { isUUID } from 'class-validator';
 import { CreateStudentDto } from './dto/create-student.dto';
 import {
   DEFAULT_STUDENT_PAGE_SIZE,
@@ -44,13 +42,8 @@ import {
   normalizeNationalIdValue,
 } from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
-import type {
-  StudentDetailRow,
-  StudentEnrollmentState,
-  StudentListFilters,
-  StudentListRow,
-} from './students.types';
-import { isStudentSelfActor, type AuthenticatedRequestUser } from '../auth';
+import type { StudentEnrollmentState, StudentListFilters } from './students.types';
+import type { AuthenticatedRequestUser } from '../auth';
 
 /** Metadata captured from the HTTP request for the PII access log. */
 export interface PiiRevealRequestMeta {
@@ -176,54 +169,6 @@ function buildPaginationMeta(page: number, limit: number, totalCount: number) {
   };
 }
 
-function mapDetailRowToListRow(student: StudentDetailRow): StudentListRow {
-  const firstName =
-    typeof student['FirstName_Onec'] === 'string'
-      ? student['FirstName_Onec']
-      : typeof student['FirstName'] === 'string'
-        ? student['FirstName']
-        : '';
-  const lastName =
-    typeof student['LastName_Onec'] === 'string'
-      ? student['LastName_Onec']
-      : typeof student['LastName'] === 'string'
-        ? student['LastName']
-        : '';
-
-  const schoolId =
-    typeof student['SchoolID_Onec'] === 'number'
-      ? student['SchoolID_Onec']
-      : typeof student['SchoolID_Onec'] === 'string'
-        ? Number.parseInt(student['SchoolID_Onec'], 10)
-        : null;
-
-  return {
-    id: student.student_uuid ?? '',
-    photo_storage_key: student.photo_storage_key ?? null,
-    photo_updated_at: student.photo_updated_at ?? null,
-    name: `${firstName} ${lastName}`.trim() || 'ไม่ทราบ',
-    grade:
-      typeof student.grade === 'string' && student.grade.trim().length > 0
-        ? student.grade
-        : 'ไม่ทราบ',
-    room: typeof student.room === 'string' && student.room.trim().length > 0 ? student.room : '-',
-    school_name: typeof student.school_name === 'string' ? student.school_name : null,
-    school_id: Number.isFinite(schoolId) ? schoolId : null,
-    student_status_label:
-      typeof student.student_status_label === 'string'
-        ? student.student_status_label
-        : 'ยังไม่ได้จับคู่',
-    student_status_category:
-      typeof student.student_status_category === 'string'
-        ? student.student_status_category
-        : 'UNMAPPED',
-    student_status_badge_variant:
-      typeof student.student_status_badge_variant === 'string'
-        ? student.student_status_badge_variant
-        : 'warning',
-  };
-}
-
 @Injectable()
 export class StudentsService {
   private readonly logger = new Logger(StudentsService.name);
@@ -324,33 +269,6 @@ export class StudentsService {
     const limit = filters.limit ?? DEFAULT_STUDENT_PAGE_SIZE;
 
     try {
-      if (isStudentSelfActor(actor)) {
-        if (!actor.student_uuid) {
-          throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
-        }
-        const ownStudent = await this.studentsRepository.findStudentById(actor.student_uuid);
-        const data = ownStudent
-          ? [mapDetailRowToListRow(ownStudent)].map(
-              ({
-                photo_storage_key: photoStorageKey,
-                photo_updated_at: photoUpdatedAt,
-                ...row
-              }) => ({
-                ...row,
-                photo_url: photoStorageKey
-                  ? `/api/students/${encodeURIComponent(row.id)}/photo?v=${encodeMediaVersion(photoUpdatedAt)}`
-                  : null,
-              }),
-            )
-          : [];
-
-        return {
-          success: true,
-          data,
-          meta: buildPaginationMeta(page, limit, data.length),
-        };
-      }
-
       const { rows, totalCount } = await this.studentsRepository.listStudents(filters, userScope);
 
       return {
@@ -418,7 +336,6 @@ export class StudentsService {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
-      await this.assertOwnStudentAccess(id, actor);
       const student = await this.studentsRepository.findStudentById(id, userScope);
 
       if (!student) {
@@ -452,13 +369,12 @@ export class StudentsService {
       // Contact channels and guardians are person-level. Both are plain contact
       // data — scope-gated by this endpoint, not masked.
       const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
-      const [personContact, guardians, studentAccount] = personUuid
+      const [personContact, guardians] = personUuid
         ? await Promise.all([
             this.studentsRepository.findStudentPersonContact(personUuid),
             this.studentsRepository.listGuardiansByPersonUuid(personUuid),
-            this.studentsRepository.findStudentAccountByPersonUuid(personUuid),
           ])
-        : [null, [], null];
+        : [null, []];
 
       const {
         photo_storage_key: photoStorageKey,
@@ -481,7 +397,6 @@ export class StudentsService {
               }
             : null,
           guardians,
-          account: studentAccount,
           address,
           resolved_home_lat: hasConfirmedLocation
             ? student.resolved_home_lat
@@ -517,9 +432,6 @@ export class StudentsService {
     meta: PiiRevealRequestMeta,
   ): Promise<{ field_group: string; values: Record<string, unknown> }> {
     try {
-      await this.assertOwnStudentAccess(id, actor);
-
-      const isSelfReveal = await this.isOwnEnrollment(id, actor);
       const group = dto.field_group as PiiFieldGroup;
       const subjectRef = this.subjectRefFor(id);
 
@@ -535,24 +447,17 @@ export class StudentsService {
           : [];
       const withinWindow = activeGroups.includes(group);
 
-      let reasonCode: PiiReasonCode;
-      // Self-reveal carries no reason context — never persist a client-supplied
-      // note for it, so un-guarded input can't reach the immutable audit log.
-      const note = isSelfReveal ? null : dto.reason_note?.trim() || null;
-      if (isSelfReveal) {
-        reasonCode = 'SELF_ACCESS';
-      } else {
-        if (
-          !dto.reason_code ||
-          dto.reason_code === 'SELF_ACCESS' ||
-          !PII_REASON_CODES.includes(dto.reason_code as PiiReasonCode)
-        ) {
-          throw new BadRequestException('valid reason_code is required');
-        }
-        reasonCode = dto.reason_code as PiiReasonCode;
+      const note = dto.reason_note?.trim() || null;
+      if (
+        !dto.reason_code ||
+        dto.reason_code === 'SELF_ACCESS' ||
+        !PII_REASON_CODES.includes(dto.reason_code as PiiReasonCode)
+      ) {
+        throw new BadRequestException('valid reason_code is required');
       }
+      const reasonCode = dto.reason_code as PiiReasonCode;
 
-      if (!withinWindow && !isSelfReveal) {
+      if (!withinWindow) {
         if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !note) {
           throw new BadRequestException('reason_note is required for this reason code');
         }
@@ -581,7 +486,7 @@ export class StudentsService {
         await this.studentsRepository.insertPiiAccessEvent({
           actorUserId: resolveAuditActorId(actor),
           actorRoles: actor?.roles ?? [],
-          actorKind: actor?.virtual_login ? 'GUEST' : 'STAFF',
+          actorKind: 'STAFF',
           subjectStudentRef: subjectRef,
           subjectType: 'STUDENT',
           subjectRef,
@@ -598,11 +503,7 @@ export class StudentsService {
 
       return { field_group: group, values };
     } catch (err) {
-      if (
-        err instanceof NotFoundException ||
-        err instanceof BadRequestException ||
-        err instanceof UnauthorizedException
-      ) {
+      if (err instanceof NotFoundException || err instanceof BadRequestException) {
         throw err;
       }
       const error = err as Error;
@@ -616,10 +517,6 @@ export class StudentsService {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
-      if (isStudentSelfActor(actor)) {
-        return [];
-      }
-
       return await this.studentsRepository.findCasesByStudentName(name, userScope);
     } catch (error) {
       const resolvedError = error as Error;
@@ -652,7 +549,6 @@ export class StudentsService {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
     try {
-      await this.assertOwnStudentAccess(id, actor);
       return await this.studentsRepository.listAttendanceByStudentId(id, userScope);
     } catch (error) {
       const resolvedError = error as Error;
@@ -669,7 +565,6 @@ export class StudentsService {
     if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
-    await this.assertOwnStudentAccess(id, actor);
     const student = await this.studentsRepository.findStudentById(id, userScope);
     if (!student) {
       throw new NotFoundException('Student not found');
@@ -735,7 +630,6 @@ export class StudentsService {
     if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
     }
-    await this.assertOwnStudentAccess(id, actor);
     const student = await this.studentsRepository.findStudentById(id, userScope);
     if (!student) {
       throw new NotFoundException('Student not found');
@@ -775,18 +669,10 @@ export class StudentsService {
     actor?: AuthenticatedRequestUser,
     userScope?: DataScope,
   ) {
-    await this.assertOwnStudentAccess(id, actor);
-
     const { contact, guardians, ...termFields } = updateStudentDto;
     // The validation pipe materializes every declared DTO key (as undefined),
     // so "provided" must mean value !== undefined, not key-present.
     const hasTermEdit = Object.values(termFields).some((value) => value !== undefined);
-
-    // Student self-service covers contact channels only — enrollment identity
-    // (name/address) stays staff-editable to keep the record authoritative.
-    if (isStudentSelfActor(actor) && hasTermEdit) {
-      throw new ForbiddenException('นักเรียนแก้ไขได้เฉพาะข้อมูลติดต่อและผู้ปกครอง');
-    }
 
     const existing = await this.studentsRepository.findStudentById(id, userScope);
     if (!existing) {
@@ -863,54 +749,5 @@ export class StudentsService {
 
   remove(id: number) {
     return `This action removes a #${id} student`;
-  }
-
-  /**
-   * True when the requested enrollment snapshot belongs to the own-only student
-   * actor — either the snapshot they logged in with, or any other enrollment of
-   * the same canonical person (B2). Non-student actors return false (their access
-   * is governed by scope, not ownership). The cross-enrollment DB lookup only
-   * runs when the fast student_uuid match fails, so legit own access stays free.
-   */
-  private async isOwnEnrollment(
-    requestedUuid: string,
-    actor?: AuthenticatedRequestUser,
-  ): Promise<boolean> {
-    if (!isStudentSelfActor(actor)) {
-      return false;
-    }
-    if (actor.student_uuid === requestedUuid) {
-      return true;
-    }
-    if (!actor.person_uuid) {
-      return false;
-    }
-    const requestedPerson =
-      await this.studentsRepository.findPersonUuidByStudentUuid(requestedUuid);
-    return requestedPerson !== null && requestedPerson === actor.person_uuid;
-  }
-
-  private async assertOwnStudentAccess(
-    requestedUuid: string,
-    actor?: AuthenticatedRequestUser,
-  ): Promise<void> {
-    // student_term.student_uuid is a `uuid` column — a malformed id (e.g. a
-    // legacy PersonID_Onec fallback) would otherwise reach the DB as a raw
-    // Postgres cast error instead of a clean 404.
-    if (!isUUID(requestedUuid)) {
-      throw new NotFoundException(`Student with ID ${requestedUuid} not found`);
-    }
-
-    if (!isStudentSelfActor(actor)) {
-      return;
-    }
-
-    if (!actor.student_uuid) {
-      throw new UnauthorizedException('ไม่พบข้อมูลนักเรียนใน session');
-    }
-
-    if (!(await this.isOwnEnrollment(requestedUuid, actor))) {
-      throw new NotFoundException('Student not found');
-    }
   }
 }

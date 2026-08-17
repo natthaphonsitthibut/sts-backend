@@ -19,7 +19,6 @@ import {
   resolveLimit,
   resolvePage,
 } from '../common/pagination/pagination.util';
-import { getBangkokDateString } from '../common/utils/date.util';
 import { TaskRepository } from '../task/task.repository';
 import { TeacherAccessService } from '../teacher-access/teacher-access.service';
 import type { ActiveTeacherGrantContext } from '../teacher-access/teacher-access.types';
@@ -32,7 +31,6 @@ import type {
 } from './dto/observation-reviews.dto';
 import { ObservationReviewsRepository } from './observation-reviews.repository';
 import type {
-  ObservationReviewAssignmentRow,
   ObservationReviewEnrollmentRow,
   ObservationSourceRef,
   RiskReviewRow,
@@ -40,14 +38,6 @@ import type {
   TeacherWatchlistRow,
   ValidatedObservationSourceRow,
 } from './observation-reviews.types';
-
-interface TeacherRequestActor {
-  userId: number;
-  username: string;
-  teacherMembershipId: number;
-  teacherGrantId: string | null;
-  assignmentId: number;
-}
 
 @Injectable()
 export class ObservationReviewsService {
@@ -69,7 +59,7 @@ export class ObservationReviewsService {
 
   private managerQueueScope(actor: AuthenticatedRequestUser): DataScope {
     this.denyExecutiveRaw(actor);
-    if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
+    if (!hasPermission(actor.roles, actor.permissions, 'students')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูข้อมูลข้อสังเกตและคำขอเยี่ยมบ้าน');
     }
     const scope = resolveActorDataScope(actor) ?? {};
@@ -85,7 +75,7 @@ export class ObservationReviewsService {
     queryRunner?: QueryRunner,
   ): Promise<void> {
     this.denyExecutiveRaw(actor);
-    if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
+    if (!hasPermission(actor.roles, actor.permissions, 'students')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ทบทวนความเสี่ยงหรือคำขอเยี่ยมบ้าน');
     }
     const scope = resolveActorDataScope(actor) ?? {};
@@ -185,7 +175,10 @@ export class ObservationReviewsService {
     return {
       id: row.id,
       studentTermId: row.student_uuid,
-      comment: row.comment,
+      problemCategory: row.problem_category_code,
+      problemCategoryLabel: row.problem_category_label,
+      problemCategoryGuidance: row.problem_category_guidance,
+      problemDescription: row.problem_description,
       authorDisplayName: row.author_display_name,
       commentedAt: new Date(row.commented_at).toISOString(),
     };
@@ -264,7 +257,10 @@ export class ObservationReviewsService {
         schoolName: row.school_name,
         gradeLabel: row.grade_label,
         roomNo: row.room_no,
-        comment: row.comment,
+        problemCategory: row.problem_category_code,
+        problemCategoryLabel: row.problem_category_label,
+        problemCategoryGuidance: row.problem_category_guidance,
+        problemDescription: row.problem_description,
         authorDisplayName: row.author_display_name,
         commentedAt: new Date(row.commented_at).toISOString(),
       })),
@@ -357,60 +353,6 @@ export class ObservationReviewsService {
       data: row ? this.toRiskReview(row) : null,
       meta: { currentCalculatedAttendanceRisk },
     };
-  }
-
-  private async resolveLoggedTeacher(
-    actor: AuthenticatedRequestUser,
-    studentUuid: string,
-    assignmentId: number | undefined,
-    queryRunner: QueryRunner,
-  ): Promise<{ enrollment: ObservationReviewEnrollmentRow; requester: TeacherRequestActor }> {
-    this.denyExecutiveRaw(actor);
-    if (!hasPermission(actor.roles, actor.permissions, 'student-observations')) {
-      throw new ForbiddenException('ไม่มีสิทธิ์ส่งคำขอให้พิจารณาติดตาม');
-    }
-    const enrollment = await this.repository.lockEnrollment(studentUuid, queryRunner);
-    if (!enrollment) throw new NotFoundException('ไม่พบข้อมูลการลงทะเบียนของนักเรียน');
-    const assignment = assignmentId
-      ? await this.repository.findActiveAssignment(
-          assignmentId,
-          studentUuid,
-          getBangkokDateString(),
-          queryRunner,
-        )
-      : await this.repository.findActiveAssignmentForTeacher(
-          actor.id,
-          studentUuid,
-          getBangkokDateString(),
-          queryRunner,
-        );
-    if (!assignment || assignment.teacher_user_id !== actor.id) {
-      throw new NotFoundException('ไม่พบนักเรียนใน assignment ที่ใช้งานได้');
-    }
-    this.assertAssignmentMatchesEnrollment(assignment, enrollment);
-    return {
-      enrollment,
-      requester: {
-        userId: actor.id,
-        username: actor.username,
-        teacherMembershipId: Number(assignment.teacher_membership_id),
-        teacherGrantId: null,
-        assignmentId: Number(assignment.assignment_id),
-      },
-    };
-  }
-
-  private assertAssignmentMatchesEnrollment(
-    assignment: ObservationReviewAssignmentRow,
-    enrollment: ObservationReviewEnrollmentRow,
-  ): void {
-    if (
-      assignment.school_id !== enrollment.school_id ||
-      String(assignment.school_term_id) !== enrollment.school_term_id ||
-      String(assignment.classroom_id) !== enrollment.classroom_id
-    ) {
-      throw new ForbiddenException('assignment ไม่ตรงกับ enrollment ที่ร้องขอ');
-    }
   }
 
   private assertGrantMatchesEnrollment(

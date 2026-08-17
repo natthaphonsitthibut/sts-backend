@@ -8,5 +8,4 @@ export * from './permissions.decorator';
 export * from './permissions.constants';
 export * from './public.decorator';
 export * from './password.service';
-export * from './student-auth.service';
 export * from './session-cookie.service';

@@ -91,7 +91,7 @@ describe('StudentObservationsRepository', () => {
         {
           assignment_id: '31',
           teacher_membership_id: '12',
-          teacher_user_id: 44,
+          teacher_id: '7',
           school_id: 10,
           school_term_id: '21',
           classroom_id: '41',
@@ -108,7 +108,7 @@ describe('StudentObservationsRepository', () => {
     expect(sql).toMatch(/enrollment\.student_uuid = \$2/);
     expect(sql).toMatch(/assignment\.assignment_status = 'ACTIVE'/);
     expect(sql).toMatch(/membership\.membership_status = 'ACTIVE'/);
-    expect(sql).toMatch(/teacher\.status = 'ACTIVE'/);
+    expect(sql).toMatch(/teacher\.teacher_status = 'ACTIVE'/);
     expect(sql).toMatch(/classroom\.classroom_status = 'ACTIVE'/);
     expect(sql).toMatch(/school\.school_status = 'ACTIVE'/);
     expect(sql).toMatch(/term\.status = 'ACTIVE'/);
@@ -165,9 +165,11 @@ describe('StudentObservationsRepository', () => {
     const { repository, rawQuery, runner } = createHarness();
     await repository.listRevisions('51', 2, 10, runner);
 
-    expect(String(rawQuery.mock.calls[0][0])).toMatch(
-      /COUNT\(\*\) OVER\(\).*LIMIT \$2 OFFSET \$3/s,
-    );
+    const sql = String(rawQuery.mock.calls[0][0]);
+    expect(sql).toMatch(/COUNT\(\*\) OVER\(\).*LIMIT \$2 OFFSET \$3/s);
+    expect(sql).toContain('LEFT JOIN users actor');
+    expect(sql).toContain('revision.changed_by_display_name');
+    expect(sql).toContain('LEFT JOIN teacher_access_grants source_grant');
     expect(rawQuery.mock.calls[0][1]).toEqual(['51', 10, 10]);
   });
 });

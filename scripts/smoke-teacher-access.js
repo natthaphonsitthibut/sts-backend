@@ -143,11 +143,12 @@ async function cleanup(dataSource) {
   );
   if (users.length === 0) return;
   const userIds = users.map((row) => Number(row.id));
-  const teacherIds = users
-    .filter((row) => row.username !== USERNAMES.admin)
-    .map((row) => Number(row.id));
   const [admin] = users.filter((row) => row.username === USERNAMES.admin);
   const adminId = admin ? Number(admin.id) : null;
+  const smokeTeachers = await dataSource.query(
+    `SELECT id FROM teachers WHERE email LIKE 'teacher_access_smoke_%@sts-smoke.invalid'`,
+  );
+  const smokeTeacherIds = smokeTeachers.map((row) => Number(row.id));
 
   if (adminId) {
     await dataSource.query(`DELETE FROM teacher_line_invitations WHERE issued_by = $1`, [adminId]);
@@ -161,10 +162,15 @@ async function cleanup(dataSource) {
   const studentIds = students.map((row) => row.student_uuid);
   const personIds = students.map((row) => row.person_uuid);
   const sessions =
-    teacherIds.length > 0
+    smokeTeacherIds.length > 0
       ? await dataSource.query(
-          `SELECT id FROM attendance_sessions WHERE created_by = ANY($1::int[])`,
-          [teacherIds],
+          `
+            SELECT DISTINCT session_id AS id
+            FROM attendance
+            WHERE recorded_by_teacher_id = ANY($1::bigint[])
+              AND session_id IS NOT NULL
+          `,
+          [smokeTeacherIds],
         )
       : [];
   const sessionIds = sessions.map((row) => row.id);
@@ -200,6 +206,27 @@ async function cleanup(dataSource) {
   }
 
   if (adminId) {
+    // Before the classroom: a slot keeps an FK to the room it is taught in, and
+    // any round recorded against that slot keeps an FK to the slot. Slot
+    // teachers cascade with the slot.
+    await dataSource.query(
+      `
+        DELETE FROM attendance
+        WHERE session_id IN (
+          SELECT id FROM attendance_sessions
+          WHERE timetable_slot_id IN (SELECT id FROM timetable_slots WHERE created_by = $1)
+        )
+      `,
+      [adminId],
+    );
+    await dataSource.query(
+      `
+        DELETE FROM attendance_sessions
+        WHERE timetable_slot_id IN (SELECT id FROM timetable_slots WHERE created_by = $1)
+      `,
+      [adminId],
+    );
+    await dataSource.query(`DELETE FROM timetable_slots WHERE created_by = $1`, [adminId]);
     await dataSource.query(
       `DELETE FROM classroom_teacher_assignments WHERE created_by = $1`,
       [adminId],
@@ -207,6 +234,11 @@ async function cleanup(dataSource) {
     await dataSource.query(`DELETE FROM school_teacher_memberships WHERE created_by = $1`, [
       adminId,
     ]);
+    if (smokeTeacherIds.length > 0) {
+      await dataSource.query(`DELETE FROM teachers WHERE id = ANY($1::bigint[])`, [
+        smokeTeacherIds,
+      ]);
+    }
     await dataSource.query(
       `DELETE FROM school_classrooms WHERE created_by = $1 AND room_name = 'Teacher access smoke'`,
       [adminId],
@@ -309,30 +341,39 @@ async function createFixture(dataSource, actors) {
     ],
   );
 
+  // A teacher is a row in `teachers`, not a login account. EMAIL_OTP needs an
+  // address on it, which is also how the smoke recognises its own fixtures.
   const teacherMemberships = [];
-  for (const teacher of [actors.teacherOne, actors.teacherTwo]) {
+  for (const [index, name] of [['One'], ['Two']].entries()) {
+    const username = index === 0 ? USERNAMES.teacherOne : USERNAMES.teacherTwo;
+    const [teacher] = await dataSource.query(
+      `
+        INSERT INTO teachers (
+          first_name, last_name, citizen_id, email, teacher_status, created_by, updated_by
+        )
+        VALUES ($1, 'Smoke', $2, $3, 'ACTIVE', $4, $4)
+        RETURNING id
+      `,
+      [
+        `Teacher ${name[0]}`,
+        `97${String(Date.now()).slice(-9)}${index}${index}`,
+        `${username}@sts-smoke.invalid`,
+        actors.admin.id,
+      ],
+    );
     const [membership] = await dataSource.query(
       `
         INSERT INTO school_teacher_memberships (
-          school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
+          school_id, teacher_id, membership_status, started_on, created_by, updated_by
         )
         VALUES ($1, $2, 'ACTIVE', CURRENT_DATE, $3, $3)
         RETURNING id, teacher_id
       `,
       [term.school_id, teacher.id, actors.admin.id],
     );
-    // The teacher identity row is created by the membership trigger. EMAIL_OTP
-    // needs an address on it (smoke accounts deliberately carry none), and a
-    // row left over from an earlier run is INACTIVE because cleanup disables
-    // the account it was copied from.
-    await dataSource.query(
-      `UPDATE teachers SET email = $2, teacher_status = 'ACTIVE', deleted_at = NULL WHERE id = $1`,
-      [membership.teacher_id, `${teacher.username}@sts-smoke.invalid`],
-    );
     teacherMemberships.push({
       id: Number(membership.id),
       teacherId: Number(membership.teacher_id),
-      teacher,
     });
   }
 
@@ -446,9 +487,57 @@ async function createFixture(dataSource, actors) {
     calendarCreated = inserted.length === 1;
   }
 
+  // The teacher pages open on today, so today has to be a school day and the
+  // subject card needs a period of its own — otherwise every attendance view
+  // renders an empty state and the browser smoke can never reach the roster.
+  const [today] = await dataSource.query(
+    `SELECT (now() AT TIME ZONE 'Asia/Bangkok')::date::text AS day,
+            EXTRACT(ISODOW FROM (now() AT TIME ZONE 'Asia/Bangkok')::date)::int AS iso_dow`,
+  );
+  await dataSource.query(
+    `
+      INSERT INTO school_calendar_days (
+        school_term_id, calendar_date, day_type, reason, source, created_by, updated_by
+      )
+      VALUES ($1, $2::date, 'SCHOOL_DAY', $3, 'MANUAL', $4, $4)
+      ON CONFLICT (school_term_id, calendar_date) DO UPDATE
+      SET day_type = 'SCHOOL_DAY', updated_by = EXCLUDED.updated_by
+    `,
+    [term.id, today.day, CALENDAR_REASON, actors.admin.id],
+  );
+  const [timetableSlot] = await dataSource.query(
+    `
+      INSERT INTO timetable_slots (
+        school_term_id, school_id, grade_level_id, room_no, day_of_week, period,
+        subject_id, classroom_id, created_by, updated_by
+      )
+      VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $8)
+      RETURNING id
+    `,
+    [
+      term.id,
+      term.school_id,
+      grade.id,
+      roomNumber,
+      today.iso_dow,
+      subject.id,
+      classroom.id,
+      actors.admin.id,
+    ],
+  );
+  await dataSource.query(
+    `
+      INSERT INTO timetable_slot_teachers (timetable_slot_id, teacher_membership_id, created_by)
+      VALUES ($1, $2, $3)
+    `,
+    [timetableSlot.id, teacherMemberships[0].id, actors.admin.id],
+  );
+
   return {
     term,
     schoolB,
+    attendanceToday: today.day,
+    timetableSlotId: Number(timetableSlot.id),
     classroom: { id: Number(classroom.id), roomNumber },
     teacherMemberships,
     homeroomAssignmentId: Number(homeroomAssignment.id),
@@ -558,22 +647,6 @@ async function main() {
         lastName: 'Smoke Admin',
         role: 'ADMIN',
         permissions: ['manage-teacher-access'],
-        dataScope: { school_ids: [initialSchoolId] },
-      }),
-      teacherOne: await upsertUser(dataSource, {
-        username: USERNAMES.teacherOne,
-        firstName: 'Teacher One',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
-        dataScope: { school_ids: [initialSchoolId] },
-      }),
-      teacherTwo: await upsertUser(dataSource, {
-        username: USERNAMES.teacherTwo,
-        firstName: 'Teacher Two',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
         dataScope: { school_ids: [initialSchoolId] },
       }),
     };
@@ -723,11 +796,96 @@ async function main() {
     );
     assert(auditRawCount === 0, 'Raw teacher token was persisted in audit metadata');
 
+    // 4b. A delegation link is a one-day stand-in for someone else's class. It is
+    //     always newer than the term link, so the roster row, the copy action and
+    //     the bulk issue must all keep pointing at the teacher's own link.
+    const teacherTwoGrantId = rowFor(afterIssue.payload, fixture.teacherMemberships[1].id).grantId;
+    // Delegations only exist for a day the assignment is already effective on,
+    // and the fixture assignment starts today.
+    const delegationDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const delegation = await request(
+      baseUrl,
+      'POST',
+      '/api/teacher-access-grants/attendance-delegations',
+      201,
+      {
+        headers: { cookie: adminCookie },
+        body: {
+          schoolId: Number(fixture.term.school_id),
+          schoolTermId: termId,
+          teacherMembershipId: fixture.teacherMemberships[1].id,
+          assignmentId: fixture.homeroomAssignmentId,
+          attendanceDate: delegationDate,
+          startsAt: '00:01',
+          endsAt: '23:59',
+        },
+      },
+    );
+    const delegationGrantId = delegation.payload?.data?.grantId ?? delegation.payload?.data?.id;
+    assert(delegationGrantId, 'Attendance delegation was not issued');
+    const afterDelegation = await request(baseUrl, 'GET', rosterUrl, 200, {
+      headers: { cookie: adminCookie },
+    });
+    const delegateRow = rowFor(afterDelegation.payload, fixture.teacherMemberships[1].id);
+    assert(
+      delegateRow.grantId === teacherTwoGrantId && delegateRow.linkStatus === 'ACTIVE',
+      'A delegation link hijacked the teacher row on the link-management screen',
+    );
+    // The screen must not be able to copy, rotate or revoke a delegation either.
+    await request(baseUrl, 'GET', `/api/teacher-access-grants/${delegationGrantId}/link`, 409, {
+      headers: { cookie: adminCookie },
+    });
+    await request(baseUrl, 'POST', `/api/teacher-access-grants/${delegationGrantId}/rotate`, 409, {
+      headers: { cookie: adminCookie },
+    });
+    const bulkWithDelegation = await request(
+      baseUrl,
+      'POST',
+      '/api/teacher-access-grants/bulk',
+      201,
+      { headers: { cookie: adminCookie }, body: { schoolTermId: termId } },
+    );
+    assert(
+      Number(bulkWithDelegation.payload?.data?.issued) === 0,
+      'Bulk issue reacted to a delegation link instead of the term links',
+    );
+    await request(
+      baseUrl,
+      'POST',
+      `/api/teacher-access-grants/attendance-delegations/${delegationGrantId}/revoke`,
+      201,
+      { headers: { cookie: adminCookie } },
+    );
+    const closedDelegation = await request(baseUrl, 'GET', '/api/teacher-access/context', 410, {
+      token: extractToken(delegation.payload?.data?.accessUrl),
+    });
+    assert(
+      String(closedDelegation.payload?.message || '').includes('ลิงก์มอบหมายการเช็กชื่อนี้ถูกปิดแล้ว'),
+      'A closed delegation link does not say which link died',
+    );
+    assert(
+      rowFor(
+        (await request(baseUrl, 'GET', rosterUrl, 200, { headers: { cookie: adminCookie } }))
+          .payload,
+        fixture.teacherMemberships[1].id,
+      ).linkStatus === 'ACTIVE',
+      'A closed delegation link left the teacher row looking revoked',
+    );
+
     // 5. Nothing is readable before the OTP is verified.
-    await request(baseUrl, 'GET', '/api/teacher-access/context', 401, { token: grantOne.token });
-    await request(baseUrl, 'GET', '/api/teacher-access/context', 404, {
+    const beforeOtp = await request(baseUrl, 'GET', '/api/teacher-access/context', 401, {
+      token: grantOne.token,
+    });
+    const unknownToken = await request(baseUrl, 'GET', '/api/teacher-access/context', 404, {
       token: tamperToken(grantOne.token),
     });
+    // The token rides in a header the HTTP cache key ignores, so a cacheable
+    // answer on this URL gets replayed for the next link opened in that tab.
+    assert(
+      beforeOtp.response.headers.get('cache-control') === 'no-store' &&
+        unknownToken.response.headers.get('cache-control') === 'no-store',
+      'Guest link responses must not be storable by the browser cache',
+    );
 
     const teacherOneEmail = `${USERNAMES.teacherOne}@sts-smoke.invalid`;
     const sessionOne = await verifiedSession(baseUrl, grantOne.token, otpCapture, teacherOneEmail);
@@ -738,6 +896,10 @@ async function main() {
       token: grantOne.token,
       headers: sessionHeaders,
     });
+    assert(
+      context.response.headers.get('cache-control') === 'no-store',
+      'A verified link read must not be storable by the browser cache either',
+    );
     assert(
       context.payload?.data?.teacherDisplayName.includes('Teacher One'),
       'Verified context did not identify teacher one',
@@ -765,7 +927,72 @@ async function main() {
 
     // 7. Attendance write + the history the teacher reads back.
     let attendanceChecked = false;
+    let teacherLinkDraftChecked = false;
     if (fixture.attendanceDate) {
+      // Draft autosave over the link: partial class, session stays open, and
+      // the session read gives the page enough to prefill and lock itself.
+      const linkMarkedAt = new Date(`${fixture.attendanceDate}T02:15:00.000Z`).toISOString();
+      const draft = await request(
+        baseUrl,
+        'POST',
+        '/api/teacher-access/attendance-marks',
+        201,
+        {
+          token: grantOne.token,
+          headers: sessionHeaders,
+          body: {
+            assignmentId: fixture.homeroomAssignmentId,
+            date: fixture.attendanceDate,
+            records: [
+              {
+                studentId: fixture.students[0].studentUuid,
+                status: 'P_LATE',
+                markedAt: linkMarkedAt,
+              },
+            ],
+          },
+        },
+      );
+      assert(
+        draft.payload?.data?.session?.status === 'OPEN',
+        'Teacher-link draft must leave the session open',
+      );
+      const draftSession = await request(
+        baseUrl,
+        'GET',
+        `/api/teacher-access/attendance-session?assignmentId=${fixture.homeroomAssignmentId}&date=${fixture.attendanceDate}`,
+        200,
+        { token: grantOne.token, headers: sessionHeaders },
+      );
+      assert(
+        draftSession.payload?.data?.session?.status === 'OPEN',
+        'Session read must report the open draft round',
+      );
+      assert(
+        draftSession.payload.data.marks.some(
+          (mark) =>
+            mark.studentUuid === fixture.students[0].studentUuid && mark.status === 'P_LATE',
+        ),
+        'Session read must prefill the mark saved by the draft',
+      );
+      assert(
+        draftSession.payload.data.expectedRosterCount === fixture.students.length,
+        'Session read must report the full roster size',
+      );
+      // A link may never draft outside its own classroom.
+      await request(baseUrl, 'POST', '/api/teacher-access/attendance-marks', 403, {
+        token: grantOne.token,
+        headers: sessionHeaders,
+        body: {
+          assignmentId: fixture.homeroomAssignmentId,
+          date: fixture.attendanceDate,
+          records: [
+            { studentId: '00000000-0000-4000-8000-0000000000ff', status: 'P_PRESENT' },
+          ],
+        },
+      });
+      teacherLinkDraftChecked = true;
+
       const attendance = await request(baseUrl, 'POST', '/api/teacher-access/attendance', 201, {
         token: grantOne.token,
         headers: sessionHeaders,
@@ -786,8 +1013,20 @@ async function main() {
       );
       assert(attendanceSession?.status === 'SUBMITTED', 'Attendance session was not submitted');
       assert(
-        Number(attendanceSession.submitted_by) === actors.teacherOne.id,
-        'Attendance was not attributed to teacher one',
+        attendanceSession.submitted_by === null,
+        'A link submission must not name a login account',
+      );
+      const [recordedBy] = await dataSource.query(
+        `
+          SELECT DISTINCT recorded_by_teacher_id
+          FROM attendance
+          WHERE session_id = $1
+        `,
+        [sessionId],
+      );
+      assert(
+        Number(recordedBy?.recorded_by_teacher_id) === fixture.teacherMemberships[0].teacherId,
+        `Attendance was not attributed to teacher one: ${JSON.stringify(recordedBy)}`,
       );
       const history = await request(
         baseUrl,
@@ -907,9 +1146,13 @@ async function main() {
           'issuing for picked rows only covers those rows and explains the skips',
           'bulk issue fills the gaps and leaves existing links alone',
           'copy link returns the issued token from ciphertext, storage stays hash-only',
+          'a delegation link never takes over the teacher row, copy, rotate or bulk issue',
           'guest reads are refused until the emailed OTP is verified',
           'wrong OTP rejected; verified session unlocks context, roster and attendance',
           attendanceChecked ? 'attendance write and history read back the same round' : null,
+          teacherLinkDraftChecked
+            ? 'teacher-link draft autosave keeps the round open and prefills the session read'
+            : null,
           'rotate invalidates the old token; revoke closes the link',
           'real row lock serializes context and revoke',
           'legacy per-classroom attendance link creation is refused',

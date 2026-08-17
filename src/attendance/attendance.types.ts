@@ -63,6 +63,11 @@ export interface RoomRow extends Record<string, unknown> {
 }
 
 export interface AttendanceStudentRow extends Record<string, unknown> {
+  first_name?: string | null;
+  last_name?: string | null;
+  classroom_id?: number | string | null;
+  risk_tier?: string | null;
+  teacher_comment?: string | null;
   id: string;
   name: string;
   grade: string;
@@ -73,7 +78,7 @@ export interface AttendanceStudentRow extends Record<string, unknown> {
   photo_storage_key: string | null;
   photo_updated_at: string | Date | null;
   term_absent_days: number | string;
-  post_case_absent_days: number | string;
+  absent_days_since_case_reset: number | string;
   absence_reset_after_date: string | Date | null;
 }
 
@@ -86,33 +91,9 @@ export interface AttendanceHistoryRow extends Record<string, unknown> {
   room?: string;
   status: number | string;
   RecordedBy?: string;
+  /** Selected via `a.*`; null for rows written before marked_at existed. */
+  marked_at?: string | null;
   school_id?: number | string;
-}
-
-export interface AttendanceTaskRow extends Record<string, unknown> {
-  task_id: string;
-  task_type: string;
-  target_grade?: string | null;
-  target_room?: string | null;
-  target_school_id?: number | null;
-  target_school_name?: string | null;
-  task_status?: string | null;
-  created_at?: string | Date;
-  active_link_id?: string | null;
-  active_link?: string | null;
-  active_link_created_at?: string | Date | null;
-  active_link_expires_at?: string | Date | null;
-  link_assigned_to?: string | null;
-  link_assigned_to_email?: string | null;
-  active_link_locked?: boolean | number | null;
-  active_link_lock_reason?: string | null;
-  active_link_lock_at?: string | Date | null;
-  link_state?: 'ACTIVE' | 'LOCKED' | 'EXPIRED' | null;
-  attendance_session_id?: string | null;
-  attendance_session_status?: string | null;
-  attendance_expected_roster_count?: number | string | null;
-  attendance_recorded_count?: number | string | null;
-  attendance_check_status?: 'COMPLETED' | 'NOT_CHECKED' | null;
 }
 
 export interface StudentAttendanceMetadataRow extends Record<string, unknown> {
@@ -130,11 +111,18 @@ export interface SettingValueRow extends Record<string, unknown> {
 export interface AttendanceWriteRecord {
   student_id: string;
   status: AttendanceSelectionStatus;
+  /**
+   * When the teacher tapped this status on their device, already clamped into
+   * the attendance day. `null` when the caller sent nothing usable.
+   */
+  marked_at: string | null;
 }
 
 export interface AttendanceSaveRecordInput {
   student_id: string;
   status: string;
+  /** Raw client timestamp; validated and clamped before it reaches the row. */
+  marked_at?: string | null;
 }
 
 export interface AttendanceInsertRecord {
@@ -142,6 +130,7 @@ export interface AttendanceInsertRecord {
   date: string;
   statusCode: number;
   recordedBy: string;
+  recordedByTeacherId?: number | null;
   period: number;
   sessionId: string;
   metadata: StudentAttendanceMetadataRow;
@@ -151,6 +140,8 @@ export interface AttendanceWriteContext {
   actorUserId: number | null;
   actorLabel: string;
   recorder: string;
+  /** `teachers.id` when a teacher recorded it; null for staff, who are not teachers. */
+  recorderTeacherId?: number | null;
   allowedStudentIds?: string[];
   session?: {
     kind: 'DAILY' | 'SUBJECT';

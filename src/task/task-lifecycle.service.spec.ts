@@ -16,14 +16,13 @@ function buildActor(): AuthenticatedRequestUser {
     id: 7,
     username: 'case-admin',
     roles: ['ADMIN'],
-    permissions: ['create'],
+    permissions: ['dashboard'],
     data_scope: { school_ids: [10010002] },
   };
 }
 
 describe('TaskLifecycleService', () => {
   const studentUuid = '11111111-1111-4111-8111-111111111111';
-  const followUpRequestId = '22222222-2222-4222-8222-222222222222';
   let service: TaskLifecycleService;
   let taskRepository: jest.Mocked<
     Pick<
@@ -38,8 +37,6 @@ describe('TaskLifecycleService', () => {
       | 'updateCaseStatus'
       | 'createTask'
       | 'createTaskLink'
-      | 'listTimetableSlotsForTaskLink'
-      | 'insertTaskLinkTimetableSlots'
       | 'lockFollowUpTaskAssignment'
       | 'markFollowUpTaskAssigned'
     >
@@ -58,7 +55,11 @@ describe('TaskLifecycleService', () => {
         sub_district: 'ดุสิต',
       }),
       findStudentTermMetadata: jest.fn().mockResolvedValue(null),
-      listVisitAssignees: jest.fn().mockResolvedValue([]),
+      listVisitAssignees: jest
+        .fn()
+        .mockResolvedValue([
+          { teacher_id: '7', display_name: 'ครูผู้ติดตาม', email: null, is_homeroom: true },
+        ]),
       lockCaseForVisitAssignment: jest.fn().mockResolvedValue({
         id: 123,
         school_id: 10010002,
@@ -71,8 +72,6 @@ describe('TaskLifecycleService', () => {
       updateCaseStatus: jest.fn().mockResolvedValue(undefined),
       createTask: jest.fn().mockResolvedValue(undefined),
       createTaskLink: jest.fn().mockResolvedValue(undefined),
-      listTimetableSlotsForTaskLink: jest.fn().mockResolvedValue([]),
-      insertTaskLinkTimetableSlots: jest.fn().mockResolvedValue(undefined),
       lockFollowUpTaskAssignment: jest.fn().mockResolvedValue(null),
       markFollowUpTaskAssigned: jest.fn().mockResolvedValue(true),
     };
@@ -93,13 +92,13 @@ describe('TaskLifecycleService', () => {
     taskRepository.findStudentTermMetadata.mockResolvedValue({ SchoolID_Onec: 10010002 });
     taskRepository.listVisitAssignees.mockResolvedValue([
       {
-        teacher_user_id: 42,
+        teacher_id: '42',
         display_name: 'ครูประจำชั้น',
         email: 'homeroom@example.test',
         is_homeroom: true,
       },
       {
-        teacher_user_id: 43,
+        teacher_id: '43',
         display_name: 'ครูในโรงเรียน',
         email: 'teacher@example.test',
         is_homeroom: false,
@@ -107,8 +106,8 @@ describe('TaskLifecycleService', () => {
     ]);
 
     await expect(service.listVisitAssignees(buildActor(), studentUuid)).resolves.toEqual([
-      { teacherUserId: 42, displayName: 'ครูประจำชั้น', isHomeroom: true },
-      { teacherUserId: 43, displayName: 'ครูในโรงเรียน', isHomeroom: false },
+      { teacherId: '42', displayName: 'ครูประจำชั้น', isHomeroom: true },
+      { teacherId: '43', displayName: 'ครูในโรงเรียน', isHomeroom: false },
     ]);
     expect(taskRepository.listVisitAssignees).toHaveBeenCalledWith(studentUuid);
   });
@@ -116,7 +115,7 @@ describe('TaskLifecycleService', () => {
   it('allows a selected school teacher without an email address', async () => {
     taskRepository.listVisitAssignees.mockResolvedValue([
       {
-        teacher_user_id: 42,
+        teacher_id: '42',
         display_name: 'ครูประจำชั้น',
         email: null,
         is_homeroom: true,
@@ -131,7 +130,7 @@ describe('TaskLifecycleService', () => {
         student_name: 'นักเรียนทดสอบ',
         target_school_id: 10010002,
         existing_case_id: '123',
-        assigned_teacher_user_id: 42,
+        assigned_teacher_id: '42',
       },
       'https://app.example.invalid',
     );
@@ -261,6 +260,9 @@ describe('TaskLifecycleService', () => {
           {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -288,6 +290,8 @@ describe('TaskLifecycleService', () => {
         {
           task_type: 'VISIT',
           assigned_to_name: 'ครูผู้ติดตาม',
+          assigned_teacher_id: '7',
+          assigned_teacher_id: '7',
           existing_case_id: '123',
           student_id: studentUuid,
           student_name: 'นักเรียนทดสอบ',
@@ -316,6 +320,9 @@ describe('TaskLifecycleService', () => {
           {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
+            assigned_teacher_id: '7',
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -339,6 +346,7 @@ describe('TaskLifecycleService', () => {
       {
         task_type: 'VISIT',
         assigned_to_name: 'ครูผู้ติดตาม',
+        assigned_teacher_id: '7',
         student_id: studentUuid,
         student_name: 'นักเรียนทดสอบ',
         target_school_id: 10010002,
@@ -412,7 +420,7 @@ describe('TaskLifecycleService', () => {
     ).rejects.toThrow('อายุลิงก์ต้องไม่เกิน 90 วัน');
   });
 
-  it('refuses to create a per-classroom attendance link now that teacher links replace them', async () => {
+  it('refuses to create a retired link type such as the per-classroom attendance link', async () => {
     await expect(
       service.createTask(
         buildActor(),
@@ -422,31 +430,10 @@ describe('TaskLifecycleService', () => {
           target_school_id: 10010002,
           target_grade: 'ม.6',
           target_room: '1',
-          subject_id: 5,
-          timetable_slot_ids: [11],
         },
         'https://app.example.invalid',
       ),
-    ).rejects.toThrow('ลิงก์เช็คชื่อรายห้องถูกยกเลิกแล้ว');
+    ).rejects.toThrow('ประเภทลิงก์นี้ถูกยกเลิกแล้ว');
     expect(taskRepository.createTaskLink).not.toHaveBeenCalled();
-    expect(taskRepository.insertTaskLinkTimetableSlots).not.toHaveBeenCalled();
-  });
-
-  it('rejects the retired follow-up request field instead of ignoring it', async () => {
-    await expect(
-      service.createTask(
-        buildActor(),
-        {
-          task_type: 'VISIT',
-          assigned_to_name: 'ครูผู้ติดตาม',
-          student_id: studentUuid,
-          student_name: 'เด็กทดสอบ',
-          target_school_id: 10010002,
-          follow_up_request_id: followUpRequestId,
-        },
-        'https://app.example.invalid',
-      ),
-    ).rejects.toThrow('ระบบไม่รองรับคำขอติดตามแล้ว');
-    expect(taskRepository.createTask).not.toHaveBeenCalled();
   });
 });

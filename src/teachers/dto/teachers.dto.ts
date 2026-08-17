@@ -57,10 +57,14 @@ export class CreateTeacherDto {
   @MaxLength(120)
   lastName!: string;
 
-  @IsOptional()
-  @optionalText()
+  /**
+   * Required: the citizen id is the identity AraID verification compares
+   * against, so a teacher without one could never approve a link.
+   */
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : (value as unknown)))
+  @IsString({ message: 'กรุณาระบุเลขบัตรประชาชน' })
   @Matches(/^[0-9]{13}$/, { message: 'เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก' })
-  citizenId?: string;
+  citizenId!: string;
 
   @IsOptional()
   @optionalText()

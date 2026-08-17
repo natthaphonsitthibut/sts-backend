@@ -4,6 +4,7 @@ import type { MessagingFriendState } from '../common/messaging/messaging.types';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import type {
   TeacherLineCitizenIdentityRow,
+  TeacherLineGroupInvitationRow,
   TeacherLineIdentityRow,
   TeacherLineInvitationRow,
   TeacherMessagingAccountRow,
@@ -43,6 +44,191 @@ export class TeacherLineRepository {
           query: async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
             await queryDataSource<T>(this.dataSource, sql, params),
         };
+  }
+
+  async createGroupInvitation(input: {
+    schoolId: number;
+    schoolName: string;
+    tokenHash: string;
+    tokenEncrypted: string;
+    issuedBy: number;
+    startsAt: Date;
+    expiresAt: Date;
+  }): Promise<TeacherLineGroupInvitationRow | null> {
+    try {
+      return await this.withTransaction(async (queryRunner) => {
+        const executor = this.executor(queryRunner);
+        const existing = await this.findOpenGroupInvitationForSchool(
+          input.schoolId,
+          queryRunner,
+          true,
+        );
+        if (existing) {
+          if (new Date(existing.expires_at).getTime() > Date.now()) return null;
+          await executor.query(
+            `
+              UPDATE teacher_line_group_invitations
+              SET revoked_at = now(),
+                  revoked_by = $2,
+                  revocation_reason = 'EXPIRED_REPLACED',
+                  updated_at = now()
+              WHERE id = $1::uuid
+                AND revoked_at IS NULL
+            `,
+            [existing.id, input.issuedBy],
+          );
+        }
+        const inserted = await executor.query<TeacherLineGroupInvitationRow>(
+          `
+            INSERT INTO teacher_line_group_invitations (
+              school_id, token_hash, token_encrypted, issued_by, starts_at, expires_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING
+              id::text,
+              school_id,
+              $7::text AS school_name,
+              token_hash,
+              token_encrypted,
+              issued_by,
+              issued_at,
+              starts_at,
+              expires_at,
+              revoked_at,
+              revoked_by,
+              revocation_reason
+          `,
+          [
+            input.schoolId,
+            input.tokenHash,
+            input.tokenEncrypted,
+            input.issuedBy,
+            input.startsAt,
+            input.expiresAt,
+            input.schoolName,
+          ],
+        );
+        return inserted.rows[0] ?? null;
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === '23505') return null;
+      throw error;
+    }
+  }
+
+  async findActiveGroupInvitationForSchool(
+    schoolId: number,
+  ): Promise<TeacherLineGroupInvitationRow | null> {
+    const invitation = await this.findOpenGroupInvitationForSchool(schoolId);
+    return invitation && new Date(invitation.expires_at).getTime() > Date.now() ? invitation : null;
+  }
+
+  async findActiveGroupInvitationByTokenHash(
+    tokenHash: string,
+  ): Promise<TeacherLineGroupInvitationRow | null> {
+    const result = await this.executor().query<TeacherLineGroupInvitationRow>(
+      `
+        SELECT
+          invitation.id::text,
+          invitation.school_id,
+          school.name AS school_name,
+          invitation.token_hash,
+          invitation.token_encrypted,
+          invitation.issued_by,
+          invitation.issued_at,
+          invitation.starts_at,
+          invitation.expires_at,
+          invitation.revoked_at,
+          invitation.revoked_by,
+          invitation.revocation_reason
+        FROM teacher_line_group_invitations invitation
+        JOIN schools school ON school.id = invitation.school_id
+        WHERE invitation.token_hash = $1
+          AND invitation.revoked_at IS NULL
+          AND invitation.expires_at > now()
+          AND school.school_status = 'ACTIVE'
+        LIMIT 1
+      `,
+      [tokenHash],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async updateActiveGroupInvitation(
+    id: string,
+    schoolId: number,
+    startsAt: Date,
+    expiresAt: Date,
+  ): Promise<boolean> {
+    const result = await this.executor().query(
+      `
+        UPDATE teacher_line_group_invitations
+        SET starts_at = $3,
+            expires_at = $4,
+            updated_at = now()
+        WHERE id = $1::uuid
+          AND school_id = $2
+          AND revoked_at IS NULL
+          AND expires_at > now()
+      `,
+      [id, schoolId, startsAt, expiresAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async revokeActiveGroupInvitation(
+    id: string,
+    schoolId: number,
+    revokedBy: number,
+  ): Promise<boolean> {
+    const result = await this.executor().query(
+      `
+        UPDATE teacher_line_group_invitations
+        SET revoked_at = now(),
+            revoked_by = $3,
+            revocation_reason = 'REVOKED_BY_ADMIN',
+            updated_at = now()
+        WHERE id = $1::uuid
+          AND school_id = $2
+          AND revoked_at IS NULL
+          AND expires_at > now()
+      `,
+      [id, schoolId, revokedBy],
+    );
+    return result.rowCount === 1;
+  }
+
+  private async findOpenGroupInvitationForSchool(
+    schoolId: number,
+    queryRunner?: QueryRunner,
+    lock = false,
+  ): Promise<TeacherLineGroupInvitationRow | null> {
+    const result = await this.executor(queryRunner).query<TeacherLineGroupInvitationRow>(
+      `
+        SELECT
+          invitation.id::text,
+          invitation.school_id,
+          school.name AS school_name,
+          invitation.token_hash,
+          invitation.token_encrypted,
+          invitation.issued_by,
+          invitation.issued_at,
+          invitation.starts_at,
+          invitation.expires_at,
+          invitation.revoked_at,
+          invitation.revoked_by,
+          invitation.revocation_reason
+        FROM teacher_line_group_invitations invitation
+        JOIN schools school ON school.id = invitation.school_id
+        WHERE invitation.school_id = $1
+          AND invitation.revoked_at IS NULL
+          AND school.school_status = 'ACTIVE'
+        LIMIT 1
+        ${lock ? 'FOR UPDATE OF invitation' : ''}
+      `,
+      [schoolId],
+    );
+    return result.rows[0] ?? null;
   }
 
   /**

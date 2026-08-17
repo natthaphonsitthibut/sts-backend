@@ -10,24 +10,29 @@ function readSeed(fileName: string): string {
 }
 
 describe('demo data provenance seed contracts', () => {
-  it('attributes demo attendance to the submitted DEMO user', () => {
+  it('attributes demo attendance to the teacher who taught the round', () => {
     const source = readScript('seed-demo-attendance-history.js');
 
-    expect(source).toContain("data_origin_code = 'DEMO'");
-    expect(source).toContain('recorder.username');
+    // A round names a teacher, not an account: the teacher who holds the
+    // classroom that day, resolved through their membership.
+    expect(source).toContain('recorded_by_teacher_id');
     expect(source).toContain('JOIN homeroom_teachers ht');
-    expect(source).not.toContain('COALESCE(ht.teacher_user_id');
+    expect(source).toContain('JOIN school_teacher_memberships membership');
+    expect(source).not.toContain('teacher_user_id');
     expect(source).toMatch(/created_by = EXCLUDED\.created_by/);
     expect(source).not.toContain("'seed-demo-attendance-history'");
   });
 
-  it('attributes anomaly attendance to a scoped DEMO teacher', () => {
+  it('attributes anomaly attendance to a real teacher and a DEMO admin', () => {
     const source = readScript('seed-attendance-anomalies.js');
 
     expect(source).toContain('Refusing to run attendance anomaly seed');
-    expect(source).toContain("role = 'TEACHER'");
+    // The round is the teacher's; the audit columns belong to the DEMO account
+    // running the seed, because those columns reference `users`.
+    expect(source).toContain("teacher.teacher_status = 'ACTIVE'");
+    expect(source).toContain('recorded_by_teacher_id');
     expect(source).toContain("data_origin_code = 'DEMO'");
-    expect(source).toContain('actor.username');
+    expect(source).toContain('structuralActor.id');
     expect(source).not.toContain("'seed-attendance-anomalies'");
   });
 
@@ -37,6 +42,8 @@ describe('demo data provenance seed contracts', () => {
     expect(source).toContain("data_origin_code = 'DEMO'");
     expect(source).toContain('actor.display_name');
     expect(source).toContain('actor.email');
+    // The assignee is a teacher row; the audit columns stay on the DEMO account.
+    expect(source).toContain('FROM teachers teacher');
     expect(source).toContain("username = 'orathai.b'");
     expect(source).toContain('[taskId, CASE_ID, caseRecord.school_id, creator.id]');
     expect(source).toContain('created_by, updated_by');

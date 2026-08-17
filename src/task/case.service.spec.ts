@@ -88,9 +88,6 @@ describe('CaseService', () => {
     };
     notificationsService = {
       notifyCaseStatusChanged: jest.fn().mockResolvedValue(undefined),
-      notifyCaseCreated: jest.fn().mockResolvedValue(undefined),
-      notifyCaseSlaWarning: jest.fn().mockResolvedValue(undefined),
-      notifyCaseSlaBreached: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new CaseService(
@@ -107,7 +104,9 @@ describe('CaseService', () => {
               targetStatus: 'RESOLVED',
               requiresResolutionOutcome: false,
               completionOutcomeCode: 'REFERRED_AGENCY',
-              requiredPermission: 'review-cases',
+              requiredPermission: 'dashboard',
+              availablePhaseCode: null,
+              targetWorkflowPhaseCode: null,
             });
           }
           if (code === 'CLOSE') {
@@ -117,7 +116,21 @@ describe('CaseService', () => {
               targetStatus: 'RESOLVED',
               requiresResolutionOutcome: false,
               completionOutcomeCode: 'CLOSED',
-              requiredPermission: 'close-case',
+              requiredPermission: 'dashboard',
+              availablePhaseCode: null,
+              targetWorkflowPhaseCode: null,
+            });
+          }
+          if (code === 'ASSIST') {
+            return Promise.resolve({
+              code,
+              label: 'ให้ความช่วยเหลือ',
+              targetStatus: 'OPEN',
+              requiresResolutionOutcome: false,
+              completionOutcomeCode: null,
+              requiredPermission: 'dashboard',
+              availablePhaseCode: 'FOLLOW_UP',
+              targetWorkflowPhaseCode: 'ASSISTANCE',
             });
           }
           throw new Error('การดำเนินการกับเคสไม่ถูกต้อง');
@@ -129,7 +142,7 @@ describe('CaseService', () => {
 
   it('opens one scoped case from the authoritative student record', async () => {
     const studentId = '11111111-1111-4111-8111-111111111111';
-    const actor = buildActor(['review-cases']);
+    const actor = buildActor(['dashboard']);
 
     const result = await service.openCase(
       { student_id: studentId, reason: '  ต้องติดตามเรื่องการมาเรียน  ' },
@@ -155,7 +168,7 @@ describe('CaseService', () => {
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CASE_CREATE', targetId: '10' }),
     );
-    expect(notificationsService.notifyCaseCreated).toHaveBeenCalled();
+    expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalled();
   });
 
   it('returns the existing active case instead of creating a duplicate', async () => {
@@ -166,13 +179,13 @@ describe('CaseService', () => {
         student_id: '11111111-1111-4111-8111-111111111111',
         reason: 'ติดตามต่อ',
       },
-      buildActor(['review-cases']),
+      buildActor(['dashboard']),
     );
 
     expect(result.created).toBe(false);
     expect(taskRepository.createCase).not.toHaveBeenCalled();
     expect(auditLog.record).not.toHaveBeenCalled();
-    expect(notificationsService.notifyCaseCreated).not.toHaveBeenCalled();
+    expect(notificationsService.notifyCaseStatusChanged).not.toHaveBeenCalled();
   });
 
   it('separates system risk signals from human review history', async () => {
@@ -195,7 +208,7 @@ describe('CaseService', () => {
       },
     ]);
 
-    const result = await service.getCase(10, buildActor(['review-cases']));
+    const result = await service.getCase(10, buildActor(['dashboard']));
 
     expect(result.data.reviews).toEqual([
       expect.objectContaining({
@@ -224,7 +237,7 @@ describe('CaseService', () => {
       },
     ]);
 
-    const result = await service.getCase(10, buildActor(['review-cases']));
+    const result = await service.getCase(10, buildActor(['dashboard']));
 
     expect(result.data.follow_up_rounds[0].photo_paths).toBe(
       '["/uploads/visit-attachments/proof.png"]',
@@ -240,11 +253,8 @@ describe('CaseService', () => {
       school_id: 10010002,
     });
 
-    const restricted = await service.getCase(10, buildActor(['review-cases']));
-    const allowed = await service.getCase(
-      10,
-      buildActor(['review-cases', 'manage-student-observations']),
-    );
+    const restricted = await service.getCase(10, buildActor(['dashboard']));
+    const allowed = await service.getCase(10, buildActor(['dashboard', 'students']));
 
     expect(restricted.data.teacher_comment).toBeNull();
     expect(allowed.data.teacher_comment).toBe('ข้อมูลข้อสังเกตที่จำกัดสิทธิ์');
@@ -259,7 +269,7 @@ describe('CaseService', () => {
           student_id: '11111111-1111-4111-8111-111111111111',
           reason: 'ติดตามต่อ',
         },
-        buildActor(['review-cases']),
+        buildActor(['dashboard']),
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
 
@@ -288,7 +298,7 @@ describe('CaseService', () => {
         review_note: 'ส่งต่อหน่วยงาน',
         reviewed_by: 'client-forged-reviewer',
       },
-      buildActor(['review-cases']),
+      buildActor(['dashboard']),
     );
 
     expect(result.case_status).toBe('RESOLVED');
@@ -321,7 +331,7 @@ describe('CaseService', () => {
       service.reviewCase(
         10,
         { review_action: 'REFER_AGENCY', review_note: 'ส่งต่อเพื่อดูแลต่อ' },
-        buildActor(['review-cases']),
+        buildActor(['dashboard']),
       ),
     ).resolves.toEqual(expect.objectContaining({ success: true, case_status: 'RESOLVED' }));
     expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalled();
@@ -333,7 +343,7 @@ describe('CaseService', () => {
       service.reviewCase(
         10,
         { review_action: 'REFER_AGENCY', review_note: '' },
-        buildActor(['review-cases']),
+        buildActor(['dashboard']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -356,7 +366,7 @@ describe('CaseService', () => {
         review_action: 'CLOSE',
         review_note: 'ตรวจรายงานแล้ว ปิดเคสได้',
       },
-      buildActor(['review-cases', 'close-case']),
+      buildActor(['dashboard', 'dashboard']),
     );
 
     expect(result.case_status).toBe('RESOLVED');
@@ -366,6 +376,7 @@ describe('CaseService', () => {
       'CLOSED',
       undefined,
       expect.objectContaining({ id: 1 }),
+      null,
     );
     expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -385,15 +396,55 @@ describe('CaseService', () => {
       reviewAction: 'CLOSE',
       completionOutcome: 'CLOSED',
       resolutionOutcome: null,
+      targetWorkflowPhase: null,
     });
   });
 
-  it('rejects CLOSE without close-case permission before mutating', async () => {
+  it('sends a follow-up case into the assistance phase on ASSIST', async () => {
+    const result = await service.reviewCase(
+      10,
+      { review_action: 'ASSIST', review_note: 'ควรให้ทุนการศึกษา' },
+      buildActor(['dashboard']),
+    );
+
+    expect(result.case_status).toBe('OPEN');
+    expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
+      10,
+      'OPEN',
+      null,
+      undefined,
+      expect.objectContaining({ id: 1 }),
+      'ASSISTANCE',
+    );
+  });
+
+  it('refuses ASSIST on a case already in the assistance phase', async () => {
+    taskRepository.findCaseById.mockResolvedValueOnce({
+      id: 10,
+      student_name: 'นักเรียน ทดสอบ',
+      school_id: 10010002,
+      workflow_phase_code: 'ASSISTANCE',
+    });
+
+    await expect(
+      service.reviewCase(
+        10,
+        { review_action: 'ASSIST', review_note: 'ช่วยเหลือรอบสอง' },
+        buildActor(['dashboard']),
+      ),
+    ).rejects.toThrow('การดำเนินการนี้ใช้กับขั้นตอนปัจจุบันของเคสไม่ได้');
+    expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
+  });
+
+  // Reviewing, closing and referring used to be three separate permissions;
+  // they are all work done on รายงานสถานะนักเรียน, so that page's permission is
+  // what decides — and an actor without it still gets nothing.
+  it('rejects a review action from an actor without the report page', async () => {
     await expect(
       service.reviewCase(
         10,
         { review_action: 'CLOSE', review_note: 'ไม่มีสิทธิ์ปิดเคส' },
-        buildActor(['review-cases']),
+        buildActor(['students']),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
@@ -406,24 +457,11 @@ describe('CaseService', () => {
       service.reviewCase(
         10,
         { review_action: 'REFER_AGENCY', review_note: 'ไม่ควรทำได้' },
-        buildActor(['review-cases'], { roles: ['EXECUTIVE'] }),
+        buildActor(['dashboard'], { roles: ['EXECUTIVE'] }),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(taskRepository.findCaseById).not.toHaveBeenCalled();
-  });
-
-  it('rejects CLOSE without base review-cases permission before mutating', async () => {
-    await expect(
-      service.reviewCase(
-        10,
-        { review_action: 'CLOSE', review_note: 'ไม่มีสิทธิ์พิจารณาเคส' },
-        buildActor(['close-case']),
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-
-    expect(taskRepository.findCaseById).not.toHaveBeenCalled();
-    expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
   it('rejects the retired FORWARD action before mutating', async () => {
@@ -431,59 +469,11 @@ describe('CaseService', () => {
       service.reviewCase(
         10,
         { review_action: 'FORWARD', review_note: 'legacy request' },
-        buildActor(['review-cases']),
+        buildActor(['dashboard']),
       ),
     ).rejects.toThrow('การดำเนินการกับเคสไม่ถูกต้อง');
 
     expect(taskRepository.findCaseById).not.toHaveBeenCalled();
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
-  });
-
-  it('notifies claimed case SLA warnings and breaches once', async () => {
-    const dueAt = new Date('2026-07-10T00:00:00.000Z');
-    taskRepository.claimCaseSlaWarnings.mockResolvedValueOnce([
-      {
-        id: 101,
-        student_name: 'สมชาย ใจดี',
-        school_id: 10010002,
-        risk_tier: 'MEDIUM',
-        sla_due_at: dueAt,
-      },
-    ]);
-    taskRepository.claimCaseSlaBreaches.mockResolvedValueOnce([
-      {
-        id: 102,
-        student_name: 'สมหญิง ดีใจ',
-        school_id: 10010002,
-        risk_tier: 'HIGH',
-        sla_due_at: dueAt,
-      },
-    ]);
-
-    const result = await service.remindCaseSla(new Date('2026-07-09T00:00:00.000Z'));
-
-    expect(result).toEqual({ warned: 1, breached: 1 });
-    expect(notificationsService.notifyCaseSlaWarning).toHaveBeenCalledWith({
-      caseId: 101,
-      studentName: 'สมชาย ใจดี',
-      schoolId: 10010002,
-      riskTier: 'MEDIUM',
-      dueAt,
-    });
-    expect(notificationsService.notifyCaseSlaBreached).toHaveBeenCalledWith({
-      caseId: 102,
-      studentName: 'สมหญิง ดีใจ',
-      schoolId: 10010002,
-      riskTier: 'HIGH',
-      dueAt,
-    });
-    expect(auditLog.record).not.toHaveBeenCalled();
-
-    taskRepository.claimCaseSlaWarnings.mockResolvedValueOnce([]);
-    taskRepository.claimCaseSlaBreaches.mockResolvedValueOnce([]);
-    await expect(service.remindCaseSla(new Date('2026-07-09T00:00:00.000Z'))).resolves.toEqual({
-      warned: 0,
-      breached: 0,
-    });
   });
 });

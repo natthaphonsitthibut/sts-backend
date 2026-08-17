@@ -103,19 +103,4 @@ describe('UserAuthService login policy', () => {
     await expect(service.validateUser('student-temp', 'TEMP123')).resolves.toBeNull();
     expect(passwordService.compare).not.toHaveBeenCalled();
   });
-
-  it('rejects retired persisted student accounts before checking the password', async () => {
-    const user = buildUser({
-      role: 'STUDENT',
-      roles: ['STUDENT'],
-      permissions: ['student-self'],
-      must_change_password: false,
-      temporary_password_expires_at: null,
-    });
-    usersRepository.findUserByUsername.mockResolvedValue(user);
-
-    await expect(service.validateUser('student-temp', 'PASSWORD')).resolves.toBeNull();
-    expect(passwordService.compare).not.toHaveBeenCalled();
-    expect(usersRepository.findCurrentStudentUuidByUserId).not.toHaveBeenCalled();
-  });
 });

@@ -121,10 +121,15 @@ describe('DataExportsService', () => {
     });
 
     expect(result.success).toBe(true);
+    // รายชื่อนักเรียน also carries the observation product and รายงานสถานะนักเรียน
+    // carries the case products, now that each page grants what is done on it.
     expect(result.data.map((item) => item.code)).toEqual([
       'student_roster_basic',
       'student_pii',
       'student_risk',
+      'case_summary',
+      'case_operational',
+      'observation_aggregate',
     ]);
     expect(
       result.data.every((item) => !item.workflowPath || item.workflowPath.startsWith('/')),
@@ -147,7 +152,9 @@ describe('DataExportsService', () => {
       100_000,
       { global: true },
     );
-    expect(statusCatalogService.getCatalog).not.toHaveBeenCalled();
+    // The case products are in this actor's catalogue now, so their status
+    // options are resolved from the workflow catalogue rather than skipped.
+    expect(statusCatalogService.getCatalog).toHaveBeenCalledWith('CASE_WORKFLOW');
   });
 
   it('returns case status options from the workflow status catalog', async () => {
@@ -155,7 +162,7 @@ describe('DataExportsService', () => {
       id: 1,
       username: 'reviewer',
       roles: ['ADMIN'],
-      permissions: ['export-data', 'review-cases'],
+      permissions: ['export-data', 'dashboard'],
       data_scope: { global: true },
     });
 
@@ -193,7 +200,7 @@ describe('DataExportsService', () => {
       id: 1,
       username: 'executive',
       roles: ['EXECUTIVE'],
-      permissions: ['*', 'export-data', 'students', 'dashboard', 'review-cases'],
+      permissions: ['*', 'export-data', 'students', 'dashboard', 'dashboard'],
       data_scope: { global: true },
     });
 
@@ -226,7 +233,7 @@ describe('DataExportsService', () => {
       id: 1,
       username: 'exporter',
       roles: ['ADMIN'],
-      permissions: ['export-data', 'manage-school-structure', 'manage-student-observations'],
+      permissions: ['export-data', 'manage-school-structure', 'students'],
       data_scope: { global: true },
     });
 
@@ -251,7 +258,7 @@ describe('DataExportsService', () => {
       id: 1,
       username: 'student',
       roles: ['STUDENT'],
-      permissions: ['export-data', 'students', 'review-cases'],
+      permissions: ['export-data', 'students', 'dashboard'],
       data_scope: { own_only: true },
     });
 
@@ -263,13 +270,7 @@ describe('DataExportsService', () => {
       id: 1,
       username: 'exporter',
       roles: ['ADMIN'],
-      permissions: [
-        'export-data',
-        'students',
-        'import-data',
-        'review-cases',
-        'attendance-dashboard',
-      ],
+      permissions: ['export-data', 'students', 'import-data', 'dashboard', 'attendance-dashboard'],
       data_scope: { global: true },
     });
 

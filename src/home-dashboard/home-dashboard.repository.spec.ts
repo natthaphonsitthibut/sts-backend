@@ -74,7 +74,7 @@ describe('HomeDashboardRepository', () => {
         id: 1,
         username: 'teacher',
         roles: ['TEACHER'],
-        permissions: ['home', 'review-cases'],
+        permissions: ['home', 'dashboard'],
         data_scope: { school_ids: [10010002], grade_levels: [7], room_ids: ['2'] },
       },
       {},
@@ -95,7 +95,7 @@ describe('HomeDashboardRepository', () => {
         id: 1,
         username: 'admin',
         roles: ['ADMIN'],
-        permissions: ['home', 'review-cases'],
+        permissions: ['home', 'dashboard'],
         data_scope: { global: true },
       },
       { period: '30_DAYS' },
@@ -126,7 +126,7 @@ describe('HomeDashboardRepository', () => {
     expect(queries[0].sql).toContain('COUNT(DISTINCT sess.id)');
   });
 
-  it('builds a bounded high-risk ranking for the requested area dimension', async () => {
+  it('ranks high-risk areas deterministically for the requested dimension', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
 
     await repository.getHighRiskAreaRanking(
@@ -146,7 +146,11 @@ describe('HomeDashboardRepository', () => {
     expect(queries[0].sql).toContain("profile.risk_tier = 'HIGH'");
     expect(queries[0].sql).toContain('COUNT(DISTINCT s.student_uuid)');
     expect(queries[0].sql).toContain('GROUP BY sc.district');
-    expect(queries[0].sql).toContain('LIMIT 10');
+    // No LIMIT on purpose: the province map colours every province from these
+    // rows, so cutting the query to a top-N would leave most of the map blank.
+    // The order is what has to hold, since the list view takes the first few.
+    expect(queries[0].sql).toContain('ORDER BY count DESC, label ASC');
+    expect(queries[0].sql).not.toContain('LIMIT');
     expect(queries[0].params).toEqual(['เชียงใหม่']);
   });
 });

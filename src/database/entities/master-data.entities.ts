@@ -40,7 +40,7 @@ export class RiskFactorEntity {
   label!: string;
 }
 
-@Entity({ name: 'assistance_measures' })
+@Entity({ name: 'assistance_measure_options' })
 export class AssistanceMeasureEntity {
   @PrimaryGeneratedColumn({ name: 'id' })
   id!: number;

@@ -160,19 +160,14 @@ export class RiskProfileRepository {
         -- when every measured period is unattended.
         classified_term_days AS (
           SELECT
-            a.student_uuid,
-            a."AttendanceDate"::date AS attendance_date,
-            COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late_records,
-            (
-              COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4) > 0
-              AND COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0
-            ) AS is_absent_day
-          FROM attendance a
-          JOIN selected_students s ON s.student_uuid = a.student_uuid
-          WHERE a."AcademicYear_Onec" = s.academic_year
-            AND a."Semester_Onec" = s.semester
-            AND a.session_kind = 'SUBJECT'
-          GROUP BY a.student_uuid, a."AttendanceDate"
+            day.student_uuid,
+            day."AttendanceDate" AS attendance_date,
+            day.late_periods AS late_records,
+            (day."AttendanceStatus" = 2) AS is_absent_day
+          FROM attendance_day day
+          JOIN selected_students s ON s.student_uuid = day.student_uuid
+          WHERE day."AcademicYear_Onec" = s.academic_year
+            AND day."Semester_Onec" = s.semester
         ),
         -- Keep the whole-term history independent from the operational reset.
         -- The post-case view uses the same day verdict, only with a date boundary.
@@ -210,7 +205,7 @@ export class RiskProfileRepository {
         attendance_summary AS (
           SELECT
             student_uuid,
-            COUNT(*) FILTER (WHERE is_absent_day)::int AS absent_days,
+            COUNT(*) FILTER (WHERE is_absent_day)::int AS absent_days_since_case_reset,
             COALESCE(SUM(late_records), 0)::int AS late_count,
             COUNT(*)::int AS recorded_day_count,
             MAX(attendance_date)::timestamptz AS latest_attendance_at
@@ -310,7 +305,7 @@ export class RiskProfileRepository {
             s.academic_year,
             s.semester,
             COALESCE(streak.consecutive_absent_days, 0)::int AS consecutive_absent_days,
-            COALESCE(attendance.absent_days, 0)::int AS absent_days,
+            COALESCE(attendance.absent_days_since_case_reset, 0)::int AS absent_days_since_case_reset,
             COALESCE(term_attendance.term_absent_days, 0)::int AS term_absent_days,
             baseline.reset_after_date AS absence_reset_after_date,
             COALESCE(attendance.late_count, 0)::int AS late_count,
@@ -320,7 +315,7 @@ export class RiskProfileRepository {
             COALESCE(teacher_signal.teacher_signal_count, 0)::int AS teacher_signal_count,
             -- Absence is counted in whole days now, so the weighted columns are
             -- the plain day count and the plain attendance rate they imply.
-            COALESCE(attendance.absent_days, 0)::numeric AS weighted_absence_days,
+            COALESCE(attendance.absent_days_since_case_reset, 0)::numeric AS weighted_absence_days,
             CASE
               WHEN COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0) > 0
                 THEN ROUND(
@@ -328,7 +323,7 @@ export class RiskProfileRepository {
                     0,
                     (
                       COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
-                      - COALESCE(attendance.absent_days, 0)::numeric
+                      - COALESCE(attendance.absent_days_since_case_reset, 0)::numeric
                     ) * 100
                     / COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
                   ),
@@ -359,21 +354,27 @@ export class RiskProfileRepository {
         ),
         -- Three tiers only: ขาดสะสมถึงเกณฑ์ = เสี่ยง, มีความคิดเห็นจากครู =
         -- เฝ้าระวัง, นอกนั้นปกติ. Absent days are cumulative, not a streak.
-        scored AS (
+        -- Which tiers exist and how they order is data in student_risk_tiers;
+        -- only the rule that picks one stays here.
+        tiered AS (
           SELECT
             metrics.*,
             CASE
-              WHEN metrics.absent_days >= $1::int THEN 'HIGH'
+              WHEN metrics.absent_days_since_case_reset >= $1::int THEN 'HIGH'
               WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'
               ELSE 'NORMAL'
             END AS risk_tier,
-            CASE
-              WHEN metrics.absent_days >= $1::int THEN 2
-              WHEN metrics.teacher_signal_count > 0 THEN 1
-              ELSE 0
-            END AS risk_severity,
-            metrics.absent_days::numeric / NULLIF($1::numeric, 0) AS risk_score
+            metrics.absent_days_since_case_reset::numeric / NULLIF($1::numeric, 0) AS risk_score
           FROM metrics
+        ),
+        -- risk_severity is the tier's own sort_order, read from the catalogue
+        -- rather than restated here: the ladder is written once, and the
+        -- composite FK on (risk_tier, risk_severity) makes any other pairing
+        -- unstorable. The join is against three rows, once per run.
+        scored AS (
+          SELECT tiered.*, tier.sort_order AS risk_severity
+          FROM tiered
+          JOIN student_risk_tiers tier ON tier.code = tiered.risk_tier
         ),
         upserted AS (
           INSERT INTO student_risk_profiles (
@@ -384,7 +385,7 @@ export class RiskProfileRepository {
             academic_year,
             semester,
             consecutive_absent_days,
-            absent_days,
+            absent_days_since_case_reset,
             term_absent_days,
             absence_reset_after_date,
             late_count,
@@ -410,7 +411,7 @@ export class RiskProfileRepository {
             academic_year,
             semester,
             consecutive_absent_days,
-            absent_days,
+            absent_days_since_case_reset,
             term_absent_days,
             absence_reset_after_date,
             late_count,
@@ -435,7 +436,7 @@ export class RiskProfileRepository {
             academic_year = EXCLUDED.academic_year,
             semester = EXCLUDED.semester,
             consecutive_absent_days = EXCLUDED.consecutive_absent_days,
-            absent_days = EXCLUDED.absent_days,
+            absent_days_since_case_reset = EXCLUDED.absent_days_since_case_reset,
             term_absent_days = EXCLUDED.term_absent_days,
             absence_reset_after_date = EXCLUDED.absence_reset_after_date,
             late_count = EXCLUDED.late_count,
@@ -464,7 +465,7 @@ export class RiskProfileRepository {
             OR student_risk_profiles.semester IS DISTINCT FROM EXCLUDED.semester
             OR student_risk_profiles.consecutive_absent_days
                  IS DISTINCT FROM EXCLUDED.consecutive_absent_days
-            OR student_risk_profiles.absent_days IS DISTINCT FROM EXCLUDED.absent_days
+            OR student_risk_profiles.absent_days_since_case_reset IS DISTINCT FROM EXCLUDED.absent_days_since_case_reset
             OR student_risk_profiles.term_absent_days
                  IS DISTINCT FROM EXCLUDED.term_absent_days
             OR student_risk_profiles.absence_reset_after_date

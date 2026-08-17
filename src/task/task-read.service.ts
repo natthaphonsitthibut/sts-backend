@@ -15,59 +15,6 @@ export class TaskReadService {
     private readonly taskPolicyService: TaskPolicyService,
   ) {}
 
-  async getTaskStudents(token: string) {
-    try {
-      const task = await this.taskAccessService.getTaskByToken(token);
-      if (!task || task.status === 'EXPIRED') {
-        throw new Error('Task not found or expired');
-      }
-
-      const rows = await this.taskRepository.listTaskStudents({
-        targetGrade: typeof task.target_grade === 'string' ? task.target_grade : null,
-        targetRoom: typeof task.target_room === 'string' ? task.target_room : null,
-        targetSchoolId:
-          typeof task.target_school_id === 'number'
-            ? task.target_school_id
-            : typeof task.target_school_id === 'string' && task.target_school_id.trim().length > 0
-              ? Number.parseInt(task.target_school_id, 10)
-              : null,
-      });
-
-      return { success: true, data: rows };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`getTaskStudents error: ${message}`);
-      throw err;
-    }
-  }
-
-  async getTaskHistory(token: string, date: string) {
-    try {
-      const task = await this.taskAccessService.getTaskByToken(token);
-      if (!task || task.status === 'EXPIRED') {
-        throw new Error('Task not found or expired');
-      }
-
-      const rows = await this.taskRepository.listTaskHistory(
-        date,
-        typeof task.target_grade === 'string' ? task.target_grade : null,
-        typeof task.target_room === 'string' ? task.target_room : null,
-        typeof task.target_school_id === 'number'
-          ? task.target_school_id
-          : typeof task.target_school_id === 'string' && task.target_school_id.trim().length > 0
-            ? Number.parseInt(task.target_school_id, 10)
-            : null,
-        typeof task.link_id === 'string' ? task.link_id : null,
-      );
-
-      return { success: true, data: rows };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`getTaskHistory error: ${message}`);
-      throw err;
-    }
-  }
-
   async getTaskChain(actor: ActorContext | undefined, taskId: string) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     if (isRestrictedExecutive(currentActor)) {

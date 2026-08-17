@@ -169,9 +169,9 @@ function escapeSqlLiteral(value: string): string {
 const SYSTEM_ROLE_BASELINE_SQL = SYSTEM_ROLE_DEFINITIONS.map(
   (role) => `
   INSERT INTO roles (
-    name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+    name, label, default_permissions, scope_mode, scope_policy, is_assignable, is_system
   )
-  VALUES ('${escapeSqlLiteral(role.name)}', '${escapeSqlLiteral(role.label)}', ${role.rank}, '${escapeSqlLiteral(JSON.stringify(role.default_permissions))}'::jsonb, '${escapeSqlLiteral(role.scope_mode)}', '${role.scope_policy}', ${role.is_assignable ? 'TRUE' : 'FALSE'}, ${role.is_system ? 'TRUE' : 'FALSE'})
+  VALUES ('${escapeSqlLiteral(role.name)}', '${escapeSqlLiteral(role.label)}', '${escapeSqlLiteral(JSON.stringify(role.default_permissions))}'::jsonb, '${escapeSqlLiteral(role.scope_mode)}', '${role.scope_policy}', ${role.is_assignable ? 'TRUE' : 'FALSE'}, ${role.is_system ? 'TRUE' : 'FALSE'})
   ON CONFLICT (name) DO NOTHING;`,
 ).join('\n');
 
@@ -180,14 +180,13 @@ const SCHOOL_ROLE_GROUP_BASELINE_SQL = `
     VALUES
       ('ADMIN', 'ผู้ดูแลระบบ', 'ADMIN', NULL::TEXT),
       ('EXECUTIVE', 'ผู้บริหาร', 'EXECUTIVE', NULL::TEXT),
-      ('ADMIN_SCHOOL', 'ผู้ดูแลระบบประจำโรงเรียน', 'ADMIN_SCHOOL', 'ADMIN'),
       ('DIRECTOR', 'ผู้อำนวยการ', 'DIRECTOR', NULL::TEXT)
   ),
   template_roles AS (
-    SELECT template.template_key, template.label, source_role.rank, source_role.default_permissions
+    SELECT template.template_key, template.label, source_role.default_permissions
     FROM templates template
     JOIN LATERAL (
-      SELECT role_record.rank, role_record.default_permissions
+      SELECT role_record.default_permissions
       FROM roles role_record
       WHERE role_record.school_id IS NULL
         AND role_record.name IN (
@@ -199,13 +198,12 @@ const SCHOOL_ROLE_GROUP_BASELINE_SQL = `
     ) source_role ON TRUE
   )
   INSERT INTO roles (
-    name, label, rank, default_permissions, scope_mode, scope_policy,
+    name, label, default_permissions, scope_mode, scope_policy,
     is_assignable, is_system, school_id
   )
   SELECT
     'S' || school.id || '_BASE_' || template.template_key,
     template.label,
-    template.rank,
     template.default_permissions,
     'school',
     'ASSIGNABLE',
@@ -329,80 +327,12 @@ export const AUDIT_RETROFIT_SQL = `
 `;
 
 /**
- * Async large-batch student-account generation job + per-candidate items.
- * Shared by the fresh-install baseline and the AddStudentAccountBatchJob
- * migration so the two never drift. Depends on `users` (FK) and the
- * `set_updated_at()` trigger function existing first. The job never stores
- * plaintext credentials — printable credentials are produced on demand via the
- * existing reissue (rotate) path, so items keep only non-secret fields.
+ * Legacy student-account batch storage. This remains exported because the
+ * historical migration that originally introduced the tables must stay
+ * executable on a fresh database. The current bootstrap intentionally omits
+ * this SQL because the feature is retired by a later migration.
  */
 export const STUDENT_ACCOUNT_BATCH_TABLES_SQL = `
-  CREATE TABLE IF NOT EXISTS student_account_batch_job (
-    id UUID PRIMARY KEY,
-    status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    scope_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
-    total_candidates INTEGER NOT NULL DEFAULT 0,
-    processed_count INTEGER NOT NULL DEFAULT 0,
-    created_count INTEGER NOT NULL DEFAULT 0,
-    skipped_count INTEGER NOT NULL DEFAULT 0,
-    failed_count INTEGER NOT NULL DEFAULT 0,
-    error_summary TEXT,
-    started_at TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-
-  DO $sabj_status$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'chk_student_account_batch_job_status'
-    ) THEN
-      ALTER TABLE student_account_batch_job
-        ADD CONSTRAINT chk_student_account_batch_job_status
-        CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'INTERRUPTED', 'CANCELED'));
-    END IF;
-  END $sabj_status$;
-
-  CREATE INDEX IF NOT EXISTS idx_student_account_batch_job_status
-    ON student_account_batch_job (status);
-  CREATE INDEX IF NOT EXISTS idx_student_account_batch_job_created_by
-    ON student_account_batch_job (created_by, created_at DESC);
-
-  DROP TRIGGER IF EXISTS trg_student_account_batch_job_set_updated_at ON student_account_batch_job;
-  CREATE TRIGGER trg_student_account_batch_job_set_updated_at
-    BEFORE UPDATE ON student_account_batch_job
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-  CREATE TABLE IF NOT EXISTS student_account_batch_job_item (
-    id BIGSERIAL PRIMARY KEY,
-    job_id UUID NOT NULL REFERENCES student_account_batch_job(id) ON DELETE CASCADE,
-    person_uuid UUID NOT NULL,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    username VARCHAR(64),
-    detail JSONB,
-    status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
-    error_code VARCHAR(64),
-    processed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-
-  DO $sabji_status$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'chk_student_account_batch_job_item_status'
-    ) THEN
-      ALTER TABLE student_account_batch_job_item
-        ADD CONSTRAINT chk_student_account_batch_job_item_status
-        CHECK (status IN ('PENDING', 'CREATED', 'SKIPPED', 'FAILED'));
-    END IF;
-  END $sabji_status$;
-
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_student_account_batch_job_item_person
-    ON student_account_batch_job_item (job_id, person_uuid);
-  CREATE INDEX IF NOT EXISTS idx_student_account_batch_job_item_status
-    ON student_account_batch_job_item (job_id, status);
 `;
 
 export const DATA_EXPORT_TABLES_SQL = `
@@ -573,7 +503,7 @@ export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
   SET label_th = EXCLUDED.label_th,
       sort_order = EXCLUDED.sort_order;
 
-  CREATE TABLE IF NOT EXISTS student_import_quarantine_resolution_states (
+  CREATE TABLE IF NOT EXISTS student_import_quarantine_resolution_statuses (
     code VARCHAR(32) PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,
     badge_variant VARCHAR(16) NOT NULL,
@@ -586,8 +516,8 @@ export const STUDENT_IMPORT_QUARANTINE_TABLES_SQL = `
     CONSTRAINT chk_student_import_quarantine_resolution_states_sort_order CHECK (sort_order >= 0),
     CONSTRAINT chk_student_import_quarantine_resolution_states_label_th CHECK (length(trim(label_th)) > 0)
   );
-  ${auditUpdatedAtTriggerSql('student_import_quarantine_resolution_states')}
-  INSERT INTO student_import_quarantine_resolution_states (
+  ${auditUpdatedAtTriggerSql('student_import_quarantine_resolution_statuses')}
+  INSERT INTO student_import_quarantine_resolution_statuses (
     code, label_th, badge_variant, sort_order
   )
   VALUES
@@ -806,8 +736,8 @@ export const CASE_TRACKING_DECISION_TABLES_SQL = `
     code, label_th, target_case_status_code, completion_outcome_code, requires_resolution_outcome,
     required_permission_code, sort_order
   ) VALUES
-    ('REFER_AGENCY', 'ส่งต่อหน่วยงาน', 'RESOLVED', 'REFERRED_AGENCY', FALSE, 'review-cases', 10),
-    ('CLOSE', 'ปิดเคส', 'RESOLVED', 'CLOSED', FALSE, 'close-case', 20)
+    ('REFER_AGENCY', 'ส่งต่อหน่วยงาน', 'RESOLVED', 'REFERRED_AGENCY', FALSE, 'dashboard', 10),
+    ('CLOSE', 'ปิดเคส', 'RESOLVED', 'CLOSED', FALSE, 'dashboard', 20)
   ON CONFLICT (code) DO UPDATE SET
     label_th = EXCLUDED.label_th,
     target_case_status_code = EXCLUDED.target_case_status_code,
@@ -1073,64 +1003,431 @@ export const HOME_VISIT_REPORT_DETAILS_SQL = `
 `;
 
 export const HOME_VISIT_ASSESSMENT_SQL = `
-  CREATE TABLE IF NOT EXISTS home_visit_assessment_options (
+  CREATE TABLE IF NOT EXISTS follow_up_problem_categories (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    guidance_th VARCHAR(200),
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_follow_up_problem_categories_code
+      CHECK (code = UPPER(BTRIM(code)) AND CHAR_LENGTH(code) BETWEEN 1 AND 32),
+    CONSTRAINT chk_follow_up_problem_categories_label
+      CHECK (label_th = BTRIM(label_th) AND CHAR_LENGTH(label_th) BETWEEN 1 AND 120),
+    CONSTRAINT chk_follow_up_problem_categories_guidance
+      CHECK (
+        guidance_th IS NULL OR (
+          guidance_th = BTRIM(guidance_th)
+          AND CHAR_LENGTH(guidance_th) BETWEEN 1 AND 200
+        )
+      ),
+    CONSTRAINT chk_follow_up_problem_categories_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('follow_up_problem_categories')}
+  INSERT INTO follow_up_problem_categories (code, label_th, guidance_th, sort_order)
+  VALUES
+    ('HEALTH', 'ปัญหาด้านสุขภาพ', 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ', 10),
+    ('SOCIAL_INTEGRATION', 'ปัญหาด้านการเข้าสังคม', 'เช่น ถูกเพื่อนกลั่นแกล้ง', 20),
+    ('ACADEMIC', 'ปัญหาด้านการเรียน', 'เช่น หมดไฟ, เรียนไม่ทัน', 30),
+    ('EMOTIONAL', 'ปัญหาด้านอารมณ์', 'เช่น เบื่อหน่าย, เครียด, ซึมเศร้า', 40),
+    ('FINANCIAL', 'ปัญหาด้านการเงิน', 'เช่น ไม่มีอุปกรณ์การเรียน/เครื่องแบบ', 50),
+    ('OTHER', 'อื่น ๆ', 'ระบุในคำอธิบาย', 60)
+  ON CONFLICT (code) DO NOTHING;
+
+  ALTER TABLE task_submissions
+    DROP COLUMN IF EXISTS cause_category,
+    ADD COLUMN IF NOT EXISTS follow_up_problem_category_code VARCHAR(32);
+  DO $follow_up_problem_category_fks$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'fk_task_submissions_follow_up_problem_category'
+    ) THEN
+      ALTER TABLE task_submissions
+        ADD CONSTRAINT fk_task_submissions_follow_up_problem_category
+        FOREIGN KEY (follow_up_problem_category_code)
+        REFERENCES follow_up_problem_categories(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $follow_up_problem_category_fks$;
+`;
+
+/**
+ * Household context captured during a home visit: parents' status, who raises
+ * the student, and what surrounds the home. Kept as lookup tables so the Thai
+ * wording is data, not code, and the environment is many-to-many because one
+ * home can carry several risk factors at once.
+ */
+/**
+ * Second dimension on the case workflow: after the follow-up review a case can
+ * be sent into an assistance round instead of being closed. Statuses stay five;
+ * `workflow_phase_code` says which round the case is in, mirroring the way
+ * `completion_outcome_code` splits `RESOLVED`.
+ */
+/**
+ * `risk_tier` as a lookup instead of a CHECK list, so the Thai labels and badge
+ * treatment are data like every other status family.
+ */
+export const STUDENT_RISK_TIER_CATALOG_SQL = `
+  CREATE TABLE IF NOT EXISTS student_risk_tiers (
+    code VARCHAR(24) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    badge_variant VARCHAR(16) NOT NULL,
+    summary_tone VARCHAR(16),
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_student_risk_tiers_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_student_risk_tiers_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('student_risk_tiers')}
+  INSERT INTO student_risk_tiers (code, label_th, badge_variant, summary_tone, sort_order) VALUES
+    ('NORMAL', 'ปกติ', 'secondary', 'default', 0),
+    ('WATCH', 'เฝ้าระวัง', 'warning', 'warning', 1),
+    ('HIGH', 'เสี่ยง', 'destructive', 'danger', 2)
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    badge_variant = EXCLUDED.badge_variant,
+    summary_tone = EXCLUDED.summary_tone,
+    sort_order = EXCLUDED.sort_order,
+    is_active = TRUE,
+    deleted_at = NULL;
+  DO $student_risk_tier_sort_unique$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'uq_student_risk_tiers_code_sort_order'
+    ) THEN
+      ALTER TABLE student_risk_tiers
+        ADD CONSTRAINT uq_student_risk_tiers_code_sort_order UNIQUE (code, sort_order);
+    END IF;
+  END $student_risk_tier_sort_unique$;
+  ALTER TABLE student_risk_profiles DROP CONSTRAINT IF EXISTS chk_student_risk_profiles_tier;
+  UPDATE student_risk_profiles profile
+  SET risk_severity = tier.sort_order
+  FROM student_risk_tiers tier
+  WHERE tier.code = profile.risk_tier
+    AND profile.risk_severity IS DISTINCT FROM tier.sort_order;
+  DO $student_risk_tier_severity_fk$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_risk_profiles_tier_severity'
+    ) THEN
+      ALTER TABLE student_risk_profiles ADD CONSTRAINT fk_student_risk_profiles_tier_severity
+        FOREIGN KEY (risk_tier, risk_severity) REFERENCES student_risk_tiers(code, sort_order)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $student_risk_tier_severity_fk$;
+  DO $student_risk_tier_fk$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_risk_profiles_tier') THEN
+      ALTER TABLE student_risk_profiles ADD CONSTRAINT fk_student_risk_profiles_tier
+        FOREIGN KEY (risk_tier) REFERENCES student_risk_tiers(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $student_risk_tier_fk$;
+`;
+
+export const CASE_ASSISTANCE_PHASE_SQL = `
+  CREATE TABLE IF NOT EXISTS case_workflow_phases (
+    code VARCHAR(24) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_case_workflow_phases_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_case_workflow_phases_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('case_workflow_phases')}
+  INSERT INTO case_workflow_phases (code, label_th, sort_order) VALUES
+    ('FOLLOW_UP', 'ติดตาม', 10),
+    ('ASSISTANCE', 'ให้ความช่วยเหลือ', 20)
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    sort_order = EXCLUDED.sort_order,
+    is_active = TRUE,
+    deleted_at = NULL;
+
+  ALTER TABLE cases ADD COLUMN IF NOT EXISTS workflow_phase_code VARCHAR(24);
+  UPDATE cases SET workflow_phase_code = 'FOLLOW_UP' WHERE workflow_phase_code IS NULL;
+  ALTER TABLE cases ALTER COLUMN workflow_phase_code SET DEFAULT 'FOLLOW_UP';
+  ALTER TABLE cases ALTER COLUMN workflow_phase_code SET NOT NULL;
+  DO $case_workflow_phase_fk$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_cases_workflow_phase') THEN
+      ALTER TABLE cases ADD CONSTRAINT fk_cases_workflow_phase
+        FOREIGN KEY (workflow_phase_code) REFERENCES case_workflow_phases(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $case_workflow_phase_fk$;
+  CREATE INDEX IF NOT EXISTS idx_cases_workflow_phase ON cases(workflow_phase_code)
+    WHERE deleted_at IS NULL;
+
+  ALTER TABLE case_review_actions ADD COLUMN IF NOT EXISTS available_phase_code VARCHAR(24);
+  ALTER TABLE case_review_actions
+    ADD COLUMN IF NOT EXISTS target_workflow_phase_code VARCHAR(24);
+  DO $case_review_action_phase_fks$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_case_review_actions_available_phase'
+    ) THEN
+      ALTER TABLE case_review_actions ADD CONSTRAINT fk_case_review_actions_available_phase
+        FOREIGN KEY (available_phase_code) REFERENCES case_workflow_phases(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'fk_case_review_actions_target_phase'
+    ) THEN
+      ALTER TABLE case_review_actions ADD CONSTRAINT fk_case_review_actions_target_phase
+        FOREIGN KEY (target_workflow_phase_code) REFERENCES case_workflow_phases(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $case_review_action_phase_fks$;
+  INSERT INTO case_review_actions (
+    code, label_th, target_case_status_code, completion_outcome_code,
+    requires_resolution_outcome, required_permission_code, sort_order,
+    available_phase_code, target_workflow_phase_code
+  ) VALUES
+    ('ASSIST', 'ให้ความช่วยเหลือ', 'OPEN', NULL, FALSE, 'dashboard', 5,
+     'FOLLOW_UP', 'ASSISTANCE')
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    target_case_status_code = EXCLUDED.target_case_status_code,
+    completion_outcome_code = EXCLUDED.completion_outcome_code,
+    requires_resolution_outcome = EXCLUDED.requires_resolution_outcome,
+    required_permission_code = EXCLUDED.required_permission_code,
+    sort_order = EXCLUDED.sort_order,
+    available_phase_code = EXCLUDED.available_phase_code,
+    target_workflow_phase_code = EXCLUDED.target_workflow_phase_code,
+    is_active = TRUE,
+    deleted_at = NULL;
+
+  -- Replaces the never-wired 2026-03 baseline stub (id, label).
+  DO $assistance_measures_upgrade$
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'assistance_measure_options' AND column_name = 'id'
+    ) THEN
+      DROP TABLE assistance_measure_options;
+    END IF;
+  END $assistance_measures_upgrade$;
+  CREATE TABLE IF NOT EXISTS assistance_measure_options (
+    code VARCHAR(40) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    requires_detail BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_assistance_measures_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_assistance_measures_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('assistance_measure_options')}
+  INSERT INTO assistance_measure_options (code, label_th, sort_order, requires_detail) VALUES
+    ('SCHOLARSHIP', 'ให้ทุนการศึกษา', 10, FALSE),
+    ('LEARNING_SUPPLIES', 'สนับสนุนอุปกรณ์การเรียน', 20, FALSE),
+    ('STRESS_ASSESSMENT', 'ประเมินความเครียด/อารมณ์', 30, FALSE),
+    ('PSYCHIATRIST_CONSULT', 'ปรึกษาจิตแพทย์', 40, FALSE),
+    ('OTHER', 'อื่น ๆ (ระบุในช่อง)', 90, TRUE)
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    sort_order = EXCLUDED.sort_order,
+    requires_detail = EXCLUDED.requires_detail,
+    is_active = TRUE,
+    deleted_at = NULL;
+
+  CREATE TABLE IF NOT EXISTS task_types (
+    code VARCHAR(24) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_task_types_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_task_types_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('task_types')}
+  INSERT INTO task_types (code, label_th, sort_order) VALUES
+    ('VISIT', 'ลงพื้นที่ติดตาม', 10),
+    ('ASSIST', 'ให้ความช่วยเหลือ', 20),
+    ('LOGIN', 'ลิงก์เข้าใช้งาน', 30)
+  ON CONFLICT (code) DO UPDATE SET
+    label_th = EXCLUDED.label_th,
+    sort_order = EXCLUDED.sort_order,
+    is_active = TRUE,
+    deleted_at = NULL;
+  ALTER TABLE tasks DROP CONSTRAINT IF EXISTS chk_tasks_task_type;
+  DO $tasks_task_type_fk$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_tasks_task_type') THEN
+      ALTER TABLE tasks ADD CONSTRAINT fk_tasks_task_type
+        FOREIGN KEY (task_type) REFERENCES task_types(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $tasks_task_type_fk$;
+
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assistance_measure_detail VARCHAR(200);
+  DO $tasks_assistance_detail_check$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_tasks_assistance_measure_detail'
+    ) THEN
+      ALTER TABLE tasks ADD CONSTRAINT chk_tasks_assistance_measure_detail
+        CHECK (assistance_measure_detail IS NULL OR length(btrim(assistance_measure_detail)) > 0);
+    END IF;
+  END $tasks_assistance_detail_check$;
+  CREATE TABLE IF NOT EXISTS task_assistance_measures (
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    assistance_measure_code VARCHAR(40) NOT NULL
+      REFERENCES assistance_measure_options(code) ON DELETE RESTRICT ON UPDATE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    PRIMARY KEY (task_id, assistance_measure_code)
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_assistance_measures_measure
+    ON task_assistance_measures(assistance_measure_code);
+
+  ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS assisted_at TIMESTAMPTZ;
+  ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS assistance_detail TEXT;
+  DO $task_submissions_assistance_check$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_task_submissions_assistance_detail'
+    ) THEN
+      ALTER TABLE task_submissions ADD CONSTRAINT chk_task_submissions_assistance_detail
+        CHECK (
+          assistance_detail IS NULL
+          OR (length(btrim(assistance_detail)) > 0 AND length(assistance_detail) <= 2000)
+        );
+    END IF;
+  END $task_submissions_assistance_check$;
+`;
+
+export const HOME_VISIT_HOUSEHOLD_CONTEXT_SQL = `
+  CREATE TABLE IF NOT EXISTS parental_status_options (
     code VARCHAR(40) PRIMARY KEY,
     label_th VARCHAR(120) NOT NULL,
     sort_order SMALLINT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_home_visit_assessment_label CHECK (length(btrim(label_th)) > 0),
-    CONSTRAINT chk_home_visit_assessment_sort_order CHECK (sort_order >= 0)
+    CONSTRAINT chk_parental_status_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_parental_status_sort_order CHECK (sort_order >= 0)
   );
-  ${auditUpdatedAtTriggerSql('home_visit_assessment_options')}
-  INSERT INTO home_visit_assessment_options (code, label_th, sort_order)
+  ${auditUpdatedAtTriggerSql('parental_status_options')}
+  INSERT INTO parental_status_options (code, label_th, sort_order)
   VALUES
-    ('NO_CONCERN', 'ไม่พบปัญหาเพิ่มเติม', 10),
-    ('CONTINUE_FOLLOW_UP', 'ควรติดตามต่อ', 20),
-    ('URGENT_SUPPORT', 'ต้องช่วยเหลือเร่งด่วน', 30),
-    ('REFER_SUPPORT', 'ควรส่งต่อหน่วยงานหรือผู้เชี่ยวชาญ', 40)
+    ('LIVING_TOGETHER', 'อยู่ด้วยกัน', 10),
+    ('LIVING_APART', 'แยกกันอยู่', 20),
+    ('DIVORCED', 'หย่าร้าง', 30),
+    ('FATHER_DECEASED', 'บิดาเสียชีวิต', 40),
+    ('MOTHER_DECEASED', 'มารดาเสียชีวิต', 50),
+    ('BOTH_DECEASED', 'บิดาและมารดาเสียชีวิต', 60),
+    ('UNKNOWN', 'ไม่ทราบข้อมูล', 70)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS guardian_type_options (
+    code VARCHAR(40) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    requires_detail BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_guardian_type_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_guardian_type_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('guardian_type_options')}
+  INSERT INTO guardian_type_options (code, label_th, sort_order, requires_detail)
+  VALUES
+    ('FATHER', 'บิดา', 10, FALSE),
+    ('MOTHER', 'มารดา', 20, FALSE),
+    ('FATHER_AND_MOTHER', 'บิดาและมารดา', 30, FALSE),
+    ('PATERNAL_GRANDPARENT', 'ปู่ / ย่า', 40, FALSE),
+    ('MATERNAL_GRANDPARENT', 'ตา / ยาย', 50, FALSE),
+    ('SIBLING', 'พี่ / น้อง', 60, FALSE),
+    ('RELATIVE', 'ญาติ', 70, FALSE),
+    ('OTHER', 'อื่น ๆ (ระบุในช่อง)', 80, TRUE),
+    ('NO_GUARDIAN', 'ไม่มีผู้ปกครอง', 90, FALSE)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS residence_environment_options (
+    code VARCHAR(40) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    sort_order SMALLINT NOT NULL,
+    is_exclusive BOOLEAN NOT NULL DEFAULT FALSE,
+    requires_detail BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ${AUDIT_COLUMNS_SQL},
+    CONSTRAINT chk_residence_environment_label CHECK (length(btrim(label_th)) > 0),
+    CONSTRAINT chk_residence_environment_sort_order CHECK (sort_order >= 0)
+  );
+  ${auditUpdatedAtTriggerSql('residence_environment_options')}
+  INSERT INTO residence_environment_options
+    (code, label_th, sort_order, is_exclusive, requires_detail)
+  VALUES
+    ('NORMAL', 'ปกติ / ไม่มีปัจจัยเสี่ยง', 10, TRUE, FALSE),
+    ('NEAR_DRUG_AREA', 'อยู่ใกล้แหล่งสารเสพติด', 20, FALSE, FALSE),
+    ('NEAR_GATHERING_AREA', 'อยู่ใกล้แหล่งมั่วสุม', 30, FALSE, FALSE),
+    ('VIOLENCE_RISK', 'มีความเสี่ยงด้านความรุนแรง', 40, FALSE, FALSE),
+    ('AREA_CRIME', 'มีปัญหาอาชญากรรมในพื้นที่', 50, FALSE, FALSE),
+    ('OTHER', 'อื่น ๆ (ระบุในรายละเอียด)', 60, FALSE, TRUE)
   ON CONFLICT (code) DO NOTHING;
 
   ALTER TABLE task_submissions
-    ADD COLUMN IF NOT EXISTS follow_up_assessment_code VARCHAR(40);
-  DO $home_visit_assessment_fks$
+    ADD COLUMN IF NOT EXISTS parental_status_code VARCHAR(40),
+    ADD COLUMN IF NOT EXISTS guardian_type_code VARCHAR(40),
+    ADD COLUMN IF NOT EXISTS guardian_type_detail VARCHAR(200),
+    ADD COLUMN IF NOT EXISTS residence_environment_detail TEXT;
+  DO $home_visit_household_fks$
   BEGIN
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint
-      WHERE conname = 'fk_task_submissions_follow_up_assessment'
+      WHERE conname = 'fk_task_submissions_parental_status'
     ) THEN
       ALTER TABLE task_submissions
-        ADD CONSTRAINT fk_task_submissions_follow_up_assessment
-        FOREIGN KEY (follow_up_assessment_code)
-        REFERENCES home_visit_assessment_options(code)
+        ADD CONSTRAINT fk_task_submissions_parental_status
+        FOREIGN KEY (parental_status_code)
+        REFERENCES parental_status_options(code)
         ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
-  END $home_visit_assessment_fks$;
-`;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'fk_task_submissions_guardian_type'
+    ) THEN
+      ALTER TABLE task_submissions
+        ADD CONSTRAINT fk_task_submissions_guardian_type
+        FOREIGN KEY (guardian_type_code)
+        REFERENCES guardian_type_options(code)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END $home_visit_household_fks$;
+  ALTER TABLE task_submissions
+    DROP CONSTRAINT IF EXISTS chk_task_submissions_guardian_type_detail;
+  ALTER TABLE task_submissions
+    ADD CONSTRAINT chk_task_submissions_guardian_type_detail CHECK (
+      guardian_type_detail IS NULL
+      OR (guardian_type_code IS NOT NULL AND length(btrim(guardian_type_detail)) > 0)
+    );
+  ALTER TABLE task_submissions
+    DROP CONSTRAINT IF EXISTS chk_task_submissions_residence_environment_detail;
+  ALTER TABLE task_submissions
+    ADD CONSTRAINT chk_task_submissions_residence_environment_detail CHECK (
+      residence_environment_detail IS NULL
+      OR (
+        length(btrim(residence_environment_detail)) > 0
+        AND length(residence_environment_detail) <= 2000
+      )
+    );
 
-export const STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS student_follow_up_request_statuses (
-    code VARCHAR(24) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_terminal BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_student_follow_up_statuses_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_student_follow_up_statuses_badge
-      CHECK (badge_variant IN ('default','secondary','destructive','success','warning')),
-    CONSTRAINT chk_student_follow_up_statuses_sort_order CHECK (sort_order >= 0)
+  CREATE TABLE IF NOT EXISTS task_submission_residence_environments (
+    task_submission_id INTEGER NOT NULL
+      REFERENCES task_submissions(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    residence_environment_code VARCHAR(40) NOT NULL
+      REFERENCES residence_environment_options(code) ON DELETE RESTRICT ON UPDATE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    PRIMARY KEY (task_submission_id, residence_environment_code)
   );
-  ${auditUpdatedAtTriggerSql('student_follow_up_request_statuses')}
-  INSERT INTO student_follow_up_request_statuses (
-    code, label_th, badge_variant, sort_order, is_terminal, is_active
-  ) VALUES
-    ('PENDING_REVIEW', 'รอพิจารณา', 'warning', 10, FALSE, TRUE),
-    ('APPROVED', 'เปิดเคสแล้ว', 'success', 20, TRUE, TRUE),
-    ('REJECTED', 'ไม่อนุมัติ', 'secondary', 30, TRUE, TRUE),
-    ('NEED_MORE_INFO', 'ขอข้อมูลเพิ่ม (เดิม)', 'secondary', 90, TRUE, FALSE)
-  ON CONFLICT (code) DO NOTHING;
+  CREATE INDEX IF NOT EXISTS idx_task_submission_residence_environments_code
+    ON task_submission_residence_environments (residence_environment_code);
 `;
 
 export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
@@ -1182,8 +1479,7 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   ${auditUpdatedAtTriggerSql('task_link_statuses')}
   INSERT INTO task_link_statuses (code, label_th, badge_variant, sort_order) VALUES
     ('ACTIVE', 'ใช้งาน', 'success', 10),
-    ('DELEGATED', 'ส่งต่อแล้ว', 'secondary', 20),
-    ('COMPLETED', 'เสร็จสิ้น', 'success', 30)
+    ('COMPLETED', 'เสร็จสิ้น', 'success', 20)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS attendance_record_statuses (
@@ -1254,48 +1550,10 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   );
   ${auditUpdatedAtTriggerSql('attendance_session_statuses')}
   INSERT INTO attendance_session_statuses (code, label_th, badge_variant, sort_order) VALUES
-    ('OPEN', 'เปิดเช็คชื่อ', 'warning', 10),
+    ('OPEN', 'เปิดเช็กชื่อ', 'warning', 10),
     ('SUBMITTED', 'ส่งแล้ว', 'success', 20),
     ('REOPENED', 'เปิดแก้ไข', 'warning', 30),
     ('VOIDED', 'ยกเลิก', 'destructive', 40)
-  ON CONFLICT (code) DO NOTHING;
-
-  CREATE TABLE IF NOT EXISTS student_account_batch_job_statuses (
-    code VARCHAR(16) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_student_account_batch_job_statuses_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_student_account_batch_job_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
-  );
-  ${auditUpdatedAtTriggerSql('student_account_batch_job_statuses')}
-  INSERT INTO student_account_batch_job_statuses (code, label_th, badge_variant, sort_order) VALUES
-    ('PENDING', 'รอเริ่ม', 'secondary', 10),
-    ('RUNNING', 'กำลังทำงาน', 'default', 20),
-    ('COMPLETED', 'เสร็จสิ้น', 'success', 30),
-    ('FAILED', 'ล้มเหลว', 'destructive', 40),
-    ('INTERRUPTED', 'หยุดชะงัก', 'warning', 50),
-    ('CANCELED', 'ยกเลิกแล้ว', 'secondary', 60)
-  ON CONFLICT (code) DO NOTHING;
-
-  CREATE TABLE IF NOT EXISTS student_account_batch_item_statuses (
-    code VARCHAR(16) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_student_account_batch_item_statuses_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_student_account_batch_item_statuses_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
-  );
-  ${auditUpdatedAtTriggerSql('student_account_batch_item_statuses')}
-  INSERT INTO student_account_batch_item_statuses (code, label_th, badge_variant, sort_order) VALUES
-    ('PENDING', 'รอดำเนินการ', 'secondary', 10),
-    ('CREATED', 'สร้างแล้ว', 'success', 20),
-    ('SKIPPED', 'ข้าม', 'warning', 30),
-    ('FAILED', 'ล้มเหลว', 'destructive', 40)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS student_import_batch_statuses (
@@ -1343,11 +1601,10 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('TASK_LINK_STATE', 'LOCKED', 'ปิดใช้งาน', 'destructive', NULL, 20),
     ('TASK_LINK_STATE', 'EXPIRED', 'หมดอายุ', 'warning', NULL, 30),
     ('TASK_LINK_STATE', 'COMPLETED', 'เสร็จสิ้น', 'success', NULL, 40),
-    ('TASK_LINK_STATE', 'DELEGATED', 'ส่งต่อแล้ว', 'secondary', NULL, 50),
     ('LOGIN_LINK_USAGE', 'USED', 'เข้าใช้แล้ว', 'success', NULL, 10),
     ('LOGIN_LINK_USAGE', 'UNUSED', 'ยังไม่เข้าใช้', 'secondary', NULL, 20),
     ('ATTENDANCE_RECONCILIATION', 'COMPLETED', 'ครบ', 'success', NULL, 10),
-    ('ATTENDANCE_RECONCILIATION', 'MISSING', 'ยังไม่เช็ค', 'destructive', NULL, 20),
+    ('ATTENDANCE_RECONCILIATION', 'MISSING', 'ยังไม่เช็ก', 'destructive', NULL, 20),
     ('ATTENDANCE_RECONCILIATION', 'INCOMPLETE', 'ไม่ครบ', 'warning', NULL, 30),
     ('RECORD_ACTIVITY', 'ACTIVE', 'เปิดใช้งาน', 'success', NULL, 10),
     ('RECORD_ACTIVITY', 'INACTIVE', 'ปิดใช้งาน', 'secondary', NULL, 20),
@@ -1356,9 +1613,9 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('STUDENT_STATUS_FLAG', 'FOLLOWUP_REQUIRED', 'ควรพิจารณาติดตาม', 'warning', NULL, 30),
     ('STUDENT_STATUS_FLAG', 'DISABLED', 'ปิดใช้งาน', 'destructive', NULL, 40),
     ('ROLE_ORIGIN', 'SYSTEM', 'ระบบ', 'secondary', NULL, 10),
-    ('ATTENDANCE_ANOMALY', 'HOLIDAY_ATTENDANCE', 'เช็คชื่อในวันหยุด', 'warning', NULL, 10),
-    ('ATTENDANCE_ANOMALY', 'CANCELLED_ATTENDANCE', 'เช็คชื่อในวันที่ยกเลิกเรียน', 'warning', NULL, 20),
-    ('ATTENDANCE_ANOMALY', 'OUT_OF_TERM', 'เช็คชื่อนอกช่วงภาคเรียน', 'destructive', NULL, 30),
+    ('ATTENDANCE_ANOMALY', 'HOLIDAY_ATTENDANCE', 'เช็กชื่อในวันหยุด', 'warning', NULL, 10),
+    ('ATTENDANCE_ANOMALY', 'CANCELLED_ATTENDANCE', 'เช็กชื่อในวันที่ยกเลิกเรียน', 'warning', NULL, 20),
+    ('ATTENDANCE_ANOMALY', 'OUT_OF_TERM', 'เช็กชื่อนอกช่วงภาคเรียน', 'destructive', NULL, 30),
     ('ATTENDANCE_ANOMALY', 'MISSING_CALENDAR_DAY', 'ไม่มีวันในปฏิทิน', 'secondary', NULL, 40)
   ON CONFLICT (domain_code, code) DO NOTHING;
 
@@ -1367,8 +1624,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
   ALTER TABLE school_terms DROP CONSTRAINT IF EXISTS chk_school_terms_status;
   ALTER TABLE school_calendar_days DROP CONSTRAINT IF EXISTS chk_school_calendar_days_type;
   ALTER TABLE attendance_sessions DROP CONSTRAINT IF EXISTS chk_attendance_sessions_status;
-  ALTER TABLE student_account_batch_job DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_status;
-  ALTER TABLE student_account_batch_job_item DROP CONSTRAINT IF EXISTS chk_student_account_batch_job_item_status;
   ALTER TABLE student_import_batches DROP CONSTRAINT IF EXISTS chk_student_import_batches_status;
 
   DO $operational_status_fks$
@@ -1400,14 +1655,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_sessions_status') THEN
       ALTER TABLE attendance_sessions ADD CONSTRAINT fk_attendance_sessions_status FOREIGN KEY (status)
         REFERENCES attendance_session_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_account_batch_job_status') THEN
-      ALTER TABLE student_account_batch_job ADD CONSTRAINT fk_student_account_batch_job_status FOREIGN KEY (status)
-        REFERENCES student_account_batch_job_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_account_batch_item_status') THEN
-      ALTER TABLE student_account_batch_job_item ADD CONSTRAINT fk_student_account_batch_item_status FOREIGN KEY (status)
-        REFERENCES student_account_batch_item_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_student_import_batches_status') THEN
       ALTER TABLE student_import_batches ADD CONSTRAINT fk_student_import_batches_status FOREIGN KEY (status)
@@ -1523,16 +1770,7 @@ export const NOTIFICATION_TABLES_SQL = `
 
   INSERT INTO notification_types (code, label_th, required_permission, sort_order)
   VALUES
-    ('CASE_CREATED', 'เคสติดตามใหม่', 'review-cases', 10),
-    ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'review-cases', 20),
-    ('TASK_DELEGATED', 'งานถูกส่งต่อ', 'attendance-dashboard', 30),
-    ('TASK_SUBMITTED', 'มีรายงานส่งกลับ', 'attendance-dashboard', 40),
-    ('IMPORT_COMPLETED', 'นำเข้าข้อมูลเสร็จแล้ว', 'import-data', 50),
-    ('IMPORT_FAILED', 'นำเข้าข้อมูลไม่สำเร็จ', 'import-data', 60),
-    ('STUDENT_ACCOUNT_BATCH_COMPLETED', 'สร้างบัญชีนักเรียนเสร็จแล้ว', 'manage-student-accounts', 70),
-    ('STUDENT_ACCOUNT_BATCH_FAILED', 'สร้างบัญชีนักเรียนไม่สำเร็จ', 'manage-student-accounts', 80),
-    ('CASE_RISK_ESCALATED', 'เคสถูกยกระดับความเสี่ยง', 'review-cases', 150),
-    ('STUDENT_RISK_WATCH', 'นักเรียนเข้าเกณฑ์เฝ้าระวัง', 'review-cases', 160)
+    ('CASE_STATUS_CHANGED', 'เคสเปลี่ยนสถานะ', 'dashboard', 10)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS notifications (
@@ -1548,7 +1786,11 @@ export const NOTIFICATION_TABLES_SQL = `
     case_id INTEGER CONSTRAINT fk_notifications_case
       REFERENCES cases(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
-    student_name_masked TEXT,
+    case_status_code VARCHAR(32) NOT NULL
+      CONSTRAINT fk_notifications_case_status
+      REFERENCES case_workflow_statuses(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    student_name_snapshot TEXT,
     reason_text TEXT,
     ref_entity VARCHAR(32),
     ref_id TEXT,
@@ -1558,58 +1800,33 @@ export const NOTIFICATION_TABLES_SQL = `
     CONSTRAINT chk_notifications_title CHECK (length(trim(title)) > 0),
     CONSTRAINT chk_notifications_student_context CHECK (
       (
-        type_code IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND student_person_uuid IS NOT NULL
-        AND student_name_masked IS NOT NULL
-        AND length(trim(student_name_masked)) > 0
+        type_code = 'CASE_STATUS_CHANGED'
+        AND student_name_snapshot IS NOT NULL
+        AND length(trim(student_name_snapshot)) > 0
       )
       OR (
-        type_code NOT IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND student_person_uuid IS NULL
-        AND student_name_masked IS NULL
+        type_code <> 'CASE_STATUS_CHANGED'
+        AND student_name_snapshot IS NULL
         AND reason_text IS NULL
       )
     ),
     CONSTRAINT chk_notifications_case_context CHECK (
       (
-        type_code IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED'
-        )
+        type_code = 'CASE_STATUS_CHANGED'
         AND case_id IS NOT NULL
+        AND case_status_code IS NOT NULL
       )
       OR (
-        type_code NOT IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED'
-        )
+        type_code <> 'CASE_STATUS_CHANGED'
         AND case_id IS NULL
+        AND case_status_code IS NULL
       )
     ),
     CONSTRAINT chk_notifications_reason_text CHECK (
       reason_text IS NULL OR length(trim(reason_text)) > 0
     ),
     CONSTRAINT chk_notifications_reason_type CHECK (
-      (
-        type_code IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND reason_text IS NOT NULL
-      )
-      OR (
-        type_code NOT IN (
-          'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-          'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-        )
-        AND reason_text IS NULL
-      )
+      type_code = 'CASE_STATUS_CHANGED'
     )
   );
 
@@ -1688,7 +1905,6 @@ export const DATABASE_BASELINE_SQL = `
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     status TEXT DEFAULT 'IN_PROGRESS',
-    max_delegation_depth INTEGER DEFAULT 3,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     task_type TEXT DEFAULT 'VISIT',
     target_grade TEXT,
@@ -1699,14 +1915,12 @@ export const DATABASE_BASELINE_SQL = `
   CREATE TABLE IF NOT EXISTS task_links (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-    parent_link_id UUID REFERENCES task_links(id),
     token_hash TEXT NOT NULL UNIQUE,
     magic_link TEXT,
     -- Encrypted (AES-256-GCM) raw token, redisplay source of truth going
     -- forward — magic_link itself is legacy/plaintext and being phased out,
     -- see tasks/task-magic-link-plaintext-token.md.
     token_encrypted TEXT NULL,
-    delegation_depth INTEGER DEFAULT 0,
     assigned_to_name TEXT,
     assigned_to_first_name VARCHAR(150)
       CHECK (assigned_to_first_name IS NULL OR BTRIM(assigned_to_first_name) <> ''),
@@ -1720,7 +1934,6 @@ export const DATABASE_BASELINE_SQL = `
     otp_attempts INTEGER NOT NULL DEFAULT 0,
     otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
-    delegation_note TEXT,
     assignment_note TEXT CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000),
     status TEXT DEFAULT 'ACTIVE',
     admin_locked INTEGER DEFAULT 0,
@@ -1865,7 +2078,6 @@ export const DATABASE_BASELINE_SQL = `
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     label TEXT NOT NULL,
-    rank INTEGER NOT NULL DEFAULT 0,
     default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
     scope_mode TEXT NOT NULL DEFAULT 'flexible',
     scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE',
@@ -1874,7 +2086,6 @@ export const DATABASE_BASELINE_SQL = `
     school_id INTEGER
   );
 
-  ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
@@ -1901,8 +2112,8 @@ export const DATABASE_BASELINE_SQL = `
     END IF;
   END $roles_school_scope$;
 
-  CREATE INDEX IF NOT EXISTS idx_roles_school_rank_name
-    ON roles (school_id, rank DESC, name)
+  CREATE INDEX IF NOT EXISTS idx_roles_school_name
+    ON roles (school_id, name)
     WHERE school_id IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_school_label_ci
     ON roles (school_id, LOWER(BTRIM(label)))
@@ -2000,7 +2211,6 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "permissions" JSONB DEFAULT '[]';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "role" TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS "data_scope" JSONB DEFAULT '{}'::jsonb;
-  ALTER TABLE users ADD COLUMN IF NOT EXISTS person_uuid UUID;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_issued_at TIMESTAMP WITH TIME ZONE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS temporary_password_expires_at TIMESTAMP WITH TIME ZONE;
@@ -2052,7 +2262,6 @@ export const DATABASE_BASELINE_SQL = `
   -- attendance.student_uuid for the migrated live DB.
   ALTER TABLE cases ADD COLUMN IF NOT EXISTS student_uuid UUID;
   ALTER TABLE attendance ADD COLUMN IF NOT EXISTS student_uuid UUID;
-  ALTER TABLE roles ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb;
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_mode TEXT NOT NULL DEFAULT 'flexible';
   ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_policy TEXT NOT NULL DEFAULT 'ASSIGNABLE';
@@ -2116,11 +2325,15 @@ export const DATABASE_BASELINE_SQL = `
   ALTER TABLE task_links ALTER COLUMN admin_lock_at TYPE TIMESTAMP WITH TIME ZONE USING admin_lock_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_role TEXT;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_permissions JSONB DEFAULT '[]'::jsonb;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS login_data_scope JSONB DEFAULT '{}'::jsonb;
+  -- Which teacher the link was issued to. AraID verification compares the
+  -- verified citizen id against this user, so it must be a real reference and
+  -- not the denormalised name/email beside it.
+  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS assigned_teacher_user_id INTEGER
+    REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_task_links_assigned_teacher
+    ON task_links(assigned_teacher_user_id)
+    WHERE assigned_teacher_user_id IS NOT NULL;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMP WITH TIME ZONE;
-  ALTER TABLE task_links ADD COLUMN IF NOT EXISTS delegation_note TEXT;
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS assignment_note TEXT;
   ALTER TABLE task_links DROP CONSTRAINT IF EXISTS chk_task_links_assignment_note_length;
   ALTER TABLE task_links ADD CONSTRAINT chk_task_links_assignment_note_length
@@ -2189,7 +2402,7 @@ export const DATABASE_BASELINE_SQL = `
     academic_year INTEGER NOT NULL,
     semester INTEGER NOT NULL,
     consecutive_absent_days INTEGER NOT NULL DEFAULT 0,
-    absent_days INTEGER NOT NULL DEFAULT 0,
+    absent_days_since_case_reset INTEGER NOT NULL DEFAULT 0,
     term_absent_days INTEGER NOT NULL DEFAULT 0
       CONSTRAINT chk_student_risk_profiles_term_absent_days
       CHECK (term_absent_days >= 0),
@@ -2337,25 +2550,6 @@ export const DATABASE_BASELINE_SQL = `
     END IF;
   END $users_lifecycle_constraints$;
 
-  DO $users_person_fk$
-  BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'student_person')
-      AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_person') THEN
-      ALTER TABLE users
-      ADD CONSTRAINT fk_users_person
-      FOREIGN KEY (person_uuid) REFERENCES student_person(person_uuid)
-      ON DELETE RESTRICT;
-    END IF;
-  END $users_person_fk$;
-
-  CREATE INDEX IF NOT EXISTS idx_users_person_uuid ON users (person_uuid);
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_users_active_student_person
-    ON users (person_uuid)
-    WHERE person_uuid IS NOT NULL AND role = 'STUDENT' AND status = 'ACTIVE';
-
-  ALTER TABLE users
-  ALTER COLUMN role SET DEFAULT 'TEACHER';
-
   ALTER TABLE users
   ALTER COLUMN role SET NOT NULL;
 
@@ -2381,10 +2575,8 @@ export const DATABASE_BASELINE_SQL = `
     id SERIAL PRIMARY KEY,
     label TEXT NOT NULL UNIQUE
   );
-  CREATE TABLE IF NOT EXISTS assistance_measures (
-    id SERIAL PRIMARY KEY,
-    label TEXT NOT NULL UNIQUE
-  );
+  -- assistance_measure_options is created by CASE_ASSISTANCE_PHASE_SQL as a coded
+  -- lookup; the 2026-03 (id, label) stub is dropped there.
   CREATE TABLE IF NOT EXISTS educational_areas (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
@@ -2553,13 +2745,10 @@ export const DATABASE_BASELINE_SQL = `
 
   ${STUDENT_CURRENT_ENROLLMENT_VIEW_SQL}
 
-  ${STUDENT_ACCOUNT_BATCH_TABLES_SQL}
-
   ${DATA_EXPORT_TABLES_SQL}
 
   ${STUDENT_IMPORT_QUARANTINE_TABLES_SQL}
 
-  ${STUDENT_FOLLOW_UP_REQUEST_STATUS_TABLE_SQL}
 
   ${ARAID_PROFILE_TABLE_SQL}
 
@@ -2573,6 +2762,12 @@ export const DATABASE_BASELINE_SQL = `
 
   ${HOME_VISIT_ASSESSMENT_SQL}
 
+  ${HOME_VISIT_HOUSEHOLD_CONTEXT_SQL}
+
+  ${CASE_ASSISTANCE_PHASE_SQL}
+
+  ${STUDENT_RISK_TIER_CATALOG_SQL}
+
   ${OPERATIONAL_STATUS_CATALOG_TABLES_SQL}
 
   ${NOTIFICATION_TABLES_SQL}
@@ -2585,7 +2780,7 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
     await executor.query(
       `
         INSERT INTO roles (
-          name, label, rank, default_permissions, scope_mode, scope_policy, is_assignable, is_system
+          name, label, default_permissions, scope_mode, scope_policy, is_assignable, is_system
         )
         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
         ON CONFLICT (name) DO NOTHING
@@ -2593,7 +2788,6 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
       [
         role.name,
         role.label,
-        role.rank,
         JSON.stringify(role.default_permissions),
         role.scope_mode,
         role.scope_policy,
@@ -2607,18 +2801,16 @@ export async function syncSystemRoleDefinitions(executor: SqlExecutor): Promise<
         UPDATE roles
         SET
           label = $2,
-          rank = $3,
-          default_permissions = $4::jsonb,
-          scope_mode = $5,
-          scope_policy = $6,
-          is_assignable = $7,
-          is_system = $8
+          default_permissions = $3::jsonb,
+          scope_mode = $4,
+          scope_policy = $5,
+          is_assignable = $6,
+          is_system = $7
         WHERE name = $1
       `,
       [
         role.name,
         role.label,
-        role.rank,
         JSON.stringify(role.default_permissions),
         role.scope_mode,
         role.scope_policy,

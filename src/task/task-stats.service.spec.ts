@@ -9,7 +9,7 @@ describe('TaskStatsService', () => {
       id: 70,
       username: 'executive.regranted',
       roles: ['EXECUTIVE'],
-      permissions: ['review-cases'],
+      permissions: ['dashboard'],
       data_scope: { provinces: ['เชียงใหม่'] },
     };
     const taskRepository = { listCasesWithActiveLinks: jest.fn() };
@@ -117,7 +117,7 @@ describe('TaskStatsService', () => {
             grade: 'ม.1',
             room: '1',
             consecutive_absent_days: 4,
-            absent_days: 5,
+            absent_days_since_case_reset: 5,
             term_absent_days: 8,
             absence_reset_after_date: '2026-08-01',
             late_count: 2,

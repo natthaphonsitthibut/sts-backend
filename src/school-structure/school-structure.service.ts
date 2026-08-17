@@ -48,6 +48,7 @@ import {
   type FileStorageAdapter,
 } from '../files/storage/file-storage.types';
 import { SchoolStructureRepository } from './school-structure.repository';
+import type { ClassroomStudentProblemCategory } from './classroom-student-comment.constants';
 import type {
   ClassroomTeacherAssignmentRow,
   SchoolClassroomRow,
@@ -96,7 +97,6 @@ export class SchoolStructureService {
       [
         'manage-teacher-access',
         'import-data',
-        'import-school-roster',
         'manage-role-groups',
         // จัดการข้อมูลคุณครู reuses this endpoint for its school picker.
         'manage-teachers',
@@ -163,8 +163,7 @@ export class SchoolStructureService {
     return {
       id: row.id,
       schoolId: row.school_id,
-      teacherUserId: row.teacher_user_id,
-      username: row.username,
+      teacherId: row.teacher_id,
       displayName: row.display_name,
       membershipStatus: row.membership_status,
       startedOn: row.started_on,
@@ -178,7 +177,7 @@ export class SchoolStructureService {
       schoolId: row.school_id,
       classroomId: row.classroom_id,
       teacherMembershipId: row.teacher_membership_id,
-      teacherUserId: row.teacher_user_id,
+      teacherId: row.teacher_id,
       teacherName: row.teacher_name,
       subjectId: row.subject_id,
       subjectCode: row.subject_code,
@@ -625,15 +624,13 @@ export class SchoolStructureService {
     const actorId = resolveAuditActorId(actor);
     try {
       const row = await this.repository.withTransaction(async (queryRunner) => {
-        if (
-          !(await this.repository.isTeacherEligible(dto.teacherUserId, dto.schoolId, queryRunner))
-        ) {
-          throw new BadRequestException('ผู้ใช้นี้ไม่ใช่บัญชีที่มีสิทธิ์ปฏิบัติงานครู');
+        if (!(await this.repository.isTeacherEligible(dto.teacherId, dto.schoolId, queryRunner))) {
+          throw new BadRequestException('ครูคนนี้ใช้งานไม่ได้ หรือสังกัดโรงเรียนนี้อยู่แล้ว');
         }
         const created = await this.repository.createTeacherMembership(
           {
             schoolId: dto.schoolId,
-            teacherUserId: dto.teacherUserId,
+            teacherId: dto.teacherId,
             startedOn: dto.startedOn ?? null,
             actorId,
           },
@@ -649,7 +646,7 @@ export class SchoolStructureService {
             metadata: {
               op: 'create',
               schoolId: dto.schoolId,
-              changedFields: ['teacherUserId', 'startedOn'],
+              changedFields: ['teacherId', 'startedOn'],
             },
             ip: null,
           },
@@ -858,7 +855,8 @@ export class SchoolStructureService {
       const comment = await this.repository.createStudentComment(
         classroomId,
         studentUuid,
-        dto.commentText,
+        dto.problemCategory,
+        dto.problemDescription,
         actorId,
         queryRunner,
       );
@@ -876,7 +874,8 @@ export class SchoolStructureService {
             schoolId: classroom.school_id,
             classroomId,
             studentUuid,
-            commentLength: dto.commentText.length,
+            problemCategory: dto.problemCategory,
+            descriptionLength: dto.problemDescription.length,
           },
           ip: null,
         },
@@ -897,7 +896,10 @@ export class SchoolStructureService {
       data: {
         id: created.id,
         studentUuid,
-        teacherComment: created.comment_text,
+        problemCategory: created.problem_category_code as ClassroomStudentProblemCategory,
+        problemCategoryLabel: created.problem_category_label,
+        problemCategoryGuidance: created.problem_category_guidance,
+        problemDescription: created.problem_description,
         createdAt: created.created_at,
       },
     };
@@ -962,6 +964,7 @@ export class SchoolStructureService {
           : 'date';
       const result = await this.repository.listClassroomDailyAttendance({
         classroomId,
+        subjectId: query.subjectId ?? null,
         date: query.date,
         search: query.search,
         sortBy,
@@ -994,6 +997,7 @@ export class SchoolStructureService {
         : 'name';
     const result = await this.repository.listClassroomStudentAttendance({
       classroomId,
+      subjectId: query.subjectId ?? null,
       date: query.date,
       search: query.search,
       sortBy,
@@ -1017,5 +1021,9 @@ export class SchoolStructureService {
       })),
       meta: buildPaginationMeta(page, limit, result.totalCount),
     };
+  }
+
+  async listStudentProblemCategories() {
+    return { data: await this.repository.listStudentProblemCategories() };
   }
 }

@@ -15,7 +15,7 @@ const ADMIN_ROLE: RoleRow = {
   id: 1,
   name: 'ADMIN',
   label: 'ผู้ดูแลระบบ',
-  rank: 5,
+  sort_order: 5,
   default_permissions: ['*'],
   scope_mode: 'flexible',
   scope_policy: 'ASSIGNABLE',
@@ -28,7 +28,7 @@ const SCHOOL_ROLE: RoleRow = {
   id: 11,
   name: 'S1001_ROLE_A',
   label: 'ผู้ดูแลห้องเรียน',
-  rank: 4,
+  sort_order: 4,
   default_permissions: ['manage-users-list', 'manage-role-groups'],
   scope_mode: 'school',
   scope_policy: 'ASSIGNABLE',
@@ -36,7 +36,6 @@ const SCHOOL_ROLE: RoleRow = {
   is_system: false,
   school_id: 1001,
   user_count: 0,
-  login_link_count: 0,
 };
 
 const OTHER_SCHOOL_ROLE: RoleRow = {
@@ -122,7 +121,7 @@ describe('RoleGroupsService school ownership', () => {
       service.createRoleGroup(ACTOR, {
         schoolId: 1001,
         label: 'ครูฝ่ายปกครอง',
-        rank: 4,
+        sort_order: 4,
         default_permissions: ['manage-users-list'],
         scope_mode: 'global',
       }),
@@ -141,7 +140,7 @@ describe('RoleGroupsService school ownership', () => {
       service.createRoleGroup(ACTOR, {
         schoolId: 1001,
         label: 'ครูฝ่ายปกครอง',
-        rank: 4,
+        sort_order: 4,
         default_permissions: ['manage-users-list'],
       }),
     ).rejects.toBeInstanceOf(ConflictException);

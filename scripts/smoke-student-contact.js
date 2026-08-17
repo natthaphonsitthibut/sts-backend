@@ -56,7 +56,7 @@ function randomThaiNationalId() {
 
 async function upsertSmokeUser(
   dataSource,
-  { username, passwordHash, firstName, lastName, permissions, role, dataScope, personUuid },
+  { username, passwordHash, firstName, lastName, permissions, role, dataScope },
 ) {
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [username]);
   if (existing) {
@@ -70,7 +70,6 @@ async function upsertSmokeUser(
             permissions = $5::jsonb,
             role = $6,
             data_scope = $7::jsonb,
-            person_uuid = $8,
             must_change_password = FALSE,
             temporary_password_issued_at = NULL,
             temporary_password_expires_at = NULL,
@@ -93,7 +92,6 @@ async function upsertSmokeUser(
         JSON.stringify(permissions),
         role,
         JSON.stringify(dataScope),
-        personUuid ?? null,
       ],
     );
     return existing;
@@ -103,9 +101,9 @@ async function upsertSmokeUser(
     `
       INSERT INTO users (
         username, password, "FirstName", "LastName", status, permissions, role,
-        data_scope, person_uuid, must_change_password, affiliation, data_origin_code
+        data_scope, must_change_password, affiliation, data_origin_code
       )
-      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, $8, FALSE, $9, 'AUTOMATED_TEST')
+      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, FALSE, $8, 'AUTOMATED_TEST')
       RETURNING id
     `,
     [
@@ -116,7 +114,6 @@ async function upsertSmokeUser(
       JSON.stringify(permissions),
       role,
       JSON.stringify(dataScope),
-      personUuid ?? null,
       'Automated student contact smoke',
     ],
   );
@@ -144,9 +141,7 @@ async function main() {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const adminUsername = 'student_contact_smoke_admin';
-  const studentUsername = 'student_contact_smoke_student';
   const adminPassword = `Admin-${suffix}-Password`;
-  const studentPassword = `Student-${suffix}-Password`;
 
   let personUuid = null;
   let studentUuid = null;
@@ -210,7 +205,7 @@ async function main() {
       passwordHash: await passwordService.hash(adminPassword),
       firstName: 'Contact',
       lastName: 'Smoke Admin',
-      permissions: ['students', 'edit-students'],
+      permissions: ['students'],
       role: 'ADMIN',
       dataScope: { global: true },
     });
@@ -317,51 +312,6 @@ async function main() {
       },
     });
 
-    // 5. Link an account after staff entered contact. Student self-service must
-    // read and update the same canonical person row.
-    await upsertSmokeUser(dataSource, {
-      username: studentUsername,
-      passwordHash: await passwordService.hash(studentPassword),
-      firstName: 'ณัฐดนัย',
-      lastName: 'พงศ์ไพบูลย์',
-      permissions: ['student-self'],
-      role: 'STUDENT',
-      dataScope: { own_only: true },
-      personUuid,
-    });
-    const studentLogin = await request(baseUrl, 'POST', '/api/users/login', 201, {
-      body: { username: studentUsername, password: studentPassword },
-    });
-    const studentCookie = cookieHeader(studentLogin.response);
-
-    await request(baseUrl, 'PATCH', `/api/students/${studentUuid}`, 403, {
-      headers: { cookie: studentCookie },
-      body: { FirstName_Onec: 'ชื่อปลอม' },
-    });
-    const selfProfile = await request(baseUrl, 'GET', '/api/users/me', 200, {
-      headers: { cookie: studentCookie },
-    });
-    assert(
-      selfProfile.payload.phone === '0812345678' && selfProfile.payload.line_id === 'natdanai_p',
-      'Student profile did not read staff-entered canonical contact',
-    );
-    const selfSave = await request(baseUrl, 'PATCH', '/api/users/me', 200, {
-      headers: { cookie: studentCookie },
-      body: { phone: '0800000001', line_id: 'natdanai_self' },
-    });
-    assert(
-      selfSave.payload.phone === '0800000001' && selfSave.payload.line_id === 'natdanai_self',
-      'Student ProfilePage contact update did not apply',
-    );
-    const afterSelfSave = await request(baseUrl, 'GET', `/api/students/${studentUuid}`, 200, {
-      headers: { cookie: adminCookie },
-    });
-    assert(
-      afterSelfSave.payload.contact?.phone === '0800000001' &&
-        afterSelfSave.payload.contact?.line_id === 'natdanai_self',
-      'Student detail did not read the ProfilePage update from the canonical row',
-    );
-
     console.log(
       JSON.stringify({
         status: 'student_contact_smoke_ok',
@@ -372,15 +322,13 @@ async function main() {
           'replacement soft-deletes prior guardians',
           'GUARDIAN without note rejected',
           'duplicate primary rejected',
-          'student blocked from enrollment fields',
-          'student ProfilePage reads and updates the same canonical contact',
         ],
       }),
     );
   } finally {
     await dataSource.query(
-      `UPDATE users SET status = 'DISABLED', person_uuid = NULL WHERE username = ANY($1::text[])`,
-      [[adminUsername, studentUsername]],
+      `UPDATE users SET status = 'DISABLED' WHERE username = ANY($1::text[])`,
+      [[adminUsername]],
     );
     if (personUuid) {
       await dataSource.query(`DELETE FROM student_term WHERE person_uuid = $1`, [personUuid]);

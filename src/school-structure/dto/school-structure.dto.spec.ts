@@ -62,16 +62,33 @@ describe('school structure DTOs', () => {
 
   it('trims classroom comments and rejects empty or oversized content', () => {
     const valid = plainToInstance(CreateClassroomStudentCommentDto, {
-      commentText: '  ติดตามการส่งงาน  ',
+      problemCategory: 'ACADEMIC',
+      problemDescription: '  ติดตามการส่งงาน  ',
     });
     expect(validateSync(valid)).toHaveLength(0);
-    expect(valid.commentText).toBe('ติดตามการส่งงาน');
+    expect(valid.problemDescription).toBe('ติดตามการส่งงาน');
     expect(
-      validateSync(plainToInstance(CreateClassroomStudentCommentDto, { commentText: '   ' })),
+      validateSync(
+        plainToInstance(CreateClassroomStudentCommentDto, {
+          problemCategory: 'ACADEMIC',
+          problemDescription: '   ',
+        }),
+      ),
     ).not.toHaveLength(0);
     expect(
       validateSync(
-        plainToInstance(CreateClassroomStudentCommentDto, { commentText: 'ก'.repeat(2001) }),
+        plainToInstance(CreateClassroomStudentCommentDto, {
+          problemCategory: 'ACADEMIC',
+          problemDescription: 'ก'.repeat(2001),
+        }),
+      ),
+    ).not.toHaveLength(0);
+    expect(
+      validateSync(
+        plainToInstance(CreateClassroomStudentCommentDto, {
+          problemCategory: 'UNKNOWN',
+          problemDescription: 'ติดตาม',
+        }),
       ),
     ).not.toHaveLength(0);
   });

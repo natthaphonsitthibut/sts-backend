@@ -21,7 +21,7 @@ const ACTOR = {
   id: 1,
   username: 'task_link_encryption_smoke',
   roles: ['ADMIN'],
-  permissions: ['create'],
+  permissions: ['dashboard'],
   data_scope: { global: true },
 };
 

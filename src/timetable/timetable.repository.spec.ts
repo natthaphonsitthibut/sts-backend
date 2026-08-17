@@ -48,28 +48,42 @@ describe('TimetableRepository', () => {
     expect(queries[0].params).toEqual([1, 2, 3]);
   });
 
-  it('listForTeacher filters by teacher_user_id and teacher_membership_id', async () => {
+  it('listForRoom reads only the active term, so last term never leaks into check-in', async () => {
     const { repository, queries } = buildRepository([]);
-    await repository.listForTeacher(42, 100);
-    expect(queries[0].sql).toContain('ts.teacher_membership_id = $1');
-    expect(queries[0].params).toEqual([100, 42]);
+    await repository.listForRoom(1, 2, 3);
+    expect(queries[0].sql).toMatch(
+      /ts\.school_term_id = \([\s\S]*FROM school_terms term[\s\S]*term\.school_id = \$1[\s\S]*term\.status = 'ACTIVE'[\s\S]*LIMIT 1\s*\)/,
+    );
   });
 
-  it('gates the legacy ts.teacher_user_id fallback behind a NOT EXISTS guard', async () => {
-    // Regression test: this fallback used to match unconditionally, so a slot
-    // reassigned to a new teacher via timetable_slot_teachers still surfaced
-    // on the *previous* teacher's schedule (via their stale legacy column) at
-    // the same day/period as their real slot — a phantom double-booking.
+  it('listForTeacher filters by the membership on the slot', async () => {
     const { repository, queries } = buildRepository([]);
-    await repository.listForTeacher(42, 100);
+    await repository.listForTeacher(100);
+    expect(queries[0].sql).toContain('ts.teacher_membership_id = $1');
+    expect(queries[0].params).toEqual([100]);
+  });
+
+  it('listForTeacher returns nothing for an actor with no membership', async () => {
+    // Without this the query ran with a NULL membership and matched every slot
+    // whose own pointers were also NULL — a staff account would have seen a
+    // schedule that is not theirs.
+    const { repository, queries } = buildRepository([]);
+    await expect(repository.listForTeacher(null)).resolves.toEqual([]);
+    expect(queries).toHaveLength(0);
+  });
+
+  it('prefers timetable_slot_teachers over the slot pointers', async () => {
+    // Regression test: the slot's own pointer used to match unconditionally, so
+    // a slot reassigned through timetable_slot_teachers still surfaced on the
+    // previous teacher's schedule at the same day/period as their real slot.
+    const { repository, queries } = buildRepository([]);
+    await repository.listForTeacher(100);
     const sql = queries[0].sql;
-    const userIdBranchStart = sql.indexOf('$2::integer IS NOT NULL');
-    const userIdBranch = sql.slice(userIdBranchStart);
-    const notExistsIndex = userIdBranch.indexOf('NOT EXISTS');
-    const legacyCheckIndex = userIdBranch.indexOf('ts.teacher_user_id = $2::integer');
+    const notExistsIndex = sql.indexOf('NOT EXISTS');
+    const slotPointerIndex = sql.indexOf('ts.teacher_membership_id = $1::bigint');
     expect(notExistsIndex).toBeGreaterThan(-1);
-    expect(legacyCheckIndex).toBeGreaterThan(-1);
-    expect(notExistsIndex).toBeLessThan(legacyCheckIndex);
+    expect(slotPointerIndex).toBeGreaterThan(-1);
+    expect(notExistsIndex).toBeLessThan(slotPointerIndex);
   });
 
   it('findById groups the teacher aggregates before returning a slot', async () => {
@@ -109,13 +123,5 @@ describe('TimetableRepository', () => {
     expect(queries[0].sql).toContain(`membership.school_id = $1`);
     expect(queries[0].sql).toContain('LIMIT 100');
     expect(queries[0].params).toEqual([10010002, '%สมชาย%']);
-  });
-
-  it('isActiveTeacherForSchool checks role, account, membership, and school together', async () => {
-    const { repository, queries } = buildRepository();
-    await expect(repository.isActiveTeacherForSchool(41, 10010002)).resolves.toBe(true);
-    expect(queries[0].sql).toContain(`teacher.role = 'TEACHER'`);
-    expect(queries[0].sql).toContain(`membership.school_id = $2`);
-    expect(queries[0].params).toEqual([41, 10010002]);
   });
 });

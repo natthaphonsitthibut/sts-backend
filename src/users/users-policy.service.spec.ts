@@ -8,8 +8,8 @@ const definitions: RoleDefinition[] = [
     id: 1,
     name: 'ADMIN',
     label: 'ผู้ดูแลระบบ',
-    rank: 5,
-    default_permissions: ['home', 'manage-users-list'],
+    sort_order: 5,
+    default_permissions: ['home', 'manage-users-list', 'students', 'dashboard'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -19,8 +19,8 @@ const definitions: RoleDefinition[] = [
     id: 2,
     name: 'DIRECTOR',
     label: 'ผู้อำนวยการ',
-    rank: 4,
-    default_permissions: ['home', 'manage-users-list'],
+    sort_order: 4,
+    default_permissions: ['home', 'manage-users-list', 'students'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -30,7 +30,7 @@ const definitions: RoleDefinition[] = [
     id: 3,
     name: 'EXECUTIVE',
     label: 'ผู้บริหาร',
-    rank: 3,
+    sort_order: 3,
     default_permissions: ['home', 'dashboard'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
@@ -41,7 +41,7 @@ const definitions: RoleDefinition[] = [
     id: 4,
     name: 'TEACHER',
     label: 'ครู',
-    rank: 2,
+    sort_order: 2,
     default_permissions: ['home', 'students'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
@@ -52,7 +52,7 @@ const definitions: RoleDefinition[] = [
     id: 5,
     name: 'STUDENT',
     label: 'นักเรียน',
-    rank: 1,
+    sort_order: 1,
     default_permissions: [],
     scope_mode: 'flexible',
     scope_policy: 'OWN_ONLY',
@@ -285,7 +285,9 @@ describe('UsersPolicyService functional roles and data scope', () => {
     ).toBe(expected);
   });
 
-  it('denies managing higher or equal role unless the actor is ADMIN', () => {
+  // The ladder is no longer a rank: a role is manageable only when it reaches
+  // no page the actor's own role lacks, and never itself unless the actor is ADMIN.
+  it('denies managing a role that reaches a page the actor does not have', () => {
     const director: ActorContext = {
       ...globalAdmin,
       id: 3,

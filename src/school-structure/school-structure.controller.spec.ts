@@ -44,7 +44,6 @@ describe('SchoolStructureController access', () => {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'manage-school-structure',
         'import-data',
-        'import-school-roster',
         // The school picker is also reachable from จัดการกลุ่มเมนู and จัดการข้อมูลคุณครู.
         ...(method === 'listSchools' ? ['manage-role-groups', 'manage-teachers'] : []),
       ]);
@@ -80,5 +79,38 @@ describe('SchoolStructureController access', () => {
     expect(guard.canActivate(context('listSchools'))).toBe(true);
     expect(guard.canActivate(context('listClassrooms'))).toBe(true);
     expect(() => guard.canActivate(context('createClassroom'))).toThrow();
+  });
+
+  it.each(['students', 'classrooms', 'manage-school-structure', 'attendance'])(
+    'lets the %s page use the shared student-comment action',
+    (permission) => {
+      const guard = new PermissionsGuard(new Reflector());
+      const context = {
+        getHandler: () => handler('createStudentComment'),
+        getClass: () => SchoolStructureController,
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: { id: 1, username: 'page-user', roles: [], permissions: [permission] },
+          }),
+        }),
+      } as never;
+
+      expect(guard.canActivate(context)).toBe(true);
+    },
+  );
+
+  it('rejects the shared student-comment action without one of its page permissions', () => {
+    const guard = new PermissionsGuard(new Reflector());
+    const context = {
+      getHandler: () => handler('createStudentComment'),
+      getClass: () => SchoolStructureController,
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: { id: 1, username: 'unrelated-user', roles: [], permissions: ['home'] },
+        }),
+      }),
+    } as never;
+
+    expect(() => guard.canActivate(context)).toThrow();
   });
 });

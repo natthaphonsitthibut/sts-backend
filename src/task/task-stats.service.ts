@@ -75,7 +75,6 @@ export class TaskStatsService {
         today: await this.taskRepository.countCasesCreatedOn(today, currentActor),
         pendingReview: await this.taskRepository.countCases('PENDING_REVIEW', currentActor),
         activeLinks: await this.taskRepository.countActiveTaskLinks(currentActor),
-        delegations: 0,
         statusCounts,
       };
     } catch (err) {
@@ -179,7 +178,7 @@ export class TaskStatsService {
           grade: row.grade,
           room: row.room,
           consecutiveAbsentDays: Number(row.consecutive_absent_days ?? 0),
-          absentDays: Number(row.absent_days ?? 0),
+          absentDays: Number(row.absent_days_since_case_reset ?? 0),
           termAbsentDays: Number(row.term_absent_days ?? 0),
           absenceResetAfterDate: row.absence_reset_after_date ?? null,
           lateCount: Number(row.late_count ?? 0),

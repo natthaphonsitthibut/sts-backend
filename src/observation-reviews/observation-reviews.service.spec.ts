@@ -16,7 +16,7 @@ const MANAGER: AuthenticatedRequestUser = {
   id: 5,
   username: 'director',
   roles: ['DIRECTOR'],
-  permissions: ['manage-student-observations'],
+  permissions: ['students'],
   data_scope: { school_ids: [101] },
 };
 
@@ -250,7 +250,7 @@ describe('ObservationReviewsService', () => {
         id: 20,
         username: 'executive',
         roles: ['EXECUTIVE'],
-        permissions: ['manage-student-observations'],
+        permissions: ['students'],
         data_scope: { global: true },
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -303,7 +303,10 @@ describe('ObservationReviewsService', () => {
       {
         id: '91',
         student_uuid: STUDENT_UUID,
-        comment: 'ควรติดตามการส่งงาน',
+        problem_category_code: 'ACADEMIC',
+        problem_category_label: 'ปัญหาด้านการเรียน',
+        problem_category_guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+        problem_description: 'ควรติดตามการส่งงาน',
         author_display_name: 'ครู ทดสอบ',
         commented_at: '2026-08-03T01:00:00.000Z',
         total_count: 4,
@@ -322,7 +325,10 @@ describe('ObservationReviewsService', () => {
         {
           id: '91',
           studentTermId: STUDENT_UUID,
-          comment: 'ควรติดตามการส่งงาน',
+          problemCategory: 'ACADEMIC',
+          problemCategoryLabel: 'ปัญหาด้านการเรียน',
+          problemCategoryGuidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+          problemDescription: 'ควรติดตามการส่งงาน',
           authorDisplayName: 'ครู ทดสอบ',
           commentedAt: '2026-08-03T01:00:00.000Z',
         },

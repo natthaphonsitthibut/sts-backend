@@ -79,7 +79,7 @@ export class HomeDashboardService {
     if (hasActorPermission(actor, 'dashboard')) {
       sections.push('riskDistribution');
     }
-    if (hasActorPermission(actor, 'review-cases')) {
+    if (hasActorPermission(actor, 'dashboard')) {
       sections.push('casePipeline', 'caseMovement');
     }
     return sections;
@@ -162,26 +162,31 @@ export class HomeDashboardService {
 
     const sections = this.resolveSections(actor);
     const riskAreaDimension = this.resolveRiskAreaDimension(filters);
-    const [totalStudents, activeCases, watchStudents, casePipeline, riskAreaRows] =
-      await Promise.all([
-        this.repository.countStudents(actor, filters),
-        hasActorPermission(actor, 'review-cases')
-          ? this.repository.countActiveCases(actor, filters)
-          : Promise.resolve(0),
-        hasActorPermission(actor, 'dashboard')
-          ? this.repository.countHighRiskStudents(actor, filters)
-          : Promise.resolve(0),
-        hasActorPermission(actor, 'review-cases')
-          ? this.repository.getCasePipeline(actor, filters)
-          : Promise.resolve(null),
-        this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
-      ]);
+    const [
+      totalStudents,
+      watchStudents,
+      casePipeline,
+      riskAreaRows,
+      causeCategoryDistribution,
+      monthlySuccessRates,
+    ] = await Promise.all([
+      this.repository.countStudents(actor, filters),
+      hasActorPermission(actor, 'dashboard')
+        ? this.repository.countHighRiskStudents(actor, filters)
+        : Promise.resolve(0),
+      hasActorPermission(actor, 'dashboard')
+        ? this.repository.getCasePipeline(actor, filters)
+        : Promise.resolve(null),
+      this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
+      this.repository.getCauseCategoryDistribution(actor, filters),
+      this.repository.getMonthlySuccessRates(actor, filters),
+    ]);
 
     const baseQuery = this.targetQuery(filters);
     const metrics: HomeDashboardMetric[] = [
       {
         key: 'totalStudents',
-        label: 'ทั้งหมด',
+        label: 'นักเรียนทั้งหมด',
         value: totalStudents,
         targetPath: '/students',
         targetQuery: baseQuery,
@@ -191,7 +196,7 @@ export class HomeDashboardService {
     if (sections.includes('riskDistribution')) {
       metrics.push({
         key: 'watchStudents',
-        label: 'เสี่ยง',
+        label: 'นักเรียนกลุ่มเสี่ยง',
         value: watchStudents,
         targetPath: '/student-risk-report',
         targetQuery: { ...baseQuery, riskTier: 'HIGH' },
@@ -199,21 +204,36 @@ export class HomeDashboardService {
       });
     }
     if (sections.includes('casePipeline')) {
+      const openCount = casePipeline?.OPEN ?? 0;
+      const inProgressCount = casePipeline?.IN_PROGRESS ?? 0;
+      const pendingReviewCount = casePipeline?.PENDING_REVIEW ?? 0;
+      const resolvedCount = casePipeline?.RESOLVED ?? 0;
+      const ongoingCount = openCount + inProgressCount + pendingReviewCount;
+      const totalCount = ongoingCount + resolvedCount;
+
       metrics.push({
-        key: 'activeCases',
-        label: 'รอติดตาม',
-        value: activeCases,
+        key: 'totalCases',
+        label: 'เคสทั้งหมด',
+        value: totalCount,
         targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'IN_PROGRESS' },
-        tone: activeCases > 0 ? 'warning' : 'success',
+        targetQuery: { ...baseQuery },
+        tone: 'default',
       });
       metrics.push({
-        key: 'pendingReview',
-        label: 'รอพิจารณา',
-        value: casePipeline?.PENDING_REVIEW ?? 0,
+        key: 'inProgressCases',
+        label: 'เคสที่กำลังดำเนินการ',
+        value: ongoingCount,
         targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'PENDING_REVIEW' },
-        tone: (casePipeline?.PENDING_REVIEW ?? 0) > 0 ? 'info' : 'success',
+        targetQuery: { ...baseQuery, status: 'OPEN,IN_PROGRESS,PENDING_REVIEW' },
+        tone: 'warning',
+      });
+      metrics.push({
+        key: 'resolvedCases',
+        label: 'เคสที่เสร็จสิ้น',
+        value: resolvedCount,
+        targetPath: '/cases',
+        targetQuery: { ...baseQuery, status: 'RESOLVED' },
+        tone: 'success',
       });
     }
 
@@ -240,6 +260,8 @@ export class HomeDashboardService {
           })),
         },
         casePipeline,
+        causeCategoryDistribution,
+        monthlySuccessRates,
       },
     };
   }

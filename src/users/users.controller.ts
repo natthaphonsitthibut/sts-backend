@@ -40,7 +40,7 @@ import {
   ChangePasswordDto,
   CreateRoleGroupDto,
   CreateUserDto,
-  DeactivateStudentAccountDto,
+  DeactivateUserAccountDto,
   GetUsersQueryDto,
   LoginDto,
   RoleGroupListQueryDto,
@@ -370,7 +370,7 @@ export class UsersController {
   @Post(':id/deactivate')
   async deactivateAccount(
     @Param('id', ParseIntPipe) id: number,
-    @Body() data: DeactivateStudentAccountDto,
+    @Body() data: DeactivateUserAccountDto,
     @Req() req: Request,
     @CurrentUser() actor: AuthenticatedRequestUser | undefined,
   ) {
@@ -437,7 +437,7 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('manage-users-list', 'manage-users-hard-delete')
+  @RequirePermission('manage-users-list')
   @Delete(':id')
   async deleteUser(
     @Param('id', ParseIntPipe) id: number,

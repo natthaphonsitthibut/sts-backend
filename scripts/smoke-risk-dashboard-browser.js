@@ -263,31 +263,30 @@ async function assertLegacyRouteRedirects(client) {
   );
 }
 
+// Every page in the registry: this smoke walks all of them, so an id missing
+// here shows up as /forbidden instead of as the assertion it was meant to make.
+const ACTOR_PERMISSIONS = [
+  'attendance',
+  'attendance-dashboard',
+  'audit-log',
+  'classrooms',
+  'dashboard',
+  'export-data',
+  'home',
+  'import-data',
+  'manage-curriculum',
+  'manage-role-groups',
+  'manage-school-structure',
+  'manage-teacher-access',
+  'manage-teachers',
+  'manage-users-list',
+  'settings',
+  'students',
+  'timetable',
+];
+
 async function upsertActor(dataSource, passwordHash) {
-  const permissions = [
-    'attendance',
-    'attendance-dashboard',
-    'audit-log',
-    'create',
-    'dashboard',
-    'edit-students',
-    'export-data',
-    'home',
-    'import-data',
-    'import-school-roster',
-    'login-links',
-    'manage-curriculum',
-    'manage-role-groups',
-    'manage-school-structure',
-    'manage-student-accounts',
-    'manage-student-observations',
-    'manage-teacher-access',
-    'manage-teachers',
-    'manage-users-list',
-    'review-cases',
-    'settings',
-    'students',
-  ];
+  const permissions = ACTOR_PERMISSIONS;
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
     await dataSource.query(
@@ -593,12 +592,12 @@ async function assertCanonicalRouteNavigation(client) {
     ['/students', 'รายชื่อนักเรียน', '/students'],
     ['/students/history', 'ประวัติรายชื่อนักเรียน', '/students'],
     ['/students/export', 'ส่งออกข้อมูลนักเรียน', '/students'],
-    ['/attendance/roster', 'เช็คชื่อ', '/attendance'],
-    ['/attendance/check-in', 'เช็คชื่อ', '/attendance'],
-    ['/attendance/history', 'ประวัติการเช็คชื่อ', '/attendance'],
-    ['/visit-links', 'ลิงก์ลงพื้นที่', '/visit-links'],
-    ['/visit-links/history', 'ประวัติลิงก์ลงพื้นที่', '/visit-links'],
-    ['/attendance-links', 'จัดการลิงก์เช็คชื่อ', '/attendance-links'],
+    ['/attendance/roster', 'เช็กชื่อ', '/attendance'],
+    ['/attendance/check-in', 'เช็กชื่อ', '/attendance'],
+    // /attendance/history is a redirect to its first tab, so the walk names the
+    // tab it lands on — asserting the redirect source can never match.
+    ['/attendance/history/attendance', 'ประวัติการเช็กชื่อ', '/attendance'],
+    ['/attendance-links', 'จัดการลิงก์เช็กชื่อ', '/attendance-links'],
     ['/attendance-operations', 'ความครบถ้วน', '/attendance-operations'],
     ['/timetable/rooms', 'ตารางสอน', '/timetable'],
     ['/classrooms', 'ห้องเรียนทั้งหมด', '/classrooms'],
@@ -616,7 +615,6 @@ async function assertCanonicalRouteNavigation(client) {
     ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
     ['/settings', 'ตั้งค่าระบบ', '/settings'],
     ['/settings/student-statuses', 'สถานะนักเรียน', '/settings'],
-    ['/settings/master-data-lookups', 'ข้อมูลพื้นฐาน', '/settings'],
     ['/profile', 'โปรไฟล์ของฉัน', null],
     ['/notifications', 'การแจ้งเตือน', null],
     ['/change-password', 'เปลี่ยนรหัสผ่าน', null],
@@ -644,7 +642,34 @@ async function assertCanonicalRouteNavigation(client) {
         ),
       `Canonical breadcrumb/menu owner was incorrect for ${route}`,
     );
+    await assertSystemFont(client, route);
   }
+}
+
+/**
+ * Every visible element must render in the app's own face. A component that
+ * ships its own stack (or a control that falls back to the UA font) reads as a
+ * different product, so the sweep runs on every canonical route.
+ */
+async function assertSystemFont(client, route) {
+  const offenders = await evaluate(
+    client,
+    `(() => {
+      const found = new Set();
+      document.querySelectorAll('body *').forEach((node) => {
+        if (!node.getClientRects().length) return;
+        const family = getComputedStyle(node).fontFamily || '';
+        if (!family.includes('TH Sarabun PSK')) {
+          found.add(node.tagName.toLowerCase() + '.' + (node.className || '').toString().slice(0, 40) + ' :: ' + family);
+        }
+      });
+      return [...found].slice(0, 5);
+    })()`,
+  );
+  assert(
+    Array.isArray(offenders) && offenders.length === 0,
+    `${route} renders in another font: ${(offenders || []).join(' | ')}`,
+  );
 }
 
 async function assertManualCaseFlow(client, row, createdCaseIds) {
@@ -653,6 +678,7 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   const reason = `${MANUAL_CASE_REASON_PREFIX} ${Date.now()}`;
 
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
+  assert(row.latestCaseId, 'risk row without an active case did not expose its latest case id');
   try {
     await waitFor(
       async () =>
@@ -662,10 +688,14 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
             const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
               .find((candidate) => candidate.offsetParent !== null
                 && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-            return Boolean(row?.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]'));
+            return Boolean(
+              row?.querySelector(
+                'a[aria-label^="ดูรายละเอียดเคสของ "][href="/cases/${String(row.latestCaseId)}"]',
+              ) && row?.querySelector('button[aria-label="แชร์ลิงก์"]')
+            );
           })()`,
         ),
-      'risk dashboard did not expose the manual case action',
+      'risk dashboard did not expose the canonical case detail/share actions',
     );
   } catch (error) {
     const diagnostic = await evaluate(
@@ -683,34 +713,6 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     );
     throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
   }
-  await evaluate(
-    client,
-    `(() => {
-      const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
-        .find((candidate) => candidate.offsetParent !== null
-          && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-      row?.querySelector('button[aria-label="เปิดเคสติดตามนักเรียน"]')?.click();
-    })()`,
-  );
-  await waitFor(
-    async () =>
-      evaluate(
-        client,
-        `(() => {
-          const dialog = document.querySelector('[role="dialog"]');
-          return Boolean(dialog
-            && dialog.innerText.includes('เปิดเคสติดตามนักเรียน')
-            && getComputedStyle(dialog).textAlign === 'left');
-        })()`,
-      ),
-    'manual case dialog did not render with canonical left alignment',
-  );
-  await evaluate(
-    client,
-    `Array.from(document.querySelectorAll('[role="dialog"] button'))
-      .find((button) => button.innerText.trim() === 'ยกเลิก')?.click()`,
-  );
-
   await navigate(client, `${FRONTEND_URL}/students/${studentId}`);
   await waitFor(
     async () =>
@@ -784,23 +786,38 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     return text.includes('เหตุผลที่เปิดเคส') && text.includes(reason);
   }, 'case detail did not render the submitted reason');
 
-  const detailBadge = await evaluate(
+  const detailStatus = await evaluate(
     client,
     `(() => {
-      const badge = document.querySelector('[data-case-status="OPEN"]');
-      if (!badge) return null;
-      const style = getComputedStyle(badge);
-      return { color: style.color, backgroundColor: style.backgroundColor };
+      // The case header composes the workflow phase onto the status
+      // (\`รอมอบหมาย : ติดตาม\`), so match the status prefix rather than the
+      // bare label — the badge in the table is the one that stays short.
+      const label = [...document.querySelectorAll('span')].find(
+        (node) => node.textContent?.trim().startsWith('รอมอบหมาย')
+          && node.parentElement?.textContent?.includes('สถานะการติดตาม'),
+      );
+      if (!label) return null;
+      const style = getComputedStyle(label);
+      return {
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+        borderWidth: style.borderTopWidth,
+        text: label.textContent?.trim(),
+      };
     })()`,
   );
-  assert(detailBadge, 'case detail did not render the OPEN status badge');
+  assert(detailStatus, 'case detail did not render the OPEN status text');
   assert(
-    detailBadge.color === 'rgb(245, 158, 11)',
-    `OPEN detail badge used ${detailBadge.color} instead of #F59E0B`,
+    detailStatus.text === 'รอมอบหมาย : ติดตาม',
+    `OPEN detail status used unexpected label ${detailStatus.text}`,
   );
   assert(
-    detailBadge.backgroundColor === 'rgb(254, 241, 219)',
-    `OPEN detail badge used unexpected soft-fill ${detailBadge.backgroundColor}`,
+    detailStatus.color === 'rgb(245, 158, 11)',
+    `OPEN detail status used ${detailStatus.color} instead of #F59E0B`,
+  );
+  assert(
+    detailStatus.backgroundColor === 'rgba(0, 0, 0, 0)' && detailStatus.borderWidth === '0px',
+    `OPEN detail status unexpectedly used badge chrome background=${detailStatus.backgroundColor} border=${detailStatus.borderWidth}`,
   );
 
   const caseId = Number(
@@ -812,11 +829,13 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
   const tableBadge = await evaluate(
     client,
     `(() => {
-      const source = document.querySelector('[data-case-status="OPEN"]');
-      if (!source) return null;
       const table = document.createElement('div');
       table.setAttribute('data-slot', 'data-table');
-      const badge = source.cloneNode(true);
+      const badge = document.createElement('span');
+      badge.setAttribute('data-slot', 'badge');
+      badge.setAttribute('data-case-status', 'OPEN');
+      badge.setAttribute('data-variant', 'secondary');
+      badge.textContent = 'รอมอบหมาย';
       table.appendChild(badge);
       document.body.appendChild(table);
       const style = getComputedStyle(badge);
@@ -835,7 +854,7 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
     `OPEN table badge used color=${tableBadge.color} border=${tableBadge.borderColor}`,
   );
   assert(
-    tableBadge.backgroundColor !== detailBadge.backgroundColor,
+    tableBadge.backgroundColor !== detailStatus.backgroundColor,
     'case table and detail badges unexpectedly used the same visual treatment',
   );
 
@@ -869,10 +888,12 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
             const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
               .find((candidate) => candidate.offsetParent !== null
                 && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-            return Boolean(row?.querySelector('button[aria-label^="ดูเคสที่กำลังติดตาม"]'));
+            return Boolean(row?.querySelector(
+              'a[aria-label^="ดูรายละเอียดเคสของ "][href="/cases/${caseId}"]',
+            ));
           })()`,
         ),
-      'risk dashboard did not expose the active case list action',
+      'risk dashboard did not expose the active case detail action',
     );
   } catch (error) {
     const diagnostic = await evaluate(
@@ -896,25 +917,13 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
       const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
         .find((candidate) => candidate.offsetParent !== null
           && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
-      row?.querySelector('button[aria-label^="ดูเคสที่กำลังติดตาม"]')?.click();
+      row?.querySelector('a[aria-label^="ดูรายละเอียดเคสของ "][href="/cases/${caseId}"]')?.click();
     })()`,
-  );
-  await waitFor(async () => {
-    const text = await evaluate(
-      client,
-      `document.querySelector('[role="dialog"]')?.innerText ?? ''`,
-    );
-    return text.includes('เคสที่กำลังติดตาม') && text.includes(reason);
-  }, 'active case list dialog did not render the student case');
-  await evaluate(
-    client,
-    `Array.from(document.querySelectorAll('[role="dialog"] button'))
-      .find((button) => button.innerText.trim() === 'ดูรายละเอียด')?.click()`,
   );
   await waitFor(
     async () =>
       evaluate(client, `window.location.pathname === ${JSON.stringify(`/cases/${caseId}`)}`),
-    'active case list did not navigate to the selected case detail',
+    'active case detail action did not navigate to the selected case',
   );
   await capture(client, '/tmp/sts-manual-case-detail.png');
 }
@@ -988,7 +997,7 @@ async function cleanupManualCases(dataSource, caseIds, actorId) {
 }
 
 async function assertCanonicalPageWidths(client) {
-  const routes = ['/student-risk-report', '/manage-users', '/manage-student-accounts'];
+  const routes = ['/student-risk-report', '/manage-users'];
   const widths = [];
   for (const route of routes) {
     await navigate(client, `${FRONTEND_URL}${route}`);
@@ -1014,9 +1023,8 @@ async function assertCanonicalPageWidths(client) {
 }
 
 async function assertStatusSummaryCardFilters(client) {
-  // /manage-users and /manage-student-accounts dropped their selectable
-  // summary cards in the roster redesign; only these routes keep the pattern.
-  const routes = ['/student-risk-report/risk', '/visit-links'];
+  // These roster pages use fixed summaries; only this route keeps selectable cards.
+  const routes = ['/student-risk-report/risk'];
 
   for (const route of routes) {
     await navigate(client, `${FRONTEND_URL}${route}`);
@@ -1195,7 +1203,7 @@ async function assertMobileFilterReset(client, expectedStudentName) {
 async function assertCollapsedGroupAccordion(client) {
   await navigate(client, `${FRONTEND_URL}/attendance`);
   await waitFor(
-    async () => (await bodyText(client)).includes('เช็คชื่อ'),
+    async () => (await bodyText(client)).includes('เช็กชื่อ'),
     'Attendance page did not render before sidebar verification',
   );
 
@@ -1224,7 +1232,7 @@ async function assertCollapsedGroupAccordion(client) {
     client,
     `(() => {
       const button = Array.from(document.querySelectorAll('aside button'))
-        .find((candidate) => candidate.innerText.includes('ระบบเช็คชื่อ'));
+        .find((candidate) => candidate.innerText.includes('ระบบเช็กชื่อ'));
       if (!button || button.getAttribute('aria-expanded') !== 'true') return false;
       button.click();
       return true;
@@ -1236,7 +1244,7 @@ async function assertCollapsedGroupAccordion(client) {
       evaluate(
         client,
         `(() => Array.from(document.querySelectorAll('aside button'))
-          .some((button) => button.innerText.includes('ระบบเช็คชื่อ')
+          .some((button) => button.innerText.includes('ระบบเช็กชื่อ')
             && button.getAttribute('aria-expanded') === 'false'))()`,
       ),
     'active attendance group could not be collapsed',
@@ -1245,7 +1253,7 @@ async function assertCollapsedGroupAccordion(client) {
     client,
     `(() => {
       const button = Array.from(document.querySelectorAll('aside button'))
-        .find((candidate) => candidate.innerText.includes('ระบบเช็คชื่อ'));
+        .find((candidate) => candidate.innerText.includes('ระบบเช็กชื่อ'));
       button?.click();
       return Boolean(button);
     })()`,
@@ -1283,11 +1291,13 @@ async function assertCollapsedGroupAccordion(client) {
   const collapsedState = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('aside button[aria-label="ระบบเช็คชื่อ"]');
+      const button = document.querySelector('aside button[aria-label="ระบบเช็กชื่อ"]');
+      const child = document.querySelector('aside a[href="/attendance"]');
       const main = document.querySelector('main');
       return {
-        active: button?.getAttribute('aria-current') === 'page',
+        parentActive: button?.getAttribute('aria-current') === 'page',
         background: button ? getComputedStyle(button).backgroundColor : null,
+        childActive: child?.getAttribute('aria-current') === 'page',
         mainLeft: main?.getBoundingClientRect().left ?? null,
         transitionDuration: document.querySelector('aside')
           ? getComputedStyle(document.querySelector('aside')).transitionDuration
@@ -1295,10 +1305,20 @@ async function assertCollapsedGroupAccordion(client) {
       };
     })()`,
   );
-  assert(collapsedState.active, 'collapsed sidebar did not mark the active attendance parent');
+  // Owner decision (2026-08-15): the active treatment belongs to the child menu
+  // item alone. The collapsed parent icon carries no active state — it is only a
+  // group toggle — so this asserts the absence on purpose.
   assert(
-    collapsedState.background === 'rgb(231, 237, 248)',
-    `collapsed attendance parent active surface drifted: ${collapsedState.background}`,
+    !collapsedState.parentActive,
+    'collapsed sidebar marked the group parent as the active page',
+  );
+  assert(
+    collapsedState.background === 'rgba(0, 0, 0, 0)',
+    `collapsed group parent picked up a surface colour: ${collapsedState.background}`,
+  );
+  assert(
+    collapsedState.childActive,
+    'the active child menu item lost its active state while the sidebar was collapsed',
   );
   assert(
     String(collapsedState.transitionDuration).includes('0.3s'),
@@ -1617,9 +1637,9 @@ async function assertSharedVisualSystem(client) {
     colors.pageBackground === 'rgb(250, 250, 250)',
     `Shared page background drifted: ${colors.pageBackground}`,
   );
-  // --color-breadcrumb-muted (#737373) from the shared token sheet.
+  // --color-breadcrumb-muted (#525252) from the shared token sheet.
   assert(
-    colors.previousPage === 'rgb(115, 115, 115)',
+    colors.previousPage === 'rgb(82, 82, 82)',
     `Previous breadcrumb ink drifted: ${colors.previousPage}`,
   );
   assert(colors.currentPage === 'rgb(17, 17, 17)', `Breadcrumb ink drifted: ${colors.currentPage}`);
@@ -1736,30 +1756,7 @@ async function main() {
       FirstName: 'Risk Dashboard',
       LastName: 'Browser Smoke',
       roles: ['ADMIN'],
-      permissions: [
-        'attendance',
-        'attendance-dashboard',
-        'audit-log',
-        'create',
-        'dashboard',
-        'edit-students',
-        'export-data',
-        'home',
-        'import-data',
-        'import-school-roster',
-        'login-links',
-        'manage-curriculum',
-        'manage-role-groups',
-        'manage-school-structure',
-        'manage-student-accounts',
-        'manage-student-observations',
-        'manage-teacher-access',
-        'manage-teachers',
-        'manage-users-list',
-        'review-cases',
-        'settings',
-        'students',
-      ],
+      permissions: ACTOR_PERMISSIONS,
       data_scope: { school_ids: [10010002] },
       must_change_password: false,
     };
@@ -1773,10 +1770,14 @@ async function main() {
       source: `
         (() => {
           const backendUrl = ${JSON.stringify(BACKEND_URL)};
+          // Keyed on the path, not on a port: the frontend's API base is baked
+          // in at build time, so a pinned port stops rewriting as soon as the
+          // frontend is served against a different backend.
           const rewrite = (url) => {
             if (typeof url !== 'string') return url;
             const parsed = new URL(url, window.location.origin);
-            return parsed.port === '3000' ? backendUrl + parsed.pathname + parsed.search : url;
+            if (!parsed.pathname.startsWith('/api/')) return url;
+            return backendUrl + parsed.pathname + parsed.search;
           };
           const originalFetch = window.fetch;
           window.fetch = (input, init) => originalFetch(

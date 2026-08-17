@@ -19,10 +19,9 @@ const EXPECTED = [
   { username: 'worapon.d', role: 'ADMIN' },
   { username: 'preeya.p', role: 'DIRECTOR' },
   { username: 'thanakorn.p', role: 'EXECUTIVE' },
-  { username: 'suphawadi.w', role: 'TEACHER' },
-  { username: 'chanwit.j', role: 'TEACHER' },
-  { username: 'narongsak.k', role: 'TEACHER' },
-  { username: '10010002-P7XKD', role: 'STUDENT' },
+  // The teacher and student accounts this migration also renamed were deleted
+  // with their roles — teachers reach the system through a link and students
+  // have no login at all — so only the staff accounts are still checkable.
 ];
 
 function assert(condition, message) {

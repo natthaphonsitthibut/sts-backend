@@ -5,13 +5,13 @@ import { TaskService } from './task.service';
 import { TaskController } from './task.controller';
 import { AdminController } from './admin.controller';
 import { StatsController } from './stats.controller';
-import { DelegationController } from './delegation.controller';
-import { DelegationService } from './delegation.service';
 import { SubmissionController } from './submission.controller';
 import { EmailModule } from '../common/email/email.module';
 import { CaseController } from './case.controller';
 import { CaseService } from './case.service';
 import { AutomationModule } from '../automation/automation.module';
+import { AraIdChallengeStore } from '../araid/araid-challenge.store';
+import { AraIdModule } from '../araid/araid.module';
 import { TaskRepository } from './task.repository';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
@@ -26,6 +26,7 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
 @Module({
   imports: [
+    AraIdModule,
     AutomationModule,
     AttendanceModule,
     NotificationsModule,
@@ -37,12 +38,12 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     TaskController,
     AdminController,
     StatsController,
-    DelegationController,
     SubmissionController,
     CaseController,
     CaseTrackingOptionsController,
   ],
   providers: [
+    AraIdChallengeStore,
     TaskRepository,
     TaskPolicyService,
     TaskLifecycleService,
@@ -51,17 +52,9 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     TaskSubmissionService,
     TaskStatsService,
     TaskService,
-    DelegationService,
     CaseService,
     CaseTrackingOptionsService,
   ],
-  exports: [
-    TaskService,
-    DelegationService,
-    CaseService,
-    TaskPolicyService,
-    TaskAccessService,
-    TaskRepository,
-  ],
+  exports: [TaskService, CaseService, TaskPolicyService, TaskAccessService, TaskRepository],
 })
 export class TaskModule {}

@@ -134,7 +134,7 @@ describe('PiiExportService', () => {
                 id: 1,
                 name: 'ADMIN',
                 label: 'Admin',
-                rank: 5,
+                sort_order: 5,
                 default_permissions: ['students'],
                 scope_mode: 'flexible',
                 scope_policy: 'ASSIGNABLE',

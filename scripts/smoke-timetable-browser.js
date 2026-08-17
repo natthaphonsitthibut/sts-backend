@@ -590,14 +590,14 @@ async function main() {
       dataSource,
       await passwordService.hash(password),
       MANAGER_USERNAME,
-      ['home', 'create', 'manage-timetable', 'attendance-dashboard'],
+      ['home', 'dashboard', 'timetable', 'attendance-dashboard'],
       { global: true },
     );
     const scopedOtherSchoolActor = await upsertActor(
       dataSource,
       await passwordService.hash(password),
       SCOPED_OTHER_SCHOOL_USERNAME,
-      ['home', 'manage-timetable'],
+      ['home', 'timetable'],
       { school_ids: [otherSchoolId] },
     );
     const staffActor = await upsertActor(
@@ -682,7 +682,7 @@ async function main() {
       FirstName: 'Timetable',
       LastName: 'Browser Smoke',
       roles: ['ADMIN'],
-      permissions: ['home', 'create', 'manage-timetable', 'attendance-dashboard'],
+      permissions: ['home', 'dashboard', 'timetable', 'attendance-dashboard'],
       data_scope: { global: true },
       must_change_password: false,
     };
@@ -692,7 +692,7 @@ async function main() {
       FirstName: 'Timetable',
       LastName: 'Browser Smoke',
       roles: ['ADMIN'],
-      permissions: ['home', 'manage-timetable'],
+      permissions: ['home', 'timetable'],
       data_scope: { school_ids: [otherSchoolId] },
       must_change_password: false,
     };
@@ -913,7 +913,7 @@ async function main() {
           hasOwnData: text.includes('ข้อมูลตัวเอง'),
           hasTimetable: text.includes('ตารางเรียน'),
           hasHome: text.includes('หน้าหลัก'),
-          hasAttendanceGroup: text.includes('ระบบเช็คชื่อ')
+          hasAttendanceGroup: text.includes('ระบบเช็กชื่อ')
         };
       })()`,
     );

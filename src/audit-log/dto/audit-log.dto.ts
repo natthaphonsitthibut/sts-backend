@@ -36,6 +36,7 @@ export const AUDIT_ACTIONS = [
   'CASE_CREATE',
   'CASE_CLOSE',
   'CASE_REFER_AGENCY',
+  'CASE_ASSIST',
   'CASE_REVIEW',
   'CASE_AUTO_CANCEL',
   'CASE_RISK_SIGNAL_DETECTED',
@@ -49,6 +50,7 @@ export const AUDIT_ACTIONS = [
   'LINK_LOCK',
   'LINK_UNLOCK',
   'TEACHER_ACCESS_GRANT_ISSUE',
+  'TEACHER_ACCESS_GRANT_UPDATE',
   'TEACHER_ACCESS_GRANT_REVOKE',
   'TEACHER_ACCESS_GRANT_ROTATE',
   'TEACHER_ACCESS_GRANT_USE',
@@ -58,6 +60,7 @@ export const AUDIT_ACTIONS = [
   'TEACHER_ACCESS_OTP_REQUEST',
   'TEACHER_ACCESS_OTP_FAILED',
   'TEACHER_ACCESS_ARAID_VERIFY',
+  'TASK_LINK_ARAID_VERIFY',
   'TEACHER_ACCESS_ARAID_FAILED',
   'TEACHER_MESSAGING_LINK',
   'TEACHER_LINE_INVITATION_ISSUE',
@@ -90,7 +93,6 @@ export const AUDIT_LOG_DOMAINS = [
   'student_accounts',
   'imports',
   'users',
-  'login_links',
   'students',
   'cases',
   'tasks',
@@ -100,7 +102,7 @@ export const AUDIT_LOG_DOMAINS = [
 
 export type AuditLogDomain = (typeof AUDIT_LOG_DOMAINS)[number];
 
-export const AUDIT_LOG_TASK_TYPES = ['ATTENDANCE', 'VISIT', 'LOGIN'] as const;
+export const AUDIT_LOG_TASK_TYPES = ['VISIT', 'ASSIST'] as const;
 
 export type AuditLogTaskType = (typeof AUDIT_LOG_TASK_TYPES)[number];
 

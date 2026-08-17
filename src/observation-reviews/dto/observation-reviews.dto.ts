@@ -13,14 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
-import {
-  FOLLOW_UP_REVIEW_DECISIONS,
-  FOLLOW_UP_URGENCIES,
-  HUMAN_RISK_DECISIONS,
-  type FollowUpReviewDecision,
-  type FollowUpUrgency,
-  type HumanRiskDecision,
-} from '../observation-reviews.types';
+import { HUMAN_RISK_DECISIONS, type HumanRiskDecision } from '../observation-reviews.types';
 
 function trimText({ value }: { value: unknown }): unknown {
   return typeof value === 'string' ? value.trim() : value;
@@ -58,63 +51,6 @@ export class CreateRiskReviewDto {
   @ValidateNested({ each: true })
   @Type(() => ObservationSourceRefDto)
   sourceObservations!: ObservationSourceRefDto[];
-}
-
-export class CreateFollowUpRequestBaseDto {
-  @IsIn(FOLLOW_UP_URGENCIES)
-  urgency!: FollowUpUrgency;
-
-  @Transform(trimText)
-  @IsString()
-  @MinLength(1)
-  @MaxLength(1000)
-  reason!: string;
-
-  @IsOptional()
-  @Transform(trimText)
-  @IsString()
-  @MinLength(1)
-  @MaxLength(2000)
-  note?: string;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(20)
-  @ValidateNested({ each: true })
-  @Type(() => ObservationSourceRefDto)
-  sourceObservations: ObservationSourceRefDto[] = [];
-}
-
-export class CreateFollowUpRequestDto extends CreateFollowUpRequestBaseDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  assignmentId?: number;
-}
-
-export class ReviewFollowUpRequestDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  expectedRevision!: number;
-
-  @IsIn(FOLLOW_UP_REVIEW_DECISIONS)
-  decision!: FollowUpReviewDecision;
-
-  @Transform(trimText)
-  @IsString()
-  @MinLength(1)
-  @MaxLength(1000)
-  reason!: string;
-}
-
-export class ListFollowUpRequestsQueryDto extends PaginationQueryDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  assignmentId?: number;
 }
 
 export class ListTeacherObservationReportsQueryDto extends PaginationQueryDto {
@@ -197,66 +133,6 @@ export class ListTeacherWatchlistQueryDto extends PaginationQueryDto {
   room?: string;
 }
 
-export class ListHomeVisitRequestsQueryDto extends PaginationQueryDto {
-  @IsOptional()
-  @IsIn(['PENDING_REVIEW', 'APPROVED', 'REJECTED'])
-  status?: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
-
-  @IsOptional()
-  @IsIn(FOLLOW_UP_URGENCIES)
-  urgency?: FollowUpUrgency;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  schoolId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  gradeLevelId?: number;
-
-  @IsOptional()
-  @IsUUID()
-  roomId?: string;
-
-  @IsOptional()
-  @Transform(trimText)
-  @IsString()
-  @MaxLength(120)
-  searchTerm?: string;
-
-  @IsOptional()
-  @IsIn(['studentName', 'reason', 'urgency', 'requester', 'status', 'caseStatus'])
-  sortBy?: 'studentName' | 'reason' | 'urgency' | 'requester' | 'status' | 'caseStatus';
-
-  @IsOptional()
-  @IsIn(['asc', 'desc'])
-  sortDirection?: 'asc' | 'desc';
-}
-
-export class PublicFollowUpRequestsQueryDto extends PaginationQueryDto {
-  @IsUUID()
-  studentTermId!: string;
-
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  assignmentId!: number;
-}
-
-export class CreatePublicFollowUpRequestDto extends CreateFollowUpRequestBaseDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  assignmentId!: number;
-
-  @IsUUID()
-  studentTermId!: string;
-}
-
 export class ObservationSourceResponseDto {
   observationId!: number;
   revision!: number;
@@ -281,50 +157,8 @@ export class HumanRiskReviewResponseDto {
   sourceObservations!: ObservationSourceResponseDto[];
 }
 
-export class FollowUpReviewOutcomeResponseDto {
-  decision!: FollowUpReviewDecision;
-  reason!: string | null;
-  reviewedBy!: ObservationReviewActorResponseDto;
-  reviewedAt!: string;
-}
-
-export class FollowUpAssignmentResponseDto {
-  taskId!: string;
-  assignedBy!: ObservationReviewActorResponseDto;
-  assignedAt!: string;
-}
-
-export class FollowUpCaseResponseDto {
-  caseId!: number;
-  status!: string;
-}
-
-export class StudentFollowUpRequestResponseDto {
-  id!: string;
-  studentTermId!: string;
-  schoolId!: number;
-  requestType!: 'HOME_VISIT_CONSIDERATION';
-  status!: 'PENDING_REVIEW' | FollowUpReviewDecision | 'NEED_MORE_INFO';
-  statusPresentation!: {
-    labelTh: string;
-    badgeVariant: string;
-  };
-  urgency!: FollowUpUrgency;
-  reason!: string;
-  note!: string | null;
-  requestedBy!: ObservationReviewActorResponseDto;
-  assignmentId!: number;
-  review!: FollowUpReviewOutcomeResponseDto | null;
-  assignment!: FollowUpAssignmentResponseDto | null;
-  openedCase!: FollowUpCaseResponseDto | null;
-  revision!: number;
-  sourceObservations!: ObservationSourceResponseDto[];
-  createdAt!: string;
-  updatedAt!: string;
-}
-
 export class TeacherObservationReportResponseDto {
-  reportKind!: 'FOLLOW_UP_REQUEST' | 'OBSERVATION';
+  reportKind!: 'OBSERVATION';
   reportId!: string;
   observationId!: string;
   observationRevision!: number;
@@ -341,11 +175,6 @@ export class TeacherObservationReportResponseDto {
   concernLevel!: 'NOTE' | 'WATCH' | 'CONCERN';
   comment!: string | null;
   observedAt!: string;
-  followUpRequestId!: string | null;
-  followUpStatus!: 'PENDING_REVIEW' | FollowUpReviewDecision | null;
-  urgency!: FollowUpUrgency | null;
-  openedCaseId!: number | null;
-  openedCaseStatus!: string | null;
 }
 
 export class TeacherWatchlistResponseDto {
@@ -365,17 +194,10 @@ export class TeacherWatchlistResponseDto {
 export class StudentClassroomCommentResponseDto {
   id!: string;
   studentTermId!: string;
-  comment!: string;
+  problemCategory!: string;
+  problemCategoryLabel!: string;
+  problemCategoryGuidance!: string | null;
+  problemDescription!: string;
   authorDisplayName!: string;
   commentedAt!: string;
-}
-
-export class HomeVisitRequestReportResponseDto extends StudentFollowUpRequestResponseDto {
-  student!: {
-    studentTermId: string;
-    displayName: string;
-    schoolName: string;
-    gradeLabel: string | null;
-    roomNo: number | null;
-  };
 }

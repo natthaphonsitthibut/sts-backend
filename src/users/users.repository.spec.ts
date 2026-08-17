@@ -1,73 +1,7 @@
 import { UsersRepository } from './users.repository';
 
-function expectCurrentEnrollmentPolicy(sql: string) {
-  expect(sql).toContain('student_current_enrollment_resolution');
-  expect(sql).toContain("current_enrollment.resolution_state = 'ACTIVE'");
-  expect(sql).toContain('current_enrollment.selected_student_uuid = s.student_uuid');
-  expect(sql).not.toContain('"StudentStatusID_Onec" = 10');
-}
-
-describe('UsersRepository student account queries', () => {
-  it('filters account-generation candidates through current enrollment policy', async () => {
-    const queries: string[] = [];
-    const repository = new UsersRepository({} as never);
-    const executor = {
-      query: jest.fn((sql: string) => {
-        queries.push(sql);
-        return Promise.resolve({ rows: [], rowCount: 0 });
-      }),
-    };
-
-    await repository.listStudentAccountCandidates({ schoolId: 10010002 }, executor);
-
-    expectCurrentEnrollmentPolicy(queries[0]);
-  });
-
-  it('combines actor scope with selected-student and name filters', async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
-    const repository = new UsersRepository({} as never);
-    const executor = {
-      query: jest.fn((sql: string, params: unknown[] = []) => {
-        calls.push({ sql, params });
-        return Promise.resolve({ rows: [], rowCount: 0 });
-      }),
-    };
-    const studentId = '00000000-0000-4000-8000-000000000001';
-
-    await repository.listStudentAccountCandidates(
-      {
-        actorScope: { school_ids: [10010002] },
-        studentIds: [studentId],
-        searchTerm: 'สมชาย',
-      },
-      executor,
-    );
-
-    expect(calls[0].sql).toContain('s."SchoolID_Onec"');
-    expect(calls[0].sql).toContain('s.student_uuid = ANY(');
-    expect(calls[0].sql).toContain('CONCAT_WS(\' \', s."FirstName_Onec"');
-    expect(calls[0].params).toContainEqual([10010002]);
-    expect(calls[0].params).toContainEqual([studentId]);
-    expect(calls[0].params).toContain('%สมชาย%');
-  });
-
-  it('escapes LIKE wildcards in the name search term', async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
-    const repository = new UsersRepository({} as never);
-    const executor = {
-      query: jest.fn((sql: string, params: unknown[] = []) => {
-        calls.push({ sql, params });
-        return Promise.resolve({ rows: [], rowCount: 0 });
-      }),
-    };
-
-    await repository.listStudentAccountCandidates({ searchTerm: '100%_a\\b' }, executor);
-
-    expect(calls[0].sql).toContain("ESCAPE '\\'");
-    expect(calls[0].params).toContain('%100\\%\\_a\\\\b%');
-  });
-
-  it('filters managed student accounts through current enrollment policy', async () => {
+describe('UsersRepository user list queries', () => {
+  it('selects role usage without a trailing select-list comma', async () => {
     const queries: string[] = [];
     const repository = new UsersRepository({
       createQueryRunner: () => ({
@@ -75,22 +9,18 @@ describe('UsersRepository student account queries', () => {
         release: jest.fn().mockResolvedValue(undefined),
         query: jest.fn().mockImplementation((sql: string) => {
           queries.push(sql);
-          return queries.length === 1
-            ? Promise.resolve({ records: [{ count: 0 }], affected: 1 })
-            : Promise.resolve({ records: [], affected: 0 });
+          return Promise.resolve({ records: [], affected: 0 });
         }),
       }),
     } as never);
 
-    await repository.listStudentAccountsPaginated({ schoolId: 10010002 });
+    await repository.listRoleRows(true, 10010009);
 
-    expect(queries).toHaveLength(2);
-    expectCurrentEnrollmentPolicy(queries[0]);
-    expectCurrentEnrollmentPolicy(queries[1]);
+    expect(queries[0]).toContain(
+      'COALESCE(u.user_count, 0)::int AS user_count\n          FROM roles r',
+    );
   });
-});
 
-describe('UsersRepository user list queries', () => {
   it('applies requested user sorting before pagination', async () => {
     const queries: string[] = [];
     const repository = new UsersRepository({
@@ -107,14 +37,14 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'ADMIN',
-      actorRank: 5,
+      actorPermissions: ['home', 'manage-users-list'],
       sortBy: 'affiliation',
       sortOrder: 'asc',
     });
 
     expect(queries[2]).toContain("ORDER BY COALESCE(u.affiliation, '') ASC, u.id ASC");
-    expect(queries[2]).toContain('teacher_membership_attention_required');
-    expect(queries[2]).toContain("active_membership.membership_status = 'ACTIVE'");
+    expect(queries[2]).toContain('OR r.name = $2');
+    expect(queries[2]).toContain("default_permissions, '[]'::jsonb) <@ $3::jsonb");
   });
 
   it('filters rows by lifecycle status without narrowing summary counts', async () => {
@@ -139,7 +69,7 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'ADMIN',
-      actorRank: 5,
+      actorPermissions: ['home', 'manage-users-list'],
       accountStatus: 'ACTIVE',
     });
 

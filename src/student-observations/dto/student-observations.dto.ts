@@ -131,28 +131,6 @@ export class CreatePublicStudentObservationDto extends StudentObservationPayload
   studentTermId!: string;
 }
 
-export class CreateTaskLinkStudentObservationDto extends StudentObservationPayloadDto {
-  @IsUUID()
-  studentTermId!: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  timetableSlotId?: number;
-}
-
-export class TaskLinkStudentObservationQueryDto extends PaginationQueryDto {
-  @IsUUID()
-  studentTermId!: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  timetableSlotId?: number;
-}
-
 export class UpdatePublicStudentObservationDto extends UpdateStudentObservationDto {
   @Type(() => Number)
   @IsInt()

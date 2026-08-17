@@ -32,7 +32,6 @@ describe('AttendanceController access', () => {
     'getSchools',
     'getStudents',
     'getHistory',
-    'getAttendanceTasks',
     'getRooms',
   ];
 
@@ -55,12 +54,14 @@ describe('AttendanceController access', () => {
 
   it('allows attendance lookup/task reads to the required actors only', () => {
     const guard = new PermissionsGuard(new Reflector());
-    const attendanceLookupMethods: Array<keyof AttendanceController> = ['getAttendanceTasks'];
+    const attendanceLookupMethods: Array<keyof AttendanceController> = ['getRooms'];
 
     for (const method of attendanceLookupMethods) {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'attendance',
         'attendance-dashboard',
+        'students',
+        'export-data',
       ]);
       expect(guard.canActivate(contextWithPermissions(method, ['attendance']))).toBe(true);
       expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
@@ -78,16 +79,13 @@ describe('AttendanceController access', () => {
         'students',
         'manage-school-structure',
         'import-data',
-        'import-school-roster',
         'export-data',
       ]);
       expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
       expect(() =>
         guard.canActivate(contextWithPermissions(method, ['manage-teacher-access'])),
       ).toThrow(ForbiddenException);
-      expect(guard.canActivate(contextWithPermissions(method, ['import-school-roster']))).toBe(
-        true,
-      );
+      expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
       expect(guard.canActivate(contextWithPermissions(method, ['export-data']))).toBe(true);
       expect(() => guard.canActivate(contextWithPermissions(method, ['home']))).toThrow(
         ForbiddenException,
@@ -141,14 +139,13 @@ describe('AttendanceController access', () => {
     for (const method of calendarReadMethods) {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'attendance-dashboard',
-        'manage-attendance-calendar',
       ]);
       expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
         true,
       );
-      expect(
-        guard.canActivate(contextWithPermissions(method, ['manage-attendance-calendar'])),
-      ).toBe(true);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
+        true,
+      );
       expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
         ForbiddenException,
       );
@@ -156,10 +153,8 @@ describe('AttendanceController access', () => {
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTerms'))).toEqual([
       'attendance-dashboard',
-      'manage-attendance-calendar',
       'manage-school-structure',
       'import-data',
-      'import-school-roster',
     ]);
     expect(
       guard.canActivate(contextWithPermissions('listTerms', ['manage-school-structure'])),
@@ -170,7 +165,7 @@ describe('AttendanceController access', () => {
     expect(guard.canActivate(contextWithPermissions('listTerms', ['import-data']))).toBe(true);
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('upsertTerm'))).toEqual([
-      'manage-attendance-calendar',
+      'attendance-dashboard',
       'manage-school-structure',
     ]);
     expect(
@@ -179,14 +174,105 @@ describe('AttendanceController access', () => {
 
     for (const method of calendarWriteMethods) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([
-        'manage-attendance-calendar',
+        'attendance-dashboard',
       ]);
-      expect(
-        guard.canActivate(contextWithPermissions(method, ['manage-attendance-calendar'])),
-      ).toBe(true);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
+        true,
+      );
       expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
         ForbiddenException,
       );
     }
+  });
+});
+
+describe('AttendanceController import scope', () => {
+  const actor = { id: 7, username: 'teacher' } as never;
+
+  function buildController(): {
+    controller: AttendanceController;
+    assertClassroomAccess: jest.Mock;
+    importService: {
+      recordApplied: jest.Mock;
+      listApplied: jest.Mock;
+      openApplied: jest.Mock;
+    };
+  } {
+    const assertClassroomAccess = jest
+      .fn()
+      .mockRejectedValue(new ForbiddenException('โรงเรียนอยู่นอกขอบเขตของคุณ'));
+    const importService = {
+      recordApplied: jest.fn(),
+      listApplied: jest.fn(),
+      openApplied: jest.fn(),
+    };
+    const controller = new AttendanceController(
+      {} as never,
+      { assertClassroomAccess } as never,
+      importService as never,
+    );
+    return { controller, assertClassroomAccess, importService };
+  }
+
+  // The stored sheet carries student ids and names, so a classroom id from the
+  // query must be checked against the actor's scope — not merely matched.
+  it('refuses import history reads for a classroom outside the actor scope', async () => {
+    const { controller, assertClassroomAccess, importService } = buildController();
+
+    await expect(
+      controller.listImports({ classroomId: 4242, page: 1, limit: 10 }, actor),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(assertClassroomAccess).toHaveBeenCalledWith(4242, actor);
+    expect(importService.listApplied).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stored import download for a classroom outside the actor scope', async () => {
+    const { controller, importService } = buildController();
+
+    await expect(
+      controller.downloadImport(1, 4242, { setHeader: jest.fn() } as never, actor),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(importService.openApplied).not.toHaveBeenCalled();
+  });
+
+  it('refuses to file an import against a classroom outside the actor scope', async () => {
+    const { controller, importService } = buildController();
+
+    await expect(
+      controller.recordImport(
+        undefined,
+        {
+          classroomId: 4242,
+          attendanceDate: '2026-08-17',
+          fileName: 'roster.xlsx',
+          rowCount: 1,
+          appliedCount: 1,
+        },
+        actor,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(importService.recordApplied).not.toHaveBeenCalled();
+  });
+
+  it('files the import under the school and term of the classroom, not the request', async () => {
+    const { controller, assertClassroomAccess, importService } = buildController();
+    assertClassroomAccess.mockResolvedValue({ schoolId: 11, schoolTermId: 22 });
+    importService.recordApplied.mockResolvedValue({ id: '1' });
+
+    await controller.recordImport(
+      undefined,
+      {
+        classroomId: 4242,
+        attendanceDate: '2026-08-17',
+        fileName: 'roster.xlsx',
+        rowCount: 1,
+        appliedCount: 1,
+      },
+      { ...(actor as object), FirstName: 'ครู', LastName: 'ทดสอบ' } as never,
+    );
+
+    expect(importService.recordApplied).toHaveBeenCalledWith(
+      expect.objectContaining({ schoolId: 11, schoolTermId: 22, classroomId: 4242 }),
+    );
   });
 });

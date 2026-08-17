@@ -11,7 +11,7 @@ const actor = {
   id: 7,
   username: 'director',
   roles: ['DIRECTOR'],
-  permissions: ['manage-student-observations'],
+  permissions: ['students'],
   data_scope: { school_ids: [101] },
 } as never;
 const source = {

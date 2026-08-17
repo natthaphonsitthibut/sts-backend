@@ -8,6 +8,8 @@ import { SchoolStructureService } from './school-structure.service';
   imports: [RiskProfileModule],
   controllers: [SchoolStructureController],
   providers: [SchoolStructureRepository, SchoolStructureService],
-  exports: [SchoolStructureService],
+  // The teacher link reads the same classroom history through this repository, so
+  // both surfaces answer with one implementation.
+  exports: [SchoolStructureService, SchoolStructureRepository],
 })
 export class SchoolStructureModule {}

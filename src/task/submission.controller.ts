@@ -53,6 +53,30 @@ export class SubmissionController {
     return normalized;
   }
 
+  private parseOptionCode(value: string | undefined, invalidMessage: string): string | null {
+    const normalized = value?.trim().toUpperCase();
+    if (!normalized) return null;
+    if (normalized.length > 40) {
+      throw new BadRequestException(invalidMessage);
+    }
+    return normalized;
+  }
+
+  /**
+   * Multipart repeats one field per picked value, so the same key arrives as a
+   * string when a single factor is chosen and as an array when several are.
+   */
+  private parseOptionCodeList(value: unknown, invalidMessage: string): string[] {
+    const entries = Array.isArray(value) ? value : value == null ? [] : [value];
+    const codes = entries.map((entry) =>
+      this.parseOptionCode(typeof entry === 'string' ? entry : undefined, invalidMessage),
+    );
+    if (codes.some((code) => code === null)) {
+      throw new BadRequestException(invalidMessage);
+    }
+    return Array.from(new Set(codes as string[]));
+  }
+
   private async cleanupStoredFiles(storageKeys: string[], context: string): Promise<void> {
     const results = await Promise.allSettled(
       storageKeys.map((storageKey) => this.storage.delete(storageKey)),
@@ -78,7 +102,7 @@ export class SubmissionController {
 
     // Validate the public credential before persisting processed files. The
     // submission service repeats this check inside the write flow to close
-    // races with expiry, completion, delegation, or an admin lock.
+    // races with expiry, completion, or an admin lock.
     await this.taskService.assertVisitSubmissionAccess(token, sessionToken);
 
     // Images are re-encoded to strip EXIF/GPS. Documents are signature-checked.
@@ -99,12 +123,24 @@ export class SubmissionController {
     const causeDetail = body.cause_detail || body.notes || '';
     const addressChanged = this.parseBoolean(body.address_changed);
     const data = {
-      cause_category: body.cause_category,
-      follow_up_assessment_code: body.follow_up_assessment_code,
+      follow_up_problem_category_code: body.follow_up_problem_category_code,
+      parental_status_code: this.parseOptionCode(
+        body.parental_status_code,
+        'สถานะของบิดา-มารดาไม่ถูกต้อง',
+      ),
+      guardian_type_code: this.parseOptionCode(body.guardian_type_code, 'ผู้ปกครองไม่ถูกต้อง'),
+      guardian_type_detail: body.guardian_type_detail?.trim() || null,
+      residence_environment_codes: this.parseOptionCodeList(
+        (body as Record<string, unknown>).residence_environment_codes,
+        'สภาพแวดล้อมรอบที่พักไม่ถูกต้อง',
+      ),
+      residence_environment_detail: body.residence_environment_detail?.trim() || null,
       cause_detail: causeDetail,
       visit_lat: this.parseOptionalNumber(body.visit_lat),
       visit_lng: this.parseOptionalNumber(body.visit_lng),
       visited_at: body.visited_at?.trim() || null,
+      assisted_at: body.assisted_at?.trim() || null,
+      assistance_detail: body.assistance_detail?.trim() || null,
       recommendation: body.recommendation,
       notes: causeDetail,
       status: body.status || 'COMPLETED',

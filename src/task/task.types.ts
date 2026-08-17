@@ -9,7 +9,6 @@ export interface RoleDefinition {
   id: number;
   name: string;
   label: string;
-  rank: number;
   default_permissions: string[];
   scope_mode: string;
   scope_policy: 'ASSIGNABLE' | 'OWN_ONLY';
@@ -92,7 +91,7 @@ export interface RiskDashboardRow extends QueryResultRow {
   grade: string | null;
   room: string | null;
   consecutive_absent_days: number | string;
-  absent_days: number | string;
+  absent_days_since_case_reset: number | string;
   term_absent_days: number | string;
   absence_reset_after_date: string | Date | null;
   late_count: number | string;

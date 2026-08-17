@@ -357,7 +357,6 @@ export class HomeDashboardRepository {
         WHERE ${whereSql}
         GROUP BY ${selected.key}, ${selected.label}
         ORDER BY count DESC, label ASC
-        LIMIT 10
       `,
       scope.params,
     );
@@ -526,14 +525,14 @@ export class HomeDashboardRepository {
           COUNT(*) FILTER (WHERE a."AttendanceStatus" = 2)::int AS absent,
           COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late,
           COUNT(*)::int AS total
-        FROM attendance a
+        -- One row per student per day, derived from that day's periods, so the
+        -- chart and the risk engine answer "came to school" the same way.
+        FROM attendance_day a
         JOIN student_term s ON s.student_uuid = a.student_uuid
         ${CURRENT_ENROLLMENT_JOIN}
         LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         WHERE a."AttendanceDate" BETWEEN $1::date AND $2::date
-          AND COALESCE(a.session_kind, 'DAILY') = 'DAILY'
-          AND COALESCE(a."Period", 1) = 1
           ${whereSql ? `AND ${whereSql}` : ''}
         GROUP BY a."AttendanceDate"
         ORDER BY a."AttendanceDate" ASC
@@ -626,7 +625,9 @@ export class HomeDashboardRepository {
            AND s."RoomID_Onec" = sess.room_id
           ${CURRENT_ENROLLMENT_JOIN}
           WHERE sess.deleted_at IS NULL
-            AND sess.session_kind = 'DAILY'
+            -- Any round of today that is still short of its roster: attendance
+            -- is taken per period now, so counting only the homeroom round hid
+            -- every unfinished subject period.
             AND sess.attendance_date = $1::date
             AND sess.expected_roster_count > 0
             AND sess.recorded_count < sess.expected_roster_count
@@ -667,7 +668,7 @@ export class HomeDashboardRepository {
           SELECT
             'attendance-incomplete' AS id,
             'ATTENDANCE_INCOMPLETE' AS kind,
-            'เช็คชื่อวันนี้ยังไม่ครบ' AS label,
+            'เช็กชื่อวันนี้ยังไม่ครบ' AS label,
             'มีห้องเรียนที่เริ่มบันทึกแล้วแต่จำนวนไม่ครบ roster' AS reason,
             count,
             oldest AS age_label,
@@ -838,6 +839,107 @@ export class HomeDashboardRepository {
       grades: row.grades || [],
       rooms: row.rooms || [],
     };
+  }
+
+  async getCauseCategoryDistribution(
+    actor: HomeDashboardActor,
+    filters: HomeDashboardFilters,
+  ): Promise<{ key: string; label: string; count: number }[]> {
+    const scope = this.buildCaseScopeQuery(actor, filters);
+    const whereSql = [
+      'c.deleted_at IS NULL',
+      'ts.deleted_at IS NULL',
+      'ts.follow_up_problem_category_code IS NOT NULL',
+      scope.sql,
+    ]
+      .filter(Boolean)
+      .join(' AND ');
+    const result = await this.query<{
+      category: string;
+      category_label: string;
+      count: number | string;
+    }>(
+      `
+        SELECT
+          ts.follow_up_problem_category_code AS category,
+          problem_category.label_th AS category_label,
+          COUNT(*)::int AS count
+        FROM task_submissions ts
+        JOIN task_links tl ON tl.id = ts.task_link_id
+        JOIN tasks t ON t.id = tl.task_id
+        JOIN cases c ON c.id = t.case_id
+        JOIN follow_up_problem_categories problem_category
+          ON problem_category.code = ts.follow_up_problem_category_code
+        LEFT JOIN schools sc ON sc.id = c.school_id
+        ${whereSql ? `WHERE ${whereSql}` : ''}
+        GROUP BY ts.follow_up_problem_category_code, problem_category.label_th
+        ORDER BY count DESC
+      `,
+      scope.params,
+    );
+    return result.rows.map((row) => ({
+      key: row.category,
+      label: row.category_label,
+      count: toNumber(row.count),
+    }));
+  }
+
+  async getMonthlySuccessRates(
+    actor: HomeDashboardActor,
+    filters: HomeDashboardFilters,
+  ): Promise<{ month: string; opened: number; resolved: number }[]> {
+    const scope = this.buildCaseScopeQuery(actor, filters);
+    const result = await this.query<{
+      month: string;
+      opened: number | string;
+      resolved: number | string;
+    }>(
+      `
+        WITH months AS (
+          SELECT date_trunc('month', d)::date AS month_date
+          FROM generate_series(
+            date_trunc('month', CURRENT_DATE - INTERVAL '11 months'),
+            date_trunc('month', CURRENT_DATE),
+            '1 month'::interval
+          ) d
+        ),
+        opened_cases AS (
+          SELECT
+            date_trunc('month', c.created_at)::date AS month_date,
+            COUNT(*)::int AS count
+          FROM cases c
+          LEFT JOIN schools sc ON sc.id = c.school_id
+          WHERE c.deleted_at IS NULL
+          ${scope.sql ? `AND ${scope.sql}` : ''}
+          GROUP BY 1
+        ),
+        resolved_cases AS (
+          SELECT
+            date_trunc('month', c.updated_at)::date AS month_date,
+            COUNT(*)::int AS count
+          FROM cases c
+          LEFT JOIN schools sc ON sc.id = c.school_id
+          WHERE c.deleted_at IS NULL
+            AND c.status = 'RESOLVED'
+          ${scope.sql ? `AND ${scope.sql}` : ''}
+          GROUP BY 1
+        )
+        SELECT
+          to_char(m.month_date, 'YYYY-MM') AS month,
+          COALESCE(o.count, 0)::int AS opened,
+          COALESCE(r.count, 0)::int AS resolved
+        FROM months m
+        LEFT JOIN opened_cases o ON o.month_date = m.month_date
+        LEFT JOIN resolved_cases r ON r.month_date = m.month_date
+        ORDER BY m.month_date ASC
+      `,
+      scope.params,
+    );
+    return result.rows.map((row) => ({
+      month: row.month,
+      opened: toNumber(row.opened),
+      resolved: toNumber(row.resolved),
+    }));
   }
 
   async getSchoolName(schoolId: number): Promise<string | null> {

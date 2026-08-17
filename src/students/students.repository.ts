@@ -10,7 +10,6 @@ import type {
   StudentSubjectAttendanceRow,
   StudentCaseRow,
   StudentDetailRow,
-  StudentAccountSummaryRow,
   StudentFilterOptions,
   StudentGuardianRow,
   StudentListFilters,
@@ -346,17 +345,16 @@ export class StudentsRepository {
         ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
       LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid
       LEFT JOIN LATERAL (
-        SELECT COALESCE(
-          NULLIF(TRIM(COALESCE(teacher."FirstName", '') || ' ' || COALESCE(teacher."LastName", '')), ''),
-          teacher.username
-        ) AS homeroom_teacher_name
+        SELECT TRIM(teacher.first_name || ' ' || teacher.last_name) AS homeroom_teacher_name
         FROM classroom_teacher_assignments assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
          AND membership.school_id = assignment.school_id
          AND membership.membership_status = 'ACTIVE'
          AND membership.deleted_at IS NULL
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher
+          ON teacher.id = membership.teacher_id
+         AND teacher.deleted_at IS NULL
         WHERE assignment.classroom_id = s.classroom_id
           AND assignment.school_id = s."SchoolID_Onec"
           AND assignment.assignment_kind = 'HOMEROOM'
@@ -499,33 +497,6 @@ export class StudentsRepository {
     return result.rows[0] ?? null;
   }
 
-  /** Current account when present; otherwise the most recently created historical account. */
-  async findStudentAccountByPersonUuid(
-    personUuid: string,
-  ): Promise<StudentAccountSummaryRow | null> {
-    const result = await this.query<StudentAccountSummaryRow>(
-      `
-        SELECT id AS user_id, username, status, must_change_password,
-          CASE
-            WHEN status <> 'ACTIVE' THEN 'DISABLED'
-            WHEN must_change_password IS TRUE
-              AND temporary_password_expires_at IS NOT NULL
-              AND temporary_password_expires_at <= NOW()
-              THEN 'TEMP_PASSWORD_EXPIRED'
-            WHEN must_change_password IS TRUE THEN 'PENDING_FIRST_LOGIN'
-            ELSE 'ACTIVE'
-          END AS lifecycle_status
-        FROM users
-        WHERE person_uuid = $1 AND role = 'STUDENT'
-        ORDER BY (status = 'ACTIVE') DESC, created_at DESC, id DESC
-        LIMIT 1
-      `,
-      [personUuid],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  /** Live guardians of a person, primary first, then บิดา → มารดา → ผปค. */
   async listGuardiansByPersonUuid(personUuid: string): Promise<StudentGuardianRow[]> {
     const result = await this.query<StudentGuardianRow>(
       `
@@ -571,29 +542,6 @@ export class StudentsRepository {
                 updated_by = $8,
                 deleted_at = NULL,
                 deleted_by = NULL
-          `,
-          [
-            personUuid,
-            contact.phone ?? null,
-            contact.email ?? null,
-            contact.line_id ?? null,
-            hasPhone,
-            hasEmail,
-            hasLineId,
-            actorUserId,
-          ],
-        );
-
-        // Expand/contract compatibility: keep a linked student account mirror
-        // current while all downstream consumers move to person-level contact.
-        await manager.query(
-          `
-            UPDATE users
-            SET phone = CASE WHEN $5 THEN $2 ELSE phone END,
-                email = CASE WHEN $6 THEN $3 ELSE email END,
-                line_id = CASE WHEN $7 THEN $4 ELSE line_id END,
-                updated_by = $8
-            WHERE person_uuid = $1 AND role = 'STUDENT' AND status = 'ACTIVE'
           `,
           [
             personUuid,
@@ -911,7 +859,8 @@ export class StudentsRepository {
           status.badge_variant AS status_badge_variant,
           attendance."RecordedAt" AS recorded_at,
           COALESCE(
-            NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
             CASE
               WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
               ELSE NULLIF(attendance."RecordedBy", '')
@@ -931,7 +880,8 @@ export class StudentsRepository {
           ON slot.id = session.timetable_slot_id
         LEFT JOIN subjects subject
           ON subject.id = COALESCE(session.subject_id, slot.subject_id)
-        LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
+        LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
+        LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE s.student_uuid = $1
           AND attendance."AttendanceDate" = $2::date
         ORDER BY attendance."Period" ASC, attendance."AttendanceID" ASC

@@ -59,11 +59,11 @@ function userPayload(targetUsername, targetPersonId, overrides = {}) {
     LastName: 'Scope Smoke',
     PersonID_Onec: targetPersonId,
     phone: '0990000001',
-    // One address per fixture user: creating a TEACHER account creates a teacher
-    // record, and teacher emails are unique since uq_teachers_email.
     email: `${targetUsername}@example.invalid`,
     affiliation: 'Automated role scope smoke',
-    role: 'TEACHER',
+    // Teachers do not hold accounts; the scope rules under test are the same
+    // for any school-bound staff role.
+    role: 'EXECUTIVE',
     permissions: ['home', 'attendance'],
     data_scope: { school_ids: [String(SCHOOL_ID)] },
     ...overrides,
@@ -141,7 +141,7 @@ async function disableSmokeUsers(dataSource, targetUsername) {
 }
 
 async function main() {
-  const app = await NestFactory.create(AppModule, { logger: false });
+  const app = await NestFactory.create(AppModule, { logger: ['error'] });
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
@@ -218,16 +218,6 @@ async function main() {
     });
     const targetUserId = created.payload?.userId;
     assert(Number.isInteger(targetUserId), 'Create user did not return a userId');
-    const [createdMembership] = await dataSource.query(
-      `SELECT school_id, membership_status
-       FROM school_teacher_memberships
-       WHERE teacher_user_id=$1 AND school_id=$2 AND deleted_at IS NULL`,
-      [targetUserId, SCHOOL_ID],
-    );
-    assert(
-      createdMembership?.membership_status === 'ACTIVE',
-      'Creating an in-scope teacher did not create an active school membership',
-    );
 
     await request(baseUrl, 'PUT', `/api/users/${targetUserId}`, 200, {
       headers: { cookie: schoolCookie },
@@ -246,7 +236,7 @@ async function main() {
       `SELECT role, data_scope, status FROM users WHERE id = $1`,
       [targetUserId],
     );
-    assert(target.role === 'TEACHER', 'Target role drifted');
+    assert(target.role === 'EXECUTIVE', 'Target role drifted');
     assert(target.status === 'ACTIVE', 'Target status was changed through update path');
     assert(
       Array.isArray(target.data_scope?.school_ids) &&
@@ -261,20 +251,14 @@ async function main() {
           'permission catalog labels',
           'school admin cannot create global scope',
           'school admin cannot create outside school scope',
-          'school admin can create in-scope teacher',
-          'teacher creation synchronizes active school membership',
-          'school admin can update in-scope teacher',
+          'school admin can create an in-scope account',
+          'school admin can update an in-scope account',
           'generic update cannot change lifecycle status',
           'school admin cannot widen target scope',
         ],
       }),
     );
   } finally {
-    await dataSource.query(
-      `DELETE FROM school_teacher_memberships
-       WHERE teacher_user_id=(SELECT id FROM users WHERE username=$1)`,
-      [targetUsername],
-    );
     await disableSmokeUsers(dataSource, targetUsername);
     await app.close();
   }

@@ -473,21 +473,14 @@ async function main() {
       firstName: 'School Structure',
       lastName: 'Browser Smoke',
       role: 'DIRECTOR',
-      permissions: [
-        'home',
-        'students',
-        'manage-school-structure',
-        'import-data',
-        'import-school-roster',
-        'export-data',
-      ],
+      permissions: ['home', 'students', 'manage-school-structure', 'import-data', 'export-data'],
       dataScope: { school_ids: [schoolA.id] },
     });
     await upsertUser(dataSource, hash, {
       username: TEACHER_USERNAME,
       firstName: TEACHER_FIRST_NAME,
       lastName: TEACHER_LAST_NAME,
-      role: 'TEACHER',
+      role: 'DIRECTOR',
       permissions: ['attendance'],
       dataScope: { school_ids: [schoolA.id] },
     });
@@ -1324,7 +1317,7 @@ async function main() {
           'เข้าบางคาบ',
           'ไม่เข้าเรียน',
           'บันทึกเมื่อ',
-          'ผู้เช็คชื่อ',
+          'ผู้เช็กชื่อ',
         ];
         const missingLabels = requiredLabels.filter((label) => !body.includes(label));
         if (missingLabels.length > 0) {
@@ -1493,7 +1486,31 @@ async function main() {
         dialogActionStyles?.confirmColor === 'rgb(255, 255, 255)',
       `Classroom dialog confirm action was not blue with white text: ${JSON.stringify(dialogActionStyles)}`,
     );
-    await evaluate(chrome.client, `document.querySelector('#classroom-student-comment')?.focus()`);
+    assert(
+      await evaluate(
+        chrome.client,
+        `Boolean(document.querySelector('#classroom-student-problem-category')) &&
+         Boolean(document.querySelector('#classroom-student-problem-description')) &&
+         Boolean(Array.from(document.querySelectorAll('button')).find((item) =>
+           item.textContent.includes('บันทึกข้อมูล'))?.disabled)`,
+      ),
+      'Problem category/description fields or required-state validation were missing',
+    );
+    await evaluate(
+      chrome.client,
+      `(() => {
+        const select = document.querySelector('#classroom-student-problem-category');
+        if (!select) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+        setter.call(select, 'ACADEMIC');
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('#classroom-student-problem-description')?.focus()`,
+    );
     await chrome.client.call('Input.insertText', { text: 'ติดตามจาก browser smoke' });
     const savedComment = await evaluate(
       chrome.client,
@@ -1506,9 +1523,30 @@ async function main() {
         (await evaluate(chrome.client, 'document.body.innerText')).includes('ติดตามจาก browser smoke'),
       'Latest classroom student comment did not render in the note column',
     );
+    await navigate(
+      chrome.client,
+      `${FRONTEND_URL}/students/${importedStudent.studentUuid}?smoke=${Date.now()}`,
+    );
+    await waitFor(
+      async () => {
+        const body = await evaluate(chrome.client, 'document.body.innerText');
+        return body.includes(
+          'หัวข้อปัญหา: ปัญหาด้านการเรียน (เช่น หมดไฟ, เรียนไม่ทัน)',
+        ) && body.includes('คำอธิบาย: ติดตามจาก browser smoke');
+      },
+      'Student profile did not render the saved problem category and description',
+    );
+    await navigate(
+      chrome.client,
+      `${FRONTEND_URL}/classrooms/${classroom.id}?smoke=${Date.now()}`,
+    );
+    await waitFor(
+      async () => (await evaluate(chrome.client, 'document.body.innerText')).includes(studentNumber),
+      'Classroom detail did not return after comment profile verification',
+    );
     const openedHistory = await evaluate(
       chrome.client,
-      `(() => { const button = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.textContent.includes('ประวัติการเช็คชื่อ')); if (!button) return false; button.click(); return true; })()`,
+      `(() => { const button = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.textContent.includes('ประวัติการเช็กชื่อ')); if (!button) return false; button.click(); return true; })()`,
     );
     assert(openedHistory, 'Classroom attendance-history tab was not available');
     await waitFor(
@@ -1545,7 +1583,7 @@ async function main() {
       `Array.from(document.querySelectorAll('th button')).map((button) => button.textContent.trim())`,
     );
     assert(
-      ['วันที่', 'ผู้เช็คชื่อ', 'จำนวนที่มา (คน)', 'จำนวนที่ขาด (คน)'].every((label) =>
+      ['วันที่', 'ผู้เช็กชื่อ', 'จำนวนที่มา (คน)', 'จำนวนที่ขาด (คน)'].every((label) =>
         dailySortHeaders.some((header) => header.includes(label)),
       ),
       'Daily attendance sortable headers were incomplete',
@@ -1590,18 +1628,18 @@ async function main() {
     assert(openedDailyDetail, 'Daily attendance drill-down button was not available');
     await waitFor(
       async () =>
-        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็คชื่อรายวัน') &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็กชื่อรายวัน') &&
         (await evaluate(chrome.client, 'document.body.innerText')).includes(studentNumber) &&
-        (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันที่เช็คชื่อ"]'))`)) &&
+        (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันที่เช็กชื่อ"]'))`)) &&
         (await evaluate(chrome.client, `Array.from(document.querySelectorAll('th button')).some((button) => button.textContent.includes('สถานะการเข้าเรียน'))`)),
       'Daily attendance drill-down did not render the student, date picker, and sortable headers',
     );
     await evaluate(chrome.client, `document.querySelector('[aria-label="กลับไปหน้าสรุป"]')?.click()`);
     await waitFor(
-      async () => await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="รูปแบบประวัติเช็คชื่อ"]'))`),
+      async () => await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="รูปแบบประวัติเช็กชื่อ"]'))`),
       'Attendance summary controls did not return after daily drill-down',
     );
-    await changeNativeSelect(chrome.client, 'รูปแบบประวัติเช็คชื่อ', 'STUDENT');
+    await changeNativeSelect(chrome.client, 'รูปแบบประวัติเช็กชื่อ', 'STUDENT');
     await waitFor(
       async () => await evaluate(chrome.client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="ดูประวัติของ ${importedStudentName}"]`)}))`),
       'Student attendance summary did not render',
@@ -1612,7 +1650,7 @@ async function main() {
     );
     await waitFor(
       async () =>
-        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็คชื่อรายคน') &&
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('ประวัติการเช็กชื่อรายคน') &&
         (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="วันเริ่ม"]') && document.querySelector('[aria-label="วันจบ"]'))`)),
       'Student attendance drill-down or date range did not render',
     );

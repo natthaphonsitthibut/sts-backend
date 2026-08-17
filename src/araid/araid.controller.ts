@@ -15,19 +15,17 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import {
-  AuthGuard,
-  CurrentUser,
-  Public,
-  RequireRoles,
-  RolesGuard,
-  type AuthenticatedRequestUser,
-} from '../auth';
+import { AuthGuard, RolesGuard } from '../auth/auth.guard';
+import type { AuthenticatedRequestUser } from '../auth/auth.types';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { Public } from '../auth/public.decorator';
+import { RequireRoles } from '../auth/permissions.decorator';
 import { ThrottleLogin } from '../config/throttle.decorators';
 import { AraIdSessionCookieService } from './araid-session-cookie.service';
 import { AraIdService } from './araid.service';
 import {
   AraIdLoginDto,
+  AraIdReauthenticateDto,
   CreateAraIdRecordDto,
   ListAraIdRecordsDto,
   UpdateAraIdRecordDto,
@@ -164,6 +162,41 @@ export class AraIdSessionController {
     const profileId = this.sessionCookie.readProfileId(request.headers.cookie);
     if (!profileId) throw new UnauthorizedException('ไม่ได้เข้าสู่ระบบ AraID');
     return { success: true, data: await this.araIdService.getSessionProfile(profileId) };
+  }
+
+  @Public()
+  @ThrottleLogin()
+  @Post('reauthenticate')
+  async reauthenticate(
+    @Body() body: AraIdReauthenticateDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const profileId = this.sessionCookie.readProfileId(request.headers.cookie);
+    if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
+    try {
+      await this.araIdService.reauthenticate(profileId, body.pin);
+      this.sessionCookie.setSession(response, profileId);
+      await this.auditLog.record({
+        action: 'LOGIN',
+        actorLabel: 'AraID',
+        targetType: 'araid_profile',
+        targetId: profileId,
+        metadata: { authMethod: 'ARAID_PIN_STEP_UP' },
+        ip: request.ip ?? null,
+      });
+      return { success: true };
+    } catch (error) {
+      await this.auditLog.record({
+        action: 'LOGIN_FAILED',
+        actorLabel: 'AraID',
+        targetType: 'araid_profile',
+        targetId: profileId,
+        metadata: { authMethod: 'ARAID_PIN_STEP_UP' },
+        ip: request.ip ?? null,
+      });
+      throw error;
+    }
   }
 
   @Public()

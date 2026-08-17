@@ -6,7 +6,6 @@ import {
   type AuthenticatedRequestUser,
   type RequestWithUser,
 } from './auth.types';
-import { StudentAuthService } from './student-auth.service';
 import { SessionCookieService } from './session-cookie.service';
 
 interface QueryResult<T extends Record<string, unknown>> {
@@ -20,8 +19,6 @@ interface UserActorRow extends Record<string, unknown> {
   permissions: unknown;
   data_scope?: Record<string, unknown> | null;
   PersonID_Onec?: string | null;
-  person_uuid?: string | null;
-  student_uuid?: string | null;
   role_default_permissions?: unknown;
 }
 
@@ -53,7 +50,6 @@ function resolvePermissions(permissions: unknown, defaultPermissions: unknown): 
 export class AuthActorService {
   constructor(
     private readonly dataSource: DataSource,
-    private readonly studentAuthService: StudentAuthService,
     private readonly sessionCookieService: SessionCookieService,
   ) {}
 
@@ -75,11 +71,6 @@ export class AuthActorService {
     const userId = this.extractUserId(request);
     if (userId) {
       return await this.loadUser(userId);
-    }
-
-    const virtualAuthToken = this.readHeader(request.headers, 'x-virtual-auth');
-    if (virtualAuthToken) {
-      return await this.studentAuthService.loadVirtualStudentActor(virtualAuthToken);
     }
 
     return null;
@@ -107,17 +98,11 @@ export class AuthActorService {
             u.permissions,
             u.data_scope,
             u."PersonID_Onec",
-            u.person_uuid,
-            current_enrollment.selected_student_uuid AS student_uuid,
             r.default_permissions AS role_default_permissions
           FROM users u
           LEFT JOIN roles r ON r.name = u.role
-          LEFT JOIN student_current_enrollment_resolution current_enrollment
-            ON current_enrollment.person_uuid = u.person_uuid
-           AND current_enrollment.resolution_state = 'ACTIVE'
           WHERE u.id = $1
             AND u.status = 'ACTIVE'
-            AND u.role IS DISTINCT FROM 'STUDENT'
         `,
         [userId],
       )) as QueryResult<UserActorRow>;
@@ -135,8 +120,6 @@ export class AuthActorService {
         permissions: resolvePermissions(row.permissions, row.role_default_permissions),
         data_scope: normalizeDataScope(row.data_scope) || {},
         PersonID_Onec: typeof row['PersonID_Onec'] === 'string' ? row['PersonID_Onec'] : undefined,
-        person_uuid: typeof row.person_uuid === 'string' ? row.person_uuid : undefined,
-        student_uuid: typeof row.student_uuid === 'string' ? row.student_uuid : undefined,
         auth_source: 'LOCAL',
       };
     } catch {

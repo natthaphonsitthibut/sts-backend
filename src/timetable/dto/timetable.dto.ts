@@ -103,11 +103,6 @@ export class CreateTimetableSlotDto {
   subjectId!: number;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  teacherUserId?: number | null;
-
-  @IsOptional()
   @IsArray()
   @Type(() => Number)
   @IsInt({ each: true })
@@ -119,11 +114,6 @@ export class UpdateTimetableSlotDto {
   @Type(() => Number)
   @IsInt()
   subjectId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  teacherUserId?: number | null;
 
   @IsOptional()
   @IsArray()

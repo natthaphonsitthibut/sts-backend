@@ -1,10 +1,10 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { AuthGuard, PermissionsGuard } from '../auth';
-import { PERMISSIONS_KEY } from '../auth/permissions.decorator';
+import { ANY_PERMISSIONS_KEY } from '../auth/permissions.decorator';
 import { AuditLogController } from './audit-log.controller';
 
 describe('AuditLogController', () => {
-  it('protects list and detail routes with the audit-log permission', () => {
+  it('opens the log to the pages that embed it, plus the standalone permission', () => {
     const listHandler = Object.getOwnPropertyDescriptor(AuditLogController.prototype, 'list')
       ?.value as () => unknown;
     const getByIdHandler = Object.getOwnPropertyDescriptor(AuditLogController.prototype, 'getById')
@@ -12,7 +12,21 @@ describe('AuditLogController', () => {
     const classGuards = Reflect.getMetadata(GUARDS_METADATA, AuditLogController) as unknown[];
 
     expect(classGuards).toEqual([AuthGuard, PermissionsGuard]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, listHandler)).toEqual(['audit-log']);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, getByIdHandler)).toEqual(['audit-log']);
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, listHandler)).toEqual([
+      'audit-log',
+      'import-data',
+      'students',
+      // The link detail screen embeds the panel and is guarded by รายงานสถานะ
+      // นักเรียน; it must not be `home`, which every account holds.
+      'dashboard',
+    ]);
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, getByIdHandler)).toEqual([
+      'audit-log',
+      'import-data',
+      'students',
+      // The link detail screen embeds the panel and is guarded by รายงานสถานะ
+      // นักเรียน; it must not be `home`, which every account holds.
+      'dashboard',
+    ]);
   });
 });

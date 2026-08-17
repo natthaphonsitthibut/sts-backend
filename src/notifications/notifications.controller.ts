@@ -1,4 +1,13 @@
-import { Controller, Get, Param, ParseUUIDPipe, Patch, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard, CurrentUser } from '../auth';
 import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import { ListNotificationsQueryDto } from './dto/notifications.dto';
@@ -16,7 +25,7 @@ export class NotificationsController {
   @Get()
   list(@CurrentUser() actor: AuthenticatedRequestUser, @Query() query: ListNotificationsQueryDto) {
     return this.notificationsService.listForUser(actor.id, {
-      unreadOnly: query.unread === true,
+      status: query.status ?? (query.unread === true ? 'unread' : 'all'),
       page: query.page,
       limit: query.limit,
     });
@@ -30,6 +39,11 @@ export class NotificationsController {
   @Patch('read-all')
   markAllRead(@CurrentUser() actor: AuthenticatedRequestUser) {
     return this.notificationsService.markAllRead(actor.id);
+  }
+
+  @Delete('read')
+  deleteAllRead(@CurrentUser() actor: AuthenticatedRequestUser) {
+    return this.notificationsService.deleteAllRead(actor.id);
   }
 
   @Patch(':id/read')

@@ -63,7 +63,7 @@ const importMulterOptions = {
 };
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequireAnyPermission('import-data', 'import-school-roster')
+@RequireAnyPermission('import-data')
 @Controller('api/imports')
 export class ImportsController {
   constructor(private readonly importsService: ImportsService) {}
@@ -128,7 +128,7 @@ export class ImportsController {
   }
 
   @Post('teachers/preview')
-  @RequirePermission('import-school-roster')
+  @RequirePermission('import-data')
   @UseInterceptors(FileInterceptor('file', importMulterOptions))
   previewTeacherImport(
     @UploadedFile() file: Express.Multer.File,
@@ -140,7 +140,7 @@ export class ImportsController {
   }
 
   @Post('teachers/bulk')
-  @RequirePermission('import-school-roster')
+  @RequirePermission('import-data')
   @UseInterceptors(FileInterceptor('file', importMulterOptions))
   processTeacherImport(
     @UploadedFile() file: Express.Multer.File,

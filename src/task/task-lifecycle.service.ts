@@ -1,23 +1,19 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
-import { finalizePersistedDataScope } from '../auth/auth.types';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
-import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { CreateTaskDto, type TaskDurationUnit } from './dto/task.dto';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { resolveAssigneeName } from './task-assignee-name';
 import { MAX_LINK_LIFETIME_MS } from './task-link-expiry';
 import type { ActorContext, DataScope, QueryExecutor, QueryResultRow } from './task.types';
-
-const OVERDUE_TASK_REMINDER_CRON = '0 15 4 * * *';
 
 @Injectable()
 export class TaskLifecycleService {
@@ -28,48 +24,10 @@ export class TaskLifecycleService {
     private readonly taskPolicyService: TaskPolicyService,
     private readonly auditLog: AuditLogService,
     private readonly tokenEncryption: TokenEncryptionService,
+    private readonly caseTrackingOptions: CaseTrackingOptionsService,
     private readonly notificationsService?: NotificationsService,
     private readonly riskProfileService?: RiskProfileService,
   ) {}
-
-  /**
-   * Notify the assigning staff when a home-visit link passes its expiry without
-   * being completed. Claims-and-marks in one query so each link reminds once.
-   * `now` is injectable for tests. Best-effort — never blocks the cron.
-   */
-  async remindOverdueTaskLinks(now = new Date()): Promise<{ notified: number }> {
-    const overdue = await this.taskRepository.claimOverdueTaskLinks(now);
-    let notified = 0;
-    for (const link of overdue) {
-      if (link.created_by == null) {
-        continue;
-      }
-      await this.notificationsService?.notifyTaskOverdue({
-        linkId: link.id,
-        taskId: link.task_id,
-        recipientUserId: link.created_by,
-        assigneeName: link.assigned_to_name,
-      });
-      notified += 1;
-    }
-    if (notified > 0) {
-      this.logger.log(`Sent ${notified} overdue home-visit reminder(s).`);
-    }
-    return { notified };
-  }
-
-  @Cron(OVERDUE_TASK_REMINDER_CRON, {
-    timeZone: BANGKOK_TIME_ZONE,
-    name: 'overdue_task_link_reminder',
-  })
-  async runOverdueTaskReminders(): Promise<void> {
-    try {
-      await this.remindOverdueTaskLinks();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Overdue task reminder job failed: ${message}`);
-    }
-  }
 
   private normalizeNumber(value: string | number | null | undefined): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -129,34 +87,6 @@ export class TaskLifecycleService {
       throw new BadRequestException('อายุลิงก์ต้องไม่เกิน 90 วัน');
     }
     return parsed.toISOString();
-  }
-
-  private normalizePositiveIntList(value: unknown): number[] {
-    if (value == null) {
-      return [];
-    }
-    if (!Array.isArray(value)) {
-      throw new BadRequestException('timetable_slot_ids must be an array');
-    }
-
-    const normalized = value.map((item) => {
-      const parsed =
-        typeof item === 'number'
-          ? item
-          : typeof item === 'string' && item.trim().length > 0
-            ? Number(item)
-            : Number.NaN;
-      if (!Number.isInteger(parsed) || parsed <= 0) {
-        throw new BadRequestException('timetable_slot_ids must contain positive integers');
-      }
-      return parsed;
-    });
-
-    if (new Set(normalized).size !== normalized.length) {
-      throw new BadRequestException('timetable_slot_ids must not contain duplicates');
-    }
-
-    return normalized;
   }
 
   private buildFullName(firstName: string | null, lastName: string | null): string | null {
@@ -258,54 +188,6 @@ export class TaskLifecycleService {
     return null;
   }
 
-  private async assertTimetableSlotsMatchTaskLink(
-    input: {
-      taskType: string;
-      slotIds: number[];
-      subjectId: number | null;
-      targetSchoolId: number | null;
-      targetGrade: string | null;
-      targetRoom: string | null;
-    },
-    executor: QueryExecutor,
-  ): Promise<void> {
-    if (input.slotIds.length === 0) {
-      return;
-    }
-    if (input.taskType !== 'ATTENDANCE') {
-      throw new BadRequestException('timetable_slot_ids are only supported for ATTENDANCE tasks');
-    }
-    if (input.subjectId === null) {
-      throw new BadRequestException('subject_id is required when timetable_slot_ids are provided');
-    }
-    if (input.targetSchoolId === null || !input.targetGrade || !input.targetRoom) {
-      throw new BadRequestException(
-        'target_school_id, target_grade, and target_room are required for timetable slots',
-      );
-    }
-
-    const targetRoomNo = Number.parseInt(input.targetRoom, 10);
-    if (!Number.isInteger(targetRoomNo) || targetRoomNo <= 0) {
-      throw new BadRequestException('target_room must be a positive room number');
-    }
-
-    const slots = await this.taskRepository.listTimetableSlotsForTaskLink(input.slotIds, executor);
-    if (slots.length !== input.slotIds.length) {
-      throw new BadRequestException('ไม่พบคาบเรียนบางรายการหรือคาบเรียนถูกลบแล้ว');
-    }
-
-    for (const slot of slots) {
-      if (
-        Number(slot.school_id) !== input.targetSchoolId ||
-        String(slot.grade_label) !== input.targetGrade ||
-        Number(slot.room_no) !== targetRoomNo ||
-        Number(slot.subject_id) !== input.subjectId
-      ) {
-        throw new BadRequestException('คาบเรียนไม่ตรงกับขอบเขตหรือวิชาของลิงก์');
-      }
-    }
-  }
-
   async listVisitAssignees(actor: ActorContext | undefined, studentUuid: string) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     this.taskPolicyService.assertCanCreateTask(currentActor, 'VISIT');
@@ -320,7 +202,7 @@ export class TaskLifecycleService {
     await this.assertSchoolWithinActorScope(currentActor, schoolId);
 
     return (await this.taskRepository.listVisitAssignees(studentUuid)).map((row) => ({
-      teacherUserId: Number(row.teacher_user_id),
+      teacherId: row.teacher_id,
       displayName: row.display_name,
       isHomeroom: row.is_homeroom === true,
     }));
@@ -336,64 +218,48 @@ export class TaskLifecycleService {
     });
     let assignedName = assigneeName.fullName;
     let assignedEmail = clean(data.assigned_to_email);
-    const selectedTeacherUserId = this.normalizeNumber(data.assigned_teacher_user_id);
+    const selectedTeacherId = this.normalizeNumber(data.assigned_teacher_id);
 
-    if (!assignedName && selectedTeacherUserId === null) {
+    // A round for a student the system knows goes to a teacher in that student's
+    // school — there is no guest assignee any more, and recording the real
+    // teacher is what AraID verification depends on. A manual visit that opens a case
+    // for a student with no record yet has no roster to pick from, so it keeps
+    // the free-text assignee and stays on email OTP.
+    const requiresTeacherAssignee =
+      taskType === 'ASSIST' || (taskType === 'VISIT' && Boolean(clean(data.student_id)));
+    if (requiresTeacherAssignee && selectedTeacherId === null) {
+      throw new BadRequestException('กรุณาเลือกครูผู้รับมอบหมาย');
+    }
+    if (!assignedName && selectedTeacherId === null) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
     if (
-      selectedTeacherUserId === null &&
+      selectedTeacherId === null &&
       assigneeName.usesStructuredInput &&
       (!assigneeName.firstName || !assigneeName.lastName)
     ) {
       throw new BadRequestException('กรุณาระบุชื่อและนามสกุลผู้รับมอบหมาย');
     }
-    if (selectedTeacherUserId !== null && taskType !== 'VISIT') {
+    if (selectedTeacherId !== null && taskType !== 'VISIT' && taskType !== 'ASSIST') {
       throw new BadRequestException('เลือกครูผู้รับมอบหมายได้เฉพาะลิงก์ติดตามนักเรียน');
     }
-    if (selectedTeacherUserId !== null && !clean(data.student_id)) {
+    if (selectedTeacherId !== null && !clean(data.student_id)) {
       throw new BadRequestException('กรุณาเลือกนักเรียนก่อนเลือกครูผู้รับมอบหมาย');
     }
-    if (taskType === 'LOGIN' && !assignedEmail) {
-      throw new Error('assigned_to_email is required for LOGIN');
-    }
-    // Per-classroom attendance links are retired in favour of per-teacher links
-    // (teacher_access_grants). Existing ATTENDANCE tasks stay readable, but no
-    // new one may be created through this endpoint.
-    if (taskType === 'ATTENDANCE') {
-      throw new BadRequestException(
-        'ลิงก์เช็คชื่อรายห้องถูกยกเลิกแล้ว กรุณาใช้ลิงก์เช็คชื่อของครูที่หน้าจัดการลิงก์เช็คชื่อ',
-      );
-    }
-
     this.taskPolicyService.assertCanCreateTask(currentActor, taskType);
 
-    const roleMap = taskType === 'LOGIN' ? await this.taskPolicyService.getRoleMap() : undefined;
-    const loginRole = taskType === 'LOGIN' ? this.taskPolicyService.normalizeRole(data) : null;
-    const loginPermissions =
-      taskType === 'LOGIN'
-        ? this.taskPolicyService.normalizePermissionList(data.permissions ?? data.mock_permissions)
+    // Measures are picked when the assistance round is assigned, not when it is
+    // reported, so the report form can show them read-only.
+    const assistanceMeasureDetail = clean(data.assistance_measure_detail) || null;
+    const assistanceMeasures =
+      taskType === 'ASSIST'
+        ? await this.caseTrackingOptions.getAssistanceMeasures(
+            Array.isArray(data.assistance_measure_codes)
+              ? data.assistance_measure_codes.map((code) => String(code).trim())
+              : [],
+            assistanceMeasureDetail,
+          )
         : [];
-    // Persist LOGIN scopes with an explicit nationwide marker: scoped reads
-    // fail closed on an empty scope, so a confirmed-nationwide link must be
-    // stored as global:true rather than an empty object.
-    const loginDataScope =
-      taskType === 'LOGIN'
-        ? finalizePersistedDataScope(this.taskPolicyService.normalizeScope(data.data_scope))
-        : {};
-
-    if (taskType === 'LOGIN') {
-      await this.taskPolicyService.assertAssignableLoginPayload(
-        currentActor,
-        {
-          ...data,
-          role: loginRole,
-          permissions: loginPermissions,
-          data_scope: loginDataScope,
-        },
-        roleMap,
-      );
-    }
 
     const taskId = crypto.randomUUID();
     const token = generateToken();
@@ -410,10 +276,6 @@ export class TaskLifecycleService {
       expiresMs = expiresValue * 24 * 60 * 60 * 1000;
     } else if (expiresUnit === 'weeks') {
       expiresMs = expiresValue * 7 * 24 * 60 * 60 * 1000;
-    }
-
-    if (taskType === 'ATTENDANCE') {
-      expiresMs = Math.max(expiresMs, 60 * 60 * 1000);
     }
 
     if (expiresMs > MAX_LINK_LIFETIME_MS) {
@@ -434,35 +296,26 @@ export class TaskLifecycleService {
     const auditTargetGrade = clean(data.target_grade) || null;
     const auditTargetRoom = clean(data.target_room) || null;
     const subjectId = this.normalizeNumber(data.subject_id);
-    const timetableSlotIds = this.normalizePositiveIntList(data.timetable_slot_ids);
-    const followUpRequestId = clean(data.follow_up_request_id) || null;
     const actorId = resolveAuditActorId(currentActor);
-
-    // คำขอเยี่ยมบ้าน was retired: a task is created directly now, so a caller
-    // still sending the old field is told rather than silently ignored.
-    if (followUpRequestId) {
-      throw new BadRequestException('ระบบไม่รองรับคำขอติดตามแล้ว กรุณาสร้างงานโดยตรง');
-    }
 
     try {
       await this.taskRepository.withTransaction(async (executor) => {
         let caseId: number | null = null;
-        const approvedFollowUpCaseId: number | null = null;
         const inputTargetSchoolId = this.normalizeNumber(data.target_school_id);
         let resolvedTargetSchoolId = inputTargetSchoolId;
 
         if (inputTargetSchoolId !== null) {
           await this.assertSchoolWithinActorScope(currentActor, inputTargetSchoolId, executor);
-        } else if (taskType !== 'LOGIN') {
+        } else {
           resolvedTargetSchoolId = this.getSingleActorSchoolId(currentActor);
         }
 
-        if (taskType === 'VISIT') {
-          if (selectedTeacherUserId !== null) {
+        if (taskType === 'VISIT' || taskType === 'ASSIST') {
+          if (selectedTeacherId !== null) {
             const studentUuid = clean(data.student_id);
             const teacher = (
               await this.taskRepository.listVisitAssignees(studentUuid!, executor)
-            ).find((candidate) => Number(candidate.teacher_user_id) === selectedTeacherUserId);
+            ).find((candidate) => Number(candidate.teacher_id) === selectedTeacherId);
             if (!teacher) {
               throw new BadRequestException(
                 'ครูผู้รับมอบหมายต้องเป็นครูที่ปฏิบัติงานอยู่ในโรงเรียนของนักเรียน',
@@ -478,14 +331,7 @@ export class TaskLifecycleService {
             };
           }
           const requestedCaseId = this.normalizeNumber(data.existing_case_id);
-          if (
-            requestedCaseId !== null &&
-            approvedFollowUpCaseId !== null &&
-            requestedCaseId !== approvedFollowUpCaseId
-          ) {
-            throw new BadRequestException('เคสไม่ตรงกับคำขอติดตาม');
-          }
-          const existingCaseId = requestedCaseId ?? approvedFollowUpCaseId;
+          const existingCaseId = requestedCaseId;
 
           if (existingCaseId) {
             const existingCase = await this.taskRepository.lockCaseForVisitAssignment(
@@ -499,6 +345,18 @@ export class TaskLifecycleService {
             const existingStatus = clean(existingCase.status)?.toUpperCase();
             if (!['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND'].includes(existingStatus || '')) {
               throw new BadRequestException('สถานะเคสนี้ไม่อนุญาตให้มอบหมายการติดตาม');
+            }
+            // A follow-up round and an assistance round are different work; the
+            // case phase decides which one may be assigned right now.
+            const existingPhase =
+              clean(existingCase.workflow_phase_code)?.toUpperCase() || 'FOLLOW_UP';
+            const requiredPhase = taskType === 'ASSIST' ? 'ASSISTANCE' : 'FOLLOW_UP';
+            if (existingPhase !== requiredPhase) {
+              throw new BadRequestException(
+                taskType === 'ASSIST'
+                  ? 'เคสนี้ยังไม่อยู่ในขั้นตอนให้ความช่วยเหลือ'
+                  : 'เคสนี้อยู่ในขั้นตอนให้ความช่วยเหลือ ไม่สามารถมอบหมายการติดตามได้',
+              );
             }
             if (existingCase.has_live_assignment === true) {
               throw new BadRequestException('เคสนี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว');
@@ -610,18 +468,6 @@ export class TaskLifecycleService {
         auditCaseId = caseId;
         auditTargetSchoolId = resolvedTargetSchoolId;
 
-        await this.assertTimetableSlotsMatchTaskLink(
-          {
-            taskType,
-            slotIds: timetableSlotIds,
-            subjectId,
-            targetSchoolId: resolvedTargetSchoolId,
-            targetGrade: auditTargetGrade,
-            targetRoom: auditTargetRoom,
-          },
-          executor,
-        );
-
         await this.taskRepository.createTask(
           {
             taskId,
@@ -631,6 +477,10 @@ export class TaskLifecycleService {
             targetRoom: auditTargetRoom,
             targetSchoolId: resolvedTargetSchoolId,
             createdBy: resolveAuditActorId(currentActor),
+            assistanceMeasureCodes: assistanceMeasures.map((measure) => measure.code),
+            assistanceMeasureDetail: assistanceMeasures.some((measure) => measure.requiresDetail)
+              ? assistanceMeasureDetail
+              : null,
           },
           executor,
         );
@@ -639,10 +489,8 @@ export class TaskLifecycleService {
           {
             linkId,
             taskId,
-            parentLinkId: null,
             tokenHash,
             tokenEncrypted,
-            delegationDepth: 0,
             // Both the legacy input validation and selected-teacher lookup above
             // guarantee a name before a link can be persisted.
             assignedToName: assignedName || '',
@@ -650,26 +498,17 @@ export class TaskLifecycleService {
             assignedToLastName: assigneeName.lastName,
             assignedToPhone: clean(data.assigned_to_phone),
             assignedToEmail: assignedEmail,
+            assignedTeacherId: selectedTeacherId,
             expiresAt,
             opensAt,
             subject: clean(data.subject),
-            delegationNote: null,
             assignmentNote: clean(data.assignment_note),
             subjectId,
             // Email-assigned links require OTP (start unverified); links with no
             // email can't be OTP'd, so mark them pre-verified to skip the gate.
             otpVerified: assignedEmail ? 0 : 1,
             createdBy: resolveAuditActorId(currentActor),
-            loginRole,
-            loginPermissions,
-            loginDataScope,
           },
-          executor,
-        );
-        await this.taskRepository.insertTaskLinkTimetableSlots(
-          linkId,
-          timetableSlotIds,
-          resolveAuditActorId(currentActor),
           executor,
         );
       });
@@ -687,11 +526,23 @@ export class TaskLifecycleService {
             grade: auditTargetGrade,
             room: auditTargetRoom,
             caseId: auditCaseId,
-            followUpRequestId,
-            scope: taskType === 'LOGIN' ? loginDataScope : undefined,
           },
           ip: null,
         });
+      }
+      if (!assignmentReused && auditCaseId !== null) {
+        try {
+          await this.notificationsService?.notifyCaseStatusChanged({
+            caseId: auditCaseId,
+            studentName: clean(data.student_name) || null,
+            schoolId: auditTargetSchoolId,
+            nextStatus: 'IN_PROGRESS',
+            actorUserId: actorId,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`Failed to notify assigned case after commit: ${message}`);
+        }
       }
       if (!assignmentReused && riskProfileStudentUuid) {
         await this.riskProfileService
@@ -718,7 +569,6 @@ export class TaskLifecycleService {
         magic_link: magicLink,
         qr_code_data: qrDataUrl,
         expires_at: responseExpiresAt,
-        follow_up_request_id: followUpRequestId,
         reused: assignmentReused,
       };
     } catch (err) {

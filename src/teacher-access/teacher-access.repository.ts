@@ -10,8 +10,11 @@ import type {
   TeacherAccessGrantRow,
   TeacherAccessGrantStatus,
   TeacherAccessRosterRow,
+  TeacherAttendanceDelegationRow,
+  TeacherAttendanceDelegationHistoryRow,
   TeacherAttendanceHistoryRow,
 } from './teacher-access.types';
+import { rosterProfileColumnsSql, rosterProfileJoinsSql } from '../common/utils/student-roster.sql';
 
 interface TermIssueRow extends Record<string, unknown> {
   id: string;
@@ -27,14 +30,13 @@ interface MembershipIssueRow extends Record<string, unknown> {
   id: string;
   school_id: number;
   teacher_id: string;
-  teacher_user_id: number;
   teacher_display_name: string;
   teacher_email: string | null;
   membership_status: 'ACTIVE' | 'INACTIVE';
   teacher_status: string;
 }
 
-/** How the จัดการลิงก์เช็คชื่อ table narrows by LINE verification. */
+/** How the จัดการลิงก์เช็กชื่อ table narrows by LINE verification. */
 export type TeacherLineFilter = 'VERIFIED' | 'NOT_VERIFIED' | 'REACHABLE';
 
 export interface TeacherLinkRosterRow extends Record<string, unknown> {
@@ -69,6 +71,23 @@ export interface TeacherGrantDeliveryRow extends Record<string, unknown> {
   token_encrypted: string | null;
   provider_user_id: string | null;
   friend_state: string | null;
+}
+
+export interface AttendanceDelegationTeacherRow extends Record<string, unknown> {
+  teacher_membership_id: string;
+  teacher_id: string;
+  teacher_display_name: string;
+}
+
+interface AttendanceDelegationGrantScopeRow extends Record<string, unknown> {
+  assignment_id: string;
+  school_id: number;
+  school_term_id: string;
+  attendance_date: string;
+  timetable_slot_id: string | null;
+  /** The link's own window, which is not tied to the round's date. */
+  starts_at: string | Date;
+  ends_at: string | Date;
 }
 
 interface QueryExecutor {
@@ -135,6 +154,34 @@ export class TeacherAccessRepository {
     return result.rows.length > 0;
   }
 
+  /**
+   * Where a classroom sits. Callers take `classroomId` from the client next to a
+   * `schoolId` they have already scope-checked, so the pair has to be verified
+   * before the classroom is used as a filter — otherwise a caller inside their
+   * own school can read another school's rows by naming its classroom — and the
+   * grade/room are what a class-confined actor is checked against.
+   */
+  async findClassroomScope(classroomId: number): Promise<{
+    school_id: number;
+    grade_level_id: number;
+    legacy_room_number: number;
+  } | null> {
+    const result = await queryDataSource<{
+      school_id: number;
+      grade_level_id: number;
+      legacy_room_number: number;
+    }>(
+      this.dataSource,
+      `
+        SELECT school_id, grade_level_id, legacy_room_number
+        FROM school_classrooms
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
+      [classroomId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async findActiveSchoolName(schoolId: number): Promise<string | null> {
     const result = await queryDataSource<{ name: string }>(
       this.dataSource,
@@ -172,7 +219,6 @@ export class TeacherAccessRepository {
       `
         SELECT membership.id::text, membership.school_id,
                membership.teacher_id::text AS teacher_id,
-               membership.teacher_user_id,
                TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
                teacher.email AS teacher_email,
                membership.membership_status, teacher.teacher_status
@@ -294,6 +340,166 @@ export class TeacherAccessRepository {
     return result.rows;
   }
 
+  async listAttendanceDelegationAssignments(
+    input: {
+      schoolId: number;
+      schoolTermId: number;
+      classroomId?: number;
+      teacherMembershipId?: number;
+      attendanceDate: string;
+      assignmentId?: number;
+      timetableSlotId?: number | null;
+      excludeGrantId?: string;
+      includeDelegatedAssignment?: boolean;
+    },
+    queryRunner?: QueryRunner,
+  ): Promise<TeacherAccessAssignmentRow[]> {
+    const result = await this.executor(queryRunner).query<TeacherAccessAssignmentRow>(
+      `
+        SELECT
+          assignment.id::text AS assignment_id,
+          assignment.teacher_membership_id::text,
+          assignment.school_id,
+          classroom.id::text AS classroom_id,
+          classroom.school_term_id::text,
+          classroom.grade_level_id,
+          grade.label AS grade_label,
+          classroom.legacy_room_number,
+          classroom.room_code,
+          classroom.room_name,
+          classroom.classroom_status,
+          classroom.card_cover_color,
+          (classroom.cover_image_storage_key IS NOT NULL) AS has_cover_image,
+          classroom.cover_image_position_x,
+          classroom.cover_image_position_y,
+          classroom.cover_image_scale,
+          assignment.assignment_kind,
+          assignment.assignment_status,
+          assignment.subject_id,
+          subject.code AS subject_code,
+          subject.name_th AS subject_name,
+          timetable_slot.id::text AS timetable_slot_id,
+          timetable_slot.period AS timetable_slot_period,
+          assignment.effective_on::text,
+          assignment.effective_until::text
+        FROM classroom_teacher_assignments assignment
+        JOIN school_classrooms classroom ON classroom.id = assignment.classroom_id
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        JOIN school_teacher_memberships membership ON membership.id = assignment.teacher_membership_id
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        LEFT JOIN subjects subject ON subject.id = assignment.subject_id
+        LEFT JOIN LATERAL (
+          SELECT slot.id, slot.period
+          FROM timetable_slots slot
+          JOIN timetable_slot_teachers slot_teacher
+            ON slot_teacher.timetable_slot_id = slot.id
+           AND slot_teacher.teacher_membership_id = assignment.teacher_membership_id
+          WHERE assignment.assignment_kind = 'SUBJECT'
+            AND slot.classroom_id = classroom.id
+            AND slot.subject_id = assignment.subject_id
+            AND slot.day_of_week = EXTRACT(ISODOW FROM $4::date)
+            AND slot.deleted_at IS NULL
+          ORDER BY slot.period, slot.id
+        ) timetable_slot ON TRUE
+        WHERE assignment.school_id = $1
+          AND classroom.school_term_id = $2
+          AND ($3::bigint IS NULL OR classroom.id = $3)
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
+          AND (assignment.effective_on IS NULL OR assignment.effective_on <= $4::date)
+          AND (assignment.effective_until IS NULL OR assignment.effective_until >= $4::date)
+          AND ($5::bigint IS NULL OR assignment.id = $5)
+          AND ($6::bigint IS NULL OR assignment.teacher_membership_id = $6)
+          AND ($7::bigint IS NULL OR timetable_slot.id = $7)
+          AND (assignment.assignment_kind = 'HOMEROOM' OR timetable_slot.id IS NOT NULL)
+          AND (
+            $9::boolean
+            OR NOT EXISTS (
+              SELECT 1
+              FROM teacher_access_attendance_assignments delegated
+              JOIN teacher_access_grants delegated_grant ON delegated_grant.id = delegated.grant_id
+              WHERE delegated.assignment_id = assignment.id
+                AND delegated.attendance_date = $4::date
+                AND (delegated.timetable_slot_id IS NULL OR delegated.timetable_slot_id = timetable_slot.id)
+                AND ($8::uuid IS NULL OR delegated.grant_id <> $8::uuid)
+                AND delegated_grant.revoked_at IS NULL
+                AND delegated_grant.expires_at > now()
+            )
+          )
+        ORDER BY assignment.assignment_kind, subject.name_th NULLS FIRST,
+                 timetable_slot.period NULLS FIRST, assignment.id
+      `,
+      [
+        input.schoolId,
+        input.schoolTermId,
+        input.classroomId ?? null,
+        input.attendanceDate,
+        input.assignmentId ?? null,
+        input.teacherMembershipId ?? null,
+        input.timetableSlotId ?? null,
+        input.excludeGrantId ?? null,
+        input.includeDelegatedAssignment ?? false,
+      ],
+    );
+    return result.rows;
+  }
+
+  async findAttendanceDelegationAssignment(
+    input: {
+      assignmentId: number;
+      schoolId: number;
+      schoolTermId: number;
+      attendanceDate: string;
+      timetableSlotId?: number | null;
+      excludeGrantId?: string;
+      includeDelegatedAssignment?: boolean;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<TeacherAccessAssignmentRow | null> {
+    const assignments = await this.listAttendanceDelegationAssignments(input, queryRunner);
+    return assignments[0] ?? null;
+  }
+
+  async lockAttendanceDelegationAssignment(
+    assignmentId: number,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    const result = await this.executor(queryRunner).query(
+      `SELECT 1 FROM classroom_teacher_assignments WHERE id = $1 FOR UPDATE`,
+      [assignmentId],
+    );
+    return result.rows.length === 1;
+  }
+
+  async listActiveTeacherMembershipsForSchool(
+    schoolId: number,
+    queryRunner?: QueryRunner,
+  ): Promise<AttendanceDelegationTeacherRow[]> {
+    const result = await this.executor(queryRunner).query<AttendanceDelegationTeacherRow>(
+      `
+        SELECT membership.id::text AS teacher_membership_id,
+               membership.teacher_id::text AS teacher_id,
+               TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name
+        FROM school_teacher_memberships membership
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        WHERE membership.school_id = $1
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
+        ORDER BY teacher.first_name, teacher.last_name, membership.id
+      `,
+      [schoolId],
+    );
+    return result.rows;
+  }
+
   async createGrant(
     input: {
       teacherMembershipId: number;
@@ -361,17 +567,321 @@ export class TeacherAccessRepository {
     return grantId;
   }
 
+  async createAttendanceDelegationGrant(
+    input: {
+      teacherMembershipId: number;
+      schoolId: number;
+      schoolTermId: number;
+      tokenHash: string;
+      tokenEncrypted: string;
+      stepUpPolicy: string;
+      issuedBy: number;
+      startsAt: Date;
+      endsAt: Date;
+      /** When the link stops working; not the same as the window for a past day. */
+      expiresAt: Date;
+      attendanceDate: string;
+      timetableSlotId: number | null;
+      assignment: TeacherAccessAssignmentRow;
+      capability: TeacherAccessCapability;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<string> {
+    const executor = this.executor(queryRunner);
+    const created = await executor.query<{ id: string }>(
+      `
+        INSERT INTO teacher_access_grants (
+          teacher_membership_id, school_id, school_term_id, token_hash, token_encrypted,
+          access_scope, step_up_policy, issued_by, expires_at
+        ) VALUES ($1, $2, $3, $4, $5, 'ATTENDANCE_ONLY', $6, $7, $8)
+        RETURNING id::text
+      `,
+      [
+        input.teacherMembershipId,
+        input.schoolId,
+        input.schoolTermId,
+        input.tokenHash,
+        input.tokenEncrypted,
+        input.stepUpPolicy,
+        input.issuedBy,
+        input.expiresAt,
+      ],
+    );
+    const grantId = created.rows[0].id;
+    await executor.query(
+      `INSERT INTO teacher_access_grant_capabilities (grant_id, capability) VALUES ($1::uuid, $2)`,
+      [grantId, input.capability],
+    );
+    await executor.query(
+      `
+        INSERT INTO teacher_access_attendance_assignments (
+          grant_id, assignment_id, assignment_teacher_membership_id, school_id,
+          school_term_id, classroom_id, attendance_date, timetable_slot_id, starts_at, ends_at
+        ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::date, $8, $9, $10)
+      `,
+      [
+        grantId,
+        Number(input.assignment.assignment_id),
+        Number(input.assignment.teacher_membership_id),
+        input.schoolId,
+        input.schoolTermId,
+        Number(input.assignment.classroom_id),
+        input.attendanceDate,
+        input.timetableSlotId,
+        input.startsAt,
+        input.endsAt,
+      ],
+    );
+    return grantId;
+  }
+
+  async listActiveAttendanceDelegations(
+    input: {
+      schoolId: number;
+      schoolTermId: number;
+      classroomId: number;
+      attendanceDate: string;
+      assignmentTeacherMembershipId?: number;
+    },
+    queryRunner?: QueryRunner,
+  ): Promise<TeacherAttendanceDelegationRow[]> {
+    const result = await this.executor(queryRunner).query<TeacherAttendanceDelegationRow>(
+      `
+        SELECT
+          access_grant.id::text AS grant_id,
+          access_grant.teacher_membership_id::text,
+          TRIM(recipient_teacher.first_name || ' ' || recipient_teacher.last_name) AS teacher_display_name,
+          delegated.assignment_id::text,
+          assignment.assignment_kind,
+          subject.name_th AS subject_name,
+          delegated.timetable_slot_id::text,
+          timetable_slot.period AS timetable_slot_period,
+          delegated.attendance_date::text,
+          delegated.starts_at,
+          delegated.ends_at,
+          access_grant.token_encrypted
+        FROM teacher_access_attendance_assignments delegated
+        JOIN teacher_access_grants access_grant ON access_grant.id = delegated.grant_id
+        JOIN school_teacher_memberships recipient_membership
+          ON recipient_membership.id = access_grant.teacher_membership_id
+        JOIN teachers recipient_teacher ON recipient_teacher.id = recipient_membership.teacher_id
+        JOIN classroom_teacher_assignments assignment ON assignment.id = delegated.assignment_id
+        LEFT JOIN subjects subject ON subject.id = assignment.subject_id
+        LEFT JOIN timetable_slots timetable_slot ON timetable_slot.id = delegated.timetable_slot_id
+        WHERE delegated.school_id = $1
+          AND delegated.school_term_id = $2
+          AND delegated.classroom_id = $3
+          AND delegated.attendance_date = $4::date
+          AND ($5::bigint IS NULL OR delegated.assignment_teacher_membership_id = $5)
+          AND access_grant.access_scope = 'ATTENDANCE_ONLY'
+          AND access_grant.revoked_at IS NULL
+          AND access_grant.expires_at > now()
+        ORDER BY delegated.starts_at, delegated.ends_at, access_grant.id
+      `,
+      [
+        input.schoolId,
+        input.schoolTermId,
+        input.classroomId,
+        input.attendanceDate,
+        input.assignmentTeacherMembershipId ?? null,
+      ],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Every delegation of a class, in any state — the history screens list these
+   * while the check-in page keeps showing only the ones still open.
+   *
+   * Status is derived, not stored: revoked wins, then a submitted round for the
+   * delegated period means the stand-in finished, then a window that has closed
+   * without a submitted round is expired; anything else is still waiting.
+   */
+  async listAttendanceDelegationHistory(
+    input: {
+      classroomId: number;
+      subjectId?: number;
+      attendanceDate?: string;
+      search?: string;
+      assignmentTeacherMembershipId?: number | null;
+      sortBy?: 'date' | 'issuedBy' | 'teacher' | 'status';
+      sortDirection?: 'asc' | 'desc';
+      page: number;
+      limit: number;
+    },
+    queryRunner?: QueryRunner,
+  ): Promise<TeacherAttendanceDelegationHistoryRow[]> {
+    const params: unknown[] = [input.classroomId];
+    const conditions = [
+      'delegated.classroom_id = $1',
+      `access_grant.access_scope = 'ATTENDANCE_ONLY'`,
+    ];
+    if (input.subjectId) {
+      params.push(input.subjectId);
+      conditions.push(`assignment.subject_id = $${params.length}`);
+    }
+    if (input.attendanceDate) {
+      params.push(input.attendanceDate);
+      conditions.push(`delegated.attendance_date = $${params.length}::date`);
+    }
+    if (input.assignmentTeacherMembershipId) {
+      params.push(input.assignmentTeacherMembershipId);
+      conditions.push(`delegated.assignment_teacher_membership_id = $${params.length}`);
+    }
+    if (input.search) {
+      params.push(`%${input.search}%`);
+      conditions.push(`(
+        TRIM(recipient_teacher.first_name || ' ' || recipient_teacher.last_name) ILIKE $${params.length}
+        OR TRIM(COALESCE(issuer."FirstName", '') || ' ' ||
+                COALESCE(issuer."LastName", '')) ILIKE $${params.length}
+        OR COALESCE(subject.name_th, '') ILIKE $${params.length}
+      )`);
+    }
+    const sortColumn =
+      {
+        date: 'delegated.attendance_date',
+        issuedBy: 'issued_by_name',
+        teacher: 'teacher_display_name',
+        status: 'delegation_status',
+      }[input.sortBy ?? 'date'] ?? 'delegated.attendance_date';
+    const direction = input.sortDirection === 'asc' ? 'ASC' : 'DESC';
+    params.push(input.limit, (input.page - 1) * input.limit);
+    const result = await this.executor(queryRunner).query<TeacherAttendanceDelegationHistoryRow>(
+      `
+        SELECT
+          access_grant.id::text AS grant_id,
+          delegated.assignment_id::text,
+          access_grant.teacher_membership_id::text,
+          COALESCE(
+            NULLIF(TRIM(COALESCE(issuer."FirstName", '') || ' ' ||
+                        COALESCE(issuer."LastName", '')), ''),
+            issuer.username,
+            '-'
+          ) AS issued_by_name,
+          TRIM(recipient_teacher.first_name || ' ' || recipient_teacher.last_name)
+            AS teacher_display_name,
+          subject.name_th AS subject_name,
+          timetable_slot.period AS timetable_slot_period,
+          delegated.attendance_date::text,
+          delegated.starts_at,
+          delegated.ends_at,
+          CASE
+            WHEN access_grant.revoked_at IS NOT NULL THEN 'REVOKED'
+            WHEN EXISTS (
+              -- Sessions are keyed by school/grade/room, so the delegated class
+              -- is matched through its classroom row.
+              SELECT 1
+              FROM attendance_sessions session
+              JOIN school_classrooms delegated_room
+                ON delegated_room.id = delegated.classroom_id
+              WHERE session.school_id = delegated_room.school_id
+                AND session.grade_level_id = delegated_room.grade_level_id
+                AND session.room_id = delegated_room.legacy_room_number
+                AND session.school_term_id = delegated_room.school_term_id
+                AND session.attendance_date = delegated.attendance_date
+                AND session.status = 'SUBMITTED'
+                AND session.deleted_at IS NULL
+                AND (
+                  delegated.timetable_slot_id IS NULL
+                  OR session.timetable_slot_id = delegated.timetable_slot_id
+                )
+            ) THEN 'COMPLETED'
+            -- The window says which round the link covers; whether the link is
+            -- still usable is the grant's expiry, which is deliberately later
+            -- for a round that had already ended when it was handed out.
+            WHEN access_grant.expires_at < now() THEN 'EXPIRED'
+            ELSE 'PENDING'
+          END AS delegation_status,
+          access_grant.token_encrypted,
+          COUNT(*) OVER()::int AS total_count
+        FROM teacher_access_attendance_assignments delegated
+        JOIN teacher_access_grants access_grant ON access_grant.id = delegated.grant_id
+        JOIN school_teacher_memberships recipient_membership
+          ON recipient_membership.id = access_grant.teacher_membership_id
+        JOIN teachers recipient_teacher ON recipient_teacher.id = recipient_membership.teacher_id
+        JOIN users issuer ON issuer.id = access_grant.issued_by
+        LEFT JOIN classroom_teacher_assignments assignment ON assignment.id = delegated.assignment_id
+        LEFT JOIN subjects subject ON subject.id = assignment.subject_id
+        LEFT JOIN timetable_slots timetable_slot ON timetable_slot.id = delegated.timetable_slot_id
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY ${sortColumn} ${direction}, delegated.starts_at DESC, access_grant.id
+        LIMIT $${params.length - 1} OFFSET $${params.length}
+      `,
+      params,
+    );
+    return result.rows;
+  }
+
+  async updateAttendanceDelegationWindow(
+    grantId: string,
+    startsAt: Date,
+    endsAt: Date,
+    expiresAt: Date,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    const executor = this.executor(queryRunner);
+    const updated = await executor.query(
+      `
+        UPDATE teacher_access_attendance_assignments
+        SET starts_at = $2,
+            ends_at = $3
+        WHERE grant_id = $1::uuid
+      `,
+      [grantId, startsAt, endsAt],
+    );
+    if (updated.rowCount !== 1) return false;
+    await executor.query(
+      `UPDATE teacher_access_grants SET expires_at = $2, updated_at = now() WHERE id = $1::uuid`,
+      [grantId, endsAt],
+    );
+    return true;
+  }
+
+  /** What a delegation covers: the class, the day and the period it was issued for. */
+  async findAttendanceDelegationScope(
+    grantId: string,
+    queryRunner: QueryRunner,
+  ): Promise<AttendanceDelegationGrantScopeRow | null> {
+    const scope = await this.executor(queryRunner).query<AttendanceDelegationGrantScopeRow>(
+      `
+        SELECT assignment_id::text, school_id, school_term_id::text, attendance_date::text,
+               timetable_slot_id::text, starts_at, ends_at
+        FROM teacher_access_attendance_assignments
+        WHERE grant_id = $1::uuid
+      `,
+      [grantId],
+    );
+    return scope.rows[0] ?? null;
+  }
+
+  async findRestrictedAttendanceAssignment(
+    grantId: string,
+    queryRunner: QueryRunner,
+  ): Promise<TeacherAccessAssignmentRow | null> {
+    const row = await this.findAttendanceDelegationScope(grantId, queryRunner);
+    if (!row) return null;
+    return await this.findAttendanceDelegationAssignment(
+      {
+        assignmentId: Number(row.assignment_id),
+        schoolId: row.school_id,
+        schoolTermId: Number(row.school_term_id),
+        attendanceDate: row.attendance_date,
+        ...(row.timetable_slot_id ? { timetableSlotId: Number(row.timetable_slot_id) } : {}),
+        includeDelegatedAssignment: true,
+      },
+      queryRunner,
+    );
+  }
+
   private grantSelectSql(): string {
     return `
       SELECT
         access_grant.id::text,
         access_grant.teacher_membership_id::text,
-        membership.teacher_user_id,
-        COALESCE(teacher_account.username, TRIM(teacher.first_name || ' ' || teacher.last_name)) AS teacher_username,
+        membership.teacher_id::text AS teacher_id,
         TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
         teacher.email AS teacher_email,
         teacher.citizen_id AS teacher_citizen_id,
-        teacher_account.data_origin_code AS teacher_data_origin_code,
         teacher.teacher_status AS teacher_status,
         membership.membership_status,
         membership.deleted_at AS membership_deleted_at,
@@ -387,6 +897,10 @@ export class TeacherAccessRepository {
         term.ends_on::text AS term_ends_on,
         access_grant.token_hash,
         access_grant.token_encrypted,
+        access_grant.access_scope,
+        attendance_assignment.attendance_date::text AS attendance_date,
+        attendance_assignment.starts_at AS attendance_starts_at,
+        attendance_assignment.ends_at AS attendance_ends_at,
         access_grant.step_up_policy,
         access_grant.issued_by,
         issuer.username AS issuer_name,
@@ -413,11 +927,11 @@ export class TeacherAccessRepository {
       JOIN school_teacher_memberships membership
         ON membership.id = access_grant.teacher_membership_id
       JOIN teachers teacher ON teacher.id = membership.teacher_id
-      LEFT JOIN users teacher_account ON teacher_account.id = membership.teacher_user_id
-        -- teacher_user_id is nullable — a teacher created without a login account
       JOIN schools school ON school.id = access_grant.school_id
       JOIN school_terms term ON term.id = access_grant.school_term_id
       JOIN users issuer ON issuer.id = access_grant.issued_by
+      LEFT JOIN teacher_access_attendance_assignments attendance_assignment
+        ON attendance_assignment.grant_id = access_grant.id
     `;
   }
 
@@ -551,6 +1065,66 @@ export class TeacherAccessRepository {
       `,
       [grantId],
     );
+  }
+
+  /**
+   * Teacher comments of one student in a class. The profile screen shows these
+   * beside observations: both are "what a teacher wrote about this student", and
+   * the comment button on the roster writes this one.
+   */
+  async listStudentComments(
+    input: { classroomId: number; studentUuid: string; limit: number },
+    queryRunner?: QueryRunner,
+  ): Promise<
+    Array<{
+      id: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
+      created_at: string | Date;
+      author_name: string;
+    }>
+  > {
+    const result = await this.executor(queryRunner).query<{
+      id: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
+      created_at: string | Date;
+      author_name: string;
+    }>(
+      `
+        SELECT
+          comment.id::text,
+          comment.problem_category_code,
+          problem_category.label_th AS problem_category_label,
+          problem_category.guidance_th AS problem_category_guidance,
+          comment.problem_description,
+          comment.created_at,
+          COALESCE(
+            NULLIF(TRIM(COALESCE(teacher.first_name, '') || ' ' ||
+                        COALESCE(teacher.last_name, '')), ''),
+            NULLIF(TRIM(COALESCE(author."FirstName", '') || ' ' ||
+                        COALESCE(author."LastName", '')), ''),
+            author.username,
+            'ครูผู้สอน'
+          ) AS author_name
+        FROM classroom_student_comments comment
+        JOIN student_term enrollment ON enrollment.person_uuid = comment.person_uuid
+        LEFT JOIN users author ON author.id = comment.authored_by_user_id
+        LEFT JOIN teachers teacher ON teacher.id = comment.authored_by_teacher_id
+        JOIN classroom_student_problem_categories problem_category
+          ON problem_category.code = comment.problem_category_code
+        WHERE comment.classroom_id = $1
+          AND enrollment.student_uuid = $2
+        ORDER BY comment.created_at DESC
+        LIMIT $3
+      `,
+      [input.classroomId, input.studentUuid, input.limit],
+    );
+    return result.rows;
   }
 
   async listGrantAssignments(
@@ -745,6 +1319,11 @@ export class TeacherAccessRepository {
           FROM teacher_access_grants access_grant
           WHERE access_grant.teacher_membership_id = membership.id
             AND access_grant.school_term_id = $2
+            -- The teacher's own term link only. A delegation grant
+            -- (ATTENDANCE_ONLY) is a one-day stand-in for someone else's class
+            -- and is always newer, so without this it hijacks the row and the
+            -- screen copies / rotates / sends the delegation token instead.
+            AND access_grant.access_scope = 'FULL'
           ORDER BY access_grant.issued_at DESC, access_grant.id DESC
           LIMIT 1
         ) latest_grant ON TRUE
@@ -847,6 +1426,11 @@ export class TeacherAccessRepository {
           FROM teacher_access_grants access_grant
           WHERE access_grant.teacher_membership_id = membership.id
             AND access_grant.school_term_id = $2
+            -- The teacher's own term link only. A delegation grant
+            -- (ATTENDANCE_ONLY) is a one-day stand-in for someone else's class
+            -- and is always newer, so without this it hijacks the row and the
+            -- screen copies / rotates / sends the delegation token instead.
+            AND access_grant.access_scope = 'FULL'
           ORDER BY access_grant.issued_at DESC, access_grant.id DESC
           LIMIT 1
         ) latest_grant ON TRUE
@@ -914,6 +1498,7 @@ export class TeacherAccessRepository {
             FROM teacher_access_grants access_grant
             WHERE access_grant.teacher_membership_id = membership.id
               AND access_grant.school_term_id = $2
+              AND access_grant.access_scope = 'FULL'
               AND access_grant.revoked_at IS NULL
               AND access_grant.expires_at > now()
           )
@@ -979,6 +1564,7 @@ export class TeacherAccessRepository {
             FROM teacher_access_grants access_grant
             WHERE access_grant.teacher_membership_id = membership.id
               AND access_grant.school_term_id = $2
+              AND access_grant.access_scope = 'FULL'
               AND access_grant.revoked_at IS NULL
               AND access_grant.expires_at > now()
           ) AS has_active_grant
@@ -1096,25 +1682,13 @@ export class TeacherAccessRepository {
           enrollment.student_uuid::text,
           enrollment.student_number,
           (person.photo_storage_key IS NOT NULL) AS has_photo,
-          enrollment."FirstName_Onec" AS first_name,
-          enrollment."LastName_Onec" AS last_name,
+          ${rosterProfileColumnsSql('enrollment')},
           enrollment.student_status_code,
           status.label_th AS student_status_label,
-          risk.risk_tier,
-          latest_comment.comment_text AS teacher_comment,
           COUNT(*) OVER()::int AS total_count
         FROM student_term enrollment
-        LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
+        ${rosterProfileJoinsSql('enrollment')}
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
-        LEFT JOIN student_risk_profiles risk ON risk.student_uuid = enrollment.student_uuid
-        LEFT JOIN LATERAL (
-          SELECT comment.comment_text
-          FROM classroom_student_comments comment
-          WHERE comment.classroom_id = enrollment.classroom_id
-            AND comment.person_uuid = enrollment.person_uuid
-          ORDER BY comment.created_at DESC, comment.id DESC
-          LIMIT 1
-        ) latest_comment ON TRUE
         WHERE enrollment.classroom_id = $1
           AND enrollment.deleted_at IS NULL
           AND (
@@ -1212,7 +1786,8 @@ export class TeacherAccessRepository {
             -- username, so the display name comes from the account behind it.
             SELECT STRING_AGG(
               DISTINCT COALESCE(
-                NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+                NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+                NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
                 CASE
                   WHEN record."RecordedBy" LIKE '%@%' THEN NULL
                   ELSE NULLIF(record."RecordedBy", '')
@@ -1222,7 +1797,8 @@ export class TeacherAccessRepository {
               ', '
             )
             FROM attendance record
-            LEFT JOIN users recorder ON recorder.username = record."RecordedBy"
+            LEFT JOIN teachers recorder ON recorder.id = record.recorded_by_teacher_id
+            LEFT JOIN users recorder_user ON recorder_user.username = record."RecordedBy"
             WHERE record.session_id = session.id
             ) AS recorded_by,
             COUNT(*) FILTER (WHERE record."AttendanceStatus" = 1)::int AS present_count,
@@ -1268,25 +1844,59 @@ export class TeacherAccessRepository {
     input: {
       classroomId: number;
       studentUuid: string;
-      commentText: string;
-      authoredByUserId: number | null;
+      problemCategory: string;
+      problemDescription: string;
+      authoredByTeacherId: number;
     },
     queryRunner: QueryRunner,
-  ): Promise<{ id: string; comment_text: string } | null> {
-    const result = await this.executor(queryRunner).query<{ id: string; comment_text: string }>(
+  ): Promise<{
+    id: string;
+    problem_category_code: string;
+    problem_category_label: string;
+    problem_category_guidance: string | null;
+    problem_description: string;
+  } | null> {
+    const result = await this.executor(queryRunner).query<{
+      id: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
+    }>(
       `
-        INSERT INTO classroom_student_comments (
-          classroom_id, person_uuid, comment_text, authored_by_user_id
+        WITH inserted AS (
+          INSERT INTO classroom_student_comments (
+            classroom_id,
+            person_uuid,
+            problem_category_code,
+            problem_description,
+            authored_by_teacher_id
+          )
+          SELECT $1, enrollment.person_uuid, $3, $4, $5
+          FROM student_term enrollment
+          WHERE enrollment.student_uuid = $2
+            AND enrollment.classroom_id = $1
+            AND enrollment.deleted_at IS NULL
+            AND enrollment.person_uuid IS NOT NULL
+          RETURNING id, problem_category_code, problem_description
         )
-        SELECT $1, enrollment.person_uuid, $3, $4
-        FROM student_term enrollment
-        WHERE enrollment.student_uuid = $2
-          AND enrollment.classroom_id = $1
-          AND enrollment.deleted_at IS NULL
-          AND enrollment.person_uuid IS NOT NULL
-        RETURNING id::text, comment_text
+        SELECT
+          inserted.id::text,
+          inserted.problem_category_code,
+          category.label_th AS problem_category_label,
+          category.guidance_th AS problem_category_guidance,
+          inserted.problem_description
+        FROM inserted
+        JOIN classroom_student_problem_categories category
+          ON category.code = inserted.problem_category_code
       `,
-      [input.classroomId, input.studentUuid, input.commentText, input.authoredByUserId],
+      [
+        input.classroomId,
+        input.studentUuid,
+        input.problemCategory,
+        input.problemDescription,
+        input.authoredByTeacherId,
+      ],
     );
     return result.rows[0] ?? null;
   }
@@ -1371,6 +1981,101 @@ export class TeacherAccessRepository {
       [classroomId],
     );
     return result.rows.map((row) => row.student_uuid);
+  }
+
+  /**
+   * Attendance session for one classroom/date/period, resolved from the class
+   * identity that `student_term` already carries. Lets the teacher-link surface
+   * show the same OPEN/SUBMITTED state the authenticated page shows, without
+   * granting the link any wider scope than its own classroom.
+   */
+  async findAttendanceSessionForClassroom(
+    input: {
+      classroomId: number;
+      attendanceDate: string;
+      sessionKind: 'DAILY' | 'SUBJECT';
+      timetableSlotId: number | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<{
+    id: string;
+    status: string;
+    revision: number;
+    expected_roster_count: number;
+    recorded_count: number;
+    submitted_at: string | null;
+    correction_reason: string | null;
+  } | null> {
+    const result = await this.executor(queryRunner).query<{
+      id: string;
+      status: string;
+      revision: number;
+      expected_roster_count: number;
+      recorded_count: number;
+      submitted_at: string | null;
+      correction_reason: string | null;
+    }>(
+      `
+        WITH class_identity AS (
+          SELECT DISTINCT
+            enrollment."SchoolID_Onec" AS school_id,
+            enrollment."GradeLevelID_Onec" AS grade_level_id,
+            enrollment."RoomID_Onec" AS room_id,
+            enrollment."AcademicYear_Onec" AS academic_year,
+            enrollment."Semester_Onec" AS semester
+          FROM student_term enrollment
+          WHERE enrollment.classroom_id = $1 AND enrollment.deleted_at IS NULL
+        )
+        SELECT
+          session.id::text,
+          session.status,
+          session.revision,
+          session.expected_roster_count,
+          session.recorded_count,
+          session.submitted_at::text,
+          session.correction_reason
+        FROM attendance_sessions session
+        JOIN class_identity class
+          ON session.grade_level_id = class.grade_level_id
+         AND session.room_id = class.room_id
+        JOIN school_terms term
+          ON term.id = session.school_term_id
+         AND term.school_id = class.school_id
+         AND term.academic_year = class.academic_year
+         AND term.semester = class.semester
+        WHERE session.attendance_date = $2
+          AND session.session_kind = $3
+          AND ($4::bigint IS NULL OR session.timetable_slot_id = $4)
+          AND ($4::bigint IS NOT NULL OR session.period = 1)
+          AND session.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [input.classroomId, input.attendanceDate, input.sessionKind, input.timetableSlotId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Per-student marks already stored for a session, for prefill on reopen. */
+  async listAttendanceMarksForSession(
+    sessionId: string,
+    queryRunner: QueryRunner,
+  ): Promise<Array<{ student_uuid: string; status_code: number; marked_at: string | null }>> {
+    const result = await this.executor(queryRunner).query<{
+      student_uuid: string;
+      status_code: number;
+      marked_at: string | null;
+    }>(
+      `
+        SELECT
+          record.student_uuid::text,
+          record."AttendanceStatus" AS status_code,
+          record.marked_at::text
+        FROM attendance record
+        WHERE record.session_id = $1
+      `,
+      [sessionId],
+    );
+    return result.rows;
   }
 
   async isStudentInClassroom(

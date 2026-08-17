@@ -47,19 +47,19 @@ async function main() {
       const [actor] = await manager.query(
         `
           SELECT
-            id,
-            trim(concat_ws(' ', "FirstName", "LastName")) AS display_name,
-            email
-          FROM users
-          WHERE role = 'TEACHER'
-            AND status = 'ACTIVE'
-            AND data_origin_code = 'DEMO'
-            AND email IS NOT NULL
-            AND data_scope @> jsonb_build_object(
-              'school_ids',
-              jsonb_build_array($1::int)
-            )
-          ORDER BY id
+            teacher.id,
+            TRIM(teacher.first_name || ' ' || teacher.last_name) AS display_name,
+            teacher.email
+          FROM teachers teacher
+          JOIN school_teacher_memberships membership
+            ON membership.teacher_id = teacher.id
+           AND membership.school_id = $1::int
+           AND membership.membership_status = 'ACTIVE'
+           AND membership.deleted_at IS NULL
+          WHERE teacher.teacher_status = 'ACTIVE'
+            AND teacher.deleted_at IS NULL
+            AND teacher.email IS NOT NULL
+          ORDER BY teacher.id
           LIMIT 1
         `,
         [caseRecord.school_id],
@@ -103,13 +103,11 @@ async function main() {
       );
       await manager.query(
         `INSERT INTO tasks (
-           id, case_id, status, max_delegation_depth, task_type, target_school_id,
-           created_by, updated_by
-         ) VALUES ($1, $2, 'PENDING_REVIEW', 2, 'VISIT', $3, $4, $4)
+           id, case_id, status, task_type, target_school_id, created_by, updated_by
+         ) VALUES ($1, $2, 'PENDING_REVIEW', 'VISIT', $3, $4, $4)
          ON CONFLICT (id) DO UPDATE SET
            case_id = EXCLUDED.case_id,
            status = EXCLUDED.status,
-           max_delegation_depth = EXCLUDED.max_delegation_depth,
            task_type = EXCLUDED.task_type,
            target_school_id = EXCLUDED.target_school_id,
            created_by = EXCLUDED.created_by,
@@ -118,10 +116,10 @@ async function main() {
       );
       await manager.query(
         `INSERT INTO task_links (
-           id, task_id, token_hash, delegation_depth, assigned_to_name,
+           id, task_id, token_hash, assigned_to_name,
            assigned_to_phone, assigned_to_email, subject, status, expires_at,
            created_by, updated_by
-         ) VALUES ($1, $2, $3, 0, $4, $5, $6, $7, 'COMPLETED', NOW() + INTERVAL '30 days', $8, $8)
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', NOW() + INTERVAL '30 days', $7, $7)
          ON CONFLICT (id) DO UPDATE SET
            task_id = EXCLUDED.task_id,
            assigned_to_name = EXCLUDED.assigned_to_name,
@@ -145,10 +143,10 @@ async function main() {
       );
       await manager.query(
         `INSERT INTO task_submissions (
-           task_link_id, cause_category, cause_detail, recommendation,
+           task_link_id, follow_up_problem_category_code, cause_detail, recommendation,
            address_changed, submitted_at, created_by, updated_by
          )
-         SELECT $1, 'FAMILY', $2, $3, FALSE, NOW() - INTERVAL '1 day', $4, $4
+         SELECT $1, 'OTHER', $2, $3, FALSE, NOW() - INTERVAL '1 day', $4, $4
          WHERE NOT EXISTS (
            SELECT 1 FROM task_submissions WHERE task_link_id = $1
          )`,
@@ -156,7 +154,7 @@ async function main() {
           linkId,
           'ผู้ปกครองมีภาระงานต่างพื้นที่ นักเรียนขาดผู้ดูแลเรื่องการเดินทางบางวัน',
           'ประสานครูที่ปรึกษาและผู้ปกครอง วางตารางรับส่งและติดตามการมาเรียน 30 วัน',
-          actor.id,
+          creator.id,
         ],
       );
       await manager.query(
@@ -166,7 +164,7 @@ async function main() {
               updated_by = $2
           WHERE task_link_id = $1
         `,
-        [linkId, actor.id],
+        [linkId, creator.id],
       );
     });
 

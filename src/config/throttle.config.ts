@@ -26,7 +26,7 @@ export type ThrottleName =
   | 'login'
   | 'otpRequest'
   | 'otpVerify'
-  | 'mockLogin'
+  | 'araidLogin'
   | 'geocode'
   | 'followerApplication'
   | 'campaignLookup'
@@ -55,7 +55,9 @@ function rule(
  *  - otpRequest   3 / 5 min    (OTP email spam)
  *  - otpVerify   10 / minute   (IP-level OTP guessing; the per-link DB lockout
  *                               is the primary cap, this caps IP rotation)
- *  - mockLogin   10 / minute   (mock ThaID student login)
+ *  - araidLogin  90 / minute   (staff AraID QR login: the browser polls one
+ *                               challenge every 2s while the phone approves,
+ *                               so a single honest login is ~30 requests/min)
  *  - geocode     30 / minute   (billable Google Maps proxy + address PII)
  *  - followerApplication  3 / 10 min  (public อสม. application form — no auth, spam-prone)
  *  - campaignLookup      20 / minute  (public recruitment-link lookup by code — normal page loads,
@@ -72,7 +74,12 @@ export const throttleConfig = registerAs('throttle', () => ({
     300,
   ),
   otpVerify: rule(process.env.RATE_LIMIT_OTP_VERIFY, process.env.RATE_LIMIT_OTP_VERIFY_TTL, 10, 60),
-  mockLogin: rule(process.env.RATE_LIMIT_MOCK_LOGIN, process.env.RATE_LIMIT_MOCK_LOGIN_TTL, 10, 60),
+  araidLogin: rule(
+    process.env.RATE_LIMIT_ARAID_LOGIN,
+    process.env.RATE_LIMIT_ARAID_LOGIN_TTL,
+    90,
+    60,
+  ),
   geocode: rule(process.env.RATE_LIMIT_GEOCODE, process.env.RATE_LIMIT_GEOCODE_TTL, 30, 60),
   followerApplication: rule(
     process.env.RATE_LIMIT_FOLLOWER_APPLICATION,

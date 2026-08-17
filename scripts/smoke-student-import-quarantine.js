@@ -17,6 +17,8 @@ if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
   throw new Error('Refusing to run: DB_NAME must end with _smoke');
 }
 
+const ALTERNATE_ACADEMIC_YEAR = 2598;
+const SMOKE_ROOM_NAME = 'Quarantine smoke';
 const SMOKE_KEY = 'student-import-quarantine-smoke';
 const GLOBAL_USERNAME = 'student_import_quarantine_smoke_global';
 const OUT_OF_SCOPE_USERNAME = 'student_import_quarantine_smoke_out_scope';
@@ -58,15 +60,20 @@ async function request(baseUrl, method, path, expectedStatus, options = {}) {
   return { response, payload };
 }
 
-async function previewUpload(baseUrl, cookie, schoolId, expectedStatus) {
+async function previewUpload(baseUrl, cookie, fixture, expectedStatus) {
   const csv = [
     'PersonID_Onec,AcademicYear_Onec,Semester_Onec,SchoolID_Onec',
-    `${IDENTIFIER},2599,1,${schoolId}`,
+    `${IDENTIFIER},${fixture.academicYear},${fixture.semester},${fixture.schoolId}`,
   ].join('\n');
   const body = new FormData();
   body.append('file', new Blob([csv], { type: 'text/csv' }), 'students.csv');
   body.append('target', 'student_term');
   body.append('mapping', '{}');
+  // The canonical import context: the endpoint refuses a preview that does not
+  // say which school, term and classroom the rows belong to.
+  body.append('schoolId', String(fixture.schoolId));
+  body.append('schoolTermId', String(fixture.schoolTermId));
+  body.append('classroomId', String(fixture.classroomId));
   const response = await fetch(`${baseUrl}/api/imports/preview`, {
     method: 'POST',
     headers: { cookie },
@@ -75,7 +82,7 @@ async function previewUpload(baseUrl, cookie, schoolId, expectedStatus) {
   const payload = await responseBody(response);
   assert(
     response.status === expectedStatus,
-    `POST /api/imports/preview: expected ${expectedStatus}, received ${response.status}`,
+    `POST /api/imports/preview: expected ${expectedStatus}, received ${response.status} ${JSON.stringify(payload)}`,
   );
   return payload;
 }
@@ -141,6 +148,17 @@ async function cleanupFixtures(dataSource) {
   await dataSource.query(`DELETE FROM student_status WHERE code = ANY($1::int[])`, [
     [PLACEHOLDER_STATUS_CODE, REAL_STATUS_CODE],
   ]);
+  // Only the rooms this smoke created carry its own room_name; rooms it reused
+  // from the school's real term keep theirs and are left alone.
+  await dataSource.query(`DELETE FROM school_classrooms WHERE room_name = $1`, [SMOKE_ROOM_NAME]);
+  await dataSource.query(
+    `DELETE FROM school_terms
+     WHERE academic_year = ANY($1::int[])
+       AND NOT EXISTS (
+         SELECT 1 FROM school_classrooms classroom WHERE classroom.school_term_id = school_terms.id
+       )`,
+    [[ALTERNATE_ACADEMIC_YEAR]],
+  );
 }
 
 async function disableActors(dataSource) {
@@ -155,9 +173,73 @@ async function disableActors(dataSource) {
 }
 
 async function createFixtures(dataSource, actorId) {
-  const [school] = await dataSource.query(`SELECT id FROM schools ORDER BY id LIMIT 1`);
+  // An enrolment only exists inside a configured term and classroom — the
+  // `resolve_student_term_structure_refs` trigger refuses anything else. Borrow
+  // the school's real active term for the main rows (a school may hold only one
+  // active term, so a second one cannot be invented) and add a DRAFT term for
+  // the row that has to sit in a different year: the trigger asks for a term
+  // that exists, not one that is active.
+  const [activeTerm] = await dataSource.query(
+    `SELECT term.id, term.school_id, term.academic_year, term.semester
+     FROM school_terms term
+     WHERE term.status = 'ACTIVE' AND term.deleted_at IS NULL
+     ORDER BY term.school_id, term.id
+     LIMIT 1`,
+  );
+  assert(activeTerm, 'Smoke requires one active school term');
   const [grade] = await dataSource.query(`SELECT id FROM grade_levels ORDER BY id LIMIT 1`);
-  assert(school && grade, 'Smoke requires at least one school and one grade level');
+  assert(grade, 'Smoke requires at least one grade level');
+
+  const [draftTerm] = await dataSource.query(
+    `INSERT INTO school_terms (
+       school_id, academic_year, semester, status, created_by, updated_by
+     )
+     VALUES ($1, $2, $3, 'DRAFT', $4, $4)
+     ON CONFLICT (school_id, academic_year, semester) DO UPDATE SET updated_by = EXCLUDED.updated_by
+     RETURNING id`,
+    [activeTerm.school_id, ALTERNATE_ACADEMIC_YEAR, activeTerm.semester, actorId],
+  );
+  assert(draftTerm?.id, 'Smoke could not prepare the alternate term');
+
+  // Rooms 1–3: the ready row uses 1, and the row that starts with an invalid
+  // room is corrected to 3 later in the run.
+  for (const termId of [activeTerm.id, draftTerm.id]) {
+    for (const roomNumber of [1, 2, 3]) {
+      await dataSource.query(
+        `INSERT INTO school_classrooms (
+           school_term_id, school_id, grade_level_id, legacy_room_number, room_code,
+           room_name, classroom_status, created_by, updated_by
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7, $7)
+         ON CONFLICT DO NOTHING`,
+        [
+          termId,
+          activeTerm.school_id,
+          grade.id,
+          roomNumber,
+          String(roomNumber),
+          SMOKE_ROOM_NAME,
+          actorId,
+        ],
+      );
+    }
+  }
+
+  const [readyClassroom] = await dataSource.query(
+    `SELECT id FROM school_classrooms
+     WHERE school_term_id = $1 AND school_id = $2 AND grade_level_id = $3
+       AND legacy_room_number = 1 AND classroom_status = 'ACTIVE' AND deleted_at IS NULL
+     LIMIT 1`,
+    [activeTerm.id, activeTerm.school_id, grade.id],
+  );
+  assert(readyClassroom?.id, 'Smoke could not resolve the classroom it just prepared');
+
+  const classroom = {
+    school_id: activeTerm.school_id,
+    grade_level_id: grade.id,
+    room_no: 1,
+    academic_year: activeTerm.academic_year,
+    semester: activeTerm.semester,
+  };
 
   const personUuids = [randomUUID(), randomUUID(), randomUUID()];
   for (const [index, personUuid] of personUuids.entries()) {
@@ -179,15 +261,17 @@ async function createFixtures(dataSource, actorId) {
          person_uuid, "PersonID_Onec", "FirstName_Onec", "LastName_Onec",
          "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
          "AcademicYear_Onec", "Semester_Onec", created_by, updated_by
-       ) VALUES ($1::uuid, $2, $3, $4, $5, $6, 1, $7, 1, $8, $8)`,
+       ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
       [
         personUuid,
         `${identifier}-${index}`,
         `Candidate${index + 1}`,
         'Smoke',
-        school.id,
-        grade.id,
-        2500 + index,
+        classroom.school_id,
+        classroom.grade_level_id,
+        classroom.room_no,
+        classroom.academic_year,
+        classroom.semester,
         actorId,
       ],
     );
@@ -207,11 +291,11 @@ async function createFixtures(dataSource, actorId) {
     PersonID_Onec: IDENTIFIER,
     FirstName_Onec: 'Private',
     LastName_Onec: 'Smoke',
-    SchoolID_Onec: school.id,
-    GradeLevelID_Onec: grade.id,
-    RoomID_Onec: 1,
-    AcademicYear_Onec: 2599,
-    Semester_Onec: 1,
+    SchoolID_Onec: classroom.school_id,
+    GradeLevelID_Onec: classroom.grade_level_id,
+    RoomID_Onec: classroom.room_no,
+    AcademicYear_Onec: classroom.academic_year,
+    Semester_Onec: classroom.semester,
   };
   await dataSource.query(
     `INSERT INTO student_status (code, label_th, category, sort_order, source_system, created_by, updated_by)
@@ -238,7 +322,7 @@ async function createFixtures(dataSource, actorId) {
        RETURNING id::text`,
       [
         batch.id,
-        school.id,
+        classroom.school_id,
         index + 2,
         createHash('sha256').update(`${batch.id}:${index}`).digest('hex'),
         reasonCode,
@@ -250,9 +334,12 @@ async function createFixtures(dataSource, actorId) {
               : index === 3
                 ? REJECT_IDENTIFIER
                 : IDENTIFIER,
-          RoomID_Onec: index === 2 ? 'bad' : index + 1,
+          RoomID_Onec: index === 2 ? 'bad' : classroom.room_no,
           ...(index === 4
-            ? { AcademicYear_Onec: 2598, StudentStatusID_Onec: PLACEHOLDER_STATUS_CODE }
+            ? {
+                AcademicYear_Onec: ALTERNATE_ACADEMIC_YEAR,
+                StudentStatusID_Onec: PLACEHOLDER_STATUS_CODE,
+              }
             : {}),
         }),
         actorId,
@@ -261,7 +348,11 @@ async function createFixtures(dataSource, actorId) {
     createdRows.push(row.id);
   }
   return {
-    schoolId: Number(school.id),
+    schoolId: Number(classroom.school_id),
+    academicYear: Number(classroom.academic_year),
+    semester: Number(classroom.semester),
+    schoolTermId: Number(activeTerm.id),
+    classroomId: Number(readyClassroom.id),
     personUuids,
     conflictRowId: createdRows[0],
     readyRowId: createdRows[1],
@@ -320,19 +411,9 @@ async function main() {
       cookies[username] = cookieHeader(login.response);
     }
 
-    await previewUpload(
-      baseUrl,
-      cookies[OUT_OF_SCOPE_USERNAME],
-      fixture.schoolId,
-      403,
-    );
-    await previewUpload(baseUrl, cookies[NO_PERMISSION_USERNAME], fixture.schoolId, 403);
-    const preview = await previewUpload(
-      baseUrl,
-      cookies[GLOBAL_USERNAME],
-      fixture.schoolId,
-      201,
-    );
+    await previewUpload(baseUrl, cookies[OUT_OF_SCOPE_USERNAME], fixture, 403);
+    await previewUpload(baseUrl, cookies[NO_PERMISSION_USERNAME], fixture, 403);
+    const preview = await previewUpload(baseUrl, cookies[GLOBAL_USERNAME], fixture, 201);
     assert(preview?.rowsToQuarantine === 1, 'Global preview did not detect identity conflict');
     assert(!JSON.stringify(preview).includes(IDENTIFIER), 'Preview leaked the raw identifier');
     for (const personUuid of fixture.personUuids) {

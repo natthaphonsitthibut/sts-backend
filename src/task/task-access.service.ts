@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  GoneException,
   HttpException,
   HttpStatus,
   Inject,
@@ -8,28 +10,26 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import * as crypto from 'crypto';
+import * as QRCode from 'qrcode';
 import { authConfig } from '../config/auth.config';
-import { emailConfig } from '../config/email.config';
 import { clean, hashToken, maskEmailAddress } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../common/email/email.service';
 import { TaskPolicyService } from './task-policy.service';
-import {
-  TaskRepository,
-  type LoginLinkListFilters,
-  type VisitLinkListFilters,
-} from './task.repository';
-import { getTaskErrorMessage, type ActorContext } from './task.types';
-import {
-  buildPaginationMeta,
-  resolveLimit,
-  resolvePage,
-} from '../common/pagination/pagination.util';
+import type { ActorContext } from './task.types';
+import { TaskRepository } from './task.repository';
+import {} from '../common/pagination/pagination.util';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
+import { AraIdChallengeStore, type AraIdChallengeScope } from '../araid/araid-challenge.store';
+import { AraIdService } from '../araid/araid.service';
+
+/** Every AraID challenge in this service belongs to a follow-up/assistance link. */
+const ARAID_SCOPE: AraIdChallengeScope = 'task-link';
 
 function maskName(name: string | null | undefined): string {
   if (!name) return '-';
@@ -53,10 +53,152 @@ export class TaskAccessService {
     private readonly auditLog: AuditLogService,
     @Inject(authConfig.KEY)
     private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
-    @Inject(emailConfig.KEY)
-    private readonly emailRuntimeConfig: ConfigType<typeof emailConfig>,
     private readonly magicSessionStore: MagicSessionStoreService,
+    private readonly araIdChallengeStore: AraIdChallengeStore,
+    private readonly araIdService: AraIdService,
   ) {}
+
+  /**
+   * A task link can be verified with AraID instead of the emailed OTP. The
+   * identity that may approve it is the teacher the link was issued to — read
+   * through `assigned_teacher_id`, never the denormalised email.
+   */
+  async createAraIdChallenge(token: string, baseUrl: string) {
+    const link = await this.findUsableLinkForVerification(token);
+    const challenge = await this.araIdChallengeStore.create(ARAID_SCOPE, String(link.id));
+    const verificationUrl = new URL('/araid/authorize', baseUrl);
+    verificationUrl.hash = `challenge=${encodeURIComponent(challenge.token)}&scope=${ARAID_SCOPE}`;
+    const qrDataUrl = await QRCode.toDataURL(verificationUrl.toString(), {
+      width: 320,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+    return {
+      success: true,
+      data: {
+        challengeToken: challenge.token,
+        verificationUrl: verificationUrl.toString(),
+        qrDataUrl,
+        referenceCode: challenge.referenceCode,
+        expiresAt: new Date(challenge.entryExpiresAt).toISOString(),
+      },
+    };
+  }
+
+  async beginTaskAraIdChallenge(challengeToken: string, existingAuthorizationToken?: string) {
+    if (existingAuthorizationToken) {
+      const resumed = await this.araIdChallengeStore.resume(
+        ARAID_SCOPE,
+        challengeToken,
+        existingAuthorizationToken,
+      );
+      if (resumed) {
+        return { authorizationToken: resumed.authorizationToken, expiresAt: resumed.expiresAt };
+      }
+    }
+    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
+    if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+    const authorization = await this.araIdChallengeStore.claim(ARAID_SCOPE, challengeToken);
+    if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
+    return authorization;
+  }
+
+  async approveTaskAraIdChallenge(
+    authorizationToken: string,
+    araIdProfileId: string,
+    authenticatedAt: number,
+  ) {
+    const authorization = await this.araIdChallengeStore.readAuthorization(
+      ARAID_SCOPE,
+      authorizationToken,
+    );
+    if (!authorization) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
+    if (authenticatedAt < authorization.minimumAuthenticatedAt) {
+      throw new UnauthorizedException('กรุณากรอก PIN AraID ใหม่เพื่อยืนยันลิงก์นี้');
+    }
+    await this.assertAraIdIdentityMatchesLink(authorization.challenge.subjectId, araIdProfileId);
+    if (!(await this.araIdChallengeStore.approveAuthorization(ARAID_SCOPE, authorizationToken))) {
+      throw new GoneException('คำขอยืนยัน AraID ถูกใช้หรือหมดอายุแล้ว');
+    }
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: null,
+      action: 'TASK_LINK_ARAID_VERIFY',
+      targetType: 'task_links',
+      targetId: authorization.challenge.subjectId,
+      metadata: { authMethod: 'ARAID_QR' },
+      ip: null,
+    });
+    return { success: true, data: { approved: true } };
+  }
+
+  async pollTaskAraIdChallenge(challengeToken: string) {
+    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
+    if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+    if (challenge.status === 'PENDING') {
+      return { success: true, data: { status: 'PENDING' as const } };
+    }
+    if (challenge.status === 'CLAIMED') {
+      return {
+        success: true,
+        data: {
+          status: 'IN_PROGRESS' as const,
+          expiresAt: new Date(challenge.expiresAt).toISOString(),
+        },
+      };
+    }
+    const consumed = await this.araIdChallengeStore.consumeApproved(ARAID_SCOPE, challengeToken);
+    if (!consumed) throw new GoneException('คำขอยืนยัน AraID ถูกใช้แล้ว');
+    const sessionToken = await this.magicSessionStore.issue(consumed.subjectId);
+    return { success: true, data: { status: 'APPROVED' as const, sessionToken } };
+  }
+
+  private async findUsableLinkForVerification(token: string): Promise<Record<string, unknown>> {
+    const trimmed = token.trim();
+    if (trimmed.length < 32 || trimmed.length > 256) {
+      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
+    }
+    const link = await this.taskRepository.findTaskLinkByTokenHash(hashToken(trimmed));
+    if (!link) throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
+    if (new Date(String(link.expires_at)) < new Date()) {
+      throw new GoneException('ลิงก์นี้หมดอายุแล้ว');
+    }
+    if (Number(link.admin_locked) === 1) {
+      throw new ForbiddenException('ลิงก์นี้ถูกระงับการใช้งาน');
+    }
+    if (link.status === 'COMPLETED') {
+      throw new ConflictException('ลิงก์นี้ถูกบันทึกเรียบร้อยแล้ว');
+    }
+    return link;
+  }
+
+  /**
+   * The AraID-verified citizen id must belong to the teacher the link was
+   * issued to. A link with no bound teacher (issued before that column existed)
+   * cannot be verified this way and stays on the emailed OTP.
+   */
+  private async assertAraIdIdentityMatchesLink(
+    linkId: string,
+    araIdProfileId: string,
+  ): Promise<void> {
+    const identity = await this.taskRepository.findTaskLinkAraIdIdentity(linkId);
+    const rawCitizenId = identity?.teacher_citizen_id;
+    const expected = typeof rawCitizenId === 'string' ? (clean(rawCitizenId) ?? '') : '';
+    if (!/^\d{13}$/.test(expected)) {
+      throw new ConflictException(
+        'ครูผู้รับมอบหมายยังไม่มีเลขบัตรประชาชนในระบบ กรุณายืนยันผ่านอีเมลแทน',
+      );
+    }
+    const verified = await this.araIdService.getVerifiedIdentityNumber(araIdProfileId);
+    const expectedBuffer = Buffer.from(expected);
+    const verifiedBuffer = Buffer.from(verified.trim());
+    const matches =
+      expectedBuffer.length === verifiedBuffer.length &&
+      crypto.timingSafeEqual(expectedBuffer, verifiedBuffer);
+    if (!matches) {
+      throw new ForbiddenException('AraID นี้ไม่ตรงกับครูผู้รับมอบหมายของลิงก์');
+    }
+  }
 
   async getTaskByToken(token: string, sessionToken?: string) {
     const tokenHash = hashToken(token);
@@ -81,35 +223,26 @@ export class TaskAccessService {
       return { error: 'Link not yet open', status: 'SCHEDULED' };
     }
 
-    if (
-      link.status === 'COMPLETED' &&
-      link.task_type !== 'ATTENDANCE' &&
-      link.task_type !== 'LOGIN'
-    ) {
+    if (link.status === 'COMPLETED') {
       return { error: 'Task already completed', status: 'COMPLETED' };
     }
 
-    if (link.status === 'DELEGATED') {
-      return { error: 'Task already delegated', status: 'DELEGATED' };
-    }
-
-    const canDelegate =
-      Number(link.delegation_depth) < Number(link.max_delegation_depth) &&
-      link.status === 'ACTIVE' &&
-      !link.admin_locked;
-    const hasEmailForOtp =
-      typeof link.assigned_to_email === 'string' && link.assigned_to_email.trim().length > 0;
     const sessionVerified = !link.otp_verified
       ? await this.magicSessionStore.isVerified(String(link.id), sessionToken)
       : false;
 
-    // OTP is gated on email actually being deliverable — both the transport
-    // enabled AND a sender configured. Otherwise the OTP would only be logged
-    // (simulated) and the guest could never receive it, so fall back to no-OTP
-    // single-factor links instead of locking them out. (no hardcoded flag)
-    const otpEnabled =
-      this.emailRuntimeConfig.enabled && this.emailRuntimeConfig.user.trim().length > 0;
-    const authRequired = otpEnabled && hasEmailForOtp && !link.otp_verified && !sessionVerified;
+    // Every public link proves identity before it hands anything over — one
+    // rule shared with the teacher access link and the LINE verification link,
+    // both of which gate unconditionally.
+    //
+    // It deliberately does NOT depend on the mail transport. AraID is the other
+    // way through this gate, so tying the requirement to SMTP would silently
+    // drop a deployment without email configured to single-factor links that
+    // hand a minor's name, address and phone to anyone holding the URL. Whether
+    // the assigned teacher actually has a citizen id or a reachable mailbox is
+    // the school's data-entry problem: the attempt fails with a clear message
+    // instead of the gate disappearing.
+    const authRequired = !link.otp_verified && !sessionVerified;
 
     const result: Record<string, unknown> = {
       task_id: link.task_id,
@@ -121,27 +254,31 @@ export class TaskAccessService {
       target_grade: link.target_grade,
       target_room: link.target_room,
       target_school_id: link.target_school_id,
-      assigned_to_name: link.assigned_to_name,
+      assigned_to_name: link.current_assignee_name || link.assigned_to_name,
       assigned_to_first_name: link.assigned_to_first_name ?? null,
       assigned_to_last_name: link.assigned_to_last_name ?? null,
-      delegation_depth: link.delegation_depth,
-      max_delegation_depth: link.max_delegation_depth,
-      can_delegate: canDelegate,
       status: link.status,
       opens_at: link.opens_at ?? null,
       expires_at: link.expires_at,
-      delegation_note: link.delegation_note ?? null,
       assignment_note: link.assignment_note ?? null,
       created_at: link.created_at ?? null,
       subject: link.subject,
       school_name: link.school_name,
       auth_required: authRequired,
-      login_role: link.login_role || null,
       login_permissions: link.login_permissions || [],
       login_data_scope: link.login_data_scope || {},
     };
 
-    if (link.task_type === 'VISIT') {
+    if (link.task_type === 'ASSIST') {
+      // The measures were committed at assignment time; the report form shows
+      // them read-only rather than letting the reporter re-pick.
+      result.assistance_measures = await this.taskRepository.listTaskAssistanceMeasures(
+        String(link.task_id),
+      );
+      result.assistance_measure_detail = link.assistance_measure_detail ?? null;
+    }
+
+    if (link.task_type === 'VISIT' || link.task_type === 'ASSIST') {
       const caseData = await this.taskRepository.findCaseByTaskId(String(link.task_id));
 
       if (result.auth_required) {
@@ -170,6 +307,10 @@ export class TaskAccessService {
         result.student_lng = caseData?.student_lng || null;
         result.reason_flagged = caseData?.reason_flagged || null;
         result.case_status = caseData?.status || null;
+        // The card header reuses the composed workflow label so the guest form
+        // shows one of the five statuses (`รอติดตาม : ให้ความช่วยเหลือ`) rather
+        // than inventing a status of its own.
+        result.case_display_status_label = caseData?.display_status_label || null;
         result.academic_year = caseData?.academic_year || null;
         result.semester = caseData?.semester || null;
         result.student_grade = caseData?.grade || null;
@@ -191,159 +332,25 @@ export class TaskAccessService {
                 typeof row.assigned_to_name === 'string' ? row.assigned_to_name : null,
               visited_at: row.visited_at ?? null,
               submitted_at: row.submitted_at ?? null,
+              assignment_starts_at: row.assignment_starts_at ?? null,
+              assignment_ends_at: row.assignment_ends_at ?? null,
+              assignment_note: typeof row.assignment_note === 'string' ? row.assignment_note : null,
               cause_detail: typeof row.cause_detail === 'string' ? row.cause_detail : null,
+              follow_up_problem_category_label:
+                typeof row.follow_up_problem_category_label === 'string'
+                  ? row.follow_up_problem_category_label
+                  : null,
+              follow_up_problem_category_guidance:
+                typeof row.follow_up_problem_category_guidance === 'string'
+                  ? row.follow_up_problem_category_guidance
+                  : null,
               exception_label: typeof row.exception_label === 'string' ? row.exception_label : null,
             }))
           : [];
       }
     }
 
-    if (link.task_type === 'ATTENDANCE') {
-      const slots = await this.taskRepository.listLinkedTimetableSlots(String(link.id));
-      result.timetable_slots = slots.map((slot) => ({
-        id: Number(slot.id),
-        day_of_week: Number(slot.day_of_week),
-        period: Number(slot.period),
-        subject_id: Number(slot.subject_id),
-        subject_name_th: typeof slot.subject_name_th === 'string' ? slot.subject_name_th : null,
-        teacher_name: typeof slot.teacher_name === 'string' ? slot.teacher_name : null,
-      }));
-    }
-
     return result;
-  }
-
-  async verifyMagicLogin(token: string, sessionToken?: string) {
-    try {
-      const link = await this.getTaskByToken(token, sessionToken);
-      if (!link) {
-        throw new Error('ไม่พบข้อมูลลิงก์หรือลิงก์ไม่ถูกต้อง');
-      }
-      if ('error' in link && link.error) {
-        throw new Error(getTaskErrorMessage(link.error));
-      }
-      if (link.task_type !== 'LOGIN') {
-        throw new Error('ลิงก์นี้ไม่ใช่ลิงก์เข้าสู่ระบบ');
-      }
-
-      if (link.auth_required) {
-        return {
-          otp_required: true,
-          email: link.assigned_to_email,
-          expires_at: link.expires_at,
-          assigned_to_name: link.assigned_to_name,
-        };
-      }
-
-      const email = typeof link.assigned_to_email === 'string' ? link.assigned_to_email : '';
-      if (!email) {
-        throw new Error('ลิงก์นี้ไม่มีข้อมูลอีเมลผู้ใช้งานที่เชื่อมโยง');
-      }
-
-      const roleMap = await this.taskPolicyService.getRoleMap();
-      const resolvedRole =
-        typeof link.login_role === 'string' && link.login_role.trim().length > 0
-          ? link.login_role.trim()
-          : 'TEACHER';
-      const resolvedPermissions = this.taskPolicyService.resolveEffectivePermissions(
-        resolvedRole,
-        link.login_permissions,
-        roleMap,
-      );
-      const resolvedScope = this.taskPolicyService.normalizeScope(link.login_data_scope);
-      await this.taskRepository.markLoginLinkUsed(String(link.link_id));
-
-      return {
-        id: this.buildVirtualUserId(String(link.link_id)),
-        username: email,
-        FirstName: link.assigned_to_name || 'ผู้ใช้ผ่านลิงก์',
-        LastName: null,
-        email,
-        affiliation: 'External Link',
-        status: 'ACTIVE',
-        role: resolvedRole,
-        permissions: resolvedPermissions,
-        roles: [resolvedRole],
-        labels: [this.taskPolicyService.getRoleLabel(resolvedRole, roleMap) || resolvedRole],
-        data_scope: resolvedScope,
-        virtual_login: true,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`verifyMagicLogin error: ${message}`);
-      throw err;
-    }
-  }
-
-  async getLoginLinks(actor?: ActorContext, filters: Partial<LoginLinkListFilters> = {}) {
-    try {
-      const currentActor = this.taskPolicyService.ensureActor(actor);
-      const roleMap = await this.taskPolicyService.getRoleMap();
-      const actorRole = this.taskPolicyService.getPrimaryRole({ roles: currentActor.roles });
-      const actorRank = this.taskPolicyService.getRoleRank(actorRole, roleMap);
-      const page = resolvePage(filters.page);
-      const limit = resolveLimit(filters.limit);
-      const { rows, totalCount, summary } = await this.taskRepository.listLoginLinksPaginated({
-        actorRole,
-        actorRank,
-        actorScope: currentActor.data_scope,
-        status: filters.status,
-        searchTerm: filters.searchTerm,
-        province: filters.province,
-        district: filters.district,
-        subDistrict: filters.subDistrict,
-        schoolId: filters.schoolId,
-        gradeLevelId: filters.gradeLevelId,
-        room: filters.room,
-        page,
-        limit,
-      });
-
-      return {
-        success: true,
-        data: rows,
-        meta: buildPaginationMeta(page, limit, totalCount),
-        summary,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`getLoginLinks error: ${message}`);
-      throw err;
-    }
-  }
-
-  async getVisitLinks(actor?: ActorContext, filters: Partial<VisitLinkListFilters> = {}) {
-    try {
-      const currentActor = this.taskPolicyService.ensureActor(actor);
-      const page = resolvePage(filters.page);
-      const limit = resolveLimit(filters.limit);
-      const { rows, totalCount, summary } = await this.taskRepository.listVisitLinksPaginated(
-        currentActor,
-        {
-          status: filters.status,
-          searchTerm: filters.searchTerm,
-          province: filters.province,
-          district: filters.district,
-          subDistrict: filters.subDistrict,
-          schoolId: filters.schoolId,
-          gradeLevelId: filters.gradeLevelId,
-          room: filters.room,
-          page,
-          limit,
-        },
-      );
-
-      return {
-        success: true,
-        data: rows,
-        meta: buildPaginationMeta(page, limit, totalCount),
-        summary,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`getVisitLinks error: ${message}`);
-      throw err;
-    }
   }
 
   async requestOtp(token: string) {
@@ -474,12 +481,8 @@ export class TaskAccessService {
       if (!link) {
         throw new Error('Link not found');
       }
-      if (
-        link.task_type !== 'LOGIN' &&
-        link.task_type !== 'ATTENDANCE' &&
-        link.task_type !== 'VISIT'
-      ) {
-        throw new Error('Only ATTENDANCE and VISIT links can be changed by admin');
+      if (link.task_type !== 'VISIT' && link.task_type !== 'ASSIST') {
+        throw new Error('Only VISIT and ASSIST links can be changed by admin');
       }
       if (link.status !== 'ACTIVE') {
         throw new Error('Only ACTIVE links can be changed by admin');
@@ -523,7 +526,6 @@ export class TaskAccessService {
             grade: link.target_grade,
             room: link.target_room,
             reason: normalizedReason,
-            scope: link.task_type === 'LOGIN' ? link.login_data_scope : undefined,
           },
           ip: null,
         });
@@ -551,7 +553,6 @@ export class TaskAccessService {
           schoolId: link.target_school_id,
           grade: link.target_grade,
           room: link.target_room,
-          scope: link.task_type === 'LOGIN' ? link.login_data_scope : undefined,
         },
         ip: null,
       });
@@ -574,7 +575,7 @@ export class TaskAccessService {
    * page can render and manage it. Same scope gate as adminLockLink. Returns an
    * explicit shape (never the raw row) so token_hash / otp are never leaked.
    */
-  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string, date?: string) {
+  async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string) {
     try {
       const currentActor = this.taskPolicyService.ensureActor(actor);
       const link = await this.taskRepository.findLinkDetailById(linkId);
@@ -606,24 +607,6 @@ export class TaskAccessService {
             ? 'SCHEDULED'
             : 'ACTIVE';
 
-      const schoolId =
-        typeof link.target_school_id === 'number'
-          ? link.target_school_id
-          : typeof link.target_school_id === 'string' && link.target_school_id.trim().length > 0
-            ? Number.parseInt(link.target_school_id, 10)
-            : null;
-
-      const records =
-        link.task_type === 'ATTENDANCE' && typeof date === 'string' && date.trim().length > 0
-          ? await this.taskRepository.listTaskHistory(
-              date,
-              typeof link.target_grade === 'string' ? link.target_grade : null,
-              typeof link.target_room === 'string' ? link.target_room : null,
-              Number.isInteger(schoolId) ? schoolId : null,
-              typeof link.id === 'string' ? link.id : null,
-            )
-          : [];
-
       return {
         link_id: link.id,
         task_id: link.task_id,
@@ -647,7 +630,6 @@ export class TaskAccessService {
         login_role_label: link.login_role_label ?? null,
         login_permissions: link.login_permissions ?? [],
         login_data_scope: link.login_data_scope ?? {},
-        records,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

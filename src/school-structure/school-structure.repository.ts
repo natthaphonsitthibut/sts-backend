@@ -20,6 +20,7 @@ import type {
   StructureStatus,
   TeacherAssignmentKind,
 } from './school-structure.types';
+import type { ClassroomStudentProblemCategoryOption } from './classroom-student-comment.constants';
 
 /**
  * Free-text match on an enrolled student (school-owned number or full name).
@@ -39,9 +40,15 @@ function recorderSearchCondition(paramIndex: number): string {
   return `(
     COALESCE(attendance."RecordedBy", '') ILIKE $${paramIndex} ESCAPE '\\'
     OR EXISTS (
-      SELECT 1 FROM users recorder_search
-      WHERE recorder_search.username = attendance."RecordedBy"
-        AND CONCAT_WS(' ', recorder_search."FirstName", recorder_search."LastName")
+      SELECT 1 FROM teachers recorder_teacher_search
+      WHERE recorder_teacher_search.id = attendance.recorded_by_teacher_id
+        AND CONCAT_WS(' ', recorder_teacher_search.first_name, recorder_teacher_search.last_name)
+              ILIKE $${paramIndex} ESCAPE '\\'
+    )
+    OR EXISTS (
+      SELECT 1 FROM users recorder_user_search
+      WHERE recorder_user_search.username = attendance."RecordedBy"
+        AND CONCAT_WS(' ', recorder_user_search."FirstName", recorder_user_search."LastName")
               ILIKE $${paramIndex} ESCAPE '\\'
     )
   )`;
@@ -183,12 +190,11 @@ export class SchoolStructureRepository {
           JOIN teachers search_teacher_person
             ON search_teacher_person.id = search_membership.teacher_id
            AND search_teacher_person.deleted_at IS NULL
-          LEFT JOIN users search_teacher ON search_teacher.id = search_membership.teacher_user_id
           WHERE search_assignment.classroom_id = classroom.id
             AND search_assignment.assignment_kind = 'HOMEROOM'
             AND search_assignment.assignment_status = 'ACTIVE'
             AND search_assignment.deleted_at IS NULL
-            AND CONCAT_WS(' ', search_teacher_person.first_name, search_teacher_person.last_name, search_teacher.username)
+            AND CONCAT_WS(' ', search_teacher_person.first_name, search_teacher_person.last_name)
                 ILIKE ${searchParam} ESCAPE '\\'
         )
       )`);
@@ -216,7 +222,7 @@ export class SchoolStructureRepository {
         SELECT
           (SELECT COUNT(*)::int FROM filtered_classrooms) AS classroom_count,
           (
-            SELECT COUNT(DISTINCT membership.teacher_user_id)::int
+            SELECT COUNT(DISTINCT membership.teacher_id)::int
             FROM filtered_classrooms classroom
             JOIN classroom_teacher_assignments assignment
               ON assignment.classroom_id = classroom.id
@@ -279,10 +285,8 @@ export class SchoolStructureRepository {
         LEFT JOIN student_term enrollment
           ON enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
         LEFT JOIN LATERAL (
-          SELECT COALESCE(
-                   NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-                   teacher.username
-                 ) AS homeroom_teacher_name
+          SELECT TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
+                 AS homeroom_teacher_name
           FROM classroom_teacher_assignments assignment
           JOIN school_teacher_memberships membership
             ON membership.id = assignment.teacher_membership_id
@@ -291,7 +295,6 @@ export class SchoolStructureRepository {
            AND membership.deleted_at IS NULL
           JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
             AND assignment.assignment_kind = 'HOMEROOM'
@@ -380,10 +383,7 @@ export class SchoolStructureRepository {
         (favorite.user_id IS NOT NULL) AS is_favorite,
         favorite.created_at AS favorited_at,
         (
-          SELECT COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          )
+          SELECT TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
           FROM classroom_teacher_assignments assignment
           JOIN school_teacher_memberships membership
             ON membership.id = assignment.teacher_membership_id
@@ -392,7 +392,6 @@ export class SchoolStructureRepository {
            AND membership.deleted_at IS NULL
           JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
             AND assignment.assignment_kind = 'HOMEROOM'
@@ -632,19 +631,14 @@ export class SchoolStructureRepository {
           SELECT
             membership.id::text,
             membership.school_id,
-            membership.teacher_user_id,
-            teacher.username,
-            COALESCE(
-              NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-              teacher.username
-            ) AS display_name,
+            membership.teacher_id::text AS teacher_id,
+            TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS display_name,
             membership.membership_status,
             membership.started_on::text,
             membership.ended_on::text
           FROM school_teacher_memberships membership
           JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
           WHERE membership.school_id = $1 AND membership.deleted_at IS NULL
           ORDER BY ${orderBy} ${direction}, membership.id ${direction}
           LIMIT $2 OFFSET $3
@@ -672,13 +666,12 @@ export class SchoolStructureRepository {
       classroomConditions.push(`classroom.id = $${params.length}`);
     }
     const filteredMembershipsSql = `
-      SELECT DISTINCT ON (membership.teacher_user_id) membership.id
+      SELECT DISTINCT ON (membership.teacher_id) membership.id
       FROM school_teacher_memberships membership
       JOIN teachers teacher_person
         ON teacher_person.id = membership.teacher_id
        AND teacher_person.teacher_status = 'ACTIVE'
        AND teacher_person.deleted_at IS NULL
-      LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
       JOIN classroom_teacher_assignments assignment
         ON assignment.teacher_membership_id = membership.id
        AND assignment.school_id = membership.school_id
@@ -691,7 +684,7 @@ export class SchoolStructureRepository {
         AND membership.membership_status = 'ACTIVE'
         AND membership.deleted_at IS NULL
         AND ${classroomConditions.join(' AND ')}
-      ORDER BY membership.teacher_user_id, membership.id
+      ORDER BY membership.teacher_id, membership.id
     `;
     const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
     const orderBy = input.sortBy === 'status' ? 'membership.membership_status' : 'display_name';
@@ -712,12 +705,8 @@ export class SchoolStructureRepository {
         SELECT
           membership.id::text,
           membership.school_id,
-          membership.teacher_user_id,
-          teacher.username,
-          COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          ) AS display_name,
+          membership.teacher_id::text AS teacher_id,
+          TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS display_name,
           membership.membership_status,
           membership.started_on::text,
           membership.ended_on::text
@@ -725,7 +714,6 @@ export class SchoolStructureRepository {
         JOIN school_teacher_memberships membership ON membership.id = filtered.id
         JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         ORDER BY ${orderBy} ${direction}, membership.id ${direction}
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}
       `,
@@ -748,38 +736,27 @@ export class SchoolStructureRepository {
       ? `AND (
           teacher_person.first_name ILIKE $${params.push(`%${search}%`)}
           OR teacher_person.last_name ILIKE $${params.length}
-          OR teacher.username ILIKE $${params.length}
         )`
       : '';
     const result = await queryDataSource<SchoolTeacherCandidateRow>(
       this.dataSource,
       `
         SELECT
-          teacher.id,
-          COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          ) AS display_name
-        FROM users teacher
-        WHERE teacher.status = 'ACTIVE'
-          AND teacher.role = 'TEACHER'
-          AND EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements_text(
-              COALESCE(teacher.data_scope -> 'school_ids', '[]'::jsonb)
-            ) AS scope_school(id)
-            WHERE scope_school.id = $1::text
-          )
+          teacher_person.id::text,
+          TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS display_name
+        FROM teachers teacher_person
+        WHERE teacher_person.teacher_status = 'ACTIVE'
+          AND teacher_person.deleted_at IS NULL
           AND NOT EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
             WHERE membership.school_id = $1::int
-              AND membership.teacher_user_id = teacher.id
+              AND membership.teacher_id = teacher_person.id
               AND membership.membership_status = 'ACTIVE'
               AND membership.deleted_at IS NULL
           )
           ${searchClause}
-        ORDER BY display_name, teacher.id
+        ORDER BY display_name, teacher_person.id
         LIMIT 100
       `,
       params,
@@ -797,7 +774,6 @@ export class SchoolStructureRepository {
       ? `AND (
           teacher_person.first_name ILIKE $${params.push(`%${search}%`)}
           OR teacher_person.last_name ILIKE $${params.length}
-          OR teacher.username ILIKE $${params.length}
         )`
       : '';
     const result = await queryDataSource<SchoolTeacherMembershipRow>(
@@ -806,19 +782,14 @@ export class SchoolStructureRepository {
         SELECT
           membership.id::text,
           membership.school_id,
-          membership.teacher_user_id,
-          teacher.username,
-          COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          ) AS display_name,
+          membership.teacher_id::text AS teacher_id,
+          TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS display_name,
           membership.membership_status,
           membership.started_on::text,
           membership.ended_on::text
         FROM school_teacher_memberships membership
         JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         WHERE membership.school_id = $1
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
@@ -840,19 +811,14 @@ export class SchoolStructureRepository {
       SELECT
         membership.id::text,
         membership.school_id,
-        membership.teacher_user_id,
-        teacher.username,
-        COALESCE(
-          NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-          teacher.username
-        ) AS display_name,
+        membership.teacher_id::text AS teacher_id,
+        TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS display_name,
         membership.membership_status,
         membership.started_on::text,
         membership.ended_on::text
       FROM school_teacher_memberships membership
       JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
       WHERE membership.id = $1 AND membership.deleted_at IS NULL
       ${queryRunner ? 'FOR UPDATE OF membership' : ''}
     `;
@@ -865,27 +831,28 @@ export class SchoolStructureRepository {
   }
 
   async isTeacherEligible(
-    teacherUserId: number,
+    teacherId: number,
     schoolId: number,
     queryRunner: QueryRunner,
   ): Promise<boolean> {
     const result = await createSqlQueryExecutor(queryRunner).query(
       `
         SELECT 1
-        FROM users teacher
-        WHERE teacher.id = $1
-          AND teacher.status = 'ACTIVE'
-          AND teacher.role = 'TEACHER'
-          AND EXISTS (
+        FROM teachers teacher_person
+        WHERE teacher_person.id = $1
+          AND teacher_person.teacher_status = 'ACTIVE'
+          AND teacher_person.deleted_at IS NULL
+          AND NOT EXISTS (
             SELECT 1
-            FROM jsonb_array_elements_text(
-              COALESCE(teacher.data_scope -> 'school_ids', '[]'::jsonb)
-            ) AS scope_school(id)
-            WHERE scope_school.id = $2::text
+            FROM school_teacher_memberships membership
+            WHERE membership.school_id = $2::int
+              AND membership.teacher_id = teacher_person.id
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
           )
         LIMIT 1
       `,
-      [teacherUserId, schoolId],
+      [teacherId, schoolId],
     );
     return result.rows.length > 0;
   }
@@ -893,7 +860,7 @@ export class SchoolStructureRepository {
   async createTeacherMembership(
     input: {
       schoolId: number;
-      teacherUserId: number;
+      teacherId: number;
       startedOn: string | null;
       actorId: number | null;
     },
@@ -902,12 +869,12 @@ export class SchoolStructureRepository {
     const result = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
       `
         INSERT INTO school_teacher_memberships (
-          school_id, teacher_user_id, started_on, created_by, updated_by
+          school_id, teacher_id, started_on, created_by, updated_by
         )
         VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), $4, $4)
         RETURNING id::text
       `,
-      [input.schoolId, input.teacherUserId, input.startedOn, input.actorId],
+      [input.schoolId, input.teacherId, input.startedOn, input.actorId],
     );
     return (await this.findMembershipById(Number(result.rows[0].id), queryRunner))!;
   }
@@ -953,11 +920,8 @@ export class SchoolStructureRepository {
           assignment.school_id,
           assignment.classroom_id::text,
           assignment.teacher_membership_id::text,
-          membership.teacher_user_id,
-          COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          ) AS teacher_name,
+          membership.teacher_id::text AS teacher_id,
+          TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS teacher_name,
           assignment.subject_id,
           subject.code AS subject_code,
           subject.name_th AS subject_name,
@@ -970,7 +934,6 @@ export class SchoolStructureRepository {
           ON membership.id = assignment.teacher_membership_id
         JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         LEFT JOIN subjects subject ON subject.id = assignment.subject_id
         WHERE assignment.classroom_id = $1 AND assignment.deleted_at IS NULL
         ORDER BY assignment.assignment_kind, teacher_name, assignment.id
@@ -1046,11 +1009,8 @@ export class SchoolStructureRepository {
           assignment.school_id,
           assignment.classroom_id::text,
           assignment.teacher_membership_id::text,
-          membership.teacher_user_id,
-          COALESCE(
-            NULLIF(TRIM(teacher_person.first_name || ' ' || teacher_person.last_name), ''),
-            teacher.username
-          ) AS teacher_name,
+          membership.teacher_id::text AS teacher_id,
+          TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS teacher_name,
           assignment.subject_id,
           subject.code AS subject_code,
           subject.name_th AS subject_name,
@@ -1063,7 +1023,6 @@ export class SchoolStructureRepository {
           ON membership.id = assignment.teacher_membership_id
         JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN users teacher ON teacher.id = membership.teacher_user_id
         LEFT JOIN subjects subject ON subject.id = assignment.subject_id
         WHERE assignment.id = $1
       `,
@@ -1114,7 +1073,7 @@ export class SchoolStructureRepository {
     const orderBy = {
       studentNumber: `enrollment.student_number`,
       name: `enrollment."FirstName_Onec"`,
-      comment: `latest_comment.comment_text`,
+      comment: `latest_comment.problem_description`,
       status: `COALESCE(profile.risk_severity, 0)`,
     }[input.sortBy];
     const offset = (input.page - 1) * input.limit;
@@ -1139,7 +1098,7 @@ export class SchoolStructureRepository {
           person.updated_at AS photo_updated_at,
           profile.risk_tier,
           profile.risk_severity,
-          latest_comment.comment_text AS teacher_comment,
+          latest_comment.problem_description AS teacher_comment,
           enrollment."FirstName_Onec" AS first_name,
           enrollment."LastName_Onec" AS last_name,
           enrollment.student_status_code,
@@ -1155,7 +1114,7 @@ export class SchoolStructureRepository {
         LEFT JOIN student_status status ON status.code = enrollment.student_status_code
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = enrollment.student_uuid
         LEFT JOIN LATERAL (
-          SELECT comment.comment_text
+          SELECT comment.problem_description
           FROM classroom_student_comments comment
           WHERE comment.classroom_id = classroom.id
             AND comment.person_uuid = enrollment.person_uuid
@@ -1174,37 +1133,62 @@ export class SchoolStructureRepository {
   async createStudentComment(
     classroomId: number,
     studentUuid: string,
-    commentText: string,
+    problemCategory: string,
+    problemDescription: string,
     authoredByUserId: number,
     queryRunner: QueryRunner,
-  ): Promise<{ id: string; comment_text: string; created_at: Date } | null> {
+  ): Promise<{
+    id: string;
+    problem_category_code: string;
+    problem_category_label: string;
+    problem_category_guidance: string | null;
+    problem_description: string;
+    created_at: Date;
+  } | null> {
     const result = await createSqlQueryExecutor(queryRunner).query<{
       id: string;
-      comment_text: string;
+      problem_category_code: string;
+      problem_category_label: string;
+      problem_category_guidance: string | null;
+      problem_description: string;
       created_at: Date;
     }>(
       `
-        INSERT INTO classroom_student_comments (
-          classroom_id,
-          person_uuid,
-          comment_text,
-          authored_by_user_id
+        WITH inserted AS (
+          INSERT INTO classroom_student_comments (
+            classroom_id,
+            person_uuid,
+            problem_category_code,
+            problem_description,
+            authored_by_user_id
+          )
+          SELECT $1, enrollment.person_uuid, $3, $4, $5
+          FROM student_term enrollment
+          WHERE enrollment.student_uuid = $2
+            AND enrollment.classroom_id = $1
+            AND enrollment.deleted_at IS NULL
+            AND enrollment.person_uuid IS NOT NULL
+          RETURNING id, problem_category_code, problem_description, created_at
         )
-        SELECT $1, enrollment.person_uuid, $3, $4
-        FROM student_term enrollment
-        WHERE enrollment.student_uuid = $2
-          AND enrollment.classroom_id = $1
-          AND enrollment.deleted_at IS NULL
-          AND enrollment.person_uuid IS NOT NULL
-        RETURNING id::text, comment_text, created_at
+        SELECT
+          inserted.id::text,
+          inserted.problem_category_code,
+          category.label_th AS problem_category_label,
+          category.guidance_th AS problem_category_guidance,
+          inserted.problem_description,
+          inserted.created_at
+        FROM inserted
+        JOIN classroom_student_problem_categories category
+          ON category.code = inserted.problem_category_code
       `,
-      [classroomId, studentUuid, commentText, authoredByUserId],
+      [classroomId, studentUuid, problemCategory, problemDescription, authoredByUserId],
     );
     return result.rows[0] ?? null;
   }
 
   async listClassroomDailyAttendance(input: {
     classroomId: number;
+    subjectId?: number | null;
     date?: string;
     search?: string;
     sortBy: 'date' | 'recordedBy' | 'present' | 'late' | 'leave' | 'absent';
@@ -1213,11 +1197,22 @@ export class SchoolStructureRepository {
     limit: number;
   }): Promise<{ rows: ClassroomDailyAttendanceRow[]; totalCount: number }> {
     const params: unknown[] = [input.classroomId];
+    // `= ANY(ARRAY(...))` rather than a join: the array is an InitPlan, so the
+    // filter reaches the view's grouping column instead of running after the
+    // whole view is aggregated.
     const conditions = [
-      'enrollment.classroom_id = $1',
-      'enrollment.deleted_at IS NULL',
-      `attendance.session_kind = 'DAILY'`,
+      `attendance.student_uuid = ANY(ARRAY(
+        SELECT enrolled.student_uuid FROM student_term enrolled
+        WHERE enrolled.classroom_id = $1 AND enrolled.deleted_at IS NULL
+      ))`,
     ];
+    // One subject reads the same day verdict as the whole day, only narrowed —
+    // which is exactly what that subject's teacher sees through their link.
+    const source = input.subjectId ? 'attendance_subject_day' : 'attendance_day';
+    if (input.subjectId) {
+      params.push(input.subjectId);
+      conditions.push(`attendance.subject_id = $${params.length}`);
+    }
     if (input.date) {
       params.push(input.date);
       conditions.push(`attendance."AttendanceDate" = $${params.length}`);
@@ -1241,8 +1236,7 @@ export class SchoolStructureRepository {
       this.dataSource,
       `
         SELECT COUNT(DISTINCT attendance."AttendanceDate")::int AS total_count
-        FROM attendance
-        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
+        FROM ${source} attendance
         WHERE ${where}
       `,
       params,
@@ -1254,7 +1248,8 @@ export class SchoolStructureRepository {
           attendance."AttendanceDate"::text AS attendance_date,
           STRING_AGG(
             DISTINCT COALESCE(
-              NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+              NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+              NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
               CASE
                 WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
                 ELSE NULLIF(attendance."RecordedBy", '')
@@ -1267,9 +1262,9 @@ export class SchoolStructureRepository {
           COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LATE})::int AS late_count,
           COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_LEAVE})::int AS leave_count,
           COUNT(*) FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
-        FROM attendance
-        JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
-        LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
+        FROM ${source} attendance
+        LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
+        LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE ${where}
         GROUP BY attendance."AttendanceDate"
         ORDER BY ${orderBy} ${direction}, attendance."AttendanceDate" DESC
@@ -1282,6 +1277,7 @@ export class SchoolStructureRepository {
 
   async listClassroomStudentAttendance(input: {
     classroomId: number;
+    subjectId?: number | null;
     date?: string;
     search?: string;
     sortBy: 'studentNumber' | 'name' | 'status' | 'present' | 'late' | 'leave' | 'absent';
@@ -1296,10 +1292,15 @@ export class SchoolStructureRepository {
       conditions.push(enrolledStudentSearchCondition(params.length));
     }
     const attendanceJoinParams: unknown[] = [];
+    let attendanceSubjectCondition = '';
+    if (input.subjectId) {
+      attendanceJoinParams.push(input.subjectId);
+      attendanceSubjectCondition = ` AND attendance.subject_id = $${params.length + attendanceJoinParams.length}`;
+    }
     let attendanceDateCondition = '';
     if (input.date) {
       attendanceJoinParams.push(input.date);
-      attendanceDateCondition = ` AND attendance."AttendanceDate" = $${params.length + 1}`;
+      attendanceDateCondition = ` AND attendance."AttendanceDate" = $${params.length + attendanceJoinParams.length}`;
     }
     const allParams = [...params, ...attendanceJoinParams];
     const where = conditions.join(' AND ');
@@ -1335,9 +1336,9 @@ export class SchoolStructureRepository {
           COUNT(attendance."AttendanceID") FILTER (WHERE attendance."AttendanceStatus" = ${ATTENDANCE_STATUS_CODE.P_ABSENT})::int AS absent_count
         FROM student_term enrollment
         LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
-        LEFT JOIN attendance
+        LEFT JOIN ${input.subjectId ? 'attendance_subject_day' : 'attendance_day'} attendance
           ON attendance.student_uuid = enrollment.student_uuid
-         AND attendance.session_kind = 'DAILY'
+         ${attendanceSubjectCondition}
          ${attendanceDateCondition}
         WHERE ${where}
         GROUP BY enrollment.student_uuid, person.photo_storage_key, person.updated_at
@@ -1366,7 +1367,6 @@ export class SchoolStructureRepository {
       'enrollment.classroom_id = $1',
       'enrollment.student_uuid = $2',
       'enrollment.deleted_at IS NULL',
-      `attendance.session_kind = 'DAILY'`,
     ];
     if (input.date) {
       params.push(input.date);
@@ -1397,7 +1397,7 @@ export class SchoolStructureRepository {
       this.dataSource,
       `
         SELECT COUNT(*)::int AS total_count
-        FROM attendance
+        FROM attendance_day attendance
         JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
         WHERE ${where}
       `,
@@ -1411,7 +1411,8 @@ export class SchoolStructureRepository {
           attendance."AttendanceDate"::text AS attendance_date,
           TO_CHAR(attendance."RecordedAt" AT TIME ZONE 'Asia/Bangkok', 'HH24:MI:SS') AS recorded_time,
           COALESCE(
-            NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
+            NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
             CASE
               WHEN attendance."RecordedBy" LIKE '%@%' THEN NULL
               ELSE NULLIF(attendance."RecordedBy", '')
@@ -1419,9 +1420,10 @@ export class SchoolStructureRepository {
             '-'
           ) AS recorded_by,
           attendance."AttendanceStatus"::int AS attendance_status
-        FROM attendance
+        FROM attendance_day attendance
         JOIN student_term enrollment ON enrollment.student_uuid = attendance.student_uuid
-        LEFT JOIN users recorder ON recorder.username = attendance."RecordedBy"
+        LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
+        LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE ${where}
         ORDER BY ${orderBy} ${direction}, attendance."AttendanceID" ${direction}
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}
@@ -1429,5 +1431,20 @@ export class SchoolStructureRepository {
       [...params, input.limit, offset],
     );
     return { rows: rows.rows, totalCount: count.rows[0]?.total_count ?? 0 };
+  }
+
+  async listStudentProblemCategories(): Promise<ClassroomStudentProblemCategoryOption[]> {
+    const result = await queryDataSource<{
+      code: ClassroomStudentProblemCategoryOption['code'];
+      label: string;
+      guidance: string | null;
+    }>(
+      this.dataSource,
+      `SELECT code, label_th AS label, guidance_th AS guidance
+       FROM classroom_student_problem_categories
+       WHERE is_active = TRUE
+       ORDER BY sort_order, code`,
+    );
+    return result.rows;
   }
 }

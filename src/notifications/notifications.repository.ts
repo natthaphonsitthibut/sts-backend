@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
 import type {
-  DirectNotificationInput,
+  CaseStatusNotificationContext,
   NotificationCounts,
   NotificationFanOutInput,
   NotificationListFilters,
@@ -63,8 +63,14 @@ const SCOPE_COVERS_EVENT_SQL = `
       AND ${scopeDimensionSql('provinces', 'sc.province')}
       AND ${scopeDimensionSql('districts', 'sc.district')}
       AND ${scopeDimensionSql('sub_districts', 'sc.sub_district')}
-      AND ${scopeDimensionSql('grade_levels', '$8::text')}
-      AND ${scopeDimensionSql('room_ids', '$9::text')}
+      AND ${scopeDimensionSql(
+        'grade_levels',
+        'COALESCE($8::text, notification_case_student."GradeLevelID_Onec"::text, notification_student."GradeLevelID_Onec"::text)',
+      )}
+      AND ${scopeDimensionSql(
+        'room_ids',
+        'COALESCE($9::text, notification_case_student."RoomID_Onec"::text, notification_student."RoomID_Onec"::text)',
+      )}
     )
   )
 `;
@@ -93,7 +99,7 @@ export class NotificationsRepository {
       `
         INSERT INTO notifications
           (recipient_user_id, type_code, title, body, ref_entity, ref_id,
-           student_person_uuid, case_id, student_name_masked, reason_text)
+           student_person_uuid, case_id, case_status_code, student_name_snapshot, reason_text)
         SELECT
           u.id,
           nt.code,
@@ -103,12 +109,10 @@ export class NotificationsRepository {
           $5,
           COALESCE(notification_case_student.person_uuid, notification_student.person_uuid),
           $10::int,
+          $15::varchar,
           $12,
           CASE
-            WHEN nt.code = ANY(ARRAY[
-              'CASE_CREATED', 'CASE_STATUS_CHANGED', 'CASE_SLA_WARNING',
-              'CASE_SLA_BREACHED', 'CASE_RISK_ESCALATED', 'STUDENT_RISK_WATCH'
-            ]::varchar[])
+            WHEN nt.code = 'CASE_STATUS_CHANGED'
               THEN COALESCE(
                 NULLIF(btrim($13::text), ''),
                 NULLIF(btrim(notification_case.reason_flagged), '')
@@ -127,7 +131,6 @@ export class NotificationsRepository {
         WHERE nt.code = $1
           AND nt.is_enabled IS TRUE
           AND u.status = 'ACTIVE'
-          AND u.role IS DISTINCT FROM 'STUDENT'
           AND u.data_origin_code <> 'AUTOMATED_TEST'
           AND ($6::int IS NULL OR u.id <> $6::int)
           AND NOT (u.id = ANY($14::int[]))
@@ -153,45 +156,98 @@ export class NotificationsRepository {
         input.roomId === null || input.roomId === undefined ? null : String(input.roomId),
         input.caseId ?? null,
         input.studentUuid ?? null,
-        input.studentNameMasked ?? null,
+        input.studentNameSnapshot ?? null,
         input.reasonText ?? null,
         input.excludeUserIds ?? [],
+        input.caseStatusCode,
       ],
     );
     return result.rows.map((row) => Number(row.recipient_user_id));
   }
 
-  async createForEligibleRecipient(input: DirectNotificationInput): Promise<boolean> {
-    const result = await this.query(
+  async findCaseStatusNotificationContext(
+    caseId: number,
+  ): Promise<CaseStatusNotificationContext | null> {
+    const result = await this.query<{
+      reason_flagged: string | null;
+      latest_teacher_comment: string | null;
+      latest_absent_date: string | null;
+      assigned_teacher_name: string | null;
+      result_summary: string | null;
+      review_note: string | null;
+      review_summary: string | null;
+      completion_outcome_label: string | null;
+    }>(
       `
-        INSERT INTO notifications (recipient_user_id, type_code, title, body, ref_entity, ref_id)
-        SELECT u.id, nt.code, $3, $4, $5, $6
-        FROM users u
-        CROSS JOIN notification_types nt
-        LEFT JOIN roles r ON r.name = u.role
-        WHERE u.id = $1
-          AND nt.code = $2
-          AND nt.is_enabled IS TRUE
-          AND u.status = 'ACTIVE'
-          AND u.role IS DISTINCT FROM 'STUDENT'
-          AND u.data_origin_code <> 'AUTOMATED_TEST'
-          AND CASE
-            WHEN jsonb_typeof(u.permissions) = 'array'
-              THEN u.permissions ? nt.required_permission
-            ELSE COALESCE(r.default_permissions ? nt.required_permission, FALSE)
-          END
-        RETURNING id
+        SELECT
+          NULLIF(BTRIM(c.reason_flagged), '') AS reason_flagged,
+          NULLIF(BTRIM(latest_comment.problem_description), '') AS latest_teacher_comment,
+          latest_absence.attendance_date::text AS latest_absent_date,
+          NULLIF(BTRIM(latest_assignment.assigned_to_name), '') AS assigned_teacher_name,
+          NULLIF(BTRIM(c.result_summary), '') AS result_summary,
+          NULLIF(BTRIM(latest_review.review_note), '') AS review_note,
+          NULLIF(BTRIM(latest_review.review_summary), '') AS review_summary,
+          NULLIF(BTRIM(completion_outcome.label_th), '') AS completion_outcome_label
+        FROM cases c
+        LEFT JOIN student_term student
+          ON student.student_uuid = c.student_uuid
+        LEFT JOIN LATERAL (
+          SELECT comment.problem_description
+          FROM classroom_student_comments comment
+          WHERE comment.classroom_id = student.classroom_id
+            AND comment.person_uuid = student.person_uuid
+          ORDER BY comment.created_at DESC, comment.id DESC
+          LIMIT 1
+        ) latest_comment ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT attendance."AttendanceDate"::date AS attendance_date
+          FROM attendance
+          WHERE attendance.student_uuid = c.student_uuid
+            AND attendance.session_kind = 'SUBJECT'
+          GROUP BY attendance."AttendanceDate"::date
+          HAVING COUNT(*) FILTER (WHERE attendance."AttendanceStatus" <> 4) > 0
+             AND COUNT(*) FILTER (WHERE attendance."AttendanceStatus" IN (1, 3)) = 0
+          ORDER BY attendance."AttendanceDate"::date DESC
+          LIMIT 1
+        ) latest_absence ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT link.assigned_to_name
+          FROM tasks task
+          JOIN task_links link
+            ON link.task_id = task.id
+           AND link.deleted_at IS NULL
+          WHERE task.case_id = c.id
+            AND task.deleted_at IS NULL
+          ORDER BY (link.status = 'ACTIVE') DESC, link.created_at DESC, link.id DESC
+          LIMIT 1
+        ) latest_assignment ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT review.review_note, review.review_summary
+          FROM case_reviews review
+          WHERE review.case_id = c.id
+          ORDER BY review.reviewed_at DESC, review.id DESC
+          LIMIT 1
+        ) latest_review ON TRUE
+        LEFT JOIN case_completion_outcomes completion_outcome
+          ON completion_outcome.code = c.completion_outcome_code
+        WHERE c.id = $1
+          AND c.deleted_at IS NULL
+        LIMIT 1
       `,
-      [
-        input.recipientUserId,
-        input.typeCode,
-        input.title,
-        input.body ?? null,
-        input.refEntity ?? null,
-        input.refId ?? null,
-      ],
+      [caseId],
     );
-    return result.rows.length > 0;
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      reasonFlagged: row.reason_flagged,
+      latestTeacherComment: row.latest_teacher_comment,
+      latestAbsentDate: row.latest_absent_date,
+      assignedTeacherName: row.assigned_teacher_name,
+      resultSummary: row.result_summary,
+      reviewNote: row.review_note,
+      reviewSummary: row.review_summary,
+      completionOutcomeLabel: row.completion_outcome_label,
+    };
   }
 
   async listForRecipient(
@@ -201,6 +257,7 @@ export class NotificationsRepository {
     const limit = Math.min(Math.max(filters.limit ?? 20, 1), 50);
     const page = Math.max(filters.page ?? 1, 1);
     const offset = (page - 1) * limit;
+    const status = filters.status ?? (filters.unreadOnly ? 'unread' : 'all');
     const result = await this.query<NotificationRow>(
       `
         SELECT
@@ -211,7 +268,11 @@ export class NotificationsRepository {
           n.body,
           n.student_person_uuid,
           n.case_id,
-          n.student_name_masked,
+          n.case_status_code,
+          COALESCE(
+            NULLIF(BTRIM(notification_case.student_name), ''),
+            n.student_name_snapshot
+          ) AS student_name_snapshot,
           n.reason_text,
           n.ref_entity,
           n.ref_id,
@@ -221,12 +282,17 @@ export class NotificationsRepository {
           COUNT(*) OVER ()::int AS total_count
         FROM notifications n
         LEFT JOIN notification_types nt ON nt.code = n.type_code
+        LEFT JOIN cases notification_case ON notification_case.id = n.case_id
         WHERE n.recipient_user_id = $1
-          AND ($2::boolean IS NOT TRUE OR n.read_at IS NULL)
+          AND (
+            $2::text = 'all'
+            OR ($2::text = 'unread' AND n.read_at IS NULL)
+            OR ($2::text = 'read' AND n.read_at IS NOT NULL)
+          )
         ORDER BY n.created_at DESC, n.id DESC
         LIMIT $3 OFFSET $4
       `,
-      [recipientUserId, filters.unreadOnly === true, limit, offset],
+      [recipientUserId, status, limit, offset],
     );
     const totalCount = Number(result.rows[0]?.total_count ?? 0);
     return { rows: result.rows, totalCount };
@@ -286,6 +352,18 @@ export class NotificationsRepository {
         SET read_at = CURRENT_TIMESTAMP,
             seen_at = COALESCE(seen_at, CURRENT_TIMESTAMP)
         WHERE recipient_user_id = $1 AND read_at IS NULL
+        RETURNING id
+      `,
+      [recipientUserId],
+    );
+    return result.rows.length;
+  }
+
+  async deleteAllRead(recipientUserId: number): Promise<number> {
+    const result = await this.query(
+      `
+        DELETE FROM notifications
+        WHERE recipient_user_id = $1 AND read_at IS NOT NULL
         RETURNING id
       `,
       [recipientUserId],

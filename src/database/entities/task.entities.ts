@@ -47,9 +47,6 @@ export class TaskEntity {
   @Column({ name: 'status', type: 'text', default: 'IN_PROGRESS' })
   status!: string;
 
-  @Column({ name: 'max_delegation_depth', type: 'integer', default: 3 })
-  maxDelegationDepth!: number;
-
   @Column({ name: 'created_at', type: 'timestamp', nullable: true })
   createdAt!: Date | null;
 
@@ -74,17 +71,11 @@ export class TaskLinkEntity {
   @Column({ name: 'task_id', type: 'uuid' })
   taskId!: string;
 
-  @Column({ name: 'parent_link_id', type: 'uuid', nullable: true })
-  parentLinkId!: string | null;
-
   @Column({ name: 'token_hash', type: 'text', unique: true })
   tokenHash!: string;
 
   @Column({ name: 'magic_link', type: 'text', nullable: true })
   magicLink!: string | null;
-
-  @Column({ name: 'delegation_depth', type: 'integer', default: 0 })
-  delegationDepth!: number;
 
   @Column({ name: 'assigned_to_name', type: 'text', nullable: true })
   assignedToName!: string | null;
@@ -123,9 +114,6 @@ export class TaskLinkEntity {
   @Column({ name: 'subject', type: 'text', nullable: true })
   subject!: string | null;
 
-  @Column({ name: 'delegation_note', type: 'text', nullable: true })
-  delegationNote!: string | null;
-
   @Column({ name: 'status', type: 'text', default: 'ACTIVE' })
   status!: string;
 
@@ -146,23 +134,6 @@ export class TaskLinkEntity {
 
   @Column({ name: 'created_by', type: 'integer', nullable: true })
   createdBy!: number | null;
-
-  @Column({ name: 'login_role', type: 'text', nullable: true })
-  loginRole!: string | null;
-
-  @Column({
-    name: 'login_permissions',
-    type: 'jsonb',
-    default: () => "'[]'::jsonb",
-  })
-  loginPermissions!: string[];
-
-  @Column({
-    name: 'login_data_scope',
-    type: 'jsonb',
-    default: () => "'{}'::jsonb",
-  })
-  loginDataScope!: Record<string, unknown>;
 
   @Column({ name: 'first_used_at', type: 'timestamptz', nullable: true })
   firstUsedAt!: Date | null;
@@ -185,11 +156,20 @@ export class TaskSubmissionEntity {
   @Column({ name: 'visited_at', type: 'timestamptz', nullable: true })
   visitedAt!: Date | null;
 
-  @Column({ name: 'cause_category', type: 'text', nullable: true })
-  causeCategory!: string | null;
+  @Column({ name: 'follow_up_problem_category_code', type: 'varchar', length: 32, nullable: true })
+  followUpProblemCategoryCode!: string | null;
 
-  @Column({ name: 'follow_up_assessment_code', type: 'varchar', length: 40, nullable: true })
-  followUpAssessmentCode!: string | null;
+  @Column({ name: 'parental_status_code', type: 'varchar', length: 40, nullable: true })
+  parentalStatusCode!: string | null;
+
+  @Column({ name: 'guardian_type_code', type: 'varchar', length: 40, nullable: true })
+  guardianTypeCode!: string | null;
+
+  @Column({ name: 'guardian_type_detail', type: 'varchar', length: 200, nullable: true })
+  guardianTypeDetail!: string | null;
+
+  @Column({ name: 'residence_environment_detail', type: 'text', nullable: true })
+  residenceEnvironmentDetail!: string | null;
 
   @Column({ name: 'cause_detail', type: 'text', nullable: true })
   causeDetail!: string | null;

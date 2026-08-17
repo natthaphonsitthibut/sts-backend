@@ -31,23 +31,23 @@ async function listCompletedTermWeekdays(manager, schoolId) {
   return rows.map((row) => row.date);
 }
 
-async function seedSchoolAttendanceHistory(manager, schoolId, historyDates, absenceDates, absentStudentUuids) {
+async function seedSchoolAttendanceHistory(
+  manager,
+  schoolId,
+  historyDates,
+  absenceDates,
+  absentStudentUuids,
+  actorUserId,
+) {
   await manager.query(
     `WITH active_term AS (
        SELECT id FROM school_terms WHERE school_id = $1 AND status = 'ACTIVE' AND deleted_at IS NULL
-     ), actor AS (
-       SELECT MIN(m.teacher_user_id) AS user_id
-       FROM classroom_teacher_assignments a
-       JOIN school_teacher_memberships m ON m.id = a.teacher_membership_id
-         AND m.membership_status = 'ACTIVE' AND m.deleted_at IS NULL
-       WHERE a.school_id = $1 AND a.assignment_kind = 'HOMEROOM'
-         AND a.assignment_status = 'ACTIVE' AND a.deleted_at IS NULL
      )
      INSERT INTO school_calendar_days (school_term_id, calendar_date, day_type, source, created_by, updated_by)
-     SELECT term.id, day_value::date, 'SCHOOL_DAY', 'MANUAL', actor.user_id, actor.user_id
-     FROM active_term term CROSS JOIN actor CROSS JOIN unnest($2::date[]) AS day_value
+     SELECT term.id, day_value::date, 'SCHOOL_DAY', 'MANUAL', $3, $3
+     FROM active_term term CROSS JOIN unnest($2::date[]) AS day_value
      ON CONFLICT (school_term_id, calendar_date) DO NOTHING`,
-    [schoolId, historyDates],
+    [schoolId, historyDates, actorUserId],
   );
 
   await manager.query(`DROP TABLE IF EXISTS darun_seed_session_ids`);
@@ -67,11 +67,11 @@ async function seedSchoolAttendanceHistory(manager, schoolId, historyDates, abse
      ), slots AS (
        SELECT slot.id, slot.school_term_id, slot.school_id, slot.grade_level_id,
          slot.room_no::int AS room_id, slot.period, slot.subject_id,
-         slot.teacher_user_id, slot.day_of_week
+         slot.teacher_membership_id, slot.day_of_week
        FROM timetable_slots slot
        WHERE slot.school_id = $1
          AND slot.deleted_at IS NULL
-         AND slot.teacher_user_id IS NOT NULL
+         AND slot.teacher_membership_id IS NOT NULL
      ), inserted_sessions AS (
      INSERT INTO attendance_sessions (
        school_term_id, school_id, grade_level_id, room_id, attendance_date,
@@ -82,8 +82,8 @@ async function seedSchoolAttendanceHistory(manager, schoolId, historyDates, abse
      SELECT slot.school_term_id, slot.school_id, slot.grade_level_id, slot.room_id,
        day_value::date, slot.period, 'SUBJECT', slot.subject_id, slot.id,
        'SUBMITTED', roster.roster_count, roster.roster_count,
-       day_value::date + TIME '15:00', slot.teacher_user_id,
-       slot.teacher_user_id, slot.teacher_user_id
+       day_value::date + TIME '15:00', $3,
+       $3, $3
      FROM slots slot
      JOIN roster ON roster.school_term_id = slot.school_term_id
        AND roster.grade_level_id = slot.grade_level_id AND roster.room_id = slot.room_id
@@ -108,13 +108,13 @@ async function seedSchoolAttendanceHistory(manager, schoolId, historyDates, abse
        AND session.deleted_at IS NULL
        AND EXISTS (
          SELECT 1 FROM attendance seeded
-         WHERE seeded.session_id = session.id AND seeded."RecordedBy" = $3
+         WHERE seeded.session_id = session.id AND seeded."RecordedBy" = $4
        )
        AND NOT EXISTS (
          SELECT 1 FROM attendance actual
-         WHERE actual.session_id = session.id AND actual."RecordedBy" <> $3
+         WHERE actual.session_id = session.id AND actual."RecordedBy" <> $4
        )`,
-    [schoolId, historyDates, ATTENDANCE_SEED_MARKER],
+    [schoolId, historyDates, actorUserId, ATTENDANCE_SEED_MARKER],
   );
 
   await manager.query(
@@ -157,19 +157,22 @@ async function seedSchoolAttendanceHistory(manager, schoolId, historyDates, abse
   );
 }
 
-async function repairTimetableTeacherCoverage(manager, schoolId) {
+async function repairTimetableTeacherCoverage(manager, schoolId, actorUserId) {
   const [invalidCoverage] = await manager.query(
     `SELECT COUNT(*)::int AS invalid_count
      FROM timetable_slots slot
      LEFT JOIN school_teacher_memberships membership
        ON membership.id = slot.teacher_membership_id
-      AND membership.teacher_user_id = slot.teacher_user_id
       AND membership.school_id = slot.school_id
       AND membership.membership_status = 'ACTIVE'
       AND membership.deleted_at IS NULL
+     LEFT JOIN teachers teacher
+       ON teacher.id = membership.teacher_id
+      AND teacher.teacher_status = 'ACTIVE'
+      AND teacher.deleted_at IS NULL
      WHERE slot.school_id = $1
        AND slot.deleted_at IS NULL
-       AND (slot.teacher_user_id IS NULL OR membership.id IS NULL)`,
+       AND (slot.teacher_membership_id IS NULL OR membership.id IS NULL OR teacher.id IS NULL)`,
     [schoolId],
   );
   if (Number(invalidCoverage.invalid_count) > 0) {
@@ -181,10 +184,10 @@ async function repairTimetableTeacherCoverage(manager, schoolId) {
   const [teacherConflicts] = await manager.query(
     `SELECT COUNT(*)::int AS conflict_count
      FROM (
-       SELECT slot.teacher_user_id, slot.day_of_week, slot.period
+       SELECT slot.teacher_membership_id, slot.day_of_week, slot.period
        FROM timetable_slots slot
        WHERE slot.school_id = $1 AND slot.deleted_at IS NULL
-       GROUP BY slot.teacher_user_id, slot.day_of_week, slot.period
+       GROUP BY slot.teacher_membership_id, slot.day_of_week, slot.period
        HAVING COUNT(*) > 1
      ) conflict`,
     [schoolId],
@@ -200,9 +203,9 @@ async function repairTimetableTeacherCoverage(manager, schoolId) {
        curriculum_subject_id, school_id, school_term_id, grade_level_id,
        teacher_membership_id, classroom_id, created_by, updated_by
      )
-     SELECT DISTINCT curriculum_subject.id, slot.school_id, slot.school_term_id,
+       SELECT DISTINCT curriculum_subject.id, slot.school_id, slot.school_term_id,
        slot.grade_level_id, slot.teacher_membership_id, slot.classroom_id,
-       slot.teacher_user_id, slot.teacher_user_id
+       $2, $2
      FROM timetable_slots slot
      JOIN curriculum_subjects curriculum_subject
        ON curriculum_subject.school_id = slot.school_id
@@ -222,7 +225,7 @@ async function repairTimetableTeacherCoverage(manager, schoolId) {
            AND existing.classroom_id = slot.classroom_id
            AND existing.deleted_at IS NULL
        )`,
-    [schoolId],
+    [schoolId, actorUserId],
   );
 }
 
@@ -380,11 +383,12 @@ async function main() {
 
         await manager.query(
           `UPDATE classroom_student_comments
-           SET comment_text = $3
+           SET problem_description = $3,
+               problem_category_code = 'ACADEMIC'
            WHERE classroom_id = $1
              AND person_uuid = $2::uuid
              AND authored_by_user_id = $4
-             AND comment_text = $5`,
+             AND problem_description = $5`,
           [
             student.classroom_id,
             student.person_uuid,
@@ -396,14 +400,15 @@ async function main() {
 
         await manager.query(
           `INSERT INTO classroom_student_comments (
-             classroom_id, person_uuid, comment_text, authored_by_user_id
+             classroom_id, person_uuid, problem_category_code,
+             problem_description, authored_by_user_id
            )
-           SELECT $1, $2::uuid, $3, $4
+           SELECT $1, $2::uuid, 'ACADEMIC', $3, $4
            WHERE NOT EXISTS (
              SELECT 1 FROM classroom_student_comments
              WHERE classroom_id = $1
                AND person_uuid = $2::uuid
-               AND comment_text = $3
+               AND problem_description = $3
                AND authored_by_user_id = $4
            )`,
           [
@@ -454,9 +459,9 @@ async function main() {
         const taskId = existingTask?.id ?? (
           await manager.query(
             `INSERT INTO tasks (
-               case_id, status, max_delegation_depth, task_type,
+               case_id, status, task_type,
                target_school_id, target_grade, target_room, created_by, updated_by
-             ) VALUES ($1, $2, 2, 'VISIT', $3, $4, $5, $6, $6)
+             ) VALUES ($1, $2, 'VISIT', $3, $4, $5, $6, $6)
              RETURNING id`,
             [caseId, scenario.taskStatus, school.id, student.grade, student.room, student.teacher_user_id],
           )
@@ -494,10 +499,10 @@ async function main() {
           linkId = (
             await manager.query(
               `INSERT INTO task_links (
-                 task_id, token_hash, token_encrypted, delegation_depth, assigned_to_name,
+                 task_id, token_hash, token_encrypted, assigned_to_name,
                  assigned_to_first_name, assigned_to_last_name, assigned_to_email,
                  subject, status, expires_at, created_by, updated_by
-               ) VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
                RETURNING id`,
               [
                 taskId,
@@ -519,11 +524,11 @@ async function main() {
         if (scenario.status !== 'IN_PROGRESS') {
           await manager.query(
             `INSERT INTO task_submissions (
-               task_link_id, cause_category, cause_detail, recommendation,
+               task_link_id, follow_up_problem_category_code, cause_detail, recommendation,
                case_follow_up_decision, home_visit_exception_code,
                submitted_at, created_by, updated_by
              )
-             SELECT $1, 'FAMILY', $2, $3, 'REQUEST_REVIEW', $4, now() - interval '1 day', $5, $5
+             SELECT $1, 'OTHER', $2, $3, 'REQUEST_REVIEW', $4, now() - interval '1 day', $5, $5
              WHERE NOT EXISTS (SELECT 1 FROM task_submissions WHERE task_link_id = $1)`,
             [
               linkId,
@@ -568,14 +573,15 @@ async function main() {
       for (const [index, student] of watchStudents.entries()) {
         await manager.query(
           `INSERT INTO classroom_student_comments (
-             classroom_id, person_uuid, comment_text, authored_by_user_id
+             classroom_id, person_uuid, problem_category_code,
+             problem_description, authored_by_user_id
            )
-           SELECT $1, $2::uuid, $3, $4
+           SELECT $1, $2::uuid, 'ACADEMIC', $3, $4
            WHERE NOT EXISTS (
              SELECT 1 FROM classroom_student_comments
              WHERE classroom_id = $1
                AND person_uuid = $2::uuid
-               AND comment_text = $3
+               AND problem_description = $3
                AND authored_by_user_id = $4
            )`,
           [student.classroom_id, student.person_uuid, WATCH_COMMENTS[index], student.teacher_user_id],

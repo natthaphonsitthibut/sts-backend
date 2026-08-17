@@ -13,6 +13,7 @@ import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
+  RequireAnyPermission,
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
@@ -22,7 +23,7 @@ import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
 import { ObservationReviewsService } from './observation-reviews.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('manage-student-observations')
+@RequirePermission('students')
 @Controller('api/students/:studentTermId/risk-review')
 export class StudentRiskReviewController {
   constructor(private readonly service: ObservationReviewsService) {}
@@ -46,7 +47,7 @@ export class StudentRiskReviewController {
 }
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('manage-student-observations')
+@RequirePermission('students')
 @Controller('api/student-risk-report/teacher-comments')
 export class TeacherCommentReportsController {
   constructor(private readonly service: ObservationReviewsService) {}
@@ -58,7 +59,7 @@ export class TeacherCommentReportsController {
 }
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('review-cases', 'manage-student-observations')
+@RequirePermission('dashboard', 'students')
 @Controller('api/student-risk-report/teacher-watchlist')
 export class TeacherWatchlistController {
   constructor(private readonly service: ObservationReviewsService) {}
@@ -72,8 +73,10 @@ export class TeacherWatchlistController {
   }
 }
 
+// Teacher comments on a student are written from รายชื่อนักเรียน, ห้องเรียนทั้งหมด
+// and เช็กชื่อ, so each of those pages can reach them.
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('manage-student-observations')
+@RequireAnyPermission('students', 'classrooms', 'manage-school-structure', 'attendance')
 @Controller('api/students/:studentTermId/classroom-comments')
 export class StudentClassroomCommentsController {
   constructor(private readonly service: ObservationReviewsService) {}

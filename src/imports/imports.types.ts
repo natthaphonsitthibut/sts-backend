@@ -113,8 +113,8 @@ export interface SchoolRosterImportContextRow extends Record<string, unknown> {
 }
 
 export interface TeacherImportCandidateRow extends Record<string, unknown> {
-  user_id: number;
-  username: string;
+  teacher_id: string;
+  citizen_id: string;
   display_name: string;
   is_eligible: boolean;
   is_active_member: boolean;
@@ -163,10 +163,10 @@ export const IMPORT_QUARANTINE_REASONS = [
   'ROOM_NOT_FOUND',
   'STATUS_CAUSE_UNMAPPED',
   'BLANK_REQUIRED_IDENTITY',
-  'BLANK_TEACHER_USERNAME',
+  'BLANK_TEACHER_CITIZEN_ID',
   'DUPLICATE_TEACHER_ROW',
-  'TEACHER_ACCOUNT_NOT_FOUND',
-  'INVALID_TEACHER_PERMISSION',
+  'TEACHER_NOT_FOUND',
+  'INACTIVE_TEACHER',
   'INVALID_TEACHER_START_DATE',
   'MISSING_IMPORT_FIELD',
   'CLASSROOM_IDENTITY_CONFLICT',

@@ -22,7 +22,7 @@ import {
 import { StudentObservationSummaryService } from './student-observation-summary.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('manage-student-observations')
+@RequirePermission('students')
 @Controller('api/students/:studentTermId/observation-summary')
 export class StudentObservationSummaryController {
   constructor(private readonly service: StudentObservationSummaryService) {}

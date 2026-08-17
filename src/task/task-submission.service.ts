@@ -13,16 +13,10 @@ import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import * as crypto from 'crypto';
-import { getBangkokDateString } from '../common/utils/date.util';
 import { hashToken } from '../common/utils/helpers';
-import {
-  SaveTaskAttendanceDto,
-  SaveTaskSubmissionDto,
-  TaskAttendanceRecordDto,
-} from './dto/task.dto';
+import { SaveTaskSubmissionDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
-import type { QueryExecutor } from './task.types';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
 /** Clock-skew allowance for a guest-reported visit timestamp. */
@@ -76,12 +70,12 @@ export class TaskSubmissionService {
   /**
    * Validate a magic-link token's state before any write. The token is the
    * credential (no AuthGuard), so this is where we fail closed: reject missing,
-   * expired, admin-locked, completed, or delegated links, and links whose type
+   * expired, admin-locked, or completed links, and links whose type
    * does not match the write surface. Returns the validated link shape.
    */
   private validateUsableLink(
     task: Awaited<ReturnType<TaskAccessService['getTaskByToken']>>,
-    expectedType: 'ATTENDANCE' | 'VISIT',
+    expectedTypes: ReadonlyArray<'VISIT' | 'ASSIST'>,
   ): Record<string, unknown> {
     if (!task) {
       throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
@@ -101,13 +95,13 @@ export class TaskSubmissionService {
       if (status === 'SCHEDULED') {
         throw new ForbiddenException('ลิงก์นี้ยังไม่เปิดใช้งาน');
       }
-      if (status === 'COMPLETED' || status === 'DELEGATED') {
+      if (status === 'COMPLETED') {
         throw new ConflictException(message);
       }
       throw new BadRequestException(message);
     }
 
-    if (link.task_type !== expectedType) {
+    if (typeof link.task_type !== 'string' || !expectedTypes.includes(link.task_type as never)) {
       throw new ForbiddenException('ลิงก์นี้ไม่รองรับการบันทึกประเภทนี้');
     }
 
@@ -123,7 +117,7 @@ export class TaskSubmissionService {
     sessionToken?: string,
   ): Promise<Record<string, unknown>> {
     const task = await this.taskAccessService.getTaskByToken(token, sessionToken);
-    return this.validateUsableLink(task, 'VISIT');
+    return this.validateUsableLink(task, ['VISIT', 'ASSIST']);
   }
 
   private toScalarString(value: unknown): string | null {
@@ -196,163 +190,6 @@ export class TaskSubmissionService {
     return parsed;
   }
 
-  private getBangkokIsoDayOfWeek(): number {
-    const [year, month, day] = getBangkokDateString().split('-').map(Number);
-    const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-    return utcDay === 0 ? 7 : utcDay;
-  }
-
-  private async resolveAttendanceSessionContext(
-    linkId: string,
-    selectedSlotId: number | null,
-    executor: QueryExecutor,
-  ): Promise<
-    | {
-        kind: 'SUBJECT';
-        period: number;
-        subjectId: number;
-        timetableSlotId: number;
-      }
-    | undefined
-  > {
-    const linkedSlots = await this.taskRepository.listLinkedTimetableSlots(linkId, executor);
-    if (linkedSlots.length === 0) {
-      if (selectedSlotId !== null) {
-        throw new BadRequestException('ลิงก์นี้ไม่ได้ผูกคาบเรียน');
-      }
-      return undefined;
-    }
-
-    if (selectedSlotId === null) {
-      throw new BadRequestException('กรุณาเลือกคาบเรียนที่จะเช็คชื่อ');
-    }
-
-    const selected = linkedSlots.find((slot) => Number(slot.id) === selectedSlotId);
-    if (!selected) {
-      throw new ForbiddenException('คาบเรียนนี้ไม่อยู่ในขอบเขตของลิงก์');
-    }
-
-    const todayDayOfWeek = this.getBangkokIsoDayOfWeek();
-    if (Number(selected.day_of_week) !== todayDayOfWeek) {
-      throw new BadRequestException('คาบเรียนนี้ไม่ตรงกับวันปัจจุบัน');
-    }
-
-    return {
-      kind: 'SUBJECT',
-      period: Number(selected.period),
-      subjectId: Number(selected.subject_id),
-      timetableSlotId: selectedSlotId,
-    };
-  }
-
-  async saveTaskAttendance(
-    token: string,
-    data: SaveTaskAttendanceDto | TaskAttendanceRecordDto[] | undefined,
-    sessionToken?: string,
-  ) {
-    const records = Array.isArray(data) ? data : data?.records;
-    const selectedSlotId = Array.isArray(data)
-      ? null
-      : this.normalizeOptionalPositiveInt(data?.timetable_slot_id, 'timetable_slot_id');
-    const attendanceRecords = Array.isArray(records) ? records : [];
-
-    try {
-      const task = await this.taskAccessService.getTaskByToken(token, sessionToken);
-      const link = this.validateUsableLink(task, 'ATTENDANCE');
-      const recorder =
-        typeof link.assigned_to_name === 'string' ? link.assigned_to_name : 'Teacher (Magic Link)';
-
-      // Enforce the link's own scope: every record must belong to the task's
-      // school (and grade/room when set). Reject any student outside that roster.
-      const targetSchoolId =
-        typeof link.target_school_id === 'number'
-          ? link.target_school_id
-          : Number(link.target_school_id);
-      // School scope is the security floor: without it listTaskStudents would
-      // return every student nationwide. Grade/room narrow it further when the
-      // link carries them, but a school-wide attendance link is still valid.
-      if (!Number.isInteger(targetSchoolId)) {
-        throw new ConflictException('ลิงก์เช็คชื่อนี้ไม่มีขอบเขตโรงเรียน');
-      }
-
-      const roster = await this.taskRepository.listTaskStudents({
-        targetGrade: this.toScalarString(link.target_grade),
-        targetRoom: this.toScalarString(link.target_room),
-        targetSchoolId,
-      });
-      const allowedStudentIds = new Set(roster.map((student) => String(student.id)));
-      const writerRecords = attendanceRecords.map((record) => ({
-        student_id: typeof record.student_id === 'string' ? record.student_id : '',
-        status: typeof record.status === 'string' ? record.status : '',
-      }));
-
-      for (const record of writerRecords) {
-        const studentUuid = record.student_id;
-        if (!studentUuid || !allowedStudentIds.has(studentUuid)) {
-          throw new ForbiddenException('พบนักเรียนนอกขอบเขตของลิงก์นี้');
-        }
-      }
-
-      if (attendanceRecords.length === 0) {
-        throw new BadRequestException('กรุณาส่งข้อมูลเช็คชื่ออย่างน้อยหนึ่งรายการ');
-      }
-
-      let calendarConfigured = false;
-      let affectedStudentIds: string[] = [];
-      await this.taskRepository.withTransaction(async (executor) => {
-        const live = await this.taskRepository.lockLiveTaskLink(String(link.link_id), executor);
-        if (!live) {
-          throw new ConflictException('ลิงก์นี้ถูกลบแล้ว');
-        }
-        const sessionContext = await this.resolveAttendanceSessionContext(
-          String(link.link_id),
-          selectedSlotId,
-          executor,
-        );
-        const results = await this.attendanceWriteService.saveAttendanceGroupsWithinTransaction(
-          writerRecords,
-          {
-            actorUserId: null,
-            actorLabel: `task-link:${String(link.link_id)}`,
-            recorder,
-            session: sessionContext,
-          },
-          executor,
-        );
-        calendarConfigured =
-          results.length > 0 && results.every((result) => result.calendarConfigured);
-        affectedStudentIds = results.flatMap((result) => result.affectedStudentIds);
-      });
-
-      await this.riskProfileService
-        ?.requestStudentRecalculation(affectedStudentIds, 'attendance-task-link-save')
-        .catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logger.error(
-            `Failed to enqueue task attendance risk profile recalculation: ${message}`,
-          );
-        });
-
-      const triggerType = await this.taskRepository.getSystemSettingValue('ALERT_TRIGGER_TYPE');
-
-      if (triggerType === 'IMMEDIATE' && calendarConfigured) {
-        this.logger.log(
-          'Attendance saved via task link. Trigger Type is IMMEDIATE. Executing absence check...',
-        );
-        this.automationService.checkConsecutiveAbsences().catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logger.error(`Error executing immediate absence check from task: ${message}`);
-        });
-      }
-
-      return { success: true };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`saveTaskAttendance error: ${message}`);
-      throw err;
-    }
-  }
-
   async saveTaskSubmission(token: string, data: SaveTaskSubmissionDto, sessionToken?: string) {
     try {
       const task = await this.assertVisitSubmissionAccess(token, sessionToken);
@@ -386,12 +223,37 @@ export class TaskSubmissionService {
       );
       const studentNotFound = homeVisitException?.code === 'STUDENT_NOT_FOUND';
       const targetCaseStatus = studentNotFound ? 'STUDENT_NOT_FOUND' : decision?.targetStatus;
-      const followUpAssessment = await this.caseTrackingOptions.getHomeVisitAssessment(
-        this.toScalarString(data.follow_up_assessment_code)?.toUpperCase() ?? null,
+      const followUpProblemCategory = await this.caseTrackingOptions.getFollowUpProblemCategory(
+        this.toScalarString(data.follow_up_problem_category_code)?.toUpperCase() ?? null,
       );
-      if (link.task_type === 'VISIT' && !followUpAssessment) {
-        throw new BadRequestException('กรุณาเลือกผลประเมินหลังลงพื้นที่');
+      // An assistance round reports what help was given, not a home visit, so
+      // the household/visit questions do not apply to it.
+      const isAssistance = link.task_type === 'ASSIST';
+      if (link.task_type === 'VISIT' && !followUpProblemCategory) {
+        throw new BadRequestException('กรุณาเลือกหัวข้อปัญหาของผลการติดตาม');
       }
+      const assistedAt = isAssistance ? (this.toScalarString(data.assisted_at) ?? null) : null;
+      const assistanceDetail = isAssistance
+        ? (this.toScalarString(data.assistance_detail) ?? null)
+        : null;
+      if (isAssistance && !assistedAt) {
+        throw new BadRequestException('กรุณาระบุวันที่และเวลาที่ให้ความช่วยเหลือ');
+      }
+      const parentalStatus = await this.caseTrackingOptions.getParentalStatus(
+        this.toScalarString(data.parental_status_code)?.toUpperCase() ?? null,
+      );
+      const guardianType = await this.caseTrackingOptions.getGuardianType(
+        this.toScalarString(data.guardian_type_code)?.toUpperCase() ?? null,
+      );
+      const guardianTypeDetail = this.toScalarString(data.guardian_type_detail);
+      if (guardianType?.requiresDetail && !guardianTypeDetail) {
+        throw new BadRequestException('กรุณาระบุผู้ปกครอง');
+      }
+      const residenceEnvironmentDetail = this.toScalarString(data.residence_environment_detail);
+      const residenceEnvironments = await this.caseTrackingOptions.getResidenceEnvironments(
+        (data.residence_environment_codes ?? []).map((code) => code.trim().toUpperCase()),
+        residenceEnvironmentDetail,
+      );
       const causeDetail = this.toScalarString(data.notes ?? data.cause_detail);
       if (homeVisitException?.code === 'STUDENT_NOT_FOUND' && !causeDetail) {
         throw new BadRequestException('กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน');
@@ -447,8 +309,14 @@ export class TaskSubmissionService {
             visitLat: this.normalizeNumber(data.visit_lat),
             visitLng: this.normalizeNumber(data.visit_lng),
             visitedAt,
-            causeCategory: data.cause_category ?? null,
-            followUpAssessmentCode: followUpAssessment?.code ?? null,
+            followUpProblemCategoryCode: followUpProblemCategory?.code ?? null,
+            parentalStatusCode: parentalStatus?.code ?? null,
+            guardianTypeCode: guardianType?.code ?? null,
+            // A detail without a guardian type has nothing to qualify, and the
+            // DB CHECK rejects it — drop it instead of failing the submission.
+            guardianTypeDetail: guardianType ? guardianTypeDetail : null,
+            residenceEnvironmentCodes: residenceEnvironments.map((option) => option.code),
+            residenceEnvironmentDetail,
             causeDetail,
             recommendation: data.recommendation ?? null,
             photoPaths: data.photo_paths ?? null,
@@ -466,11 +334,17 @@ export class TaskSubmissionService {
             caseFollowUpDecision: studentNotFound ? null : (decision?.code ?? null),
             caseResolutionOutcomeCode:
               !studentNotFound && decision?.requiresResolutionOutcome ? resolutionOutcome : null,
+            assistedAt,
+            assistanceDetail,
           },
           executor,
         );
 
-        if (link.task_type === 'VISIT' && caseId !== null && targetCaseStatus) {
+        if (
+          (link.task_type === 'VISIT' || link.task_type === 'ASSIST') &&
+          caseId !== null &&
+          targetCaseStatus
+        ) {
           const nextSummary = causeDetail || homeVisitException?.label || 'บันทึกผลการลงพื้นที่';
           // When the visitor flags the home location as wrong, persist the
           // corrected coordinates to the case independently of the address TEXT —
@@ -526,7 +400,6 @@ export class TaskSubmissionService {
         await this.taskRepository.updateTaskLinkStatus(String(link.link_id), 'COMPLETED', executor);
       });
 
-      let caseStatusRecipients: number[] = [];
       if (caseId !== null && targetCaseStatus) {
         if (reviewId) {
           await this.auditLog.record({
@@ -544,7 +417,7 @@ export class TaskSubmissionService {
           });
         }
         try {
-          caseStatusRecipients = await this.notificationsService.notifyCaseStatusChanged({
+          await this.notificationsService.notifyCaseStatusChanged({
             caseId,
             studentName: this.toScalarString(link.student_name),
             schoolId: this.normalizeNumber(link.school_id as string | number | null | undefined),
@@ -560,19 +433,6 @@ export class TaskSubmissionService {
       this.logger.log(
         `[saveTaskSubmission] success decision=${decision?.code ?? 'NONE'} exception=${homeVisitException?.code ?? 'NONE'}`,
       );
-      // One submission, one notification per person: whoever was just told the
-      // case changed status is skipped here instead of getting a second row
-      // saying the same report came back.
-      try {
-        await this.notificationsService.notifyTaskSubmitted({
-          taskId: String(link.task_id),
-          submitterName: typeof task?.assigned_to_name === 'string' ? task.assigned_to_name : null,
-          alreadyNotifiedUserIds: caseStatusRecipients,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Failed to notify task submission after commit: ${message}`);
-      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

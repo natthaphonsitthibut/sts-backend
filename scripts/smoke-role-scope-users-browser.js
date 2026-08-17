@@ -42,7 +42,7 @@ const TEACHER_SCOPE = {
   school_ids: [SCHOOL.id],
 };
 // TEACHER default permissions -> Thai catalog labels shown in the review dialog.
-const TEACHER_PERMISSION_LABELS = ['หน้าหลัก', 'รายชื่อนักเรียน', 'เช็คชื่อ'];
+const TEACHER_PERMISSION_LABELS = ['หน้าหลัก', 'รายชื่อนักเรียน', 'เช็กชื่อ'];
 const ALL_PERMISSIONS = [...VALID_PERMISSION_IDS];
 
 function assert(condition, message) {
@@ -438,7 +438,7 @@ async function main() {
       permissions: ALL_PERMISSIONS, passwordHash: adminHash, personId: '1000000000001',
     });
     teacherId = await upsertUser(dataSource, {
-      username: TEACHER_USERNAME, role: 'TEACHER', dataScope: TEACHER_SCOPE,
+      username: TEACHER_USERNAME, role: 'DIRECTOR', dataScope: TEACHER_SCOPE,
       permissions: [], passwordHash: teacherHash, personId: '1000000000002',
     });
     nationalId = await upsertUser(dataSource, {
@@ -634,7 +634,7 @@ async function main() {
        SET "PersonID_Onec" = '',
            permissions = $2::jsonb
        WHERE id = $1`,
-      [teacherId, JSON.stringify(['home', 'forward-case', 'attendance-operations'])],
+      [teacherId, JSON.stringify(['home', 'dashboard', 'attendance-operations'])],
     );
     await navigate(client, `${FRONTEND_URL}/manage-users/${teacherId}/edit/permissions`);
     await waitForEditForm(client, 'คุณครู');
@@ -677,7 +677,7 @@ async function main() {
     await waitForReviewDialog(client, true);
     const cleanupReview = await reviewDialogText(client);
     assert(
-      cleanupReview.includes('forward-case') && cleanupReview.includes('attendance-operations'),
+      cleanupReview.includes('dashboard') && cleanupReview.includes('attendance-operations'),
       'Review dialog did not disclose retired permissions that will be removed',
     );
     await clickDialogButton(client, 'ยืนยันบันทึก');
@@ -689,7 +689,7 @@ async function main() {
         );
         return (
           saved?.PersonID_Onec === '1000000000002' &&
-          !saved?.permissions?.includes('forward-case') &&
+          !saved?.permissions?.includes('dashboard') &&
           !saved?.permissions?.includes('attendance-operations')
         );
       },
@@ -704,7 +704,7 @@ async function main() {
       'Corrected hidden profile field was not persisted',
     );
     assert(
-      !cleanedTeacher?.permissions?.includes('forward-case') &&
+      !cleanedTeacher?.permissions?.includes('dashboard') &&
         !cleanedTeacher?.permissions?.includes('attendance-operations'),
       `Retired permissions were not removed: ${JSON.stringify(cleanedTeacher?.permissions)}`,
     );

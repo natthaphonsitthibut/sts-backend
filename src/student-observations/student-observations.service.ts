@@ -4,7 +4,6 @@ import {
   Inject,
   ConflictException,
   ForbiddenException,
-  GoneException,
   Injectable,
   NotFoundException,
   Optional,
@@ -18,20 +17,17 @@ import {
   resolveLimit,
   resolvePage,
 } from '../common/pagination/pagination.util';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { TeacherAccessService } from '../teacher-access/teacher-access.service';
 import type { ActiveTeacherGrantContext } from '../teacher-access/teacher-access.types';
-import { TaskAccessService } from '../task/task-access.service';
-import { TaskRepository } from '../task/task.repository';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import type {
   CreatePublicStudentObservationDto,
-  CreateTaskLinkStudentObservationDto,
   CreateStudentObservationDto,
   ListStudentObservationsQueryDto,
   UpdateObservationCatalogItemDto,
   UpdateStudentObservationDto,
-  TaskLinkStudentObservationQueryDto,
 } from './dto/student-observations.dto';
 import { StudentObservationsRepository } from './student-observations.repository';
 import type {
@@ -55,14 +51,6 @@ interface WriteActorContext {
   observerDisplayName: string | null;
 }
 
-interface TaskLinkObservationContext {
-  linkId: string;
-  creatorUserId: number;
-  observerDisplayName: string;
-  schoolId: number;
-  selectedTimetableSlotId: number | null;
-}
-
 @Injectable()
 export class StudentObservationsService {
   constructor(
@@ -72,8 +60,6 @@ export class StudentObservationsService {
     // student profile, observations authorise through teacher-access.
     @Inject(forwardRef(() => TeacherAccessService))
     private readonly teacherAccess: TeacherAccessService,
-    private readonly taskAccess: TaskAccessService,
-    private readonly taskRepository: TaskRepository,
     @Optional()
     private readonly riskProfileService?: RiskProfileService,
   ) {}
@@ -91,12 +77,13 @@ export class StudentObservationsService {
     }
   }
 
+  /**
+   * Observing a student and managing a school's observations were two
+   * permissions; both are work done on รายชื่อนักเรียน, so that page decides and
+   * `data_scope` is what still separates a class teacher from a school manager.
+   */
   private canManage(actor: AuthenticatedRequestUser): boolean {
-    return hasPermission(actor.roles, actor.permissions, 'manage-student-observations');
-  }
-
-  private canUseTeacherObservations(actor: AuthenticatedRequestUser): boolean {
-    return hasPermission(actor.roles, actor.permissions, 'student-observations');
+    return hasPermission(actor.roles, actor.permissions, 'students');
   }
 
   private async findEnrollment(
@@ -128,22 +115,15 @@ export class StudentObservationsService {
     assignment: ObservationAssignmentRow | null;
   }> {
     this.denyExecutiveRaw(actor);
-    const enrollment = await this.findEnrollment(studentUuid, queryRunner);
-    if (this.canManage(actor)) {
-      await this.assertEnrollmentScopeAccess(actor, enrollment);
-      return { enrollment, assignment: null };
-    }
-    if (!this.canUseTeacherObservations(actor)) {
+    if (!this.canManage(actor)) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูข้อสังเกตนักเรียน');
     }
+    const enrollment = await this.findEnrollment(studentUuid, queryRunner);
     await this.assertEnrollmentScopeAccess(actor, enrollment);
-    const assignment = await this.repository.findActorAssignment(
-      actor.id,
-      studentUuid,
-      getBangkokDateString(),
-      queryRunner,
-    );
-    return { enrollment, assignment };
+    // A logged-in actor is staff. Teachers reach the system through an access
+    // link, so there is no assignment to infer from the account — the caller
+    // names one explicitly when the write belongs to a class.
+    return { enrollment, assignment: null };
   }
 
   private async resolveLoggedWriteAccess(
@@ -157,19 +137,11 @@ export class StudentObservationsService {
     const onDate = getBangkokDateString();
     const assignment = assignmentId
       ? await this.repository.findActiveAssignment(assignmentId, studentUuid, onDate, queryRunner)
-      : timetableSlotId && !this.canManage(actor)
-        ? await this.repository.findActorAssignmentForTimetableSlot(
-            actor.id,
-            studentUuid,
-            timetableSlotId,
-            onDate,
-            queryRunner,
-          )
-        : readAccess.assignment;
-    if (!this.canManage(actor) && !assignment && assignmentId) {
+      : readAccess.assignment;
+    if (!assignment && assignmentId) {
       throw new NotFoundException('ไม่พบการมอบหมายครูที่ใช้งานได้สำหรับนักเรียน');
     }
-    if (!this.canManage(actor) && !assignment && timetableSlotId) {
+    if (!assignment && timetableSlotId) {
       const slotMatchesEnrollment = await this.repository.isTimetableSlotForEnrollment(
         timetableSlotId,
         readAccess.enrollment,
@@ -179,19 +151,13 @@ export class StudentObservationsService {
         throw new NotFoundException('ไม่พบคาบเรียนในห้องของนักเรียน');
       }
     }
-    if (assignment && !this.canManage(actor) && assignment.teacher_user_id !== actor.id) {
-      throw new NotFoundException('assignment อยู่นอกขอบเขตของคุณ');
-    }
     return {
       enrollment: readAccess.enrollment,
       actorContext: {
         kind: 'USER',
         userId: actor.id,
         username: actor.username,
-        teacherMembershipId:
-          assignment?.teacher_user_id === actor.id
-            ? Number(assignment.teacher_membership_id)
-            : null,
+        teacherMembershipId: null,
         grantId: null,
         sourceAssignmentId: assignment ? Number(assignment.assignment_id) : null,
         sourceTaskLinkId: null,
@@ -217,70 +183,6 @@ export class StudentObservationsService {
   private scalarNumber(value: unknown): number | null {
     const parsed = typeof value === 'number' ? value : Number(value);
     return Number.isInteger(parsed) ? parsed : null;
-  }
-
-  private async resolveTaskLinkObservationContext(
-    rawToken: string,
-    sessionToken: string,
-    studentUuid?: string,
-    timetableSlotId?: number,
-  ): Promise<TaskLinkObservationContext> {
-    const task = await this.taskAccess.getTaskByToken(rawToken, sessionToken || undefined);
-    if (!task) throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
-    if (task.error) {
-      const message = typeof task.error === 'string' ? task.error : 'ลิงก์ใช้งานไม่ได้';
-      if (task.status === 'EXPIRED') throw new GoneException(message);
-      if (task.status === 'ADMIN_LOCKED' || task.status === 'SCHEDULED') {
-        throw new ForbiddenException(message);
-      }
-      throw new ConflictException(message);
-    }
-    if (task.task_type !== 'ATTENDANCE') {
-      throw new ForbiddenException('ลิงก์นี้ไม่รองรับการบันทึกข้อสังเกตนักเรียน');
-    }
-    if (task.auth_required === true) {
-      throw new ForbiddenException('กรุณายืนยัน OTP ก่อนบันทึกข้อสังเกต');
-    }
-    const linkId = typeof task.link_id === 'string' ? task.link_id : '';
-    if (!linkId) throw new ConflictException('ลิงก์ไม่มีข้อมูลอ้างอิงที่ใช้งานได้');
-    const link = await this.taskRepository.findTaskLinkById(linkId);
-    const creatorUserId = this.scalarNumber(link?.created_by);
-    const schoolId = this.scalarNumber(task.target_school_id);
-    const observerDisplayName =
-      typeof task.assigned_to_name === 'string' ? task.assigned_to_name.trim() : '';
-    if (!creatorUserId || !schoolId || !observerDisplayName) {
-      throw new ConflictException('ลิงก์ไม่มีข้อมูลผู้บันทึกหรือขอบเขตโรงเรียนที่ครบถ้วน');
-    }
-
-    const linkedSlots = await this.taskRepository.listLinkedTimetableSlots(linkId);
-    if (studentUuid && linkedSlots.length > 0 && !timetableSlotId) {
-      throw new BadRequestException('กรุณาเลือกคาบเรียนของข้อสังเกต');
-    }
-    if (
-      timetableSlotId &&
-      !linkedSlots.some((slot) => Number(slot.id) === Number(timetableSlotId))
-    ) {
-      throw new ForbiddenException('คาบเรียนอยู่นอกขอบเขตของลิงก์');
-    }
-
-    if (studentUuid) {
-      const roster = await this.taskRepository.listTaskStudents({
-        targetGrade: typeof task.target_grade === 'string' ? task.target_grade : null,
-        targetRoom: typeof task.target_room === 'string' ? task.target_room : null,
-        targetSchoolId: schoolId,
-      });
-      if (!roster.some((student) => String(student.id) === studentUuid)) {
-        throw new ForbiddenException('นักเรียนอยู่นอกขอบเขตของลิงก์');
-      }
-    }
-
-    return {
-      linkId,
-      creatorUserId,
-      observerDisplayName,
-      schoolId,
-      selectedTimetableSlotId: timetableSlotId ?? null,
-    };
   }
 
   private async resolveWriteInput(
@@ -410,7 +312,7 @@ export class StudentObservationsService {
       const row = await this.repository.createObservation(input, queryRunner);
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'STUDENT_OBSERVATION_CREATE',
           targetType: 'student_observations',
@@ -434,7 +336,7 @@ export class StudentObservationsService {
     const access = await this.resolveLoggedReadAccess(actor, studentUuid);
     const result = await this.listInternal(studentUuid, query);
     await this.auditLog.record({
-      actorUserId: actor.id,
+      actorUserId: resolveAuditActorId(actor),
       actorLabel: actor.username,
       action: 'STUDENT_OBSERVATION_VIEW',
       targetType: 'student_term',
@@ -526,10 +428,7 @@ export class StudentObservationsService {
           kind: 'USER',
           userId: actor.id,
           username: actor.username,
-          teacherMembershipId:
-            assignment?.teacher_user_id === actor.id
-              ? Number(assignment.teacher_membership_id)
-              : null,
+          teacherMembershipId: null,
           grantId: null,
           sourceAssignmentId:
             current.source_assignment_id === null ? null : Number(current.source_assignment_id),
@@ -549,7 +448,7 @@ export class StudentObservationsService {
       );
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'STUDENT_OBSERVATION_UPDATE',
           targetType: 'student_observations',
@@ -633,8 +532,8 @@ export class StudentObservationsService {
           enrollment,
           {
             kind: 'TEACHER_ACCESS',
-            userId: grant.teacherUserId,
-            username: grant.teacherUsername,
+            userId: null,
+            username: grant.teacherDisplayName,
             teacherMembershipId: Number(grant.teacherMembershipId),
             grantId: grant.grantId,
             sourceAssignmentId: Number(assignment.assignment_id),
@@ -647,8 +546,8 @@ export class StudentObservationsService {
         const row = await this.repository.createObservation(input, queryRunner);
         await this.auditLog.recordAtomic(
           {
-            actorUserId: grant.teacherUserId,
-            actorLabel: grant.teacherUsername,
+            actorUserId: null,
+            actorLabel: grant.teacherDisplayName,
             action: 'STUDENT_OBSERVATION_CREATE',
             targetType: 'student_observations',
             targetId: row.id,
@@ -686,8 +585,8 @@ export class StudentObservationsService {
         const result = await this.listInternal(studentUuid, query, queryRunner);
         await this.auditLog.recordAtomic(
           {
-            actorUserId: grant.teacherUserId,
-            actorLabel: grant.teacherUsername,
+            actorUserId: null,
+            actorLabel: grant.teacherDisplayName,
             action: 'STUDENT_OBSERVATION_VIEW',
             targetType: 'student_term',
             targetId: studentUuid,
@@ -732,7 +631,9 @@ export class StudentObservationsService {
           true,
         );
         if (!current) throw new NotFoundException('ไม่พบข้อสังเกต');
-        if (current.author_user_id !== grant.teacherUserId) {
+        if (
+          String(current.author_teacher_membership_id ?? '') !== String(grant.teacherMembershipId)
+        ) {
           throw new ForbiddenException('แก้ไขได้เฉพาะข้อสังเกตที่ครูผู้ใช้ลิงก์นี้บันทึก');
         }
         if (current.revision_number !== dto.expectedRevision) {
@@ -752,8 +653,8 @@ export class StudentObservationsService {
           enrollment,
           {
             kind: 'TEACHER_ACCESS',
-            userId: grant.teacherUserId,
-            username: grant.teacherUsername,
+            userId: null,
+            username: grant.teacherDisplayName,
             teacherMembershipId: Number(grant.teacherMembershipId),
             grantId: grant.grantId,
             sourceAssignmentId: Number(assignment.assignment_id),
@@ -768,13 +669,13 @@ export class StudentObservationsService {
           observationId,
           input,
           current.revision_number + 1,
-          grant.teacherUserId,
+          null,
           queryRunner,
         );
         await this.auditLog.recordAtomic(
           {
-            actorUserId: grant.teacherUserId,
-            actorLabel: grant.teacherUsername,
+            actorUserId: null,
+            actorLabel: grant.teacherDisplayName,
             action: 'STUDENT_OBSERVATION_UPDATE',
             targetType: 'student_observations',
             targetId: row.id,
@@ -823,7 +724,7 @@ export class StudentObservationsService {
 
   async getCatalog(actor: AuthenticatedRequestUser) {
     this.denyExecutiveRaw(actor);
-    if (!this.canManage(actor) && !this.canUseTeacherObservations(actor)) {
+    if (!this.canManage(actor)) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดู catalog ข้อสังเกต');
     }
     const catalog = await this.repository.listCatalog();
@@ -832,96 +733,6 @@ export class StudentObservationsService {
         dimensions: catalog.dimensions.map((row) => this.toDimension(row)),
         tags: catalog.tags.map((row) => this.toTag(row)),
       },
-    };
-  }
-
-  async getCatalogWithTaskLink(rawToken: string, sessionToken: string) {
-    await this.resolveTaskLinkObservationContext(rawToken, sessionToken);
-    const catalog = await this.repository.listCatalog();
-    return {
-      data: {
-        dimensions: catalog.dimensions
-          .filter((row) => row.is_active)
-          .map((row) => this.toDimension(row)),
-        tags: catalog.tags.filter((row) => row.is_active).map((row) => this.toTag(row)),
-      },
-    };
-  }
-
-  async createWithTaskLink(
-    rawToken: string,
-    sessionToken: string,
-    dto: CreateTaskLinkStudentObservationDto,
-  ) {
-    const result = await this.repository.withTransaction(async (queryRunner) => {
-      const context = await this.resolveTaskLinkObservationContext(
-        rawToken,
-        sessionToken,
-        dto.studentTermId,
-        dto.timetableSlotId,
-      );
-      const enrollment = await this.findEnrollment(dto.studentTermId, queryRunner);
-      if (enrollment.school_id !== context.schoolId) {
-        throw new ForbiddenException('นักเรียนอยู่นอกขอบเขตโรงเรียนของลิงก์');
-      }
-      const input = await this.resolveWriteInput(
-        dto,
-        enrollment,
-        {
-          kind: 'USER',
-          userId: context.creatorUserId,
-          username: context.observerDisplayName,
-          teacherMembershipId: null,
-          grantId: null,
-          sourceAssignmentId: null,
-          sourceTaskLinkId: context.linkId,
-          sourceTimetableSlotId: context.selectedTimetableSlotId,
-          observerDisplayName: context.observerDisplayName,
-        },
-        queryRunner,
-      );
-      const row = await this.repository.createObservation(input, queryRunner);
-      await this.auditLog.recordAtomic(
-        {
-          actorUserId: context.creatorUserId,
-          actorLabel: context.observerDisplayName,
-          action: 'STUDENT_OBSERVATION_CREATE',
-          targetType: 'student_observations',
-          targetId: row.id,
-          metadata: { ...this.auditMetadata(row), sourceTaskLinkId: context.linkId },
-          ip: null,
-        },
-        queryRunner,
-      );
-      return { data: this.toObservation(row) };
-    });
-    await this.recalculateStudentRisk(dto.studentTermId, 'task-link-observation-created');
-    return result;
-  }
-
-  async listWithTaskLink(
-    rawToken: string,
-    sessionToken: string,
-    query: TaskLinkStudentObservationQueryDto,
-  ) {
-    const context = await this.resolveTaskLinkObservationContext(
-      rawToken,
-      sessionToken,
-      query.studentTermId,
-      query.timetableSlotId,
-    );
-    const page = resolvePage(query.page);
-    const limit = resolveLimit(query.limit);
-    const rows = await this.repository.listTaskLinkObservations(
-      query.studentTermId,
-      context.linkId,
-      context.selectedTimetableSlotId,
-      page,
-      limit,
-    );
-    return {
-      data: rows.map((row) => this.toObservation(row)),
-      meta: buildPaginationMeta(page, limit, Number(rows[0]?.total_count ?? 0)),
     };
   }
 
@@ -983,7 +794,7 @@ export class StudentObservationsService {
       if (!row) throw new NotFoundException('ไม่พบด้านข้อสังเกต');
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'MASTER_DATA_EDIT',
           targetType: 'observation_dimensions',
@@ -1008,7 +819,7 @@ export class StudentObservationsService {
       if (!row) throw new NotFoundException('ไม่พบ behavior tag');
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'MASTER_DATA_EDIT',
           targetType: 'observation_behavior_tags',

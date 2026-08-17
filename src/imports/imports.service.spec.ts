@@ -368,33 +368,33 @@ describe('ImportsService', () => {
     Object.assign(repository, {
       findTeacherImportCandidates: jest.fn().mockResolvedValue([
         {
-          user_id: 11,
-          username: 'teacher.ready',
+          teacher_id: '11',
+          citizen_id: '1100000000011',
           display_name: 'ครูพร้อม',
           is_eligible: true,
           is_active_member: false,
         },
         {
-          user_id: 12,
-          username: 'teacher.existing',
+          teacher_id: '12',
+          citizen_id: '1100000000012',
           display_name: 'ครูเดิม',
           is_eligible: true,
           is_active_member: true,
         },
         {
-          user_id: 13,
-          username: 'teacher.denied',
-          display_name: 'บัญชีไม่ใช่ครู',
+          teacher_id: '13',
+          citizen_id: '1100000000013',
+          display_name: 'ครูปิดใช้งาน',
           is_eligible: false,
           is_active_member: false,
         },
       ]),
     });
     const file = makeImportFile([
-      { ชื่อผู้ใช้: 'teacher.ready', วันที่เริ่มปฏิบัติงาน: '2026-07-01' },
-      { ชื่อผู้ใช้: 'teacher.existing' },
-      { ชื่อผู้ใช้: 'teacher.missing' },
-      { ชื่อผู้ใช้: 'teacher.denied' },
+      { เลขประจำตัวประชาชน: '1100000000011', วันที่เริ่มปฏิบัติงาน: '2026-07-01' },
+      { เลขประจำตัวประชาชน: '1100000000012' },
+      { เลขประจำตัวประชาชน: '1100000000099' },
+      { เลขประจำตัวประชาชน: '1100000000013' },
     ]);
 
     const preview = await service.previewTeacherImport(file, 1001, {
@@ -409,6 +409,7 @@ describe('ImportsService', () => {
       rowsSkipped: 1,
       rowsToQuarantine: 2,
     });
+    // Both quarantined rows now show up in the sample, matching rowsToQuarantine.
     expect(preview.sampleRows.map((row) => row.action)).toEqual([
       'insert',
       'skip',
@@ -430,8 +431,8 @@ describe('ImportsService', () => {
     Object.assign(repository, {
       findTeacherImportCandidates: jest.fn().mockResolvedValue([
         {
-          user_id: 11,
-          username: 'teacher.ready',
+          teacher_id: '11',
+          citizen_id: '1100000000011',
           display_name: 'ครูพร้อม',
           is_eligible: true,
           is_active_member: false,
@@ -440,7 +441,7 @@ describe('ImportsService', () => {
     });
 
     const preview = await service.previewTeacherImport(
-      makeCsvImportFile('username,startedOn\nteacher.ready,2026-07-01\n'),
+      makeCsvImportFile('citizenId,startedOn\n1100000000011,2026-07-01\n'),
       1001,
       { id: 1, data_scope: { school_ids: [1001] } } as never,
     );
@@ -466,8 +467,8 @@ describe('ImportsService', () => {
       ),
       findTeacherImportCandidates: jest.fn().mockResolvedValue([
         {
-          user_id: 11,
-          username: 'teacher.ready',
+          teacher_id: '11',
+          citizen_id: '1100000000011',
           display_name: 'ครูพร้อม',
           is_eligible: true,
           is_active_member: false,
@@ -479,7 +480,7 @@ describe('ImportsService', () => {
       failImportBatch: jest.fn().mockResolvedValue(undefined),
     });
     auditLog.recordAtomic = jest.fn().mockResolvedValue(undefined);
-    const file = makeImportFile([{ username: 'teacher.ready' }, { username: 'teacher.missing' }]);
+    const file = makeImportFile([{ citizenId: '1100000000011' }, { citizenId: '1100000000099' }]);
 
     await expect(
       service.processTeacherImport(file, 1001, {
@@ -1027,7 +1028,7 @@ describe('ImportsService', () => {
     const service = new ImportsService(
       repository as never,
       auditLog as never,
-      notificationsService as never,
+      notificationsService,
     );
     const file = makeImportFile([
       {
@@ -1075,14 +1076,7 @@ describe('ImportsService', () => {
       rowsUpdated: 0,
       rowsQuarantined: 0,
     });
-    expect(notificationsService.notifyImportCompleted).toHaveBeenNthCalledWith(1, {
-      batchId: 'batch-id',
-      actorUserId: 1,
-      targetLabel: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
-      importedRows: 2,
-      quarantinedRows: 0,
-    });
-    expect(notificationsService.notifyImportCompleted).toHaveBeenCalledTimes(2);
+    expect(notificationsService.notifyImportCompleted).not.toHaveBeenCalled();
     expect(notificationsService.notifyImportFailed).not.toHaveBeenCalled();
   });
 
@@ -1166,7 +1160,7 @@ describe('ImportsService', () => {
     const service = new ImportsService(
       repository as never,
       auditLog as never,
-      notificationsService as never,
+      notificationsService,
     );
     const file = makeImportFile([
       {
@@ -1187,11 +1181,7 @@ describe('ImportsService', () => {
     expect(repository.failImportBatch).toHaveBeenCalledWith('batch-id');
     expect(repository.completeImportBatch).not.toHaveBeenCalled();
     expect(auditLog.recordAtomic).not.toHaveBeenCalled();
-    expect(notificationsService.notifyImportFailed).toHaveBeenCalledWith({
-      batchId: 'batch-id',
-      actorUserId: 1,
-      targetLabel: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
-    });
+    expect(notificationsService.notifyImportFailed).not.toHaveBeenCalled();
     expect(notificationsService.notifyImportCompleted).not.toHaveBeenCalled();
   });
 

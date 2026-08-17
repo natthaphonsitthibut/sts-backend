@@ -22,7 +22,6 @@ export interface RoleDefinition {
   id: number;
   name: string;
   label: string;
-  rank: number;
   default_permissions: string[];
   scope_mode: RoleScopeMode;
   scope_policy: RoleScopePolicy;
@@ -30,7 +29,6 @@ export interface RoleDefinition {
   is_system: boolean;
   school_id?: number | null;
   user_count?: number;
-  login_link_count?: number;
 }
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
@@ -49,7 +47,6 @@ export interface RoleRow extends Record<string, unknown> {
   id: number;
   name: string;
   label: string;
-  rank: number;
   default_permissions: unknown;
   scope_mode: unknown;
   scope_policy: unknown;
@@ -57,7 +54,6 @@ export interface RoleRow extends Record<string, unknown> {
   is_system: boolean;
   school_id?: number | null;
   user_count?: number;
-  login_link_count?: number;
 }
 
 export interface HydratableUserRow extends Record<string, unknown> {
@@ -99,46 +95,4 @@ export interface HydratableUserRow extends Record<string, unknown> {
   role_default_permissions?: unknown;
   password?: string;
   student_uuid?: string;
-  teacher_membership_attention_required?: boolean;
-}
-
-export interface StudentAccountCandidateRow extends Record<string, unknown> {
-  student_uuid: string;
-  person_uuid: string;
-  first_name: string | null;
-  last_name: string | null;
-  school_id: number;
-  school_name: string | null;
-  grade_label: string | null;
-  grade_level_id: number | null;
-  room_id: number | null;
-  academic_year: number | null;
-  semester: number | null;
-  existing_user_id: number | null;
-  existing_username: string | null;
-}
-
-export interface StudentAccountManagementRow extends Record<string, unknown> {
-  user_id: number;
-  username: string;
-  status: string | null;
-  must_change_password: boolean | null;
-  temporary_password_issued_at: string | Date | null;
-  temporary_password_expires_at: string | Date | null;
-  deactivated_at?: string | Date | null;
-  deactivated_by?: number | null;
-  deactivation_reason_code?: string | null;
-  deactivation_note?: string | null;
-  created_at: string | Date | null;
-  person_uuid: string | null;
-  student_uuid: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  school_id: number | null;
-  school_name: string | null;
-  grade_label: string | null;
-  grade_level_id: number | null;
-  room_id: number | null;
-  academic_year: number | null;
-  semester: number | null;
 }

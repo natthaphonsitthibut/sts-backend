@@ -13,6 +13,7 @@ import type { QueryRunner } from 'typeorm';
 import * as QRCode from 'qrcode';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AraIdService } from '../araid/araid.service';
+import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { EmailService } from '../common/email/email.service';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
 import { OtpStore } from '../common/otp/otp.store';
@@ -22,11 +23,31 @@ import { authConfig } from '../config/auth.config';
 import { lineConfig } from '../config/line.config';
 import { TeacherLineRepository } from './teacher-line.repository';
 import {
-  type TeacherLineAraIdChallenge as StoredTeacherLineAraIdChallenge,
-  TeacherLineAraIdChallengeStore,
-} from './teacher-line-araid-challenge.store';
+  type AraIdChallenge as StoredTeacherLineAraIdChallenge,
+  AraIdChallengeStore,
+  type AraIdChallengeScope,
+} from '../araid/araid-challenge.store';
+
+/** Every AraID challenge in this service belongs to the LINE-invitation flow. */
+const ARAID_SCOPE: AraIdChallengeScope = 'teacher-line';
+
+/** What this flow stores in the shared challenge's context bag. */
+interface TeacherLineChallengeContext {
+  schoolId: number;
+  schoolName: string;
+  bindingToken?: string;
+  teacherName?: string;
+}
+
+function readLineContext(context: Record<string, unknown>): TeacherLineChallengeContext {
+  return context as unknown as TeacherLineChallengeContext;
+}
 import { TeacherLineSessionStore } from './teacher-line-session.store';
-import type { TeacherLineInvitationRow, TeacherLineLinkOutcome } from './teacher-line.types';
+import type {
+  TeacherLineGroupInvitationRow,
+  TeacherLineInvitationRow,
+  TeacherLineLinkOutcome,
+} from './teacher-line.types';
 
 /**
  * Identical whether or not the address belongs to a teacher. Telling an
@@ -53,11 +74,12 @@ export class TeacherLineService {
   constructor(
     private readonly repository: TeacherLineRepository,
     private readonly sessionStore: TeacherLineSessionStore,
+    private readonly tokenEncryption: TokenEncryptionService,
     private readonly otpStore: OtpStore,
     private readonly emailService: EmailService,
     private readonly auditLog: AuditLogService,
     private readonly araIdService: AraIdService,
-    private readonly araIdChallengeStore: TeacherLineAraIdChallengeStore,
+    private readonly araIdChallengeStore: AraIdChallengeStore,
     @Inject(MESSAGING_PROVIDER)
     private readonly messaging: MessagingProvider,
     @Inject(lineConfig.KEY)
@@ -102,6 +124,7 @@ export class TeacherLineService {
   async issueGroupInvitation(input: {
     schoolId: number;
     schoolName: string;
+    issuedBy: number;
     startsAt: Date;
     expiresAt: Date;
     baseUrl: string;
@@ -118,18 +141,22 @@ export class TeacherLineService {
       input.startsAt,
       input.expiresAt,
     );
-    const created = await this.sessionStore.createGroupInvitation({
+    const rawToken = randomBytes(32).toString('hex');
+    const created = await this.repository.createGroupInvitation({
       schoolId: input.schoolId,
       schoolName: input.schoolName,
-      startsAt,
-      expiresAt,
+      issuedBy: input.issuedBy,
+      startsAt: new Date(startsAt),
+      expiresAt: new Date(expiresAt),
+      tokenHash: hashToken(rawToken),
+      tokenEncrypted: this.tokenEncryption.encrypt(rawToken),
     });
     if (!created) {
       throw new ConflictException('โรงเรียนนี้มีลิงก์ยืนยัน LINE ที่ยังใช้งานอยู่แล้ว');
     }
-    const { id, token } = created;
+    const { id } = created;
     const url = new URL('/line-link', input.baseUrl);
-    url.hash = `token=${encodeURIComponent(token)}`;
+    url.hash = `token=${encodeURIComponent(rawToken)}`;
     return {
       id,
       schoolId: input.schoolId,
@@ -152,23 +179,25 @@ export class TeacherLineService {
     expiresAt: string;
     status: 'PENDING' | 'ACTIVE';
   } | null> {
-    const invitation = await this.sessionStore.readActiveGroupInvitation(schoolId);
-    if (!invitation || !invitation.shareToken || invitation.expiresAt <= Date.now()) return null;
+    const invitation = await this.repository.findActiveGroupInvitationForSchool(schoolId);
+    if (!invitation) return null;
+    const shareToken = this.decryptGroupInvitationToken(invitation);
+    if (!shareToken) return null;
     const url = new URL('/line-link', baseUrl);
-    url.hash = `token=${encodeURIComponent(invitation.shareToken)}`;
+    url.hash = `token=${encodeURIComponent(shareToken)}`;
     return {
       id: invitation.id,
-      schoolId: invitation.schoolId,
-      schoolName: invitation.schoolName,
+      schoolId: invitation.school_id,
+      schoolName: invitation.school_name,
       url: url.toString(),
-      startsAt: new Date(invitation.startsAt).toISOString(),
-      expiresAt: new Date(invitation.expiresAt).toISOString(),
-      status: invitation.startsAt > Date.now() ? 'PENDING' : 'ACTIVE',
+      startsAt: new Date(invitation.starts_at).toISOString(),
+      expiresAt: new Date(invitation.expires_at).toISOString(),
+      status: new Date(invitation.starts_at).getTime() > Date.now() ? 'PENDING' : 'ACTIVE',
     };
   }
 
-  async revokeGroupInvitation(id: string, schoolId: number): Promise<boolean> {
-    return await this.sessionStore.revokeGroupInvitation(id, schoolId);
+  async revokeGroupInvitation(id: string, schoolId: number, revokedBy: number): Promise<boolean> {
+    return await this.repository.revokeActiveGroupInvitation(id, schoolId, revokedBy);
   }
 
   async updateGroupInvitation(input: {
@@ -191,14 +220,25 @@ export class TeacherLineService {
       input.startsAt,
       input.expiresAt,
     );
-    const updated = await this.sessionStore.updateGroupInvitation(input.id, input.schoolId, {
-      startsAt,
-      expiresAt,
-    });
+    const updated = await this.repository.updateActiveGroupInvitation(
+      input.id,
+      input.schoolId,
+      new Date(startsAt),
+      new Date(expiresAt),
+    );
     if (!updated) throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
     const invitation = await this.getActiveGroupInvitation(input.schoolId, input.baseUrl);
     if (!invitation) throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
     return invitation;
+  }
+
+  private decryptGroupInvitationToken(invitation: TeacherLineGroupInvitationRow): string | null {
+    try {
+      return this.tokenEncryption.decrypt(invitation.token_encrypted);
+    } catch {
+      this.logger.error(`Unable to decrypt active LINE group invitation ${invitation.id}`);
+      return null;
+    }
   }
 
   private validateGroupInvitationTiming(
@@ -229,25 +269,29 @@ export class TeacherLineService {
     status: 'PENDING' | 'ACTIVE';
   }> {
     this.assertEnabled();
-    const invitation = await this.sessionStore.readGroupInvitation(rawToken.trim());
-    if (!invitation || invitation.expiresAt <= Date.now()) {
+    const invitation = await this.repository.findActiveGroupInvitationByTokenHash(
+      hashToken(rawToken.trim()),
+    );
+    if (!invitation) {
       throw new GoneException('ลิงก์ยืนยัน LINE ไม่ถูกต้องหรือหมดอายุแล้ว');
     }
     return {
-      schoolId: invitation.schoolId,
-      schoolName: invitation.schoolName,
-      startsAt: new Date(invitation.startsAt).toISOString(),
-      expiresAt: new Date(invitation.expiresAt).toISOString(),
-      status: invitation.startsAt > Date.now() ? 'PENDING' : 'ACTIVE',
+      schoolId: invitation.school_id,
+      schoolName: invitation.school_name,
+      startsAt: new Date(invitation.starts_at).toISOString(),
+      expiresAt: new Date(invitation.expires_at).toISOString(),
+      status: new Date(invitation.starts_at).getTime() > Date.now() ? 'PENDING' : 'ACTIVE',
     };
   }
 
   private async assertGroupInvitationActive(rawToken: string) {
-    const invitation = await this.sessionStore.readGroupInvitation(rawToken.trim());
-    if (!invitation || invitation.expiresAt <= Date.now()) {
+    const invitation = await this.repository.findActiveGroupInvitationByTokenHash(
+      hashToken(rawToken.trim()),
+    );
+    if (!invitation) {
       throw new GoneException('ลิงก์ยืนยัน LINE ไม่ถูกต้องหรือหมดอายุแล้ว');
     }
-    if (invitation.startsAt > Date.now()) {
+    if (new Date(invitation.starts_at).getTime() > Date.now()) {
       throw new BadRequestException('ลิงก์ยืนยัน LINE ยังไม่ถึงเวลาเริ่มใช้งาน');
     }
     return invitation;
@@ -403,7 +447,7 @@ export class TeacherLineService {
   ): Promise<{ message: string }> {
     this.assertEnabled();
     const invitation = await this.assertGroupInvitationActive(groupToken);
-    const teacher = await this.repository.findActiveTeacherByEmail(email, invitation.schoolId);
+    const teacher = await this.repository.findActiveTeacherByEmail(email, invitation.school_id);
     if (!teacher) {
       // Logged so a burst of attempts against unknown addresses is still visible.
       this.logger.warn('LINE link OTP requested for an address with no active teacher');
@@ -448,7 +492,7 @@ export class TeacherLineService {
   ): Promise<{ bindingToken: string; teacherName: string }> {
     this.assertEnabled();
     const invitation = await this.assertGroupInvitationActive(groupToken);
-    const teacher = await this.repository.findActiveTeacherByEmail(email, invitation.schoolId);
+    const teacher = await this.repository.findActiveTeacherByEmail(email, invitation.school_id);
     if (!teacher) {
       // Same message as a wrong code: the pair is either right or it is not.
       throw new BadRequestException(GENERIC_OTP_VERIFY_MESSAGE);
@@ -486,7 +530,7 @@ export class TeacherLineService {
     return {
       bindingToken: await this.sessionStore.createBindingSession({
         teacherId: teacher.teacher_id,
-        schoolId: invitation.schoolId,
+        schoolId: invitation.school_id,
       }),
       teacherName: `${teacher.first_name} ${teacher.last_name}`.trim(),
     };
@@ -501,7 +545,7 @@ export class TeacherLineService {
     const citizenId = await this.araIdService.getVerifiedIdentityNumber(araIdProfileId);
     const teacher = await this.repository.findActiveTeacherByCitizenId(
       citizenId,
-      invitation.schoolId,
+      invitation.school_id,
     );
     if (!teacher) throw new BadRequestException('ไม่พบข้อมูลครูที่ตรงกับ AraID ในโรงเรียนนี้');
     if (
@@ -516,7 +560,7 @@ export class TeacherLineService {
     }
     const bindingToken = await this.sessionStore.createBindingSession({
       teacherId: teacher.teacher_id,
-      schoolId: invitation.schoolId,
+      schoolId: invitation.school_id,
     });
     await this.auditLog.record({
       actorUserId: null,
@@ -524,7 +568,7 @@ export class TeacherLineService {
       action: 'TEACHER_ACCESS_ARAID_VERIFY',
       targetType: 'teachers',
       targetId: teacher.teacher_id,
-      metadata: { via: 'LINE_LINK', schoolId: invitation.schoolId, authMethod: 'ARAID' },
+      metadata: { via: 'LINE_LINK', schoolId: invitation.school_id, authMethod: 'ARAID' },
       ip: null,
     });
     return {
@@ -536,10 +580,9 @@ export class TeacherLineService {
   async createAraIdChallenge(groupToken: string) {
     this.assertEnabled();
     const invitation = await this.assertGroupInvitationActive(groupToken);
-    const challenge = await this.araIdChallengeStore.create({
-      invitationId: invitation.id,
-      schoolId: invitation.schoolId,
-      schoolName: invitation.schoolName,
+    const challenge = await this.araIdChallengeStore.create(ARAID_SCOPE, invitation.id, {
+      schoolId: invitation.school_id,
+      schoolName: invitation.school_name,
     });
     return this.presentAraIdChallenge(challenge.token, challenge);
   }
@@ -553,7 +596,7 @@ export class TeacherLineService {
   async beginAraIdChallenge(challengeToken: string) {
     this.assertEnabled();
     await this.readActiveAraIdChallenge(challengeToken);
-    const authorization = await this.araIdChallengeStore.claim(challengeToken);
+    const authorization = await this.araIdChallengeStore.claim(ARAID_SCOPE, challengeToken);
     if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     return {
       authorizationToken: authorization.authorizationToken,
@@ -563,14 +606,17 @@ export class TeacherLineService {
 
   async approveAraIdChallenge(authorizationToken: string, araIdProfileId: string): Promise<void> {
     this.assertEnabled();
-    const challenge = await this.araIdChallengeStore.readAuthorization(authorizationToken);
-    if (!challenge) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
-    const active = await this.sessionStore.readActiveGroupInvitation(challenge.schoolId);
+    const authorization = await this.araIdChallengeStore.readAuthorization(
+      ARAID_SCOPE,
+      authorizationToken,
+    );
+    if (!authorization) throw new GoneException('การยืนยัน AraID หมดอายุแล้ว');
+    const challenge = readLineContext(authorization.challenge.context);
+    const active = await this.repository.findActiveGroupInvitationForSchool(challenge.schoolId);
     if (
       !active ||
-      active.id !== challenge.invitationId ||
-      active.startsAt > Date.now() ||
-      active.expiresAt <= Date.now()
+      active.id !== authorization.challenge.subjectId ||
+      new Date(active.starts_at).getTime() > Date.now()
     ) {
       throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
     }
@@ -594,10 +640,14 @@ export class TeacherLineService {
       teacherId: teacher.teacher_id,
       schoolId: challenge.schoolId,
     });
-    const approved = await this.araIdChallengeStore.approveAuthorization(authorizationToken, {
-      bindingToken,
-      teacherName: `${teacher.first_name} ${teacher.last_name}`.trim(),
-    });
+    const approved = await this.araIdChallengeStore.approveAuthorization(
+      ARAID_SCOPE,
+      authorizationToken,
+      {
+        bindingToken,
+        teacherName: `${teacher.first_name} ${teacher.last_name}`.trim(),
+      },
+    );
     if (!approved) throw new GoneException('คำขอยืนยัน AraID ถูกใช้หรือหมดอายุแล้ว');
   }
 
@@ -611,14 +661,15 @@ export class TeacherLineService {
         expiresAt: new Date(challenge.expiresAt).toISOString(),
       };
     }
-    const approved = await this.araIdChallengeStore.consumeApproved(challengeToken);
-    if (!approved?.bindingToken || !approved.teacherName) {
+    const approved = await this.araIdChallengeStore.consumeApproved(ARAID_SCOPE, challengeToken);
+    const result = approved ? readLineContext(approved.context) : null;
+    if (!result?.bindingToken || !result.teacherName) {
       throw new GoneException('คำขอยืนยัน AraID ถูกใช้แล้ว');
     }
     return {
       status: 'APPROVED' as const,
-      bindingToken: approved.bindingToken,
-      teacherName: approved.teacherName,
+      bindingToken: result.bindingToken,
+      teacherName: result.teacherName,
     };
   }
 
@@ -639,20 +690,21 @@ export class TeacherLineService {
       qrDataUrl,
       referenceCode: challenge.referenceCode,
       expiresAt: new Date(challenge.entryExpiresAt).toISOString(),
-      schoolName: challenge.schoolName,
+      schoolName: readLineContext(challenge.context).schoolName,
       status: challenge.status,
     };
   }
 
   private async readActiveAraIdChallenge(challengeToken: string) {
-    const challenge = await this.araIdChallengeStore.read(challengeToken);
+    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
     if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
-    const active = await this.sessionStore.readActiveGroupInvitation(challenge.schoolId);
+    const active = await this.repository.findActiveGroupInvitationForSchool(
+      readLineContext(challenge.context).schoolId,
+    );
     if (
       !active ||
-      active.id !== challenge.invitationId ||
-      active.startsAt > Date.now() ||
-      active.expiresAt <= Date.now()
+      active.id !== challenge.subjectId ||
+      new Date(active.starts_at).getTime() > Date.now()
     ) {
       throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
     }

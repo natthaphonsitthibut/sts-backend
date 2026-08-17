@@ -1,4 +1,5 @@
 import { normalizeScopeArray, type DataScope } from './auth.types';
+import { GRANTABLE_PAGE_PERMISSIONS, NON_PAGE_PERMISSIONS } from './page-registry.constants';
 
 export type RoleScopeMode =
   | 'flexible'
@@ -13,7 +14,6 @@ export type RoleScopePolicy = 'ASSIGNABLE' | 'OWN_ONLY';
 export interface SystemRoleDefinition {
   name: string;
   label: string;
-  rank: number;
   default_permissions: string[];
   scope_mode: RoleScopeMode;
   scope_policy: RoleScopePolicy;
@@ -27,57 +27,36 @@ interface PermissionMenuItem {
   children?: PermissionMenuItem[];
 }
 
-// Canonical permission tree — the single source of truth for both the valid
-// permission ids and their Thai labels. The frontend fetches this (GET
-// /users/permissions) instead of hardcoding its own list, so the checkbox
-// editor and review dialog never drift from what the backend accepts.
-export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = [
-  { id: 'home', label: 'หน้าหลัก' },
-  { id: 'dashboard', label: 'รายงานนักเรียน' },
-  { id: 'students', label: 'รายชื่อนักเรียน' },
-  { id: 'edit-students', label: 'แก้ไขข้อมูลนักเรียน' },
-  {
-    id: 'case-management',
-    label: 'จัดการเคสติดตามนักเรียน',
-    children: [
-      { id: 'review-cases', label: 'ดูเคสติดตามนักเรียน' },
-      { id: 'assign-follow-up-cases', label: 'มอบหมายผู้ติดตามเคสในโรงเรียน' },
-      { id: 'close-case', label: 'ปิดเคส' },
-    ],
-  },
-  { id: 'create', label: 'สร้างลิงก์' },
-  { id: 'import-data', label: 'นำเข้าข้อมูล' },
-  { id: 'export-data', label: 'ส่งออกข้อมูล' },
-  {
-    id: 'attendance-system',
-    label: 'ระบบเช็คชื่อ',
-    children: [
-      { id: 'attendance-dashboard', label: 'ดูภาพรวมและความครบถ้วนการเช็คชื่อ' },
-      { id: 'attendance', label: 'เช็คชื่อและดูข้อมูลการเข้าเรียน' },
-      { id: 'manage-attendance-calendar', label: 'จัดการปฏิทินเช็คชื่อ' },
-      { id: 'manage-timetable', label: 'จัดการตารางสอน' },
-    ],
-  },
-  {
-    id: 'manage-users',
-    label: 'จัดการสิทธิ์ผู้ใช้งาน',
-    children: [
-      { id: 'manage-users-list', label: 'จัดการรายชื่อผู้ใช้งาน' },
-      { id: 'manage-teachers', label: 'จัดการข้อมูลครู' },
-      { id: 'manage-users-hard-delete', label: 'ลบบัญชีถาวร' },
-      { id: 'manage-role-groups', label: 'จัดการกลุ่มเมนู' },
-    ],
-  },
-  { id: 'manage-schools', label: 'จัดการข้อมูลโรงเรียน' },
-  { id: 'manage-school-structure', label: 'จัดการภาคเรียน ห้อง และครู' },
-  { id: 'manage-curriculum', label: 'จัดการข้อมูลหลักสูตร' },
-  { id: 'manage-teacher-access', label: 'จัดการลิงก์เช็คชื่อของครู' },
-  { id: 'student-observations', label: 'บันทึกและดูข้อสังเกตนักเรียนที่รับผิดชอบ' },
-  { id: 'manage-student-observations', label: 'จัดการข้อสังเกตนักเรียนในโรงเรียน' },
-  { id: 'import-school-roster', label: 'นำเข้าครูและนักเรียนของโรงเรียน' },
-  { id: 'settings', label: 'ตั้งค่าระบบ' },
-  { id: 'audit-log', label: 'บันทึกการใช้งาน' },
-];
+/**
+ * Built from the page registry rather than written by hand: one permission per
+ * page, labelled with that page's own title, grouped the way the sidebar groups
+ * it. The frontend fetches this (GET /users/permissions) instead of keeping its
+ * own list, so what an operator ticks always reads like the menu they are
+ * granting.
+ */
+function buildPermissionMenu(): PermissionMenuItem[] {
+  const items: PermissionMenuItem[] = [];
+  const groups = new Map<string, PermissionMenuItem>();
+
+  for (const page of GRANTABLE_PAGE_PERMISSIONS) {
+    const entry = { id: page.id, label: page.title };
+    if (!page.group) {
+      items.push(entry);
+      continue;
+    }
+    let group = groups.get(page.group);
+    if (!group) {
+      group = { id: `group:${page.group}`, label: page.group, children: [] };
+      groups.set(page.group, group);
+      items.push(group);
+    }
+    group.children!.push(entry);
+  }
+
+  return [...items, ...NON_PAGE_PERMISSIONS.map((item) => ({ id: item.id, label: item.title }))];
+}
+
+export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = buildPermissionMenu();
 
 function collectLeafPermissions(items: PermissionMenuItem[]): Array<{ id: string; label: string }> {
   return items.flatMap((item) =>
@@ -92,7 +71,10 @@ export const PERMISSION_CATALOG = collectLeafPermissions(PERMISSION_MENU_ITEMS);
 
 export const VALID_PERMISSION_IDS = PERMISSION_CATALOG.map((item) => item.id);
 
-export const GRANT_EXEMPT_PERMISSION_IDS = ['student-self'];
+// Where each retired permission ended up when the catalog collapsed to one
+// permission per page (2026-08-17) is recorded — and executed — by migration
+// 20260821090000-CollapsePermissionsToPages. Keeping a second copy here as an
+// exported constant nothing reads would only give the two a way to disagree.
 
 const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS;
 
@@ -100,7 +82,6 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'ADMIN',
     label: 'ผู้ดูแลระบบ',
-    rank: 5,
     default_permissions: ADMIN_DEFAULT_PERMISSIONS,
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
@@ -110,30 +91,25 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'DIRECTOR',
     label: 'ผู้อำนวยการ',
-    rank: 4,
+    // Every page a director works in. The retired action-level ids
+    // (edit-students, close-case, manage-timetable, …) are covered by the page
+    // they lived on — see 20260821090000-CollapsePermissionsToPages.
     default_permissions: [
       'home',
       'dashboard',
       'students',
-      'edit-students',
-      'review-cases',
-      'assign-follow-up-cases',
-      'close-case',
-      'create',
+      'classrooms',
       'attendance',
       'attendance-dashboard',
-      'manage-attendance-calendar',
-      'manage-timetable',
-      'manage-users-list',
-      'manage-teachers',
-      'manage-schools',
+      'timetable',
+      'manage-teacher-access',
       'manage-school-structure',
       'manage-curriculum',
-      'manage-teacher-access',
-      'manage-student-observations',
-      'import-school-roster',
-      'settings',
+      'import-data',
       'export-data',
+      'manage-users-list',
+      'manage-teachers',
+      'settings',
       'audit-log',
     ],
     scope_mode: 'flexible',
@@ -144,28 +120,13 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'EXECUTIVE',
     label: 'ผู้บริหาร',
-    rank: 3,
     default_permissions: ['home'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
     is_system: true,
   },
-  {
-    name: 'TEACHER',
-    label: 'คุณครู',
-    rank: 2,
-    default_permissions: ['home', 'students', 'attendance', 'student-observations'],
-    scope_mode: 'flexible',
-    scope_policy: 'ASSIGNABLE',
-    is_assignable: true,
-    is_system: true,
-  },
 ];
-
-export const ROLE_RANKS: Record<string, number> = Object.fromEntries(
-  SYSTEM_ROLE_DEFINITIONS.map((role) => [role.name, role.rank]),
-);
 
 export const ROLE_BASELINES: Record<string, string[]> = Object.fromEntries(
   SYSTEM_ROLE_DEFINITIONS.map((role) => [role.name, role.default_permissions]),
@@ -303,16 +264,23 @@ export function getEffectivePermissions(
   return Array.from(new Set(customPermissions));
 }
 
-const EXECUTIVE_ALLOWED_PERMISSIONS = new Set(['home']);
-
+/**
+ * Which pages an actor may open is what its menu group grants — the role name
+ * decides nothing on its own.
+ *
+ * ผู้บริหาร used to be clamped here to หน้าหลัก whatever its group said, which
+ * made the group's own ticks a lie: after the page collapse the role carries
+ * `home` and `ตารางสอน`, the sidebar showed both, and every timetable request
+ * came back 403. The rule that actually matters for that role — it never reads a
+ * student's raw text — is not a page permission and is enforced where the raw
+ * data is read (`isRestrictedExecutive` in students, task, case and data-export
+ * services). Granting ผู้บริหาร a page therefore grants the page, not the text.
+ */
 export function hasPermission(
   roles: string[],
   customPermissions: string[],
   permission: string,
 ): boolean {
-  if (isRestrictedExecutive({ roles }) && !EXECUTIVE_ALLOWED_PERMISSIONS.has(permission)) {
-    return false;
-  }
   if (customPermissions.includes('*') || customPermissions.includes('ALL')) return true;
   const effectivePermissions = getEffectivePermissions(roles, customPermissions);
   return effectivePermissions.includes(permission);

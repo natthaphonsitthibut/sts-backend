@@ -2,6 +2,7 @@ export interface TimetableSlotRow extends Record<string, unknown> {
   id: string;
   school_term_id: string;
   school_id: number;
+  classroom_id: string;
   grade_level_id: number;
   grade_label: string | null;
   room_no: number;
@@ -10,7 +11,6 @@ export interface TimetableSlotRow extends Record<string, unknown> {
   subject_id: number;
   subject_code: string;
   subject_name_th: string;
-  teacher_user_id: number | null;
   teacher_membership_ids?: number[];
   teacher_name: string | null;
   created_at: Date | string;

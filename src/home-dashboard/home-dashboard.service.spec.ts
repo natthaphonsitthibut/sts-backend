@@ -7,7 +7,7 @@ const baseActor: HomeDashboardActor = {
   id: 1,
   username: 'admin',
   roles: ['ADMIN'],
-  permissions: ['home', 'dashboard', 'attendance-dashboard', 'review-cases', 'students'],
+  permissions: ['home', 'dashboard', 'attendance-dashboard', 'dashboard', 'students'],
   data_scope: { school_ids: [10010002] },
 };
 
@@ -19,6 +19,8 @@ function createRepositoryMock(): jest.Mocked<
     | 'countActiveCases'
     | 'countHighRiskStudents'
     | 'getHighRiskAreaRanking'
+    | 'getCauseCategoryDistribution'
+    | 'getMonthlySuccessRates'
     | 'getCasePipeline'
     | 'getAttentionItems'
     | 'getAttendanceTrend'
@@ -38,6 +40,8 @@ function createRepositoryMock(): jest.Mocked<
     getHighRiskAreaRanking: jest
       .fn()
       .mockResolvedValue([{ key: 'เชียงใหม่', label: 'เชียงใหม่', count: 5 }]),
+    getCauseCategoryDistribution: jest.fn().mockResolvedValue([]),
+    getMonthlySuccessRates: jest.fn().mockResolvedValue([]),
     getCasePipeline: jest.fn().mockResolvedValue({
       OPEN: 1,
       IN_PROGRESS: 2,
@@ -100,32 +104,26 @@ describe('HomeDashboardService', () => {
         'caseMovement',
       ]),
     );
+    // The case tiles are derived from the pipeline the repository returned
+    // (OPEN 1 + IN_PROGRESS 2 + PENDING_REVIEW 3 are ongoing, RESOLVED 4 is done),
+    // so the numbers below are that arithmetic rather than copies of a fixture.
     expect(result.data.metrics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           key: 'totalStudents',
-          label: 'ทั้งหมด',
+          label: 'นักเรียนทั้งหมด',
           tone: 'default',
           value: 120,
         }),
         expect.objectContaining({
           key: 'watchStudents',
-          label: 'เสี่ยง',
+          label: 'นักเรียนกลุ่มเสี่ยง',
           tone: 'danger',
           value: 5,
         }),
-        expect.objectContaining({
-          key: 'activeCases',
-          label: 'รอติดตาม',
-          tone: 'warning',
-          value: 8,
-        }),
-        expect.objectContaining({
-          key: 'pendingReview',
-          label: 'รอพิจารณา',
-          tone: 'info',
-          value: 3,
-        }),
+        expect.objectContaining({ key: 'totalCases', value: 1 + 2 + 3 + 4 }),
+        expect.objectContaining({ key: 'inProgressCases', tone: 'warning', value: 1 + 2 + 3 }),
+        expect.objectContaining({ key: 'resolvedCases', tone: 'success', value: 4 }),
       ]),
     );
     expect(result.data.attentionItems).toEqual([]);

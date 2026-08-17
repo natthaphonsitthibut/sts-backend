@@ -234,17 +234,7 @@ async function loginInBrowser(client, user, sessionCookie) {
 }
 
 async function upsertActor(dataSource, passwordHash) {
-  const permissions = [
-    'home',
-    'dashboard',
-    'students',
-    'attendance-dashboard',
-    'review-cases',
-    'import-data',
-    'export-data',
-    'manage-school-structure',
-    'manage-student-observations',
-  ];
+  const permissions = ['home', 'dashboard', 'students', 'attendance-dashboard', 'import-data', 'export-data', 'manage-school-structure'];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
     await dataSource.query(
@@ -344,17 +334,7 @@ async function main() {
         FirstName: 'Data Export',
         LastName: 'Browser Smoke',
         roles: ['ADMIN'],
-        permissions: [
-          'home',
-          'dashboard',
-          'students',
-          'attendance-dashboard',
-          'review-cases',
-          'import-data',
-          'export-data',
-          'manage-school-structure',
-          'manage-student-observations',
-        ],
+        permissions: ['home', 'dashboard', 'students', 'attendance-dashboard', 'import-data', 'export-data', 'manage-school-structure'],
         data_scope: { global: true },
         must_change_password: false,
       },

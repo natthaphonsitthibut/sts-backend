@@ -97,7 +97,7 @@ describe('SchoolStructureRepository scope', () => {
     expect(runner.query).toHaveBeenNthCalledWith(
       1,
       expect.stringMatching(
-        /filtered_classrooms[\s\S]*COUNT\(DISTINCT membership\.teacher_user_id\)[\s\S]*COUNT\(DISTINCT enrollment\.student_uuid\)/,
+        /filtered_classrooms[\s\S]*COUNT\(DISTINCT membership\.teacher_id\)[\s\S]*COUNT\(DISTINCT enrollment\.student_uuid\)/,
       ),
       [1001, 21, 4, '%ม.1%'],
       true,
@@ -309,7 +309,16 @@ describe('SchoolStructureRepository scope', () => {
   it('appends a comment only when the student belongs to the classroom', async () => {
     const runner = {
       query: jest.fn().mockResolvedValue({
-        records: [{ id: '91', comment_text: 'ติดตาม', created_at: new Date() }],
+        records: [
+          {
+            id: '91',
+            problem_category_code: 'ACADEMIC',
+            problem_category_label: 'ปัญหาด้านการเรียน',
+            problem_category_guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+            problem_description: 'ติดตาม',
+            created_at: new Date(),
+          },
+        ],
         affected: 1,
       }),
     };
@@ -319,18 +328,23 @@ describe('SchoolStructureRepository scope', () => {
       repository.createStudentComment(
         42,
         '00000000-0000-4000-8000-000000000001',
+        'ACADEMIC',
         'ติดตาม',
         7,
         runner as never,
       ),
-    ).resolves.toMatchObject({ id: '91', comment_text: 'ติดตาม' });
+    ).resolves.toMatchObject({
+      id: '91',
+      problem_category_code: 'ACADEMIC',
+      problem_description: 'ติดตาม',
+    });
     // Stored against the cross-term person identity, looked up from the
     // enrollment the caller addressed, so the history survives a term change.
     expect(runner.query).toHaveBeenCalledWith(
       expect.stringMatching(
-        /INSERT INTO classroom_student_comments[\s\S]*person_uuid[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
+        /INSERT INTO classroom_student_comments[\s\S]*problem_category[\s\S]*problem_description[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
       ),
-      [42, '00000000-0000-4000-8000-000000000001', 'ติดตาม', 7],
+      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'ติดตาม', 7],
       true,
     );
   });
@@ -359,10 +373,14 @@ describe('SchoolStructureRepository scope', () => {
 
     expect(runner.query).toHaveBeenLastCalledWith(
       expect.stringMatching(
-        /STRING_AGG[\s\S]*recorder\."FirstName"[\s\S]*COUNT\(\*\) FILTER[\s\S]*LEFT JOIN users recorder[\s\S]*GROUP BY attendance\."AttendanceDate"/,
+        /STRING_AGG[\s\S]*recorder\.first_name[\s\S]*COUNT\(\*\) FILTER[\s\S]*LEFT JOIN teachers recorder[\s\S]*GROUP BY attendance\."AttendanceDate"/,
       ),
       [42, '2026-07-14', 10, 0],
       true,
+    );
+    const lastCall = (runner.query.mock.calls as Array<[string, unknown[], boolean]>).at(-1);
+    expect(lastCall?.[0]).toContain(
+      'LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"',
     );
   });
 

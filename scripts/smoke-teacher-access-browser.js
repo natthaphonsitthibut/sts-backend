@@ -11,6 +11,7 @@ const { AppExceptionFilter } = require('../dist/common/filters/app-exception.fil
 const {
   createValidationException,
 } = require('../dist/common/validation/validation-exception.factory');
+const xlsx = require('xlsx');
 const {
   USERNAMES,
   assert,
@@ -36,6 +37,38 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9255);
 
+/**
+ * Almost every failure here reads "the screen did not render X", which is the
+ * symptom, never the cause. The cause is usually that the app bounced to
+ * `/login`: this smoke runs its own backend on 127.0.0.1, so serving the
+ * frontend on `localhost` puts the session cookie on a different host, every
+ * API answers 401 and the client clears `sts_user`. Printing the URL and
+ * whether a user is still stored turns that into a one-line diagnosis.
+ */
+let trackedPage = null;
+
+function trackPage(client) {
+  trackedPage = client;
+}
+
+async function describePage() {
+  if (!trackedPage) return '';
+  try {
+    const state = await trackedPage.call('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        url: location.href,
+        signedIn: Boolean(localStorage.getItem('sts_user')),
+        text: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 160),
+      })`,
+      returnByValue: true,
+    });
+    const value = state.result && state.result.value;
+    return value ? `\n  page: ${value}` : '';
+  } catch {
+    return '';
+  }
+}
+
 async function waitFor(check, message, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
@@ -47,7 +80,8 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${lastError.message}` : message);
+  const reason = lastError ? `${message}: ${lastError.message}` : message;
+  throw new Error(`${reason}${await describePage()}`);
 }
 
 class CdpClient {
@@ -112,6 +146,72 @@ async function navigate(client, url) {
   );
 }
 
+/** Clicks a button by its exact visible label; returns false when it is absent. */
+async function clickByText(client, label, scope = 'document') {
+  return Boolean(
+    await evaluate(
+      client,
+      `(() => {
+        // Match the label a user actually sees, not raw textContent: a Button
+        // with a loading state lays its label out twice in the same grid cell
+        // and hides the inactive copy with aria-hidden, so textContent reads
+        // "นำเข้านำเข้า" and an exact match never fires.
+        const visibleLabel = (button) => {
+          const clone = button.cloneNode(true);
+          clone.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+          return clone.textContent.replace(/\\s+/g, ' ').trim();
+        };
+        const button = [...${scope}.querySelectorAll('button')]
+          .find((item) => visibleLabel(item) === ${JSON.stringify(label)});
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`,
+    ),
+  );
+}
+
+async function openAttendanceImportDialog(client, label) {
+  await waitFor(
+    async () => await clickByText(client, 'เครื่องมือ'),
+    `${label} attendance tools menu did not open`,
+  );
+  await waitFor(
+    async () => await clickByText(client, 'นำเข้าไฟล์การเช็กชื่อ'),
+    `${label} attendance tools menu did not expose the file import`,
+  );
+  await waitFor(
+    async () => (await bodyText(client)).includes('หรือนำเข้าจาก URL'),
+    `${label} attendance import dialog did not render`,
+  );
+}
+
+/** Writes a real .xlsx so the dropzone and the server-side parser both run. */
+function writeAttendanceImportFixture(rows) {
+  const filePath = path.join(os.tmpdir(), `sts-attendance-import-${process.pid}.xlsx`);
+  const workbook = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(
+    workbook,
+    xlsx.utils.aoa_to_sheet([
+      ['ลำดับ', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'สถานะการเช็กชื่อ'],
+      ...rows,
+    ]),
+    'การเช็กชื่อ',
+  );
+  xlsx.writeFile(workbook, filePath);
+  return filePath;
+}
+
+async function attachImportFile(client, filePath) {
+  const { root } = await client.call('DOM.getDocument', { depth: -1, pierce: true });
+  const { nodeId } = await client.call('DOM.querySelector', {
+    nodeId: root.nodeId,
+    selector: '[role="dialog"] input[type="file"]',
+  });
+  assert(nodeId, 'Attendance import dialog had no file input');
+  await client.call('DOM.setFileInputFiles', { files: [filePath], nodeId });
+}
+
 async function openChrome() {
   assert(fs.existsSync(CHROME_PATH), 'Google Chrome executable was not found');
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sts-teacher-access-chrome-'));
@@ -141,6 +241,7 @@ async function openChrome() {
   assert(target?.webSocketDebuggerUrl, 'Chrome page target was not available');
   const client = new CdpClient(target.webSocketDebuggerUrl);
   await client.connect();
+  trackPage(client);
   return { client, processRef, userDataDir };
 }
 
@@ -217,6 +318,18 @@ async function hoverSnapshot(client, classroomId) {
   return await cardSnapshot(client, classroomId);
 }
 
+const DIRECTOR_PERMISSIONS = [
+  // ห้องเรียนทั้งหมด is its own page since the permission collapse; it used to
+  // ride on จัดการภาคเรียนและห้องเรียน, and the walk below opens it.
+  'attendance',
+  'classrooms',
+  'manage-curriculum',
+  'manage-school-structure',
+  'manage-teacher-access',
+  'manage-teachers',
+  'timetable',
+];
+
 async function main() {
   const frontendProbe = await fetch(FRONTEND_URL).catch(() => null);
   assert(frontendProbe?.ok, `Start the smoke frontend at ${FRONTEND_URL} before running`);
@@ -257,29 +370,7 @@ async function main() {
         firstName: 'Teacher Access',
         lastName: 'Smoke Admin',
         role: 'ADMIN',
-        permissions: [
-          'manage-teacher-access',
-          'manage-school-structure',
-          'manage-curriculum',
-          'manage-timetable',
-          'attendance',
-        ],
-        dataScope: { school_ids: [Number(initialSchool.id)] },
-      }),
-      teacherOne: await upsertUser(dataSource, {
-        username: USERNAMES.teacherOne,
-        firstName: 'Teacher One',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
-        dataScope: { school_ids: [Number(initialSchool.id)] },
-      }),
-      teacherTwo: await upsertUser(dataSource, {
-        username: USERNAMES.teacherTwo,
-        firstName: 'Teacher Two',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
+        permissions: DIRECTOR_PERMISSIONS,
         dataScope: { school_ids: [Number(initialSchool.id)] },
       }),
     };
@@ -388,6 +479,9 @@ async function main() {
     await client.call('Page.enable');
     await client.call('Runtime.enable');
     await client.call('Network.enable');
+    // Needed by DOM.setFileInputFiles, which is the only way to hand a real
+    // file to the attendance-import dropzone in headless Chrome.
+    await client.call('DOM.enable');
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 1366,
       height: 900,
@@ -398,10 +492,34 @@ async function main() {
       source: `
         (() => {
           const backendUrl = ${JSON.stringify(backendUrl)};
+          const qrFixtureValue = ${JSON.stringify(fixtureStudentNumbers[0])};
+          class SmokeBarcodeDetector {
+            async detect() {
+              return [{ rawValue: qrFixtureValue }];
+            }
+          }
+          Object.defineProperty(window, 'BarcodeDetector', {
+            configurable: true,
+            value: SmokeBarcodeDetector,
+          });
+          navigator.mediaDevices.getUserMedia = async () => new MediaStream();
+          HTMLMediaElement.prototype.play = function() {
+            return Promise.resolve();
+          };
+          Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
+            configurable: true,
+            get: () => HTMLMediaElement.HAVE_CURRENT_DATA,
+          });
+          // Redirect every API call to this smoke's in-process backend, keyed on
+          // the path rather than on a port. The frontend's API base is baked in
+          // at build time, so pinning a port here silently stops rewriting the
+          // moment the frontend is served against a different backend — the
+          // calls then hit the developer's real backend and come back 401.
           const rewrite = (url) => {
             if (typeof url !== 'string') return url;
             const parsed = new URL(url, window.location.origin);
-            return parsed.port === '3000' ? backendUrl + parsed.pathname + parsed.search : url;
+            if (!parsed.pathname.startsWith('/api/')) return url;
+            return backendUrl + parsed.pathname + parsed.search;
           };
           const originalOpen = XMLHttpRequest.prototype.open;
           XMLHttpRequest.prototype.open = function(method, url, ...rest) {
@@ -440,7 +558,9 @@ async function main() {
       `({
         hasAraId: document.body.innerText.includes('AraID'),
         hasEmail: document.body.innerText.includes('อีเมล'),
-        hasGuestProfile: Boolean(document.querySelector('[aria-label^="ผู้รับมอบหมาย"]')),
+        hasGuestProfile: Boolean(
+          document.querySelector('[aria-label^="เปิดเมนูบัญชีผู้ใช้"]'),
+        ),
       })`,
     );
     assert(
@@ -548,26 +668,88 @@ async function main() {
         ),
       'Teacher classroom route did not preserve its breadcrumb/menu owner',
     );
-    const teacherClassroomCrumbs = await evaluate(
+
+    // The link header carries the same identity popover as the signed-in shell,
+    // showing who the link belongs to and offering neither of the two actions a
+    // link cannot honour.
+    const hasProfileTrigger = await evaluate(
       client,
-      `[...document.querySelector('[data-page-breadcrumb]').querySelectorAll('a, [data-breadcrumb-current]')]
-        .map((node) => node.textContent.trim()).filter(Boolean)`,
+      `(() => {
+        const trigger = document.querySelector('header [aria-label^="เปิดเมนูบัญชีผู้ใช้"]');
+        if (!trigger) return false;
+        trigger.click();
+        return true;
+      })()`,
+    );
+    assert(hasProfileTrigger, 'Teacher link header has no profile control');
+    // The panel mounts on the next render, so reading it in the click's own tick
+    // would report it missing every time.
+    await waitFor(
+      async () => await evaluate(client, `Boolean(document.querySelector('#header-profile-menu'))`),
+      'Teacher link header profile did not open',
+    );
+    const linkProfile = await evaluate(
+      client,
+      `(() => {
+        const panel = document.querySelector('#header-profile-menu');
+        const photo = panel.querySelector('[data-slot="avatar"]');
+        const lines = photo ? photo.parentElement.lastElementChild : null;
+        const photoBox = photo ? photo.getBoundingClientRect() : null;
+        const linesBox = lines ? lines.getBoundingClientRect() : null;
+        return {
+          text: panel.innerText,
+          items: [...panel.querySelectorAll('[role="menuitem"]')].map((item) =>
+            item.innerText.trim(),
+          ),
+          photoCenter: photoBox ? photoBox.y + photoBox.height / 2 : null,
+          linesCenter: linesBox ? linesBox.y + linesBox.height / 2 : null,
+        };
+      })()`,
+    );
+    // The photo is centred against the three identity lines rather than pinned to
+    // the name, which is what the reference layout shows.
+    assert(
+      linkProfile.photoCenter !== null &&
+        Math.abs(linkProfile.photoCenter - linkProfile.linesCenter) <= 1.5,
+      `Teacher link profile photo is not centred on its text: ${JSON.stringify(linkProfile)}`,
     );
     assert(
-      teacherClassroomCrumbs.length === 2 && teacherClassroomCrumbs[0] === 'ห้องเรียนของฉัน',
+      linkProfile.text.includes('สังกัด:') && linkProfile.text.includes('ตำแหน่ง: คุณครู'),
+      `Teacher link profile is missing สังกัด/ตำแหน่ง: ${JSON.stringify(linkProfile)}`,
+    );
+    assert(
+      linkProfile.items.length === 0,
+      `Teacher link profile must offer no actions: ${JSON.stringify(linkProfile.items)}`,
+    );
+    await evaluate(client, `document.body.click(), true`);
+    // The breadcrumb container mounts before its links do, so this has to wait
+    // for the crumbs themselves instead of reading them one tick too early.
+    const readClassroomCrumbs = async () =>
+      await evaluate(
+        client,
+        `[...document.querySelector('[data-page-breadcrumb]').querySelectorAll('a, [data-breadcrumb-current]')]
+          .map((node) => node.textContent.trim()).filter(Boolean)`,
+      );
+    await waitFor(
+      async () => (await readClassroomCrumbs()).length === 2,
+      'Teacher classroom breadcrumb did not render its crumbs',
+    );
+    const teacherClassroomCrumbs = await readClassroomCrumbs();
+    assert(
+      teacherClassroomCrumbs[0] === 'ห้องเรียนของฉัน',
       `Teacher classroom breadcrumb was incorrect: ${teacherClassroomCrumbs.join(' > ')}`,
     );
     await evaluate(
       client,
       `[...document.querySelectorAll('button')]
-        .find((button) => button.textContent.trim() === 'เช็คชื่อ')?.click()`,
+        .find((button) => button.textContent.trim() === 'เช็กชื่อ')?.click()`,
     );
     await waitFor(
       async () =>
         Boolean(
           await evaluate(
             client,
-            `location.pathname === ${JSON.stringify(`${teacherAssignmentBase}/attendance`)}
+            `location.pathname === ${JSON.stringify(`${teacherAssignmentBase}/check-in`)}
               && document.querySelector('table') && document.body.innerText.includes(${JSON.stringify(
               fixtureStudentNumbers[0],
             )})`,
@@ -605,15 +787,339 @@ async function main() {
     );
     assert(
       JSON.stringify(teacherAttendanceTable.statuses.map((item) => item.label)) ===
-        JSON.stringify(['มา', 'สาย', 'ลา', 'ขาด']) &&
-        teacherAttendanceTable.statuses[0]?.pressed === 'true',
+        JSON.stringify(['มา', 'สาย', 'ขาด', 'ลา']) &&
+        teacherAttendanceTable.statuses.every((item) => item.pressed === 'false'),
       `Teacher-link attendance status pills drifted: ${JSON.stringify(teacherAttendanceTable.statuses)}`,
     );
+
+    // QR attendance is shared with the authenticated page. The page-level mock
+    // above substitutes a physical camera in headless Chrome and must mark only
+    // this roster's matching student, then expose its read-only latest value.
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'เครื่องมือ')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')]
+              .some((button) => button.textContent.trim() === 'สแกน QR Code เพื่อเช็กชื่อ')`,
+          ),
+        ),
+      'Teacher-link attendance tools menu did not expose QR scanner',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'สแกน QR Code เพื่อเช็กชื่อ')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelector('[data-attendance-qr-last-value]') && document.body.innerText.includes('ข้อมูลที่บันทึกใน QR Code')`,
+          ),
+        ),
+      'Teacher-link QR scanner dialog did not render',
+    );
+    const teacherQrResult = await evaluate(
+      client,
+      `(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        return {
+          firstRowMark: document.querySelector('table tbody tr')?.getAttribute('data-attendance-mark'),
+          scannerTitle: document.body.innerText.includes('รายการที่สแกน'),
+          scannerStatuses: [...document.querySelectorAll('[role="dialog"] button[aria-pressed]')]
+            .map((button) => button.textContent.trim()),
+          lastValue: document.querySelector('[data-attendance-qr-last-value]')?.textContent.trim(),
+          // Owner order: a scanned row shows avatar, name, student number and
+          // time, and carries the status as the row's own colour — no pill.
+          scannedRow: (() => {
+            const row = document.querySelector('[role="dialog"] ul li');
+            if (!row) return null;
+            const style = getComputedStyle(row);
+            return {
+              // The avatar falls back to initials when the student has no photo,
+              // so matching on the image element alone would pass or fail on
+              // fixture data rather than on whether the row renders an avatar.
+              hasAvatar: Boolean(row.querySelector('[data-slot="avatar"]')),
+              showsStudentNumber: row.innerText.includes('รหัสประจำตัว'),
+              hasTime: Boolean(row.querySelector('time')),
+              tinted: style.backgroundColor !== 'rgb(255, 255, 255)'
+                && style.backgroundColor !== 'rgba(0, 0, 0, 0)',
+              pills: row.querySelectorAll('[data-slot="badge"]').length,
+            };
+          })(),
+        };
+      })()`,
+    );
+    assert(
+        teacherQrResult.firstRowMark === 'P_PRESENT' &&
+        teacherQrResult.scannerTitle &&
+        JSON.stringify(teacherQrResult.scannerStatuses) === JSON.stringify(['มา', 'สาย']) &&
+        teacherQrResult.lastValue === fixtureStudentNumbers[0],
+      `Teacher-link QR scanner did not mark the matching student: ${JSON.stringify(teacherQrResult)}`,
+    );
+    const scannedRow = teacherQrResult.scannedRow;
+    assert(scannedRow, 'QR scanner did not list the scanned student');
+    assert(
+      scannedRow.hasAvatar && scannedRow.showsStudentNumber && scannedRow.hasTime,
+      `scanned row is missing avatar/student number/time: ${JSON.stringify(scannedRow)}`,
+    );
+    assert(
+      scannedRow.tinted && scannedRow.pills === 0,
+      `scanned row must carry the status as its colour, not a pill: ${JSON.stringify(scannedRow)}`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]')?.click()`,
+    );
+    // Return the fixture to the untouched baseline expected by the remainder
+    // of this smoke: roster-pill taps retain their intentional toggle-off rule.
+    await evaluate(
+      client,
+      `document.querySelector('table tbody tr [role="group"] button')?.click()`,
+    );
+
+    // File import is the third shared check-in tool. On the teacher link this
+    // asserts the entry point and the form preview; the authenticated page
+    // below drives a real upload through the same dialog and parser.
+    await openAttendanceImportDialog(client, 'Teacher-link');
+    const teacherImportDialog = await evaluate(
+      client,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        return {
+          showsRound: dialog.innerText.includes('วันที่เช็กชื่อ'),
+          hasDatePicker: Boolean(dialog.querySelector('input[type="date"]')),
+          hasUrlField: Boolean(dialog.querySelector('#attendance-import-url')),
+          hasFileInput: Boolean(dialog.querySelector('input[type="file"]')),
+        };
+      })()`,
+    );
+    assert(
+      teacherImportDialog.showsRound &&
+        !teacherImportDialog.hasDatePicker &&
+        teacherImportDialog.hasUrlField &&
+        teacherImportDialog.hasFileInput,
+      `Teacher-link import dialog drifted from the agreed shape: ${JSON.stringify(teacherImportDialog)}`,
+    );
+    await waitFor(
+      async () => await clickByText(client, 'ตัวอย่างไฟล์'),
+      'Teacher-link import dialog did not offer the sample view',
+    );
+    await waitFor(
+      async () => (await bodyText(client)).includes('ตัวอย่างไฟล์นำเข้า'),
+      'Teacher-link import sample view did not render',
+    );
+    const teacherImportSample = await evaluate(
+      client,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        return {
+          headings: [...dialog.querySelectorAll('table thead th')].map((cell) => cell.textContent.trim()),
+          showsRoster: dialog.innerText.includes(${JSON.stringify(fixtureStudentNumbers[0])}),
+          hasTemplateDownload: [...dialog.querySelectorAll('button')]
+            .some((button) => button.textContent.trim() === 'ดาวน์โหลดแบบฟอร์ม'),
+        };
+      })()`,
+    );
+    assert(
+      JSON.stringify(teacherImportSample.headings) ===
+        JSON.stringify(['ลำดับ', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'สถานะการเช็กชื่อ']) &&
+        teacherImportSample.showsRoster &&
+        teacherImportSample.hasTemplateDownload,
+      `Teacher-link import sample view drifted: ${JSON.stringify(teacherImportSample)}`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]')?.click()`,
+    );
+
+    // No default status: an untouched roster leaves submit blocked and every
+    // row flagged, and "มาทั้งหมด" fills only what the teacher has not answered.
+    const beforeMarking = await evaluate(
+      client,
+      `(() => {
+        const rows = [...document.querySelectorAll('table tbody tr')];
+        const submit = [...document.querySelectorAll('button[type="submit"]')].at(-1);
+        return {
+          unmarkedRows: rows.filter(
+            (row) => row.getAttribute('data-attendance-mark') === 'NONE',
+          ).length,
+          rowCount: rows.length,
+          submitDisabled: submit ? submit.disabled : null,
+          bodyText: document.body.innerText,
+        };
+      })()`,
+    );
+    assert(
+      beforeMarking.rowCount > 0 && beforeMarking.unmarkedRows === beforeMarking.rowCount,
+      `Every row must start unmarked: ${JSON.stringify(beforeMarking)}`,
+    );
+
+    // ย้อนกลับ must use the same white/dark treatment as the other secondary
+    // buttons, not the tinted ghost variant it shipped with.
+    const undoButtonStyle = await evaluate(
+      client,
+      `(() => {
+        const undo = [...document.querySelectorAll('button')].find(
+          (button) => button.textContent.trim() === 'ย้อนกลับ',
+        );
+        if (!undo) return null;
+        const style = getComputedStyle(undo);
+        return { background: style.backgroundColor, color: style.color };
+      })()`,
+    );
+    assert(
+      undoButtonStyle &&
+        undoButtonStyle.background === 'rgb(255, 255, 255)' &&
+        undoButtonStyle.color !== 'rgb(255, 255, 255)',
+      `ย้อนกลับ must be a white button with dark text: ${JSON.stringify(undoButtonStyle)}`,
+    );
+
+    // The badge must line up down the column and must not move the table when a
+    // mark is set — both were real defects before it was pinned right and kept
+    // in the DOM while hidden.
+    const badgeGeometry = await evaluate(
+      client,
+      `(() => {
+        const badges = [...document.querySelectorAll('table tbody tr')].map((row) =>
+          [...row.querySelectorAll('span')].find(
+            (span) => span.textContent.trim() === 'ยังไม่เช็ก',
+          ),
+        );
+        const lefts = badges.map((badge) => Math.round(badge.getBoundingClientRect().left));
+        const nameColumnWidth = Math.round(
+          document.querySelector('table tbody tr').cells[3].getBoundingClientRect().width,
+        );
+        return { distinctLefts: [...new Set(lefts)].length, badgeCount: badges.length, nameColumnWidth };
+      })()`,
+    );
+    assert(
+      badgeGeometry.badgeCount === beforeMarking.rowCount &&
+        badgeGeometry.distinctLefts === 1,
+      `Unmarked badges must share one left edge: ${JSON.stringify(badgeGeometry)}`,
+    );
+    assert(
+      beforeMarking.submitDisabled === true &&
+        beforeMarking.bodyText.includes('ยังไม่เช็ก'),
+      'Submit must stay blocked while students are unmarked',
+    );
+
+    await evaluate(
+      client,
+      `(() => {
+        const group = document.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        // By label, not index: the status order is an owner decision that has
+        // already moved once (มา → สาย → ขาด → ลา).
+        [...group.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'ขาด')
+          .click();
+      })()`,
+    );
+    // Tapping the same status again clears the student back to "ยังไม่เช็ก".
+    await evaluate(
+      client,
+      `(() => {
+        const group = document.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        // By label, not index: the status order is an owner decision that has
+        // already moved once (มา → สาย → ขาด → ลา).
+        [...group.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'ขาด')
+          .click();
+      })()`,
+    );
+    const widthAfterMarking = await evaluate(
+      client,
+      `Math.round(
+        document.querySelector('table tbody tr').cells[3].getBoundingClientRect().width,
+      )`,
+    );
+    assert(
+      widthAfterMarking === badgeGeometry.nameColumnWidth,
+      `Marking a student must not resize the name column: ${badgeGeometry.nameColumnWidth} -> ${widthAfterMarking}`,
+    );
+
+    // Read after the click in a separate call so React has committed.
+    const toggledOff = await evaluate(
+      client,
+      `(() => {
+        const row = document.querySelector('table tbody tr');
+        return {
+          mark: row.getAttribute('data-attendance-mark'),
+          pressed: [...row.querySelectorAll('[role="group"] button')].map((button) =>
+            button.getAttribute('aria-pressed'),
+          ),
+        };
+      })()`,
+    );
+    assert(
+      toggledOff.mark === 'NONE' &&
+        toggledOff.pressed.every((value) => value === 'false'),
+      `Tapping the same status twice must clear the student: ${JSON.stringify(toggledOff)}`,
+    );
+    // Put it back so the mark-all assertion below still has an explicit answer
+    // to protect.
+    await evaluate(
+      client,
+      `(() => {
+        const group = document.querySelector('[role="group"][aria-label^="สถานะของ"]');
+        // By label, not index: the status order is an owner decision that has
+        // already moved once (มา → สาย → ขาด → ลา).
+        [...group.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'ขาด')
+          .click();
+      })()`,
+    );
+
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim().startsWith('มาทั้งหมด'))
+        ?.click()`,
+    );
+    const afterMarkAll = await evaluate(
+      client,
+      `(() => {
+        const rows = [...document.querySelectorAll('table tbody tr')];
+        const submit = [...document.querySelectorAll('button[type="submit"]')].at(-1);
+        return {
+          stillUnmarked: rows.filter(
+            (row) => row.getAttribute('data-attendance-mark') === 'NONE',
+          ).length,
+          firstRowMark: rows[0].getAttribute('data-attendance-mark'),
+          firstRowPressed: [
+            ...rows[0].querySelectorAll('[role="group"] button'),
+          ].map((button) => button.getAttribute('aria-pressed')),
+          submitDisabled: submit ? submit.disabled : null,
+        };
+      })()`,
+    );
+    assert(
+      afterMarkAll.stillUnmarked === 0 && afterMarkAll.submitDisabled === false,
+      `"มาทั้งหมด" must complete the class and unblock submit: ${JSON.stringify(afterMarkAll)}`,
+    );
+    assert(
+      // The row marked ขาด before the bulk action must keep it, proving the
+      // fill only touches students with no answer. The control shows one
+      // selection; how many statuses it offers is the catalog's business, so
+      // this counts the pressed button instead of pinning the button count.
+      afterMarkAll.firstRowMark === 'P_ABSENT' &&
+        afterMarkAll.firstRowPressed.filter((pressed) => pressed === 'true').length === 1,
+      `"มาทั้งหมด" must not overwrite an explicit mark: ${JSON.stringify(afterMarkAll)}`,
+    );
+
+
 
     await navigate(client, `${FRONTEND_URL}${teacherAssignmentBase}?tab=attendance`);
     await waitFor(
       async () =>
-        (await evaluate(client, 'location.pathname')) === `${teacherAssignmentBase}/attendance`,
+        (await evaluate(client, 'location.pathname')) === `${teacherAssignmentBase}/check-in`,
       'Legacy teacher classroom tab did not redirect to canonical attendance',
     );
 
@@ -625,7 +1131,7 @@ async function main() {
             client,
             `location.pathname === ${JSON.stringify(`${teacherAssignmentBase}/history/attendance`)}
               && document.querySelector('[data-breadcrumb-current]')?.textContent.trim()
-                === 'ประวัติการเช็คชื่อ'`,
+                === 'ประวัติการเช็กชื่อ'`,
           ),
         ),
       'Teacher attendance history did not use its distinct route/breadcrumb',
@@ -710,13 +1216,7 @@ async function main() {
       LastName: 'Smoke Admin',
       role: 'ADMIN',
       roles: ['ADMIN'],
-      permissions: [
-        'manage-teacher-access',
-        'manage-school-structure',
-        'manage-curriculum',
-        'manage-timetable',
-        'attendance',
-      ],
+      permissions: DIRECTOR_PERMISSIONS,
       data_scope: { school_ids: [schoolId] },
       status: 'ACTIVE',
     };
@@ -792,8 +1292,33 @@ async function main() {
       'Teacher-link roster sort did not reach the server before pagination',
     );
 
-    // The toolbar issues one expiring group link, while the row action remains
-    // available for a teacher-scoped single-use invitation.
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button[data-teacher-link-profile]')]
+        .find((button) => button.getAttribute('aria-label') === 'เปิดข้อมูลคุณครู Teacher One Smoke')
+        ?.click()`,
+    );
+    const teacherProfilePath = `/manage-teachers/${fixture.teacherMemberships[0].teacherId}/edit`;
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) === teacherProfilePath,
+      'Teacher-link roster profile did not open the matching teacher record',
+    );
+    await navigate(client, `${FRONTEND_URL}/attendance-links`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('th button')].some((button) => button.textContent.includes('ชื่อ-นามสกุล'))`,
+          ),
+        ),
+      'Teacher-link roster did not render after returning from the teacher record',
+    );
+
+    // LINE verification is one school-wide link: every teacher joins through the
+    // same invitation, so the row menu must not offer a per-teacher one and only
+    // the toolbar issues the group link.
     const lineActions = await evaluate(
       client,
       `(() => {
@@ -808,21 +1333,21 @@ async function main() {
         };
       })()`,
     );
-    await waitFor(
-      async () =>
-        Boolean(
-          await evaluate(
-            client,
-            `[...document.querySelectorAll('button')].some((button) =>
-              button.getClientRects().length > 0 &&
-              button.textContent.includes('ออกลิงก์ยืนยัน LINE'))`,
-          ),
-        ),
-      'The unverified teacher row did not expose a scoped LINE invitation action',
+    // Read the opened row menu in its own call so React has committed it.
+    const rowMenuOffersLineInvite = await evaluate(
+      client,
+      `[...document.querySelectorAll('button')].some((button) =>
+        button.getClientRects().length > 0 &&
+        button.textContent.includes('ออกลิงก์ยืนยัน LINE'))`,
     );
     assert(
-      lineActions.rowFound && lineActions.globalCreate,
-      `LINE invitation scope is wrong: ${JSON.stringify(lineActions)}`,
+      lineActions.rowFound && lineActions.globalCreate && !rowMenuOffersLineInvite,
+      `LINE invitation scope is wrong: ${JSON.stringify({ ...lineActions, rowMenuOffersLineInvite })}`,
+    );
+    // Close the row menu so the toolbar button below is clickable.
+    await evaluate(
+      client,
+      `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
     );
 
     await evaluate(
@@ -1035,19 +1560,31 @@ async function main() {
       'Curriculum classroom MultiSelect did not become ready',
     );
     await evaluate(client, `document.querySelector('input[id^="classrooms-"]').focus()`);
-    await client.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown' });
-    await client.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown' });
     await waitFor(
       async () =>
         Boolean(
           await evaluate(
             client,
-            `document.querySelector('[role="listbox"]') &&
-             document.activeElement?.getAttribute('role') === 'option'`,
+            `document.activeElement === document.querySelector('input[id^="classrooms-"]')`,
           ),
         ),
-      'MultiSelect ArrowDown did not open and focus its first option',
+      'Curriculum classroom MultiSelect input did not take focus',
     );
+    // The panel opens from a React state update, so a key dispatched in the same
+    // frame as `focus()` can arrive before the handler is listening — that race
+    // made this check fail about one run in three. Press again while the panel
+    // is still closed instead of assuming a single press lands.
+    await waitFor(async () => {
+      const opened = await evaluate(
+        client,
+        `Boolean(document.querySelector('[role="listbox"]')) &&
+         document.activeElement?.getAttribute('role') === 'option'`,
+      );
+      if (opened) return true;
+      await client.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown' });
+      await client.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown' });
+      return false;
+    }, 'MultiSelect ArrowDown did not open and focus its first option');
     await client.call('Input.dispatchKeyEvent', {
       type: 'rawKeyDown',
       key: 'Enter',
@@ -1152,6 +1689,52 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: false,
     });
+    // The system roster tab must carry the same columns and per-student tools
+    // as the teacher-link classroom, not a bare name list.
+    await navigate(client, `${FRONTEND_URL}/attendance/roster`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.querySelectorAll('table tbody tr').length > 0`,
+          ),
+        ),
+      'System roster tab did not render',
+    );
+    const systemRoster = await evaluate(
+      client,
+      `(() => {
+        const table = document.querySelector('table');
+        const row = table.querySelector('tbody tr');
+        return {
+          headings: [...table.querySelectorAll('thead th')].map((cell) => cell.textContent.trim()),
+          riskBadges: row.querySelectorAll('[data-student-risk-tier]').length,
+          toolButtons: [...row.querySelectorAll('button[aria-label]')]
+            .map((button) => button.getAttribute('aria-label'))
+            .filter((label) => label.startsWith('ดูข้อมูล') || label.startsWith('เพิ่มความคิดเห็น'))
+            .length,
+        };
+      })()`,
+    );
+    assert(
+      JSON.stringify(systemRoster.headings) ===
+        JSON.stringify([
+          'ลำดับ',
+          'รูปประจำตัว',
+          'รหัสประจำตัว',
+          'ชื่อ-นามสกุล',
+          'หมายเหตุ',
+          'สถานะความเสี่ยง',
+          'เครื่องมือ',
+        ]),
+      `System roster columns drifted from the teacher-link roster: ${JSON.stringify(systemRoster.headings)}`,
+    );
+    assert(
+      systemRoster.riskBadges === 1 && systemRoster.toolButtons === 2,
+      `System roster must show a risk badge and both row tools: ${JSON.stringify(systemRoster)}`,
+    );
+
     await navigate(client, `${FRONTEND_URL}/attendance/check-in`);
     await waitFor(
       async () =>
@@ -1160,7 +1743,7 @@ async function main() {
             client,
             `document.querySelector('table') &&
              document.body.innerText.includes(${JSON.stringify(fixtureStudentNumbers[0])}) &&
-             document.body.innerText.includes('บันทึกการเช็คชื่อ 2 คน')`,
+             document.body.innerText.includes('ส่งเช็กชื่อ 2 คน')`,
           ),
         ),
       'Authenticated attendance page did not render the fixture roster',
@@ -1193,8 +1776,75 @@ async function main() {
       `Authenticated attendance did not default to ascending student number: ${JSON.stringify(systemAttendanceTable)}`,
     );
     assert(
-      JSON.stringify(systemAttendanceTable.labels) === JSON.stringify(['มา', 'สาย', 'ลา', 'ขาด']),
+      JSON.stringify(systemAttendanceTable.labels) === JSON.stringify(['มา', 'สาย', 'ขาด', 'ลา']),
       `Authenticated attendance status pills drifted: ${systemAttendanceTable.labels.join(' | ')}`,
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'เครื่องมือ')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')]
+              .some((button) => button.textContent.trim() === 'สแกน QR Code เพื่อเช็กชื่อ')`,
+          ),
+        ),
+      'Authenticated attendance tools menu did not expose QR scanner',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'สแกน QR Code เพื่อเช็กชื่อ')?.click()`,
+    );
+    await waitFor(
+      // Return a boolean, not the node: CDP cannot serialize a DOM element by
+      // value and the failure surfaces as "Object reference chain is too long".
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('[data-attendance-qr-last-value]'))`,
+          ),
+        ),
+      'Authenticated QR scanner dialog did not render',
+    );
+    const systemQrResult = await evaluate(
+      client,
+      `(async () => {
+        // The base Select puts the id on its visible trigger; the real <select>
+        // is the sr-only one beside it.
+        const source = document.querySelector('#attendance-qr-source');
+        const nativeSource = source?.closest('div')?.querySelector('select');
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        return {
+          sourceOptions: [...(nativeSource?.options ?? [])].map((option) => option.value),
+          firstRowMark: document.querySelector('table tbody tr')?.getAttribute('data-attendance-mark'),
+          lastValue: document.querySelector('[data-attendance-qr-last-value]')?.textContent.trim(),
+          hasEditableQrInput: Boolean(document.querySelector('input#attendance-qr-manual')),
+        };
+      })()`,
+    );
+    assert(
+      JSON.stringify(systemQrResult.sourceOptions) ===
+        JSON.stringify(['studentNumber', 'studentName']) &&
+        systemQrResult.firstRowMark === 'P_PRESENT' &&
+        systemQrResult.lastValue === fixtureStudentNumbers[0] &&
+        !systemQrResult.hasEditableQrInput,
+      `Authenticated QR scan did not mark the matching student: ${JSON.stringify(systemQrResult)}`,
+    );
+    await evaluate(
+      client,
+      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]')?.click()`,
+    );
+    // The assertion below covers the ordinary roster-pill interaction; restore
+    // its selected "สาย" state after the QR flow intentionally changed it.
+    await evaluate(
+      client,
+      `document.querySelector('table tbody tr [role="group"] button:nth-child(2)')?.click()`,
     );
     await waitFor(
       async () =>
@@ -1207,6 +1857,95 @@ async function main() {
         ),
       'Authenticated attendance status selection did not update',
     );
+    // Full import round-trip: an off-allowlist link must be refused by the
+    // server, and a real .xlsx must reach the roster as marks the teacher still
+    // has to save.
+    await openAttendanceImportDialog(client, 'Authenticated');
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#attendance-import-url');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(input, 'https://files.example.com/attendance.xlsx');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await waitFor(
+      async () => await clickByText(client, 'นำเข้า'),
+      'Attendance import dialog did not offer the URL action',
+    );
+    await waitFor(
+      async () =>
+        (await bodyText(client)).includes('ยังไม่รองรับลิงก์จาก files.example.com'),
+      'Attendance import accepted a host outside the allowlist',
+    );
+
+    const importFixturePath = writeAttendanceImportFixture([
+      [1, fixtureStudentNumbers[0], 'ไม่ต้องตรงชื่อ', 'ขาด'],
+      [2, fixtureStudentNumbers[1], 'ไม่ต้องตรงชื่อ', 'ลา'],
+      [3, '66000000000', 'นักเรียนนอกห้อง', 'มา'],
+    ]);
+    await attachImportFile(client, importFixturePath);
+    await waitFor(
+      async () => (await bodyText(client)).includes('จับคู่นักเรียนได้'),
+      'Attendance import did not report a parsed file',
+    );
+    const importSummary = await evaluate(
+      client,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const stats = [...dialog.querySelectorAll('[data-summary-label]')].map((item) => ({
+          label: item.getAttribute('data-summary-label'),
+          value: item.querySelector('[data-summary-value]')?.textContent.trim(),
+        }));
+        return { stats, reportsIssue: dialog.innerText.includes('แถวที่นำเข้าไม่ได้ (1)') };
+      })()`,
+    );
+    fs.rmSync(importFixturePath, { force: true });
+    assert(
+      JSON.stringify(importSummary.stats) ===
+        JSON.stringify([
+          { label: 'จับคู่นักเรียนได้', value: '2' },
+          { label: 'สถานะที่เปลี่ยน', value: '2' },
+          { label: 'แถวที่มีปัญหา', value: '1' },
+        ]) && importSummary.reportsIssue,
+      `Attendance import summary drifted: ${JSON.stringify(importSummary)}`,
+    );
+    await waitFor(
+      async () => await clickByText(client, 'บันทึกข้อมูล'),
+      'Attendance import did not offer the apply action',
+    );
+    await waitFor(
+      async () =>
+        JSON.stringify(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('table tbody tr')]
+              .map((row) => row.getAttribute('data-attendance-mark'))`,
+          ),
+        ) === JSON.stringify(['P_ABSENT', 'P_LEAVE']),
+      'Attendance import did not fill the roster with the imported statuses',
+    );
+    const afterImport = await evaluate(
+      client,
+      `(() => {
+        const submit = [...document.querySelectorAll('button[type="submit"]')].at(-1);
+        return {
+          dialogClosed: !document.querySelector('[role="dialog"]'),
+          submitStillRequired: Boolean(submit) && !submit.disabled,
+        };
+      })()`,
+    );
+    assert(
+      afterImport.dialogClosed && afterImport.submitStillRequired,
+      `Import must close its dialog and leave the teacher to save: ${JSON.stringify(afterImport)}`,
+    );
+    // Restore the "สาย" selection the roster-pill assertions below expect.
+    await evaluate(
+      client,
+      `document.querySelector('table tbody tr [role="group"] button:nth-child(2)')?.click()`,
+    );
+
     const searchNarrowedAttendance = await evaluate(
       client,
       `(async () => {
@@ -1257,7 +1996,7 @@ async function main() {
     );
     const resultHasProfile = await evaluate(
       client,
-      `Boolean(document.querySelector('header [aria-label^="ผู้รับมอบหมาย"]'))`,
+      `Boolean(document.querySelector('header [aria-label^="เปิดเมนูบัญชีผู้ใช้"]'))`,
     );
     assert(!resultHasProfile, 'LINE link result rendered an unnecessary guest profile avatar');
 
@@ -1270,10 +2009,22 @@ async function main() {
           'teacher card color updates every subject card for the shared classroom',
           'teacher-link roster sorting reaches the server',
           'teacher-link and authenticated attendance default to ascending student number in the shared numbered roster',
+          'teacher-link attendance has no default status, blocks submit until complete, and มาทั้งหมด fills only unmarked rows',
+          'tapping the same status twice clears the student back to ยังไม่เช็ก',
+          'ยังไม่เช็ก badges share one left edge and marking a student does not resize the name column',
+          'ย้อนกลับ uses the shared white/dark secondary button treatment',
+          'system roster tab matches the teacher-link roster columns and per-student tools',
           'authenticated attendance search, status selection and mobile internal scrolling work',
+          'attendance file import opens from the shared tools menu on the teacher link and the system page, without its own date field',
+          'attendance import sample view lists the class roster and offers the .xlsx form download',
+          'attendance import refuses a URL host outside the allowlist',
+          'uploading an .xlsx fills the roster with the imported statuses, reports unmatched rows and still requires the teacher to save',
           'teacher-link classroom, history and student routes keep their breadcrumbs, menu owner and safe back targets',
           'LINE invitations are scoped to unverified teacher rows with no global reusable URL',
+          'QR scan lists the student with avatar, student number and time, carrying status as colour rather than a pill',
+          'teacher-link header opens the shared profile popover with no link-less actions',
           'teacher-link roster renders one profile avatar per visible teacher',
+          'teacher-link roster avatar opens the matching teacher record',
           'LINE unlink icons stay visible, disable by verification state and refresh after unlink',
           'teacher verification method choice offers AraID/email without a guest profile avatar',
           'LINE link result omits the guest profile avatar',

@@ -106,6 +106,43 @@ describe('AraIdService login', () => {
     expect(profiles.save).toHaveBeenCalledWith(profile);
   });
 
+  it('requires the current AraID profile PIN again for step-up verification', async () => {
+    const profile = profileFixture({
+      failedPinAttempts: 2,
+      pinLockedUntil: new Date(Date.now() - 1_000),
+    });
+    profiles.findOne.mockResolvedValue(profile);
+    records.findOne.mockResolvedValue(recordFixture());
+    passwordService.compare.mockResolvedValue(true);
+
+    await expect(service.reauthenticate(profile.id, '12345678')).resolves.toBeUndefined();
+
+    expect(passwordService.compare).toHaveBeenCalledWith('12345678', '$hash');
+    expect(profile.failedPinAttempts).toBe(0);
+    expect(profile.pinLockedUntil).toBeNull();
+    expect(profiles.save).toHaveBeenCalledWith(profile);
+  });
+
+  it('reactivates an expired PIN lock during step-up verification', async () => {
+    const profile = profileFixture({
+      registrationStatus: 'LOCKED',
+      failedPinAttempts: 5,
+      pinLockedUntil: new Date(Date.now() - 1_000),
+    });
+    profiles.findOne.mockResolvedValue(profile);
+    records.findOne.mockResolvedValue(recordFixture());
+    passwordService.compare.mockResolvedValue(true);
+
+    await expect(service.reauthenticate(profile.id, '12345678')).resolves.toBeUndefined();
+
+    expect(profile).toMatchObject({
+      registrationStatus: 'ACTIVE',
+      failedPinAttempts: 0,
+      pinLockedUntil: null,
+    });
+    expect(profiles.save).toHaveBeenCalledWith(profile);
+  });
+
   it('returns the full identity number only through the server-side verified claim', async () => {
     profiles.findOne.mockResolvedValue(profileFixture());
     records.findOne.mockResolvedValue(recordFixture());

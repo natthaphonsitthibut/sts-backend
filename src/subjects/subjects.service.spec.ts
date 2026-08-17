@@ -15,7 +15,7 @@ describe('SubjectsService', () => {
     id: 3,
     username: 'admin1',
     roles: ['ADMIN'],
-    permissions: ['manage-timetable'],
+    permissions: ['timetable'],
     data_scope: { global: true },
   };
 

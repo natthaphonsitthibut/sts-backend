@@ -1,4 +1,4 @@
-import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
+import { type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PermissionsGuard } from '../auth';
 import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY } from '../auth/permissions.decorator';
@@ -21,32 +21,28 @@ function contextWithPermissions(method: string, permissions: string[]): Executio
 }
 
 describe('ImportsController access', () => {
-  it('keeps the shared catalog routes available to either import capability', () => {
-    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, ImportsController)).toEqual([
-      'import-data',
-      'import-school-roster',
-    ]);
+  // Importing teachers and importing students are the same page now, so the
+  // controller answers to one permission instead of two.
+  it('keeps every import route on the นำเข้าข้อมูล permission', () => {
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, ImportsController)).toEqual(['import-data']);
   });
 
   it('keeps school checks student-import only and teacher endpoints roster-import only', () => {
     expect(Reflect.getMetadata(PERMISSIONS_KEY, handler('checkSchools'))).toEqual(['import-data']);
     expect(Reflect.getMetadata(PERMISSIONS_KEY, handler('previewTeacherImport'))).toEqual([
-      'import-school-roster',
+      'import-data',
     ]);
     expect(Reflect.getMetadata(PERMISSIONS_KEY, handler('processTeacherImport'))).toEqual([
-      'import-school-roster',
+      'import-data',
     ]);
   });
 
-  it('denies import-data-only actors from the legacy teacher import routes', () => {
+  it('admits นำเข้าข้อมูล actors to every import route', () => {
     const guard = new PermissionsGuard(new Reflector());
 
-    expect(() =>
-      guard.canActivate(contextWithPermissions('previewTeacherImport', ['import-data'])),
-    ).toThrow(ForbiddenException);
-    expect(
-      guard.canActivate(contextWithPermissions('previewTeacherImport', ['import-school-roster'])),
-    ).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('previewTeacherImport', ['import-data']))).toBe(
+      true,
+    );
     expect(guard.canActivate(contextWithPermissions('processTeacherImport', ['ALL']))).toBe(true);
   });
 });

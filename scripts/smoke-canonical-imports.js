@@ -17,7 +17,10 @@ if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
 }
 
 const ACTOR_USERNAME = 'canonical_import_smoke_actor';
-const TEACHER_USERNAME = 'canonical_import_smoke_teacher';
+// A teacher is matched by citizen id now — there is no login account to name.
+// The 97 prefix keeps the smoke out of any real citizen-id range.
+const TEACHER_CITIZEN_ID = '9700000000001';
+const MISSING_TEACHER_CITIZEN_ID = '9700000000099';
 const ACADEMIC_YEAR = 9901;
 const SEMESTER = 1;
 const ROOM_CODE = '1999999901';
@@ -144,6 +147,7 @@ async function cleanup(dataSource, actorId, schoolId) {
     `DELETE FROM school_teacher_memberships WHERE school_id = $1 AND created_by = $2`,
     [schoolId, actorId],
   );
+  await dataSource.query(`DELETE FROM teachers WHERE citizen_id = $1`, [TEACHER_CITIZEN_ID]);
   await dataSource.query(
     `DELETE FROM school_classrooms
      WHERE school_id = $1 AND room_code = $2 AND created_by = $3`,
@@ -166,7 +170,7 @@ async function disableUsers(dataSource) {
            'Retained automated canonical import smoke fixture'
          )
      WHERE username = ANY($1::text[])`,
-    [[ACTOR_USERNAME, TEACHER_USERNAME]],
+    [[ACTOR_USERNAME]],
   );
 }
 
@@ -229,19 +233,21 @@ async function main() {
       username: ACTOR_USERNAME,
       firstName: 'Canonical Import',
       lastName: 'Smoke Actor',
-      permissions: ['import-data', 'import-school-roster'],
+      permissions: ['import-data'],
       dataScope: { school_ids: [school.id] },
       role: 'ADMIN',
     });
-    await upsertUser(dataSource, passwordHash, {
-      username: TEACHER_USERNAME,
-      firstName: 'Canonical Import',
-      lastName: 'Smoke Teacher',
-      permissions: ['attendance'],
-      dataScope: { school_ids: [school.id] },
-      role: 'TEACHER',
-    });
     await cleanup(dataSource, actor.id, school.id);
+    await dataSource.query(
+      `
+        INSERT INTO teachers (
+          first_name, last_name, citizen_id, teacher_status, created_by, updated_by
+        )
+        VALUES ('Canonical Import', 'Smoke Teacher', $1, 'ACTIVE', $2, $2)
+        ON CONFLICT DO NOTHING
+      `,
+      [TEACHER_CITIZEN_ID, actor.id],
+    );
 
     const [term] = await dataSource.query(
       `INSERT INTO school_terms (
@@ -281,7 +287,7 @@ async function main() {
       mapping: '{}',
       schoolId: school.id,
     };
-    const teacherCsv = `username,startedOn\n${TEACHER_USERNAME},2026-07-01`;
+    const teacherCsv = `citizenId,startedOn\n${TEACHER_CITIZEN_ID},2026-07-01`;
     const teacherPreview = await csvRequest(
       baseUrl,
       cookie,
@@ -359,9 +365,9 @@ async function main() {
       classroomId: classroom.id,
     };
     const assignmentCsv = [
-      'username,assignmentKind,subjectId',
-      `${TEACHER_USERNAME},HOMEROOM,`,
-      `canonical_import_missing_teacher,SUBJECT,${subject.id}`,
+      'citizenId,assignmentKind,subjectId',
+      `${TEACHER_CITIZEN_ID},HOMEROOM,`,
+      `${MISSING_TEACHER_CITIZEN_ID},SUBJECT,${subject.id}`,
     ].join('\n');
     const assignmentPreview = await csvRequest(
       baseUrl,

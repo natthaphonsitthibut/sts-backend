@@ -32,25 +32,6 @@ describe('ObservationReviewsRepository', () => {
     expect(queries[0].params).toEqual(['11111111-1111-4111-8111-111111111111', [9], [2]]);
   });
 
-  it('updates only the pre-case request when a reviewer decides', async () => {
-    const { repository, queryRunner, queries } = buildRepository();
-    await repository.reviewFollowUp(
-      '22222222-2222-4222-8222-222222222222',
-      2,
-      'APPROVED',
-      'approved',
-      5,
-      123,
-      queryRunner as never,
-    );
-
-    expect(queries[0].sql).toContain('UPDATE student_follow_up_requests');
-    expect(queries[0].sql).toContain("status = 'PENDING_REVIEW'");
-    expect(queries[0].sql).not.toContain('UPDATE cases');
-    expect(queries[0].sql).not.toContain('INSERT INTO tasks');
-    expect(queries[0].sql).not.toContain('student_risk_profiles');
-  });
-
   it('derives calculated attendance risk without mutating the profile', async () => {
     const { repository, queryRunner, queries } = buildRepository();
     await repository.findCalculatedAttendanceRisk(
@@ -62,6 +43,17 @@ describe('ObservationReviewsRepository', () => {
     expect(queries[0].sql).not.toContain('UPDATE student_risk_profiles');
   });
 
+  it('keeps teacher-link observations visible after their login account is retired', async () => {
+    const { repository, queries } = buildRepository();
+
+    await repository.listTeacherObservationReports({ school_ids: [101] }, { page: 1, limit: 20 });
+
+    expect(queries[0].sql).toContain(
+      'LEFT JOIN users author ON author.id = observation.author_user_id',
+    );
+    expect(queries[0].sql).toContain('observation.observer_display_name');
+  });
+
   it('lists one latest classroom comment per currently enrolled student within actor scope', async () => {
     const { repository, queries } = buildRepository();
     await repository.listTeacherWatchlist(
@@ -71,6 +63,7 @@ describe('ObservationReviewsRepository', () => {
 
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('comment.problem_description');
     expect(queries[0].sql).toContain('enrollment.classroom_id = comment.classroom_id');
     expect(queries[0].sql).toContain('COUNT(*) OVER (PARTITION BY comment.person_uuid)');
     expect(queries[0].sql).toContain('ROW_NUMBER() OVER');
@@ -90,6 +83,8 @@ describe('ObservationReviewsRepository', () => {
     );
 
     expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('comment.problem_category');
+    expect(queries[0].sql).toContain('comment.problem_description');
     expect(queries[0].sql).toContain('enrollment.classroom_id = comment.classroom_id');
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('enrollment.student_uuid = $1');

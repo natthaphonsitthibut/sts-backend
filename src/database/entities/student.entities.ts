@@ -263,7 +263,7 @@ export class StudentRiskProfileEntity {
   @Column({ name: 'consecutive_absent_days', type: 'integer', default: 0 })
   consecutiveAbsentDays!: number;
 
-  @Column({ name: 'absent_days', type: 'integer', default: 0 })
+  @Column({ name: 'absent_days_since_case_reset', type: 'integer', default: 0 })
   absentDays!: number;
 
   @Column({ name: 'term_absent_days', type: 'integer', default: 0 })

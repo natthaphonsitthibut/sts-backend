@@ -92,20 +92,20 @@ async function main() {
   try {
     const fixtures = await runner.query(
       `
-        SELECT t.id::text AS teacher_id, u.username
+        SELECT t.id::text AS teacher_id,
+               TRIM(t.first_name || ' ' || t.last_name) AS username
         FROM teachers t
-        JOIN users u ON u.id = t.linked_user_id
-        WHERE u.username ~* $1
-           OR COALESCE(u."FirstName", '') ~* 'smoke|lifecycle|^test$'
+        WHERE COALESCE(t.email, '') ~* $1
+           OR t.first_name ~* 'smoke|lifecycle|^test$'
       `,
       [FIXTURE_ACCOUNT_PATTERN],
     );
 
     const targets = await runner.query(
       `
-        SELECT t.id::text AS teacher_id, u.username
+        SELECT t.id::text AS teacher_id,
+               TRIM(t.first_name || ' ' || t.last_name) AS username
         FROM teachers t
-        LEFT JOIN users u ON u.id = t.linked_user_id
         WHERE t.deleted_at IS NULL
         ORDER BY t.id
       `,

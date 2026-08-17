@@ -5,7 +5,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
 import { isRestrictedExecutive } from '../auth/permissions.constants';
@@ -14,15 +13,12 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
-import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
-
-const CASE_SLA_REMINDER_CRON = '0 45 4 * * *';
 
 @Injectable()
 export class CaseService {
@@ -65,7 +61,7 @@ export class CaseService {
     actor: AuthenticatedRequestUser,
     requiredPermission: string,
   ): void {
-    if (!this.taskPolicyService.hasPermission(actor, 'review-cases')) {
+    if (!this.taskPolicyService.hasPermission(actor, 'dashboard')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
     }
 
@@ -101,6 +97,7 @@ export class CaseService {
       status_label: this.normalizeText(row.status_label) || null,
       completion_outcome_code: this.normalizeText(row.completion_outcome_code) || null,
       completion_outcome_label: this.normalizeText(row.completion_outcome_label) || null,
+      workflow_phase_code: this.normalizeText(row.workflow_phase_code) || null,
       display_status_label:
         this.normalizeText(row.display_status_label) ||
         this.normalizeText(row.status_label) ||
@@ -115,6 +112,22 @@ export class CaseService {
     };
   }
 
+  /**
+   * The multi-choice answers on a round (residence environments, assistance
+   * measures) arrive as `json_agg` arrays — already ordered and labelled, so the
+   * response only has to drop anything malformed.
+   */
+  private mapCodeLabelList(value: unknown): Array<{ code: string; label: string }> {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry) => {
+      if (typeof entry !== 'object' || entry === null) return [];
+      const record = entry as Record<string, unknown>;
+      const code = this.normalizeText(record.code);
+      const label = this.normalizeText(record.label);
+      return code ? [{ code, label: label || code }] : [];
+    });
+  }
+
   private mapFollowUpRound(row: Record<string, unknown>) {
     const photoPaths = Array.isArray(row.photo_paths)
       ? JSON.stringify(row.photo_paths.filter((path): path is string => typeof path === 'string'))
@@ -122,6 +135,11 @@ export class CaseService {
     return {
       task_id: this.normalizeText(row.task_id),
       task_status: this.normalizeText(row.task_status),
+      task_type: this.normalizeText(row.task_type) || null,
+      assistance_measures: this.mapCodeLabelList(row.assistance_measures),
+      assistance_measure_detail: this.normalizeText(row.assistance_measure_detail) || null,
+      assisted_at: row.assisted_at ?? null,
+      assistance_detail: this.normalizeText(row.assistance_detail) || null,
       created_at: row.created_at ?? null,
       initial_assignee: this.normalizeText(row.initial_assignee) || null,
       assignment_starts_at: row.assignment_starts_at ?? null,
@@ -130,9 +148,19 @@ export class CaseService {
       link_count: this.normalizeNumber(row.link_count) ?? 0,
       submitted_at: row.submitted_at ?? null,
       visited_at: row.visited_at ?? null,
-      cause_category: this.normalizeText(row.cause_category) || null,
-      follow_up_assessment_code: this.normalizeText(row.follow_up_assessment_code) || null,
-      follow_up_assessment_label: this.normalizeText(row.follow_up_assessment_label) || null,
+      follow_up_problem_category_code:
+        this.normalizeText(row.follow_up_problem_category_code) || null,
+      follow_up_problem_category_label:
+        this.normalizeText(row.follow_up_problem_category_label) || null,
+      follow_up_problem_category_guidance:
+        this.normalizeText(row.follow_up_problem_category_guidance) || null,
+      parental_status_code: this.normalizeText(row.parental_status_code) || null,
+      parental_status_label: this.normalizeText(row.parental_status_label) || null,
+      guardian_type_code: this.normalizeText(row.guardian_type_code) || null,
+      guardian_type_label: this.normalizeText(row.guardian_type_label) || null,
+      guardian_type_detail: this.normalizeText(row.guardian_type_detail) || null,
+      residence_environments: this.mapCodeLabelList(row.residence_environments),
+      residence_environment_detail: this.normalizeText(row.residence_environment_detail) || null,
       cause_detail: this.normalizeText(row.cause_detail) || null,
       recommendation: this.normalizeText(row.recommendation) || null,
       visit_lat: row.visit_lat ?? null,
@@ -180,7 +208,7 @@ export class CaseService {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     if (
       isRestrictedExecutive(currentActor) ||
-      !this.taskPolicyService.hasPermission(currentActor, 'review-cases')
+      !this.taskPolicyService.hasPermission(currentActor, 'dashboard')
     ) {
       throw new ForbiddenException('ไม่มีสิทธิ์เปิดเคสนักเรียน');
     }
@@ -251,7 +279,7 @@ export class CaseService {
     if (result.created) {
       const mapped = this.mapCaseDetail(
         detail,
-        this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+        this.taskPolicyService.hasPermission(currentActor, 'students'),
       );
       await this.auditLog.record({
         actorUserId: resolveAuditActorId(currentActor),
@@ -262,12 +290,12 @@ export class CaseService {
         metadata: { schoolId: mapped.school_id },
         ip: null,
       });
-      await this.notificationsService.notifyCaseCreated({
+      await this.notificationsService.notifyCaseStatusChanged({
         caseId: result.caseId,
         studentName: mapped.student_name || null,
         schoolId: mapped.school_id,
-        schoolName: mapped.student_school,
-        reason: mapped.reason_flagged ?? reason,
+        nextStatus: 'OPEN',
+        actorUserId: resolveAuditActorId(currentActor),
       });
       await this.riskProfileService
         ?.requestStudentRecalculation([studentUuid], 'case-open')
@@ -282,7 +310,7 @@ export class CaseService {
       created: result.created,
       data: this.mapCaseDetail(
         detail,
-        this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+        this.taskPolicyService.hasPermission(currentActor, 'students'),
       ),
     };
   }
@@ -306,59 +334,13 @@ export class CaseService {
       data: {
         ...this.mapCaseDetail(
           detail,
-          this.taskPolicyService.hasPermission(currentActor, 'manage-student-observations'),
+          this.taskPolicyService.hasPermission(currentActor, 'students'),
         ),
         follow_up_rounds: rounds.map((round) => this.mapFollowUpRound(round)),
         reviews: reviews.map((review) => this.mapCaseReview(review)),
         risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
       },
     };
-  }
-
-  async remindCaseSla(now = new Date()): Promise<{ warned: number; breached: number }> {
-    const warnings = await this.taskRepository.claimCaseSlaWarnings(now);
-    const breaches = await this.taskRepository.claimCaseSlaBreaches(now);
-
-    for (const row of warnings) {
-      await this.notificationsService.notifyCaseSlaWarning({
-        caseId: row.id,
-        studentName: row.student_name,
-        schoolId: row.school_id,
-        riskTier: row.risk_tier,
-        dueAt: row.sla_due_at,
-      });
-    }
-
-    for (const row of breaches) {
-      await this.notificationsService.notifyCaseSlaBreached({
-        caseId: row.id,
-        studentName: row.student_name,
-        schoolId: row.school_id,
-        riskTier: row.risk_tier,
-        dueAt: row.sla_due_at,
-      });
-    }
-
-    if (warnings.length > 0 || breaches.length > 0) {
-      this.logger.log(
-        `Sent ${warnings.length} case SLA warning(s) and ${breaches.length} breach escalation(s).`,
-      );
-    }
-
-    return { warned: warnings.length, breached: breaches.length };
-  }
-
-  @Cron(CASE_SLA_REMINDER_CRON, {
-    timeZone: BANGKOK_TIME_ZONE,
-    name: 'case_sla_reminder',
-  })
-  async runCaseSlaReminder(): Promise<void> {
-    try {
-      await this.remindCaseSla();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Case SLA reminder job failed: ${message}`);
-    }
   }
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {
@@ -392,6 +374,13 @@ export class CaseService {
       if (!caseRecord) {
         throw new Error('Case not found');
       }
+      // An action pinned to a phase (ASSIST → FOLLOW_UP) must not be reachable
+      // from another phase, otherwise an assistance case could be sent into a
+      // second assistance round from the API even though the UI hides the button.
+      const currentPhase = this.normalizeText(caseRecord.workflow_phase_code) || 'FOLLOW_UP';
+      if (reviewAction.availablePhaseCode && reviewAction.availablePhaseCode !== currentPhase) {
+        throw new BadRequestException('การดำเนินการนี้ใช้กับขั้นตอนปัจจุบันของเคสไม่ได้');
+      }
       await this.taskRepository.withTransaction(async (executor) => {
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
@@ -399,6 +388,7 @@ export class CaseService {
           reviewAction.completionOutcomeCode,
           executor,
           currentActor,
+          reviewAction.targetWorkflowPhaseCode,
         );
         if (!transitioned) {
           throw new BadRequestException('เคสนี้ไม่ได้อยู่ในสถานะรอตรวจผลแล้ว');
@@ -427,12 +417,15 @@ export class CaseService {
             ? 'CASE_CLOSE'
             : reviewAction.code === 'REFER_AGENCY'
               ? 'CASE_REFER_AGENCY'
-              : 'CASE_REVIEW',
+              : reviewAction.code === 'ASSIST'
+                ? 'CASE_ASSIST'
+                : 'CASE_REVIEW',
         targetType: 'case',
         targetId: String(caseId),
         metadata: {
           reviewAction: reviewAction.code,
           completionOutcome: reviewAction.completionOutcomeCode,
+          targetWorkflowPhase: reviewAction.targetWorkflowPhaseCode,
           resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
         },
         ip: null,

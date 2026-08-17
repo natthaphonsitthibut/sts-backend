@@ -31,54 +31,41 @@ describe('AttendanceRepository', () => {
     };
   }
 
-  it('includes the active link time range in the attendance task list', async () => {
+  it('persists the per-student mark time alongside the server recorded time', async () => {
     const { queries, repository } = createRepository();
+    const executor = {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+    };
 
-    await repository.listAttendanceTasks();
+    await repository.upsertAttendanceBatch(
+      {
+        studentIds: ['00000000-0000-4000-8000-000000000001'],
+        statusCodes: [1],
+        markedAt: ['2026-07-07T01:05:00.000Z'],
+        date: '2026-07-07',
+        period: 1,
+        recordedBy: 'teacher',
+        sessionId: '11111111-1111-4111-8111-111111111111',
+        metadata: {
+          SchoolID_Onec: 10010002,
+          GradeLevelID_Onec: 1,
+          RoomID_Onec: 1,
+          AcademicYear_Onec: 2026,
+          Semester_Onec: 1,
+        },
+      },
+      executor,
+    );
 
-    expect(queries).toHaveLength(1);
-    expect(queries[0].sql).toContain('tl.created_at as active_link_created_at');
-    expect(queries[0].sql).toContain('tl.expires_at as active_link_expires_at');
-    expect(queries[0].sql).toContain("WHEN sess.status = 'SUBMITTED' THEN 'COMPLETED'");
-    expect(queries[0].sql).toContain('FROM attendance_sessions attendance_session');
-  });
-
-  it('includes the active link time range in the paginated task list', async () => {
-    const { queries, repository } = createRepository();
-
-    await repository.listAttendanceTasksPaginated(undefined, {
-      page: 1,
-      limit: 20,
-    });
-
-    const listQuery = queries.at(-1);
-    expect(listQuery?.sql).toContain('tl.created_at as active_link_created_at');
-    expect(listQuery?.sql).toContain('tl.expires_at as active_link_expires_at');
-    expect(listQuery?.sql).toContain('tl.expires_at <= NOW()');
-    expect(listQuery?.sql).toContain('AS link_state');
-    expect(listQuery?.sql).toContain("WHEN sess.status = 'SUBMITTED' THEN 'COMPLETED'");
-    expect(listQuery?.sql).toContain('FROM attendance_sessions attendance_session');
-  });
-
-  it('applies every selected school area filter to paginated tasks', async () => {
-    const { queries, repository } = createRepository();
-
-    await repository.listAttendanceTasksPaginated(undefined, {
-      page: 1,
-      limit: 20,
-      province: 'ขอนแก่น',
-      district: 'เมืองขอนแก่น',
-      subDistrict: 'ในเมือง',
-    });
-
-    const filteredQueries = queries.slice(1);
-    expect(filteredQueries).toHaveLength(2);
-    for (const query of filteredQueries) {
-      expect(query.sql).toContain('sc.province = $1');
-      expect(query.sql).toContain('sc.district = $2');
-      expect(query.sql).toContain('sc.sub_district = $3');
-    }
-    expect(filteredQueries[0].params).toEqual(['ขอนแก่น', 'เมืองขอนแก่น', 'ในเมือง']);
+    // RecordedAt stays server-generated; only marked_at comes from the payload.
+    expect(queries[0].sql).toContain('marked_at');
+    expect(queries[0].sql).toContain('"RecordedAt" = now()');
+    expect(queries[0].sql).toContain('marked_at = EXCLUDED.marked_at');
+    expect(queries[0].sql).toContain('$13::timestamptz[]');
+    expect(queries[0].params?.[12]).toEqual(['2026-07-07T01:05:00.000Z']);
   });
 
   it('filters the attendance roster through current enrollment policy', async () => {
@@ -93,9 +80,12 @@ describe('AttendanceRepository', () => {
     expect(queries[0].sql).toContain(
       'LEFT JOIN student_person person ON person.person_uuid = s.person_uuid',
     );
-    expect(queries[0].sql).toContain('LEFT JOIN student_risk_profiles profile');
-    expect(queries[0].sql).toContain('profile.term_absent_days');
-    expect(queries[0].sql).toContain('profile.absence_reset_after_date');
+    expect(queries[0].sql).toContain('LEFT JOIN student_risk_profiles risk');
+    expect(queries[0].sql).toContain('risk.term_absent_days');
+    expect(queries[0].sql).toContain('risk.absence_reset_after_date');
+    // Shared roster SQL: both rosters must keep serving หมายเหตุ and ความเสี่ยง.
+    expect(queries[0].sql).toContain('risk.risk_tier');
+    expect(queries[0].sql).toContain('classroom_student_comments');
     expect(queries[0].sql).not.toContain('FROM attendance a');
   });
 
@@ -132,6 +122,7 @@ describe('AttendanceRepository', () => {
       {
         studentIds: ['00000000-0000-4000-8000-000000000001'],
         statusCodes: [1],
+        markedAt: ['2026-07-07T01:05:00.000Z'],
         date: '2026-07-07',
         period: 1,
         recordedBy: 'teacher',
@@ -167,6 +158,7 @@ describe('AttendanceRepository', () => {
       {
         studentIds: ['00000000-0000-4000-8000-000000000001'],
         statusCodes: [2],
+        markedAt: [null],
         date: '2026-07-07',
         period: 3,
         sessionKind: 'SUBJECT',

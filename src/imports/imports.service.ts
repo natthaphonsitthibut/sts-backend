@@ -15,7 +15,6 @@ import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { normalizeScalar } from '../common/utils/helpers';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
-import { NotificationsService } from '../notifications/notifications.service';
 import { maskPiiValue } from '../students/pii-fields.config';
 import { isXlsxBuffer, looksLikeTextBuffer } from '../common/file-upload/file-signature.util';
 import { ImportsRepository, type QuarantineLookupRow } from './imports.repository';
@@ -175,7 +174,7 @@ export interface ImportPreviewResult {
 
 interface TeacherImportRow {
   rowNumber: number;
-  username: string;
+  citizenId: string;
   startedOn: string | null;
 }
 
@@ -187,7 +186,7 @@ export interface TeacherImportPreviewResult {
   rowsToQuarantine: number;
   sampleRows: Array<{
     rowNumber: number;
-    username: string;
+    citizenId: string;
     displayName: string;
     action: 'insert' | 'skip' | 'quarantine';
     issue: string | null;
@@ -244,7 +243,6 @@ export class ImportsService {
   constructor(
     private readonly importsRepository: ImportsRepository,
     private readonly auditLog: AuditLogService,
-    private readonly notificationsService?: NotificationsService,
   ) {}
 
   getCatalog(actor: AuthenticatedRequestUser) {
@@ -736,14 +734,14 @@ export class ImportsService {
     requestedMapping: Record<string, string> = {},
   ): TeacherImportRow[] {
     const mapping = this.resolveCatalogMapping('school_teacher_membership', requestedMapping, data);
-    const usernameHeader = mapping.username;
-    if (!usernameHeader) {
-      throw new BadRequestException('ไม่พบคอลัมน์ username หรือ ชื่อผู้ใช้');
+    const citizenIdHeader = mapping.citizenId;
+    if (!citizenIdHeader) {
+      throw new BadRequestException('ไม่พบคอลัมน์ citizenId หรือ เลขประจำตัวประชาชนครู');
     }
     const startedOnHeader = mapping.startedOn;
     return data.map((row, index) => ({
       rowNumber: index + 2,
-      username: normalizeScalar(row[usernameHeader]).toLowerCase(),
+      citizenId: normalizeScalar(row[citizenIdHeader]),
       startedOn: startedOnHeader ? normalizeScalar(row[startedOnHeader]) || null : null,
     }));
   }
@@ -771,14 +769,18 @@ export class ImportsService {
 
   private teacherImportIssue(
     row: TeacherImportRow,
-    duplicateUsernames: ReadonlySet<string>,
+    duplicateCitizenIds: ReadonlySet<string>,
     candidate?: {
       is_eligible: boolean;
       is_active_member: boolean;
     },
   ): { reason: ImportQuarantineReason | null; label: string | null; skip: boolean } {
-    if (!row.username) {
-      return { reason: 'BLANK_TEACHER_USERNAME', label: 'ไม่มีชื่อผู้ใช้ครู', skip: false };
+    if (!row.citizenId) {
+      return {
+        reason: 'BLANK_TEACHER_CITIZEN_ID',
+        label: 'ไม่มีเลขประจำตัวประชาชนครู',
+        skip: false,
+      };
     }
     if (!this.isValidIsoDate(row.startedOn)) {
       return {
@@ -787,18 +789,14 @@ export class ImportsService {
         skip: false,
       };
     }
-    if (duplicateUsernames.has(row.username)) {
-      return { reason: 'DUPLICATE_TEACHER_ROW', label: 'บัญชีครูซ้ำในไฟล์', skip: false };
+    if (duplicateCitizenIds.has(row.citizenId)) {
+      return { reason: 'DUPLICATE_TEACHER_ROW', label: 'ครูซ้ำในไฟล์', skip: false };
     }
     if (!candidate) {
-      return { reason: 'TEACHER_ACCOUNT_NOT_FOUND', label: 'ไม่พบบัญชีครูในระบบ', skip: false };
+      return { reason: 'TEACHER_NOT_FOUND', label: 'ไม่พบครูในระบบ', skip: false };
     }
     if (!candidate.is_eligible) {
-      return {
-        reason: 'INVALID_TEACHER_PERMISSION',
-        label: 'บัญชีไม่มีสิทธิ์ปฏิบัติงานครู',
-        skip: false,
-      };
+      return { reason: 'INACTIVE_TEACHER', label: 'ครูคนนี้ไม่ได้เปิดใช้งาน', skip: false };
     }
     if (candidate.is_active_member) return { reason: null, label: null, skip: true };
     return { reason: null, label: null, skip: false };
@@ -816,30 +814,30 @@ export class ImportsService {
       throw new BadRequestException('The uploaded file is empty or unreadable');
     const counts = new Map<string, number>();
     for (const row of rows) {
-      if (row.username) counts.set(row.username, (counts.get(row.username) ?? 0) + 1);
+      if (row.citizenId) counts.set(row.citizenId, (counts.get(row.citizenId) ?? 0) + 1);
     }
     const duplicates = new Set(
-      [...counts].filter(([, count]) => count > 1).map(([username]) => username),
+      [...counts].filter(([, count]) => count > 1).map(([citizenId]) => citizenId),
     );
     const candidates = await this.importsRepository.findTeacherImportCandidates(
       [...counts.keys()],
       schoolId,
     );
-    const candidatesByUsername = new Map(
-      candidates.map((candidate) => [candidate.username.toLowerCase(), candidate]),
+    const candidatesByCitizenId = new Map(
+      candidates.map((candidate) => [candidate.citizen_id, candidate]),
     );
     let rowsReady = 0;
     let rowsSkipped = 0;
     let rowsToQuarantine = 0;
     const sampleRows = rows.slice(0, IMPORT_PREVIEW_SAMPLE_LIMIT).map((row) => {
-      const candidate = candidatesByUsername.get(row.username);
+      const candidate = candidatesByCitizenId.get(row.citizenId);
       const issue = this.teacherImportIssue(row, duplicates, candidate);
       if (issue.reason) rowsToQuarantine += 1;
       else if (issue.skip) rowsSkipped += 1;
       else rowsReady += 1;
       return {
         rowNumber: row.rowNumber,
-        username: row.username || '-',
+        citizenId: row.citizenId || '-',
         displayName: candidate?.display_name ?? '-',
         action: issue.reason
           ? ('quarantine' as const)
@@ -853,7 +851,7 @@ export class ImportsService {
       const issue = this.teacherImportIssue(
         row,
         duplicates,
-        candidatesByUsername.get(row.username),
+        candidatesByCitizenId.get(row.citizenId),
       );
       if (issue.reason) rowsToQuarantine += 1;
       else if (issue.skip) rowsSkipped += 1;
@@ -892,24 +890,24 @@ export class ImportsService {
       return await this.importsRepository.withTransaction(async (executor) => {
         const counts = new Map<string, number>();
         for (const row of rows) {
-          if (row.username) counts.set(row.username, (counts.get(row.username) ?? 0) + 1);
+          if (row.citizenId) counts.set(row.citizenId, (counts.get(row.citizenId) ?? 0) + 1);
         }
         const duplicates = new Set(
-          [...counts].filter(([, count]) => count > 1).map(([username]) => username),
+          [...counts].filter(([, count]) => count > 1).map(([citizenId]) => citizenId),
         );
         const candidates = await this.importsRepository.findTeacherImportCandidates(
           [...counts.keys()],
           schoolId,
           executor,
         );
-        const candidatesByUsername = new Map(
-          candidates.map((candidate) => [candidate.username.toLowerCase(), candidate]),
+        const candidatesByCitizenId = new Map(
+          candidates.map((candidate) => [candidate.citizen_id, candidate]),
         );
         let inserted = 0;
         let skipped = 0;
         let quarantined = 0;
         for (const row of rows) {
-          const candidate = candidatesByUsername.get(row.username);
+          const candidate = candidatesByCitizenId.get(row.citizenId);
           const issue = this.teacherImportIssue(row, duplicates, candidate);
           if (issue.reason) {
             await this.importsRepository.quarantineImportRow(
@@ -920,11 +918,11 @@ export class ImportsService {
                 rowFingerprint: this.fingerprint({
                   target: 'school_teacher_membership',
                   schoolId,
-                  username: row.username,
+                  citizenId: row.citizenId,
                   startedOn: row.startedOn,
                 }),
                 reasonCode: issue.reason,
-                mappedValues: { username: row.username, startedOn: row.startedOn },
+                mappedValues: { citizenId: row.citizenId, startedOn: row.startedOn },
                 actorUserId,
               },
               executor,
@@ -939,7 +937,7 @@ export class ImportsService {
           const membershipId = await this.importsRepository.insertTeacherImportMembership(
             {
               schoolId,
-              teacherUserId: candidate.user_id,
+              teacherId: Number(candidate.teacher_id),
               startedOn: row.startedOn,
               actorUserId,
             },
@@ -1111,8 +1109,8 @@ export class ImportsService {
     classroomId: number,
     executor?: QueryExecutor,
   ): Promise<StructureRowEvaluation[]> {
-    const usernames = [
-      ...new Set(rows.map((row) => row.values.username?.trim().toLowerCase()).filter(Boolean)),
+    const citizenIds = [
+      ...new Set(rows.map((row) => row.values.citizenId?.trim()).filter(Boolean)),
     ];
     const subjectIds = [
       ...new Set(
@@ -1122,38 +1120,35 @@ export class ImportsService {
       ),
     ];
     const [memberships, knownSubjectIds, existing] = await Promise.all([
-      this.importsRepository.findAssignmentTeacherReferences(schoolId, usernames, executor),
+      this.importsRepository.findAssignmentTeacherReferences(schoolId, citizenIds, executor),
       this.importsRepository.findExistingSubjectIds(subjectIds, executor),
       this.importsRepository.findClassroomAssignmentReferences(schoolId, classroomId, executor),
     ]);
-    const membershipByUsername = new Map(
-      memberships.map((membership) => [
-        membership.username.toLowerCase(),
-        membership.membership_id,
-      ]),
+    const membershipByCitizenId = new Map(
+      memberships.map((membership) => [membership.citizen_id, membership.membership_id]),
     );
     const knownSubjects = new Set(knownSubjectIds);
     const duplicateCounts = new Map<string, number>();
     for (const row of rows) {
-      const username = row.values.username?.trim().toLowerCase() ?? '';
+      const citizenId = row.values.citizenId?.trim() ?? '';
       const kind = row.values.assignmentKind?.trim().toUpperCase() ?? '';
       const subjectId = Number(row.values.subjectId);
-      const key = kind === 'HOMEROOM' ? 'HOMEROOM' : `${kind}:${username}:${subjectId}`;
+      const key = kind === 'HOMEROOM' ? 'HOMEROOM' : `${kind}:${citizenId}:${subjectId}`;
       duplicateCounts.set(key, (duplicateCounts.get(key) ?? 0) + 1);
     }
     return rows.map((row) => {
-      const username = row.values.username?.trim().toLowerCase() ?? '';
+      const citizenId = row.values.citizenId?.trim() ?? '';
       const assignmentKind = row.values.assignmentKind?.trim().toUpperCase() ?? '';
       const subjectRaw = row.values.subjectId?.trim() ?? '';
       const subjectId = subjectRaw ? Number(subjectRaw) : null;
       const effectiveOn = row.values.effectiveOn?.trim() || null;
       const effectiveUntil = row.values.effectiveUntil?.trim() || null;
-      if (!username) {
+      if (!citizenId) {
         return {
           row,
           action: 'quarantine',
           reason: 'MISSING_IMPORT_FIELD',
-          issue: 'ไม่มีชื่อผู้ใช้ครู',
+          issue: 'ไม่มีเลขประจำตัวประชาชนครู',
         };
       }
       if (assignmentKind !== 'HOMEROOM' && assignmentKind !== 'SUBJECT') {
@@ -1188,7 +1183,7 @@ export class ImportsService {
           issue: 'ช่วงวันที่การมอบหมายไม่ถูกต้อง',
         };
       }
-      const teacherMembershipId = membershipByUsername.get(username);
+      const teacherMembershipId = membershipByCitizenId.get(citizenId);
       if (!teacherMembershipId) {
         return {
           row,
@@ -1206,7 +1201,7 @@ export class ImportsService {
         };
       }
       const duplicateKey =
-        assignmentKind === 'HOMEROOM' ? 'HOMEROOM' : `${assignmentKind}:${username}:${subjectId}`;
+        assignmentKind === 'HOMEROOM' ? 'HOMEROOM' : `${assignmentKind}:${citizenId}:${subjectId}`;
       if ((duplicateCounts.get(duplicateKey) ?? 0) > 1) {
         return {
           row,
@@ -1481,15 +1476,15 @@ export class ImportsService {
       return {
         ...preview,
         targetLabel: getImportTargetDefinition(target)!.label,
-        canImport: Boolean(mapping.username),
+        canImport: Boolean(mapping.citizenId),
         headers: this.getWorksheetHeaders(data),
         mapping,
         rowsToInsert: preview.rowsReady,
-        missingRequiredColumns: mapping.username ? [] : ['username'],
+        missingRequiredColumns: mapping.citizenId ? [] : ['citizenId'],
         unmappedHeaders: this.catalogUnmappedHeaders(data, mapping),
         sampleRows: preview.sampleRows.map((row) => ({
           ...row,
-          values: { username: row.username, displayName: row.displayName },
+          values: { citizenId: row.citizenId, displayName: row.displayName },
           issues: row.issue ? [row.issue] : [],
         })),
       };
@@ -1527,7 +1522,7 @@ export class ImportsService {
       const schoolId = this.requirePositiveContextId(context, 'schoolId');
       const data = this.readWorksheetRows(file);
       const mapping = this.resolveCatalogMapping(target, this.parseMapping(mappingStr), data);
-      if (!mapping.username) throw new BadRequestException('คอลัมน์บังคับไม่ครบ: username');
+      if (!mapping.citizenId) throw new BadRequestException('คอลัมน์บังคับไม่ครบ: citizenId');
       const result = await this.processTeacherImport(file, schoolId, actor, auditMeta, mapping);
       return { ...result, target, rowsUpdated: 0 };
     }
@@ -2442,28 +2437,12 @@ export class ImportsService {
         );
         return result;
       });
-      if (actorUserId !== null) {
-        await this.notificationsService?.notifyImportCompleted({
-          batchId,
-          actorUserId,
-          targetLabel: this.getTargetLabel(validTarget),
-          importedRows: result.rowsInserted + result.rowsUpdated,
-          quarantinedRows: result.rowsQuarantined,
-        });
-      }
       return result;
     } catch (error) {
       try {
         await this.importsRepository.failImportBatch(batchId);
       } catch {
         this.logger.error(`Failed to persist FAILED status for ${validTarget} import batch`);
-      }
-      if (actorUserId !== null) {
-        await this.notificationsService?.notifyImportFailed({
-          batchId,
-          actorUserId,
-          targetLabel: this.getTargetLabel(validTarget),
-        });
       }
       throw error;
     }
@@ -2676,7 +2655,11 @@ export class ImportsService {
       student: {
         personIdMasked: this.maskIdentifier(values['PersonID_Onec']),
         firstName:
-          normalizeScalar(values['FirstName_Onec']) || normalizeScalar(values['username']) || '-',
+          // A quarantined teacher row has no name column — the citizen id is the
+          // only identifier it carries, and it is masked like every other one.
+          normalizeScalar(values['FirstName_Onec']) ||
+          (values['citizenId'] ? this.maskIdentifier(values['citizenId']) : '') ||
+          '-',
         lastName: normalizeScalar(values['LastName_Onec']) || '-',
         academicYear: normalizeScalar(values['AcademicYear_Onec']) || '-',
         semester: normalizeScalar(values['Semester_Onec']) || '-',

@@ -6,7 +6,7 @@ const ALL_THROTTLERS: ThrottleName[] = [
   'login',
   'otpRequest',
   'otpVerify',
-  'mockLogin',
+  'araidLogin',
   'geocode',
   'followerApplication',
   'campaignLookup',
@@ -36,7 +36,7 @@ function only(name: ThrottleName) {
 export const ThrottleLogin = () => only('login');
 export const ThrottleOtpRequest = () => only('otpRequest');
 export const ThrottleOtpVerify = () => only('otpVerify');
-export const ThrottleMockLogin = () => only('mockLogin');
+export const ThrottleAraIdLogin = () => only('araidLogin');
 export const ThrottleGeocode = () => only('geocode');
 export const ThrottleFollowerApplication = () => only('followerApplication');
 export const ThrottleCampaignLookup = () => only('campaignLookup');

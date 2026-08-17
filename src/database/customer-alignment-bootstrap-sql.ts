@@ -145,11 +145,49 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_user_classroom_favorites_order
     ON user_classroom_favorites (user_id, created_at DESC, classroom_id);
 
+  CREATE TABLE IF NOT EXISTS classroom_student_problem_categories (
+    code VARCHAR(32) PRIMARY KEY,
+    label_th VARCHAR(120) NOT NULL,
+    guidance_th VARCHAR(200),
+    sort_order SMALLINT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_classroom_student_problem_categories_code
+      CHECK (code = UPPER(BTRIM(code)) AND CHAR_LENGTH(code) BETWEEN 1 AND 32),
+    CONSTRAINT chk_classroom_student_problem_categories_label
+      CHECK (label_th = BTRIM(label_th) AND CHAR_LENGTH(label_th) BETWEEN 1 AND 120),
+    CONSTRAINT chk_classroom_student_problem_categories_guidance
+      CHECK (
+        guidance_th IS NULL OR (
+          guidance_th = BTRIM(guidance_th)
+          AND CHAR_LENGTH(guidance_th) BETWEEN 1 AND 200
+        )
+      ),
+    CONSTRAINT chk_classroom_student_problem_categories_sort_order CHECK (sort_order >= 0)
+  );
+  DROP TRIGGER IF EXISTS trg_classroom_student_problem_categories_set_updated_at
+    ON classroom_student_problem_categories;
+  CREATE TRIGGER trg_classroom_student_problem_categories_set_updated_at
+    BEFORE UPDATE ON classroom_student_problem_categories
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+  INSERT INTO classroom_student_problem_categories (
+    code, label_th, guidance_th, sort_order
+  ) VALUES
+    ('HEALTH', 'ปัญหาด้านสุขภาพ', 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ', 10),
+    ('SOCIAL_INTEGRATION', 'ปัญหาด้านการเข้าสังคม', 'เช่น ถูกเพื่อนกลั่นแกล้ง', 20),
+    ('ACADEMIC', 'ปัญหาด้านการเรียน', 'เช่น หมดไฟ, เรียนไม่ทัน', 30),
+    ('EMOTIONAL', 'ปัญหาด้านอารมณ์', 'เช่น เบื่อหน่าย, เครียด, ซึมเศร้า', 40),
+    ('FINANCIAL', 'ปัญหาด้านการเงิน', 'เช่น ไม่มีอุปกรณ์การเรียน/เครื่องแบบ', 50),
+    ('OTHER', 'อื่น ๆ', 'ระบุในคำอธิบาย', 60)
+  ON CONFLICT (code) DO NOTHING;
+
   CREATE TABLE IF NOT EXISTS classroom_student_comments (
     id BIGSERIAL PRIMARY KEY,
     classroom_id BIGINT NOT NULL,
     person_uuid UUID NOT NULL,
-    comment_text TEXT NOT NULL,
+    problem_category_code VARCHAR(32) NOT NULL,
+    problem_description TEXT NOT NULL,
     authored_by_user_id INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_classroom_student_comments_classroom
@@ -161,10 +199,13 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT fk_classroom_student_comments_author
       FOREIGN KEY (authored_by_user_id) REFERENCES users(id)
       ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_classroom_student_comments_text
+    CONSTRAINT fk_classroom_student_comments_problem_category
+      FOREIGN KEY (problem_category_code) REFERENCES classroom_student_problem_categories(code)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_classroom_student_comments_description
       CHECK (
-        comment_text = BTRIM(comment_text)
-        AND CHAR_LENGTH(comment_text) BETWEEN 1 AND 2000
+        problem_description = BTRIM(problem_description)
+        AND CHAR_LENGTH(problem_description) BETWEEN 1 AND 2000
       )
   );
   CREATE INDEX IF NOT EXISTS idx_classroom_student_comments_latest
@@ -570,7 +611,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT chk_teacher_access_grants_token_hash
       CHECK (token_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT chk_teacher_access_grants_step_up
-      CHECK (step_up_policy IN ('NONE', 'EMAIL_OTP', 'THAID')),
+      CHECK (step_up_policy IN ('NONE', 'EMAIL_OTP', 'ARAID')),
     CONSTRAINT chk_teacher_access_grants_validity
       CHECK (expires_at > issued_at),
     CONSTRAINT chk_teacher_access_grants_revocation
@@ -706,7 +747,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     student_uuid UUID NOT NULL,
     school_id INTEGER NOT NULL,
     author_kind VARCHAR(24) NOT NULL,
-    author_user_id INTEGER NOT NULL,
+    author_user_id INTEGER,
     author_teacher_membership_id BIGINT,
     source_teacher_access_grant_id UUID,
     source_assignment_id BIGINT,
@@ -763,6 +804,11 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
           AND source_assignment_id IS NOT NULL
         )
       ),
+    CONSTRAINT chk_student_observations_author_user
+      CHECK (
+        (author_kind = 'USER' AND (author_user_id IS NOT NULL OR observer_display_name IS NOT NULL))
+        OR (author_kind = 'TEACHER_ACCESS' AND author_user_id IS NULL)
+      ),
     CONSTRAINT chk_student_observations_observer_display_name
       CHECK (
         observer_display_name IS NULL
@@ -773,7 +819,10 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
         (
           source_task_link_id IS NULL
           AND source_timetable_slot_id IS NULL
-          AND observer_display_name IS NULL
+          AND (
+            observer_display_name IS NULL
+            OR (author_kind = 'USER' AND author_user_id IS NULL)
+          )
         )
         OR (
           author_kind = 'USER'
@@ -832,7 +881,8 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     comment_required BOOLEAN NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL,
     behavior_tag_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    changed_by_user_id INTEGER NOT NULL,
+    changed_by_user_id INTEGER,
+    changed_by_display_name VARCHAR(200),
     source_teacher_access_grant_id UUID,
     change_reason VARCHAR(500),
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -858,6 +908,19 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
       CHECK (
         (concern_level <> 'CONCERN' AND comment_required = FALSE)
         OR (comment IS NOT NULL AND length(trim(comment)) > 0)
+      ),
+    CONSTRAINT chk_student_observation_revisions_changed_by
+      CHECK (
+        num_nonnulls(
+          changed_by_user_id,
+          source_teacher_access_grant_id,
+          changed_by_display_name
+        ) >= 1
+      ),
+    CONSTRAINT chk_student_observation_revisions_changed_by_display_name
+      CHECK (
+        changed_by_display_name IS NULL
+        OR CHAR_LENGTH(BTRIM(changed_by_display_name)) BETWEEN 1 AND 200
       ),
     CONSTRAINT chk_student_observation_revisions_tag_ids
       CHECK (jsonb_typeof(behavior_tag_ids) = 'array'),
@@ -944,147 +1007,6 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_observation_risk_review_sources_observation
     ON student_observation_risk_review_sources (observation_id, observation_revision);
-
-  CREATE TABLE IF NOT EXISTS student_follow_up_requests (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    student_uuid UUID NOT NULL,
-    school_id INTEGER NOT NULL,
-    follow_up_request_type VARCHAR(32) NOT NULL DEFAULT 'HOME_VISIT_CONSIDERATION',
-    status VARCHAR(24) NOT NULL DEFAULT 'PENDING_REVIEW',
-    urgency VARCHAR(16) NOT NULL,
-    request_reason VARCHAR(1000) NOT NULL,
-    supplemental_note VARCHAR(2000),
-    requested_by INTEGER NOT NULL,
-    requester_teacher_membership_id BIGINT NOT NULL,
-    source_teacher_access_grant_id UUID,
-    source_assignment_id BIGINT NOT NULL,
-    review_decision VARCHAR(24),
-    review_reason VARCHAR(1000),
-    reviewed_by INTEGER,
-    reviewed_at TIMESTAMPTZ,
-    assigned_task_id UUID,
-    assigned_by INTEGER,
-    assigned_at TIMESTAMPTZ,
-    opened_case_id INTEGER,
-    revision_number INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT fk_follow_up_requests_enrollment_school
-      FOREIGN KEY (student_uuid, school_id)
-      REFERENCES student_term(student_uuid, "SchoolID_Onec")
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_school
-      FOREIGN KEY (school_id) REFERENCES schools(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_requester
-      FOREIGN KEY (requested_by) REFERENCES users(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_membership
-      FOREIGN KEY (requester_teacher_membership_id, school_id)
-      REFERENCES school_teacher_memberships(id, school_id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_teacher_grant
-      FOREIGN KEY (source_teacher_access_grant_id) REFERENCES teacher_access_grants(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_assignment
-      FOREIGN KEY (source_assignment_id) REFERENCES classroom_teacher_assignments(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_reviewer
-      FOREIGN KEY (reviewed_by) REFERENCES users(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_assigned_task
-      FOREIGN KEY (assigned_task_id) REFERENCES tasks(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_assigned_by
-      FOREIGN KEY (assigned_by) REFERENCES users(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_opened_case
-      FOREIGN KEY (opened_case_id) REFERENCES cases(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_requests_status
-      FOREIGN KEY (status) REFERENCES student_follow_up_request_statuses(code)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_follow_up_requests_type
-      CHECK (follow_up_request_type IN ('HOME_VISIT_CONSIDERATION')),
-    CONSTRAINT chk_follow_up_requests_urgency CHECK (urgency IN ('NORMAL', 'URGENT')),
-    CONSTRAINT chk_follow_up_requests_reason
-      CHECK (length(trim(request_reason)) BETWEEN 1 AND 1000),
-    CONSTRAINT chk_follow_up_requests_note
-      CHECK (supplemental_note IS NULL OR length(trim(supplemental_note)) BETWEEN 1 AND 2000),
-    CONSTRAINT chk_follow_up_requests_review_state
-      CHECK (
-        (status = 'PENDING_REVIEW' AND review_decision IS NULL AND review_reason IS NULL
-          AND reviewed_by IS NULL AND reviewed_at IS NULL)
-        OR
-        (status <> 'PENDING_REVIEW' AND review_decision = status
-          AND review_reason IS NOT NULL AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)
-      ),
-    CONSTRAINT chk_follow_up_requests_review_reason
-      CHECK (review_reason IS NULL OR length(trim(review_reason)) BETWEEN 1 AND 1000),
-    CONSTRAINT chk_follow_up_requests_assignment_state
-      CHECK (
-        (assigned_task_id IS NULL AND assigned_by IS NULL AND assigned_at IS NULL)
-        OR
-        (status = 'APPROVED'
-          AND assigned_task_id IS NOT NULL
-          AND assigned_by IS NOT NULL
-          AND assigned_at IS NOT NULL)
-      ),
-    CONSTRAINT chk_follow_up_requests_revision CHECK (revision_number > 0)
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_up_requests_pending_type
-    ON student_follow_up_requests (student_uuid, follow_up_request_type)
-    WHERE status = 'PENDING_REVIEW';
-  CREATE INDEX IF NOT EXISTS idx_follow_up_requests_school_queue
-    ON student_follow_up_requests (school_id, status, urgency, created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_follow_up_requests_student_history
-    ON student_follow_up_requests (student_uuid, created_at DESC);
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_up_requests_assigned_task
-    ON student_follow_up_requests (assigned_task_id)
-    WHERE assigned_task_id IS NOT NULL;
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_up_requests_opened_case
-    ON student_follow_up_requests (opened_case_id)
-    WHERE opened_case_id IS NOT NULL;
-
-  CREATE TABLE IF NOT EXISTS student_follow_up_request_sources (
-    follow_up_request_id UUID NOT NULL,
-    observation_id BIGINT NOT NULL,
-    observation_revision INTEGER NOT NULL,
-    added_by INTEGER NOT NULL,
-    source_teacher_access_grant_id UUID,
-    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT pk_follow_up_request_sources PRIMARY KEY (follow_up_request_id, observation_id),
-    CONSTRAINT fk_follow_up_request_sources_request
-      FOREIGN KEY (follow_up_request_id) REFERENCES student_follow_up_requests(id)
-      ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_request_sources_observation_revision
-      FOREIGN KEY (observation_id, observation_revision)
-      REFERENCES student_observation_revisions(observation_id, revision_number)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_request_sources_actor
-      FOREIGN KEY (added_by) REFERENCES users(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_follow_up_request_sources_teacher_grant
-      FOREIGN KEY (source_teacher_access_grant_id) REFERENCES teacher_access_grants(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_follow_up_request_sources_revision CHECK (observation_revision > 0)
-  );
-  CREATE INDEX IF NOT EXISTS idx_follow_up_request_sources_observation
-    ON student_follow_up_request_sources (observation_id, observation_revision);
-
-  DO $follow_up_updated_at_trigger$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_trigger
-      WHERE tgname = 'trg_student_follow_up_requests_set_updated_at'
-        AND tgrelid = 'student_follow_up_requests'::regclass AND NOT tgisinternal
-    ) THEN
-      CREATE TRIGGER trg_student_follow_up_requests_set_updated_at
-        BEFORE UPDATE ON student_follow_up_requests
-        FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-    END IF;
-  END;
-  $follow_up_updated_at_trigger$;
 
   CREATE TABLE IF NOT EXISTS student_observation_summaries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1225,22 +1147,19 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     AND NOT (default_permissions ? 'manage-school-structure');
 
   UPDATE roles
-  SET default_permissions = default_permissions || '["import-school-roster"]'::jsonb
+  SET default_permissions = default_permissions || '["import-data"]'::jsonb
   WHERE name IN ('ADMIN', 'DIRECTOR')
-    AND NOT (default_permissions ? 'import-school-roster');
+    AND NOT (default_permissions ? 'import-data');
 
   UPDATE roles
   SET default_permissions = default_permissions || '["manage-teacher-access"]'::jsonb
   WHERE name IN ('ADMIN', 'DIRECTOR')
     AND NOT (default_permissions ? 'manage-teacher-access');
 
+  -- Teacher comments live on the รายชื่อนักเรียน page since the permission
+  -- catalogue collapsed to one id per page; the separate observation ids are gone.
   UPDATE roles
-  SET default_permissions = default_permissions || '["manage-student-observations"]'::jsonb
+  SET default_permissions = default_permissions || '["students"]'::jsonb
   WHERE name IN ('ADMIN', 'DIRECTOR')
-    AND NOT (default_permissions ? 'manage-student-observations');
-
-  UPDATE roles
-  SET default_permissions = default_permissions || '["student-observations"]'::jsonb
-  WHERE name = 'TEACHER'
-    AND NOT (default_permissions ? 'student-observations');
+    AND NOT (default_permissions ? 'students');
 `;

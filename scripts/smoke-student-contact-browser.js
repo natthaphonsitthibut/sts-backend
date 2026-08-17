@@ -347,13 +347,7 @@ async function main() {
       passwordHash: await passwordService.hash(adminPassword),
       firstName: 'Contact',
       lastName: 'Browser Admin',
-      permissions: [
-        'students',
-        'edit-students',
-        'student-observations',
-        'manage-student-observations',
-        'dashboard',
-      ],
+      permissions: ['students', 'dashboard'],
       role: 'ADMIN',
       dataScope: { global: true },
     });

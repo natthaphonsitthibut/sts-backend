@@ -41,7 +41,7 @@ export interface ObservationEnrollmentRow extends Record<string, unknown> {
 export interface ObservationAssignmentRow extends Record<string, unknown> {
   assignment_id: string;
   teacher_membership_id: string;
-  teacher_user_id: number;
+  teacher_id: string;
   school_id: number;
   school_term_id: string;
   classroom_id: string;
@@ -60,7 +60,7 @@ export interface StudentObservationRow extends Record<string, unknown> {
   student_uuid: string;
   school_id: number;
   author_kind: ObservationAuthorKind;
-  author_user_id: number;
+  author_user_id: number | null;
   author_username: string;
   author_display_name: string;
   author_teacher_membership_id: string | null;
@@ -96,7 +96,7 @@ export interface StudentObservationRevisionRow extends Record<string, unknown> {
   comment_required: boolean;
   observed_at: string | Date;
   behavior_tag_ids: string[];
-  changed_by_user_id: number;
+  changed_by_user_id: number | null;
   changed_by_display_name: string;
   source_teacher_access_grant_id: string | null;
   change_reason: string | null;

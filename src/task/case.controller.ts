@@ -27,7 +27,7 @@ export class CaseController {
   constructor(private readonly caseService: CaseService) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
+  @RequirePermission('dashboard')
   @Post()
   @HttpCode(HttpStatus.OK)
   async openCase(@Body() body: OpenCaseDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
@@ -35,7 +35,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
+  @RequirePermission('dashboard')
   @Get(':caseId')
   async getCase(
     @Param('caseId', ParseIntPipe) caseId: number,
@@ -45,7 +45,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
+  @RequirePermission('dashboard')
   @Post(':caseId/review')
   async reviewCase(
     @Param('caseId', ParseIntPipe) caseId: number,
@@ -66,7 +66,7 @@ export class CaseController {
 
   @Get(':caseId/tasks')
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
+  @RequirePermission('dashboard')
   async getCaseTasks(
     @Param('caseId', ParseIntPipe) caseId: number,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -85,7 +85,7 @@ export class CaseController {
 
   @Get(':caseId/reviews')
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
+  @RequirePermission('dashboard')
   async getCaseReviews(
     @Param('caseId', ParseIntPipe) caseId: number,
     @CurrentUser() actor?: AuthenticatedRequestUser,

@@ -39,7 +39,7 @@ const USERS = {
   calendarAdmin: {
     username: 'attendance_operations_browser_calendar_admin',
     firstName: 'Attendance Calendar Admin',
-    permissions: ['home', 'attendance-dashboard', 'manage-attendance-calendar'],
+    permissions: ['home', 'attendance-dashboard'],
   },
 };
 
@@ -378,10 +378,18 @@ function containsManageButtons(text) {
 
 async function assertAttendancePage(client, expectedManage, label) {
   await navigate(client, `${FRONTEND_URL}/attendance-operations`);
-  await waitFor(
-    async () => (await bodyText(client)).includes('ตรวจสถานะเช็คชื่อรายวัน'),
-    `${label} attendance operations page did not render`,
-  );
+  try {
+    await waitFor(
+      async () => (await bodyText(client)).includes('ตรวจสถานะเช็กชื่อรายวัน'),
+      `${label} attendance operations page did not render`,
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      client,
+      `JSON.stringify({ path: location.pathname, text: document.body.innerText.slice(0, 1000) })`,
+    );
+    throw new Error(`${errorMessage(error)}: ${diagnostic}`);
+  }
   await waitFor(
     async () => (await bodyText(client)).includes('ตรวจความครบถ้วน'),
     `${label} reconciliation section did not render`,
@@ -461,7 +469,7 @@ async function main() {
     await navigate(client, `${FRONTEND_URL}/attendance-operations`);
     await waitFor(
       async () =>
-        (await bodyText(client)).includes('ตรวจสถานะเช็คชื่อรายวัน') &&
+        (await bodyText(client)).includes('ตรวจสถานะเช็กชื่อรายวัน') &&
         (await bodyText(client)).includes('เพิ่มภาคเรียน'),
       'Mobile calendar-admin attendance operations page did not render',
     );

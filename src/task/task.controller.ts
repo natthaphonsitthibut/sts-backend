@@ -5,27 +5,24 @@ import {
   Get,
   Delete,
   Body,
+  Headers,
   Param,
-  Query,
   Req,
+  Res,
   HttpException,
   HttpStatus,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
-import type { Request } from 'express';
-import { AuthGuard, CurrentUser, PermissionsGuard, Public, RequirePermission } from '../auth';
+import type { Request, Response } from 'express';
+import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service';
+import { AuthGuard, CurrentUser, Public } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
-import { getBangkokDateString } from '../common/utils/date.util';
 import { appConfig } from '../config/app.config';
 import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decorators';
-import {
-  CreateTaskDto,
-  GetVisitLinksQueryDto,
-  SaveTaskAttendanceDto,
-  SaveTaskSubmissionDto,
-} from './dto/task.dto';
+import { CreateTaskDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import {
   getHeaderValue,
   getTaskErrorMessage,
@@ -39,6 +36,7 @@ export class TaskController {
     private readonly taskService: TaskService,
     @Inject(appConfig.KEY)
     private readonly runtimeConfig: ConfigType<typeof appConfig>,
+    private readonly araIdSessionCookie: AraIdSessionCookieService,
   ) {}
 
   private resolveStatusCode(err: unknown, fallbackStatus: HttpStatus): HttpStatus {
@@ -69,24 +67,6 @@ export class TaskController {
     return { data: await this.taskService.getVisitAssignees(req.user, studentId) };
   }
 
-  @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('review-cases')
-  @Get('visit-links')
-  async getVisitLinks(@Req() req: RequestWithActor, @Query() query: GetVisitLinksQueryDto) {
-    return await this.taskService.getVisitLinks(req.user, {
-      status: query.status,
-      searchTerm: query.searchTerm?.trim() || undefined,
-      province: query.province?.trim() || undefined,
-      district: query.district?.trim() || undefined,
-      subDistrict: query.subDistrict?.trim() || undefined,
-      schoolId: query.schoolId,
-      gradeLevelId: query.gradeLevelId,
-      room: query.room?.trim() || undefined,
-      page: query.page,
-      limit: query.limit,
-    });
-  }
-
   @Public()
   @Get(':token')
   async getTask(@Param('token') token: string, @Req() req: Request) {
@@ -101,19 +81,6 @@ export class TaskController {
     return task;
   }
 
-  @Public()
-  @Get(':token/students')
-  async getTaskStudents(@Param('token') token: string) {
-    return await this.taskService.getTaskStudents(token);
-  }
-
-  @Public()
-  @Get(':token/history')
-  async getTaskHistory(@Param('token') token: string, @Query('date') date: string) {
-    const targetDate = date || getBangkokDateString();
-    return await this.taskService.getTaskHistory(token, targetDate);
-  }
-
   @Get(':taskId/chain')
   @UseGuards(AuthGuard)
   async getTaskChain(
@@ -125,17 +92,6 @@ export class TaskController {
       throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
     }
     return result;
-  }
-
-  @Public()
-  @Post(':token/attendance')
-  async saveTaskAttendance(
-    @Param('token') token: string,
-    @Body() body: SaveTaskAttendanceDto,
-    @Req() req: Request,
-  ) {
-    const sessionToken = getHeaderValue(req.headers['x-magic-session']);
-    return await this.taskService.saveTaskAttendance(token, body, sessionToken);
   }
 
   @Public()
@@ -161,6 +117,71 @@ export class TaskController {
   @Post(':token/verify')
   async verifyOtp(@Param('token') token: string, @Body('otp') otp: string) {
     return await this.taskService.verifyOtp(token, otp);
+  }
+
+  /**
+   * AraID verification for a follow-up/assistance link. Same QR → PIN → approve
+   * shape as the teacher link; the challenge itself is scoped to `task-link` so
+   * it can never be redeemed through another flow.
+   */
+  @Public()
+  @ThrottleOtpRequest()
+  @Post(':token/araid/challenge')
+  async createAraIdChallenge(@Param('token') token: string, @Req() request: Request) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return await this.taskService.createAraIdChallenge(token, baseUrl);
+  }
+
+  @Public()
+  @ThrottleOtpRequest()
+  @Post('araid/challenge/begin')
+  async beginAraIdChallenge(
+    @Headers('x-task-araid-challenge') rawChallenge: string | undefined,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const authorization = await this.taskService.beginTaskAraIdChallenge(
+      (rawChallenge ?? '').trim(),
+      this.araIdSessionCookie.readTaskLinkAuthorization(request.headers.cookie) ?? undefined,
+    );
+    this.araIdSessionCookie.setTaskLinkAuthorization(
+      response,
+      authorization.authorizationToken,
+      Math.max(1, Math.ceil((authorization.expiresAt - Date.now()) / 1000)),
+    );
+    return {
+      success: true,
+      data: { expiresAt: new Date(authorization.expiresAt).toISOString() },
+    };
+  }
+
+  @Public()
+  @ThrottleOtpVerify()
+  @Post('araid/challenge/approve')
+  async approveAraIdChallenge(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const session = this.araIdSessionCookie.readSessionIdentity(request.headers.cookie);
+    if (!session) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
+    const authorizationToken = this.araIdSessionCookie.readTaskLinkAuthorization(
+      request.headers.cookie,
+    );
+    if (!authorizationToken) throw new UnauthorizedException('การยืนยัน AraID หมดอายุแล้ว');
+    const result = await this.taskService.approveTaskAraIdChallenge(
+      authorizationToken,
+      session.profileId,
+      session.authenticatedAt,
+    );
+    this.araIdSessionCookie.clearTaskLinkAuthorization(response);
+    return result;
+  }
+
+  @Public()
+  @ThrottleOtpVerify()
+  @Post('araid/challenge/status')
+  async pollAraIdChallenge(@Headers('x-task-araid-challenge') rawChallenge: string | undefined) {
+    return await this.taskService.pollTaskAraIdChallenge((rawChallenge ?? '').trim());
   }
 
   @Post(':taskId/delete')

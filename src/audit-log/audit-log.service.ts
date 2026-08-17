@@ -221,6 +221,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'expiresAt', label: 'หมดอายุ' },
     ],
   },
+  TEACHER_ACCESS_GRANT_UPDATE: {
+    domain: 'tasks',
+    label: 'แก้ไขลิงก์เข้าใช้งานครู',
+    detailKeys: [
+      { key: 'startsAt', label: 'เริ่มต้น' },
+      { key: 'endsAt', label: 'สิ้นสุด' },
+    ],
+  },
   TEACHER_ACCESS_GRANT_REVOKE: {
     domain: 'tasks',
     label: 'ยกเลิกลิงก์เข้าใช้งานครู',
@@ -261,6 +269,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   TEACHER_ACCESS_ARAID_VERIFY: {
     domain: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ครูสำเร็จ',
+    detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
+  },
+  TASK_LINK_ARAID_VERIFY: {
+    domain: 'tasks',
+    label: 'ยืนยัน AraID ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
   TEACHER_ACCESS_ARAID_FAILED: {
@@ -461,12 +474,12 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     detailKeys: [{ key: 'schoolId', label: 'รหัสโรงเรียน' }],
   },
   LINK_LOCK: {
-    domain: 'login_links',
+    domain: 'tasks',
     label: 'ปิดลิงก์',
     detailKeys: [{ key: 'taskType', label: 'ประเภทลิงก์' }],
   },
   LINK_UNLOCK: {
-    domain: 'login_links',
+    domain: 'tasks',
     label: 'เปิดลิงก์อีกครั้ง',
     detailKeys: [{ key: 'taskType', label: 'ประเภทลิงก์' }],
   },
@@ -484,6 +497,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     domain: 'cases',
     label: 'ส่งต่อหน่วยงาน',
     detailKeys: [{ key: 'completionOutcome', label: 'ผลการดำเนินการ' }],
+  },
+  CASE_ASSIST: {
+    domain: 'cases',
+    label: 'ให้ความช่วยเหลือ',
+    detailKeys: [{ key: 'targetWorkflowPhase', label: 'ขั้นตอนถัดไป' }],
   },
   CASE_AUTO_CANCEL: {
     domain: 'cases',
@@ -535,7 +553,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   ATTENDANCE_SUBMIT: {
     domain: 'attendance',
-    label: 'บันทึกการเช็คชื่อ',
+    label: 'บันทึกการเช็กชื่อ',
     detailKeys: [
       { key: 'attendanceDate', label: 'วันที่' },
       { key: 'recordedCount', label: 'บันทึกแล้ว' },
@@ -545,7 +563,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   ATTENDANCE_REOPEN: {
     domain: 'attendance',
-    label: 'เปิดรอบเช็คชื่อเพื่อแก้ไข',
+    label: 'เปิดรอบเช็กชื่อเพื่อแก้ไข',
     detailKeys: [
       { key: 'attendanceDate', label: 'วันที่' },
       { key: 'revision', label: 'ครั้งที่แก้ไข' },
@@ -627,16 +645,22 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
 };
 
+/**
+ * Which page's permission opens each slice of the log. `student_accounts` and
+ * `student_accounts` covers a retired feature whose permission id left the
+ * catalogue years of migrations ago — its history is read from the page that owns
+ * that subject today, rather than being unreachable because it names a permission
+ * nobody can hold.
+ */
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
-  student_accounts: ['manage-student-accounts'],
+  student_accounts: ['manage-users-list'],
   imports: ['import-data'],
   users: ['manage-users-list'],
-  login_links: ['login-links'],
   students: ['students'],
-  cases: ['review-cases'],
-  tasks: ['create', 'review-cases', 'attendance-dashboard'],
+  cases: ['dashboard'],
+  tasks: ['dashboard', 'attendance-dashboard'],
   attendance: ['attendance', 'attendance-dashboard'],
-  timetable: ['manage-timetable'],
+  timetable: ['timetable'],
 };
 
 const LINK_HISTORY_ACTIONS: AuditAction[] = [
@@ -648,9 +672,8 @@ const LINK_HISTORY_ACTIONS: AuditAction[] = [
 ];
 
 const LINK_HISTORY_DOMAINS: Record<AuditLogTaskType, AuditLogDomain> = {
-  ATTENDANCE: 'tasks',
   VISIT: 'tasks',
-  LOGIN: 'login_links',
+  ASSIST: 'tasks',
 };
 
 @Injectable()

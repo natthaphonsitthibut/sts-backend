@@ -7,7 +7,7 @@ describe('AuditLogService', () => {
     id: 1,
     username: 'admin',
     roles: ['ADMIN'],
-    permissions: ['manage-student-accounts'],
+    permissions: ['manage-users-list'],
   };
 
   it('binds the action list as a PostgreSQL array parameter', async () => {
@@ -92,13 +92,13 @@ describe('AuditLogService', () => {
 
     await service.list(taskActor, {
       domain: 'tasks',
-      taskType: 'ATTENDANCE',
+      taskType: 'VISIT',
       page: 1,
       limit: 20,
     });
 
     expect(queries[0].sql).toContain("a.metadata ->> 'taskType' = $");
-    expect(queries[0].params).toContain('ATTENDANCE');
+    expect(queries[0].params).toContain('VISIT');
     expect(queries[0].params?.[0]).toEqual(
       expect.arrayContaining(['TASK_CREATE', 'LINK_LOCK', 'LINK_UNLOCK']),
     );
@@ -122,7 +122,7 @@ describe('AuditLogService', () => {
     await expect(
       service.list(taskActor, {
         domain: 'tasks',
-        taskType: 'ATTENDANCE',
+        taskType: 'VISIT',
         action: 'LINK_LOCK',
       }),
     ).resolves.toBeDefined();
@@ -133,8 +133,8 @@ describe('AuditLogService', () => {
 
     await expect(
       service.list(
-        { ...actor, permissions: ['attendance-dashboard'], data_scope: { global: true } },
-        { domain: 'tasks', taskType: 'LOGIN' },
+        { ...actor, permissions: ['students'], data_scope: { global: true } },
+        { domain: 'students', taskType: 'VISIT' },
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -142,8 +142,8 @@ describe('AuditLogService', () => {
   it('serves action labels from the backend definitions', () => {
     const service = new AuditLogService({} as never);
     const result = service.getActionOptions(
-      { ...actor, permissions: ['login-links'], data_scope: { global: true } },
-      { domain: 'login_links', taskType: 'LOGIN' },
+      { ...actor, permissions: ['dashboard'], data_scope: { global: true } },
+      { domain: 'tasks' },
     );
 
     expect(result.data).toEqual(
@@ -203,7 +203,7 @@ describe('AuditLogService', () => {
   it('filters history by target type and id', async () => {
     const taskActor: AuthenticatedRequestUser = {
       ...actor,
-      permissions: ['review-cases'],
+      permissions: ['dashboard'],
     };
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
@@ -236,7 +236,7 @@ describe('AuditLogService', () => {
   it('filters case history by case id across case and referral events', async () => {
     const caseActor: AuthenticatedRequestUser = {
       ...actor,
-      permissions: ['review-cases'],
+      permissions: ['dashboard'],
     };
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
@@ -284,7 +284,7 @@ describe('AuditLogService', () => {
       service.list(
         {
           ...actor,
-          permissions: ['manage-student-accounts'],
+          permissions: ['manage-users-list'],
         },
         {
           domain: 'cases',

@@ -11,7 +11,7 @@ describe('GetAuditLogQueryDto', () => {
   it('accepts valid target and task filters', () => {
     const errors = validateQuery({
       domain: 'tasks',
-      taskType: 'ATTENDANCE',
+      taskType: 'VISIT',
       targetType: 'task_link',
       targetId: 'link-1',
       page: '1',

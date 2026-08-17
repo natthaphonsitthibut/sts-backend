@@ -1,15 +1,14 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import {
-  GRANT_EXEMPT_PERMISSION_IDS,
   ROLE_BASELINES,
   ROLE_LABELS,
-  ROLE_RANKS,
   VALID_PERMISSION_IDS,
   getRoleScopeValidationError,
   type RoleScopeMode,
   type RoleScopePolicy,
 } from '../auth/permissions.constants';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
+import { canManageRole, roleReachesFurtherThanActor } from '../auth/role-authority';
 import type {
   CreateRoleGroupDto,
   CreateUserDto,
@@ -97,7 +96,6 @@ export class UsersPolicyService {
       id: Number(row.id),
       name: String(row.name),
       label: String(row.label),
-      rank: Number(row.rank) || 0,
       default_permissions: this.normalizePermissionList(row.default_permissions),
       scope_mode: this.normalizeScopeMode(row.scope_mode),
       scope_policy: row.scope_policy === 'OWN_ONLY' ? 'OWN_ONLY' : 'ASSIGNABLE',
@@ -105,8 +103,6 @@ export class UsersPolicyService {
       is_system: row.is_system === true,
       school_id: row.school_id == null ? null : Number(row.school_id),
       user_count: row.user_count !== undefined ? Number(row.user_count) || 0 : undefined,
-      login_link_count:
-        row.login_link_count !== undefined ? Number(row.login_link_count) || 0 : undefined,
     };
   }
 
@@ -121,19 +117,6 @@ export class UsersPolicyService {
   async getRoleMap(includeUsage = false): Promise<Map<string, RoleDefinition>> {
     const definitions = await this.getRoleDefinitions(includeUsage);
     return new Map(definitions.map((definition) => [definition.name, definition]));
-  }
-
-  getRoleRank(role?: string | null, roleMap?: Map<string, RoleDefinition>): number {
-    if (!role) {
-      return 0;
-    }
-
-    const dbRank = roleMap?.get(role)?.rank;
-    if (typeof dbRank === 'number' && dbRank > 0) {
-      return dbRank;
-    }
-
-    return roleMap ? 0 : ROLE_RANKS[role] || 0;
   }
 
   getRoleLabel(role?: string | null, roleMap?: Map<string, RoleDefinition>): string {
@@ -186,23 +169,13 @@ export class UsersPolicyService {
     return firstRole?.trim() || null;
   }
 
+  /** See `canManageRole` in auth/role-authority — the rule lives there. */
   canManageRole(
     actorRole?: string | null,
     targetRole?: string | null,
     roleMap?: Map<string, RoleDefinition>,
   ): boolean {
-    const actorRank = this.getRoleRank(actorRole, roleMap);
-    const targetRank = this.getRoleRank(targetRole, roleMap);
-
-    if (targetRank > actorRank) {
-      return false;
-    }
-
-    if (targetRank === actorRank && actorRole !== 'ADMIN') {
-      return false;
-    }
-
-    return true;
+    return canManageRole(actorRole, targetRole, roleMap ?? new Map<string, RoleDefinition>());
   }
 
   isScopeGlobal(scope: unknown): boolean {
@@ -271,9 +244,7 @@ export class UsersPolicyService {
       return true;
     }
 
-    return targetPermissions
-      .filter((permission) => !GRANT_EXEMPT_PERMISSION_IDS.includes(permission))
-      .every((permission) => grantablePermissions.includes(permission));
+    return targetPermissions.every((permission) => grantablePermissions.includes(permission));
   }
 
   resolveDisplayPermissions(
@@ -384,15 +355,13 @@ export class UsersPolicyService {
     const currentRoleMap = roleMap || (await this.getRoleMap());
     const actorRole = this.getPrimaryRole({ roles: actor.roles });
     const requestedRole = this.normalizeRole(data);
-    const actorRank = this.getRoleRank(actorRole, currentRoleMap);
-    const requestedRank = this.getRoleRank(requestedRole, currentRoleMap);
     const requestedDefinition = currentRoleMap.get(requestedRole);
 
     if (requestedDefinition?.is_assignable === false) {
       throw new BadRequestException(`ตำแหน่ง ${requestedRole} ไม่เปิดให้กำหนดกับบัญชีผู้ใช้`);
     }
 
-    if (requestedRank === 0) {
+    if (!requestedDefinition) {
       throw new ForbiddenException(`ไม่สามารถกำหนดตำแหน่ง ${requestedRole} ได้`);
     }
 
@@ -408,12 +377,15 @@ export class UsersPolicyService {
       }
     }
 
-    const exceedsRoleAuthority = options.allowEqualRole
-      ? requestedRank > actorRank
-      : requestedRank > actorRank || (requestedRank === actorRank && actorRole !== 'ADMIN');
-
-    if (exceedsRoleAuthority) {
-      throw new ForbiddenException('ไม่สามารถกำหนดตำแหน่งสูงกว่าหรือเทียบเท่าตำแหน่งของตนเองได้');
+    // Assigning a group is the same question as managing one: it may not reach
+    // a page the actor lacks. `allowEqualRole` keeps the one exception that
+    // existed before — handing out your own group.
+    const reachesFurther = roleReachesFurtherThanActor(actorRole, requestedRole, currentRoleMap);
+    if (
+      reachesFurther ||
+      (!options.allowEqualRole && requestedRole === actorRole && actorRole !== 'ADMIN')
+    ) {
+      throw new ForbiddenException('ไม่สามารถกำหนดตำแหน่งที่เข้าถึงหน้าที่ตนเองไม่มีได้');
     }
 
     const requestedPermissions = this.normalizePermissionList(data.permissions);
@@ -450,7 +422,6 @@ export class UsersPolicyService {
   ): {
     name: string;
     label: string;
-    rank: number;
     default_permissions: string[];
     scope_mode: RoleScopeMode;
     scope_policy: RoleScopePolicy;
@@ -471,11 +442,6 @@ export class UsersPolicyService {
       throw new BadRequestException('กรุณากรอกชื่อกลุ่มผู้ใช้งาน');
     }
 
-    const rank = Number(data.rank);
-    if (!Number.isInteger(rank) || rank < 1) {
-      throw new BadRequestException('ลำดับสิทธิ์ต้องเป็นตัวเลขจำนวนเต็มที่มากกว่าศูนย์');
-    }
-
     const defaultPermissions = this.normalizePermissionList(
       data.default_permissions ?? data.permissions,
     );
@@ -487,7 +453,6 @@ export class UsersPolicyService {
     return {
       name,
       label,
-      rank,
       default_permissions: defaultPermissions,
       scope_mode: this.normalizeScopeMode(data.scope_mode),
       scope_policy: existing?.scope_policy || 'ASSIGNABLE',

@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { GoneException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthGuard, PermissionsGuard } from '../auth';
@@ -29,6 +29,7 @@ describe('Teacher access controller security metadata', () => {
     'createAraIdChallenge',
     'approveAraIdChallenge',
     'pollAraIdChallenge',
+    'createStudentComment',
   ] as const)('marks public %s access as public but IP-throttled', (methodName) => {
     const handler = Object.getOwnPropertyDescriptor(
       PublicTeacherAccessController.prototype,
@@ -40,18 +41,16 @@ describe('Teacher access controller security metadata', () => {
     expect(methodGuards).toContain(ThrottlerGuard);
   });
 
-  it('requires an AraID session cookie before verifying a teacher link', () => {
+  it('rejects the legacy direct AraID verification endpoint', () => {
     const service = { verifyAraId: jest.fn() };
-    const araIdSessionCookie = { readProfileId: jest.fn().mockReturnValue(null) };
+    const araIdSessionCookie = {};
     const controller = new PublicTeacherAccessController(
       service as never,
       araIdSessionCookie as never,
       { frontendBaseUrl: 'https://sts.test' } as never,
     );
 
-    expect(() => controller.verifyAraId('link-token', { headers: {} } as never)).toThrow(
-      UnauthorizedException,
-    );
+    expect(() => controller.verifyAraId()).toThrow(GoneException);
     expect(service.verifyAraId).not.toHaveBeenCalled();
   });
 });

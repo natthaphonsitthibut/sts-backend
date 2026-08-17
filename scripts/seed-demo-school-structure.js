@@ -4,9 +4,8 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run demo school structure seed with NODE_ENV=production');
 }
 
-const { createHash, randomBytes } = require('crypto');
+const { createHash } = require('crypto');
 const appDataSource = require('../dist/database/typeorm.datasource').default;
-const { PasswordService } = require('../dist/auth/password.service');
 
 const AUDIT_ONLY = process.argv.includes('--audit-only');
 const LEGACY_SEED_SOURCE = 'DEMO_SCHOOL_STRUCTURE';
@@ -88,7 +87,7 @@ function studentName(index) {
   };
 }
 
-async function auditStructure(dataSource, expectedTeacherPasswordHash = null) {
+async function auditStructure(dataSource) {
   const [audit] = await dataSource.query(`
     WITH active_schools AS (
       SELECT id FROM schools WHERE school_status = 'ACTIVE'
@@ -123,11 +122,10 @@ async function auditStructure(dataSource, expectedTeacherPasswordHash = null) {
        AND membership.school_id = assignment.school_id
        AND membership.membership_status = 'ACTIVE'
        AND membership.deleted_at IS NULL
-      JOIN users teacher
-        ON teacher.id = membership.teacher_user_id
-       AND teacher.role = 'TEACHER'
-       AND teacher.status = 'ACTIVE'
-       AND teacher.data_scope @> jsonb_build_object('school_ids', jsonb_build_array(assignment.school_id))
+      JOIN teachers teacher
+        ON teacher.id = membership.teacher_id
+       AND teacher.teacher_status = 'ACTIVE'
+       AND teacher.deleted_at IS NULL
       WHERE assignment.assignment_kind = 'HOMEROOM'
         AND assignment.assignment_status = 'ACTIVE'
         AND assignment.deleted_at IS NULL
@@ -151,44 +149,36 @@ async function auditStructure(dataSource, expectedTeacherPasswordHash = null) {
       ) AS classrooms_without_valid_homeroom,
       (SELECT COUNT(*)::int FROM kindergarten_rosters WHERE student_count < $2) AS kindergarten_classrooms_below_minimum,
       (SELECT COALESCE(MIN(student_count), 0)::int FROM kindergarten_rosters) AS minimum_kindergarten_students,
+      (SELECT COUNT(*)::int FROM teachers
+        WHERE deleted_at IS NULL
+          AND lower(btrim(COALESCE(email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@sts-demo\\.ac\\.th$'
+      ) AS synthetic_teachers,
+      (SELECT COUNT(*)::int FROM teachers
+        WHERE deleted_at IS NULL
+          AND lower(btrim(COALESCE(email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@sts-demo\\.ac\\.th$'
+          AND teacher_status <> 'ACTIVE'
+      ) AS synthetic_teacher_status_issues,
+      (SELECT COUNT(*)::int FROM teachers teacher
+        WHERE teacher.deleted_at IS NULL
+          AND lower(btrim(COALESCE(teacher.email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@sts-demo\\.ac\\.th$'
+          AND NOT EXISTS (
+            SELECT 1 FROM school_teacher_memberships membership
+            WHERE membership.teacher_id = teacher.id
+              AND membership.membership_status = 'ACTIVE'
+              AND membership.deleted_at IS NULL
+          )
+      ) AS synthetic_teachers_without_membership,
+      -- Teachers do not sign in. A login account for one would be a regression,
+      -- not a fixture, so the audit fails on the first sign of one.
       (SELECT COUNT(*)::int FROM users
-        WHERE data_origin_code = 'DEMO'
-          AND role = 'TEACHER'
+        WHERE lower(btrim(COALESCE(email, ''))) LIKE '%@sts-demo.ac.th'
           AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
       ) AS synthetic_teacher_accounts,
-      (SELECT COUNT(*)::int FROM users
-        WHERE data_origin_code = 'DEMO'
-          AND role = 'TEACHER'
-          AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
-          AND (
-            must_change_password = TRUE
-            OR temporary_password_issued_at IS NOT NULL
-            OR temporary_password_expires_at IS NOT NULL
-          )
-      ) AS synthetic_teacher_password_state_issues,
-      (SELECT COUNT(*)::int FROM users
-        WHERE data_origin_code = 'DEMO'
-          AND role = 'TEACHER'
-          AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
-          AND (
-            email IS NULL
-            OR lower(email) <> lower(username || '@sts-demo.ac.th')
-          )
-      ) AS synthetic_teacher_email_issues,
-      CASE WHEN $4::text IS NULL THEN NULL ELSE (
-        SELECT COUNT(*)::int FROM users
-        WHERE data_origin_code = 'DEMO'
-          AND role = 'TEACHER'
-          AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
-          AND password IS DISTINCT FROM $4::text
-      ) END AS synthetic_teacher_password_hash_mismatches,
-      (SELECT COUNT(*)::int FROM users WHERE username LIKE 'demo_teacher_%') AS fixture_style_teacher_usernames,
       (SELECT COUNT(*)::int FROM student_person_identifier WHERE source = $3 AND deleted_at IS NULL) AS synthetic_students
   `, [
     KINDERGARTEN_LABELS,
     STUDENTS_PER_KINDERGARTEN_CLASSROOM,
     SEED_SOURCE,
-    expectedTeacherPasswordHash,
   ]);
 
   assert(audit.active_schools > 0, 'No active schools are available');
@@ -198,16 +188,17 @@ async function auditStructure(dataSource, expectedTeacherPasswordHash = null) {
   assert(audit.schools_without_k3 > 0, 'The demo set must include schools without อ.3');
   assert(audit.classrooms_without_valid_homeroom === 0, 'Some active classrooms have no valid homeroom teacher');
   assert(audit.kindergarten_classrooms_below_minimum === 0, 'Some kindergarten classrooms have too few students');
-  assert(audit.synthetic_teacher_password_state_issues === 0, 'Some demo teachers have an invalid temporary-password state');
-  assert(audit.synthetic_teacher_email_issues === 0, 'Some demo teachers have no realistic demo email');
-  if (expectedTeacherPasswordHash) {
-    assert(audit.synthetic_teacher_password_hash_mismatches === 0, 'Some demo teachers retained an older password hash');
-  }
-  assert(audit.fixture_style_teacher_usernames === 0, 'Fixture-style teacher usernames remain');
+  assert(audit.synthetic_teachers > 0, 'No generated demo teacher was found');
+  assert(audit.synthetic_teacher_status_issues === 0, 'Some generated demo teachers are not active');
+  assert(
+    audit.synthetic_teachers_without_membership === 0,
+    'Some generated demo teachers have no active school membership',
+  );
+  assert(audit.synthetic_teacher_accounts === 0, 'A generated demo teacher still has a login account');
   return audit;
 }
 
-async function seedStructure(dataSource, unusablePasswordHash) {
+async function seedStructure(dataSource) {
   const [actor] = await dataSource.query(`
     SELECT id
     FROM users
@@ -409,90 +400,45 @@ async function seedStructure(dataSource, unusablePasswordHash) {
       )
     `, [JSON.stringify(teacherPlan)]);
 
-    const [{ conflicting_usernames: conflictingUsernames }] = await manager.query(`
-      SELECT COUNT(*)::int AS conflicting_usernames
-      FROM demo_teacher_plan_20260716 plan
-      JOIN users target ON target.username IN (plan.legacy_username, plan.username)
-      WHERE target.data_origin_code NOT IN ('AUTOMATED_TEST', 'DEMO')
-         OR (
-           target.username = plan.username
-           AND EXISTS (
-             SELECT 1 FROM users legacy
-             WHERE legacy.username = plan.legacy_username AND legacy.id <> target.id
-           )
-         )
-    `);
-    assert(conflictingUsernames === 0, 'A generated teacher username belongs to another account');
-
     await manager.query(`
-      UPDATE users teacher
-      SET username = plan.username,
-          password = $1,
-          "FirstName" = plan.first_name,
-          "LastName" = plan.last_name,
-          email = plan.email,
-          data_origin_code = 'DEMO'
-      FROM demo_teacher_plan_20260716 plan
-      WHERE teacher.username = plan.legacy_username
-        AND teacher.data_origin_code IN ('AUTOMATED_TEST', 'DEMO')
-        AND NOT EXISTS (
-          SELECT 1 FROM users target
-          WHERE target.username = plan.username AND target.id <> teacher.id
-        )
-    `, [unusablePasswordHash]);
-
-    await manager.query(`
-      INSERT INTO users (
-        username, password, "FirstName", "LastName", email, role,
-        permissions, data_scope, affiliation, status, must_change_password,
-        data_origin_code
+      INSERT INTO teachers (
+        first_name, last_name, email, teacher_status, created_by, updated_by
       )
-      SELECT plan.username, $1, plan.first_name, plan.last_name, plan.email, 'TEACHER', $2::jsonb,
-        jsonb_build_object('school_ids', jsonb_build_array(plan.school_id)),
-        plan.school_name, 'ACTIVE', FALSE, 'DEMO'
+      SELECT plan.first_name, plan.last_name, plan.email, 'ACTIVE', $1::int, $1::int
       FROM demo_teacher_plan_20260716 plan
-      ON CONFLICT (username) DO UPDATE
-      SET password = EXCLUDED.password,
-          "FirstName" = EXCLUDED."FirstName",
-          "LastName" = EXCLUDED."LastName",
-          email = EXCLUDED.email,
-          role = 'TEACHER',
-          permissions = EXCLUDED.permissions,
-          data_scope = EXCLUDED.data_scope,
-          affiliation = EXCLUDED.affiliation,
-          status = 'ACTIVE',
-          must_change_password = FALSE,
-          temporary_password_issued_at = NULL,
-          temporary_password_expires_at = NULL,
-          deactivated_at = NULL,
-          deactivated_by = NULL,
-          deactivation_reason_code = NULL,
-          deactivation_note = NULL,
-          data_origin_code = 'DEMO'
-      WHERE users.data_origin_code IN ('AUTOMATED_TEST', 'DEMO')
-    `, [unusablePasswordHash, JSON.stringify(TEACHER_PERMISSIONS)]);
+      ON CONFLICT (lower(btrim(email))) WHERE email IS NOT NULL AND deleted_at IS NULL
+      DO UPDATE SET
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        teacher_status = 'ACTIVE',
+        deleted_at = NULL,
+        deleted_by = NULL,
+        updated_by = EXCLUDED.updated_by
+    `, [actor.id]);
 
-    const [{ missing_users: missingUsers }] = await manager.query(`
-      SELECT COUNT(*)::int AS missing_users
+    const [{ missing_teachers: missingTeachers }] = await manager.query(`
+      SELECT COUNT(*)::int AS missing_teachers
       FROM demo_teacher_plan_20260716 plan
-      LEFT JOIN users teacher
-        ON teacher.username = plan.username
-       AND teacher.data_origin_code = 'DEMO'
+      LEFT JOIN teachers teacher
+        ON lower(btrim(teacher.email)) = lower(btrim(plan.email))
+       AND teacher.deleted_at IS NULL
       WHERE teacher.id IS NULL
     `);
-    assert(missingUsers === 0, 'A generated teacher account could not be prepared safely');
+    assert(missingTeachers === 0, 'A generated teacher could not be prepared safely');
 
     await manager.query(`
       INSERT INTO school_teacher_memberships (
-        school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
+        school_id, teacher_id, membership_status, started_on, created_by, updated_by
       )
       SELECT DISTINCT plan.school_id, teacher.id, 'ACTIVE', CURRENT_DATE, $1::int, $1::int
       FROM demo_teacher_plan_20260716 plan
-      JOIN users teacher ON teacher.username = plan.username
+      JOIN teachers teacher
+        ON lower(btrim(teacher.email)) = lower(btrim(plan.email))
+       AND teacher.deleted_at IS NULL
       WHERE NOT EXISTS (
         SELECT 1 FROM school_teacher_memberships membership
         WHERE membership.school_id = plan.school_id
-          AND membership.teacher_user_id = teacher.id
+          AND membership.teacher_id = teacher.id
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
       )
@@ -511,13 +457,13 @@ async function seedStructure(dataSource, unusablePasswordHash) {
         AND NOT EXISTS (
           SELECT 1
           FROM school_teacher_memberships membership
-          JOIN users teacher ON teacher.id = membership.teacher_user_id
+          JOIN teachers teacher ON teacher.id = membership.teacher_id
           WHERE membership.id = assignment.teacher_membership_id
             AND membership.school_id = assignment.school_id
             AND membership.membership_status = 'ACTIVE'
             AND membership.deleted_at IS NULL
-            AND teacher.role = 'TEACHER'
-            AND teacher.status = 'ACTIVE'
+            AND teacher.teacher_status = 'ACTIVE'
+            AND teacher.deleted_at IS NULL
         )
     `, [actor.id]);
 
@@ -529,10 +475,12 @@ async function seedStructure(dataSource, unusablePasswordHash) {
       SELECT plan.school_id, plan.classroom_id, membership.id, NULL,
         'HOMEROOM', 'ACTIVE', CURRENT_DATE, $1::int, $1::int
       FROM demo_teacher_plan_20260716 plan
-      JOIN users teacher ON teacher.username = plan.username
+      JOIN teachers teacher
+        ON lower(btrim(teacher.email)) = lower(btrim(plan.email))
+       AND teacher.deleted_at IS NULL
       JOIN school_teacher_memberships membership
         ON membership.school_id = plan.school_id
-       AND membership.teacher_user_id = teacher.id
+       AND membership.teacher_id = teacher.id
        AND membership.membership_status = 'ACTIVE'
        AND membership.deleted_at IS NULL
       WHERE NOT EXISTS (
@@ -697,12 +645,10 @@ async function main() {
   await dataSource.initialize();
   try {
     let seedResult = null;
-    let expectedTeacherPasswordHash = null;
     if (!AUDIT_ONLY) {
-      expectedTeacherPasswordHash = await new PasswordService().hash(randomBytes(32).toString('hex'));
-      seedResult = await seedStructure(dataSource, expectedTeacherPasswordHash);
+      seedResult = await seedStructure(dataSource);
     }
-    const audit = await auditStructure(dataSource, expectedTeacherPasswordHash);
+    const audit = await auditStructure(dataSource);
     console.log(JSON.stringify({ mode: AUDIT_ONLY ? 'audit' : 'seed', seed: seedResult, audit }, null, 2));
   } finally {
     await dataSource.destroy();
