@@ -21,7 +21,7 @@ const MANAGER: AuthenticatedRequestUser = {
   id: 1,
   username: 'director',
   roles: ['DIRECTOR'],
-  permissions: ['manage-student-observations'],
+  permissions: ['students'],
   data_scope: { school_ids: [10] },
 };
 
@@ -29,7 +29,7 @@ const TEACHER: AuthenticatedRequestUser = {
   id: 44,
   username: 'teacher.one',
   roles: ['TEACHER'],
-  permissions: ['student-observations'],
+  permissions: ['students'],
   data_scope: { school_ids: [10], grade_levels: [11], room_ids: ['1'] },
 };
 
@@ -251,13 +251,16 @@ describe('StudentObservationsService', () => {
     expect(repository.createObservation).not.toHaveBeenCalled();
   });
 
-  it('fails closed for cross-school managers and mismatched teacher assignments', async () => {
+  it('fails closed for cross-school managers and unusable assignments', async () => {
     const { service, repository } = createHarness();
     repository.isEnrollmentInScope.mockResolvedValue(false);
     await expect(service.list(STUDENT_UUID, {}, MANAGER)).rejects.toBeInstanceOf(NotFoundException);
 
+    // The named assignment must still be active and still cover this student.
+    // Ownership is no longer part of it — a teacher has no account to own it
+    // with, and the writer's own scope was already checked above.
     repository.isEnrollmentInScope.mockResolvedValue(true);
-    repository.findActiveAssignment.mockResolvedValue({ ...ASSIGNMENT, teacher_user_id: 99 });
+    repository.findActiveAssignment.mockResolvedValue(null);
     await expect(
       service.create(
         STUDENT_UUID,
@@ -322,7 +325,7 @@ describe('StudentObservationsService', () => {
         {
           ...MANAGER,
           roles: ['EXECUTIVE'],
-          permissions: ['manage-student-observations'],
+          permissions: ['students'],
         },
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -382,7 +385,7 @@ describe('StudentObservationsService', () => {
     expect(repository.createObservation).toHaveBeenCalledWith(
       expect.objectContaining({
         authorKind: 'TEACHER_ACCESS',
-        authorUserId: 44,
+        authorUserId: null,
         authorTeacherMembershipId: 12,
         sourceTeacherAccessGrantId: '11111111-1111-4111-8111-111111111111',
       }),

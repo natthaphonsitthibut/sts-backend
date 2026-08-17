@@ -1,6 +1,6 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { AuthGuard, PermissionsGuard } from '../auth';
-import { PERMISSIONS_KEY } from '../auth/permissions.decorator';
+import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY } from '../auth/permissions.decorator';
 import {
   StudentClassroomCommentsController,
   StudentRiskReviewController,
@@ -14,9 +14,7 @@ describe('Observation review controller security metadata', () => {
       AuthGuard,
       PermissionsGuard,
     ]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, StudentRiskReviewController)).toEqual([
-      'manage-student-observations',
-    ]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, StudentRiskReviewController)).toEqual(['students']);
   });
 
   it('keeps the teacher comment report behind auth and manage permission', () => {
@@ -25,7 +23,7 @@ describe('Observation review controller security metadata', () => {
       PermissionsGuard,
     ]);
     expect(Reflect.getMetadata(PERMISSIONS_KEY, TeacherCommentReportsController)).toEqual([
-      'manage-student-observations',
+      'students',
     ]);
   });
 
@@ -35,18 +33,23 @@ describe('Observation review controller security metadata', () => {
       PermissionsGuard,
     ]);
     expect(Reflect.getMetadata(PERMISSIONS_KEY, TeacherWatchlistController)).toEqual([
-      'review-cases',
-      'manage-student-observations',
+      'dashboard',
+      'students',
     ]);
   });
 
-  it('protects classroom comment history with observation-manager permission', () => {
+  // Teacher comments are written from three pages, so any of them opens the
+  // history; the guard is an OR set rather than a single required permission.
+  it('opens classroom comment history to every page that writes one', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, StudentClassroomCommentsController)).toEqual([
       AuthGuard,
       PermissionsGuard,
     ]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, StudentClassroomCommentsController)).toEqual([
-      'manage-student-observations',
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, StudentClassroomCommentsController)).toEqual([
+      'students',
+      'classrooms',
+      'manage-school-structure',
+      'attendance',
     ]);
   });
 });

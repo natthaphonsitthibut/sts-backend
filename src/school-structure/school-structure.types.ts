@@ -52,10 +52,8 @@ export interface SchoolClassroomOptionRow extends Record<string, unknown> {
 export interface SchoolTeacherMembershipRow extends Record<string, unknown> {
   id: string;
   school_id: number;
-  /** Legacy login account. Null for teachers created without one — the name
-   * now comes from `teachers`, so nothing should key off this. */
-  teacher_user_id: number | null;
-  username: string | null;
+  /** `teachers.id` — the teacher this membership belongs to. */
+  teacher_id: string;
   display_name: string;
   membership_status: StructureStatus;
   started_on: string;
@@ -63,7 +61,8 @@ export interface SchoolTeacherMembershipRow extends Record<string, unknown> {
 }
 
 export interface SchoolTeacherCandidateRow extends Record<string, unknown> {
-  id: number;
+  /** `teachers.id`. */
+  id: string;
   display_name: string;
 }
 
@@ -72,7 +71,7 @@ export interface ClassroomTeacherAssignmentRow extends Record<string, unknown> {
   school_id: number;
   classroom_id: string;
   teacher_membership_id: string;
-  teacher_user_id: number;
+  teacher_id: string;
   teacher_name: string;
   subject_id: number | null;
   subject_code: string | null;

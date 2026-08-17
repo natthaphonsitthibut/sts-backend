@@ -97,7 +97,7 @@ describe('SchoolStructureRepository scope', () => {
     expect(runner.query).toHaveBeenNthCalledWith(
       1,
       expect.stringMatching(
-        /filtered_classrooms[\s\S]*COUNT\(DISTINCT membership\.teacher_user_id\)[\s\S]*COUNT\(DISTINCT enrollment\.student_uuid\)/,
+        /filtered_classrooms[\s\S]*COUNT\(DISTINCT membership\.teacher_id\)[\s\S]*COUNT\(DISTINCT enrollment\.student_uuid\)/,
       ),
       [1001, 21, 4, '%ม.1%'],
       true,
@@ -359,7 +359,7 @@ describe('SchoolStructureRepository scope', () => {
 
     expect(runner.query).toHaveBeenLastCalledWith(
       expect.stringMatching(
-        /STRING_AGG[\s\S]*recorder\."FirstName"[\s\S]*COUNT\(\*\) FILTER[\s\S]*LEFT JOIN users recorder[\s\S]*GROUP BY attendance\."AttendanceDate"/,
+        /STRING_AGG[\s\S]*recorder\.first_name[\s\S]*COUNT\(\*\) FILTER[\s\S]*LEFT JOIN teachers recorder[\s\S]*GROUP BY attendance\."AttendanceDate"/,
       ),
       [42, '2026-07-14', 10, 0],
       true,

@@ -20,8 +20,7 @@ describe('Student observation controller security metadata', () => {
       PermissionsGuard,
     ]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, StudentObservationsController)).toEqual([
-      'student-observations',
-      'manage-student-observations',
+      'students',
     ]);
   });
 
@@ -29,7 +28,7 @@ describe('Student observation controller security metadata', () => {
     for (const method of ['updateDimension', 'updateTag'] as const) {
       expect(
         Reflect.getMetadata(PERMISSIONS_KEY, handler(StudentObservationCatalogController, method)),
-      ).toEqual(['manage-student-observations']);
+      ).toEqual(['students']);
     }
   });
 

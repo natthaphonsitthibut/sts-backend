@@ -145,6 +145,10 @@ async function main() {
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const password = `Teachers-${suffix}-Password`;
   const email = `teachers.smoke.${suffix}@smoke.invalid`;
+  // The unique identity of a teacher. Kept inside a reserved test range so it
+  // can never collide with a real citizen id.
+  const citizenId = `99${String(Date.now()).slice(-11)}`;
+  const duplicateCitizenId = `98${String(Date.now()).slice(-11)}`;
   const checked = [];
 
   try {
@@ -166,15 +170,16 @@ async function main() {
     });
     const cookie = cookieHeader(login.response);
 
-    // The regression this smoke exists for: a teacher created here has no login
-    // account, so the membership row carries a NULL teacher_user_id. While that
-    // column was still NOT NULL every single creation failed with a 500.
+    // The regression this smoke exists for: creating a teacher writes both the
+    // person and their school membership, and the membership names the teacher
+    // row directly — there is no login account anywhere in the path.
     const created = await request(baseUrl, 'POST', '/api/teachers', 201, {
       headers: { cookie },
       body: {
         schoolId: Number(school.id),
         firstName: 'สมสมร',
         lastName: 'ทดสอบระบบ',
+        citizenId,
         email,
         phone: '0812345678',
       },
@@ -185,7 +190,7 @@ async function main() {
 
     const [membership] = await dataSource.query(
       `
-        SELECT teacher_user_id, membership_status
+        SELECT teacher_id, membership_status
         FROM school_teacher_memberships
         WHERE teacher_id = $1
       `,
@@ -193,10 +198,11 @@ async function main() {
     );
     assert(membership, 'Creating a teacher did not write a school membership');
     assert(
-      membership.teacher_user_id === null && membership.membership_status === 'ACTIVE',
+      String(membership.teacher_id) === String(teacherId) &&
+        membership.membership_status === 'ACTIVE',
       `Membership shape unexpected: ${JSON.stringify(membership)}`,
     );
-    checked.push('the membership is active and holds no user account');
+    checked.push('the membership is active and points at the teacher row');
 
     const listed = await request(
       baseUrl,
@@ -220,6 +226,7 @@ async function main() {
         schoolId: Number(school.id),
         firstName: 'ซ้ำ',
         lastName: 'อีเมลเดิม',
+        citizenId: duplicateCitizenId,
         email,
       },
     });
@@ -234,6 +241,7 @@ async function main() {
         schoolId: Number(school.id),
         firstName: 'ไม่มีสิทธิ์',
         lastName: 'ทดสอบระบบ',
+        citizenId: duplicateCitizenId,
       },
     });
     checked.push('an account without manage-teachers is refused');

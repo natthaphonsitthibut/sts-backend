@@ -7,18 +7,22 @@ describe('demo school structure seed security contract', () => {
     'utf8',
   );
 
-  it('rotates existing demo teacher passwords and verifies the resulting hash', () => {
-    expect(source).toMatch(/UPDATE users teacher[\s\S]*?password = \$1/);
-    expect(source).toMatch(
-      /ON CONFLICT \(username\) DO UPDATE[\s\S]*?password = EXCLUDED\.password/,
-    );
-    expect(source).toContain('synthetic_teacher_password_hash_mismatches');
+  it('creates teachers as people, never as login accounts', () => {
+    // Teachers reach the system through an access link. A seed that minted a
+    // login for one would hand out a credential nobody intends to exist.
+    expect(source).toContain('INSERT INTO teachers (');
+    expect(source).not.toMatch(/INSERT INTO users[\s\S]{0,400}'TEACHER'/);
+    expect(source).not.toContain('password');
+    expect(source).toContain('synthetic_teacher_accounts');
+    expect(source).toContain('A generated demo teacher still has a login account');
   });
 
-  it('uses DEMO actors and assigns every generated teacher a realistic demo email', () => {
-    expect(source).toContain("data_origin_code = 'DEMO'");
+  it('gives every generated teacher a realistic demo email and an active membership', () => {
     expect(source).toContain('email: `${identity.username}@sts-demo.ac.th`');
-    expect(source).toContain('synthetic_teacher_email_issues');
-    expect(source).toMatch(/email = EXCLUDED\.email/);
+    expect(source).toContain('synthetic_teacher_status_issues');
+    expect(source).toContain('synthetic_teachers_without_membership');
+    // Re-running the seed must find the same teacher by the email that is
+    // unique in the schema, not create a second row for the same person.
+    expect(source).toMatch(/ON CONFLICT \(lower\(btrim\(email\)\)\)/);
   });
 });

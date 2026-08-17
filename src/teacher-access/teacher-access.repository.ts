@@ -30,7 +30,6 @@ interface MembershipIssueRow extends Record<string, unknown> {
   id: string;
   school_id: number;
   teacher_id: string;
-  teacher_user_id: number;
   teacher_display_name: string;
   teacher_email: string | null;
   membership_status: 'ACTIVE' | 'INACTIVE';
@@ -76,7 +75,7 @@ export interface TeacherGrantDeliveryRow extends Record<string, unknown> {
 
 export interface AttendanceDelegationTeacherRow extends Record<string, unknown> {
   teacher_membership_id: string;
-  teacher_user_id: number | null;
+  teacher_id: string;
   teacher_display_name: string;
 }
 
@@ -220,7 +219,6 @@ export class TeacherAccessRepository {
       `
         SELECT membership.id::text, membership.school_id,
                membership.teacher_id::text AS teacher_id,
-               membership.teacher_user_id,
                TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
                teacher.email AS teacher_email,
                membership.membership_status, teacher.teacher_status
@@ -486,7 +484,7 @@ export class TeacherAccessRepository {
     const result = await this.executor(queryRunner).query<AttendanceDelegationTeacherRow>(
       `
         SELECT membership.id::text AS teacher_membership_id,
-               membership.teacher_user_id,
+               membership.teacher_id::text AS teacher_id,
                TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name
         FROM school_teacher_memberships membership
         JOIN teachers teacher ON teacher.id = membership.teacher_id
@@ -734,8 +732,8 @@ export class TeacherAccessRepository {
       params.push(`%${input.search}%`);
       conditions.push(`(
         TRIM(recipient_teacher.first_name || ' ' || recipient_teacher.last_name) ILIKE $${params.length}
-        OR TRIM(COALESCE(issuer_teacher.first_name, issuer."FirstName") || ' ' ||
-                COALESCE(issuer_teacher.last_name, issuer."LastName")) ILIKE $${params.length}
+        OR TRIM(COALESCE(issuer."FirstName", '') || ' ' ||
+                COALESCE(issuer."LastName", '')) ILIKE $${params.length}
         OR COALESCE(subject.name_th, '') ILIKE $${params.length}
       )`);
     }
@@ -755,8 +753,6 @@ export class TeacherAccessRepository {
           delegated.assignment_id::text,
           access_grant.teacher_membership_id::text,
           COALESCE(
-            NULLIF(TRIM(COALESCE(issuer_teacher.first_name, '') || ' ' ||
-                        COALESCE(issuer_teacher.last_name, '')), ''),
             NULLIF(TRIM(COALESCE(issuer."FirstName", '') || ' ' ||
                         COALESCE(issuer."LastName", '')), ''),
             issuer.username,
@@ -804,11 +800,6 @@ export class TeacherAccessRepository {
           ON recipient_membership.id = access_grant.teacher_membership_id
         JOIN teachers recipient_teacher ON recipient_teacher.id = recipient_membership.teacher_id
         JOIN users issuer ON issuer.id = access_grant.issued_by
-        LEFT JOIN school_teacher_memberships issuer_membership
-          ON issuer_membership.teacher_user_id = issuer.id
-         AND issuer_membership.school_id = delegated.school_id
-         AND issuer_membership.deleted_at IS NULL
-        LEFT JOIN teachers issuer_teacher ON issuer_teacher.id = issuer_membership.teacher_id
         LEFT JOIN classroom_teacher_assignments assignment ON assignment.id = delegated.assignment_id
         LEFT JOIN subjects subject ON subject.id = assignment.subject_id
         LEFT JOIN timetable_slots timetable_slot ON timetable_slot.id = delegated.timetable_slot_id
@@ -887,12 +878,10 @@ export class TeacherAccessRepository {
       SELECT
         access_grant.id::text,
         access_grant.teacher_membership_id::text,
-        membership.teacher_user_id,
-        COALESCE(teacher_account.username, TRIM(teacher.first_name || ' ' || teacher.last_name)) AS teacher_username,
+        membership.teacher_id::text AS teacher_id,
         TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
         teacher.email AS teacher_email,
         teacher.citizen_id AS teacher_citizen_id,
-        teacher_account.data_origin_code AS teacher_data_origin_code,
         teacher.teacher_status AS teacher_status,
         membership.membership_status,
         membership.deleted_at AS membership_deleted_at,
@@ -938,8 +927,6 @@ export class TeacherAccessRepository {
       JOIN school_teacher_memberships membership
         ON membership.id = access_grant.teacher_membership_id
       JOIN teachers teacher ON teacher.id = membership.teacher_id
-      LEFT JOIN users teacher_account ON teacher_account.id = membership.teacher_user_id
-        -- teacher_user_id is nullable — a teacher created without a login account
       JOIN schools school ON school.id = access_grant.school_id
       JOIN school_terms term ON term.id = access_grant.school_term_id
       JOIN users issuer ON issuer.id = access_grant.issued_by
@@ -1113,10 +1100,7 @@ export class TeacherAccessRepository {
         FROM classroom_student_comments comment
         JOIN student_term enrollment ON enrollment.person_uuid = comment.person_uuid
         LEFT JOIN users author ON author.id = comment.authored_by_user_id
-        LEFT JOIN school_teacher_memberships membership
-          ON membership.teacher_user_id = author.id
-         AND membership.deleted_at IS NULL
-        LEFT JOIN teachers teacher ON teacher.id = membership.teacher_id
+        LEFT JOIN teachers teacher ON teacher.id = comment.authored_by_teacher_id
         WHERE comment.classroom_id = $1
           AND enrollment.student_uuid = $2
         ORDER BY comment.created_at DESC
@@ -1786,7 +1770,7 @@ export class TeacherAccessRepository {
             -- username, so the display name comes from the account behind it.
             SELECT STRING_AGG(
               DISTINCT COALESCE(
-                NULLIF(BTRIM(CONCAT_WS(' ', recorder."FirstName", recorder."LastName")), ''),
+                NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
                 CASE
                   WHEN record."RecordedBy" LIKE '%@%' THEN NULL
                   ELSE NULLIF(record."RecordedBy", '')
@@ -1796,7 +1780,7 @@ export class TeacherAccessRepository {
               ', '
             )
             FROM attendance record
-            LEFT JOIN users recorder ON recorder.username = record."RecordedBy"
+            LEFT JOIN teachers recorder ON recorder.id = record.recorded_by_teacher_id
             WHERE record.session_id = session.id
             ) AS recorded_by,
             COUNT(*) FILTER (WHERE record."AttendanceStatus" = 1)::int AS present_count,
@@ -1843,14 +1827,14 @@ export class TeacherAccessRepository {
       classroomId: number;
       studentUuid: string;
       commentText: string;
-      authoredByUserId: number | null;
+      authoredByTeacherId: number;
     },
     queryRunner: QueryRunner,
   ): Promise<{ id: string; comment_text: string } | null> {
     const result = await this.executor(queryRunner).query<{ id: string; comment_text: string }>(
       `
         INSERT INTO classroom_student_comments (
-          classroom_id, person_uuid, comment_text, authored_by_user_id
+          classroom_id, person_uuid, comment_text, authored_by_teacher_id
         )
         SELECT $1, enrollment.person_uuid, $3, $4
         FROM student_term enrollment
@@ -1860,7 +1844,7 @@ export class TeacherAccessRepository {
           AND enrollment.person_uuid IS NOT NULL
         RETURNING id::text, comment_text
       `,
-      [input.classroomId, input.studentUuid, input.commentText, input.authoredByUserId],
+      [input.classroomId, input.studentUuid, input.commentText, input.authoredByTeacherId],
     );
     return result.rows[0] ?? null;
   }

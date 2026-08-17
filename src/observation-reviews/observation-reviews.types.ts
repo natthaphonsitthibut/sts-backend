@@ -13,15 +13,6 @@ export interface ObservationReviewEnrollmentRow extends Record<string, unknown> 
   classroom_id: string | null;
 }
 
-export interface ObservationReviewAssignmentRow extends Record<string, unknown> {
-  assignment_id: number | string;
-  teacher_membership_id: number | string;
-  teacher_user_id: number;
-  school_id: number;
-  school_term_id: number | string;
-  classroom_id: number | string;
-}
-
 export interface ValidatedObservationSourceRow extends Record<string, unknown> {
   observation_id: number | string;
   observation_revision: number | string;

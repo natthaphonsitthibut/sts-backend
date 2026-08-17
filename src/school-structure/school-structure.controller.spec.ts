@@ -44,7 +44,6 @@ describe('SchoolStructureController access', () => {
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'manage-school-structure',
         'import-data',
-        'import-school-roster',
         // The school picker is also reachable from จัดการกลุ่มเมนู and จัดการข้อมูลคุณครู.
         ...(method === 'listSchools' ? ['manage-role-groups', 'manage-teachers'] : []),
       ]);

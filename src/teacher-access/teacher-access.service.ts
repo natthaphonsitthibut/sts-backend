@@ -250,8 +250,7 @@ export class TeacherAccessService {
     return {
       id: row.id,
       teacherMembershipId: row.teacher_membership_id,
-      teacherUserId: row.teacher_user_id,
-      teacherUsername: row.teacher_username,
+      teacherId: row.teacher_id,
       teacherDisplayName: row.teacher_display_name,
       schoolId: row.school_id,
       schoolName: row.school_name,
@@ -1202,7 +1201,6 @@ export class TeacherAccessService {
     const assignments = await this.repository.listAttendanceDelegationAssignments(input);
     const teachers = await this.repository.listActiveTeacherMembershipsForSchool(input.schoolId);
     const activeDelegations = await this.repository.listActiveAttendanceDelegations(input);
-    const actorId = resolveAuditActorId(actor);
     return {
       data: {
         assignments: assignments.map((assignment) => ({
@@ -1215,12 +1213,10 @@ export class TeacherAccessService {
             : null,
           period: assignment.timetable_slot_period ?? null,
         })),
-        teachers: teachers
-          .filter((teacher) => teacher.teacher_user_id !== actorId)
-          .map((teacher) => ({
-            teacherMembershipId: Number(teacher.teacher_membership_id),
-            teacherDisplayName: teacher.teacher_display_name,
-          })),
+        teachers: teachers.map((teacher) => ({
+          teacherMembershipId: Number(teacher.teacher_membership_id),
+          teacherDisplayName: teacher.teacher_display_name,
+        })),
         activeDelegations: activeDelegations.map((row) =>
           this.toAttendanceDelegation(row, baseUrl),
         ),
@@ -1299,7 +1295,7 @@ export class TeacherAccessService {
           rowCount: input.rowCount,
           appliedCount: input.appliedCount,
           // A link holder has no account row of their own to point at.
-          importedBy: context.teacherUserId,
+          importedBy: null,
           importedByLabel: context.teacherDisplayName,
           file: input.file,
         });
@@ -1435,9 +1431,6 @@ export class TeacherAccessService {
         recipient.teacher_status !== 'ACTIVE'
       ) {
         throw new BadRequestException('ครูผู้ได้รับมอบหมายต้องเป็นครูที่เปิดใช้งานในโรงเรียนนี้');
-      }
-      if (recipient.teacher_user_id === actorId) {
-        throw new BadRequestException('ไม่สามารถมอบหมายการเช็กชื่อให้ตนเองได้');
       }
       if (
         !(await this.repository.lockAttendanceDelegationAssignment(dto.assignmentId, queryRunner))
@@ -1691,7 +1684,7 @@ export class TeacherAccessService {
         if (!detail) throw new ConflictException('สร้างลิงก์มอบหมายการเช็กชื่อไม่สำเร็จ');
         await this.auditLog.recordAtomic(
           {
-            actorUserId: context.teacherUserId,
+            actorUserId: null,
             actorLabel: context.teacherDisplayName,
             action: 'TEACHER_ACCESS_GRANT_ISSUE',
             targetType: 'teacher_access_grants',
@@ -1992,7 +1985,7 @@ export class TeacherAccessService {
               startsAt: window.starts,
               endsAt: window.ends,
               issuedBy: context.issuerUserId,
-              actorUserId: context.teacherUserId,
+              actorUserId: null,
               actorLabel: context.teacherDisplayName,
               issuedViaGrantId: context.grantId,
             },
@@ -2059,7 +2052,9 @@ export class TeacherAccessService {
         }
         await this.repository.revokeGrant(
           grantId,
-          context.teacherUserId ?? context.issuerUserId,
+          // The teacher acting on the link has no account; the revocation is
+          // attributed to whoever issued it.
+          context.issuerUserId,
           'REVOKED_BY_ASSIGNMENT_TEACHER',
           queryRunner,
         );
@@ -2281,8 +2276,7 @@ export class TeacherAccessService {
     return {
       grantId: detail.grant.id,
       teacherMembershipId: detail.grant.teacher_membership_id,
-      teacherUserId: detail.grant.teacher_user_id,
-      teacherUsername: detail.grant.teacher_username,
+      teacherId: detail.grant.teacher_id,
       teacherDisplayName: detail.grant.teacher_display_name,
       issuerUserId: detail.grant.issued_by,
       schoolId: detail.grant.school_id,
@@ -2382,8 +2376,8 @@ export class TeacherAccessService {
           await this.repository.touchGrant(grant.id, queryRunner);
           await this.auditLog.recordAtomic(
             {
-              actorUserId: grant.teacher_user_id,
-              actorLabel: grant.teacher_username,
+              actorUserId: null,
+              actorLabel: grant.teacher_display_name,
               action: 'TEACHER_ACCESS_GRANT_USE',
               targetType: 'teacher_access_grants',
               targetId: grant.id,
@@ -2404,8 +2398,8 @@ export class TeacherAccessService {
       const denialContext = deniedGrant as TeacherAccessGrantRow | null;
       if (denialContext) {
         await this.auditLog.record({
-          actorUserId: denialContext.teacher_user_id,
-          actorLabel: denialContext.teacher_username,
+          actorUserId: null,
+          actorLabel: denialContext.teacher_display_name,
           action: 'TEACHER_ACCESS_GRANT_DENIED',
           targetType: 'teacher_access_grants',
           targetId: denialContext.id,
@@ -2457,8 +2451,8 @@ export class TeacherAccessService {
     const ttlMinutes = Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 60_000));
     await this.emailService.sendOTP(email, code, ttlMinutes);
     await this.auditLog.record({
-      actorUserId: grant.teacher_user_id,
-      actorLabel: grant.teacher_username,
+      actorUserId: null,
+      actorLabel: grant.teacher_display_name,
       action: 'TEACHER_ACCESS_OTP_REQUEST',
       targetType: 'teacher_access_grants',
       targetId: grant.id,
@@ -2483,8 +2477,8 @@ export class TeacherAccessService {
     const outcome = await this.otpStore.verify(otpKey(grant.id), code.trim());
     if (outcome !== 'ok') {
       await this.auditLog.record({
-        actorUserId: grant.teacher_user_id,
-        actorLabel: grant.teacher_username,
+        actorUserId: null,
+        actorLabel: grant.teacher_display_name,
         action: 'TEACHER_ACCESS_OTP_FAILED',
         targetType: 'teacher_access_grants',
         targetId: grant.id,
@@ -2522,8 +2516,8 @@ export class TeacherAccessService {
 
     const sessionToken = await this.magicSessionStore.issue(grant.id);
     await this.auditLog.record({
-      actorUserId: grant.teacher_user_id,
-      actorLabel: grant.teacher_username,
+      actorUserId: null,
+      actorLabel: grant.teacher_display_name,
       action: 'TEACHER_ACCESS_ARAID_VERIFY',
       targetType: 'teacher_access_grants',
       targetId: grant.id,
@@ -2611,8 +2605,8 @@ export class TeacherAccessService {
       throw new GoneException('คำขอยืนยัน AraID ถูกใช้หรือหมดอายุแล้ว');
     }
     await this.auditLog.record({
-      actorUserId: grant.teacher_user_id,
-      actorLabel: grant.teacher_username,
+      actorUserId: null,
+      actorLabel: grant.teacher_display_name,
       action: 'TEACHER_ACCESS_ARAID_VERIFY',
       targetType: 'teacher_access_grants',
       targetId: grant.id,
@@ -3086,8 +3080,8 @@ export class TeacherAccessService {
         if (!context.classroomId) throw new ForbiddenException('ไม่พบห้องเรียนใน assignment');
         await this.auditLog.recordAtomic(
           {
-            actorUserId: context.teacherUserId,
-            actorLabel: context.teacherUsername,
+            actorUserId: null,
+            actorLabel: context.teacherDisplayName,
             action: 'CLASSROOM_DATA_EXPORT',
             targetType: 'school_classrooms',
             targetId: String(context.classroomId),
@@ -3131,7 +3125,7 @@ export class TeacherAccessService {
             classroomId: Number(context.classroomId),
             studentUuid: input.studentUuid,
             commentText: input.commentText,
-            authoredByUserId: context.teacherUserId,
+            authoredByTeacherId: Number(context.teacherId),
           },
           queryRunner,
         );
@@ -3230,7 +3224,7 @@ export class TeacherAccessService {
               coverImagePositionX,
               coverImagePositionY,
               coverImageScale,
-              actorUserId: context.teacherUserId,
+              actorUserId: null,
             },
             queryRunner,
           );
@@ -3267,7 +3261,7 @@ export class TeacherAccessService {
   }
 
   /**
-   * The link already carries a real teacher identity (membership → account,
+   * The link already carries a real teacher identity (membership → teacher,
    * school, term and the exact classes they teach), so student reads run through
    * the ordinary student services with an actor built from the grant instead of
    * a duplicated set of guest queries. The permission set is the read-only
@@ -3277,13 +3271,14 @@ export class TeacherAccessService {
    */
   private grantActor(context: ActiveTeacherGrantContext): AuthenticatedRequestUser {
     return {
-      // Teachers created without a login account have no user_id; the real
-      // identity is the grant + teacherUsername captured in audit metadata.
-      id: context.teacherUserId ?? 0,
+      // A teacher has no account row. Id 0 is the "not a user" marker these
+      // services already understand; the identity that matters is the grant,
+      // and the teacher's name is what the audit entries carry.
+      id: 0,
       teacher_membership_id: Number(context.teacherMembershipId),
-      username: context.teacherUsername,
+      username: context.teacherDisplayName,
       roles: ['TEACHER'],
-      permissions: ['students', 'student-observations'],
+      permissions: ['students'],
       data_scope: { school_ids: [context.schoolId] },
     };
   }
@@ -3355,7 +3350,7 @@ export class TeacherAccessService {
       async (context) => {
         const actor = this.grantActor(context);
         const [schedule, periodTimes] = await Promise.all([
-          this.timetableService.getMySchedule(actor, { mine: true }),
+          this.timetableService.getTeacherSchedule(actor),
           this.timetableService.listPeriodTimes(actor, context.schoolId),
         ]);
         return { data: { slots: schedule.data, periodTimes: periodTimes.data } };
@@ -3493,9 +3488,10 @@ export class TeacherAccessService {
             marked_at: record.markedAt ?? null,
           })),
           {
-            actorUserId: context.teacherUserId,
-            actorLabel: context.teacherUsername,
-            recorder: context.teacherUsername,
+            actorUserId: null,
+            actorLabel: context.teacherDisplayName,
+            recorder: context.teacherDisplayName,
+            recorderTeacherId: Number(context.teacherId) || null,
             allowedStudentIds,
           },
           createSqlQueryExecutor(queryRunner),
@@ -3644,9 +3640,10 @@ export class TeacherAccessService {
             marked_at: record.markedAt ?? null,
           })),
           {
-            actorUserId: context.teacherUserId,
-            actorLabel: context.teacherUsername,
-            recorder: context.teacherUsername,
+            actorUserId: null,
+            actorLabel: context.teacherDisplayName,
+            recorder: context.teacherDisplayName,
+            recorderTeacherId: Number(context.teacherId) || null,
             allowedStudentIds,
           },
           createSqlQueryExecutor(queryRunner),

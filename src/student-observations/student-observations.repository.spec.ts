@@ -91,7 +91,7 @@ describe('StudentObservationsRepository', () => {
         {
           assignment_id: '31',
           teacher_membership_id: '12',
-          teacher_user_id: 44,
+          teacher_id: '7',
           school_id: 10,
           school_term_id: '21',
           classroom_id: '41',
@@ -108,7 +108,7 @@ describe('StudentObservationsRepository', () => {
     expect(sql).toMatch(/enrollment\.student_uuid = \$2/);
     expect(sql).toMatch(/assignment\.assignment_status = 'ACTIVE'/);
     expect(sql).toMatch(/membership\.membership_status = 'ACTIVE'/);
-    expect(sql).toMatch(/teacher\.status = 'ACTIVE'/);
+    expect(sql).toMatch(/teacher\.teacher_status = 'ACTIVE'/);
     expect(sql).toMatch(/classroom\.classroom_status = 'ACTIVE'/);
     expect(sql).toMatch(/school\.school_status = 'ACTIVE'/);
     expect(sql).toMatch(/term\.status = 'ACTIVE'/);

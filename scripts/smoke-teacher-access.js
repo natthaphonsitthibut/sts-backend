@@ -143,11 +143,12 @@ async function cleanup(dataSource) {
   );
   if (users.length === 0) return;
   const userIds = users.map((row) => Number(row.id));
-  const teacherIds = users
-    .filter((row) => row.username !== USERNAMES.admin)
-    .map((row) => Number(row.id));
   const [admin] = users.filter((row) => row.username === USERNAMES.admin);
   const adminId = admin ? Number(admin.id) : null;
+  const smokeTeachers = await dataSource.query(
+    `SELECT id FROM teachers WHERE email LIKE 'teacher_access_smoke_%@sts-smoke.invalid'`,
+  );
+  const smokeTeacherIds = smokeTeachers.map((row) => Number(row.id));
 
   if (adminId) {
     await dataSource.query(`DELETE FROM teacher_line_invitations WHERE issued_by = $1`, [adminId]);
@@ -161,10 +162,15 @@ async function cleanup(dataSource) {
   const studentIds = students.map((row) => row.student_uuid);
   const personIds = students.map((row) => row.person_uuid);
   const sessions =
-    teacherIds.length > 0
+    smokeTeacherIds.length > 0
       ? await dataSource.query(
-          `SELECT id FROM attendance_sessions WHERE created_by = ANY($1::int[])`,
-          [teacherIds],
+          `
+            SELECT DISTINCT session_id AS id
+            FROM attendance
+            WHERE recorded_by_teacher_id = ANY($1::bigint[])
+              AND session_id IS NOT NULL
+          `,
+          [smokeTeacherIds],
         )
       : [];
   const sessionIds = sessions.map((row) => row.id);
@@ -228,6 +234,11 @@ async function cleanup(dataSource) {
     await dataSource.query(`DELETE FROM school_teacher_memberships WHERE created_by = $1`, [
       adminId,
     ]);
+    if (smokeTeacherIds.length > 0) {
+      await dataSource.query(`DELETE FROM teachers WHERE id = ANY($1::bigint[])`, [
+        smokeTeacherIds,
+      ]);
+    }
     await dataSource.query(
       `DELETE FROM school_classrooms WHERE created_by = $1 AND room_name = 'Teacher access smoke'`,
       [adminId],
@@ -330,30 +341,39 @@ async function createFixture(dataSource, actors) {
     ],
   );
 
+  // A teacher is a row in `teachers`, not a login account. EMAIL_OTP needs an
+  // address on it, which is also how the smoke recognises its own fixtures.
   const teacherMemberships = [];
-  for (const teacher of [actors.teacherOne, actors.teacherTwo]) {
+  for (const [index, name] of [['One'], ['Two']].entries()) {
+    const username = index === 0 ? USERNAMES.teacherOne : USERNAMES.teacherTwo;
+    const [teacher] = await dataSource.query(
+      `
+        INSERT INTO teachers (
+          first_name, last_name, citizen_id, email, teacher_status, created_by, updated_by
+        )
+        VALUES ($1, 'Smoke', $2, $3, 'ACTIVE', $4, $4)
+        RETURNING id
+      `,
+      [
+        `Teacher ${name[0]}`,
+        `97${String(Date.now()).slice(-9)}${index}${index}`,
+        `${username}@sts-smoke.invalid`,
+        actors.admin.id,
+      ],
+    );
     const [membership] = await dataSource.query(
       `
         INSERT INTO school_teacher_memberships (
-          school_id, teacher_user_id, membership_status, started_on, created_by, updated_by
+          school_id, teacher_id, membership_status, started_on, created_by, updated_by
         )
         VALUES ($1, $2, 'ACTIVE', CURRENT_DATE, $3, $3)
         RETURNING id, teacher_id
       `,
       [term.school_id, teacher.id, actors.admin.id],
     );
-    // The teacher identity row is created by the membership trigger. EMAIL_OTP
-    // needs an address on it (smoke accounts deliberately carry none), and a
-    // row left over from an earlier run is INACTIVE because cleanup disables
-    // the account it was copied from.
-    await dataSource.query(
-      `UPDATE teachers SET email = $2, teacher_status = 'ACTIVE', deleted_at = NULL WHERE id = $1`,
-      [membership.teacher_id, `${teacher.username}@sts-smoke.invalid`],
-    );
     teacherMemberships.push({
       id: Number(membership.id),
       teacherId: Number(membership.teacher_id),
-      teacher,
     });
   }
 
@@ -627,22 +647,6 @@ async function main() {
         lastName: 'Smoke Admin',
         role: 'ADMIN',
         permissions: ['manage-teacher-access'],
-        dataScope: { school_ids: [initialSchoolId] },
-      }),
-      teacherOne: await upsertUser(dataSource, {
-        username: USERNAMES.teacherOne,
-        firstName: 'Teacher One',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
-        dataScope: { school_ids: [initialSchoolId] },
-      }),
-      teacherTwo: await upsertUser(dataSource, {
-        username: USERNAMES.teacherTwo,
-        firstName: 'Teacher Two',
-        lastName: 'Smoke',
-        role: 'TEACHER',
-        permissions: ['attendance'],
         dataScope: { school_ids: [initialSchoolId] },
       }),
     };
@@ -1009,8 +1013,20 @@ async function main() {
       );
       assert(attendanceSession?.status === 'SUBMITTED', 'Attendance session was not submitted');
       assert(
-        Number(attendanceSession.submitted_by) === actors.teacherOne.id,
-        'Attendance was not attributed to teacher one',
+        attendanceSession.submitted_by === null,
+        'A link submission must not name a login account',
+      );
+      const [recordedBy] = await dataSource.query(
+        `
+          SELECT DISTINCT recorded_by_teacher_id
+          FROM attendance
+          WHERE session_id = $1
+        `,
+        [sessionId],
+      );
+      assert(
+        Number(recordedBy?.recorded_by_teacher_id) === fixture.teacherMemberships[0].teacherId,
+        `Attendance was not attributed to teacher one: ${JSON.stringify(recordedBy)}`,
       );
       const history = await request(
         baseUrl,

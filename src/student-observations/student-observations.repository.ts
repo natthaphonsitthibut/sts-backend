@@ -153,7 +153,7 @@ export class StudentObservationsRepository {
         SELECT
           assignment.id::text AS assignment_id,
           assignment.teacher_membership_id::text,
-          membership.teacher_user_id,
+          membership.teacher_id::text AS teacher_id,
           assignment.school_id,
           classroom.school_term_id::text,
           assignment.classroom_id::text,
@@ -172,13 +172,14 @@ export class StudentObservationsRepository {
          AND enrollment.deleted_at IS NULL
         JOIN school_terms term ON term.id = classroom.school_term_id
         JOIN schools school ON school.id = assignment.school_id
-        JOIN users teacher ON teacher.id = membership.teacher_user_id
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
         WHERE assignment.id = $1
           AND assignment.assignment_status = 'ACTIVE'
           AND assignment.deleted_at IS NULL
           AND membership.membership_status = 'ACTIVE'
           AND membership.deleted_at IS NULL
-          AND teacher.status = 'ACTIVE'
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
           AND classroom.classroom_status = 'ACTIVE'
           AND classroom.deleted_at IS NULL
           AND school.school_status = 'ACTIVE'
@@ -195,82 +196,6 @@ export class StudentObservationsRepository {
       [assignmentId, studentUuid, onDate],
     );
     return result.rows[0] ?? null;
-  }
-
-  async findActorAssignment(
-    actorUserId: number,
-    studentUuid: string,
-    onDate: string,
-    queryRunner?: QueryRunner,
-  ): Promise<ObservationAssignmentRow | null> {
-    const result = await this.executor(queryRunner).query<{ id: number }>(
-      `
-        SELECT assignment.id
-        FROM classroom_teacher_assignments assignment
-        JOIN school_teacher_memberships membership
-          ON membership.id = assignment.teacher_membership_id
-         AND membership.school_id = assignment.school_id
-        JOIN student_term enrollment
-          ON enrollment.classroom_id = assignment.classroom_id
-         AND enrollment.student_uuid = $2
-         AND enrollment.deleted_at IS NULL
-        WHERE membership.teacher_user_id = $1
-          AND assignment.assignment_status = 'ACTIVE'
-          AND assignment.deleted_at IS NULL
-          AND membership.membership_status = 'ACTIVE'
-          AND membership.deleted_at IS NULL
-          AND ($3::date >= COALESCE(assignment.effective_on, $3::date))
-          AND ($3::date <= COALESCE(assignment.effective_until, $3::date))
-          AND ($3::date >= COALESCE(membership.started_on, $3::date))
-          AND ($3::date <= COALESCE(membership.ended_on, $3::date))
-        ORDER BY assignment.id
-        LIMIT 1
-      `,
-      [actorUserId, studentUuid, onDate],
-    );
-    const assignmentId = result.rows[0]?.id;
-    return assignmentId
-      ? await this.findActiveAssignment(assignmentId, studentUuid, onDate, queryRunner)
-      : null;
-  }
-
-  async findActorAssignmentForTimetableSlot(
-    actorUserId: number,
-    studentUuid: string,
-    timetableSlotId: number,
-    onDate: string,
-    queryRunner?: QueryRunner,
-  ): Promise<ObservationAssignmentRow | null> {
-    const result = await this.executor(queryRunner).query<{ assignment_id: number }>(
-      `SELECT assignment.id AS assignment_id
-       FROM timetable_slots slot
-       JOIN student_term enrollment
-         ON enrollment.classroom_id = slot.classroom_id
-        AND enrollment.student_uuid = $2
-        AND enrollment.deleted_at IS NULL
-       JOIN classroom_teacher_assignments assignment
-         ON assignment.classroom_id = slot.classroom_id
-        AND assignment.school_id = slot.school_id
-        AND assignment.subject_id = slot.subject_id
-        AND assignment.assignment_status = 'ACTIVE'
-        AND assignment.deleted_at IS NULL
-       JOIN school_teacher_memberships membership
-         ON membership.id = assignment.teacher_membership_id
-        AND membership.teacher_user_id = $1
-        AND membership.membership_status = 'ACTIVE'
-        AND membership.deleted_at IS NULL
-       WHERE slot.id = $3
-         AND slot.deleted_at IS NULL
-         AND slot.teacher_user_id = $1
-         AND ($4::date >= COALESCE(assignment.effective_on, $4::date))
-         AND ($4::date <= COALESCE(assignment.effective_until, $4::date))
-       LIMIT 1`,
-      [actorUserId, studentUuid, timetableSlotId, onDate],
-    );
-    const assignmentId = result.rows[0]?.assignment_id;
-    return assignmentId
-      ? await this.findActiveAssignment(assignmentId, studentUuid, onDate, queryRunner)
-      : null;
   }
 
   async resolveCatalog(
@@ -335,9 +260,14 @@ export class StudentObservationsRepository {
         CASE WHEN observation.source_task_link_id IS NOT NULL
           THEN 'TASK_LINK' ELSE observation.author_kind END AS author_kind,
         observation.author_user_id,
-        COALESCE(observation.observer_display_name, author.username) AS author_username,
         COALESCE(
           observation.observer_display_name,
+          NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
+          author.username
+        ) AS author_username,
+        COALESCE(
+          observation.observer_display_name,
+          NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
           NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
           author.username
         )
@@ -362,7 +292,10 @@ export class StudentObservationsRepository {
         observation.updated_at,
         COALESCE(tag_list.tags, '[]'::jsonb) AS tags
       FROM student_observations observation
-      JOIN users author ON author.id = observation.author_user_id
+      LEFT JOIN users author ON author.id = observation.author_user_id
+      LEFT JOIN school_teacher_memberships author_membership
+        ON author_membership.id = observation.author_teacher_membership_id
+      LEFT JOIN teachers author_teacher ON author_teacher.id = author_membership.teacher_id
       JOIN observation_dimensions dimension ON dimension.id = observation.observation_dimension_id
       LEFT JOIN classroom_teacher_assignments assignment
         ON assignment.id = observation.source_assignment_id

@@ -16,7 +16,7 @@ const MANAGER: AuthenticatedRequestUser = {
   id: 5,
   username: 'director',
   roles: ['DIRECTOR'],
-  permissions: ['manage-student-observations'],
+  permissions: ['students'],
   data_scope: { school_ids: [101] },
 };
 
@@ -250,7 +250,7 @@ describe('ObservationReviewsService', () => {
         id: 20,
         username: 'executive',
         roles: ['EXECUTIVE'],
-        permissions: ['manage-student-observations'],
+        permissions: ['students'],
         data_scope: { global: true },
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);

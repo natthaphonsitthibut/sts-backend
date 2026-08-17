@@ -112,7 +112,6 @@ export class TeachersService {
         ? `/api/teachers/${row.id}/photo?v=${encodeURIComponent(row.updated_at)}`
         : null,
       teacherStatus: row.teacher_status,
-      linkedUserId: row.linked_user_id,
       membershipId: row.membership_id,
       schoolId: row.school_id,
       membershipStatus: row.membership_status,

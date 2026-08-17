@@ -27,14 +27,14 @@ export class SubjectsController {
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Post()
   async create(@CurrentUser() actor: AuthenticatedRequestUser, @Body() body: CreateSubjectDto) {
     return await this.subjectsService.create(actor, body);
   }
 
   @UseGuards(PermissionsGuard)
-  @RequirePermission('manage-timetable')
+  @RequirePermission('timetable')
   @Patch(':id')
   async update(
     @CurrentUser() actor: AuthenticatedRequestUser,

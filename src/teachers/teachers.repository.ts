@@ -17,7 +17,6 @@ const TEACHER_SELECT_SQL = `
   teacher.line_id,
   teacher.photo_storage_key,
   teacher.teacher_status,
-  teacher.linked_user_id,
   membership.id::text AS membership_id,
   membership.school_id,
   membership.membership_status,
@@ -312,9 +311,9 @@ export class TeachersRepository {
     const result = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
       `
         INSERT INTO school_teacher_memberships (
-          school_id, teacher_id, teacher_user_id, membership_status, started_on, created_by, updated_by
+          school_id, teacher_id, membership_status, started_on, created_by, updated_by
         )
-        VALUES ($1, $2, NULL, 'ACTIVE', CURRENT_DATE, $3, $3)
+        VALUES ($1, $2, 'ACTIVE', CURRENT_DATE, $3, $3)
         RETURNING id::text
       `,
       [input.schoolId, input.teacherId, input.actorId],

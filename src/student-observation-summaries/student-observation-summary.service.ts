@@ -34,7 +34,7 @@ export class StudentObservationSummaryService {
   ) {}
 
   private async access(studentUuid: string, actor: AuthenticatedRequestUser) {
-    if (!hasPermission(actor.roles, actor.permissions, 'manage-student-observations')) {
+    if (!hasPermission(actor.roles, actor.permissions, 'students')) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการสรุปข้อสังเกต');
     }
     if (actor.roles.includes('EXECUTIVE') && !actor.roles.includes('ADMIN')) {

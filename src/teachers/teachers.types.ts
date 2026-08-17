@@ -14,7 +14,6 @@ export interface TeacherRow extends Record<string, unknown> {
   line_id: string | null;
   photo_storage_key: string | null;
   teacher_status: TeacherStatus;
-  linked_user_id: number | null;
   membership_id: string;
   school_id: number;
   membership_status: TeacherStatus;

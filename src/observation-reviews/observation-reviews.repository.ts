@@ -7,7 +7,6 @@ import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import type {
   ClassroomCommentListRow,
   HumanRiskDecision,
-  ObservationReviewAssignmentRow,
   ObservationReviewEnrollmentRow,
   ObservationSourceRef,
   RiskReviewRow,
@@ -126,90 +125,6 @@ export class ObservationReviewsRepository {
       [studentUuid],
     );
     return result.rows[0] ?? null;
-  }
-
-  async findActiveAssignment(
-    assignmentId: number,
-    studentUuid: string,
-    onDate: string,
-    queryRunner: QueryRunner,
-  ): Promise<ObservationReviewAssignmentRow | null> {
-    const result = await this.executor(queryRunner).query<ObservationReviewAssignmentRow>(
-      `SELECT assignment.id::text AS assignment_id,
-              assignment.teacher_membership_id::text,
-              membership.teacher_user_id,
-              assignment.school_id,
-              classroom.school_term_id::text,
-              assignment.classroom_id::text
-       FROM classroom_teacher_assignments assignment
-       JOIN school_teacher_memberships membership
-         ON membership.id = assignment.teacher_membership_id
-        AND membership.school_id = assignment.school_id
-       JOIN school_classrooms classroom
-         ON classroom.id = assignment.classroom_id
-        AND classroom.school_id = assignment.school_id
-       JOIN student_term enrollment
-         ON enrollment.classroom_id = classroom.id
-        AND enrollment.student_uuid = $2
-        AND enrollment.deleted_at IS NULL
-       JOIN school_terms term ON term.id = classroom.school_term_id
-       JOIN schools school ON school.id = assignment.school_id
-       JOIN users teacher ON teacher.id = membership.teacher_user_id
-       WHERE assignment.id = $1
-         AND assignment.assignment_status = 'ACTIVE'
-         AND assignment.deleted_at IS NULL
-         AND membership.membership_status = 'ACTIVE'
-         AND membership.deleted_at IS NULL
-         AND teacher.status = 'ACTIVE'
-         AND classroom.classroom_status = 'ACTIVE'
-         AND classroom.deleted_at IS NULL
-         AND term.status = 'ACTIVE'
-         AND term.deleted_at IS NULL
-         AND school.school_status = 'ACTIVE'
-         AND ($3::date >= COALESCE(assignment.effective_on, $3::date))
-         AND ($3::date <= COALESCE(assignment.effective_until, $3::date))
-         AND ($3::date >= COALESCE(membership.started_on, $3::date))
-         AND ($3::date <= COALESCE(membership.ended_on, $3::date))
-         AND ($3::date >= COALESCE(term.starts_on, $3::date))
-         AND ($3::date <= COALESCE(term.ends_on, $3::date))
-       LIMIT 1`,
-      [assignmentId, studentUuid, onDate],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async findActiveAssignmentForTeacher(
-    teacherUserId: number,
-    studentUuid: string,
-    onDate: string,
-    queryRunner: QueryRunner,
-  ): Promise<ObservationReviewAssignmentRow | null> {
-    const result = await this.executor(queryRunner).query<{ assignment_id: number }>(
-      `SELECT assignment.id AS assignment_id
-       FROM classroom_teacher_assignments assignment
-       JOIN school_teacher_memberships membership
-         ON membership.id = assignment.teacher_membership_id
-        AND membership.teacher_user_id = $1
-       JOIN student_term enrollment
-         ON enrollment.classroom_id = assignment.classroom_id
-        AND enrollment.student_uuid = $2
-        AND enrollment.deleted_at IS NULL
-       WHERE assignment.assignment_status = 'ACTIVE'
-         AND assignment.deleted_at IS NULL
-         AND membership.membership_status = 'ACTIVE'
-         AND membership.deleted_at IS NULL
-         AND ($3::date >= COALESCE(assignment.effective_on, $3::date))
-         AND ($3::date <= COALESCE(assignment.effective_until, $3::date))
-         AND ($3::date >= COALESCE(membership.started_on, $3::date))
-         AND ($3::date <= COALESCE(membership.ended_on, $3::date))
-       ORDER BY assignment.id
-       LIMIT 1`,
-      [teacherUserId, studentUuid, onDate],
-    );
-    const assignmentId = result.rows[0]?.assignment_id;
-    return assignmentId
-      ? await this.findActiveAssignment(assignmentId, studentUuid, onDate, queryRunner)
-      : null;
   }
 
   async validateObservationSources(
@@ -555,6 +470,7 @@ export class ObservationReviewsRepository {
            comment.id::text AS latest_comment_id,
            comment.comment_text AS latest_comment,
            COALESCE(
+             NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
              NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
              author.username
            ) AS latest_author_display_name,
@@ -574,7 +490,8 @@ export class ObservationReviewsRepository {
           AND current_enrollment.resolution_state = 'ACTIVE'
          JOIN schools school ON school.id = enrollment."SchoolID_Onec"
          LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
-         JOIN users author ON author.id = comment.authored_by_user_id
+         LEFT JOIN users author ON author.id = comment.authored_by_user_id
+         LEFT JOIN teachers author_teacher ON author_teacher.id = comment.authored_by_teacher_id
          WHERE enrollment.deleted_at IS NULL
        ), watchlist AS (
          SELECT * FROM ranked_comments WHERE comment_rank = 1
@@ -619,6 +536,7 @@ export class ObservationReviewsRepository {
          enrollment.student_uuid::text,
          comment.comment_text AS comment,
          COALESCE(
+           NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
            NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
            author.username
          ) AS author_display_name,
@@ -633,7 +551,8 @@ export class ObservationReviewsRepository {
         AND current_enrollment.selected_student_uuid = enrollment.student_uuid
         AND current_enrollment.resolution_state = 'ACTIVE'
        JOIN schools school ON school.id = enrollment."SchoolID_Onec"
-       JOIN users author ON author.id = comment.authored_by_user_id
+       LEFT JOIN users author ON author.id = comment.authored_by_user_id
+       LEFT JOIN teachers author_teacher ON author_teacher.id = comment.authored_by_teacher_id
        WHERE enrollment.student_uuid = $1
          AND enrollment.deleted_at IS NULL
          ${scopeCondition}
@@ -692,6 +611,7 @@ export class ObservationReviewsRepository {
          enrollment."RoomID_Onec"::text AS room_no,
          comment.comment_text AS comment,
          COALESCE(
+           NULLIF(trim(concat_ws(' ', author_teacher.first_name, author_teacher.last_name)), ''),
            NULLIF(trim(concat_ws(' ', author."FirstName", author."LastName")), ''),
            author.username
          ) AS author_display_name,
@@ -707,7 +627,8 @@ export class ObservationReviewsRepository {
         AND current_enrollment.resolution_state = 'ACTIVE'
        JOIN schools school ON school.id = enrollment."SchoolID_Onec"
        LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
-       JOIN users author ON author.id = comment.authored_by_user_id
+       LEFT JOIN users author ON author.id = comment.authored_by_user_id
+       LEFT JOIN teachers author_teacher ON author_teacher.id = comment.authored_by_teacher_id
        WHERE ${conditions.join(' AND ')}
        ORDER BY comment.created_at DESC, comment.id DESC
        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,

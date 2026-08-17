@@ -236,7 +236,7 @@ export class CreateSchoolTeacherMembershipDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  teacherUserId!: number;
+  teacherId!: number;
 
   @IsOptional()
   @IsString()

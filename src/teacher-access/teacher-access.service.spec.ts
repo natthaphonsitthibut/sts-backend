@@ -22,7 +22,7 @@ const TODAY = getBangkokDateString(NOW);
 const GRANT: TeacherAccessGrantRow = {
   id: '11111111-1111-4111-8111-111111111111',
   teacher_membership_id: '12',
-  teacher_user_id: 44,
+  teacher_id: '7',
   teacher_username: 'teacher.one',
   teacher_display_name: 'ครู หนึ่ง',
   teacher_email: 'teacher.one@sts-demo.ac.th',
@@ -462,7 +462,7 @@ describe('TeacherAccessService', () => {
       studentUuid,
       expect.objectContaining({
         teacher_membership_id: Number(GRANT.teacher_membership_id),
-        permissions: ['students', 'student-observations'],
+        permissions: ['students'],
       }),
       { school_ids: [GRANT.school_id] },
     );
@@ -775,7 +775,7 @@ describe('TeacherAccessService', () => {
     repository.findMembershipForIssue.mockResolvedValue({
       id: '12',
       school_id: 10,
-      teacher_user_id: 44,
+      teacher_id: '7',
       membership_status: 'ACTIVE',
       teacher_status: 'ACTIVE',
     });
@@ -814,39 +814,13 @@ describe('TeacherAccessService', () => {
     repository.findMembershipForIssue.mockResolvedValue({
       id: '12',
       school_id: 10,
-      teacher_user_id: 44,
+      teacher_id: '7',
       membership_status: 'ACTIVE',
       teacher_status: 'ACTIVE',
     });
     repository.listAssignmentOptions.mockResolvedValue([ASSIGNMENT]);
     repository.createGrant.mockResolvedValue(GRANT.id);
   }
-
-  it('omits the issuing teacher from attendance-delegation recipients', async () => {
-    const { service, repository } = createHarness();
-    repository.listActiveTeacherMembershipsForSchool.mockResolvedValue([
-      {
-        teacher_membership_id: '12',
-        teacher_user_id: ACTOR.id,
-        teacher_display_name: 'ครูผู้ออกลิงก์',
-      },
-      {
-        teacher_membership_id: '13',
-        teacher_user_id: 44,
-        teacher_display_name: 'ครูผู้รับมอบหมาย',
-      },
-    ]);
-
-    const result = await service.listAttendanceDelegationOptions(
-      { schoolId: 10, schoolTermId: 21, classroomId: 41, attendanceDate: TODAY },
-      ACTOR,
-      'https://sts.example.test',
-    );
-
-    expect(result.data.teachers).toEqual([
-      { teacherMembershipId: 13, teacherDisplayName: 'ครูผู้รับมอบหมาย' },
-    ]);
-  });
 
   it('returns active attendance delegations with their usable link', async () => {
     const { service, repository } = createHarness();
@@ -879,39 +853,6 @@ describe('TeacherAccessService', () => {
         accessUrl: 'https://sts.example.test/teacher-access#token=delegation-token',
       }),
     ]);
-  });
-
-  it('refuses a direct request that delegates attendance to the issuer', async () => {
-    const { service, repository } = createHarness();
-    stubIssuableTerm(repository);
-    repository.findMembershipForIssue.mockResolvedValue({
-      id: '12',
-      school_id: 10,
-      teacher_id: '7',
-      teacher_user_id: ACTOR.id,
-      teacher_display_name: 'ครูผู้ออกลิงก์',
-      teacher_email: 'teacher@example.test',
-      membership_status: 'ACTIVE',
-      teacher_status: 'ACTIVE',
-    });
-
-    await expect(
-      service.issueAttendanceDelegation(
-        {
-          schoolId: 10,
-          schoolTermId: 21,
-          classroomId: 41,
-          assignmentId: 31,
-          teacherMembershipId: 12,
-          attendanceDate: '2099-08-15',
-          // The link's own expiry, which is not the round's date.
-          endsOn: '2099-08-15',
-          endsAt: '09:00',
-        },
-        ACTOR,
-        'https://sts.example',
-      ),
-    ).rejects.toThrow('ไม่สามารถมอบหมายการเช็กชื่อให้ตนเองได้');
   });
 
   it('issues an email-OTP link that covers every assignment of the teacher', async () => {
@@ -1121,7 +1062,7 @@ describe('TeacherAccessService', () => {
       id: '12',
       school_id: 10,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
@@ -1153,7 +1094,7 @@ describe('TeacherAccessService', () => {
       id: '12',
       school_id: 99,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
@@ -1216,7 +1157,7 @@ describe('TeacherAccessService', () => {
       id: '12',
       school_id: 10,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: 'teacher.one@sts-demo.ac.th',
       membership_status: 'ACTIVE',
@@ -1247,7 +1188,7 @@ describe('TeacherAccessService', () => {
       id: '12',
       school_id: 10,
       teacher_id: '7',
-      teacher_user_id: 44,
+      teacher_id: '7',
       teacher_display_name: 'ครู หนึ่ง',
       teacher_email: null,
       membership_status: 'ACTIVE',

@@ -17,6 +17,7 @@ import {
   resolveLimit,
   resolvePage,
 } from '../common/pagination/pagination.util';
+import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { TeacherAccessService } from '../teacher-access/teacher-access.service';
 import type { ActiveTeacherGrantContext } from '../teacher-access/teacher-access.types';
@@ -76,12 +77,13 @@ export class StudentObservationsService {
     }
   }
 
+  /**
+   * Observing a student and managing a school's observations were two
+   * permissions; both are work done on รายชื่อนักเรียน, so that page decides and
+   * `data_scope` is what still separates a class teacher from a school manager.
+   */
   private canManage(actor: AuthenticatedRequestUser): boolean {
-    return hasPermission(actor.roles, actor.permissions, 'manage-student-observations');
-  }
-
-  private canUseTeacherObservations(actor: AuthenticatedRequestUser): boolean {
-    return hasPermission(actor.roles, actor.permissions, 'student-observations');
+    return hasPermission(actor.roles, actor.permissions, 'students');
   }
 
   private async findEnrollment(
@@ -113,22 +115,15 @@ export class StudentObservationsService {
     assignment: ObservationAssignmentRow | null;
   }> {
     this.denyExecutiveRaw(actor);
-    const enrollment = await this.findEnrollment(studentUuid, queryRunner);
-    if (this.canManage(actor)) {
-      await this.assertEnrollmentScopeAccess(actor, enrollment);
-      return { enrollment, assignment: null };
-    }
-    if (!this.canUseTeacherObservations(actor)) {
+    if (!this.canManage(actor)) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูข้อสังเกตนักเรียน');
     }
+    const enrollment = await this.findEnrollment(studentUuid, queryRunner);
     await this.assertEnrollmentScopeAccess(actor, enrollment);
-    const assignment = await this.repository.findActorAssignment(
-      actor.id,
-      studentUuid,
-      getBangkokDateString(),
-      queryRunner,
-    );
-    return { enrollment, assignment };
+    // A logged-in actor is staff. Teachers reach the system through an access
+    // link, so there is no assignment to infer from the account — the caller
+    // names one explicitly when the write belongs to a class.
+    return { enrollment, assignment: null };
   }
 
   private async resolveLoggedWriteAccess(
@@ -142,19 +137,11 @@ export class StudentObservationsService {
     const onDate = getBangkokDateString();
     const assignment = assignmentId
       ? await this.repository.findActiveAssignment(assignmentId, studentUuid, onDate, queryRunner)
-      : timetableSlotId && !this.canManage(actor)
-        ? await this.repository.findActorAssignmentForTimetableSlot(
-            actor.id,
-            studentUuid,
-            timetableSlotId,
-            onDate,
-            queryRunner,
-          )
-        : readAccess.assignment;
-    if (!this.canManage(actor) && !assignment && assignmentId) {
+      : readAccess.assignment;
+    if (!assignment && assignmentId) {
       throw new NotFoundException('ไม่พบการมอบหมายครูที่ใช้งานได้สำหรับนักเรียน');
     }
-    if (!this.canManage(actor) && !assignment && timetableSlotId) {
+    if (!assignment && timetableSlotId) {
       const slotMatchesEnrollment = await this.repository.isTimetableSlotForEnrollment(
         timetableSlotId,
         readAccess.enrollment,
@@ -164,19 +151,13 @@ export class StudentObservationsService {
         throw new NotFoundException('ไม่พบคาบเรียนในห้องของนักเรียน');
       }
     }
-    if (assignment && !this.canManage(actor) && assignment.teacher_user_id !== actor.id) {
-      throw new NotFoundException('assignment อยู่นอกขอบเขตของคุณ');
-    }
     return {
       enrollment: readAccess.enrollment,
       actorContext: {
         kind: 'USER',
         userId: actor.id,
         username: actor.username,
-        teacherMembershipId:
-          assignment?.teacher_user_id === actor.id
-            ? Number(assignment.teacher_membership_id)
-            : null,
+        teacherMembershipId: null,
         grantId: null,
         sourceAssignmentId: assignment ? Number(assignment.assignment_id) : null,
         sourceTaskLinkId: null,
@@ -331,7 +312,7 @@ export class StudentObservationsService {
       const row = await this.repository.createObservation(input, queryRunner);
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'STUDENT_OBSERVATION_CREATE',
           targetType: 'student_observations',
@@ -355,7 +336,7 @@ export class StudentObservationsService {
     const access = await this.resolveLoggedReadAccess(actor, studentUuid);
     const result = await this.listInternal(studentUuid, query);
     await this.auditLog.record({
-      actorUserId: actor.id,
+      actorUserId: resolveAuditActorId(actor),
       actorLabel: actor.username,
       action: 'STUDENT_OBSERVATION_VIEW',
       targetType: 'student_term',
@@ -447,10 +428,7 @@ export class StudentObservationsService {
           kind: 'USER',
           userId: actor.id,
           username: actor.username,
-          teacherMembershipId:
-            assignment?.teacher_user_id === actor.id
-              ? Number(assignment.teacher_membership_id)
-              : null,
+          teacherMembershipId: null,
           grantId: null,
           sourceAssignmentId:
             current.source_assignment_id === null ? null : Number(current.source_assignment_id),
@@ -470,7 +448,7 @@ export class StudentObservationsService {
       );
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'STUDENT_OBSERVATION_UPDATE',
           targetType: 'student_observations',
@@ -554,8 +532,8 @@ export class StudentObservationsService {
           enrollment,
           {
             kind: 'TEACHER_ACCESS',
-            userId: grant.teacherUserId,
-            username: grant.teacherUsername,
+            userId: null,
+            username: grant.teacherDisplayName,
             teacherMembershipId: Number(grant.teacherMembershipId),
             grantId: grant.grantId,
             sourceAssignmentId: Number(assignment.assignment_id),
@@ -568,8 +546,8 @@ export class StudentObservationsService {
         const row = await this.repository.createObservation(input, queryRunner);
         await this.auditLog.recordAtomic(
           {
-            actorUserId: grant.teacherUserId,
-            actorLabel: grant.teacherUsername,
+            actorUserId: null,
+            actorLabel: grant.teacherDisplayName,
             action: 'STUDENT_OBSERVATION_CREATE',
             targetType: 'student_observations',
             targetId: row.id,
@@ -607,8 +585,8 @@ export class StudentObservationsService {
         const result = await this.listInternal(studentUuid, query, queryRunner);
         await this.auditLog.recordAtomic(
           {
-            actorUserId: grant.teacherUserId,
-            actorLabel: grant.teacherUsername,
+            actorUserId: null,
+            actorLabel: grant.teacherDisplayName,
             action: 'STUDENT_OBSERVATION_VIEW',
             targetType: 'student_term',
             targetId: studentUuid,
@@ -653,7 +631,9 @@ export class StudentObservationsService {
           true,
         );
         if (!current) throw new NotFoundException('ไม่พบข้อสังเกต');
-        if (current.author_user_id !== grant.teacherUserId) {
+        if (
+          String(current.author_teacher_membership_id ?? '') !== String(grant.teacherMembershipId)
+        ) {
           throw new ForbiddenException('แก้ไขได้เฉพาะข้อสังเกตที่ครูผู้ใช้ลิงก์นี้บันทึก');
         }
         if (current.revision_number !== dto.expectedRevision) {
@@ -673,8 +653,8 @@ export class StudentObservationsService {
           enrollment,
           {
             kind: 'TEACHER_ACCESS',
-            userId: grant.teacherUserId,
-            username: grant.teacherUsername,
+            userId: null,
+            username: grant.teacherDisplayName,
             teacherMembershipId: Number(grant.teacherMembershipId),
             grantId: grant.grantId,
             sourceAssignmentId: Number(assignment.assignment_id),
@@ -689,13 +669,13 @@ export class StudentObservationsService {
           observationId,
           input,
           current.revision_number + 1,
-          grant.teacherUserId,
+          null,
           queryRunner,
         );
         await this.auditLog.recordAtomic(
           {
-            actorUserId: grant.teacherUserId,
-            actorLabel: grant.teacherUsername,
+            actorUserId: null,
+            actorLabel: grant.teacherDisplayName,
             action: 'STUDENT_OBSERVATION_UPDATE',
             targetType: 'student_observations',
             targetId: row.id,
@@ -744,7 +724,7 @@ export class StudentObservationsService {
 
   async getCatalog(actor: AuthenticatedRequestUser) {
     this.denyExecutiveRaw(actor);
-    if (!this.canManage(actor) && !this.canUseTeacherObservations(actor)) {
+    if (!this.canManage(actor)) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดู catalog ข้อสังเกต');
     }
     const catalog = await this.repository.listCatalog();
@@ -814,7 +794,7 @@ export class StudentObservationsService {
       if (!row) throw new NotFoundException('ไม่พบด้านข้อสังเกต');
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'MASTER_DATA_EDIT',
           targetType: 'observation_dimensions',
@@ -839,7 +819,7 @@ export class StudentObservationsService {
       if (!row) throw new NotFoundException('ไม่พบ behavior tag');
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actor.id,
+          actorUserId: resolveAuditActorId(actor),
           actorLabel: actor.username,
           action: 'MASTER_DATA_EDIT',
           targetType: 'observation_behavior_tags',

@@ -29,6 +29,7 @@ import {
   CurrentUser,
   PermissionsGuard,
   Public,
+  RequireAnyPermission,
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
@@ -134,61 +135,6 @@ export class TeacherAccessGrantController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listAssignmentOptions(query, actor);
-  }
-
-  @Get('attendance-delegation-options')
-  attendanceDelegationOptions(
-    @Query() query: TeacherAccessAttendanceDelegationOptionsDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-    @Req() request: Request,
-  ) {
-    return this.service.listAttendanceDelegationOptions(
-      query,
-      actor,
-      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
-    );
-  }
-
-  @Get('attendance-delegation-history')
-  attendanceDelegationHistory(
-    @Query() query: ListTeacherAccessDelegationHistoryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-    @Req() request: Request,
-  ) {
-    return this.service.listAttendanceDelegationHistory(
-      query,
-      actor,
-      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
-    );
-  }
-
-  @Post('attendance-delegations')
-  issueAttendanceDelegation(
-    @Body() body: IssueTeacherAccessAttendanceDelegationDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-    @Req() request: Request,
-  ) {
-    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
-    return this.service.issueAttendanceDelegation(body, actor, baseUrl);
-  }
-
-  @Patch('attendance-delegations/:grantId')
-  updateAttendanceDelegation(
-    @Param('grantId', ParseUUIDPipe) grantId: string,
-    @Body() body: UpdateTeacherAccessAttendanceDelegationDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-    @Req() request: Request,
-  ) {
-    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
-    return this.service.updateAttendanceDelegation(grantId, body, actor, baseUrl);
-  }
-
-  @Post('attendance-delegations/:grantId/revoke')
-  revokeAttendanceDelegation(
-    @Param('grantId', ParseUUIDPipe) grantId: string,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-  ) {
-    return this.service.revokeAttendanceDelegation(grantId, actor);
   }
 
   @Post('teacher-memberships/:teacherMembershipId/unlink-line')
@@ -308,6 +254,74 @@ export class TeacherAccessGrantController {
   ) {
     const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
     return this.service.rotateGrant(grantId, actor, baseUrl);
+  }
+
+  // Standing in for a colleague's check-in is offered from two screens — the
+  // เช็กชื่อ page and จัดการลิงก์เช็กชื่อ — so these answer to either page's
+  // permission instead of the controller-wide `manage-teacher-access`.
+  @Get('attendance-delegation-options')
+  @RequirePermission()
+  @RequireAnyPermission('manage-teacher-access', 'attendance')
+  attendanceDelegationOptions(
+    @Query() query: TeacherAccessAttendanceDelegationOptionsDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.listAttendanceDelegationOptions(
+      query,
+      actor,
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
+  @Get('attendance-delegation-history')
+  @RequirePermission()
+  @RequireAnyPermission('manage-teacher-access', 'attendance')
+  attendanceDelegationHistory(
+    @Query() query: ListTeacherAccessDelegationHistoryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.listAttendanceDelegationHistory(
+      query,
+      actor,
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
+  @Post('attendance-delegations')
+  @RequirePermission()
+  @RequireAnyPermission('manage-teacher-access', 'attendance')
+  issueAttendanceDelegation(
+    @Body() body: IssueTeacherAccessAttendanceDelegationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.issueAttendanceDelegation(body, actor, baseUrl);
+  }
+
+  @Patch('attendance-delegations/:grantId')
+  @RequirePermission()
+  @RequireAnyPermission('manage-teacher-access', 'attendance')
+  updateAttendanceDelegation(
+    @Param('grantId', ParseUUIDPipe) grantId: string,
+    @Body() body: UpdateTeacherAccessAttendanceDelegationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
+    return this.service.updateAttendanceDelegation(grantId, body, actor, baseUrl);
+  }
+
+  @Post('attendance-delegations/:grantId/revoke')
+  @RequirePermission()
+  @RequireAnyPermission('manage-teacher-access', 'attendance')
+  revokeAttendanceDelegation(
+    @Param('grantId', ParseUUIDPipe) grantId: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.revokeAttendanceDelegation(grantId, actor);
   }
 }
 

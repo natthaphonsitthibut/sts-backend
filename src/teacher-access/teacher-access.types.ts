@@ -9,12 +9,10 @@ export type TeacherAccessScope = 'FULL' | 'ATTENDANCE_ONLY';
 export interface TeacherAccessGrantRow extends Record<string, unknown> {
   id: string;
   teacher_membership_id: string;
-  teacher_user_id: number | null;
-  teacher_username: string;
+  teacher_id: string;
   teacher_display_name: string;
   teacher_email: string | null;
   teacher_citizen_id: string | null;
-  teacher_data_origin_code: string | null;
   teacher_status: string;
   membership_status: 'ACTIVE' | 'INACTIVE';
   membership_deleted_at: string | Date | null;
@@ -146,8 +144,8 @@ export interface TeacherAccessGrantDetail {
 export interface ActiveTeacherGrantContext {
   grantId: string;
   teacherMembershipId: string;
-  teacherUserId: number | null;
-  teacherUsername: string;
+  /** `teachers.id` — the identity an attendance row is attributed to. */
+  teacherId: string;
   teacherDisplayName: string;
   issuerUserId: number;
   schoolId: number;
