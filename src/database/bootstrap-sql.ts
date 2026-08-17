@@ -2301,6 +2301,9 @@ export const DATABASE_BASELINE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cases_student_uuid ON cases(student_uuid);
   CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance("AttendanceDate");
   CREATE INDEX IF NOT EXISTS idx_attendance_student_uuid ON attendance(student_uuid);
+  CREATE INDEX IF NOT EXISTS idx_attendance_created_by_user_id ON attendance(created_by);
+  CREATE INDEX IF NOT EXISTS idx_attendance_updated_by_user_id ON attendance(updated_by);
+  CREATE INDEX IF NOT EXISTS idx_attendance_deleted_by_user_id ON attendance(deleted_by);
   CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_scope
     ON student_risk_profiles (school_id, grade_level_id, room_id);
   CREATE INDEX IF NOT EXISTS idx_student_risk_profiles_tier

@@ -20,6 +20,23 @@ export class RemoveRetiredStudentAccounts20260821180000 implements MigrationInte
   name = 'RemoveRetiredStudentAccounts20260821180000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // A parent-row DELETE makes PostgreSQL probe every FK that references
+    // users.id. Attendance is the largest child table, so its audit FKs need
+    // indexes before deleting hundreds of retired accounts; without them each
+    // account triggers another full attendance scan.
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS idx_attendance_created_by_user_id
+      ON attendance (created_by)
+    `);
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS idx_attendance_updated_by_user_id
+      ON attendance (updated_by)
+    `);
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS idx_attendance_deleted_by_user_id
+      ON attendance (deleted_by)
+    `);
+
     // Three immutable tables refuse the `ON DELETE SET NULL` update requested by
     // their own actor FK. Suspend only those guards while PostgreSQL nulls the
     // actor reference; never delete the history rows.
@@ -50,5 +67,8 @@ export class RemoveRetiredStudentAccounts20260821180000 implements MigrationInte
       VALUES ('STUDENT', 'นักเรียน', '[]'::jsonb, 'flexible', 'OWN_ONLY', FALSE, TRUE)
       ON CONFLICT (name) DO NOTHING
     `);
+    await queryRunner.query(`DROP INDEX IF EXISTS idx_attendance_deleted_by_user_id`);
+    await queryRunner.query(`DROP INDEX IF EXISTS idx_attendance_updated_by_user_id`);
+    await queryRunner.query(`DROP INDEX IF EXISTS idx_attendance_created_by_user_id`);
   }
 }

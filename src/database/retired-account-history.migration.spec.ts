@@ -12,6 +12,29 @@ describe('retired account migration history safety', () => {
     expect(source).toContain("SET role = 'ADMIN'");
     expect(source).toContain('SELECT jsonb_agg(id ORDER BY id) FROM permission_page_catalog');
     expect(source).toContain("WHERE username = 'newnew'");
+    expect(source).not.toContain("DELETE FROM users\n      WHERE role = 'STUDENT'");
+  });
+
+  it('indexes attendance actor FKs before deleting retired student accounts', () => {
+    const migration = readMigration('20260821180000-RemoveRetiredStudentAccounts.ts');
+    const bootstrap = readFileSync(
+      resolve(process.cwd(), 'src', 'database', 'bootstrap-sql.ts'),
+      'utf8',
+    );
+    const deletePosition = migration.indexOf("DELETE FROM users WHERE role = 'STUDENT'");
+
+    for (const indexName of [
+      'idx_attendance_created_by_user_id',
+      'idx_attendance_updated_by_user_id',
+      'idx_attendance_deleted_by_user_id',
+    ]) {
+      expect(migration.indexOf(`CREATE INDEX IF NOT EXISTS ${indexName}`)).toBeGreaterThan(-1);
+      expect(migration.indexOf(`CREATE INDEX IF NOT EXISTS ${indexName}`)).toBeLessThan(
+        deletePosition,
+      );
+      expect(migration).toContain(`DROP INDEX IF EXISTS ${indexName}`);
+      expect(bootstrap).toContain(`CREATE INDEX IF NOT EXISTS ${indexName}`);
+    }
   });
 
   it.each([
@@ -33,6 +56,17 @@ describe('retired account migration history safety', () => {
     expect(source).toContain('ADD COLUMN changed_by_display_name VARCHAR(200)');
     expect(source).not.toMatch(
       /public async up[\s\S]*DELETE FROM student_observations[\s\S]*public async down/,
+    );
+  });
+
+  it('creates temporary user-FK indexes before auditing teacher delete blockers', () => {
+    const source = readMigration('20260823120000-RemoveTeacherUserAccounts.ts');
+
+    expect(source.indexOf('CREATE INDEX "${index.name}"')).toBeLessThan(
+      source.indexOf('const blockingForeignKeys'),
+    );
+    expect(source.indexOf('const blockingForeignKeys')).toBeLessThan(
+      source.indexOf("DELETE FROM users WHERE role = 'TEACHER'"),
     );
   });
 });
