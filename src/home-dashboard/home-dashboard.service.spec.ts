@@ -158,7 +158,7 @@ describe('HomeDashboardService', () => {
     expect(repository.getSchoolName).toHaveBeenCalledWith(10010004);
   });
 
-  it('hides dashboard/case sections when actor only has attendance permissions', async () => {
+  it('shows every section to an actor without dashboard permissions', async () => {
     const repository = createRepositoryMock();
     const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
     const actor: HomeDashboardActor = {
@@ -169,11 +169,16 @@ describe('HomeDashboardService', () => {
 
     const result = await service.getTrends(actor, {});
 
-    expect(result.data.availableSections).toEqual(['attendanceTrend']);
-    expect(result.data.riskDistribution).toBeNull();
-    expect(result.data.casePipeline).toBeNull();
-    expect(repository.getRiskDistribution).not.toHaveBeenCalled();
-    expect(repository.getCasePipeline).not.toHaveBeenCalled();
+    // Opening /student-risk-report or /cases still needs the permission; what
+    // the overview says about the scope this actor already sees does not.
+    expect(result.data.availableSections).toEqual([
+      'attendanceTrend',
+      'riskDistribution',
+      'casePipeline',
+      'caseMovement',
+    ]);
+    expect(repository.getRiskDistribution).toHaveBeenCalled();
+    expect(repository.getCasePipeline).toHaveBeenCalled();
   });
 
   it('rejects invalid cascade filters before querying aggregates', async () => {

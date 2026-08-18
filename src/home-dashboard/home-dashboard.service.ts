@@ -1,5 +1,4 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { hasPermission } from '../auth/permissions.constants';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { HomeDashboardRepository } from './home-dashboard.repository';
 import type {
@@ -21,10 +20,6 @@ const DEFAULT_PERIOD: HomeDashboardPeriod = '30_DAYS';
 function trim(value?: string): string | undefined {
   const next = value?.trim();
   return next && next.length > 0 ? next : undefined;
-}
-
-function hasActorPermission(actor: HomeDashboardActor, permission: string): boolean {
-  return hasPermission(actor.roles || [], actor.permissions || [], permission);
 }
 
 @Injectable()
@@ -68,21 +63,21 @@ export class HomeDashboardService {
     }
   }
 
-  private resolveSections(actor: HomeDashboardActor): HomeDashboardSection[] {
-    const sections: HomeDashboardSection[] = ['riskAreaRanking'];
-    if (
-      hasActorPermission(actor, 'attendance') ||
-      hasActorPermission(actor, 'attendance-dashboard')
-    ) {
-      sections.push('attendanceTrend');
-    }
-    if (hasActorPermission(actor, 'dashboard')) {
-      sections.push('riskDistribution');
-    }
-    if (hasActorPermission(actor, 'dashboard')) {
-      sections.push('casePipeline', 'caseMovement');
-    }
-    return sections;
+  /**
+   * หน้าหลัก shows the same picture to every role: which pages an account may
+   * OPEN is a permission question, but what the overview says about the scope it
+   * already sees is not — a ผู้บริหาร reading a different summary from an admin
+   * standing in the same scope was the bug. Scope itself still narrows every
+   * number, because each repository call filters by the actor's data_scope.
+   */
+  private resolveSections(): HomeDashboardSection[] {
+    return [
+      'riskAreaRanking',
+      'attendanceTrend',
+      'riskDistribution',
+      'casePipeline',
+      'caseMovement',
+    ];
   }
 
   private resolveRiskAreaDimension(
@@ -160,7 +155,7 @@ export class HomeDashboardService {
     const filters = this.normalizeFilters(input);
     await this.assertFiltersAllowed(actor, filters);
 
-    const sections = this.resolveSections(actor);
+    const sections = this.resolveSections();
     const riskAreaDimension = this.resolveRiskAreaDimension(filters);
     const [
       totalStudents,
@@ -171,12 +166,8 @@ export class HomeDashboardService {
       monthlySuccessRates,
     ] = await Promise.all([
       this.repository.countStudents(actor, filters),
-      hasActorPermission(actor, 'dashboard')
-        ? this.repository.countHighRiskStudents(actor, filters)
-        : Promise.resolve(0),
-      hasActorPermission(actor, 'dashboard')
-        ? this.repository.getCasePipeline(actor, filters)
-        : Promise.resolve(null),
+      this.repository.countHighRiskStudents(actor, filters),
+      this.repository.getCasePipeline(actor, filters),
       this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
       this.repository.getCauseCategoryDistribution(actor, filters),
       this.repository.getMonthlySuccessRates(actor, filters),
@@ -273,7 +264,7 @@ export class HomeDashboardService {
     const filters = this.normalizeFilters(input);
     await this.assertFiltersAllowed(actor, filters);
 
-    const sections = this.resolveSections(actor).filter((section) => section !== 'riskAreaRanking');
+    const sections = this.resolveSections().filter((section) => section !== 'riskAreaRanking');
     const today = getBangkokDateString();
     const startsOn = await this.getPeriodStart(actor, filters, today);
 
