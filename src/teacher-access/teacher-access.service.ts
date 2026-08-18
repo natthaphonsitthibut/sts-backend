@@ -2234,8 +2234,11 @@ export class TeacherAccessService {
       if (!startsAt || !endsAt || !grant.attendance_date) {
         throw new ForbiddenException('ข้อมูลช่วงเวลาของลิงก์เช็กชื่อไม่ครบถ้วน');
       }
+      // Gated on the link's own window only, same as normal check-in: a teacher
+      // can record a past date's round today, so a delegated link opened today
+      // must be able to cover an earlier attendance_date too.
       const now = Date.now();
-      if (getBangkokDateString() !== grant.attendance_date || now < startsAt.getTime()) {
+      if (now < startsAt.getTime()) {
         throw new ForbiddenException('ลิงก์เช็กชื่อยังไม่ถึงเวลาใช้งาน');
       }
       if (now >= endsAt.getTime()) {
@@ -2745,14 +2748,17 @@ export class TeacherAccessService {
               )
             : await this.repository.listGrantAssignments(context.grantId, queryRunner);
         const activeAssignments = assignments.filter((row) => this.assignmentActiveToday(row));
+        // Fetched once and reused: the error path needs the round's date to name
+        // it, and the success path needs it so the page can default to the round
+        // being delegated instead of today.
+        const delegation =
+          context.accessScope === 'ATTENDANCE_ONLY'
+            ? await this.repository.findAttendanceDelegationScope(context.grantId, queryRunner)
+            : null;
         if (activeAssignments.length === 0) {
           // The teacher opening this has no way to know which of the two setup
           // steps is missing, and is the one who has to report it — so say which.
           if (context.accessScope === 'ATTENDANCE_ONLY') {
-            const delegation = await this.repository.findAttendanceDelegationScope(
-              context.grantId,
-              queryRunner,
-            );
             throw new ForbiddenException(
               delegation
                 ? `ไม่พบคาบเรียนที่มอบหมายของวันที่ ${delegation.attendance_date} ในตารางสอนแล้ว (ตารางสอนอาจถูกแก้ไข หรือครูถูกปลดออกจากคาบนี้) กรุณาแจ้งผู้ดูแลให้ตรวจสอบตารางสอนและออกลิงก์ใหม่`
@@ -2779,6 +2785,7 @@ export class TeacherAccessService {
             semester: context.semester,
             capabilities: context.capabilities,
             accessScope: context.accessScope,
+            attendanceDate: delegation?.attendance_date ?? null,
             problemCategories,
             assignments: activeAssignments.map((row) =>
               this.toAssignment(row, context.capabilities),
