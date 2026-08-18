@@ -288,8 +288,6 @@ export class TimetableRepository {
         (
           COALESCE(t.first_name, '') ILIKE $${params.length}
           OR COALESCE(t.last_name, '') ILIKE $${params.length}
-          OR COALESCE(u."FirstName", '') ILIKE $${params.length}
-          OR COALESCE(u."LastName", '') ILIKE $${params.length}
         )
       `);
     }
@@ -299,11 +297,7 @@ export class TimetableRepository {
       `
         SELECT DISTINCT
           membership.id,
-          COALESCE(
-            NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
-            NULLIF(TRIM(COALESCE(u."FirstName", '') || ' ' || COALESCE(u."LastName", '')), ''),
-            u.username
-          ) AS display_name
+          TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')) AS display_name
         FROM school_teacher_memberships membership
         ${joins.join('\n')}
         WHERE ${conditions.join(' AND ')}
