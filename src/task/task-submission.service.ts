@@ -86,7 +86,7 @@ export class TaskSubmissionService {
     if (link.error) {
       const status = typeof link.status === 'string' ? link.status : '';
       const message = typeof link.error === 'string' ? link.error : 'ลิงก์ใช้งานไม่ได้';
-      if (status === 'EXPIRED') {
+      if (status === 'EXPIRED' || status === 'CANCELLED') {
         throw new GoneException(message);
       }
       if (status === 'ADMIN_LOCKED') {
