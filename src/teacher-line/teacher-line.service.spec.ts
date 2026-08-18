@@ -106,7 +106,7 @@ function createHarness() {
   const araIdChallengeStore = {
     create: jest.fn(),
     read: jest.fn(),
-    claim: jest.fn(),
+    claimOrRenew: jest.fn(),
     readAuthorization: jest.fn(),
     approveAuthorization: jest.fn(),
     consumeApproved: jest.fn(),
@@ -276,7 +276,7 @@ describe('TeacherLineService', () => {
       expiresAt: Date.now() + 90_000,
     };
     araIdChallengeStore.read.mockResolvedValue(challenge);
-    araIdChallengeStore.claim.mockResolvedValue({
+    araIdChallengeStore.claimOrRenew.mockResolvedValue({
       authorizationToken: 'd'.repeat(43),
       expiresAt: Date.now() + 600_000,
     });
