@@ -758,6 +758,35 @@ export class SchoolStructureService {
           },
           queryRunner,
         );
+        // A homeroom teacher teaches โฮมรูม — nobody should have to add that to
+        // the curriculum or the assignment list by hand, and without it the room
+        // has no โฮมรูม period to check attendance in.
+        if (dto.assignmentKind === 'HOMEROOM') {
+          const homeroomSubjectId = await this.repository.findHomeroomSubjectId(queryRunner);
+          if (homeroomSubjectId) {
+            await this.repository.deactivateHomeroomSubjectAssignments(
+              dto.classroomId,
+              homeroomSubjectId,
+              actorId,
+              queryRunner,
+            );
+            await this.repository.createAssignment(
+              {
+                schoolId: classroom.school_id,
+                classroomId: dto.classroomId,
+                teacherMembershipId: dto.teacherMembershipId,
+                subjectId: homeroomSubjectId,
+                assignmentKind: 'SUBJECT',
+                effectiveOn: dto.effectiveOn ?? null,
+                effectiveUntil: dto.effectiveUntil ?? null,
+                actorId,
+              },
+              queryRunner,
+            );
+          } else {
+            this.logger.warn('ไม่พบรายวิชาโฮมรูม จึงข้ามการผูกครูประจำชั้นกับวิชาโฮมรูม');
+          }
+        }
         await this.auditLog.recordAtomic(
           {
             actorUserId: actorId,

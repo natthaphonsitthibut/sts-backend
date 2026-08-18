@@ -5,6 +5,7 @@ import { buildDataScopeQuery } from '../common/utils/authorization';
 import { ATTENDANCE_STATUS_CODE } from '../attendance/attendance-status';
 import { escapeLikePattern } from '../common/utils/helpers';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
+import { HOMEROOM_SUBJECT_CODE } from './homeroom-subject.constants';
 import type {
   ClassroomRosterRow,
   ClassroomDailyAttendanceRow,
@@ -964,6 +965,44 @@ export class SchoolStructureRepository {
           AND deleted_at IS NULL
       `,
       [classroomId, actorId],
+    );
+  }
+
+  /**
+   * The โฮมรูม subject row, looked up by its stable code rather than an id so
+   * every environment resolves the same subject the migration seeded.
+   */
+  async findHomeroomSubjectId(queryRunner: QueryRunner): Promise<number | null> {
+    const result = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
+      `SELECT id::text FROM subjects WHERE code = $1 AND deleted_at IS NULL LIMIT 1`,
+      [HOMEROOM_SUBJECT_CODE],
+    );
+    const row = result.rows[0];
+    return row ? Number(row.id) : null;
+  }
+
+  /**
+   * Retires the room's โฮมรูม teaching row. The homeroom teacher owns that
+   * subject, so replacing the homeroom teacher must not leave the previous one
+   * still teaching it.
+   */
+  async deactivateHomeroomSubjectAssignments(
+    classroomId: number,
+    homeroomSubjectId: number,
+    actorId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        UPDATE classroom_teacher_assignments
+        SET assignment_status = 'INACTIVE', updated_by = $3
+        WHERE classroom_id = $1
+          AND assignment_kind = 'SUBJECT'
+          AND subject_id = $2
+          AND assignment_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [classroomId, homeroomSubjectId, actorId],
     );
   }
 

@@ -89,9 +89,19 @@ describe('TaskSubmissionService', () => {
         label: 'ปัญหาด้านสุขภาพ',
         guidance: 'เช่น เจ็บป่วย, ได้รับบาดเจ็บ',
       }),
-      getParentalStatus: jest.fn().mockResolvedValue(null),
-      getGuardianType: jest.fn().mockResolvedValue(null),
-      getResidenceEnvironments: jest.fn().mockResolvedValue([]),
+      // A visit report is only accepted with the household answers filled in,
+      // so the default fixtures resolve to a complete set.
+      getParentalStatus: jest
+        .fn()
+        .mockResolvedValue({ code: 'LIVE_TOGETHER', label: 'อยู่ด้วยกัน' }),
+      getGuardianType: jest
+        .fn()
+        .mockResolvedValue({ code: 'FATHER', label: 'บิดา', requiresDetail: false }),
+      getResidenceEnvironments: jest
+        .fn()
+        .mockResolvedValue([
+          { code: 'NORMAL', label: 'ปกติ', requiresDetail: false, isExclusive: true },
+        ]),
     };
 
     service = new TaskSubmissionService(
@@ -117,6 +127,60 @@ describe('TaskSubmissionService', () => {
     expect(taskRepository.findTaskSubmissionContextByTokenHash).not.toHaveBeenCalled();
   });
 
+  it('requires the household answers on a home-visit report', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+    });
+    trackingOptions.getParentalStatus.mockResolvedValueOnce(null);
+
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        notes: 'ลงพื้นที่แล้ว',
+        residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
+        case_follow_up_decision: 'REQUEST_REVIEW',
+      }),
+    ).rejects.toThrow('กรุณาเลือกสถานะของบิดา-มารดา');
+    expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+  });
+
+  it('drops the household answers when the student was not found', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+    });
+    trackingOptions.getHomeVisitException.mockResolvedValueOnce({
+      code: 'STUDENT_NOT_FOUND',
+      label: 'ไม่พบนักเรียน',
+      requiresUpdatedAddress: false,
+    });
+    trackingOptions.getParentalStatus.mockResolvedValueOnce(null);
+    trackingOptions.getGuardianType.mockResolvedValueOnce(null);
+    trackingOptions.getResidenceEnvironments.mockResolvedValueOnce([]);
+
+    await service.saveTaskSubmission('public-token', {
+      notes: 'ตรวจสอบรอบบ้านและสอบถามเพื่อนบ้านแล้วไม่พบนักเรียน',
+      home_visit_exception_code: 'STUDENT_NOT_FOUND',
+      case_follow_up_decision: 'REQUEST_REVIEW',
+    });
+
+    expect(taskRepository.insertTaskSubmission).toHaveBeenCalled();
+  });
+
   it('requires a review assessment for a home-visit report', async () => {
     taskAccessService.getTaskByToken.mockResolvedValue({
       task_type: 'VISIT',
@@ -134,6 +198,7 @@ describe('TaskSubmissionService', () => {
     await expect(
       service.saveTaskSubmission('public-token', {
         notes: 'ลงพื้นที่แล้ว',
+        residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
         case_follow_up_decision: 'REQUEST_REVIEW',
       }),
     ).rejects.toThrow('กรุณาเลือกหัวข้อปัญหาของผลการติดตาม');
@@ -159,6 +224,7 @@ describe('TaskSubmissionService', () => {
     await service.saveTaskSubmission('public-token', {
       follow_up_problem_category_code: 'ACADEMIC',
       notes: 'พบผู้ปกครองแล้ว',
+      residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
       case_follow_up_decision: 'REQUEST_REVIEW',
     });
 
@@ -196,6 +262,7 @@ describe('TaskSubmissionService', () => {
 
     await service.saveTaskSubmission('public-token', {
       notes: 'พบผู้ปกครองและบันทึกข้อมูลแล้ว',
+      residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
       visited_at: '2026-07-31T02:30:00.000Z',
     });
 
@@ -233,6 +300,7 @@ describe('TaskSubmissionService', () => {
 
     await service.saveTaskSubmission('public-token', {
       notes: 'พบผู้ปกครองแล้ว',
+      residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
       case_follow_up_decision: 'REQUEST_REVIEW',
     });
 
@@ -267,6 +335,7 @@ describe('TaskSubmissionService', () => {
     await expect(
       service.saveTaskSubmission('public-token', {
         notes: 'บันทึกผลการเยี่ยมบ้านแล้ว',
+        residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
         case_follow_up_decision: 'REQUEST_REVIEW',
       }),
     ).resolves.toEqual({ success: true });
@@ -302,6 +371,7 @@ describe('TaskSubmissionService', () => {
     await expect(
       service.saveTaskSubmission('public-token', {
         notes: 'ลงพื้นที่แล้ว',
+        residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
         visited_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       }),
     ).rejects.toThrow('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ในอนาคต');
@@ -309,6 +379,7 @@ describe('TaskSubmissionService', () => {
     await expect(
       service.saveTaskSubmission('public-token', {
         notes: 'ลงพื้นที่แล้ว',
+        residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
         visited_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
       }),
     ).rejects.toThrow('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ก่อนเวลาที่ได้รับมอบหมาย');
@@ -339,6 +410,7 @@ describe('TaskSubmissionService', () => {
 
     await service.saveTaskSubmission('public-token', {
       notes: 'ยืนยันที่อยู่ใหม่จากผู้ปกครอง',
+      residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
       home_visit_exception_code: 'ADDRESS_CHANGED',
       updated_address_line: '99/9 หมู่ 5',
       updated_address_province: 'กรุงเทพมหานคร',
@@ -416,6 +488,7 @@ describe('TaskSubmissionService', () => {
     await service.saveTaskSubmission('public-token', {
       home_visit_exception_code: 'STUDENT_NOT_FOUND',
       notes: 'สอบถามเพื่อนบ้านแล้วไม่พบตัวนักเรียน',
+      residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
     });
 
     expect(taskRepository.updateCaseAfterSubmission).toHaveBeenCalledWith(
@@ -453,6 +526,7 @@ describe('TaskSubmissionService', () => {
 
     await service.saveTaskSubmission('public-token', {
       notes: 'กลับมาเรียนแล้ว',
+      residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
       case_follow_up_decision: 'CLOSE_CASE',
       case_resolution_outcome_code: 'RETURNED_TO_SCHOOL',
     });
@@ -495,6 +569,7 @@ describe('TaskSubmissionService', () => {
     await expect(
       service.saveTaskSubmission('public-token', {
         notes: 'รายงานจากลิงก์เก่า',
+        residence_environment_detail: 'บ้านอยู่ริมถนนใหญ่ รถวิ่งเร็ว',
         case_follow_up_decision: 'REQUEST_REVIEW',
       }),
     ).rejects.toBeInstanceOf(ConflictException);

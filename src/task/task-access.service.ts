@@ -207,6 +207,12 @@ export class TaskAccessService {
       return null;
     }
 
+    // A withdrawn assignment closes its link exactly like expiry does: whoever
+    // still holds the URL must not be able to report on work that was taken back.
+    if (link.status === 'CANCELLED') {
+      return { error: 'ลิงก์นี้ถูกยกเลิกการมอบหมายแล้ว', status: 'CANCELLED' };
+    }
+
     if (new Date(String(link.expires_at)) < new Date()) {
       return { error: 'Link expired', status: 'EXPIRED' };
     }
@@ -599,13 +605,16 @@ export class TaskAccessService {
 
       const isExpired = new Date(String(link.expires_at)) < new Date();
       const isScheduled = !!link.opens_at && new Date(link.opens_at as string) > new Date();
-      const status = isExpired
-        ? 'EXPIRED'
-        : link.admin_locked
-          ? 'LOCKED'
-          : isScheduled
-            ? 'SCHEDULED'
-            : 'ACTIVE';
+      const status =
+        link.status === 'CANCELLED'
+          ? 'CANCELLED'
+          : isExpired
+            ? 'EXPIRED'
+            : link.admin_locked
+              ? 'LOCKED'
+              : isScheduled
+                ? 'SCHEDULED'
+                : 'ACTIVE';
 
       return {
         link_id: link.id,

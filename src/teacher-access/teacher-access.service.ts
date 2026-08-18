@@ -2252,7 +2252,9 @@ export class TeacherAccessService {
       throw new ForbiddenException('assignment อยู่นอกขอบเขตของลิงก์');
     }
     if (!this.assignmentActiveToday(assignment)) {
-      throw new ForbiddenException('assignment นี้ไม่ได้เปิดใช้งาน');
+      throw new ForbiddenException(
+        'ห้องเรียนหรือคาบสอนนี้ไม่ได้เปิดใช้งานแล้ว กรุณาแจ้งผู้ดูแลให้ตรวจสอบตารางสอนและการมอบหมายครู',
+      );
     }
     if (capability === 'SUBJECT_ATTENDANCE' && assignment.assignment_kind !== 'SUBJECT') {
       throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็กชื่อใน assignment นี้');
@@ -2562,10 +2564,9 @@ export class TeacherAccessService {
         };
       }
     }
-    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
-    if (!challenge || challenge.status !== 'PENDING') {
-      throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
-    }
+    // A rescan, a refresh or a bounce through the AraID login and PIN screens
+    // comes back to a challenge that is already CLAIMED; `claimOrRenew` issues
+    // that visit a fresh authorization, so only a missing challenge is fatal.
     const authorization = await this.araIdChallengeStore.claimOrRenew(ARAID_SCOPE, challengeToken);
     if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     return {
@@ -2690,9 +2691,16 @@ export class TeacherAccessService {
     return await this.repository.findGrantAssignment(context.grantId, assignmentId, queryRunner);
   }
 
+  /**
+   * The delegated day is the whole point of an attendance link, so name both
+   * days: this fires when the link works but the request is for another date,
+   * which reads very differently from a link whose period is gone entirely.
+   */
   private assertAttendanceDateAllowed(context: ActiveTeacherGrantContext, date: string): void {
     if (context.accessScope === 'ATTENDANCE_ONLY' && context.attendanceDate !== date) {
-      throw new ForbiddenException('ลิงก์นี้ใช้เช็กชื่อได้เฉพาะวันที่ได้รับมอบหมาย');
+      throw new ForbiddenException(
+        `ลิงก์นี้ใช้เช็กชื่อได้เฉพาะวันที่ ${context.attendanceDate ?? 'ที่ได้รับมอบหมาย'} เท่านั้น (กำลังเปิดวันที่ ${date}) หากต้องการเช็กชื่อวันอื่น กรุณาแจ้งผู้ดูแลให้ออกลิงก์ใหม่`,
+      );
     }
   }
 
@@ -2714,7 +2722,22 @@ export class TeacherAccessService {
             : await this.repository.listGrantAssignments(context.grantId, queryRunner);
         const activeAssignments = assignments.filter((row) => this.assignmentActiveToday(row));
         if (activeAssignments.length === 0) {
-          throw new ForbiddenException('ลิงก์นี้ไม่มี assignment ที่เปิดใช้งาน');
+          // The teacher opening this has no way to know which of the two setup
+          // steps is missing, and is the one who has to report it — so say which.
+          if (context.accessScope === 'ATTENDANCE_ONLY') {
+            const delegation = await this.repository.findAttendanceDelegationScope(
+              context.grantId,
+              queryRunner,
+            );
+            throw new ForbiddenException(
+              delegation
+                ? `ไม่พบคาบเรียนที่มอบหมายของวันที่ ${delegation.attendance_date} ในตารางสอนแล้ว (ตารางสอนอาจถูกแก้ไข หรือครูถูกปลดออกจากคาบนี้) กรุณาแจ้งผู้ดูแลให้ตรวจสอบตารางสอนและออกลิงก์ใหม่`
+                : 'ลิงก์นี้ไม่มีคาบเรียนที่มอบหมายไว้ กรุณาแจ้งผู้ดูแลให้ออกลิงก์ใหม่',
+            );
+          }
+          throw new ForbiddenException(
+            'ยังไม่มีห้องเรียนหรือคาบสอนที่ผูกกับครูท่านนี้ในภาคเรียนนี้ กรุณาแจ้งผู้ดูแลให้จัดตารางสอนและมอบหมายครูผู้สอนก่อน',
+          );
         }
         const problemCategories = await this.schoolStructure.listStudentProblemCategories();
         return {

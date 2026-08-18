@@ -86,7 +86,7 @@ export class TaskSubmissionService {
     if (link.error) {
       const status = typeof link.status === 'string' ? link.status : '';
       const message = typeof link.error === 'string' ? link.error : 'ลิงก์ใช้งานไม่ได้';
-      if (status === 'EXPIRED') {
+      if (status === 'EXPIRED' || status === 'CANCELLED') {
         throw new GoneException(message);
       }
       if (status === 'ADMIN_LOCKED') {
@@ -229,7 +229,9 @@ export class TaskSubmissionService {
       // An assistance round reports what help was given, not a home visit, so
       // the household/visit questions do not apply to it.
       const isAssistance = link.task_type === 'ASSIST';
-      if (link.task_type === 'VISIT' && !followUpProblemCategory) {
+      // Nothing was observed when the student was not found, so the assessment
+      // has nothing to categorise either.
+      if (link.task_type === 'VISIT' && !studentNotFound && !followUpProblemCategory) {
         throw new BadRequestException('กรุณาเลือกหัวข้อปัญหาของผลการติดตาม');
       }
       const assistedAt = isAssistance ? (this.toScalarString(data.assisted_at) ?? null) : null;
@@ -255,8 +257,30 @@ export class TaskSubmissionService {
         residenceEnvironmentDetail,
       );
       const causeDetail = this.toScalarString(data.notes ?? data.cause_detail);
-      if (homeVisitException?.code === 'STUDENT_NOT_FOUND' && !causeDetail) {
-        throw new BadRequestException('กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน');
+      // A visit report carries what the visitor observed, so every household
+      // answer is required. Not finding the student is the one round with
+      // nothing to observe — then only the account of the search is required.
+      if (link.task_type === 'VISIT' && !causeDetail) {
+        throw new BadRequestException(
+          studentNotFound ? 'กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน' : 'กรุณากรอกคำอธิบายเพิ่มเติม',
+        );
+      }
+      if (link.task_type === 'VISIT' && !studentNotFound) {
+        if (!parentalStatus) {
+          throw new BadRequestException('กรุณาเลือกสถานะของบิดา-มารดา');
+        }
+        if (!guardianType) {
+          throw new BadRequestException('กรุณาเลือกผู้ปกครอง');
+        }
+        if (residenceEnvironments.length === 0) {
+          throw new BadRequestException('กรุณาเลือกสภาพแวดล้อมรอบที่พัก');
+        }
+        if (!residenceEnvironmentDetail) {
+          throw new BadRequestException('กรุณากรอกรายละเอียดสภาพแวดล้อมรอบที่พัก');
+        }
+      }
+      if (isAssistance && !assistanceDetail) {
+        throw new BadRequestException('กรุณากรอกคำอธิบายเพิ่มเติม');
       }
       const updatedAddressLine = this.toScalarString(data.updated_address_line);
       const updatedAddressProvince = this.toScalarString(data.updated_address_province);

@@ -331,6 +331,17 @@ export class ReviewCaseDto {
   reviewed_by?: string | null;
 }
 
+export class CancelCaseAssignmentDto {
+  /**
+   * Required: withdrawing work already handed to a teacher has to say why, and
+   * the case history shows this back to whoever picks the case up next.
+   */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  cancel_reason!: string;
+}
+
 export class OpenCaseDto {
   @IsUUID()
   student_id!: string;
