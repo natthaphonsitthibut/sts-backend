@@ -527,6 +527,57 @@ async function assertAvatarOnlyStudentNavigation(client, label) {
   };
 
   await assertContextNavigation('รายงานสถานะนักเรียน', '/student-risk-report', 'risk-to-student');
+
+  // A risk row always has a case, so the tracking tab can open one. The case
+  // page used to hardcode its breadcrumb, which dropped every ancestor above
+  // its immediate parent — assert the whole report → student → case chain.
+  await evaluate(
+    client,
+    `(() => {
+      const tab = [...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim().startsWith('ประวัติการติดตาม'));
+      if (!tab) throw new Error('Student tracking history tab not found');
+      tab.click();
+    })()`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `Boolean(document.querySelector('a[aria-label="ดูรายละเอียดเคส"]'))`,
+      ),
+    `${label} student tracking history did not offer a case link`,
+  );
+  await evaluate(
+    client,
+    `document.querySelector('a[aria-label="ดูรายละเอียดเคส"]').click()`,
+  );
+  await waitFor(
+    async () => evaluate(client, `/^\\/cases\\/[^/]+$/.test(window.location.pathname)`),
+    `${label} student tracking history did not open the case detail`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `(() => {
+          const breadcrumb = document.querySelector('[data-page-breadcrumb]');
+          const labels = breadcrumb
+            ? [...breadcrumb.querySelectorAll('a, [data-breadcrumb-current]')]
+                .map((node) => node.textContent.trim())
+                .filter(Boolean)
+            : [];
+          return labels.join(' > ') === 'หน้าหลัก > รายงานสถานะนักเรียน > ข้อมูลนักเรียน > ติดตามนักเรียน';
+        })()`,
+      ),
+    `${label} case detail breadcrumb lost the report → student chain`,
+  );
+  await evaluate(client, `window.history.back()`);
+  await waitFor(
+    async () => evaluate(client, `window.location.pathname === ${JSON.stringify(studentPath)}`),
+    `${label} case detail did not return to the student profile`,
+  );
+
   await client.call('Page.reload', { ignoreCache: true });
   await waitFor(
     async () => evaluate(client, `document.readyState === 'complete'`),
