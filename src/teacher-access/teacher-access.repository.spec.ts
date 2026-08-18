@@ -33,6 +33,23 @@ describe('TeacherAccessRepository', () => {
     );
   });
 
+  it('offers only timetable-backed subject assignments for attendance delegation', async () => {
+    const { repository, runner } = createRepository();
+
+    await repository.listAttendanceDelegationAssignments({
+      schoolId: 10,
+      schoolTermId: 21,
+      classroomId: 41,
+      attendanceDate: '2026-08-07',
+    });
+
+    const calls = runner.query.mock.calls as unknown as Array<[string, unknown[], boolean]>;
+    const sql = calls[0]?.[0] ?? '';
+    expect(sql).toContain("assignment.assignment_kind = 'SUBJECT'");
+    expect(sql).toContain('timetable_slot.id IS NOT NULL');
+    expect(sql).not.toContain("assignment.assignment_kind = 'HOMEROOM' OR");
+  });
+
   it('persists assignment scope columns from canonical assignment and classroom rows', async () => {
     const { repository, runner } = createRepository();
     runner.query
@@ -52,7 +69,7 @@ describe('TeacherAccessRepository', () => {
         stepUpPolicy: 'EMAIL_OTP',
         issuedBy: 1,
         expiresAt: new Date('2026-12-31T16:59:59.999Z'),
-        capabilities: ['HOMEROOM_ATTENDANCE'],
+        capabilities: ['SUBJECT_ATTENDANCE'],
         assignmentIds: [31],
       },
       runner as never,
@@ -101,9 +118,8 @@ describe('TeacherAccessRepository', () => {
       /INSERT INTO teacher_access_grant_assignments[\s\S]*ON CONFLICT \(grant_id, assignment_id\) DO NOTHING/,
     );
     expect(calls[2][0]).toContain('DELETE FROM teacher_access_grant_capabilities');
-    expect(calls[3][0]).toMatch(
-      /HOMEROOM_ATTENDANCE[\s\S]*SUBJECT_ATTENDANCE[\s\S]*TEACHER_OBSERVATION/,
-    );
+    expect(calls[3][0]).toMatch(/SUBJECT_ATTENDANCE[\s\S]*TEACHER_OBSERVATION/);
+    expect(calls[3][0]).not.toContain('HOMEROOM_ATTENDANCE');
     expect(calls.map((call) => call[1])).toEqual([
       ['11111111-1111-4111-8111-111111111111', '2026-08-07'],
       ['11111111-1111-4111-8111-111111111111', '2026-08-07'],

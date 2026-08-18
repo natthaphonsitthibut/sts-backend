@@ -42,7 +42,7 @@ export class AttendanceReadService {
     date: string,
     userScope?: DataScope,
     schoolId?: number | null,
-    sessionKind?: 'DAILY' | 'SUBJECT',
+    sessionKind?: 'SUBJECT',
     timetableSlotId?: number,
   ) {
     const rows = await this.attendanceRepository.listAttendanceHistory(

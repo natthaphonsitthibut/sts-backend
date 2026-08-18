@@ -528,7 +528,7 @@ export class AttendanceOperationsRepository {
     actorUserId: number | null,
     executor: QueryExecutor,
   ): Promise<AttendanceSessionRow> {
-    const sessionKind = identity.sessionKind ?? 'DAILY';
+    const sessionKind = 'SUBJECT';
     await executor.query(
       `
         INSERT INTO attendance_sessions (
@@ -671,7 +671,7 @@ export class AttendanceOperationsRepository {
     }
     const sessionCondition = timetableSlotId
       ? `AND attendance_date = $4 AND session_kind = 'SUBJECT' AND timetable_slot_id = $5`
-      : `AND attendance_date = $4 AND period = 1 AND session_kind = 'DAILY'`;
+      : `AND FALSE`;
     const sessionParams = timetableSlotId
       ? [term.id, metadata.grade_level_id, roomId, date, timetableSlotId]
       : [term.id, metadata.grade_level_id, roomId, date];
@@ -922,7 +922,8 @@ export class AttendanceOperationsRepository {
       conditions.push(`s."RoomID_Onec"::int = $${params.length}`);
     }
     const rosterSql = `
-      SELECT s."GradeLevelID_Onec" AS grade_level_id,
+      SELECT s.classroom_id,
+        s."GradeLevelID_Onec" AS grade_level_id,
         gl.label AS grade_label,
         s."RoomID_Onec" AS room_id,
         COUNT(*)::int AS expected_roster_count
@@ -931,7 +932,7 @@ export class AttendanceOperationsRepository {
       JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
       JOIN schools sc ON sc.id = s."SchoolID_Onec"
       WHERE ${conditions.join(' AND ')}
-      GROUP BY s."GradeLevelID_Onec", gl.label, s."RoomID_Onec"
+      GROUP BY s.classroom_id, s."GradeLevelID_Onec", gl.label, s."RoomID_Onec"
     `;
     const termPlaceholder = params.length + 1;
     const datePlaceholder = params.length + 2;
@@ -946,19 +947,29 @@ export class AttendanceOperationsRepository {
         WITH roster AS (${rosterSql}), states AS (
           SELECT CASE
             WHEN sess.id IS NULL THEN 'MISSING'
-            WHEN sess.status = 'SUBMITTED'
-              AND sess.recorded_count = roster.expected_roster_count THEN 'COMPLETED'
+            WHEN sess.is_complete THEN 'COMPLETED'
             ELSE 'INCOMPLETE'
           END AS operational_status
           FROM roster
-          LEFT JOIN attendance_sessions sess
-            ON sess.school_term_id = $${termPlaceholder}
-           AND sess.grade_level_id = roster.grade_level_id
-           AND sess.room_id = roster.room_id
-           AND sess.attendance_date = $${datePlaceholder}
-           AND sess.period = 1
-           AND sess.session_kind = 'DAILY'
-           AND sess.deleted_at IS NULL
+          LEFT JOIN LATERAL (
+            SELECT
+              MIN(session.id::text) AS id,
+              BOOL_AND(
+                session.id IS NOT NULL
+                AND session.status = 'SUBMITTED'
+                AND session.recorded_count = roster.expected_roster_count
+              ) AS is_complete
+            FROM timetable_slots slot
+            LEFT JOIN attendance_sessions session
+              ON session.timetable_slot_id = slot.id
+             AND session.attendance_date = $${datePlaceholder}
+             AND session.session_kind = 'SUBJECT'
+             AND session.deleted_at IS NULL
+            WHERE slot.school_term_id = $${termPlaceholder}
+              AND slot.classroom_id = roster.classroom_id
+              AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
+              AND slot.deleted_at IS NULL
+          ) sess ON TRUE
         )
         SELECT
           COUNT(*)::text AS count,
@@ -987,19 +998,37 @@ export class AttendanceOperationsRepository {
           sess.revision,
           CASE
             WHEN sess.id IS NULL THEN 'MISSING'
-            WHEN sess.status = 'SUBMITTED'
-              AND sess.recorded_count = roster.expected_roster_count THEN 'COMPLETED'
+            WHEN sess.is_complete THEN 'COMPLETED'
             ELSE 'INCOMPLETE'
           END AS operational_status
         FROM roster
-        LEFT JOIN attendance_sessions sess
-          ON sess.school_term_id = $${termPlaceholder}
-         AND sess.grade_level_id = roster.grade_level_id
-         AND sess.room_id = roster.room_id
-         AND sess.attendance_date = $${datePlaceholder}
-         AND sess.period = 1
-         AND sess.session_kind = 'DAILY'
-         AND sess.deleted_at IS NULL
+        LEFT JOIN LATERAL (
+          SELECT
+            MIN(session.id::text) AS id,
+            MIN(session.recorded_count)::int AS recorded_count,
+            CASE
+              WHEN BOOL_AND(session.status = 'SUBMITTED') THEN 'SUBMITTED'
+              WHEN BOOL_OR(session.status = 'REOPENED') THEN 'REOPENED'
+              WHEN BOOL_OR(session.status = 'OPEN') THEN 'OPEN'
+              ELSE NULL
+            END AS status,
+            MAX(session.revision)::int AS revision,
+            BOOL_AND(
+              session.id IS NOT NULL
+              AND session.status = 'SUBMITTED'
+              AND session.recorded_count = roster.expected_roster_count
+            ) AS is_complete
+          FROM timetable_slots slot
+          LEFT JOIN attendance_sessions session
+            ON session.timetable_slot_id = slot.id
+           AND session.attendance_date = $${datePlaceholder}
+           AND session.session_kind = 'SUBJECT'
+           AND session.deleted_at IS NULL
+          WHERE slot.school_term_id = $${termPlaceholder}
+            AND slot.classroom_id = roster.classroom_id
+            AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
+            AND slot.deleted_at IS NULL
+        ) sess ON TRUE
         ORDER BY roster.grade_level_id, roster.room_id
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
       `,
@@ -1037,7 +1066,7 @@ export class AttendanceOperationsRepository {
     const conditions = [
       'sess.school_term_id = $1',
       'sess.school_id = $2',
-      "sess.session_kind = 'DAILY'",
+      "sess.session_kind = 'SUBJECT'",
       'sess.deleted_at IS NULL',
     ];
     if (scope) {

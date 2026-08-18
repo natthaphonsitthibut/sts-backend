@@ -281,11 +281,10 @@ export class IssueTeacherAccessAttendanceDelegationDto {
   @Min(1)
   assignmentId!: number;
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetableSlotId?: number;
+  timetableSlotId!: number;
 
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   attendanceDate!: string;
@@ -329,11 +328,10 @@ export class IssuePublicTeacherAccessAttendanceDelegationDto extends PublicTeach
   @Min(1)
   teacherMembershipId!: number;
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetableSlotId?: number;
+  timetableSlotId!: number;
 
   /**
    * The day the link stops working, separate from `attendanceDate`, which says
@@ -648,12 +646,11 @@ export class SaveTeacherAccessAttendanceDto {
   @Min(1)
   assignmentId!: number;
 
-  /** Required only when a subject meets more than once on the chosen day. */
-  @IsOptional()
+  /** Every attendance write belongs to one timetable subject period. */
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetableSlotId?: number;
+  timetableSlotId!: number;
 
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   date!: string;
@@ -675,11 +672,10 @@ export class SaveTeacherAccessAttendanceMarksDto {
   @Min(1)
   assignmentId!: number;
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetableSlotId?: number;
+  timetableSlotId!: number;
 
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   date!: string;
@@ -756,11 +752,10 @@ export class RecordPublicTeacherAccessImportDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   attendanceDate!: string;
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetableSlotId?: number;
+  timetableSlotId!: number;
 
   @IsString()
   @MaxLength(255)

@@ -1,16 +1,6 @@
-export const TEACHER_ACCESS_CAPABILITIES = [
-  'HOMEROOM_ATTENDANCE',
-  'SUBJECT_ATTENDANCE',
-  'TEACHER_OBSERVATION',
-] as const;
+export const TEACHER_ACCESS_CAPABILITIES = ['SUBJECT_ATTENDANCE', 'TEACHER_OBSERVATION'] as const;
 
 export type TeacherAccessCapability = (typeof TEACHER_ACCESS_CAPABILITIES)[number];
-
-/** Capability a teacher needs to record attendance for each kind of assignment. */
-export const TEACHER_ACCESS_ATTENDANCE_CAPABILITY = {
-  HOMEROOM: 'HOMEROOM_ATTENDANCE',
-  SUBJECT: 'SUBJECT_ATTENDANCE',
-} as const satisfies Record<'HOMEROOM' | 'SUBJECT', TeacherAccessCapability>;
 
 /**
  * A link is scoped to the rooms and subjects a teacher actually teaches, so a

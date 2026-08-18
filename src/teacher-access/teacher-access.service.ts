@@ -58,7 +58,6 @@ import { EmailService } from '../common/email/email.service';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import {
-  TEACHER_ACCESS_ATTENDANCE_CAPABILITY,
   TEACHER_ACCESS_LINK_PATH,
   TEACHER_ACCESS_DEFAULT_EXPIRY_POLICY,
   TEACHER_ACCESS_DEFAULT_STEP_UP_POLICY,
@@ -276,9 +275,8 @@ export class TeacherAccessService {
 
   private toAssignment(row: TeacherAccessAssignmentRow, capabilities: TeacherAccessCapability[]) {
     const allowedActions: TeacherAccessCapability[] = [];
-    const attendance = this.attendanceCapability(row.assignment_kind);
-    if (capabilities.includes(attendance)) {
-      allowedActions.push(attendance);
+    if (row.assignment_kind === 'SUBJECT' && capabilities.includes('SUBJECT_ATTENDANCE')) {
+      allowedActions.push('SUBJECT_ATTENDANCE');
     }
     if (row.assignment_kind === 'SUBJECT' && capabilities.includes('TEACHER_OBSERVATION')) {
       allowedActions.push('TEACHER_OBSERVATION');
@@ -357,7 +355,10 @@ export class TeacherAccessService {
   private attendanceCapability(
     kind: TeacherAccessAssignmentRow['assignment_kind'],
   ): TeacherAccessCapability {
-    return TEACHER_ACCESS_ATTENDANCE_CAPABILITY[kind];
+    if (kind !== 'SUBJECT') {
+      throw new ForbiddenException('การเช็กชื่อต้องเข้าผ่าน assignment รายวิชา');
+    }
+    return 'SUBJECT_ATTENDANCE';
   }
 
   /**
@@ -370,8 +371,8 @@ export class TeacherAccessService {
   ): TeacherAccessCapability[] {
     const capabilities = new Set<TeacherAccessCapability>();
     for (const assignment of assignments) {
-      capabilities.add(this.attendanceCapability(assignment.assignment_kind));
       if (assignment.assignment_kind === 'SUBJECT') {
+        capabilities.add('SUBJECT_ATTENDANCE');
         capabilities.add('TEACHER_OBSERVATION');
       }
     }
@@ -1451,10 +1452,7 @@ export class TeacherAccessService {
       if (!assignment) {
         throw new ConflictException('วิชาหรือคาบนี้ถูกมอบหมายแล้ว');
       }
-      if (
-        (assignment.assignment_kind === 'SUBJECT' && !dto.timetableSlotId) ||
-        (assignment.assignment_kind === 'HOMEROOM' && dto.timetableSlotId)
-      ) {
+      if (assignment.assignment_kind !== 'SUBJECT' || !dto.timetableSlotId) {
         throw new BadRequestException('กรุณาเลือกรายวิชาและคาบที่ถูกต้อง');
       }
       const rawToken = generateToken();
@@ -1653,10 +1651,7 @@ export class TeacherAccessService {
         ) {
           throw new ForbiddenException('รายวิชาที่เลือกอยู่นอกขอบเขตของลิงก์ครู');
         }
-        if (
-          (assignment.assignment_kind === 'SUBJECT' && !dto.timetableSlotId) ||
-          (assignment.assignment_kind === 'HOMEROOM' && dto.timetableSlotId)
-        ) {
+        if (assignment.assignment_kind !== 'SUBJECT' || !dto.timetableSlotId) {
           throw new BadRequestException('กรุณาเลือกรายวิชาและคาบที่ถูกต้อง');
         }
         const rawChildToken = generateToken();
@@ -2259,10 +2254,7 @@ export class TeacherAccessService {
     if (!this.assignmentActiveToday(assignment)) {
       throw new ForbiddenException('assignment นี้ไม่ได้เปิดใช้งาน');
     }
-    if (
-      (capability === 'HOMEROOM_ATTENDANCE' || capability === 'SUBJECT_ATTENDANCE') &&
-      capability !== this.attendanceCapability(assignment.assignment_kind)
-    ) {
+    if (capability === 'SUBJECT_ATTENDANCE' && assignment.assignment_kind !== 'SUBJECT') {
       throw new ForbiddenException('ลิงก์นี้ไม่มีสิทธิ์เช็กชื่อใน assignment นี้');
     }
     if (capability === 'TEACHER_OBSERVATION' && assignment.assignment_kind !== 'SUBJECT') {
@@ -2868,7 +2860,9 @@ export class TeacherAccessService {
     dto: { date: string; timetableSlotId?: number },
     queryRunner: QueryRunner,
   ): Promise<number | undefined> {
-    if (assignment.assignment_kind !== 'SUBJECT') return undefined;
+    if (assignment.assignment_kind !== 'SUBJECT') {
+      throw new BadRequestException('การเช็กชื่อต้องเข้าผ่าน assignment รายวิชาและคาบในตารางสอน');
+    }
     if (!assignment.subject_id) {
       throw new ConflictException('assignment รายวิชานี้ไม่มีรายวิชาที่ผูกไว้');
     }
@@ -3574,14 +3568,17 @@ export class TeacherAccessService {
           date: query.date,
         });
         if (query.preflightOnly) return { data: { calendar } };
-        const sessionKind = assignment.assignment_kind === 'SUBJECT' ? 'SUBJECT' : 'DAILY';
+        if (assignment.assignment_kind !== 'SUBJECT') {
+          throw new BadRequestException(
+            'การเช็กชื่อต้องเข้าผ่าน assignment รายวิชาและคาบในตารางสอน',
+          );
+        }
+        const sessionKind = 'SUBJECT';
         // A subject class with several periods a day needs the caller to say
         // which one; resolveAttendanceSlotId raises the same errors the write
         // path does, so read and write agree on what "this round" means.
         const timetableSlotId =
-          sessionKind === 'SUBJECT'
-            ? ((await this.resolveAttendanceSlotId(assignment, query, queryRunner)) ?? null)
-            : null;
+          (await this.resolveAttendanceSlotId(assignment, query, queryRunner)) ?? null;
         const roster = await this.repository.listRosterIds(classroomId, queryRunner);
         const session = await this.repository.findAttendanceSessionForClassroom(
           {

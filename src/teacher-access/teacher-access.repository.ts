@@ -327,6 +327,7 @@ export class TeacherAccessRepository {
           AND classroom.school_term_id = $2
           AND assignment.teacher_membership_id = ANY($3::bigint[])
           AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.assignment_kind = 'SUBJECT'
           AND assignment.deleted_at IS NULL
           AND classroom.classroom_status = 'ACTIVE'
           AND classroom.deleted_at IS NULL
@@ -417,7 +418,8 @@ export class TeacherAccessRepository {
           AND ($5::bigint IS NULL OR assignment.id = $5)
           AND ($6::bigint IS NULL OR assignment.teacher_membership_id = $6)
           AND ($7::bigint IS NULL OR timetable_slot.id = $7)
-          AND (assignment.assignment_kind = 'HOMEROOM' OR timetable_slot.id IS NOT NULL)
+          AND assignment.assignment_kind = 'SUBJECT'
+          AND timetable_slot.id IS NOT NULL
           AND (
             $9::boolean
             OR NOT EXISTS (
@@ -999,6 +1001,7 @@ export class TeacherAccessRepository {
               AND assignment.school_id = access_grant.school_id
               AND classroom.school_term_id = access_grant.school_term_id
               AND assignment.assignment_status = 'ACTIVE'
+              AND assignment.assignment_kind = 'SUBJECT'
               AND assignment.deleted_at IS NULL
               AND classroom.classroom_status = 'ACTIVE'
               AND classroom.deleted_at IS NULL
@@ -1030,6 +1033,7 @@ export class TeacherAccessRepository {
          AND classroom.school_term_id = access_grant.school_term_id
         WHERE access_grant.id = $1::uuid
           AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.assignment_kind = 'SUBJECT'
           AND assignment.deleted_at IS NULL
           AND classroom.classroom_status = 'ACTIVE'
           AND classroom.deleted_at IS NULL
@@ -1048,13 +1052,11 @@ export class TeacherAccessRepository {
         INSERT INTO teacher_access_grant_capabilities (grant_id, capability)
         SELECT DISTINCT $1::uuid, capability
         FROM (
-          SELECT CASE assignment.assignment_kind
-                   WHEN 'HOMEROOM' THEN 'HOMEROOM_ATTENDANCE'
-                   WHEN 'SUBJECT' THEN 'SUBJECT_ATTENDANCE'
-                 END AS capability
+          SELECT 'SUBJECT_ATTENDANCE' AS capability
           FROM teacher_access_grant_assignments scope
           JOIN classroom_teacher_assignments assignment ON assignment.id = scope.assignment_id
           WHERE scope.grant_id = $1::uuid
+            AND assignment.assignment_kind = 'SUBJECT'
           UNION ALL
           SELECT 'TEACHER_OBSERVATION'
           FROM teacher_access_grant_assignments scope
@@ -1746,12 +1748,12 @@ export class TeacherAccessRepository {
   /**
    * Attendance sessions already recorded for a class, newest first, with the
    * per-status tally the history screen shows. Subject assignments only count
-   * their own periods; a homeroom link sees the DAILY sessions.
+   * their own subject periods; homeroom attendance uses its timetable subject.
    */
   async listAttendanceHistory(
     input: {
       classroomId: number;
-      sessionKind: 'DAILY' | 'SUBJECT';
+      sessionKind: 'SUBJECT';
       subjectId: number | null;
       search?: string;
       attendanceDate?: string;
@@ -1993,7 +1995,7 @@ export class TeacherAccessRepository {
     input: {
       classroomId: number;
       attendanceDate: string;
-      sessionKind: 'DAILY' | 'SUBJECT';
+      sessionKind: 'SUBJECT';
       timetableSlotId: number | null;
     },
     queryRunner: QueryRunner,

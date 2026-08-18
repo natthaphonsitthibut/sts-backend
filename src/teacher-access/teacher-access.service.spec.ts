@@ -58,7 +58,7 @@ const GRANT: TeacherAccessGrantRow = {
   revocation_reason: null,
   rotated_at: null,
   rotation_count: 0,
-  capabilities: ['HOMEROOM_ATTENDANCE'],
+  capabilities: ['SUBJECT_ATTENDANCE'],
   assignment_count: 1,
 };
 
@@ -79,11 +79,11 @@ const ASSIGNMENT: TeacherAccessAssignmentRow = {
   cover_image_position_x: 50,
   cover_image_position_y: 50,
   cover_image_scale: 1,
-  assignment_kind: 'HOMEROOM',
+  assignment_kind: 'SUBJECT',
   assignment_status: 'ACTIVE',
-  subject_id: null,
-  subject_code: null,
-  subject_name: null,
+  subject_id: 7,
+  subject_code: 'HOMEROOM',
+  subject_name: 'โฮมรูม',
   effective_on: null,
   effective_until: null,
 };
@@ -408,7 +408,7 @@ describe('TeacherAccessService', () => {
       teacherDisplayName: 'ครู หนึ่ง',
       schoolId: 10,
       schoolTermId: '21',
-      capabilities: ['HOMEROOM_ATTENDANCE'],
+      capabilities: ['SUBJECT_ATTENDANCE'],
       problemCategories: [
         {
           code: 'ACADEMIC',
@@ -557,7 +557,7 @@ describe('TeacherAccessService', () => {
     await expect(
       service.withActiveGrantContext(
         'valid-token-value-that-is-at-least-thirty-two-characters',
-        { capability: 'HOMEROOM_ATTENDANCE', assignmentId: 31, operation: 'TEST' },
+        { capability: 'SUBJECT_ATTENDANCE', assignmentId: 31, operation: 'TEST' },
         () => Promise.resolve(undefined),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -623,7 +623,7 @@ describe('TeacherAccessService', () => {
     await expect(
       service.withActiveGrantContext(
         'valid-token-value-that-is-at-least-thirty-two-characters',
-        { capability: 'HOMEROOM_ATTENDANCE', assignmentId: 31, operation: 'TEST' },
+        { capability: 'SUBJECT_ATTENDANCE', assignmentId: 31, operation: 'TEST' },
         () => Promise.resolve(undefined),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -678,8 +678,16 @@ describe('TeacherAccessService', () => {
   });
 
   it('adapts the TypeORM query runner before saving public attendance', async () => {
-    const { service, repository, attendance } = createHarness();
+    const { service, repository, attendance } = createHarness({
+      capabilities: ['SUBJECT_ATTENDANCE'],
+    });
     const studentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    repository.findGrantAssignment.mockResolvedValue({
+      ...ASSIGNMENT,
+      assignment_kind: 'SUBJECT',
+      subject_id: 7,
+    });
+    repository.listAssignmentSlotsForDate.mockResolvedValue([{ id: '41', period: 1 }]);
     const rawQuery = jest.fn().mockResolvedValue({ records: [{ ok: true }], affected: 1 });
     repository.withTransaction.mockImplementation(
       async (operation) => await operation({ query: rawQuery } as unknown as QueryRunner),
@@ -702,6 +710,7 @@ describe('TeacherAccessService', () => {
     await expect(
       service.savePublicAttendance('valid-token-value-that-is-at-least-thirty-two-characters', {
         assignmentId: 31,
+        timetableSlotId: 41,
         date: TODAY,
         records: [{ studentId, status: 'P_PRESENT' }],
       }),
@@ -890,7 +899,7 @@ describe('TeacherAccessService', () => {
       expect.objectContaining({
         stepUpPolicy: 'EMAIL_OTP',
         assignmentIds: [31, 32],
-        capabilities: ['HOMEROOM_ATTENDANCE', 'SUBJECT_ATTENDANCE', 'TEACHER_OBSERVATION'],
+        capabilities: ['SUBJECT_ATTENDANCE', 'TEACHER_OBSERVATION'],
       }),
       expect.anything(),
     );

@@ -48,7 +48,7 @@ export class AttendanceService {
     date: string,
     userScope?: DataScope,
     schoolId?: number | null,
-    sessionKind?: 'DAILY' | 'SUBJECT',
+    sessionKind?: 'SUBJECT',
     timetableSlotId?: number,
   ) {
     return await this.attendanceReadService.getHistory(

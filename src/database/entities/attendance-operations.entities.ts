@@ -68,7 +68,7 @@ export class AttendanceSessionEntity {
   @Column({ name: 'period', type: 'integer', default: 1 })
   period!: number;
 
-  @Column({ name: 'session_kind', type: 'varchar', length: 16, default: 'DAILY' })
+  @Column({ name: 'session_kind', type: 'varchar', length: 16, default: 'SUBJECT' })
   sessionKind!: string;
 
   @Column({ name: 'status', type: 'varchar', length: 16, default: 'OPEN' })

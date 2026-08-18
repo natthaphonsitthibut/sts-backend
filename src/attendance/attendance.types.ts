@@ -144,7 +144,7 @@ export interface AttendanceWriteContext {
   recorderTeacherId?: number | null;
   allowedStudentIds?: string[];
   session?: {
-    kind: 'DAILY' | 'SUBJECT';
+    kind: 'SUBJECT';
     period: number;
     subjectId?: number | null;
     timetableSlotId?: number | null;
