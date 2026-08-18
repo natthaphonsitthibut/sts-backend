@@ -1287,6 +1287,10 @@ export class TeacherAccessRepository {
             WHERE assignment.teacher_membership_id = membership.id
               AND classroom.school_term_id = $2
               AND assignment.assignment_status = 'ACTIVE'
+              -- A HOMEROOM-kind row is roster ownership only — it never grants a
+              -- teacher-access capability (see syncGrantScopeFromAssignments),
+              -- so counting it here overstates what the teacher's own link shows.
+              AND assignment.assignment_kind = 'SUBJECT'
               AND assignment.deleted_at IS NULL
               AND classroom.classroom_status = 'ACTIVE'
               AND classroom.deleted_at IS NULL
