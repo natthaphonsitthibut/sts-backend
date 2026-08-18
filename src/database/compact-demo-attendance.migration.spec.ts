@@ -8,7 +8,7 @@ function normalized(statement: string): string {
 }
 
 describe('compact demo attendance migrations', () => {
-  it('replaces demo attendance with 3-5 timetable-backed SUBJECT days', async () => {
+  it('replaces demo attendance with five complete timetable-backed weekdays', async () => {
     const statements: string[] = [];
     const queryRunner = {
       query: jest.fn((statement: string) => {
@@ -23,15 +23,29 @@ describe('compact demo attendance migrations', () => {
     const sql = statements.join('\n');
 
     expect(sql).toContain('WHERE id BETWEEN 10010001 AND 10010010');
-    expect(sql).toContain('WHEN school.id = $1 THEN 5');
-    expect(sql).toContain('ELSE (3 + MOD(school.id, 3))::smallint');
+    expect(sql).toContain('SELECT school.id, 5::smallint');
+    expect(sql).toContain('term.academic_year = 2569');
+    expect(sql).toContain('term.semester = 1');
+    expect(sql).toContain('PARTITION BY term.school_id, EXTRACT(ISODOW FROM candidate_date)');
+    expect(sql).toContain('WHERE weekday_rank = 1');
+    expect(sql).toContain('DELETE FROM school_terms term');
+    expect(sql).toContain('AND term.semester = 2');
+    expect(sql).toContain('DELETE FROM school_calendar_days calendar');
+    expect(sql).toContain("'SCHOOL_DAY'");
     expect(sql).toContain("session.session_kind = 'SUBJECT'");
     expect(sql).toContain("record.session_kind = 'SUBJECT'");
-    expect(sql.indexOf('WHERE NOT EXISTS ( SELECT 1 FROM timetable_slot_teachers')).toBeLessThan(
+    expect(sql.indexOf('INSERT INTO timetable_slot_teachers')).toBeLessThan(
       sql.indexOf('TRUNCATE TABLE'),
     );
     expect(sql).toContain('FROM timetable_slot_teachers slot_teacher');
+    expect(sql).toContain('SELECT slot.teacher_membership_id, 1 AS source_priority');
+    expect(sql).toContain('assignment.classroom_id = slot.classroom_id');
+    expect(sql).toContain('assignment.subject_id = slot.subject_id');
+    expect(sql).toContain("assignment.assignment_kind = 'SUBJECT'");
+    expect(sql).toContain("assignment.assignment_kind = 'HOMEROOM'");
+    expect(sql).toContain("assignment.assignment_status = 'ACTIVE'");
     expect(sql).toContain("teacher.teacher_status = 'ACTIVE'");
+    expect(sql).toContain('WHERE NOT EXISTS ( SELECT 1 FROM timetable_slot_teachers slot_teacher');
     expect(sql).toContain('recorder.teacher_id AS recorded_by_teacher_id');
     expect(sql).toContain("'SUBJECT', 'SUBMITTED'");
     expect(sql).toContain('PARTITION BY enrollment."SchoolID_Onec", enrollment.classroom_id');
@@ -39,6 +53,26 @@ describe('compact demo attendance migrations', () => {
     expect(sql).toContain('seed.day_rank <= 3 THEN 2');
     expect(sql).not.toMatch(/INSERT INTO attendance[\s\S]*?'DAILY'/);
     expect(sql).not.toMatch(/(?:INSERT|UPDATE|DELETE)[\s\S]{0,80}\bcases\b/i);
+  });
+
+  it('fails before destructive work when a target 2569/1 term is missing', async () => {
+    const statements: string[] = [];
+    const queryRunner = {
+      query: jest.fn((statement: string) => {
+        const sql = normalized(statement);
+        statements.push(sql);
+        if (sql.includes('SELECT id FROM schools')) return Promise.resolve([{ id: 10010004 }]);
+        if (sql.includes('HAVING COUNT(term.id) <> 1')) {
+          return Promise.resolve([{ school_id: 10010004 }]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as QueryRunner;
+
+    await expect(new CompactDemoSubjectAttendance20260826090000().up(queryRunner)).rejects.toThrow(
+      'every target school must have exactly one 2569/1 term',
+    );
+    expect(statements.join('\n')).not.toContain('TRUNCATE TABLE');
   });
 
   it('keeps destructive attendance compaction non-reversible', async () => {

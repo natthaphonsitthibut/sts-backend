@@ -2,6 +2,10 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
 
 const SHOWCASE_SCHOOL_ID = 10010004;
 const CALENDAR_REASON = 'ข้อมูลสาธิตการเช็กชื่อรายวิชาแบบย่อ';
+const DEMO_ACADEMIC_YEAR = 2569;
+const DEMO_SEMESTER = 1;
+const DEMO_TERM_START = '2026-05-16';
+const DEMO_TERM_END = '2026-10-10';
 
 /**
  * Replaces the oversized month-long demo attendance set with a compact,
@@ -32,20 +36,13 @@ export class CompactDemoSubjectAttendance20260826090000 implements MigrationInte
         requested_day_count SMALLINT NOT NULL
       ) ON COMMIT DROP
     `);
-    await queryRunner.query(
-      `
+    await queryRunner.query(`
         INSERT INTO compact_demo_school_targets_20260826 (school_id, requested_day_count)
-        SELECT school.id,
-          CASE
-            WHEN school.id = $1 THEN 5
-            ELSE (3 + MOD(school.id, 3))::smallint
-          END
+        SELECT school.id, 5::smallint
         FROM schools school
         WHERE school.id BETWEEN 10010001 AND 10010010
           AND school.school_status = 'ACTIVE'
-      `,
-      [SHOWCASE_SCHOOL_ID],
-    );
+    `);
 
     // Preserve any operational school outside the known demo-id range. The
     // four related tables are truncated together because the provenance tables
@@ -90,43 +87,168 @@ export class CompactDemoSubjectAttendance20260826090000 implements MigrationInte
       JOIN compact_demo_retained_attendance_20260826 record
         ON record."AttendanceID" = backup.attendance_id
     `);
-    // Pick the latest real school days from each school's active term. A day
-    // is eligible only when its timetable actually contains at least one slot.
+
+    const missingTermOne = (await queryRunner.query(
+      `
+        SELECT target.school_id
+        FROM compact_demo_school_targets_20260826 target
+        LEFT JOIN school_terms term
+          ON term.school_id = target.school_id
+         AND term.academic_year = $1
+         AND term.semester = $2
+         AND term.deleted_at IS NULL
+        GROUP BY target.school_id
+        HAVING COUNT(term.id) <> 1
+        ORDER BY target.school_id
+      `,
+      [DEMO_ACADEMIC_YEAR, DEMO_SEMESTER],
+    )) as Array<{ school_id: number }>;
+    if (missingTermOne.length > 0) {
+      throw new Error(
+        `CompactDemoSubjectAttendance: every target school must have exactly one 2569/1 term: ${JSON.stringify(missingTermOne)}`,
+      );
+    }
+
+    const referencedTermTwo = (await queryRunner.query(
+      `
+        SELECT
+          term.school_id,
+          term.id AS school_term_id,
+          (
+            SELECT COUNT(*) FROM attendance_import_files row
+            WHERE row.school_term_id = term.id
+          ) + (
+            SELECT COUNT(*) FROM attendance_sessions row
+            WHERE row.school_term_id = term.id
+          ) + (
+            SELECT COUNT(*) FROM curriculum_subjects row
+            WHERE row.school_term_id = term.id
+          ) + (
+            SELECT COUNT(*) FROM school_classrooms row
+            WHERE row.school_term_id = term.id
+          ) + (
+            SELECT COUNT(*) FROM student_term row
+            WHERE row.school_term_id = term.id
+          ) + (
+            SELECT COUNT(*) FROM teacher_access_grants row
+            WHERE row.school_term_id = term.id
+          ) + (
+            SELECT COUNT(*) FROM timetable_slots row
+            WHERE row.school_term_id = term.id
+          ) AS operational_reference_count
+        FROM school_terms term
+        JOIN compact_demo_school_targets_20260826 target
+          ON target.school_id = term.school_id
+        WHERE term.academic_year = $1
+          AND term.semester = 2
+          AND term.deleted_at IS NULL
+      `,
+      [DEMO_ACADEMIC_YEAR],
+    )) as Array<{
+      school_id: number;
+      school_term_id: number;
+      operational_reference_count: number | string;
+    }>;
+    const blockedTermTwo = referencedTermTwo.filter(
+      (term) => Number(term.operational_reference_count) > 0,
+    );
+    if (blockedTermTwo.length > 0) {
+      throw new Error(
+        `CompactDemoSubjectAttendance: 2569/2 term has operational references: ${JSON.stringify(blockedTermTwo)}`,
+      );
+    }
+
+    await queryRunner.query(
+      `
+        DELETE FROM school_terms term
+        USING compact_demo_school_targets_20260826 target
+        WHERE target.school_id = term.school_id
+          AND term.academic_year = $1
+          AND term.semester = 2
+          AND term.deleted_at IS NULL
+      `,
+      [DEMO_ACADEMIC_YEAR],
+    );
+
+    await queryRunner.query(
+      `
+        UPDATE school_terms term
+        SET starts_on = $3::date,
+            ends_on = $4::date,
+            status = 'ACTIVE',
+            updated_at = now()
+        FROM compact_demo_school_targets_20260826 target
+        WHERE target.school_id = term.school_id
+          AND term.academic_year = $1
+          AND term.semester = $2
+          AND term.deleted_at IS NULL
+      `,
+      [DEMO_ACADEMIC_YEAR, DEMO_SEMESTER, DEMO_TERM_START, DEMO_TERM_END],
+    );
+
+    await queryRunner.query(
+      `
+        DELETE FROM school_calendar_days calendar
+        USING school_terms term, compact_demo_school_targets_20260826 target
+        WHERE calendar.school_term_id = term.id
+          AND target.school_id = term.school_id
+          AND term.academic_year = $1
+          AND term.semester = $2
+      `,
+      [DEMO_ACADEMIC_YEAR, DEMO_SEMESTER],
+    );
+    await queryRunner.query(
+      `
+        INSERT INTO school_calendar_days (
+          school_term_id,
+          calendar_date,
+          day_type,
+          reason,
+          source
+        )
+        SELECT
+          term.id,
+          candidate_date::date,
+          'SCHOOL_DAY',
+          $5,
+          'BACKFILL'
+        FROM school_terms term
+        JOIN compact_demo_school_targets_20260826 target
+          ON target.school_id = term.school_id
+        CROSS JOIN LATERAL GENERATE_SERIES(
+          $3::date,
+          $4::date,
+          INTERVAL '1 day'
+        ) candidate_date
+        WHERE term.academic_year = $1
+          AND term.semester = $2
+          AND term.deleted_at IS NULL
+          AND EXTRACT(ISODOW FROM candidate_date) BETWEEN 1 AND 5
+      `,
+      [DEMO_ACADEMIC_YEAR, DEMO_SEMESTER, DEMO_TERM_START, DEMO_TERM_END, CALENDAR_REASON],
+    );
+    // Pick one latest real school day for each weekday (Monday-Friday) from
+    // the configured 2569/1 term. A day is eligible only when its timetable
+    // actually contains at least one slot.
     await queryRunner.query(`
       CREATE TEMP TABLE compact_demo_selected_days_20260826
       ON COMMIT DROP AS
-      WITH existing_anchors AS MATERIALIZED (
+      WITH active_terms AS MATERIALIZED (
         SELECT
-          record."SchoolID_Onec" AS school_id,
-          MAX(record."AttendanceDate")::date AS latest_attendance_date
-        FROM attendance record
-        JOIN compact_demo_school_targets_20260826 target
-          ON target.school_id = record."SchoolID_Onec"
-        GROUP BY record."SchoolID_Onec"
-      ),
-      active_terms AS MATERIALIZED (
-        SELECT DISTINCT ON (term.school_id)
           term.id AS school_term_id,
           term.school_id,
           term.academic_year,
           term.semester,
           term.starts_on,
-          LEAST(
-            CURRENT_DATE - 1,
-            GREATEST(
-              COALESCE(term.ends_on, term.starts_on),
-              term.starts_on + INTERVAL '42 days',
-              COALESCE(anchor.latest_attendance_date, term.starts_on)
-            )
-          )::date AS seed_window_ends_on,
+          LEAST(CURRENT_DATE - 1, term.ends_on)::date AS seed_window_ends_on,
           target.requested_day_count
         FROM school_terms term
         JOIN compact_demo_school_targets_20260826 target
           ON target.school_id = term.school_id
-        LEFT JOIN existing_anchors anchor ON anchor.school_id = term.school_id
-        WHERE term.status = 'ACTIVE'
+        WHERE term.academic_year = 2569
+          AND term.semester = 1
+          AND term.status = 'ACTIVE'
           AND term.deleted_at IS NULL
-        ORDER BY term.school_id, term.starts_on DESC, term.id DESC
       ),
       ranked_days AS (
         SELECT
@@ -135,10 +257,11 @@ export class CompactDemoSubjectAttendance20260826090000 implements MigrationInte
           term.academic_year,
           term.semester,
           candidate_date::date AS attendance_date,
+          EXTRACT(ISODOW FROM candidate_date)::smallint AS day_rank,
           ROW_NUMBER() OVER (
-            PARTITION BY term.school_id
+            PARTITION BY term.school_id, EXTRACT(ISODOW FROM candidate_date)
             ORDER BY candidate_date DESC
-          )::smallint AS day_rank,
+          )::smallint AS weekday_rank,
           term.requested_day_count
         FROM active_terms term
         CROSS JOIN LATERAL GENERATE_SERIES(
@@ -172,7 +295,7 @@ export class CompactDemoSubjectAttendance20260826090000 implements MigrationInte
         attendance_date,
         day_rank
       FROM ranked_days
-      WHERE day_rank <= requested_day_count
+      WHERE weekday_rank = 1
     `);
 
     const incompleteDayWindows = (await queryRunner.query(`
@@ -197,22 +320,135 @@ export class CompactDemoSubjectAttendance20260826090000 implements MigrationInte
       );
     }
 
-    // Some imported demo terms were created as a one-day term even though the
-    // same term owns a full weekly timetable. Keep the retained attendance
-    // internally valid by extending only those malformed end dates to the last
-    // selected (past) school day.
+    // Repair active-term timetable slots that have no usable explicit teacher.
+    // Prefer a real teacher already related to the slot/class; only the final
+    // fallback chooses the least-loaded active named teacher in the same school.
     await queryRunner.query(`
-      WITH selected_range AS (
-        SELECT school_term_id, MAX(attendance_date) AS last_attendance_date
-        FROM compact_demo_selected_days_20260826
-        GROUP BY school_term_id
+      WITH roster_classrooms AS MATERIALIZED (
+        SELECT DISTINCT enrollment.classroom_id, enrollment.school_term_id
+        FROM student_term enrollment
+        JOIN student_current_enrollment_resolution current_enrollment
+          ON current_enrollment.person_uuid = enrollment.person_uuid
+         AND current_enrollment.selected_student_uuid = enrollment.student_uuid
+         AND current_enrollment.resolution_state = 'ACTIVE'
+        JOIN compact_demo_school_targets_20260826 target
+          ON target.school_id = enrollment."SchoolID_Onec"
+        WHERE enrollment.deleted_at IS NULL
+          AND enrollment.classroom_id IS NOT NULL
+          AND enrollment.school_term_id IS NOT NULL
+      ),
+      missing_slots AS MATERIALIZED (
+        SELECT DISTINCT
+          slot.id AS timetable_slot_id,
+          slot.school_id,
+          slot.classroom_id,
+          slot.subject_id,
+          slot.teacher_membership_id
+        FROM timetable_slots slot
+        JOIN school_terms term
+          ON term.id = slot.school_term_id
+         AND term.academic_year = 2569
+         AND term.semester = 1
+         AND term.status = 'ACTIVE'
+         AND term.deleted_at IS NULL
+        JOIN compact_demo_school_targets_20260826 target
+          ON target.school_id = slot.school_id
+        JOIN roster_classrooms roster
+          ON roster.classroom_id = slot.classroom_id
+         AND roster.school_term_id = slot.school_term_id
+        WHERE slot.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM timetable_slot_teachers existing_link
+            JOIN school_teacher_memberships existing_membership
+              ON existing_membership.id = existing_link.teacher_membership_id
+             AND existing_membership.school_id = slot.school_id
+             AND existing_membership.membership_status = 'ACTIVE'
+             AND existing_membership.deleted_at IS NULL
+            JOIN teachers existing_teacher
+              ON existing_teacher.id = existing_membership.teacher_id
+             AND existing_teacher.teacher_status = 'ACTIVE'
+             AND existing_teacher.deleted_at IS NULL
+            WHERE existing_link.timetable_slot_id = slot.id
+              AND NULLIF(BTRIM(CONCAT_WS(
+                ' ', existing_teacher.first_name, existing_teacher.last_name
+              )), '') IS NOT NULL
+          )
+      ),
+      ranked_candidates AS (
+        SELECT
+          slot.timetable_slot_id,
+          candidate.teacher_membership_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY slot.timetable_slot_id
+            ORDER BY
+              candidate.source_priority,
+              candidate.explicit_slot_count,
+              candidate.teacher_membership_id
+          ) AS candidate_rank
+        FROM missing_slots slot
+        JOIN LATERAL (
+          SELECT
+            membership.id AS teacher_membership_id,
+            source.source_priority,
+            (
+              SELECT COUNT(*)::int
+              FROM timetable_slot_teachers workload
+              WHERE workload.teacher_membership_id = membership.id
+            ) AS explicit_slot_count
+          FROM (
+            SELECT slot.teacher_membership_id, 1 AS source_priority
+            WHERE slot.teacher_membership_id IS NOT NULL
+
+            UNION ALL
+
+            SELECT assignment.teacher_membership_id, 2 AS source_priority
+            FROM classroom_teacher_assignments assignment
+            WHERE assignment.classroom_id = slot.classroom_id
+              AND assignment.subject_id = slot.subject_id
+              AND assignment.assignment_kind = 'SUBJECT'
+              AND assignment.assignment_status = 'ACTIVE'
+              AND assignment.deleted_at IS NULL
+
+            UNION ALL
+
+            SELECT assignment.teacher_membership_id, 3 AS source_priority
+            FROM classroom_teacher_assignments assignment
+            WHERE assignment.classroom_id = slot.classroom_id
+              AND assignment.assignment_kind = 'HOMEROOM'
+              AND assignment.assignment_status = 'ACTIVE'
+              AND assignment.deleted_at IS NULL
+
+            UNION ALL
+
+            SELECT school_membership.id, 4 AS source_priority
+            FROM school_teacher_memberships school_membership
+            WHERE school_membership.school_id = slot.school_id
+          ) source
+          JOIN school_teacher_memberships membership
+            ON membership.id = source.teacher_membership_id
+           AND membership.school_id = slot.school_id
+           AND membership.membership_status = 'ACTIVE'
+           AND membership.deleted_at IS NULL
+          JOIN teachers teacher
+            ON teacher.id = membership.teacher_id
+           AND teacher.teacher_status = 'ACTIVE'
+           AND teacher.deleted_at IS NULL
+          WHERE NULLIF(BTRIM(CONCAT_WS(' ', teacher.first_name, teacher.last_name)), '') IS NOT NULL
+        ) candidate ON TRUE
       )
-      UPDATE school_terms term
-      SET ends_on = selected.last_attendance_date,
-          updated_at = now()
-      FROM selected_range selected
-      WHERE term.id = selected.school_term_id
-        AND (term.ends_on IS NULL OR term.ends_on < selected.last_attendance_date)
+      INSERT INTO timetable_slot_teachers (
+        timetable_slot_id,
+        teacher_membership_id,
+        created_by
+      )
+      SELECT
+        candidate.timetable_slot_id,
+        candidate.teacher_membership_id,
+        NULL
+      FROM ranked_candidates candidate
+      WHERE candidate.candidate_rank = 1
+      ON CONFLICT (timetable_slot_id, teacher_membership_id) DO NOTHING
     `);
 
     const slotsWithoutTeachers = (await queryRunner.query(`
@@ -246,6 +482,7 @@ export class CompactDemoSubjectAttendance20260826090000 implements MigrationInte
         FROM timetable_slot_teachers slot_teacher
         JOIN school_teacher_memberships membership
           ON membership.id = slot_teacher.teacher_membership_id
+         AND membership.school_id = slot.school_id
          AND membership.membership_status = 'ACTIVE'
          AND membership.deleted_at IS NULL
         JOIN teachers teacher
@@ -377,6 +614,7 @@ export class CompactDemoSubjectAttendance20260826090000 implements MigrationInte
         FROM timetable_slot_teachers slot_teacher
         JOIN school_teacher_memberships membership
           ON membership.id = slot_teacher.teacher_membership_id
+         AND membership.school_id = slot.school_id
          AND membership.membership_status = 'ACTIVE'
          AND membership.deleted_at IS NULL
         JOIN teachers teacher
