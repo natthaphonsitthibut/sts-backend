@@ -276,7 +276,7 @@ export class AttendanceRepository {
     date: string,
     userScope?: DataScope,
     schoolId?: number | null,
-    sessionKind?: 'DAILY' | 'SUBJECT',
+    sessionKind?: 'SUBJECT',
     timetableSlotId?: number,
   ): Promise<AttendanceHistoryRow[]> {
     // Self-only actors own no history rows (see listSchools note).
@@ -308,6 +308,7 @@ export class AttendanceRepository {
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       WHERE a."AttendanceDate" = $1
         AND a."SchoolID_Onec" = $2
+        AND a.session_kind = 'SUBJECT'
     `;
     const params: unknown[] = [date, schoolId];
 
@@ -562,7 +563,7 @@ export class AttendanceRepository {
       markedAt: Array<string | null>;
       date: string;
       period: number;
-      sessionKind?: 'DAILY' | 'SUBJECT';
+      sessionKind: 'SUBJECT';
       recordedBy: string;
       recordedByTeacherId?: number | null;
       sessionId: string;
@@ -570,11 +571,8 @@ export class AttendanceRepository {
     },
     executor: QueryExecutor,
   ): Promise<void> {
-    const sessionKind = input.sessionKind ?? 'DAILY';
-    const conflictTarget =
-      sessionKind === 'SUBJECT'
-        ? `ON CONFLICT (student_uuid, "AttendanceDate", "Period") WHERE session_kind = 'SUBJECT' DO UPDATE SET`
-        : `ON CONFLICT (student_uuid, "AttendanceDate") WHERE session_kind = 'DAILY' DO UPDATE SET`;
+    const sessionKind = 'SUBJECT';
+    const conflictTarget = `ON CONFLICT (student_uuid, "AttendanceDate", "Period") WHERE session_kind = 'SUBJECT' DO UPDATE SET`;
 
     await executor.query(
       `
@@ -643,30 +641,6 @@ export class AttendanceRepository {
         input.recordedByTeacherId ?? null,
       ],
     );
-  }
-
-  async listAttendanceStatuses(
-    studentIds: string[],
-    date: string,
-    period: number,
-    executor: QueryExecutor,
-  ): Promise<Array<{ student_uuid: string; attendance_status: number }>> {
-    if (studentIds.length === 0) return [];
-    const result = await executor.query<{
-      student_uuid: string;
-      attendance_status: number;
-    }>(
-      `
-        SELECT student_uuid, "AttendanceStatus"::int AS attendance_status
-        FROM attendance
-        WHERE student_uuid = ANY($1::uuid[])
-          AND "AttendanceDate" = $2
-          AND "Period" = $3
-          AND session_kind = 'DAILY'
-      `,
-      [studentIds, date, period],
-    );
-    return result.rows;
   }
 
   async getAlertTriggerType(): Promise<string> {

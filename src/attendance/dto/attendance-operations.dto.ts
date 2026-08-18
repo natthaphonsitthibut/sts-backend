@@ -107,11 +107,10 @@ export class AttendanceSessionContextQueryDto {
   @Matches(ISO_DATE_PATTERN)
   date!: string;
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetableSlotId?: number;
+  timetableSlotId!: number;
 }
 
 export class AttendanceReconciliationQueryDto extends PaginatedSearchQueryDto {

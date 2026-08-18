@@ -19,7 +19,7 @@ import { ISO_DATE_PATTERN } from './attendance-operations.dto';
 import { ATTENDANCE_SELECTION_STATUS_VALUES } from '../attendance-status';
 
 const ATTENDANCE_STATUS_VALUES = ATTENDANCE_SELECTION_STATUS_VALUES;
-const ATTENDANCE_SESSION_KIND_VALUES = ['DAILY', 'SUBJECT'] as const;
+const ATTENDANCE_SESSION_KIND_VALUES = ['SUBJECT'] as const;
 
 export class GetSchoolsQueryDto {
   @IsOptional()
@@ -132,11 +132,10 @@ export class SaveAttendanceMarksDto {
   @IsUUID(undefined, { each: true })
   cleared_student_ids?: string[];
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetable_slot_id?: number;
+  timetable_slot_id!: number;
 
   @IsOptional()
   @Matches(ISO_DATE_PATTERN)
@@ -150,11 +149,10 @@ export class SaveAttendanceDto {
   @Type(() => AttendanceRecordDto)
   records!: AttendanceRecordDto[];
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  timetable_slot_id?: number;
+  timetable_slot_id!: number;
 
   /** Attendance date to record for, `YYYY-MM-DD`; omit for today. */
   @IsOptional()

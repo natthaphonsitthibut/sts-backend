@@ -638,7 +638,7 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
       FOREIGN KEY (grant_id) REFERENCES teacher_access_grants(id)
       ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT chk_teacher_access_grant_capability
-      CHECK (capability IN ('HOMEROOM_ATTENDANCE', 'SUBJECT_ATTENDANCE', 'TEACHER_OBSERVATION'))
+      CHECK (capability IN ('SUBJECT_ATTENDANCE', 'TEACHER_OBSERVATION'))
   );
 
   CREATE TABLE IF NOT EXISTS teacher_access_grant_assignments (

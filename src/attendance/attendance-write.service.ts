@@ -200,25 +200,30 @@ export class AttendanceWriteService {
     }
 
     const attendanceDate = date ?? getBangkokDateString();
+    if (timetableSlotId === undefined && !context.session) {
+      throw new BadRequestException('กรุณาเลือกคาบรายวิชาก่อนเช็กชื่อ');
+    }
     const selectedSlot =
-      timetableSlotId !== undefined
-        ? await this.resolveDirectTimetableSlotSession(
+      timetableSlotId === undefined
+        ? null
+        : await this.resolveDirectTimetableSlotSession(
             timetableSlotId,
             first,
             attendanceDate,
             executor,
-          )
-        : null;
-    const sessionContext =
-      context.session ??
-      (selectedSlot
-        ? {
-            kind: 'SUBJECT' as const,
-            period: selectedSlot.period,
-            subjectId: selectedSlot.subject_id,
-            timetableSlotId: Number(selectedSlot.id),
-          }
-        : { kind: 'DAILY' as const, period: 1 });
+          );
+    let sessionContext = context.session;
+    if (!sessionContext) {
+      if (!selectedSlot) {
+        throw new BadRequestException('กรุณาเลือกคาบรายวิชาก่อนเช็กชื่อ');
+      }
+      sessionContext = {
+        kind: 'SUBJECT',
+        period: selectedSlot.period,
+        subjectId: selectedSlot.subject_id,
+        timetableSlotId: Number(selectedSlot.id),
+      };
+    }
     // Drafts fire many times per class, so they read the term without the
     // FOR UPDATE lock that find-or-create takes; only the rare first write of a
     // term falls through to the locking path.

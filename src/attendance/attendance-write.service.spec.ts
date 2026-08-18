@@ -10,6 +10,7 @@ const STUDENT_IDS = [
   '00000000-0000-4000-8000-000000000002',
 ];
 const TEST_ATTENDANCE_DATE = getBangkokDateString();
+const TEST_TIMETABLE_SLOT_ID = 11;
 const TEST_DAY_OF_WEEK = (() => {
   const [year, month, day] = TEST_ATTENDANCE_DATE.split('-').map(Number);
   const utcDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
@@ -23,8 +24,8 @@ const buildSession = (overrides: Partial<AttendanceSessionRow> = {}): Attendance
   grade_level_id: 6,
   room_id: 1,
   attendance_date: TEST_ATTENDANCE_DATE,
-  period: 1,
-  session_kind: 'DAILY',
+  period: 3,
+  session_kind: 'SUBJECT',
   status: 'OPEN',
   expected_roster_count: 2,
   recorded_count: 0,
@@ -35,14 +36,26 @@ const buildSession = (overrides: Partial<AttendanceSessionRow> = {}): Attendance
 });
 
 describe('AttendanceWriteService', () => {
-  const executor = { query: jest.fn() };
+  const executor = {
+    query: jest.fn().mockResolvedValue({
+      rows: [
+        {
+          id: TEST_TIMETABLE_SLOT_ID,
+          school_term_id: 10,
+          school_id: 10010002,
+          grade_level_id: 6,
+          room_no: 1,
+          day_of_week: TEST_DAY_OF_WEEK,
+          period: 3,
+          subject_id: 5,
+        },
+      ],
+    }),
+  };
   let attendanceRepository: jest.Mocked<
     Pick<
       AttendanceRepository,
-      | 'filterStudentIdsInScope'
-      | 'upsertAttendanceBatch'
-      | 'listAttendanceStatuses'
-      | 'getAlertTriggerType'
+      'filterStudentIdsInScope' | 'upsertAttendanceBatch' | 'getAlertTriggerType'
     >
   >;
   let riskProfileService: { requestStudentRecalculation: jest.Mock };
@@ -66,7 +79,6 @@ describe('AttendanceWriteService', () => {
     attendanceRepository = {
       filterStudentIdsInScope: jest.fn().mockResolvedValue(STUDENT_IDS),
       upsertAttendanceBatch: jest.fn().mockResolvedValue(undefined),
-      listAttendanceStatuses: jest.fn().mockResolvedValue([]),
       getAlertTriggerType: jest.fn().mockResolvedValue('SCHEDULED'),
     };
     riskProfileService = { requestStudentRecalculation: jest.fn().mockResolvedValue(undefined) };
@@ -110,11 +122,25 @@ describe('AttendanceWriteService', () => {
     );
   });
 
+  it('rejects a direct attendance write without a timetable subject slot', async () => {
+    await expect(
+      service.saveAttendanceWithinTransaction(
+        STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
+        { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
+        executor,
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(operationsRepository.findOrCreateSessionForUpdate).not.toHaveBeenCalled();
+    expect(attendanceRepository.upsertAttendanceBatch).not.toHaveBeenCalled();
+  });
+
   it('submits one complete class and writes the session audit', async () => {
     const result = await service.saveAttendanceWithinTransaction(
       STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
       { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
       executor,
+      undefined,
+      TEST_TIMETABLE_SLOT_ID,
     );
 
     expect(result).toEqual({
@@ -139,6 +165,8 @@ describe('AttendanceWriteService', () => {
       ],
       { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
       executor,
+      undefined,
+      TEST_TIMETABLE_SLOT_ID,
     );
 
     expect(attendanceRepository.upsertAttendanceBatch).toHaveBeenCalledWith(
@@ -151,6 +179,7 @@ describe('AttendanceWriteService', () => {
     await service.saveAttendance(
       STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
       { id: 5, username: 'teacher', roles: ['TEACHER'], permissions: ['attendance'] },
+      TEST_TIMETABLE_SLOT_ID,
     );
 
     expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
@@ -170,6 +199,8 @@ describe('AttendanceWriteService', () => {
         STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
         { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
         executor,
+        undefined,
+        TEST_TIMETABLE_SLOT_ID,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(attendanceRepository.upsertAttendanceBatch).not.toHaveBeenCalled();
@@ -187,6 +218,8 @@ describe('AttendanceWriteService', () => {
         STUDENT_IDS.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
         { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
         executor,
+        undefined,
+        TEST_TIMETABLE_SLOT_ID,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(attendanceRepository.upsertAttendanceBatch).not.toHaveBeenCalled();
@@ -212,6 +245,8 @@ describe('AttendanceWriteService', () => {
       ],
       { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
       executor,
+      undefined,
+      TEST_TIMETABLE_SLOT_ID,
     );
 
     expect(operationsRepository.recordSessionAudit).toHaveBeenCalledWith(
@@ -225,10 +260,10 @@ describe('AttendanceWriteService', () => {
           gradeLevelId: 6,
           roomId: 1,
           attendanceDate: TEST_ATTENDANCE_DATE,
-          sessionKind: 'DAILY',
-          period: 1,
-          subjectId: null,
-          timetableSlotId: null,
+          sessionKind: 'SUBJECT',
+          period: 3,
+          subjectId: 5,
+          timetableSlotId: TEST_TIMETABLE_SLOT_ID,
           expectedRosterCount: 2,
           recordedCount: 2,
           revision: 2,
@@ -446,14 +481,26 @@ describe('AttendanceWriteService', () => {
 });
 
 describe('AttendanceWriteService marked_at clamping', () => {
-  const executor = { query: jest.fn() };
+  const executor = {
+    query: jest.fn().mockResolvedValue({
+      rows: [
+        {
+          id: TEST_TIMETABLE_SLOT_ID,
+          school_term_id: 10,
+          school_id: 10010002,
+          grade_level_id: 6,
+          room_no: 1,
+          day_of_week: TEST_DAY_OF_WEEK,
+          period: 3,
+          subject_id: 5,
+        },
+      ],
+    }),
+  };
   let attendanceRepository: jest.Mocked<
     Pick<
       AttendanceRepository,
-      | 'filterStudentIdsInScope'
-      | 'upsertAttendanceBatch'
-      | 'listAttendanceStatuses'
-      | 'getAlertTriggerType'
+      'filterStudentIdsInScope' | 'upsertAttendanceBatch' | 'getAlertTriggerType'
     >
   >;
   let service: AttendanceWriteService;
@@ -469,13 +516,14 @@ describe('AttendanceWriteService marked_at clamping', () => {
       [{ student_id: STUDENT_IDS[0], status: 'P_PRESENT', marked_at }],
       { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
       executor,
+      undefined,
+      TEST_TIMETABLE_SLOT_ID,
     );
 
   beforeEach(() => {
     attendanceRepository = {
       filterStudentIdsInScope: jest.fn().mockResolvedValue([STUDENT_IDS[0]]),
       upsertAttendanceBatch: jest.fn().mockResolvedValue(undefined),
-      listAttendanceStatuses: jest.fn().mockResolvedValue([]),
       getAlertTriggerType: jest.fn().mockResolvedValue('SCHEDULED'),
     };
     const operationsRepository = {
@@ -564,14 +612,28 @@ describe('AttendanceWriteService marked_at clamping', () => {
 });
 
 describe('AttendanceWriteService draft marks', () => {
-  const executor = { query: jest.fn() };
+  const executor = {
+    query: jest.fn().mockResolvedValue({
+      rows: [
+        {
+          id: TEST_TIMETABLE_SLOT_ID,
+          school_term_id: 10,
+          school_id: 10010002,
+          grade_level_id: 6,
+          room_no: 1,
+          day_of_week: TEST_DAY_OF_WEEK,
+          period: 3,
+          subject_id: 5,
+        },
+      ],
+    }),
+  };
   let attendanceRepository: jest.Mocked<
     Pick<
       AttendanceRepository,
       | 'filterStudentIdsInScope'
       | 'upsertAttendanceBatch'
       | 'deleteAttendanceMarks'
-      | 'listAttendanceStatuses'
       | 'getAlertTriggerType'
     >
   >;
@@ -614,6 +676,8 @@ describe('AttendanceWriteService draft marks', () => {
       studentIds.map((studentId) => ({ student_id: studentId, status: 'P_PRESENT' })),
       { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
       executor,
+      undefined,
+      TEST_TIMETABLE_SLOT_ID,
     );
   };
 
@@ -622,7 +686,6 @@ describe('AttendanceWriteService draft marks', () => {
       filterStudentIdsInScope: jest.fn().mockImplementation((ids: string[]) => ids),
       upsertAttendanceBatch: jest.fn().mockResolvedValue(undefined),
       deleteAttendanceMarks: jest.fn().mockResolvedValue(undefined),
-      listAttendanceStatuses: jest.fn().mockResolvedValue([]),
       getAlertTriggerType: jest.fn().mockResolvedValue('IMMEDIATE'),
     };
     riskProfileService = { requestStudentRecalculation: jest.fn().mockResolvedValue(undefined) };
@@ -735,7 +798,7 @@ describe('AttendanceWriteService draft marks', () => {
       { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
       executor,
       undefined,
-      undefined,
+      TEST_TIMETABLE_SLOT_ID,
       undefined,
       [STUDENT_IDS[0]],
     );
@@ -756,7 +819,7 @@ describe('AttendanceWriteService draft marks', () => {
         { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
         executor,
         undefined,
-        undefined,
+        TEST_TIMETABLE_SLOT_ID,
         undefined,
         ['00000000-0000-4000-8000-000000000009'],
       ),
@@ -771,7 +834,7 @@ describe('AttendanceWriteService draft marks', () => {
       { actorUserId: 5, actorLabel: 'teacher', recorder: 'teacher' },
       executor,
       undefined,
-      undefined,
+      TEST_TIMETABLE_SLOT_ID,
       undefined,
       [STUDENT_IDS[0]],
     );

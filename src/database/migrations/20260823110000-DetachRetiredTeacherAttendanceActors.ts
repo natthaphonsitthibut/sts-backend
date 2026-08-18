@@ -18,7 +18,9 @@ export class DetachRetiredTeacherAttendanceActors20260823110000 implements Migra
   transaction = false;
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`VACUUM (ANALYZE) attendance`);
+    // PARALLEL 0 avoids PostgreSQL allocating a large dynamic shared-memory
+    // segment on small containers while producing the same table statistics.
+    await queryRunner.query(`VACUUM (ANALYZE, PARALLEL 0) attendance`);
 
     let updatedRows: number;
     do {
@@ -48,7 +50,7 @@ export class DetachRetiredTeacherAttendanceActors20260823110000 implements Migra
       updatedRows = Number(result[0]?.updated_rows ?? 0);
     } while (updatedRows > 0);
 
-    await queryRunner.query(`VACUUM (ANALYZE) attendance`);
+    await queryRunner.query(`VACUUM (ANALYZE, PARALLEL 0) attendance`);
   }
 
   public async down(): Promise<void> {}
