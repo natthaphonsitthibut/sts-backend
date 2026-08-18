@@ -18,7 +18,7 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import { CaseService } from './case.service';
-import { OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
+import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { getTaskErrorMessage, hasHttpStatusGetter } from './task.types';
 
 @UseGuards(AuthGuard)
@@ -42,6 +42,18 @@ export class CaseController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return await this.caseService.getCase(caseId, actor);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('dashboard')
+  @Post(':caseId/cancel-assignment')
+  @HttpCode(HttpStatus.OK)
+  async cancelCaseAssignment(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Body() body: CancelCaseAssignmentDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.caseService.cancelCaseAssignment(caseId, body, actor);
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

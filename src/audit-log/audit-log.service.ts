@@ -435,6 +435,19 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ลบภารกิจ',
     detailKeys: [],
   },
+  TASK_CANCEL: {
+    domain: 'tasks',
+    label: 'ยกเลิกการมอบหมาย',
+    detailKeys: [
+      { key: 'caseId', label: 'เคส' },
+      { key: 'assignee', label: 'ผู้รับมอบหมาย' },
+    ],
+  },
+  TASK_EXPIRE: {
+    domain: 'tasks',
+    label: 'ลิงก์มอบหมายหมดอายุ',
+    detailKeys: [{ key: 'caseId', label: 'เคส' }],
+  },
   DELEGATION: {
     domain: 'tasks',
     label: 'ส่งต่อภารกิจ',
@@ -548,6 +561,8 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
 const LINK_HISTORY_ACTIONS: AuditAction[] = [
   'TASK_CREATE',
   'TASK_DELETE',
+  'TASK_CANCEL',
+  'TASK_EXPIRE',
   'LINK_LOCK',
   'LINK_UNLOCK',
   'DELEGATION',

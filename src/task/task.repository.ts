@@ -996,6 +996,120 @@ export class TaskRepository {
     return result.rows.length === 1;
   }
 
+  /**
+   * Withdraws the assignment a case is currently waiting on.
+   *
+   * Only an assignment nobody has reported on can be withdrawn — a submitted
+   * round is history, not a mistake to undo. The link dies with the same effect
+   * as expiry (the holder can no longer open it), the task keeps its row so the
+   * case history still shows the round happened, and the case drops back to
+   * รอมอบหมาย inside whatever phase it was already in.
+   */
+  async cancelCaseAssignment(
+    caseId: number,
+    reason: string,
+    actorId: number | null,
+    actor?: ActorContext,
+  ): Promise<{ taskId: string; assignee: string | null; taskType: string | null } | null> {
+    return await this.withTransaction(async (executor) => {
+      const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+      const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+      const target = await executor.query<{
+        task_id: string;
+        link_id: string;
+        assignee: string | null;
+        task_type: string | null;
+      }>(
+        `
+          SELECT t.id AS task_id, tl.id AS link_id, tl.assigned_to_name AS assignee,
+                 t.task_type
+          FROM cases c
+          JOIN tasks t ON t.case_id = c.id AND t.deleted_at IS NULL
+          JOIN task_links tl ON tl.task_id = t.id AND tl.deleted_at IS NULL
+          WHERE c.id = $1
+            AND c.deleted_at IS NULL
+            AND c.status = 'IN_PROGRESS'
+            AND tl.status IN ('ACTIVE', 'SCHEDULED')
+            AND NOT EXISTS (
+              SELECT 1 FROM task_submissions submission
+              WHERE submission.task_link_id = tl.id AND submission.deleted_at IS NULL
+            )${scopeSql}
+          ORDER BY t.created_at DESC
+          LIMIT 1
+          FOR UPDATE OF tl
+        `,
+        [caseId, ...scopeQuery.params],
+      );
+      const row = target.rows[0];
+      if (!row) return null;
+      await executor.query(
+        `
+          UPDATE task_links
+          SET status = 'CANCELLED',
+              cancelled_at = now(),
+              cancelled_by = $2,
+              cancel_reason = $3,
+              updated_by = $2
+          WHERE id = $1
+        `,
+        [row.link_id, actorId, reason],
+      );
+      await executor.query(`UPDATE tasks SET status = 'CANCELLED', updated_by = $2 WHERE id = $1`, [
+        row.task_id,
+        actorId,
+      ]);
+      await executor.query(`UPDATE cases SET status = 'OPEN' WHERE id = $1`, [caseId]);
+      return {
+        taskId: row.task_id,
+        assignee: row.assignee ?? null,
+        taskType: row.task_type ?? null,
+      };
+    });
+  }
+
+  /**
+   * Closes every assignment whose link ran out with no report and hands the
+   * case back to รอมอบหมาย.
+   *
+   * Expiry used to be read-side only — the link stopped working but the case
+   * still read รอติดตาม, so a case waiting for a new assignment looked like a
+   * case someone was working on. This makes the state real, which is what the
+   * case list, the counters and the reminder all read.
+   */
+  async expireLapsedAssignments(): Promise<Array<{ caseId: number; taskId: string }>> {
+    const result = await this.query<{ case_id: number; task_id: string }>(
+      `
+        WITH lapsed AS (
+          UPDATE task_links tl
+          SET status = 'EXPIRED'
+          WHERE tl.status IN ('ACTIVE', 'SCHEDULED')
+            AND tl.deleted_at IS NULL
+            AND tl.expires_at <= now()
+            AND NOT EXISTS (
+              SELECT 1 FROM task_submissions submission
+              WHERE submission.task_link_id = tl.id AND submission.deleted_at IS NULL
+            )
+          RETURNING tl.task_id
+        ),
+        lapsed_tasks AS (
+          UPDATE tasks t
+          SET status = 'EXPIRED'
+          FROM lapsed
+          WHERE t.id = lapsed.task_id AND t.deleted_at IS NULL
+          RETURNING t.id AS task_id, t.case_id
+        )
+        UPDATE cases c
+        SET status = 'OPEN'
+        FROM lapsed_tasks
+        WHERE c.id = lapsed_tasks.case_id
+          AND c.status = 'IN_PROGRESS'
+          AND c.deleted_at IS NULL
+        RETURNING c.id AS case_id, lapsed_tasks.task_id
+      `,
+    );
+    return result.rows.map((row) => ({ caseId: row.case_id, taskId: row.task_id }));
+  }
+
   async createTask(data: CreateTaskInput, executor?: QueryExecutor): Promise<void> {
     await this.getExecutor(executor).query(
       `
@@ -2824,6 +2938,13 @@ export class TaskRepository {
         tl.opens_at AS assignment_starts_at,
         tl.expires_at AS assignment_ends_at,
         tl.assignment_note,
+        tl.status AS link_status,
+        tl.cancelled_at,
+        tl.cancel_reason,
+        COALESCE(
+          NULLIF(TRIM(cancelled_by_user."FirstName" || ' ' || cancelled_by_user."LastName"), ''),
+          cancelled_by_user.username
+        ) AS cancelled_by_label,
         (SELECT COUNT(*) FROM task_links WHERE task_id = t.id AND deleted_at IS NULL) AS link_count,
         latest_submission.submitted_at,
         latest_submission.visited_at,
@@ -2858,6 +2979,7 @@ export class TaskRepository {
         latest_submission.assistance_detail
       FROM tasks t
       LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.deleted_at IS NULL
+      LEFT JOIN users cancelled_by_user ON cancelled_by_user.id = tl.cancelled_by
       LEFT JOIN teachers current_assignee_teacher
         ON current_assignee_teacher.id = tl.assigned_teacher_id
        AND current_assignee_teacher.deleted_at IS NULL

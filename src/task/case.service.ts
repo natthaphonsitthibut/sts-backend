@@ -15,7 +15,7 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
-import { OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
+import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
@@ -146,6 +146,10 @@ export class CaseService {
       assignment_ends_at: row.assignment_ends_at ?? null,
       assignment_note: this.normalizeText(row.assignment_note) || null,
       link_count: this.normalizeNumber(row.link_count) ?? 0,
+      link_status: this.normalizeText(row.link_status) || null,
+      cancelled_at: row.cancelled_at ?? null,
+      cancel_reason: this.normalizeText(row.cancel_reason) || null,
+      cancelled_by_label: this.normalizeText(row.cancelled_by_label) || null,
       submitted_at: row.submitted_at ?? null,
       visited_at: row.visited_at ?? null,
       follow_up_problem_category_code:
@@ -341,6 +345,49 @@ export class CaseService {
         risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
       },
     };
+  }
+
+  /**
+   * Withdraws the assignment a case is waiting on and sends the case back to
+   * รอมอบหมาย. Only "รอติดตาม" with nothing reported yet can be withdrawn —
+   * once a report is in, the round is history and the review path owns it.
+   */
+  async cancelCaseAssignment(
+    caseId: number,
+    body: CancelCaseAssignmentDto,
+    actor?: AuthenticatedRequestUser,
+  ) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (isRestrictedExecutive(currentActor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารไม่มีสิทธิ์ดำเนินการกับเคสรายบุคคล');
+    }
+    const reason = clean(this.normalizeText(body.cancel_reason)) || null;
+    if (!reason) {
+      throw new BadRequestException('กรุณาระบุเหตุผลการยกเลิกการมอบหมาย');
+    }
+    const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
+    if (!caseRecord) {
+      throw new NotFoundException('Case not found');
+    }
+    const cancelled = await this.taskRepository.cancelCaseAssignment(
+      caseId,
+      reason,
+      resolveAuditActorId(currentActor),
+      currentActor,
+    );
+    if (!cancelled) {
+      throw new BadRequestException('ยกเลิกได้เฉพาะการมอบหมายที่ยังไม่มีการส่งรายงาน');
+    }
+    await this.auditLog.record({
+      actorUserId: resolveAuditActorId(currentActor),
+      actorLabel: this.actorLabel(currentActor),
+      action: 'TASK_CANCEL',
+      targetType: 'task',
+      targetId: cancelled.taskId,
+      metadata: { caseId, taskType: cancelled.taskType, assignee: cancelled.assignee },
+      ip: null,
+    });
+    return { success: true, data: { case_id: caseId, task_id: cancelled.taskId } };
   }
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {

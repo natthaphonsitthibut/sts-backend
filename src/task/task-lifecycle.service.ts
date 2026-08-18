@@ -1,4 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import { clean, generateToken, hashToken } from '../common/utils/helpers';
@@ -13,6 +15,8 @@ import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { resolveAssigneeName } from './task-assignee-name';
 import { MAX_LINK_LIFETIME_MS } from './task-link-expiry';
+
+const LAPSED_ASSIGNMENT_CRON = '0 */10 * * * *';
 import type { ActorContext, DataScope, QueryExecutor, QueryResultRow } from './task.types';
 
 @Injectable()
@@ -575,6 +579,37 @@ export class TaskLifecycleService {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`createTask error: ${message}`);
       throw err;
+    }
+  }
+
+  /**
+   * Every ten minutes, hand back any case whose assignment link ran out with no
+   * report. Read-side expiry was not enough: the case kept reading รอติดตาม, so
+   * work that had silently lapsed never surfaced in the รอมอบหมาย queue.
+   */
+  @Cron(LAPSED_ASSIGNMENT_CRON, {
+    timeZone: BANGKOK_TIME_ZONE,
+    name: 'task_lapsed_assignment_sweep',
+  })
+  async sweepLapsedAssignments(): Promise<{ expired: number }> {
+    try {
+      const lapsed = await this.taskRepository.expireLapsedAssignments();
+      for (const entry of lapsed) {
+        await this.auditLog.record({
+          action: 'TASK_EXPIRE',
+          actorUserId: null,
+          actorLabel: 'ระบบ',
+          targetType: 'task',
+          targetId: entry.taskId,
+          metadata: { caseId: entry.caseId },
+          ip: null,
+        });
+      }
+      return { expired: lapsed.length };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Lapsed assignment sweep failed: ${message}`);
+      return { expired: 0 };
     }
   }
 
