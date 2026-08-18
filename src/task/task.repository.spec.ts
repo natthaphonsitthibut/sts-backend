@@ -399,6 +399,8 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('profile.term_absent_days');
     expect(queries[0].sql).toContain('profile.absence_reset_after_date');
     expect(queries[0].sql).toContain('FROM classroom_student_comments comment');
+    expect(queries[0].sql).toContain('JOIN classroom_student_problem_categories category');
+    expect(queries[0].sql).toContain('latest_comment.problem_category_label');
     expect(queries[0].sql).toContain('latest_case.id IS NOT NULL');
     expect(queries[0].sql).toContain("COUNT(*) FILTER (WHERE latest_case_status = 'OPEN')");
     expect(queries[0].sql).not.toContain('JOIN base_students case_student');
@@ -411,6 +413,47 @@ describe('TaskRepository', () => {
       'ORDER BY weighted_attendance_percent ASC NULLS LAST, risk_severity DESC, student_name ASC',
     );
     expect(queries[2].sql).toContain('LIMIT $5 OFFSET $6');
+  });
+
+  it('sorts the watchlist by problem category and keeps the raw comment available', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (queries.length === 1) {
+          return { records: [{ total_count: 0, HIGH: 0, WATCH: 0, NORMAL: 0 }], affected: 1 };
+        }
+        if (queries.length === 2) return { records: [{ count: 0 }], affected: 1 };
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.listRiskDashboardStudents(
+      {
+        id: 1,
+        username: 'dashboard-admin',
+        roles: ['ADMIN'],
+        permissions: ['dashboard', 'students'],
+        data_scope: {},
+      },
+      { studentGroup: 'WATCHLIST', page: 1, limit: 20, sortBy: 'problemCategory' },
+      { highAbsentDays: 3 },
+    );
+
+    // Both tabs show the catalog label; the risk tab keeps the absence summary
+    // as its fallback, and the watchlist column reads the label field directly.
+    expect(queries[0].sql).toContain('latest_comment.problem_category_label');
+    expect(queries[0].sql).not.toContain('latest_comment.problem_description');
+    expect(queries[2].sql).toContain(
+      'ORDER BY problem_category_label DESC NULLS LAST, student_name ASC',
+    );
   });
 
   it('builds a valid unfiltered dashboard query and escapes literal search wildcards', async () => {

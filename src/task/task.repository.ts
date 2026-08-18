@@ -2537,8 +2537,9 @@ export class TaskRepository {
           latest_case.updated_at AS latest_case_at,
           latest_case_link.token_encrypted AS latest_case_link_token_encrypted,
           latest_comment.id AS latest_comment_id,
+          latest_comment.problem_category_label,
           COALESCE(
-            latest_comment.problem_description,
+            latest_comment.problem_category_label,
             CASE
               WHEN profile.absence_reset_after_date IS NULL
                 THEN CONCAT('ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0), ' วัน')
@@ -2581,8 +2582,10 @@ export class TaskRepository {
           LIMIT 1
         ) latest_case_link ON TRUE
         LEFT JOIN LATERAL (
-          SELECT comment.id, comment.problem_description
+          SELECT comment.id, category.label_th AS problem_category_label
           FROM classroom_student_comments comment
+          JOIN classroom_student_problem_categories category
+            ON category.code = comment.problem_category_code
           WHERE comment.classroom_id = s.classroom_id
             AND comment.person_uuid = s.person_uuid
           ORDER BY comment.created_at DESC, comment.id DESC
@@ -2690,7 +2693,9 @@ export class TaskRepository {
                   ? `open_case_count ${sortDirection}, risk_severity DESC, risk_score DESC, student_name ASC`
                   : filters.sortBy === 'updatedAt'
                     ? `latest_case_at ${sortDirection} NULLS LAST, student_name ASC`
-                    : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
+                    : filters.sortBy === 'problemCategory'
+                      ? `problem_category_label ${sortDirection} NULLS LAST, student_name ASC`
+                      : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
 
     const rowsResult = await this.query<RiskDashboardRow>(
       `
@@ -2723,6 +2728,7 @@ export class TaskRepository {
           latest_case_status,
           latest_case_at,
           latest_case_link_token_encrypted,
+          problem_category_label,
           teacher_comment
         FROM filtered
         ORDER BY ${orderBy}

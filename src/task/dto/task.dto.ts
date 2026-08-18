@@ -386,6 +386,7 @@ export const RISK_DASHBOARD_SORT_FIELDS = [
   'attendance',
   'openCases',
   'updatedAt',
+  'problemCategory',
 ] as const;
 export const RISK_DASHBOARD_SORT_DIRECTIONS = ['asc', 'desc'] as const;
 export const RISK_DASHBOARD_CASE_STATUSES = [
