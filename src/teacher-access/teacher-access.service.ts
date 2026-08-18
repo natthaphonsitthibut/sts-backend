@@ -894,6 +894,30 @@ export class TeacherAccessService {
     return result;
   }
 
+  /**
+   * A link holder has no admin actor to check school access with — the grant
+   * token already proves it's their own membership, so that replaces the
+   * `assertSchoolAccess` check the admin roster endpoint uses.
+   */
+  async resolvePublicTeacherPhoto(
+    rawToken: string,
+    sessionToken?: string,
+  ): Promise<FileServeResult> {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { sessionToken, operation: 'VIEW_CONTEXT', recordSuccessfulUse: false },
+      async (context) => {
+        const photo = await this.repository.findTeacherMembershipPhoto(
+          Number(context.teacherMembershipId),
+        );
+        if (!photo?.photo_storage_key) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+        const result = await this.storage.resolve(photo.photo_storage_key);
+        if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+        return result;
+      },
+    );
+  }
+
   async unlinkTeacherLineAccount(teacherMembershipId: number, actor: AuthenticatedRequestUser) {
     const actorId = resolveAuditActorId(actor);
     if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ที่ปลดการเชื่อมต่อ LINE');
@@ -2740,10 +2764,14 @@ export class TeacherAccessService {
           );
         }
         const problemCategories = await this.schoolStructure.listStudentProblemCategories();
+        const photo = await this.repository.findTeacherMembershipPhoto(
+          Number(context.teacherMembershipId),
+        );
         return {
           data: {
             grantId: context.grantId,
             teacherDisplayName: context.teacherDisplayName,
+            teacherHasPhoto: Boolean(photo?.photo_storage_key),
             schoolId: context.schoolId,
             schoolName: context.schoolName,
             schoolTermId: context.schoolTermId,

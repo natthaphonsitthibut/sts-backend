@@ -436,6 +436,26 @@ export class PublicTeacherAccessController {
     return this.service.getPublicContext(this.token(rawToken), this.session(rawSession));
   }
 
+  @Get('my-photo')
+  @ThrottleTeacherAccess()
+  async myPhoto(
+    @Headers(TEACHER_ACCESS_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Headers(TEACHER_ACCESS_SESSION_HEADER) rawSession: string | string[] | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.service.resolvePublicTeacherPhoto(
+      this.token(rawToken),
+      this.session(rawSession),
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
   @Get('attendance-delegation-options')
   @ThrottleTeacherAccess()
   attendanceDelegationOptions(
