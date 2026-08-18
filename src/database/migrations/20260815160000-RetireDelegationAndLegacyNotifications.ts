@@ -2,7 +2,6 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
 import {
   AUDIT_COLUMNS_SQL,
   SET_UPDATED_AT_FUNCTION_SQL,
-  STUDENT_ACCOUNT_BATCH_TABLES_SQL,
   auditUpdatedAtTriggerSql,
 } from '../bootstrap-sql';
 
@@ -243,7 +242,6 @@ export class RetireDelegationAndLegacyNotifications20260815160000 implements Mig
         ('FAILED', 'ล้มเหลว', 'destructive', 40)
       ON CONFLICT (code) DO NOTHING
     `);
-    await queryRunner.query(STUDENT_ACCOUNT_BATCH_TABLES_SQL);
     await queryRunner.query(`
       DO $batch_status_fks$
       BEGIN

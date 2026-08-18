@@ -326,15 +326,6 @@ export const AUDIT_RETROFIT_SQL = `
   END $audit$;
 `;
 
-/**
- * Legacy student-account batch storage. This remains exported because the
- * historical migration that originally introduced the tables must stay
- * executable on a fresh database. The current bootstrap intentionally omits
- * this SQL because the feature is retired by a later migration.
- */
-export const STUDENT_ACCOUNT_BATCH_TABLES_SQL = `
-`;
-
 export const DATA_EXPORT_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS data_export_job (
     id UUID PRIMARY KEY,
