@@ -156,9 +156,10 @@ export class TaskStatsService {
           },
           thresholds,
         );
-      const canViewTeacherComments = currentActor.permissions.includes(
-        'manage-student-observations',
-      );
+      // 20260821090000-CollapsePermissionsToPages folded the retired
+      // `manage-student-observations` id into the `students` page, so the old
+      // id no longer exists on any actor and gated the column off for everyone.
+      const canViewTeacherComments = currentActor.permissions.includes('students');
       if (missingProfileCount && missingProfileCount > 0) {
         this.logger.warn(
           `Risk dashboard has ${missingProfileCount} active enrollment(s) without risk profiles`,
@@ -200,6 +201,9 @@ export class TaskStatsService {
           latestCaseStatus: row.latest_case_status ?? null,
           latestCaseAt: row.latest_case_at,
           latestCaseMagicLink: row.latest_case_magic_link ?? null,
+          problemCategoryLabel: canViewTeacherComments
+            ? (row.problem_category_label ?? null)
+            : null,
           teacherComment: canViewTeacherComments ? (row.teacher_comment ?? null) : null,
         })),
         meta: {

@@ -178,4 +178,64 @@ describe('TaskStatsService', () => {
       expect.objectContaining({ highAbsentDays: 4 }),
     );
   });
+
+  // The gate used to name `manage-student-observations`, which
+  // 20260821090000-CollapsePermissionsToPages folded into `students`. Nobody
+  // held the retired id afterwards, so the column read `-` for every actor.
+  it('shows the problem category and teacher comment to an actor holding the students page', async () => {
+    const actor = {
+      id: 8,
+      username: 'school-admin',
+      roles: ['SCHOOL_ADMIN'],
+      permissions: ['dashboard', 'students'],
+      data_scope: { school_ids: [101] },
+    };
+    const taskRepository = {
+      getSystemSettingValue: jest.fn().mockResolvedValue('4'),
+      listRiskDashboardStudents: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            student_uuid: 'student-1',
+            student_name: 'เด็ก ทดสอบ',
+            school_id: 101,
+            grade: 'ม.1',
+            room: '1',
+            risk_tier: 'WATCH',
+            problem_category_label: 'ปัญหาด้านสุขภาพ',
+            teacher_comment: 'Covid',
+          },
+        ],
+        totalCount: 1,
+        summary: { HIGH: 0, WATCH: 1, NORMAL: 0 },
+        caseStatusSummary: {
+          OPEN: 0,
+          IN_PROGRESS: 0,
+          PENDING_REVIEW: 0,
+          STUDENT_NOT_FOUND: 0,
+        },
+      }),
+    };
+    const taskPolicyService = { ensureActor: jest.fn().mockReturnValue(actor) };
+    const service = new TaskStatsService(
+      taskRepository as unknown as TaskRepository,
+      taskPolicyService as unknown as TaskPolicyService,
+    );
+
+    await expect(
+      service.getRiskDashboard(actor, { page: 1, limit: 20, sortBy: 'problemCategory' }),
+    ).resolves.toMatchObject({
+      data: [
+        {
+          studentId: 'student-1',
+          problemCategoryLabel: 'ปัญหาด้านสุขภาพ',
+          teacherComment: 'Covid',
+        },
+      ],
+    });
+    expect(taskRepository.listRiskDashboardStudents).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({ sortBy: 'problemCategory' }),
+      expect.anything(),
+    );
+  });
 });

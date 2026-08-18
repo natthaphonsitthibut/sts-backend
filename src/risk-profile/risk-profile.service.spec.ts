@@ -244,7 +244,9 @@ describe('RiskProfileService', () => {
   });
 
   it('repairs only missing profiles on startup instead of recalculating everything', async () => {
-    repository.listMissingActiveProfileStudentUuids.mockResolvedValueOnce(['student-missing']);
+    repository.listMissingActiveProfileStudentUuids
+      .mockResolvedValueOnce(['student-missing'])
+      .mockResolvedValueOnce([]);
 
     await service.repairMissingProfiles('startup-repair');
 
@@ -256,6 +258,35 @@ describe('RiskProfileService', () => {
       expect.any(Object),
     );
     expect(await redis.smembers('risk-profile:dirty:students')).toEqual([]);
+  });
+
+  it('queues a background full pass when missing profiles exceed the startup batch', async () => {
+    service = new RiskProfileService(
+      repository as unknown as RiskProfileRepository,
+      {
+        redisUrl: 'redis://placeholder',
+        requireRedis: true,
+        riskProfile: { queueName: 'student-risk-profile', attempts: 3, backoffMs: 30_000 },
+        dataExport: { queueName: 'data-export', attempts: 3, backoffMs: 30_000 },
+      },
+      { getClient: () => redis } as never,
+    );
+    (service as unknown as { queue: typeof queue }).queue = queue;
+    repository.listMissingActiveProfileStudentUuids
+      .mockResolvedValueOnce(Array.from({ length: 500 }, (_, index) => `student-${index}`))
+      .mockResolvedValueOnce(['student-remaining']);
+
+    await service.repairMissingProfiles('startup-repair');
+
+    expect(repository.recalculateStudents).toHaveBeenCalledWith(
+      expect.arrayContaining(['student-0', 'student-499']),
+      expect.any(Object),
+    );
+    expect(await redis.get('risk-profile:dirty:full')).toBe(
+      'startup-repair:remaining-missing-profiles',
+    );
+    expect(queue.add).toHaveBeenCalledTimes(1);
+    expect(repository.recalculateAll).not.toHaveBeenCalled();
   });
 
   it('stays idle on startup when no profile is missing', async () => {
