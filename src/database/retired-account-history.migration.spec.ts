@@ -79,7 +79,7 @@ describe('retired account migration history safety', () => {
     const source = readMigration('20260823110000-DetachRetiredTeacherAttendanceActors.ts');
 
     expect(source).toContain('transaction = false');
-    expect(source).toContain('VACUUM (ANALYZE) attendance');
+    expect(source).toContain('VACUUM (ANALYZE, PARALLEL 0) attendance');
     expect(source).toContain('LIMIT 20000');
     expect(source).toContain(
       "WHEN record.created_by IN (SELECT id FROM users WHERE role = 'TEACHER') THEN NULL",
