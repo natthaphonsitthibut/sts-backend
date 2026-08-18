@@ -177,6 +177,22 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
     this.logger.log(
       `Risk profile startup repair completed: evaluated=${result.evaluated}, changed=${result.changed}, reason=${reason}`,
     );
+
+    const remaining =
+      await this.riskProfileRepository.listMissingActiveProfileStudentUuids(REPAIR_BATCH_SIZE);
+    if (remaining.length === 0) {
+      return;
+    }
+    if (!this.queueRuntimeConfig().redisUrl || !this.queue) {
+      this.logger.warn(
+        `Risk profile startup repair remains incomplete: remainingBatch=${remaining.length}, reason=${reason}`,
+      );
+      return;
+    }
+    await this.enqueueFull(`${reason}:remaining-missing-profiles`);
+    this.logger.log(
+      `Risk profile full recalculation queued after bounded startup repair: remainingBatch=${remaining.length}, reason=${reason}`,
+    );
   }
 
   private requireRedis(): Redis {
