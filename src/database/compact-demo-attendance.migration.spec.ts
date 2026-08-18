@@ -2,6 +2,7 @@ import type { QueryRunner } from 'typeorm';
 import { CompactDemoSubjectAttendance20260826090000 } from './migrations/20260826090000-CompactDemoSubjectAttendance';
 import { RetireLeakedAutomatedTestAccounts20260826091000 } from './migrations/20260826091000-RetireLeakedAutomatedTestAccounts';
 import { RetireDailyAttendance20260826092000 } from './migrations/20260826092000-RetireDailyAttendance';
+import { DistributeDemoAttendanceRisk20260826100000 } from './migrations/20260826100000-DistributeDemoAttendanceRisk';
 
 function normalized(statement: string): string {
   return statement.replace(/\s+/g, ' ').trim();
@@ -78,6 +79,58 @@ describe('compact demo attendance migrations', () => {
   it('keeps destructive attendance compaction non-reversible', async () => {
     const query = jest.fn();
     await new CompactDemoSubjectAttendance20260826090000().down({
+      query,
+    } as unknown as QueryRunner);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('distributes four-day absence cohorts across every demo school', async () => {
+    const statements: string[] = [];
+    const queryRunner = {
+      query: jest.fn((statement: string) => {
+        const sql = normalized(statement);
+        statements.push(sql);
+        return Promise.resolve([]);
+      }),
+    } as unknown as QueryRunner;
+
+    await new DistributeDemoAttendanceRisk20260826100000().up(queryRunner);
+    const sql = statements.join('\n');
+
+    expect(sql).toContain(
+      'MOD( ABS(HASHTEXTEXTENDED(enrollment.classroom_id::text, $1)::numeric), 4',
+    );
+    expect(sql).toContain('WHERE room_rank <= room_cohort_size');
+    expect(sql).toContain("tracked_case.status = 'RESOLVED'");
+    expect(sql).toContain('COUNT(selected.student_uuid) > capacity.student_count');
+    expect(sql).toContain('WHERE attendance_day_rank <= 4');
+    expect(sql).toContain('SET "AttendanceStatus" = 2');
+    expect(sql).toContain('DELETE FROM student_risk_profiles profile');
+    expect(sql).not.toMatch(/(?:INSERT|UPDATE|DELETE)[\s\S]{0,80}\bcases\b/i);
+  });
+
+  it('fails before attendance updates when selected students lack four subject days', async () => {
+    const statements: string[] = [];
+    const queryRunner = {
+      query: jest.fn((statement: string) => {
+        const sql = normalized(statement);
+        statements.push(sql);
+        if (sql.includes('HAVING COUNT(absence.attendance_date) <> 4')) {
+          return Promise.resolve([{ school_id: 10010002, incomplete_student_count: 1 }]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as QueryRunner;
+
+    await expect(new DistributeDemoAttendanceRisk20260826100000().up(queryRunner)).rejects.toThrow(
+      'selected students need four submitted subject days',
+    );
+    expect(statements.join('\n')).not.toContain('UPDATE attendance record');
+  });
+
+  it('keeps distributed demo absences on rollback', async () => {
+    const query = jest.fn();
+    await new DistributeDemoAttendanceRisk20260826100000().down({
       query,
     } as unknown as QueryRunner);
     expect(query).not.toHaveBeenCalled();
