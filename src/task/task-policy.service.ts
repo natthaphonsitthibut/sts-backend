@@ -124,7 +124,7 @@ export class TaskPolicyService {
     return firstRole?.trim() || null;
   }
 
-  normalizeRole(data: unknown, fallbackRole = 'TEACHER'): string {
+  normalizeRole(data: unknown, fallbackRole = ''): string {
     const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
     const requestedRole =
       (typeof payload.role === 'string' && payload.role.trim().length > 0
@@ -269,6 +269,9 @@ export class TaskPolicyService {
     const currentRoleMap = roleMap || (await this.getRoleMap());
     const actorRole = this.getPrimaryRole({ roles: actor.roles });
     const requestedRole = this.normalizeRole(data);
+    if (!requestedRole) {
+      throw new BadRequestException('กรุณาระบุตำแหน่งของลิงก์');
+    }
     const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
     const requestedDefinition = currentRoleMap.get(requestedRole);
 
@@ -323,9 +326,12 @@ export class TaskPolicyService {
     const targetRole =
       typeof link.login_role === 'string' && link.login_role.trim().length > 0
         ? link.login_role.trim()
-        : 'TEACHER';
+        : null;
 
-    if (!this.canManageRole(actorRole, targetRole, roleMap)) {
+    // A link that names no role used to fall back to `TEACHER`, which the role
+    // catalogue no longer offers, so `canManageRole` already denied it. Say so
+    // outright instead of routing through a role that cannot exist.
+    if (!targetRole || !this.canManageRole(actorRole, targetRole, roleMap)) {
       return false;
     }
 
