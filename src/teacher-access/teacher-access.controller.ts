@@ -219,6 +219,43 @@ export class TeacherAccessGrantController {
     res.sendFile(result.filePath);
   }
 
+  // Standing in for a colleague's check-in is offered from two screens — the
+  // เช็กชื่อ page and จัดการลิงก์เช็กชื่อ — so these answer to either page's
+  // permission instead of the controller-wide `manage-teacher-access`.
+  // Declared before `:grantId` on purpose: Nest/Express match routes in
+  // registration order, so a static path after a single-segment param route
+  // would be swallowed by it (attendance-delegation-options -> ParseUUIDPipe
+  // on "attendance-delegation-options" -> 400 "uuid is expected").
+  @Get('attendance-delegation-options')
+  @RequirePermission()
+  @RequireAnyPermission('manage-teacher-access', 'attendance')
+  attendanceDelegationOptions(
+    @Query() query: TeacherAccessAttendanceDelegationOptionsDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.listAttendanceDelegationOptions(
+      query,
+      actor,
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
+  @Get('attendance-delegation-history')
+  @RequirePermission()
+  @RequireAnyPermission('manage-teacher-access', 'attendance')
+  attendanceDelegationHistory(
+    @Query() query: ListTeacherAccessDelegationHistoryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.listAttendanceDelegationHistory(
+      query,
+      actor,
+      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
+    );
+  }
+
   @Get(':grantId')
   detail(
     @Param('grantId', ParseUUIDPipe) grantId: string,
@@ -254,39 +291,6 @@ export class TeacherAccessGrantController {
   ) {
     const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
     return this.service.rotateGrant(grantId, actor, baseUrl);
-  }
-
-  // Standing in for a colleague's check-in is offered from two screens — the
-  // เช็กชื่อ page and จัดการลิงก์เช็กชื่อ — so these answer to either page's
-  // permission instead of the controller-wide `manage-teacher-access`.
-  @Get('attendance-delegation-options')
-  @RequirePermission()
-  @RequireAnyPermission('manage-teacher-access', 'attendance')
-  attendanceDelegationOptions(
-    @Query() query: TeacherAccessAttendanceDelegationOptionsDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-    @Req() request: Request,
-  ) {
-    return this.service.listAttendanceDelegationOptions(
-      query,
-      actor,
-      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
-    );
-  }
-
-  @Get('attendance-delegation-history')
-  @RequirePermission()
-  @RequireAnyPermission('manage-teacher-access', 'attendance')
-  attendanceDelegationHistory(
-    @Query() query: ListTeacherAccessDelegationHistoryDto,
-    @CurrentUser() actor: AuthenticatedRequestUser,
-    @Req() request: Request,
-  ) {
-    return this.service.listAttendanceDelegationHistory(
-      query,
-      actor,
-      resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl),
-    );
   }
 
   @Post('attendance-delegations')
