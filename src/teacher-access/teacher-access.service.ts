@@ -2564,10 +2564,9 @@ export class TeacherAccessService {
         };
       }
     }
-    const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
-    if (!challenge || challenge.status !== 'PENDING') {
-      throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
-    }
+    // A rescan, a refresh or a bounce through the AraID login and PIN screens
+    // comes back to a challenge that is already CLAIMED; `claimOrRenew` issues
+    // that visit a fresh authorization, so only a missing challenge is fatal.
     const authorization = await this.araIdChallengeStore.claimOrRenew(ARAID_SCOPE, challengeToken);
     if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     return {
