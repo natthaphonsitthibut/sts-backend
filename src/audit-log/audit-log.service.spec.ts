@@ -26,7 +26,7 @@ describe('AuditLogService', () => {
     const service = new AuditLogService(dataSource as never);
 
     const result = await service.list(actor, {
-      domain: 'student_accounts',
+      domain: 'users',
       page: 1,
       limit: 20,
     });
@@ -34,17 +34,12 @@ describe('AuditLogService', () => {
     expect(result.data).toEqual([]);
     expect(queries).toHaveLength(1);
     expect(queries[0].sql).toContain('a.action = ANY($1::text[])');
-    expect(queries[0].sql).toContain("NULLIF(a.metadata ->> 'scopeLabel', '')");
     expect(queries[0].params?.[0]).toEqual(
-      expect.arrayContaining([
-        'STUDENT_ACCOUNT_BULK_GENERATE',
-        'STUDENT_ACCOUNT_DEACTIVATE',
-        'STUDENT_TEMP_PASSWORD_REISSUE',
-      ]),
+      expect.arrayContaining(['USER_CREATE', 'USER_DEACTIVATE', 'USER_TEMP_PASSWORD_REISSUE']),
     );
   });
 
-  it('filters student account history by province scope', async () => {
+  it('filters user history by province scope', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -60,7 +55,7 @@ describe('AuditLogService', () => {
     const service = new AuditLogService(dataSource as never);
 
     await service.list(actor, {
-      domain: 'student_accounts',
+      domain: 'users',
       province: 'กรุงเทพมหานคร',
       page: 1,
       limit: 20,
@@ -269,7 +264,7 @@ describe('AuditLogService', () => {
 
     await expect(
       service.list(actor, {
-        domain: 'student_accounts',
+        domain: 'users',
         caseId: 42,
         page: 1,
         limit: 20,
@@ -314,7 +309,7 @@ describe('AuditLogService', () => {
     } as never);
 
     await service.list(scopedActor, {
-      domain: 'student_accounts',
+      domain: 'users',
       page: 1,
       limit: 20,
     });
@@ -331,8 +326,8 @@ describe('AuditLogService', () => {
     const row = {
       id: '77',
       actor_label: 'admin',
-      action: 'STUDENT_TEMP_PASSWORD_REISSUE',
-      target_type: 'student_accounts',
+      action: 'USER_TEMP_PASSWORD_REISSUE',
+      target_type: 'users',
       target_id: 'student-77',
       target_username: null,
       school_name: null,
@@ -353,7 +348,7 @@ describe('AuditLogService', () => {
     } as never);
 
     const result = await service.list(globalActor, {
-      domain: 'student_accounts',
+      domain: 'users',
       page: 2,
       limit: 20,
     });
@@ -377,11 +372,11 @@ describe('AuditLogService', () => {
     const row = {
       id: '42',
       actor_label: 'newnew',
-      action: 'STUDENT_ACCOUNT_BULK_GENERATE',
-      target_type: 'student_accounts',
+      action: 'USER_UPDATE',
+      target_type: 'users',
       target_id: 'batch-42',
       metadata: {
-        createdCount: 42,
+        fieldCount: 42,
         schoolId: 10010003,
         grade: 'ป.3',
         scope: { school_ids: [10010003] },
@@ -408,14 +403,13 @@ describe('AuditLogService', () => {
 
     expect(result.data).toMatchObject({
       id: '42',
-      domain: 'student_accounts',
-      actionLabel: 'สร้างบัญชีนักเรียนแบบชุด',
+      domain: 'users',
+      actionLabel: 'แก้ไขผู้ใช้งาน',
       actorLabel: 'newnew',
-      targetType: 'student_accounts',
+      targetType: 'users',
       targetId: 'batch-42',
     });
-    expect(result.data.details).toContainEqual({ label: 'สร้างสำเร็จ', value: 42 });
-    expect(result.data.details).toContainEqual({ label: 'โรงเรียน', value: 'โรงเรียนตัวอย่าง' });
+    expect(result.data.details).toContainEqual({ label: 'จำนวนข้อมูลที่แก้', value: 42 });
     expect(queries).toHaveLength(2);
     expect(queries[1].sql).toContain('a.id = $1::bigint');
     expect(queries[1].sql).toContain("-> 'school_ids'");

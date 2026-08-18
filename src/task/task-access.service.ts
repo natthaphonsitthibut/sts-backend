@@ -98,7 +98,7 @@ export class TaskAccessService {
     }
     const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
     if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
-    const authorization = await this.araIdChallengeStore.claim(ARAID_SCOPE, challengeToken);
+    const authorization = await this.araIdChallengeStore.claimOrRenew(ARAID_SCOPE, challengeToken);
     if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     return authorization;
   }

@@ -242,7 +242,7 @@ function createHarness(overrides: Partial<TeacherAccessGrantRow> = {}) {
       expiresAt: Date.now() + 90_000,
     }),
     read: jest.fn(),
-    claim: jest.fn().mockResolvedValue({
+    claimOrRenew: jest.fn().mockResolvedValue({
       authorizationToken: 'authorization-token',
       expiresAt: Date.now() + 600_000,
     }),
@@ -1426,7 +1426,7 @@ describe('TeacherAccessService', () => {
     await expect(
       service.beginAraIdChallenge('challenge-token', 'existing-authorization'),
     ).resolves.toMatchObject({ authorizationToken: 'existing-authorization' });
-    expect(araIdChallengeStore.claim).not.toHaveBeenCalled();
+    expect(araIdChallengeStore.claimOrRenew).not.toHaveBeenCalled();
   });
 
   it('rejects AraID when the link does not require step-up verification', async () => {

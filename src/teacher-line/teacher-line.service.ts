@@ -596,7 +596,7 @@ export class TeacherLineService {
   async beginAraIdChallenge(challengeToken: string) {
     this.assertEnabled();
     await this.readActiveAraIdChallenge(challengeToken);
-    const authorization = await this.araIdChallengeStore.claim(ARAID_SCOPE, challengeToken);
+    const authorization = await this.araIdChallengeStore.claimOrRenew(ARAID_SCOPE, challengeToken);
     if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     return {
       authorizationToken: authorization.authorizationToken,

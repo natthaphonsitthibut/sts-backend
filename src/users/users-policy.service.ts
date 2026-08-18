@@ -299,9 +299,13 @@ export class UsersPolicyService {
           ? data.roles.find(
               (role): role is string => typeof role === 'string' && role.trim().length > 0,
             )
-          : null) || 'TEACHER';
+          : null) || '';
 
-    return requestedRole.trim();
+    const normalized = requestedRole.trim();
+    // The retired `TEACHER` role used to stand in here, which now resolves to a
+    // role the catalogue no longer has and surfaces as a confusing denial.
+    if (!normalized) throw new BadRequestException('กรุณาระบุตำแหน่งของผู้ใช้งาน');
+    return normalized;
   }
 
   ensureActor(actor?: ActorContext): ActorContext {

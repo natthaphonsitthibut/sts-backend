@@ -69,7 +69,9 @@ export class UserEntity {
   @Column({ name: 'permissions', type: 'jsonb', default: () => "'[]'::jsonb" })
   permissions!: string[];
 
-  @Column({ name: 'role', type: 'text', default: 'TEACHER' })
+  // No default on purpose: `TEACHER` was dropped from `roles` and the column
+  // carries FK `fk_users_role_name`, so every write must name a live role.
+  @Column({ name: 'role', type: 'text' })
   role!: string;
 
   @Column({ name: 'data_scope', type: 'jsonb', default: () => "'{}'::jsonb" })

@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
+import { authConfig } from '../config/auth.config';
 import { RedisClientService } from '../redis/redis-client.service';
 
 /**
@@ -43,15 +45,16 @@ export interface AraIdChallenge extends StoredChallenge {
   token: string;
 }
 
-export const ARAID_CHALLENGE_ENTRY_TTL_SECONDS = 90;
-export const ARAID_CHALLENGE_AUTHORIZATION_TTL_SECONDS = 10 * 60;
-
 @Injectable()
 export class AraIdChallengeStore {
   private readonly memory = new Map<string, StoredChallenge>();
   private readonly memoryAuthorizations = new Map<string, StoredAuthorization>();
 
-  constructor(private readonly redisClientService: RedisClientService) {}
+  constructor(
+    private readonly redisClientService: RedisClientService,
+    @Inject(authConfig.KEY)
+    private readonly config: ConfigType<typeof authConfig>,
+  ) {}
 
   async create(
     scope: AraIdChallengeScope,
@@ -59,7 +62,8 @@ export class AraIdChallengeStore {
     context: Record<string, unknown> = {},
   ): Promise<AraIdChallenge> {
     const token = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + ARAID_CHALLENGE_ENTRY_TTL_SECONDS * 1000;
+    const entryTtlSeconds = this.config.araIdChallengeEntryTtlSeconds;
+    const expiresAt = Date.now() + entryTtlSeconds * 1000;
     const stored: StoredChallenge = {
       scope,
       subjectId,
@@ -72,57 +76,89 @@ export class AraIdChallengeStore {
     const key = this.key(scope, token);
     const client = this.redisClientService.getClient();
     if (client) {
-      await client.set(key, JSON.stringify(stored), 'EX', ARAID_CHALLENGE_ENTRY_TTL_SECONDS);
+      await client.set(key, JSON.stringify(stored), 'EX', entryTtlSeconds);
     } else {
       this.memory.set(key, stored);
     }
     return { token, ...stored };
   }
 
-  async claim(
+  /**
+   * Hands the scanning device an authorization for this challenge.
+   *
+   * A first visit claims a `PENDING` challenge. A repeat visit — a refresh, a
+   * second tab, a back button — finds it already `CLAIMED` and gets a fresh
+   * authorization for the same challenge instead of an error, because the real
+   * gate is the AraID identity match plus a PIN entered after this moment, not
+   * the claim itself. The renewal never extends the original window and always
+   * resets `minimumAuthenticatedAt`, so a PIN typed before it cannot be reused.
+   */
+  async claimOrRenew(
     scope: AraIdChallengeScope,
     token: string,
   ): Promise<{ authorizationToken: string; expiresAt: number } | null> {
     const challengeKey = this.key(scope, token);
     const authorizationToken = randomBytes(32).toString('base64url');
     const authorizationKey = this.authorizationKey(scope, authorizationToken);
-    const expiresAt = Date.now() + ARAID_CHALLENGE_AUTHORIZATION_TTL_SECONDS * 1000;
-    const authorization: StoredAuthorization = {
-      challengeKey,
-      expiresAt,
-      minimumAuthenticatedAt: Date.now(),
-    };
+    const now = Date.now();
+    const claimedExpiresAt = now + this.config.araIdChallengeAuthorizationTtlSeconds * 1000;
     const client = this.redisClientService.getClient();
     if (!client) {
       const stored = await this.read(scope, token);
-      if (!stored || stored.status !== 'PENDING' || stored.entryExpiresAt <= Date.now()) {
+      if (!stored) return null;
+      let expiresAt: number;
+      if (stored.status === 'PENDING') {
+        if (stored.entryExpiresAt <= now) return null;
+        expiresAt = claimedExpiresAt;
+      } else if (stored.status === 'CLAIMED') {
+        if (stored.expiresAt <= now) return null;
+        expiresAt = stored.expiresAt;
+      } else {
         return null;
       }
       this.memory.set(challengeKey, { ...stored, status: 'CLAIMED', expiresAt });
-      this.memoryAuthorizations.set(authorizationKey, authorization);
+      this.memoryAuthorizations.set(authorizationKey, {
+        challengeKey,
+        expiresAt,
+        minimumAuthenticatedAt: now,
+      });
       return { authorizationToken, expiresAt };
     }
-    const claimed = await client.eval(
+    const effectiveExpiresAt = await client.eval(
       `
         local raw = redis.call('GET', KEYS[1])
         if not raw then return 0 end
         local value = cjson.decode(raw)
-        if value.status ~= 'PENDING' or value.entryExpiresAt <= tonumber(ARGV[1]) then return 0 end
+        local now = tonumber(ARGV[1])
+        if value.status == 'PENDING' then
+          if value.entryExpiresAt <= now then return 0 end
+          value.expiresAt = tonumber(ARGV[2])
+        elseif value.status == 'CLAIMED' then
+          if value.expiresAt <= now then return 0 end
+        else
+          return 0
+        end
         value.status = 'CLAIMED'
-        value.expiresAt = tonumber(ARGV[2])
-        redis.call('SET', KEYS[1], cjson.encode(value), 'PX', ARGV[3])
-        redis.call('SET', KEYS[2], ARGV[4], 'PX', ARGV[3])
-        return 1
+        -- Redis rejects a fractional PX, and the Lua bridge truncates the
+        -- return value anyway, so keep both as whole milliseconds.
+        local ttl = math.floor(value.expiresAt - now)
+        if ttl <= 0 then return 0 end
+        redis.call('SET', KEYS[1], cjson.encode(value), 'PX', ttl)
+        redis.call('SET', KEYS[2], cjson.encode({
+          challengeKey = KEYS[1],
+          expiresAt = value.expiresAt,
+          minimumAuthenticatedAt = now
+        }), 'PX', ttl)
+        return math.floor(value.expiresAt)
       `,
       2,
       challengeKey,
       authorizationKey,
-      String(Date.now()),
-      String(expiresAt),
-      String(ARAID_CHALLENGE_AUTHORIZATION_TTL_SECONDS * 1000),
-      JSON.stringify(authorization),
+      String(now),
+      String(claimedExpiresAt),
     );
-    return Number(claimed) === 1 ? { authorizationToken, expiresAt } : null;
+    const expiresAt = Number(effectiveExpiresAt);
+    return expiresAt > 0 ? { authorizationToken, expiresAt } : null;
   }
 
   async resume(

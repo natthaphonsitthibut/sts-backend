@@ -96,121 +96,10 @@ export interface AuditLogEntryResponse {
 }
 
 const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
-  STUDENT_TEMP_PASSWORD_REISSUE: {
-    domain: 'student_accounts',
-    label: 'ออกรหัสชั่วคราวใหม่',
-    detailKeys: [
-      { key: 'expiresAt', label: 'รหัสหมดอายุ' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
   USER_TEMP_PASSWORD_REISSUE: {
     domain: 'users',
     label: 'ออกรหัสชั่วคราวใหม่',
     detailKeys: [{ key: 'expiresAt', label: 'รหัสหมดอายุ' }],
-  },
-  STUDENT_ACCOUNT_BULK_GENERATE: {
-    domain: 'student_accounts',
-    label: 'สร้างบัญชีนักเรียนแบบชุด',
-    detailKeys: [
-      { key: 'createdCount', label: 'สร้างสำเร็จ' },
-      { key: 'scopeLabel', label: 'ขอบเขต' },
-      { key: 'province', label: 'จังหวัด' },
-      { key: 'district', label: 'อำเภอ' },
-      { key: 'subDistrict', label: 'ตำบล' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
-  STUDENT_ACCOUNT_DEACTIVATE: {
-    domain: 'student_accounts',
-    label: 'ปิดใช้งานบัญชีนักเรียน',
-    detailKeys: [
-      { key: 'reasonCode', label: 'รหัสเหตุผล' },
-      { key: 'note', label: 'หมายเหตุ' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
-  STUDENT_ACCOUNT_REACTIVATE: {
-    domain: 'student_accounts',
-    label: 'เปิดใช้งานบัญชีนักเรียนอีกครั้ง',
-    detailKeys: [
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
-  STUDENT_ACCOUNT_BATCH_ENQUEUE: {
-    domain: 'student_accounts',
-    label: 'สั่งสร้างบัญชีนักเรียน',
-    detailKeys: [
-      { key: 'totalCandidates', label: 'จำนวนที่ต้องสร้าง' },
-      { key: 'scopeLabel', label: 'ขอบเขต' },
-      { key: 'province', label: 'จังหวัด' },
-      { key: 'district', label: 'อำเภอ' },
-      { key: 'subDistrict', label: 'ตำบล' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
-  STUDENT_ACCOUNT_BATCH_COMPLETED: {
-    domain: 'student_accounts',
-    label: 'สร้างบัญชีนักเรียนเสร็จ',
-    detailKeys: [
-      { key: 'createdCount', label: 'สร้างสำเร็จ' },
-      { key: 'skippedCount', label: 'ข้าม' },
-      { key: 'failedCount', label: 'ล้มเหลว' },
-      { key: 'scopeLabel', label: 'ขอบเขต' },
-      { key: 'province', label: 'จังหวัด' },
-      { key: 'district', label: 'อำเภอ' },
-      { key: 'subDistrict', label: 'ตำบล' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
-  STUDENT_ACCOUNT_BATCH_FAILED: {
-    domain: 'student_accounts',
-    label: 'สร้างบัญชีนักเรียนไม่สำเร็จ',
-    detailKeys: [
-      { key: 'createdCount', label: 'สร้างสำเร็จ' },
-      { key: 'skippedCount', label: 'ข้าม' },
-      { key: 'failedCount', label: 'ล้มเหลว' },
-      { key: 'errorSummary', label: 'สาเหตุ' },
-      { key: 'scopeLabel', label: 'ขอบเขต' },
-      { key: 'province', label: 'จังหวัด' },
-      { key: 'district', label: 'อำเภอ' },
-      { key: 'subDistrict', label: 'ตำบล' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
-  STUDENT_ACCOUNT_BATCH_RESUME: {
-    domain: 'student_accounts',
-    label: 'ทำงานสร้างบัญชีนักเรียนแบบชุดต่อ',
-    detailKeys: [
-      { key: 'previousStatus', label: 'สถานะเดิม' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
-  },
-  STUDENT_ACCOUNT_BATCH_CANCEL: {
-    domain: 'student_accounts',
-    label: 'ยกเลิกงานสร้างบัญชีนักเรียนแบบชุด',
-    detailKeys: [
-      { key: 'previousStatus', label: 'สถานะเดิม' },
-      { key: 'schoolName', label: 'โรงเรียน' },
-      { key: 'grade', label: 'ชั้นเรียน' },
-      { key: 'room', label: 'ห้อง' },
-    ],
   },
   TEACHER_ACCESS_GRANT_ISSUE: {
     domain: 'tasks',
@@ -645,15 +534,8 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
 };
 
-/**
- * Which page's permission opens each slice of the log. `student_accounts` and
- * `student_accounts` covers a retired feature whose permission id left the
- * catalogue years of migrations ago — its history is read from the page that owns
- * that subject today, rather than being unreachable because it names a permission
- * nobody can hold.
- */
+/** Which page's permission opens each slice of the log. */
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
-  student_accounts: ['manage-users-list'],
   imports: ['import-data'],
   users: ['manage-users-list'],
   students: ['students'],
@@ -1022,23 +904,6 @@ export class AuditLogService {
     const params: unknown[] = [];
     params.push(filters.action ? [filters.action] : actions);
     conditions.push(`a.action = ANY($${params.length}::text[])`);
-    conditions.push(
-      `NOT (a.action = 'STUDENT_ACCOUNT_BULK_GENERATE' AND a.metadata ->> 'createdCount' = '0')`,
-    );
-    if (filters.domain === 'student_accounts') {
-      conditions.push(`(
-        COALESCE(
-          NULLIF(a.metadata ->> 'scopeLabel', ''),
-          NULLIF(a.metadata ->> 'province', ''),
-          NULLIF(a.metadata ->> 'district', ''),
-          NULLIF(a.metadata ->> 'subDistrict', ''),
-          NULLIF(a.metadata ->> 'schoolId', ''),
-          NULLIF(a.metadata ->> 'grade', ''),
-          NULLIF(a.metadata ->> 'room', '')
-        ) IS NOT NULL
-        OR COALESCE(a.metadata -> 'scope', '{}'::jsonb) <> '{}'::jsonb
-      )`);
-    }
     if (filters.taskType) {
       params.push(filters.taskType);
       conditions.push(`a.metadata ->> 'taskType' = $${params.length}`);
@@ -1208,23 +1073,6 @@ export class AuditLogService {
 
     const conditions = [`a.id = $1::bigint`, `a.data_origin_code <> 'AUTOMATED_TEST'`];
     const params: unknown[] = [id];
-    if (definition.domain === 'student_accounts') {
-      conditions.push(
-        `NOT (a.action = 'STUDENT_ACCOUNT_BULK_GENERATE' AND a.metadata ->> 'createdCount' = '0')`,
-      );
-      conditions.push(`(
-        COALESCE(
-          NULLIF(a.metadata ->> 'scopeLabel', ''),
-          NULLIF(a.metadata ->> 'province', ''),
-          NULLIF(a.metadata ->> 'district', ''),
-          NULLIF(a.metadata ->> 'subDistrict', ''),
-          NULLIF(a.metadata ->> 'schoolId', ''),
-          NULLIF(a.metadata ->> 'grade', ''),
-          NULLIF(a.metadata ->> 'room', '')
-        ) IS NOT NULL
-        OR COALESCE(a.metadata -> 'scope', '{}'::jsonb) <> '{}'::jsonb
-      )`);
-    }
     this.appendScopeConditions(conditions, params, actor.data_scope);
 
     const scoped = (
