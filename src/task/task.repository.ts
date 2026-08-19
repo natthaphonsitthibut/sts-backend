@@ -2650,6 +2650,7 @@ export class TaskRepository {
           latest_case.status AS latest_case_status,
           latest_case.updated_at AS latest_case_at,
           latest_case_link.token_encrypted AS latest_case_link_token_encrypted,
+          latest_case_assignment.had_assignment AS latest_case_had_assignment,
           latest_comment.id AS latest_comment_id,
           latest_comment.problem_category_label,
           COALESCE(
@@ -2695,6 +2696,15 @@ export class TaskRepository {
           ORDER BY link.created_at DESC, link.id DESC
           LIMIT 1
         ) latest_case_link ON TRUE
+        LEFT JOIN LATERAL (
+          -- Distinguishes a case that never had an assignment from one whose
+          -- link expired/was cancelled and fell back to OPEN, so the dashboard
+          -- can warn "needs reassignment" only for the latter.
+          SELECT EXISTS (
+            SELECT 1 FROM tasks task
+            WHERE task.case_id = latest_case.id AND task.deleted_at IS NULL
+          ) AS had_assignment
+        ) latest_case_assignment ON TRUE
         LEFT JOIN LATERAL (
           SELECT comment.id, category.label_th AS problem_category_label
           FROM classroom_student_comments comment
@@ -2842,6 +2852,7 @@ export class TaskRepository {
           latest_case_status,
           latest_case_at,
           latest_case_link_token_encrypted,
+          latest_case_had_assignment,
           problem_category_label,
           teacher_comment
         FROM filtered

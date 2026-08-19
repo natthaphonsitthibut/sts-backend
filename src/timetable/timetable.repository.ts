@@ -34,6 +34,14 @@ const SELECT_COLUMNS = `
     DISTINCT NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
     ', '
   ) AS teacher_name,
+  COALESCE(
+    jsonb_agg(DISTINCT jsonb_build_object(
+      'id', t.id,
+      'name', NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
+      'hasPhoto', t.photo_storage_key IS NOT NULL
+    )) FILTER (WHERE t.id IS NOT NULL),
+    '[]'::jsonb
+  ) AS teachers,
   ts.created_at,
   ts.updated_at
 `;
@@ -288,8 +296,6 @@ export class TimetableRepository {
         (
           COALESCE(t.first_name, '') ILIKE $${params.length}
           OR COALESCE(t.last_name, '') ILIKE $${params.length}
-          OR COALESCE(u."FirstName", '') ILIKE $${params.length}
-          OR COALESCE(u."LastName", '') ILIKE $${params.length}
         )
       `);
     }
@@ -299,11 +305,7 @@ export class TimetableRepository {
       `
         SELECT DISTINCT
           membership.id,
-          COALESCE(
-            NULLIF(TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')), ''),
-            NULLIF(TRIM(COALESCE(u."FirstName", '') || ' ' || COALESCE(u."LastName", '')), ''),
-            u.username
-          ) AS display_name
+          TRIM(COALESCE(t.first_name, '') || ' ' || COALESCE(t.last_name, '')) AS display_name
         FROM school_teacher_memberships membership
         ${joins.join('\n')}
         WHERE ${conditions.join(' AND ')}

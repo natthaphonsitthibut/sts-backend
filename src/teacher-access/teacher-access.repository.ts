@@ -1287,6 +1287,10 @@ export class TeacherAccessRepository {
             WHERE assignment.teacher_membership_id = membership.id
               AND classroom.school_term_id = $2
               AND assignment.assignment_status = 'ACTIVE'
+              -- A HOMEROOM-kind row is roster ownership only — it never grants a
+              -- teacher-access capability (see syncGrantScopeFromAssignments),
+              -- so counting it here overstates what the teacher's own link shows.
+              AND assignment.assignment_kind = 'SUBJECT'
               AND assignment.deleted_at IS NULL
               AND classroom.classroom_status = 'ACTIVE'
               AND classroom.deleted_at IS NULL
@@ -1373,16 +1377,19 @@ export class TeacherAccessRepository {
     return result.rows;
   }
 
-  async findTeacherMembershipPhoto(
-    teacherMembershipId: number,
-  ): Promise<{ school_id: number; photo_storage_key: string | null } | null> {
+  async findTeacherMembershipPhoto(teacherMembershipId: number): Promise<{
+    school_id: number;
+    photo_storage_key: string | null;
+    photo_updated_at: string | Date | null;
+  } | null> {
     const result = await queryDataSource<{
       school_id: number;
       photo_storage_key: string | null;
+      photo_updated_at: string | Date | null;
     }>(
       this.dataSource,
       `
-        SELECT membership.school_id, teacher.photo_storage_key
+        SELECT membership.school_id, teacher.photo_storage_key, teacher.updated_at AS photo_updated_at
         FROM school_teacher_memberships membership
         JOIN teachers teacher ON teacher.id = membership.teacher_id
         WHERE membership.id = $1

@@ -894,6 +894,30 @@ export class TeacherAccessService {
     return result;
   }
 
+  /**
+   * A link holder has no admin actor to check school access with — the grant
+   * token already proves it's their own membership, so that replaces the
+   * `assertSchoolAccess` check the admin roster endpoint uses.
+   */
+  async resolvePublicTeacherPhoto(
+    rawToken: string,
+    sessionToken?: string,
+  ): Promise<FileServeResult> {
+    return await this.withActiveGrantContext(
+      rawToken,
+      { sessionToken, operation: 'VIEW_CONTEXT', recordSuccessfulUse: false },
+      async (context) => {
+        const photo = await this.repository.findTeacherMembershipPhoto(
+          Number(context.teacherMembershipId),
+        );
+        if (!photo?.photo_storage_key) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+        const result = await this.storage.resolve(photo.photo_storage_key);
+        if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+        return result;
+      },
+    );
+  }
+
   async unlinkTeacherLineAccount(teacherMembershipId: number, actor: AuthenticatedRequestUser) {
     const actorId = resolveAuditActorId(actor);
     if (actorId === null) throw new ForbiddenException('ไม่พบผู้ใช้ที่ปลดการเชื่อมต่อ LINE');
@@ -2210,8 +2234,11 @@ export class TeacherAccessService {
       if (!startsAt || !endsAt || !grant.attendance_date) {
         throw new ForbiddenException('ข้อมูลช่วงเวลาของลิงก์เช็กชื่อไม่ครบถ้วน');
       }
+      // Gated on the link's own window only, same as normal check-in: a teacher
+      // can record a past date's round today, so a delegated link opened today
+      // must be able to cover an earlier attendance_date too.
       const now = Date.now();
-      if (getBangkokDateString() !== grant.attendance_date || now < startsAt.getTime()) {
+      if (now < startsAt.getTime()) {
         throw new ForbiddenException('ลิงก์เช็กชื่อยังไม่ถึงเวลาใช้งาน');
       }
       if (now >= endsAt.getTime()) {
@@ -2721,14 +2748,17 @@ export class TeacherAccessService {
               )
             : await this.repository.listGrantAssignments(context.grantId, queryRunner);
         const activeAssignments = assignments.filter((row) => this.assignmentActiveToday(row));
+        // Fetched once and reused: the error path needs the round's date to name
+        // it, and the success path needs it so the page can default to the round
+        // being delegated instead of today.
+        const delegation =
+          context.accessScope === 'ATTENDANCE_ONLY'
+            ? await this.repository.findAttendanceDelegationScope(context.grantId, queryRunner)
+            : null;
         if (activeAssignments.length === 0) {
           // The teacher opening this has no way to know which of the two setup
           // steps is missing, and is the one who has to report it — so say which.
           if (context.accessScope === 'ATTENDANCE_ONLY') {
-            const delegation = await this.repository.findAttendanceDelegationScope(
-              context.grantId,
-              queryRunner,
-            );
             throw new ForbiddenException(
               delegation
                 ? `ไม่พบคาบเรียนที่มอบหมายของวันที่ ${delegation.attendance_date} ในตารางสอนแล้ว (ตารางสอนอาจถูกแก้ไข หรือครูถูกปลดออกจากคาบนี้) กรุณาแจ้งผู้ดูแลให้ตรวจสอบตารางสอนและออกลิงก์ใหม่`
@@ -2740,10 +2770,14 @@ export class TeacherAccessService {
           );
         }
         const problemCategories = await this.schoolStructure.listStudentProblemCategories();
+        const photo = await this.repository.findTeacherMembershipPhoto(
+          Number(context.teacherMembershipId),
+        );
         return {
           data: {
             grantId: context.grantId,
             teacherDisplayName: context.teacherDisplayName,
+            teacherHasPhoto: Boolean(photo?.photo_storage_key),
             schoolId: context.schoolId,
             schoolName: context.schoolName,
             schoolTermId: context.schoolTermId,
@@ -2751,6 +2785,7 @@ export class TeacherAccessService {
             semester: context.semester,
             capabilities: context.capabilities,
             accessScope: context.accessScope,
+            attendanceDate: delegation?.attendance_date ?? null,
             problemCategories,
             assignments: activeAssignments.map((row) =>
               this.toAssignment(row, context.capabilities),
@@ -2794,7 +2829,16 @@ export class TeacherAccessService {
           },
           queryRunner,
         );
-        return { data: slots.map((slot) => ({ id: Number(slot.id), period: slot.period })) };
+        // A delegation grant is issued for one specific period (its
+        // `timetable_slot_id`), not "whichever period of this subject" — a
+        // classroom with two โฮมรูม periods (e.g. คาบ 1 and คาบ 8) must not
+        // let the delegate pick the one that was not actually handed over. A
+        // FULL-access teacher-link assignment has no single slot to pin, so
+        // it keeps seeing every period as before.
+        const scopedSlots = assignment.timetable_slot_id
+          ? slots.filter((slot) => slot.id === assignment.timetable_slot_id)
+          : slots;
+        return { data: scopedSlots.map((slot) => ({ id: Number(slot.id), period: slot.period })) };
       },
     );
   }
@@ -2888,6 +2932,18 @@ export class TeacherAccessService {
     }
     if (!assignment.subject_id) {
       throw new ConflictException('assignment รายวิชานี้ไม่มีรายวิชาที่ผูกไว้');
+    }
+    // A delegation grant is pinned to the one period it was issued for — its
+    // own timetable_slot_id is authoritative and the client cannot pick a
+    // different period of the same subject (e.g. โฮมรูม คาบ 1 vs คาบ 8). A
+    // FULL-access teacher-link assignment has no single slot to pin, so it
+    // falls through to the "which period" resolution below unchanged.
+    if (assignment.timetable_slot_id) {
+      const pinnedSlotId = Number(assignment.timetable_slot_id);
+      if (dto.timetableSlotId && dto.timetableSlotId !== pinnedSlotId) {
+        throw new ForbiddenException('ลิงก์นี้ใช้เช็กชื่อได้เฉพาะคาบที่ได้รับมอบหมายเท่านั้น');
+      }
+      return pinnedSlotId;
     }
     const slots = await this.repository.listAssignmentSlotsForDate(
       {

@@ -672,9 +672,11 @@ export class AttendanceOperationsRepository {
     const sessionCondition = timetableSlotId
       ? `AND attendance_date = $4 AND session_kind = 'SUBJECT' AND timetable_slot_id = $5`
       : `AND FALSE`;
+    // The no-slot branch's SQL is `... room_id = $3 AND FALSE` — it never
+    // references $4, so date must not be bound here either.
     const sessionParams = timetableSlotId
       ? [term.id, metadata.grade_level_id, roomId, date, timetableSlotId]
-      : [term.id, metadata.grade_level_id, roomId, date];
+      : [term.id, metadata.grade_level_id, roomId];
     const [calendarDay, rosterIds, sessionResult] = await Promise.all([
       this.findCalendarDay(term.id, date),
       this.listRosterIds(metadata),

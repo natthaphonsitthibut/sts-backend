@@ -201,6 +201,7 @@ export class TaskStatsService {
           latestCaseStatus: row.latest_case_status ?? null,
           latestCaseAt: row.latest_case_at,
           latestCaseMagicLink: row.latest_case_magic_link ?? null,
+          latestCaseHadAssignment: Boolean(row.latest_case_had_assignment),
           problemCategoryLabel: canViewTeacherComments
             ? (row.problem_category_label ?? null)
             : null,

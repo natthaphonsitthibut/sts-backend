@@ -111,6 +111,7 @@ export interface RiskDashboardRow extends QueryResultRow {
   latest_case_at: string | null;
   latest_case_link_token_encrypted?: string | null;
   latest_case_magic_link?: string | null;
+  latest_case_had_assignment: boolean;
   problem_category_label: string | null;
   teacher_comment: string | null;
 }
