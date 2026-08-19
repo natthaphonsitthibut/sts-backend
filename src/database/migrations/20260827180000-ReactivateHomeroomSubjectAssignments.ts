@@ -12,31 +12,16 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * scope both read — they showed up as having no room or subject this term
  * even though their homeroom assignment was never touched.
  *
- * This reactivates exactly the rows caught by that collision (paired with
- * a still-ACTIVE HOMEROOM row for the same classroom + teacher) and removes
- * them from the original migration's backup table, since they were never a
- * real orphan and its down() should no longer offer to re-deactivate them.
+ * This reactivates exactly the rows caught by that collision: paired with
+ * a still-ACTIVE HOMEROOM row for the same classroom + teacher. The original
+ * migration's backup table is dropped separately (see
+ * `DropTeacherAssignmentMigrationBackupTables`) now that neither it nor the
+ * curriculum backfill it ran alongside needs to stay revertible.
  */
 export class ReactivateHomeroomSubjectAssignments20260827180000 implements MigrationInterface {
   name = 'ReactivateHomeroomSubjectAssignments20260827180000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`
-      DELETE FROM orphaned_subject_assignment_deactivation_20260827_backup backup
-      USING classroom_teacher_assignments hr_subject
-      WHERE backup.assignment_id = hr_subject.id
-        AND hr_subject.assignment_kind = 'SUBJECT'
-        AND hr_subject.subject_id = (SELECT id FROM subjects WHERE code = 'HOMEROOM')
-        AND EXISTS (
-          SELECT 1 FROM classroom_teacher_assignments homeroom
-          WHERE homeroom.classroom_id = hr_subject.classroom_id
-            AND homeroom.teacher_membership_id = hr_subject.teacher_membership_id
-            AND homeroom.assignment_kind = 'HOMEROOM'
-            AND homeroom.assignment_status = 'ACTIVE'
-            AND homeroom.deleted_at IS NULL
-        )
-    `);
-
     await queryRunner.query(`
       UPDATE classroom_teacher_assignments hr_subject
       SET assignment_status = 'ACTIVE', updated_at = now()
