@@ -2829,7 +2829,16 @@ export class TeacherAccessService {
           },
           queryRunner,
         );
-        return { data: slots.map((slot) => ({ id: Number(slot.id), period: slot.period })) };
+        // A delegation grant is issued for one specific period (its
+        // `timetable_slot_id`), not "whichever period of this subject" — a
+        // classroom with two โฮมรูม periods (e.g. คาบ 1 and คาบ 8) must not
+        // let the delegate pick the one that was not actually handed over. A
+        // FULL-access teacher-link assignment has no single slot to pin, so
+        // it keeps seeing every period as before.
+        const scopedSlots = assignment.timetable_slot_id
+          ? slots.filter((slot) => slot.id === assignment.timetable_slot_id)
+          : slots;
+        return { data: scopedSlots.map((slot) => ({ id: Number(slot.id), period: slot.period })) };
       },
     );
   }
@@ -2923,6 +2932,18 @@ export class TeacherAccessService {
     }
     if (!assignment.subject_id) {
       throw new ConflictException('assignment รายวิชานี้ไม่มีรายวิชาที่ผูกไว้');
+    }
+    // A delegation grant is pinned to the one period it was issued for — its
+    // own timetable_slot_id is authoritative and the client cannot pick a
+    // different period of the same subject (e.g. โฮมรูม คาบ 1 vs คาบ 8). A
+    // FULL-access teacher-link assignment has no single slot to pin, so it
+    // falls through to the "which period" resolution below unchanged.
+    if (assignment.timetable_slot_id) {
+      const pinnedSlotId = Number(assignment.timetable_slot_id);
+      if (dto.timetableSlotId && dto.timetableSlotId !== pinnedSlotId) {
+        throw new ForbiddenException('ลิงก์นี้ใช้เช็กชื่อได้เฉพาะคาบที่ได้รับมอบหมายเท่านั้น');
+      }
+      return pinnedSlotId;
     }
     const slots = await this.repository.listAssignmentSlotsForDate(
       {
