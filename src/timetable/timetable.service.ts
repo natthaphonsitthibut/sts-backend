@@ -82,6 +82,13 @@ export class TimetableService {
       subject_name_th: row.subject_name_th,
       teacher_membership_ids: (row.teacher_membership_ids ?? []).map(Number),
       teacher_name: row.teacher_name,
+      // Same signed-URL redirect endpoint the teacher roster/link pages use
+      // (`teachers.controller.ts#getPhoto`) — never a raw storage key.
+      teachers: (row.teachers ?? []).map((teacher) => ({
+        id: teacher.id,
+        name: teacher.name,
+        photoUrl: teacher.hasPhoto ? `/api/teachers/${teacher.id}/photo` : null,
+      })),
     };
   }
 

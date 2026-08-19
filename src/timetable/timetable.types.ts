@@ -13,6 +13,7 @@ export interface TimetableSlotRow extends Record<string, unknown> {
   subject_name_th: string;
   teacher_membership_ids?: number[];
   teacher_name: string | null;
+  teachers?: Array<{ id: number; name: string | null; hasPhoto: boolean }>;
   created_at: Date | string;
   updated_at: Date | string;
 }
