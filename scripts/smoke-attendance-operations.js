@@ -172,6 +172,10 @@ async function main() {
   let deniedActorId = null;
   let settingsOnlyActorId = null;
   let allowedActorId = null;
+  let smokeSubjectId = null;
+  let smokeSchoolSubjectId = null;
+  let smokeClassroomSubjectId = null;
+  let smokeTimetableSlotId = null;
   let fixturePrepared = false;
 
   const fixtureRows = await dataSource.query(`
@@ -234,7 +238,8 @@ async function main() {
     const payload = raw ? JSON.parse(raw) : null;
     assert(
       response.status === expectedStatus,
-      `${method} ${path}: expected ${expectedStatus}, received ${response.status}`,
+      `${method} ${path}: expected ${expectedStatus}, received ${response.status}; ` +
+        `payload=${JSON.stringify(payload)}`,
     );
     return payload;
   };
@@ -290,6 +295,84 @@ async function main() {
       month: '2-digit',
       day: '2-digit',
     }).format(new Date());
+    const isoDayOfWeek = (() => {
+      const day = new Date(`${today}T12:00:00+07:00`).getUTCDay();
+      return day === 0 ? 7 : day;
+    })();
+
+    const [smokeSubject] = await dataSource.query(
+      `INSERT INTO subjects (code, name_th, created_by, updated_by)
+       VALUES ($1, 'วิชาตรวจสอบระบบเช็กชื่อ', $2, $2)
+       RETURNING id`,
+      [`AS${String(Date.now()).slice(-12)}`, adminId],
+    );
+    smokeSubjectId = Number(smokeSubject?.id);
+    const [smokeSchoolSubject] = await dataSource.query(
+      `INSERT INTO school_subjects (school_id, subject_id, created_by, updated_by)
+       VALUES ($1, $2, $3, $3)
+       RETURNING id`,
+      [fixture.school_id, smokeSubjectId, adminId],
+    );
+    smokeSchoolSubjectId = Number(smokeSchoolSubject?.id);
+    const [smokeClassroomSubject] = await dataSource.query(
+      `INSERT INTO classroom_subjects (
+         school_id, classroom_id, school_subject_id, created_by, updated_by
+       )
+       SELECT $1, id, $2, $3, $3
+       FROM school_classrooms
+       WHERE school_term_id = $4
+         AND school_id = $1
+         AND grade_level_id = $5
+         AND legacy_room_number = $6
+         AND deleted_at IS NULL
+       RETURNING id`,
+      [
+        fixture.school_id,
+        smokeSchoolSubjectId,
+        adminId,
+        fixture.term_id,
+        fixture.grade_level_id,
+        fixture.room_id,
+      ],
+    );
+    smokeClassroomSubjectId = Number(smokeClassroomSubject?.id);
+    assert(Number.isInteger(smokeClassroomSubjectId), 'Classroom subject fixture was not created');
+
+    const [smokeSlot] = await dataSource.query(
+      `INSERT INTO timetable_slots (
+         school_term_id, school_id, grade_level_id, room_no, classroom_id,
+         day_of_week, period, subject_id, created_by, updated_by
+       )
+       SELECT
+         $1, $2, $3, $4, classroom.id,
+         $5,
+         COALESCE((
+           SELECT MAX(existing.period)
+           FROM timetable_slots existing
+           WHERE existing.classroom_id = classroom.id
+             AND existing.day_of_week = $5
+             AND existing.deleted_at IS NULL
+         ), 0) + 1,
+         $6, $7, $7
+       FROM school_classrooms classroom
+       WHERE classroom.school_term_id = $1
+         AND classroom.school_id = $2
+         AND classroom.grade_level_id = $3
+         AND classroom.legacy_room_number = $4
+         AND classroom.deleted_at IS NULL
+       RETURNING id`,
+      [
+        fixture.term_id,
+        fixture.school_id,
+        fixture.grade_level_id,
+        fixture.room_id,
+        isoDayOfWeek,
+        smokeSubjectId,
+        adminId,
+      ],
+    );
+    smokeTimetableSlotId = Number(smokeSlot?.id);
+    assert(Number.isInteger(smokeTimetableSlotId), 'Subject timetable fixture was not created');
 
     await dataSource.query(
       `UPDATE school_terms
@@ -344,10 +427,16 @@ async function main() {
       student_id: row.student_uuid,
       status: 'P_PRESENT',
     }));
-    await request('POST', '/api/attendance', 409, adminId, { records: presentRecords });
+    await request('POST', '/api/attendance', 409, adminId, {
+      records: presentRecords,
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
+    });
     // A submitted round rejects further autosaves the same way it rejects submits.
     await request('POST', '/api/attendance/marks', 409, adminId, {
       records: [presentRecords[0]],
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
     await request('PATCH', `/api/attendance/calendar-days/${calendarDayId}`, 200, adminId, {
       dayType: 'SCHOOL_DAY',
@@ -359,6 +448,7 @@ async function main() {
       grade: fixture.grade_label,
       room: String(fixture.room_id),
       date: today,
+      timetableSlotId: String(smokeTimetableSlotId),
     });
     const beforeSubmit = await request(
       'GET',
@@ -375,6 +465,8 @@ async function main() {
     const markedAt = new Date(Date.now() - 90 * 1000).toISOString();
     const draftMarks = await request('POST', '/api/attendance/marks', 201, adminId, {
       records: [{ ...presentRecords[0], marked_at: markedAt }],
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
     assert(draftMarks.session.status === 'OPEN', 'Draft must leave the session open');
     assert(draftMarks.recordedCount === 1, 'Draft recorded_count must count stored rows');
@@ -423,12 +515,16 @@ async function main() {
       records: [
         { student_id: '00000000-0000-4000-8000-0000000000ff', status: 'P_PRESENT' },
       ],
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
 
     // Tapping the same status again clears the student: the stored row must go,
     // otherwise the next prefill would restore what the teacher just undid.
     const cleared = await request('POST', '/api/attendance/marks', 201, adminId, {
       cleared_student_ids: [presentRecords[0].student_id],
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
     assert(cleared.recordedCount === 0, 'Clearing a mark must drop the recorded count');
     const [clearedRow] = await dataSource.query(
@@ -439,11 +535,15 @@ async function main() {
     assert(clearedRow.total === 0, 'Clearing a mark must delete the stored row');
     await request('POST', '/api/attendance/marks', 403, adminId, {
       cleared_student_ids: ['00000000-0000-4000-8000-0000000000ff'],
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
     console.error('[smoke] clearing a mark removed the row');
 
     const initialSubmit = await request('POST', '/api/attendance', 201, adminId, {
       records: presentRecords,
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
     assert(initialSubmit.session.status === 'SUBMITTED', 'Initial submit did not lock session');
     assert(initialSubmit.session.revision === 1, 'Initial session revision must be one');
@@ -455,10 +555,16 @@ async function main() {
     );
     assert(submittedDay.total === 1, 'A submitted round must appear in attendance_day');
     console.error('[smoke] initial submit locked and reached the day views');
-    await request('POST', '/api/attendance', 409, adminId, { records: presentRecords });
+    await request('POST', '/api/attendance', 409, adminId, {
+      records: presentRecords,
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
+    });
     // A submitted round rejects further autosaves the same way it rejects submits.
     await request('POST', '/api/attendance/marks', 409, adminId, {
       records: [presentRecords[0]],
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
     await request('POST', `/api/attendance/sessions/${sessionId}/reopen`, 400, adminId, {
       reason: '',
@@ -481,6 +587,8 @@ async function main() {
     }));
     const corrected = await request('POST', '/api/attendance', 201, adminId, {
       records: correctedRecords,
+      timetable_slot_id: smokeTimetableSlotId,
+      date: today,
     });
     assert(corrected.session.status === 'SUBMITTED', 'Corrected session was not submitted');
     assert(corrected.session.revision === 2, 'Corrected session lost its revision');
@@ -554,6 +662,20 @@ async function main() {
         `DELETE FROM school_calendar_days WHERE school_term_id = $1 AND created_by = $2`,
         [fixture.term_id, allowedActorId],
       );
+    }
+    if (smokeTimetableSlotId) {
+      await dataSource.query(`DELETE FROM timetable_slots WHERE id = $1`, [smokeTimetableSlotId]);
+    }
+    if (smokeClassroomSubjectId) {
+      await dataSource.query(`DELETE FROM classroom_subjects WHERE id = $1`, [
+        smokeClassroomSubjectId,
+      ]);
+    }
+    if (smokeSchoolSubjectId) {
+      await dataSource.query(`DELETE FROM school_subjects WHERE id = $1`, [smokeSchoolSubjectId]);
+    }
+    if (smokeSubjectId) {
+      await dataSource.query(`DELETE FROM subjects WHERE id = $1`, [smokeSubjectId]);
     }
     if (fixturePrepared && !fixture.synthetic) {
       await dataSource.query(

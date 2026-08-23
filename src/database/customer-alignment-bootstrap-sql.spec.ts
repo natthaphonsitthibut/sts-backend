@@ -72,6 +72,9 @@ describe('CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL', () => {
     expect(sql).toContain('ALTER TABLE teacher_external_identities ENABLE ROW LEVEL SECURITY');
     expect(sql).toContain('ALTER TABLE classroom_homeroom_teachers ENABLE ROW LEVEL SECURITY');
     expect(sql).toContain('ALTER TABLE classroom_attendance_links ENABLE ROW LEVEL SECURITY');
+    expect(sql).toContain('line_delivery_teacher_membership_id BIGINT');
+    expect(sql).toContain('chk_classroom_attendance_links_line_delivery_state');
+    expect(sql).toContain('idx_classroom_attendance_links_line_delivery');
     expect(sql).toContain("ARRAY['anon', 'authenticated']");
     expect(sql).toContain('CREATE OR REPLACE FUNCTION sync_classroom_homeroom_teacher(');
     expect(sql).toContain('DELETE FROM classroom_homeroom_teachers');

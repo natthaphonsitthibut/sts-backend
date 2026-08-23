@@ -36,6 +36,12 @@ async function main() {
        FROM student_term enrollment
        INNER JOIN schools school ON school.id = enrollment."SchoolID_Onec"
        WHERE enrollment.person_uuid IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM cases active_case
+           WHERE active_case.student_uuid = enrollment.student_uuid
+             AND active_case.deleted_at IS NULL
+             AND active_case.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+         )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
     );
@@ -60,7 +66,7 @@ async function main() {
          (username, password, "FirstName", "LastName", status, permissions, role,
           data_scope, must_change_password, data_origin_code)
        VALUES ($1, 'smoke-unused-password', 'Notification', 'Smoke', 'ACTIVE',
-               '["review-cases"]'::jsonb, 'ADMIN', '{"global":true}'::jsonb, FALSE, 'DEMO')
+               '["dashboard"]'::jsonb, 'ADMIN', '{"global":true}'::jsonb, FALSE, 'OPERATIONAL')
        RETURNING id`,
       [`${runId}-reviewer`],
     );
@@ -77,7 +83,7 @@ async function main() {
     assert(recipients.includes(reviewerId), 'case-status notification must reach the scoped reviewer');
 
     const rows = await dataSource.query(
-      `SELECT type_code, case_id, case_status_code, student_person_uuid, student_name_masked
+      `SELECT type_code, case_id, case_status_code, student_person_uuid, student_name_snapshot
        FROM notifications
        WHERE case_id = $1 AND ref_id = $1::text`,
       [caseId],
@@ -86,7 +92,7 @@ async function main() {
     assert(rows.every((row) => row.type_code === 'CASE_STATUS_CHANGED'), 'legacy type code persisted');
     assert(rows.every((row) => row.case_status_code === 'OPEN'), 'status code was not persisted');
     assert(rows.every((row) => row.case_id === caseId), 'case FK was not persisted');
-    assert(rows.every((row) => row.student_name_masked), 'masked student name was not persisted');
+    assert(rows.every((row) => row.student_name_snapshot), 'student name snapshot was not persisted');
 
     const targetRecipientId = reviewerId;
     const inbox = await service.listForUser(targetRecipientId, {});
@@ -105,7 +111,7 @@ async function main() {
     await dataSource.query(
       `INSERT INTO notifications
         (recipient_user_id, type_code, title, ref_entity, ref_id, created_at,
-         case_id, case_status_code, student_name_masked)
+         case_id, case_status_code, student_name_snapshot)
        VALUES
         ($1, 'CASE_STATUS_CHANGED', 'Retention expired', 'case', $2,
          $4::timestamptz - INTERVAL '91 days', $5, 'OPEN', 'นร.****'),

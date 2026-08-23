@@ -86,6 +86,7 @@ describe('AttendanceWriteService', () => {
       findClassMetadata: jest.fn().mockResolvedValue(
         STUDENT_IDS.map((studentUuid) => ({
           student_uuid: studentUuid,
+          classroom_id: 101,
           school_id: 10010002,
           grade_level_id: 6,
           grade_label: 'ม.6',
@@ -308,6 +309,8 @@ describe('AttendanceWriteService', () => {
 
     expect(operationsRepository.findOrCreateSessionForUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
+        classroomId: 101,
+        classroomSubjectId: TEST_TIMETABLE_SLOT_ID,
         period: 3,
         sessionKind: 'SUBJECT',
         subjectId: 5,
@@ -694,6 +697,7 @@ describe('AttendanceWriteService draft marks', () => {
       findClassMetadata: jest.fn().mockImplementation((ids: string[]) =>
         ids.map((studentUuid) => ({
           student_uuid: studentUuid,
+          classroom_id: 101,
           school_id: 10010002,
           grade_level_id: 6,
           grade_label: 'ม.6',

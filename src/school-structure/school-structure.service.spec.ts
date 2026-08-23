@@ -12,7 +12,7 @@ const SCHOOL_ACTOR = {
 const TEACHER_ACCESS_ACTOR = {
   ...SCHOOL_ACTOR,
   roles: [],
-  permissions: ['manage-teacher-access'],
+  permissions: ['manage-classroom-links'],
 };
 
 const IMPORT_ACTOR = {

@@ -6,7 +6,7 @@ const AUDIT_ONLY = process.argv.includes('--audit-only');
 /** Removes exactly what this script seeds, so the demo can go back and forth. */
 const REVERT = process.argv.includes('--revert');
 
-const SUBJECT_CODE = 'HOMEROOM';
+const SUBJECT_CODE = 'HOMEROOM101';
 const SUBJECT_NAME = 'โฮมรูม';
 /** Mon–Fri. A homeroom round belongs to the school week, not to Saturday clubs. */
 const SCHOOL_DAYS = [1, 2, 3, 4, 5];

@@ -82,7 +82,7 @@ const ASSIGNMENT: TeacherAccessAssignmentRow = {
   assignment_kind: 'SUBJECT',
   assignment_status: 'ACTIVE',
   subject_id: 7,
-  subject_code: 'HOMEROOM',
+  subject_code: 'HOMEROOM101',
   subject_name: 'โฮมรูม',
   effective_on: null,
   effective_until: null,
@@ -92,7 +92,7 @@ const ACTOR: AuthenticatedRequestUser = {
   id: 1,
   username: 'admin',
   roles: ['ADMIN'],
-  permissions: ['manage-teacher-access'],
+  permissions: ['manage-classroom-links'],
   data_scope: { school_ids: [10] },
 };
 
@@ -1153,7 +1153,7 @@ describe('TeacherAccessService', () => {
     expect(repository.listAttendanceDelegationHistory).not.toHaveBeenCalled();
   });
 
-  // A teacher confined to one room keeps `manage-teacher-access` inside their
+  // A teacher confined to one room keeps `manage-classroom-links` inside their
   // own school, so the school check alone would still hand them another room's
   // delegation rows — each carrying a live link into that class.
   it('refuses delegation history for a room outside a class-confined actor', async () => {

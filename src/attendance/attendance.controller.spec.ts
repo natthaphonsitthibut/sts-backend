@@ -97,6 +97,7 @@ describe('AttendanceController access', () => {
       'attendance-dashboard',
       'students',
       'manage-school-structure',
+      'manage-classroom-links',
       'export-data',
     ]);
     expect(
@@ -153,9 +154,14 @@ describe('AttendanceController access', () => {
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTerms'))).toEqual([
       'attendance-dashboard',
+      'attendance',
       'manage-school-structure',
+      'manage-classroom-links',
+      'manage-subjects',
       'import-data',
     ]);
+    expect(guard.canActivate(contextWithPermissions('listTerms', ['attendance']))).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('listTerms', ['manage-subjects']))).toBe(true);
     expect(
       guard.canActivate(contextWithPermissions('listTerms', ['manage-school-structure'])),
     ).toBe(true);
@@ -210,6 +216,7 @@ describe('AttendanceController import scope', () => {
       {} as never,
       { assertClassroomAccess } as never,
       importService as never,
+      {} as never,
     );
     return { controller, assertClassroomAccess, importService };
   }
