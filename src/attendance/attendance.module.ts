@@ -15,6 +15,8 @@ import { AttendanceWriteService } from './attendance-write.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import { AttendanceOperationsService } from './attendance-operations.service';
 import { PublicLocationsController } from './public-locations.controller';
+import { ExceptionAttendanceRepository } from './exception-attendance.repository';
+import { ExceptionAttendanceService } from './exception-attendance.service';
 
 @Module({
   imports: [
@@ -35,7 +37,14 @@ import { PublicLocationsController } from './public-locations.controller';
     AttendanceOperationsService,
     AttendanceService,
     AttendanceImportHistoryRepository,
+    ExceptionAttendanceRepository,
+    ExceptionAttendanceService,
   ],
-  exports: [AttendanceService, AttendanceWriteService, AttendanceImportService],
+  exports: [
+    AttendanceService,
+    AttendanceWriteService,
+    AttendanceImportService,
+    ExceptionAttendanceService,
+  ],
 })
 export class AttendanceModule {}

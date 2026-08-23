@@ -63,6 +63,9 @@ export class SchoolStructureController {
   @RequirePermission()
   @RequireAnyPermission(
     'manage-school-structure',
+    'manage-classroom-links',
+    'manage-subjects',
+    'attendance',
     'import-data',
     'manage-role-groups',
     'manage-teachers',
@@ -83,7 +86,7 @@ export class SchoolStructureController {
 
   @Get('classrooms/options')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure', 'import-data')
+  @RequireAnyPermission('manage-school-structure', 'manage-subjects', 'attendance', 'import-data')
   listClassroomOptions(
     @Query() query: ListSchoolClassroomOptionsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,

@@ -13,10 +13,6 @@ import { TimetableModule } from '../timetable/timetable.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { OtpModule } from '../common/otp/otp.module';
 import { TeacherLineModule } from '../teacher-line/teacher-line.module';
-import {
-  PublicTeacherAccessController,
-  TeacherAccessGrantController,
-} from './teacher-access.controller';
 import { TeacherAccessRepository } from './teacher-access.repository';
 import { AraIdChallengeStore } from '../araid/araid-challenge.store';
 import { TeacherAccessService } from './teacher-access.service';
@@ -38,7 +34,10 @@ import { TeacherAccessService } from './teacher-access.service';
     SchoolStructureModule,
     forwardRef(() => StudentObservationsModule),
   ],
-  controllers: [TeacherAccessGrantController, PublicTeacherAccessController],
+  // The assignment-bound link and attendance-delegation HTTP contracts are
+  // retired. Keep the service temporarily because observation/review readers
+  // still resolve historical provenance through it until destructive cleanup.
+  controllers: [],
   providers: [TeacherAccessRepository, AraIdChallengeStore, TeacherAccessService],
   exports: [TeacherAccessService],
 })

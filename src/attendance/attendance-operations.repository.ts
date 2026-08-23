@@ -389,6 +389,7 @@ export class AttendanceOperationsRepository {
       `
         SELECT
           s.student_uuid,
+          s.classroom_id,
           s."SchoolID_Onec" AS school_id,
           s."GradeLevelID_Onec" AS grade_level_id,
           gl.label AS grade_label,
@@ -532,18 +533,24 @@ export class AttendanceOperationsRepository {
     await executor.query(
       `
         INSERT INTO attendance_sessions (
-          school_term_id, school_id, grade_level_id, room_id, attendance_date,
-          period, session_kind, subject_id, timetable_slot_id, status, expected_roster_count, recorded_count,
+          school_term_id, school_id, classroom_id, classroom_subject_id,
+          grade_level_id, room_id, attendance_date,
+          period, session_kind, subject_id, timetable_slot_id, record_storage_mode,
+          checking_started_at, status, expected_roster_count, recorded_count,
           created_by, updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', $10, 0, $11, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+          'FULL_ROSTER', NOW(), 'OPEN', $12, 0, $13, $13)
         ON CONFLICT (
-          school_term_id, grade_level_id, room_id, attendance_date, period, session_kind
-        ) DO NOTHING
+          school_term_id, classroom_id, classroom_subject_id, attendance_date, period
+        ) WHERE deleted_at IS NULL AND record_storage_mode = 'FULL_ROSTER'
+        DO NOTHING
       `,
       [
         identity.schoolTermId,
         identity.schoolId,
+        identity.classroomId,
+        identity.classroomSubjectId,
         identity.gradeLevelId,
         identity.roomId,
         identity.attendanceDate,
@@ -574,20 +581,20 @@ export class AttendanceOperationsRepository {
           correction_reason
         FROM attendance_sessions
         WHERE school_term_id = $1
-          AND grade_level_id = $2
-          AND room_id = $3
+          AND classroom_id = $2
+          AND classroom_subject_id = $3
           AND attendance_date = $4
           AND period = $5
-          AND session_kind = $6
+          AND record_storage_mode = 'FULL_ROSTER'
+          AND deleted_at IS NULL
         FOR UPDATE
       `,
       [
         identity.schoolTermId,
-        identity.gradeLevelId,
-        identity.roomId,
+        identity.classroomId,
+        identity.classroomSubjectId,
         identity.attendanceDate,
         identity.period,
-        sessionKind,
       ],
     );
     return result.rows[0];
@@ -954,23 +961,42 @@ export class AttendanceOperationsRepository {
           END AS operational_status
           FROM roster
           LEFT JOIN LATERAL (
-            SELECT
-              MIN(session.id::text) AS id,
-              BOOL_AND(
-                session.id IS NOT NULL
-                AND session.status = 'SUBMITTED'
-                AND session.recorded_count = roster.expected_roster_count
-              ) AS is_complete
-            FROM timetable_slots slot
-            LEFT JOIN attendance_sessions session
-              ON session.timetable_slot_id = slot.id
-             AND session.attendance_date = $${datePlaceholder}
-             AND session.session_kind = 'SUBJECT'
-             AND session.deleted_at IS NULL
-            WHERE slot.school_term_id = $${termPlaceholder}
-              AND slot.classroom_id = roster.classroom_id
-              AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
-              AND slot.deleted_at IS NULL
+            SELECT candidate.id, candidate.is_complete
+            FROM (
+              SELECT 1 AS priority, MIN(session.id::text) AS id,
+                BOOL_OR(
+                  session.status = 'SUBMITTED'
+                  AND session.recorded_count = roster.expected_roster_count
+                ) AS is_complete
+              FROM attendance_sessions session
+              WHERE session.school_term_id = $${termPlaceholder}
+                AND session.classroom_id = roster.classroom_id
+                AND session.attendance_date = $${datePlaceholder}
+                AND session.record_storage_mode = 'EXCEPTIONS'
+                AND session.deleted_at IS NULL
+              HAVING COUNT(*) > 0
+
+              UNION ALL
+
+              SELECT 2 AS priority, MIN(session.id::text) AS id,
+                BOOL_AND(
+                  session.id IS NOT NULL
+                  AND session.status = 'SUBMITTED'
+                  AND session.recorded_count = roster.expected_roster_count
+                ) AS is_complete
+              FROM timetable_slots slot
+              LEFT JOIN attendance_sessions session
+                ON session.timetable_slot_id = slot.id
+               AND session.attendance_date = $${datePlaceholder}
+               AND session.session_kind = 'SUBJECT'
+               AND session.deleted_at IS NULL
+              WHERE slot.school_term_id = $${termPlaceholder}
+                AND slot.classroom_id = roster.classroom_id
+                AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
+                AND slot.deleted_at IS NULL
+            ) candidate
+            ORDER BY candidate.priority
+            LIMIT 1
           ) sess ON TRUE
         )
         SELECT
@@ -1005,31 +1031,59 @@ export class AttendanceOperationsRepository {
           END AS operational_status
         FROM roster
         LEFT JOIN LATERAL (
-          SELECT
-            MIN(session.id::text) AS id,
-            MIN(session.recorded_count)::int AS recorded_count,
-            CASE
-              WHEN BOOL_AND(session.status = 'SUBMITTED') THEN 'SUBMITTED'
-              WHEN BOOL_OR(session.status = 'REOPENED') THEN 'REOPENED'
-              WHEN BOOL_OR(session.status = 'OPEN') THEN 'OPEN'
-              ELSE NULL
-            END AS status,
-            MAX(session.revision)::int AS revision,
-            BOOL_AND(
-              session.id IS NOT NULL
-              AND session.status = 'SUBMITTED'
-              AND session.recorded_count = roster.expected_roster_count
-            ) AS is_complete
-          FROM timetable_slots slot
-          LEFT JOIN attendance_sessions session
-            ON session.timetable_slot_id = slot.id
-           AND session.attendance_date = $${datePlaceholder}
-           AND session.session_kind = 'SUBJECT'
-           AND session.deleted_at IS NULL
-          WHERE slot.school_term_id = $${termPlaceholder}
-            AND slot.classroom_id = roster.classroom_id
-            AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
-            AND slot.deleted_at IS NULL
+          SELECT candidate.id, candidate.recorded_count, candidate.status,
+                 candidate.revision, candidate.is_complete
+          FROM (
+            SELECT 1 AS priority, MAX(session.id::text) AS id,
+              MAX(session.recorded_count)::int AS recorded_count,
+              CASE
+                WHEN BOOL_OR(session.status = 'SUBMITTED') THEN 'SUBMITTED'
+                WHEN BOOL_OR(session.status = 'REOPENED') THEN 'REOPENED'
+                WHEN BOOL_OR(session.status = 'OPEN') THEN 'OPEN'
+                ELSE NULL
+              END AS status,
+              MAX(session.revision)::int AS revision,
+              BOOL_OR(
+                session.status = 'SUBMITTED'
+                AND session.recorded_count = roster.expected_roster_count
+              ) AS is_complete
+            FROM attendance_sessions session
+            WHERE session.school_term_id = $${termPlaceholder}
+              AND session.classroom_id = roster.classroom_id
+              AND session.attendance_date = $${datePlaceholder}
+              AND session.record_storage_mode = 'EXCEPTIONS'
+              AND session.deleted_at IS NULL
+            HAVING COUNT(*) > 0
+
+            UNION ALL
+
+            SELECT 2 AS priority, MIN(session.id::text) AS id,
+              MIN(session.recorded_count)::int AS recorded_count,
+              CASE
+                WHEN BOOL_AND(session.status = 'SUBMITTED') THEN 'SUBMITTED'
+                WHEN BOOL_OR(session.status = 'REOPENED') THEN 'REOPENED'
+                WHEN BOOL_OR(session.status = 'OPEN') THEN 'OPEN'
+                ELSE NULL
+              END AS status,
+              MAX(session.revision)::int AS revision,
+              BOOL_AND(
+                session.id IS NOT NULL
+                AND session.status = 'SUBMITTED'
+                AND session.recorded_count = roster.expected_roster_count
+              ) AS is_complete
+            FROM timetable_slots slot
+            LEFT JOIN attendance_sessions session
+              ON session.timetable_slot_id = slot.id
+             AND session.attendance_date = $${datePlaceholder}
+             AND session.session_kind = 'SUBJECT'
+             AND session.deleted_at IS NULL
+            WHERE slot.school_term_id = $${termPlaceholder}
+              AND slot.classroom_id = roster.classroom_id
+              AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
+              AND slot.deleted_at IS NULL
+          ) candidate
+          ORDER BY candidate.priority
+          LIMIT 1
         ) sess ON TRUE
         ORDER BY roster.grade_level_id, roster.room_id
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}

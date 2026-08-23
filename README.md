@@ -1,6 +1,6 @@
 # sts-backend
 
-Backend ของระบบติดตามนักเรียน พัฒนาด้วย NestJS + TypeScript โดยโครงสร้างปัจจุบันเป็นแบบ `controller + dto + focused services + repository/data layer` และใช้ TypeORM `DataSource` + migrations เป็นฐาน runtime
+Backend ของระบบติดตามผู้เรียน พัฒนาด้วย NestJS + TypeScript โดยโครงสร้างปัจจุบันเป็นแบบ `controller + dto + focused services + repository/data layer` และใช้ TypeORM `DataSource` + migrations เป็นฐาน runtime
 
 ## Current Stack
 

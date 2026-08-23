@@ -321,6 +321,13 @@ export class AraIdService {
 
   /** Server-only identity claim for relying flows; never expose this value to the browser. */
   async getVerifiedIdentityNumber(profileId: string): Promise<string> {
+    return (await this.getVerifiedIdentityClaim(profileId)).identityNumber;
+  }
+
+  /** Server-only immutable subject + identity claim for relying-party bindings. */
+  async getVerifiedIdentityClaim(
+    profileId: string,
+  ): Promise<{ providerSubject: string; identityNumber: string }> {
     const profile = await this.profiles.findOne({ where: { id: profileId } });
     if (!profile || profile.registrationStatus !== 'ACTIVE') {
       throw new UnauthorizedException('เซสชัน AraID ไม่ถูกต้อง');
@@ -329,7 +336,7 @@ export class AraIdService {
       where: { id: profile.identityRecordId, recordStatus: 'ACTIVE' },
     });
     if (!record) throw new UnauthorizedException('เซสชัน AraID ไม่ถูกต้อง');
-    return record.identityNumber;
+    return { providerSubject: record.id, identityNumber: record.identityNumber };
   }
 
   private async findRecordOrThrow(id: string): Promise<AraIdIdentityRecordEntity> {

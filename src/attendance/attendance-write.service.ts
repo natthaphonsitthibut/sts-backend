@@ -224,6 +224,11 @@ export class AttendanceWriteService {
         timetableSlotId: Number(selectedSlot.id),
       };
     }
+    const classroomSubjectId = await this.resolveClassroomSubjectId(
+      first.classroom_id,
+      sessionContext.subjectId,
+      executor,
+    );
     // Drafts fire many times per class, so they read the term without the
     // FOR UPDATE lock that find-or-create takes; only the rare first write of a
     // term falls through to the locking path.
@@ -269,6 +274,8 @@ export class AttendanceWriteService {
       {
         schoolTermId: term.id,
         schoolId: first.school_id,
+        classroomId: first.classroom_id,
+        classroomSubjectId,
         gradeLevelId: first.grade_level_id,
         roomId: first.room_id,
         attendanceDate,
@@ -627,6 +634,38 @@ export class AttendanceWriteService {
     }
 
     return slot;
+  }
+
+  private async resolveClassroomSubjectId(
+    classroomId: number,
+    subjectId: number | null | undefined,
+    executor: QueryExecutor,
+  ): Promise<number> {
+    if (!subjectId) {
+      throw new BadRequestException('ไม่พบรายวิชาที่จะเช็กชื่อ');
+    }
+    const result = await executor.query<{ id: number | string }>(
+      `
+        SELECT offering.id
+        FROM classroom_subjects offering
+        JOIN school_subjects catalog
+          ON catalog.id = offering.school_subject_id
+         AND catalog.school_id = offering.school_id
+        WHERE offering.classroom_id = $1
+          AND catalog.subject_id = $2
+          AND offering.offering_status = 'ACTIVE'
+          AND offering.deleted_at IS NULL
+          AND catalog.subject_status = 'ACTIVE'
+          AND catalog.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [classroomId, subjectId],
+    );
+    const classroomSubjectId = Number(result.rows[0]?.id);
+    if (!Number.isInteger(classroomSubjectId)) {
+      throw new BadRequestException('รายวิชานี้ไม่ได้เปิดสอนในห้องที่เลือก');
+    }
+    return classroomSubjectId;
   }
 
   private normalizeRecords(

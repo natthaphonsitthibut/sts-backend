@@ -43,6 +43,7 @@ import { AraIdChallengeStore } from '../araid/araid-challenge.store';
     PasswordService,
     AuthActorService,
     AraIdLoginService,
+    AraIdChallengeStore,
     SessionCookieService,
     MagicSessionStoreService,
     AuthGuard,

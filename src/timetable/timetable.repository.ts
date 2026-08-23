@@ -1,4 +1,3 @@
-import { HOMEROOM_SUBJECT_CODE } from '../school-structure/homeroom-subject.constants';
 import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import type { DataScope } from '../auth';
@@ -224,15 +223,9 @@ export class TimetableRepository {
         JOIN subjects sub ON sub.id = cs.subject_id
         WHERE cs.school_id = $1 AND cs.grade_level_id = $2
           AND cs.deleted_at IS NULL AND sub.is_active = TRUE
-        UNION
-        -- โฮมรูม belongs to every room by definition, so it is offered without
-        -- anyone having to add it to the curriculum first.
-        SELECT sub.id AS subject_id, sub.code, sub.name_th
-        FROM subjects sub
-        WHERE sub.code = $3 AND sub.is_active = TRUE
         ORDER BY name_th ASC
       `,
-      [schoolId, gradeLevelId, HOMEROOM_SUBJECT_CODE],
+      [schoolId, gradeLevelId],
     );
     if (result.rows.length > 0) {
       return result.rows;

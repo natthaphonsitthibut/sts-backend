@@ -41,8 +41,8 @@ export const APP_PAGES: AppPageDefinition[] = [
     group: APP_PAGE_GROUPS.data,
   },
   {
-    id: 'manage-curriculum',
-    title: 'จัดการข้อมูลหลักสูตร',
+    id: 'manage-subjects',
+    title: 'จัดการหลักสูตร',
     group: APP_PAGE_GROUPS.data,
   },
   { id: 'import-data', title: 'นำเข้าข้อมูล', group: APP_PAGE_GROUPS.data },
@@ -54,13 +54,8 @@ export const APP_PAGES: AppPageDefinition[] = [
   },
   { id: 'attendance', title: 'เช็กชื่อ', group: APP_PAGE_GROUPS.attendance },
   {
-    id: 'manage-teacher-access',
-    title: 'จัดการลิงก์เช็กชื่อ',
-    group: APP_PAGE_GROUPS.attendance,
-  },
-  {
-    id: 'timetable',
-    title: 'ตารางสอน',
+    id: 'manage-classroom-links',
+    title: 'จัดการลิงก์ห้องเรียน',
     group: APP_PAGE_GROUPS.attendance,
   },
   {

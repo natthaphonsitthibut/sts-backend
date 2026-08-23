@@ -10,6 +10,7 @@ const ARAID_LINE_AUTHORIZATION_COOKIE_NAME = 'araid_line_authorization';
 const ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME = 'araid_teacher_access_authorization';
 const ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME = 'araid_task_link_authorization';
 const ARAID_ADMIN_LOGIN_AUTHORIZATION_COOKIE_NAME = 'araid_admin_login_authorization';
+const ARAID_CLASSROOM_CHECK_IN_AUTHORIZATION_COOKIE_NAME = 'araid_classroom_check_in_authorization';
 
 interface AraIdSessionPayload {
   authenticatedAt?: number;
@@ -115,6 +116,23 @@ export class AraIdSessionCookieService {
 
   clearAdminLoginAuthorization(response: Response): void {
     response.clearCookie(ARAID_ADMIN_LOGIN_AUTHORIZATION_COOKIE_NAME, { path: '/' });
+  }
+
+  setClassroomCheckInAuthorization(response: Response, token: string, maxAgeSeconds: number): void {
+    this.setOpaqueAuthorization(
+      response,
+      ARAID_CLASSROOM_CHECK_IN_AUTHORIZATION_COOKIE_NAME,
+      token,
+      maxAgeSeconds,
+    );
+  }
+
+  readClassroomCheckInAuthorization(cookieHeader: string | undefined): string | null {
+    return this.readCookie(cookieHeader, ARAID_CLASSROOM_CHECK_IN_AUTHORIZATION_COOKIE_NAME);
+  }
+
+  clearClassroomCheckInAuthorization(response: Response): void {
+    response.clearCookie(ARAID_CLASSROOM_CHECK_IN_AUTHORIZATION_COOKIE_NAME, { path: '/' });
   }
 
   readProfileId(cookieHeader: string | undefined): string | null {

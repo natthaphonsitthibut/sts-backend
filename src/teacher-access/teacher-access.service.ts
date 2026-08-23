@@ -165,7 +165,7 @@ export class TeacherAccessService {
   ) {}
 
   private resolveIssuerScope(actor: AuthenticatedRequestUser): DataScope {
-    if (!hasPermission(actor.roles, actor.permissions, 'manage-teacher-access')) {
+    if (!hasPermission(actor.roles, actor.permissions, 'manage-classroom-links')) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการลิงก์เข้าใช้งานครู');
     }
     const scope = normalizeDataScope(actor.data_scope) ?? {};

@@ -451,7 +451,60 @@ export class SchoolStructureRepository {
         input.actorId,
       ],
     );
-    return (await this.findClassroomById(Number(result.rows[0].id), queryRunner))!;
+    const classroomId = result.rows[0]?.id;
+    if (!classroomId) {
+      throw new Error('CREATE_CLASSROOM_FAILED');
+    }
+    const homeroom = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
+      `
+        WITH homeroom_subject AS (
+          SELECT id
+          FROM subjects
+          WHERE code = $1
+            AND is_active
+            AND deleted_at IS NULL
+        ), school_offering AS (
+          INSERT INTO school_subjects (
+            school_id,
+            subject_id,
+            subject_status,
+            created_by,
+            updated_by
+          )
+          SELECT $2, subject.id, 'ACTIVE', $3, $3
+          FROM homeroom_subject subject
+          ON CONFLICT (school_id, subject_id) WHERE deleted_at IS NULL
+          DO UPDATE SET
+            subject_status = 'ACTIVE',
+            deleted_at = NULL,
+            deleted_by = NULL,
+            updated_by = EXCLUDED.updated_by
+          RETURNING id
+        )
+        INSERT INTO classroom_subjects (
+          school_id,
+          classroom_id,
+          school_subject_id,
+          offering_status,
+          created_by,
+          updated_by
+        )
+        SELECT $2, $4, school_offering.id, 'ACTIVE', $3, $3
+        FROM school_offering
+        ON CONFLICT (classroom_id, school_subject_id) WHERE deleted_at IS NULL
+        DO UPDATE SET
+          offering_status = 'ACTIVE',
+          deleted_at = NULL,
+          deleted_by = NULL,
+          updated_by = EXCLUDED.updated_by
+        RETURNING id::text
+      `,
+      [HOMEROOM_SUBJECT_CODE, input.schoolId, input.actorId, classroomId],
+    );
+    if (homeroom.rows.length !== 1) {
+      throw new Error('HOMEROOM_SUBJECT_UNAVAILABLE');
+    }
+    return (await this.findClassroomById(Number(classroomId), queryRunner))!;
   }
 
   async updateClassroom(
@@ -965,44 +1018,6 @@ export class SchoolStructureRepository {
           AND deleted_at IS NULL
       `,
       [classroomId, actorId],
-    );
-  }
-
-  /**
-   * The โฮมรูม subject row, looked up by its stable code rather than an id so
-   * every environment resolves the same subject the migration seeded.
-   */
-  async findHomeroomSubjectId(queryRunner: QueryRunner): Promise<number | null> {
-    const result = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
-      `SELECT id::text FROM subjects WHERE code = $1 AND deleted_at IS NULL LIMIT 1`,
-      [HOMEROOM_SUBJECT_CODE],
-    );
-    const row = result.rows[0];
-    return row ? Number(row.id) : null;
-  }
-
-  /**
-   * Retires the room's โฮมรูม teaching row. The homeroom teacher owns that
-   * subject, so replacing the homeroom teacher must not leave the previous one
-   * still teaching it.
-   */
-  async deactivateHomeroomSubjectAssignments(
-    classroomId: number,
-    homeroomSubjectId: number,
-    actorId: number | null,
-    queryRunner: QueryRunner,
-  ): Promise<void> {
-    await createSqlQueryExecutor(queryRunner).query(
-      `
-        UPDATE classroom_teacher_assignments
-        SET assignment_status = 'INACTIVE', updated_by = $3
-        WHERE classroom_id = $1
-          AND assignment_kind = 'SUBJECT'
-          AND subject_id = $2
-          AND assignment_status = 'ACTIVE'
-          AND deleted_at IS NULL
-      `,
-      [classroomId, homeroomSubjectId, actorId],
     );
   }
 

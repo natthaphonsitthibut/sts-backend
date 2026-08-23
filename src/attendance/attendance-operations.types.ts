@@ -48,6 +48,7 @@ export interface AttendanceSessionRow extends Record<string, unknown> {
 
 export interface AttendanceClassMetadataRow extends Record<string, unknown> {
   student_uuid: string;
+  classroom_id: number;
   school_id: number;
   grade_level_id: number;
   grade_label: string;
@@ -96,6 +97,8 @@ export interface SchoolTermInput {
 export interface AttendanceSessionIdentity {
   schoolTermId: string;
   schoolId: number;
+  classroomId: number;
+  classroomSubjectId: number;
   gradeLevelId: number;
   roomId: number;
   attendanceDate: string;

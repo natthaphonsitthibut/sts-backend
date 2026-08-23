@@ -56,6 +56,13 @@ import {
   UpdateSchoolCalendarDayDto,
   UpsertSchoolTermDto,
 } from './dto/attendance-operations.dto';
+import {
+  InternalCheckInOptionsQueryDto,
+  InternalCheckInRosterQueryDto,
+  StartInternalExceptionAttendanceDto,
+  SubmitExceptionAttendanceDto,
+} from './dto/exception-attendance.dto';
+import { ExceptionAttendanceService } from './exception-attendance.service';
 
 @UseGuards(AuthGuard)
 @Controller('api/attendance')
@@ -64,7 +71,92 @@ export class AttendanceController {
     private readonly attendanceService: AttendanceService,
     private readonly attendanceOperationsService: AttendanceOperationsService,
     private readonly attendanceImportService: AttendanceImportService,
+    private readonly exceptionAttendanceService: ExceptionAttendanceService,
   ) {}
+
+  @Get('check-in/options')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async checkInOptions(
+    @Query() query: InternalCheckInOptionsQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    const checkInActor = await this.exceptionAttendanceService.resolveInternalActor(
+      query.classroomId,
+      actor,
+    );
+    return await this.exceptionAttendanceService.getOptions(checkInActor, query.date);
+  }
+
+  @Get('check-in/roster')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async checkInRoster(
+    @Query() query: InternalCheckInRosterQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    const checkInActor = await this.exceptionAttendanceService.resolveInternalActor(
+      query.classroomId,
+      actor,
+    );
+    return await this.exceptionAttendanceService.getRoster(checkInActor);
+  }
+
+  @Get('check-in/student-photo')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async checkInStudentPhoto(
+    @Query('classroomId', ParseIntPipe) classroomId: number,
+    @Query('studentId', ParseUUIDPipe) studentId: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Res() response: Response,
+  ): Promise<void> {
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    const checkInActor = await this.exceptionAttendanceService.resolveInternalActor(
+      classroomId,
+      actor,
+    );
+    const result = await this.exceptionAttendanceService.resolveStudentPhoto(
+      checkInActor,
+      studentId,
+    );
+    if (result.kind === 'redirect') {
+      response.redirect(302, result.url);
+      return;
+    }
+    response.sendFile(result.filePath);
+  }
+
+  @Post('check-in/sessions/start')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async startCheckInSession(
+    @Body() body: StartInternalExceptionAttendanceDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    const checkInActor = await this.exceptionAttendanceService.resolveInternalActor(
+      body.classroomId,
+      actor,
+    );
+    return await this.exceptionAttendanceService.start(checkInActor, body);
+  }
+
+  @Post('check-in/sessions/:sessionId/submit')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async submitCheckInSession(
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Body() body: SubmitExceptionAttendanceDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    const checkInActor = await this.exceptionAttendanceService.getInternalActorForSession(
+      sessionId,
+      actor,
+    );
+    return await this.exceptionAttendanceService.submit(checkInActor, sessionId, body);
+  }
 
   @Get('grade-levels')
   @UseGuards(PermissionsGuard)
@@ -73,6 +165,7 @@ export class AttendanceController {
     'attendance-dashboard',
     'students',
     'manage-school-structure',
+    'manage-classroom-links',
     'export-data',
   )
   async getGradeLevels() {
@@ -294,7 +387,14 @@ export class AttendanceController {
 
   @Get('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard', 'manage-school-structure', 'import-data')
+  @RequireAnyPermission(
+    'attendance-dashboard',
+    'attendance',
+    'manage-school-structure',
+    'manage-classroom-links',
+    'manage-subjects',
+    'import-data',
+  )
   async listTerms(
     @Query() query: ListSchoolTermsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,

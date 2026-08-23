@@ -53,6 +53,8 @@ import { StudentObservationsModule } from './student-observations/student-observ
 import { StudentObservationSummaryModule } from './student-observation-summaries/student-observation-summary.module';
 import { AraIdModule } from './araid/araid.module';
 import { ObservationReviewsModule } from './observation-reviews/observation-reviews.module';
+import { ClassroomAttendanceLinksModule } from './classroom-attendance-links/classroom-attendance-links.module';
+import { googleLoginConfig } from './config/google-login.config';
 
 @Module({
   imports: [
@@ -67,6 +69,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
         emailConfig,
         encryptionConfig,
         geoConfig,
+        googleLoginConfig,
         lineConfig,
         piiConfig,
         queueConfig,
@@ -142,6 +145,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
     ObservationReviewsModule,
     StudentObservationSummaryModule,
     AraIdModule,
+    ClassroomAttendanceLinksModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],
