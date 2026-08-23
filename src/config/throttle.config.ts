@@ -27,6 +27,7 @@ export type ThrottleName =
   | 'otpRequest'
   | 'otpVerify'
   | 'araidLogin'
+  | 'araidPin'
   | 'geocode'
   | 'followerApplication'
   | 'campaignLookup'
@@ -58,6 +59,10 @@ function rule(
  *  - araidLogin  90 / minute   (staff AraID QR login: the browser polls one
  *                               challenge every 2s while the phone approves,
  *                               so a single honest login is ~30 requests/min)
+ *  - araidPin    10 / minute   (AraID PIN submit + step-up: credential guessing,
+ *                               so it stays tight — but on its own counter, since
+ *                               sharing `login` let one school's shared NAT IP
+ *                               lock staff out of the admin form and vice versa)
  *  - geocode     30 / minute   (billable Google Maps proxy + address PII)
  *  - followerApplication  3 / 10 min  (public อสม. application form — no auth, spam-prone)
  *  - campaignLookup      20 / minute  (public recruitment-link lookup by code — normal page loads,
@@ -80,6 +85,7 @@ export const throttleConfig = registerAs('throttle', () => ({
     90,
     60,
   ),
+  araidPin: rule(process.env.RATE_LIMIT_ARAID_PIN, process.env.RATE_LIMIT_ARAID_PIN_TTL, 10, 60),
   geocode: rule(process.env.RATE_LIMIT_GEOCODE, process.env.RATE_LIMIT_GEOCODE_TTL, 30, 60),
   followerApplication: rule(
     process.env.RATE_LIMIT_FOLLOWER_APPLICATION,

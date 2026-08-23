@@ -7,6 +7,7 @@ const ALL_THROTTLERS: ThrottleName[] = [
   'otpRequest',
   'otpVerify',
   'araidLogin',
+  'araidPin',
   'geocode',
   'followerApplication',
   'campaignLookup',
@@ -37,6 +38,7 @@ export const ThrottleLogin = () => only('login');
 export const ThrottleOtpRequest = () => only('otpRequest');
 export const ThrottleOtpVerify = () => only('otpVerify');
 export const ThrottleAraIdLogin = () => only('araidLogin');
+export const ThrottleAraIdPin = () => only('araidPin');
 export const ThrottleGeocode = () => only('geocode');
 export const ThrottleFollowerApplication = () => only('followerApplication');
 export const ThrottleCampaignLookup = () => only('campaignLookup');

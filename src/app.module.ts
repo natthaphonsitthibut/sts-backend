@@ -93,6 +93,7 @@ import { ObservationReviewsModule } from './observation-reviews/observation-revi
           { name: 'otpRequest', ttl: config.otpRequest.ttlMs, limit: config.otpRequest.limit },
           { name: 'otpVerify', ttl: config.otpVerify.ttlMs, limit: config.otpVerify.limit },
           { name: 'araidLogin', ttl: config.araidLogin.ttlMs, limit: config.araidLogin.limit },
+          { name: 'araidPin', ttl: config.araidPin.ttlMs, limit: config.araidPin.limit },
           { name: 'geocode', ttl: config.geocode.ttlMs, limit: config.geocode.limit },
           {
             name: 'followerApplication',
