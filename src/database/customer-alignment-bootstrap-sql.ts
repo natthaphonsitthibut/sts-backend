@@ -427,6 +427,13 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     rotated_at TIMESTAMPTZ,
     last_used_at TIMESTAMPTZ,
+    line_delivery_teacher_membership_id BIGINT,
+    line_delivery_status VARCHAR(16) NOT NULL DEFAULT 'NOT_READY',
+    line_delivery_failure_code VARCHAR(32),
+    line_delivery_attempt_count INTEGER NOT NULL DEFAULT 0,
+    line_delivery_request_id UUID,
+    line_delivery_last_attempted_at TIMESTAMPTZ,
+    line_delivered_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by INTEGER,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -443,6 +450,10 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT fk_classroom_attendance_links_updated_by
       FOREIGN KEY (updated_by) REFERENCES users(id)
       ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_attendance_links_line_delivery_membership
+      FOREIGN KEY (line_delivery_teacher_membership_id, school_id)
+      REFERENCES school_teacher_memberships(id, school_id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT chk_classroom_attendance_links_token_hash
       CHECK (token_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT chk_classroom_attendance_links_encrypted_token
@@ -452,7 +463,74 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     CONSTRAINT chk_classroom_attendance_links_rotated_at
       CHECK (rotated_at IS NULL OR rotated_at >= issued_at),
     CONSTRAINT chk_classroom_attendance_links_last_used_at
-      CHECK (last_used_at IS NULL OR last_used_at >= issued_at)
+      CHECK (last_used_at IS NULL OR last_used_at >= issued_at),
+    CONSTRAINT chk_classroom_attendance_links_line_delivery_status
+      CHECK (
+        line_delivery_status IN (
+          'NOT_READY', 'SENDING', 'SENT', 'FAILED', 'NEEDS_RESEND'
+        )
+      ),
+    CONSTRAINT chk_classroom_attendance_links_line_delivery_failure
+      CHECK (
+        line_delivery_failure_code IS NULL
+        OR line_delivery_failure_code IN (
+          'HOMEROOM_UNAVAILABLE', 'MESSAGING_DISABLED',
+          'ACCOUNT_NOT_VERIFIED', 'ACCOUNT_NOT_REACHABLE',
+          'PROVIDER_REJECTED', 'PROVIDER_UNAVAILABLE'
+        )
+      ),
+    CONSTRAINT chk_classroom_attendance_links_line_delivery_attempts
+      CHECK (line_delivery_attempt_count >= 0),
+    CONSTRAINT chk_classroom_attendance_links_line_delivery_state
+      CHECK (
+        (
+          line_delivery_status = 'NOT_READY'
+          AND line_delivered_at IS NULL
+          AND (
+            line_delivery_failure_code IS NULL
+            OR line_delivery_failure_code IN (
+              'HOMEROOM_UNAVAILABLE', 'MESSAGING_DISABLED',
+              'ACCOUNT_NOT_VERIFIED', 'ACCOUNT_NOT_REACHABLE'
+            )
+          )
+        )
+        OR (
+          line_delivery_status = 'NEEDS_RESEND'
+          AND line_delivery_teacher_membership_id IS NOT NULL
+          AND line_delivery_failure_code IS NULL
+          AND line_delivered_at IS NULL
+        )
+        OR (
+          line_delivery_status = 'SENDING'
+          AND line_delivery_teacher_membership_id IS NOT NULL
+          AND line_delivery_request_id IS NOT NULL
+          AND line_delivery_attempt_count > 0
+          AND line_delivery_last_attempted_at IS NOT NULL
+          AND line_delivery_failure_code IS NULL
+          AND line_delivered_at IS NULL
+        )
+        OR (
+          line_delivery_status = 'SENT'
+          AND line_delivery_teacher_membership_id IS NOT NULL
+          AND line_delivery_request_id IS NOT NULL
+          AND line_delivery_attempt_count > 0
+          AND line_delivery_last_attempted_at IS NOT NULL
+          AND line_delivery_failure_code IS NULL
+          AND line_delivered_at IS NOT NULL
+          AND line_delivered_at >= line_delivery_last_attempted_at
+        )
+        OR (
+          line_delivery_status = 'FAILED'
+          AND line_delivery_teacher_membership_id IS NOT NULL
+          AND line_delivery_request_id IS NOT NULL
+          AND line_delivery_attempt_count > 0
+          AND line_delivery_last_attempted_at IS NOT NULL
+          AND line_delivery_failure_code IN (
+            'PROVIDER_REJECTED', 'PROVIDER_UNAVAILABLE'
+          )
+          AND line_delivered_at IS NULL
+        )
+      )
   );
   CREATE INDEX IF NOT EXISTS idx_classroom_attendance_links_scope
     ON classroom_attendance_links (
@@ -467,6 +545,15 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_classroom_attendance_links_updated_by
     ON classroom_attendance_links (updated_by)
     WHERE updated_by IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_classroom_attendance_links_line_delivery
+    ON classroom_attendance_links (
+      line_delivery_status,
+      school_id,
+      school_term_id
+    );
+  CREATE INDEX IF NOT EXISTS idx_classroom_attendance_links_line_delivery_membership
+    ON classroom_attendance_links (line_delivery_teacher_membership_id, school_id)
+    WHERE line_delivery_teacher_membership_id IS NOT NULL;
   DROP TRIGGER IF EXISTS trg_classroom_attendance_links_set_updated_at
     ON classroom_attendance_links;
   CREATE TRIGGER trg_classroom_attendance_links_set_updated_at
@@ -1442,9 +1529,9 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     AND NOT (default_permissions ? 'import-data');
 
   UPDATE roles
-  SET default_permissions = default_permissions || '["manage-teacher-access"]'::jsonb
+  SET default_permissions = default_permissions || '["manage-classroom-links"]'::jsonb
   WHERE name IN ('ADMIN', 'DIRECTOR')
-    AND NOT (default_permissions ? 'manage-teacher-access');
+    AND NOT (default_permissions ? 'manage-classroom-links');
 
   -- Teacher comments live on the รายชื่อนักเรียน page since the permission
   -- catalogue collapsed to one id per page; the separate observation ids are gone.
