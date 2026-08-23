@@ -304,6 +304,296 @@ export const CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL = `
     ON classroom_teacher_assignments (subject_id, assignment_status)
     WHERE deleted_at IS NULL AND subject_id IS NOT NULL;
 
+  CREATE TABLE IF NOT EXISTS teacher_external_identities (
+    id BIGSERIAL PRIMARY KEY,
+    teacher_id BIGINT NOT NULL,
+    provider VARCHAR(16) NOT NULL,
+    provider_subject VARCHAR(255) NOT NULL,
+    normalized_email VARCHAR(255),
+    verified_at TIMESTAMPTZ NOT NULL,
+    last_authenticated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by INTEGER,
+    deleted_at TIMESTAMPTZ,
+    deleted_by INTEGER,
+    CONSTRAINT uq_teacher_external_identities_provider_subject
+      UNIQUE (provider, provider_subject),
+    CONSTRAINT uq_teacher_external_identities_teacher_provider
+      UNIQUE (teacher_id, provider),
+    CONSTRAINT fk_teacher_external_identities_teacher
+      FOREIGN KEY (teacher_id) REFERENCES teachers(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_teacher_external_identities_created_by
+      FOREIGN KEY (created_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_teacher_external_identities_updated_by
+      FOREIGN KEY (updated_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_teacher_external_identities_deleted_by
+      FOREIGN KEY (deleted_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT chk_teacher_external_identities_provider
+      CHECK (provider IN ('GOOGLE', 'THAID')),
+    CONSTRAINT chk_teacher_external_identities_provider_subject
+      CHECK (
+        provider_subject = btrim(provider_subject)
+        AND char_length(provider_subject) BETWEEN 1 AND 255
+      ),
+    CONSTRAINT chk_teacher_external_identities_email
+      CHECK (
+        (
+          provider = 'GOOGLE'
+          AND normalized_email IS NOT NULL
+          AND normalized_email = lower(btrim(normalized_email))
+          AND position('@' IN normalized_email) > 1
+        )
+        OR (provider = 'THAID' AND normalized_email IS NULL)
+      ),
+    CONSTRAINT chk_teacher_external_identities_authentication_time
+      CHECK (
+        last_authenticated_at IS NULL
+        OR last_authenticated_at >= verified_at
+      ),
+    CONSTRAINT chk_teacher_external_identities_deletion_actor
+      CHECK (deleted_at IS NOT NULL OR deleted_by IS NULL)
+  );
+  CREATE INDEX IF NOT EXISTS idx_teacher_external_identities_google_email
+    ON teacher_external_identities (normalized_email)
+    WHERE provider = 'GOOGLE'
+      AND normalized_email IS NOT NULL
+      AND deleted_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_teacher_external_identities_created_by
+    ON teacher_external_identities (created_by)
+    WHERE created_by IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_teacher_external_identities_updated_by
+    ON teacher_external_identities (updated_by)
+    WHERE updated_by IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_teacher_external_identities_deleted_by
+    ON teacher_external_identities (deleted_by)
+    WHERE deleted_by IS NOT NULL;
+  DROP TRIGGER IF EXISTS trg_teacher_external_identities_set_updated_at
+    ON teacher_external_identities;
+  CREATE TRIGGER trg_teacher_external_identities_set_updated_at
+    BEFORE UPDATE ON teacher_external_identities
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+  CREATE TABLE IF NOT EXISTS classroom_homeroom_teachers (
+    classroom_id BIGINT PRIMARY KEY,
+    school_id INTEGER NOT NULL,
+    teacher_membership_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by INTEGER,
+    CONSTRAINT fk_classroom_homeroom_teachers_classroom
+      FOREIGN KEY (classroom_id, school_id)
+      REFERENCES school_classrooms(id, school_id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_homeroom_teachers_membership
+      FOREIGN KEY (teacher_membership_id, school_id)
+      REFERENCES school_teacher_memberships(id, school_id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_homeroom_teachers_created_by
+      FOREIGN KEY (created_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_homeroom_teachers_updated_by
+      FOREIGN KEY (updated_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_classroom_homeroom_teachers_membership
+    ON classroom_homeroom_teachers (teacher_membership_id, classroom_id);
+  CREATE INDEX IF NOT EXISTS idx_classroom_homeroom_teachers_created_by
+    ON classroom_homeroom_teachers (created_by)
+    WHERE created_by IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_classroom_homeroom_teachers_updated_by
+    ON classroom_homeroom_teachers (updated_by)
+    WHERE updated_by IS NOT NULL;
+  DROP TRIGGER IF EXISTS trg_classroom_homeroom_teachers_set_updated_at
+    ON classroom_homeroom_teachers;
+  CREATE TRIGGER trg_classroom_homeroom_teachers_set_updated_at
+    BEFORE UPDATE ON classroom_homeroom_teachers
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+  CREATE TABLE IF NOT EXISTS classroom_attendance_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id INTEGER NOT NULL,
+    school_term_id BIGINT NOT NULL,
+    classroom_id BIGINT NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    token_encrypted TEXT NOT NULL,
+    link_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    rotated_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by INTEGER,
+    CONSTRAINT uq_classroom_attendance_links_token_hash UNIQUE (token_hash),
+    CONSTRAINT uq_classroom_attendance_links_classroom UNIQUE (classroom_id),
+    CONSTRAINT fk_classroom_attendance_links_classroom
+      FOREIGN KEY (classroom_id, school_term_id, school_id)
+      REFERENCES school_classrooms(id, school_term_id, school_id)
+      ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_attendance_links_created_by
+      FOREIGN KEY (created_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_classroom_attendance_links_updated_by
+      FOREIGN KEY (updated_by) REFERENCES users(id)
+      ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT chk_classroom_attendance_links_token_hash
+      CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_classroom_attendance_links_encrypted_token
+      CHECK (char_length(btrim(token_encrypted)) > 0),
+    CONSTRAINT chk_classroom_attendance_links_status
+      CHECK (link_status IN ('ACTIVE', 'INACTIVE')),
+    CONSTRAINT chk_classroom_attendance_links_rotated_at
+      CHECK (rotated_at IS NULL OR rotated_at >= issued_at),
+    CONSTRAINT chk_classroom_attendance_links_last_used_at
+      CHECK (last_used_at IS NULL OR last_used_at >= issued_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_classroom_attendance_links_scope
+    ON classroom_attendance_links (
+      school_id,
+      school_term_id,
+      link_status,
+      classroom_id
+    );
+  CREATE INDEX IF NOT EXISTS idx_classroom_attendance_links_created_by
+    ON classroom_attendance_links (created_by)
+    WHERE created_by IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_classroom_attendance_links_updated_by
+    ON classroom_attendance_links (updated_by)
+    WHERE updated_by IS NOT NULL;
+  DROP TRIGGER IF EXISTS trg_classroom_attendance_links_set_updated_at
+    ON classroom_attendance_links;
+  CREATE TRIGGER trg_classroom_attendance_links_set_updated_at
+    BEFORE UPDATE ON classroom_attendance_links
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+  ALTER TABLE teacher_external_identities ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE classroom_homeroom_teachers ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE classroom_attendance_links ENABLE ROW LEVEL SECURITY;
+
+  DO $secure_classroom_link_tables$
+  DECLARE
+    role_name TEXT;
+  BEGIN
+    FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated']
+    LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+        EXECUTE format(
+          'REVOKE ALL PRIVILEGES ON TABLE teacher_external_identities, classroom_homeroom_teachers, classroom_attendance_links FROM %I',
+          role_name
+        );
+        EXECUTE format(
+          'REVOKE ALL PRIVILEGES ON SEQUENCE teacher_external_identities_id_seq FROM %I',
+          role_name
+        );
+      END IF;
+    END LOOP;
+  END;
+  $secure_classroom_link_tables$;
+
+  DROP FUNCTION IF EXISTS sync_classroom_homeroom_teacher(BIGINT, INTEGER);
+
+  CREATE OR REPLACE FUNCTION sync_classroom_homeroom_teacher(
+    target_classroom_id BIGINT
+  )
+  RETURNS VOID
+  LANGUAGE plpgsql
+  SECURITY INVOKER
+  SET search_path = public, pg_temp
+  AS $sync_classroom_homeroom_teacher$
+  BEGIN
+    INSERT INTO classroom_homeroom_teachers (
+      classroom_id,
+      school_id,
+      teacher_membership_id,
+      created_at,
+      created_by,
+      updated_at,
+      updated_by
+    )
+    SELECT
+      assignment.classroom_id,
+      assignment.school_id,
+      assignment.teacher_membership_id,
+      assignment.created_at,
+      assignment.created_by,
+      assignment.updated_at,
+      assignment.updated_by
+    FROM classroom_teacher_assignments assignment
+    WHERE assignment.classroom_id = target_classroom_id
+      AND assignment.assignment_kind = 'HOMEROOM'
+      AND assignment.assignment_status = 'ACTIVE'
+      AND assignment.deleted_at IS NULL
+    ON CONFLICT (classroom_id) DO UPDATE
+    SET school_id = EXCLUDED.school_id,
+        teacher_membership_id = EXCLUDED.teacher_membership_id,
+        updated_at = EXCLUDED.updated_at,
+        updated_by = EXCLUDED.updated_by;
+
+    IF NOT FOUND THEN
+      DELETE FROM classroom_homeroom_teachers
+      WHERE classroom_id = target_classroom_id;
+    END IF;
+  END;
+  $sync_classroom_homeroom_teacher$;
+
+  CREATE OR REPLACE FUNCTION sync_classroom_homeroom_teacher_from_assignment()
+  RETURNS TRIGGER
+  LANGUAGE plpgsql
+  SECURITY INVOKER
+  SET search_path = public, pg_temp
+  AS $sync_classroom_homeroom_teacher_from_assignment$
+  BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.assignment_kind = 'HOMEROOM' THEN
+      PERFORM sync_classroom_homeroom_teacher(OLD.classroom_id);
+    END IF;
+
+    IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.assignment_kind = 'HOMEROOM' THEN
+      PERFORM sync_classroom_homeroom_teacher(NEW.classroom_id);
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+      RETURN OLD;
+    END IF;
+    RETURN NEW;
+  END;
+  $sync_classroom_homeroom_teacher_from_assignment$;
+
+  DROP TRIGGER IF EXISTS trg_sync_classroom_homeroom_teacher
+    ON classroom_teacher_assignments;
+  CREATE TRIGGER trg_sync_classroom_homeroom_teacher
+    AFTER INSERT OR UPDATE OR DELETE ON classroom_teacher_assignments
+    FOR EACH ROW EXECUTE FUNCTION sync_classroom_homeroom_teacher_from_assignment();
+
+  REVOKE ALL ON FUNCTION sync_classroom_homeroom_teacher(BIGINT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION sync_classroom_homeroom_teacher_from_assignment() FROM PUBLIC;
+
+  DO $secure_classroom_link_functions$
+  DECLARE
+    role_name TEXT;
+  BEGIN
+    FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated']
+    LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+        EXECUTE format(
+          'REVOKE ALL ON FUNCTION sync_classroom_homeroom_teacher(BIGINT) FROM %I',
+          role_name
+        );
+        EXECUTE format(
+          'REVOKE ALL ON FUNCTION sync_classroom_homeroom_teacher_from_assignment() FROM %I',
+          role_name
+        );
+      END IF;
+    END LOOP;
+  END;
+  $secure_classroom_link_functions$;
+
   CREATE TABLE IF NOT EXISTS school_structure_backfill_issues (
     id BIGSERIAL PRIMARY KEY,
     student_uuid UUID NOT NULL,
