@@ -7,6 +7,7 @@ import type {
   StudentAttendanceRow,
   StudentAttendanceCalendarRow,
   StudentProfileSummaryRow,
+  StudentCareConsiderationRow,
   StudentSubjectAttendanceRow,
   StudentCaseRow,
   StudentDetailRow,
@@ -185,7 +186,7 @@ export class StudentsRepository {
           sc.name as school_name,
           sc.id as school_id,
           COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
-          COALESCE(ss.category, 'UNMAPPED') as student_status_category,
+          COALESCE(ss.category, 'UNMATCHED') as student_status_category,
           COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant,
           person.photo_storage_key,
           person.updated_at AS photo_updated_at
@@ -328,7 +329,7 @@ export class StudentsRepository {
         sc.name as school_name,
         COALESCE(risk.risk_tier, 'NORMAL') as risk_tier,
         COALESCE(ss.label_th, 'ยังไม่ได้จับคู่') as student_status_label,
-        COALESCE(ss.category, 'UNMAPPED') as student_status_category,
+        COALESCE(ss.category, 'UNMATCHED') as student_status_category,
         COALESCE(ss.badge_variant, 'warning') as student_status_badge_variant,
         homeroom.homeroom_teacher_name,
         -- Latest home-visit case pin wins (most recent on-the-ground
@@ -778,6 +779,32 @@ export class StudentsRepository {
       [id],
     );
     return result.rows[0] ?? null;
+  }
+
+  async listStudentCareConsiderations(id: string): Promise<StudentCareConsiderationRow[]> {
+    const result = await this.query<StudentCareConsiderationRow>(
+      `
+        SELECT 'DISADVANTAGE'::text AS care_kind, option.code, option.label_th,
+          relation.recorded_at::text
+        FROM student_term_disadvantages relation
+        JOIN disadvantage_types option
+          ON option.code = relation.disadvantage_type_code
+        WHERE relation.student_uuid = $1 AND option.is_active = TRUE
+
+        UNION ALL
+
+        SELECT 'DISABILITY'::text AS care_kind, option.code, option.label_th,
+          relation.recorded_at::text
+        FROM student_disabilities relation
+        JOIN disability_types option
+          ON option.code = relation.disability_type_code
+        WHERE relation.student_uuid = $1 AND option.is_active = TRUE
+
+        ORDER BY care_kind, label_th, code
+      `,
+      [id],
+    );
+    return result.rows;
   }
 
   async listStudentAttendanceCalendar(id: string): Promise<StudentAttendanceCalendarRow[]> {

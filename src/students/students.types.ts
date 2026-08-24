@@ -109,6 +109,13 @@ export interface StudentProfileSummaryRow extends Record<string, unknown> {
   total_count: string | number;
 }
 
+export interface StudentCareConsiderationRow extends Record<string, unknown> {
+  care_kind: 'DISADVANTAGE' | 'DISABILITY';
+  code: string;
+  label_th: string;
+  recorded_at: string;
+}
+
 export interface StudentAttendanceCalendarRow extends Record<string, unknown> {
   attendance_category: 'ALL_PERIODS' | 'SOME_PERIODS' | 'NO_PERIODS';
   attendance_category_label: string;

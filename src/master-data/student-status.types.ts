@@ -1,10 +1,12 @@
 export const STUDENT_STATUS_CATEGORIES = [
-  'ACTIVE',
+  'STUDYING',
+  'SUSPENDED',
   'GRADUATED',
-  'WITHDRAWN',
   'TRANSFERRED',
+  'WITHDRAWN',
+  'DISCHARGED',
   'DECEASED',
-  'UNMAPPED',
+  'UNMATCHED',
 ] as const;
 
 export type StudentStatusCategory = (typeof STUDENT_STATUS_CATEGORIES)[number];

@@ -11,10 +11,4 @@ export class PublicStatusCatalogController {
   async getAttendanceRecordStatuses() {
     return await this.statusCatalogService.getCatalog('ATTENDANCE_RECORD');
   }
-
-  /** The teacher and delegation links render ประวัติการมอบหมาย without a session. */
-  @Get('attendance-delegation')
-  async getAttendanceDelegationStatuses() {
-    return await this.statusCatalogService.getCatalog('ATTENDANCE_DELEGATION');
-  }
 }

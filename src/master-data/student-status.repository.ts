@@ -9,6 +9,8 @@ interface ListOptions {
   searchTerm?: string;
   sortBy: StudentStatusSortField;
   sortDirection: 'asc' | 'desc';
+  includeTechnical: boolean;
+  includeInactive: boolean;
 }
 
 interface WriteValues {
@@ -55,16 +57,19 @@ export class StudentStatusRepository {
 
   async list(options: ListOptions): Promise<{ rows: StudentStatusRow[]; totalCount: number }> {
     const params: unknown[] = [];
-    let whereSql = '';
+    const whereConditions: string[] = [];
+    if (!options.includeTechnical) whereConditions.push("status.category <> 'UNMATCHED'");
+    if (!options.includeInactive) whereConditions.push('status.is_enabled = TRUE');
     if (options.searchTerm) {
       params.push(`%${options.searchTerm}%`);
-      whereSql = `
-        WHERE status.label_th ILIKE $1
+      whereConditions.push(`(
+           status.label_th ILIKE $1
            OR status.category ILIKE $1
            OR status.source_system ILIKE $1
            OR status.code::text ILIKE $1
-      `;
+      )`);
     }
+    const whereSql = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
     const countResult = await queryDataSource<CountRow>(
       this.dataSource,

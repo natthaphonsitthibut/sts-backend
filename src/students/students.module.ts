@@ -8,9 +8,10 @@ import { StudentsRepository } from './students.repository';
 import { PiiExportController, PiiExportDownloadController } from './pii-export.controller';
 import { PiiExportRepository } from './pii-export.repository';
 import { PiiExportService } from './pii-export.service';
+import { MasterDataModule } from '../master-data/master-data.module';
 
 @Module({
-  imports: [AuthModule, TaskModule, StudentGeocodeModule],
+  imports: [AuthModule, TaskModule, StudentGeocodeModule, MasterDataModule],
   controllers: [PiiExportController, PiiExportDownloadController, StudentsController],
   providers: [StudentsRepository, StudentsService, PiiExportRepository, PiiExportService],
   // Teacher links render the same student profile as the staff screen, so the

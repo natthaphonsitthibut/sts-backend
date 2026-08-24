@@ -570,9 +570,10 @@ export class StudentsService {
       throw new NotFoundException('Student not found');
     }
 
-    const [summary, calendarRows] = await Promise.all([
+    const [summary, calendarRows, careRows] = await Promise.all([
       this.studentsRepository.findStudentProfileSummary(id),
       this.studentsRepository.listStudentAttendanceCalendar(id),
+      this.studentsRepository.listStudentCareConsiderations(id),
     ]);
     if (!summary) {
       throw new NotFoundException('Student profile summary not found');
@@ -603,6 +604,22 @@ export class StudentsService {
         grades: {
           termGpa: summary.term_gpa === null ? null : Number(summary.term_gpa),
           cumulativeGpax: summary.cumulative_gpax === null ? null : Number(summary.cumulative_gpax),
+        },
+        careConsiderations: {
+          disadvantages: careRows
+            .filter((row) => row.care_kind === 'DISADVANTAGE')
+            .map((row) => ({
+              code: row.code,
+              labelTh: row.label_th,
+              recordedAt: row.recorded_at,
+            })),
+          disabilities: careRows
+            .filter((row) => row.care_kind === 'DISABILITY')
+            .map((row) => ({
+              code: row.code,
+              labelTh: row.label_th,
+              recordedAt: row.recorded_at,
+            })),
         },
         attendance: {
           ratePercent: attendanceRatePercent,

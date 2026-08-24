@@ -21,9 +21,10 @@ export interface SystemRoleDefinition {
   is_system: boolean;
 }
 
-interface PermissionMenuItem {
+export interface PermissionMenuItem {
   id: string;
   label: string;
+  scopePolicy?: 'global-only';
   children?: PermissionMenuItem[];
 }
 
@@ -39,7 +40,11 @@ function buildPermissionMenu(): PermissionMenuItem[] {
   const groups = new Map<string, PermissionMenuItem>();
 
   for (const page of GRANTABLE_PAGE_PERMISSIONS) {
-    const entry = { id: page.id, label: page.title };
+    const entry = {
+      id: page.id,
+      label: page.title,
+      ...(page.scopePolicy ? { scopePolicy: page.scopePolicy } : {}),
+    };
     if (!page.group) {
       items.push(entry);
       continue;
@@ -58,11 +63,9 @@ function buildPermissionMenu(): PermissionMenuItem[] {
 
 export const PERMISSION_MENU_ITEMS: PermissionMenuItem[] = buildPermissionMenu();
 
-function collectLeafPermissions(items: PermissionMenuItem[]): Array<{ id: string; label: string }> {
+function collectLeafPermissions(items: PermissionMenuItem[]): PermissionMenuItem[] {
   return items.flatMap((item) =>
-    item.children && item.children.length > 0
-      ? collectLeafPermissions(item.children)
-      : [{ id: item.id, label: item.label }],
+    item.children && item.children.length > 0 ? collectLeafPermissions(item.children) : [item],
   );
 }
 

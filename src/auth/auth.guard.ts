@@ -6,7 +6,12 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY, ROLES_KEY } from './permissions.decorator';
+import {
+  ANY_PERMISSIONS_KEY,
+  GLOBAL_SCOPE_KEY,
+  PERMISSIONS_KEY,
+  ROLES_KEY,
+} from './permissions.decorator';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { hasPermission } from './permissions.constants';
 import { AuthActorService } from './auth-actor.service';
@@ -113,6 +118,28 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('ไม่มีสิทธิ์เข้าถึง');
     }
 
+    return true;
+  }
+}
+
+@Injectable()
+export class GlobalScopeGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiresGlobalScope = this.reflector.getAllAndOverride<boolean>(GLOBAL_SCOPE_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!requiresGlobalScope) return true;
+
+    const user = context.switchToHttp().getRequest<RequestWithUser>().user;
+    if (!user) {
+      throw new UnauthorizedException('ไม่ได้เข้าสู่ระบบ');
+    }
+    if (user.data_scope?.global !== true) {
+      throw new ForbiddenException('หน้านี้ใช้ได้เฉพาะขอบเขตข้อมูลระดับประเทศ');
+    }
     return true;
   }
 }

@@ -479,14 +479,14 @@ export class ImportsService {
 
   /**
    * Codes usable as a real student status for import. A placeholder row whose
-   * category is UNMAPPED (e.g. seeded "ยังไม่ได้จับคู่") exists in master data but
+   * category is UNMATCHED (e.g. seeded "ยังไม่ได้จับคู่") exists in master data but
    * must still be treated as not mapped, otherwise quarantined rows would
    * auto-pass retry without any correction.
    */
   private mappedStudentStatusCodes(statuses: ImportReferenceRow[]): Set<number> {
     return new Set(
       statuses
-        .filter((status) => status.category !== 'UNMAPPED')
+        .filter((status) => status.category !== 'UNMATCHED')
         .map((status) => Number(status.id)),
     );
   }
@@ -495,7 +495,7 @@ export class ImportsService {
     label?: string | null;
     category?: string | null;
   }): string | null {
-    if (!status?.label || status.category === 'UNMAPPED') return null;
+    if (!status?.label || status.category === 'UNMATCHED') return null;
     return status.label.replace(/\s*\(ตัวอย่าง\)\s*$/u, '').trim() || status.label;
   }
 
@@ -2043,7 +2043,7 @@ export class ImportsService {
           hasDifferentSchoolSnapshot,
           studentStatusCode: studentStatusCode || '-',
           studentStatusLabel: this.importStatusLabel(studentStatus) ?? 'ยังไม่ได้จับคู่',
-          studentStatusCategory: studentStatus?.category ?? 'UNMAPPED',
+          studentStatusCategory: studentStatus?.category ?? 'UNMATCHED',
         };
       });
 

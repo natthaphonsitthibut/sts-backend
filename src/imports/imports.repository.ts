@@ -1008,7 +1008,7 @@ export class ImportsRepository {
       (q.reason_code = 'UNMAPPED_STUDENT_STATUS'
       AND EXISTS (
         SELECT 1 FROM student_status ready_status
-        WHERE ready_status.category <> 'UNMAPPED'
+        WHERE ready_status.category <> 'UNMATCHED'
           AND ready_status.code = CASE
           WHEN q.mapped_values->>'StudentStatusID_Onec' ~ '^[1-9]\\d*$'
           THEN (q.mapped_values->>'StudentStatusID_Onec')::int
@@ -1065,7 +1065,7 @@ export class ImportsRepository {
       COALESCE(q.mapped_values->>'StudentStatusID_Onec', '') = ''
       OR EXISTS (
         SELECT 1 FROM student_status required_status
-        WHERE required_status.category <> 'UNMAPPED'
+        WHERE required_status.category <> 'UNMATCHED'
           AND required_status.code = CASE
           WHEN q.mapped_values->>'StudentStatusID_Onec' ~ '^[1-9]\\d*$'
           THEN (q.mapped_values->>'StudentStatusID_Onec')::int

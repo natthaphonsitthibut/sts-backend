@@ -38,6 +38,7 @@ import {
 } from './dto/students.dto';
 import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { MasterDataService } from '../master-data/master-data.service';
 
 function firstHeaderValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -54,6 +55,7 @@ export class StudentsController {
   constructor(
     private readonly studentsService: StudentsService,
     private readonly auditLog: AuditLogService,
+    private readonly masterData: MasterDataService,
   ) {}
 
   private async recordStudentWriteAudit(
@@ -110,6 +112,16 @@ export class StudentsController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return this.studentsService.getFilterOptions(query, resolveActorDataScope(actor), actor);
+  }
+
+  @Get('care-options')
+  @RequirePermission('students')
+  async getCareOptions() {
+    const [disadvantages, disabilities] = await Promise.all([
+      this.masterData.listActiveOptions('disadvantage-types'),
+      this.masterData.listActiveOptions('disability-types'),
+    ]);
+    return { success: true, data: { disadvantages, disabilities } };
   }
 
   @Get('cases/by-name/:name')

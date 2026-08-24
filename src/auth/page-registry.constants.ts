@@ -22,6 +22,8 @@ export interface AppPageDefinition {
   title: string;
   /** Sidebar section header, or null for a top-level entry. */
   group: string | null;
+  /** Extra data-scope boundary enforced for page CRUD, if any. */
+  scopePolicy?: 'global-only';
 }
 
 export const APP_PAGE_GROUPS = {
@@ -47,6 +49,12 @@ export const APP_PAGES: AppPageDefinition[] = [
   },
   { id: 'import-data', title: 'นำเข้าข้อมูล', group: APP_PAGE_GROUPS.data },
   { id: 'export-data', title: 'ส่งออกข้อมูล', group: APP_PAGE_GROUPS.data },
+  {
+    id: 'master-data',
+    title: 'ข้อมูลพื้นฐาน',
+    group: APP_PAGE_GROUPS.data,
+    scopePolicy: 'global-only',
+  },
   {
     id: 'attendance-dashboard',
     title: 'ความครบถ้วน',
