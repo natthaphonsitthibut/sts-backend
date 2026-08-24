@@ -12,7 +12,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import * as crypto from 'crypto';
 import { hashToken } from '../common/utils/helpers';
 import { SaveTaskSubmissionDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
@@ -145,21 +144,25 @@ export class TaskSubmissionService {
    * skew) and never before the assignment window opened. Without the bounds a
    * link holder could date a home visit years away from when it happened.
    */
-  private normalizeVisitedAt(value: unknown, task: Record<string, unknown>): string {
+  private normalizeTaskTimestamp(
+    value: unknown,
+    task: Record<string, unknown>,
+    fieldLabel: string,
+  ): string {
     const raw = this.toScalarString(value);
     if (!raw) {
-      return new Date().toISOString();
+      throw new BadRequestException(`กรุณาระบุ${fieldLabel}`);
     }
     const parsed = new Date(raw);
     if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException('วันและเวลาที่ลงพื้นที่ไม่ถูกต้อง');
+      throw new BadRequestException(`${fieldLabel}ไม่ถูกต้อง`);
     }
     if (parsed.getTime() > Date.now() + VISITED_AT_FUTURE_GRACE_MS) {
-      throw new BadRequestException('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ในอนาคต');
+      throw new BadRequestException(`${fieldLabel}ต้องไม่อยู่ในอนาคต`);
     }
     const assignedFrom = this.toTimestamp(task.opens_at) ?? this.toTimestamp(task.created_at);
     if (assignedFrom !== null && parsed.getTime() < assignedFrom) {
-      throw new BadRequestException('วันและเวลาที่ลงพื้นที่ต้องไม่อยู่ก่อนเวลาที่ได้รับมอบหมาย');
+      throw new BadRequestException(`${fieldLabel}ต้องไม่อยู่ก่อนเวลาที่ได้รับมอบหมาย`);
     }
     return parsed.toISOString();
   }
@@ -202,86 +205,86 @@ export class TaskSubmissionService {
       }
 
       const caseId = typeof link.case_id === 'number' ? link.case_id : null;
-      const decisionCode =
-        this.toScalarString(data.case_follow_up_decision)?.toUpperCase() ??
-        (caseId !== null ? 'REQUEST_REVIEW' : '');
+      // A link holder reports assigned work only. Case action fields from legacy
+      // clients are deliberately ignored; the authenticated reviewer decides next.
       const decision = caseId
-        ? await this.caseTrackingOptions.getFollowUpDecision(decisionCode)
+        ? await this.caseTrackingOptions.getFollowUpDecision('REQUEST_REVIEW')
         : null;
-      const resolutionOutcome = await this.caseTrackingOptions.assertResolutionOutcome(
-        this.toScalarString(data.case_resolution_outcome_code)?.toUpperCase() ?? null,
-      );
-      if (decision?.requiresResolutionOutcome && !resolutionOutcome) {
-        throw new BadRequestException('กรุณาเลือกผลลัพธ์การติดตามก่อนปิดเคส');
-      }
       if (decision && !decision.targetStatus) {
         throw new BadRequestException('ผลการส่งรายงานไม่มีสถานะปลายทาง');
       }
-      const visitedAt = this.normalizeVisitedAt(data.visited_at, task);
-      const homeVisitException = await this.caseTrackingOptions.getHomeVisitException(
-        this.toScalarString(data.home_visit_exception_code)?.toUpperCase() ?? null,
+      const isAssistance = link.task_type === 'ASSIST';
+      const visitedAt = isAssistance
+        ? null
+        : this.normalizeTaskTimestamp(data.visited_at, task, 'วันและเวลาที่ไปเยี่ยม/ติดตาม');
+      const assistedAt = isAssistance
+        ? this.normalizeTaskTimestamp(data.assisted_at, task, 'วันและเวลาที่ให้ความช่วยเหลือ')
+        : null;
+      const submittedExecutionOutcomeCode =
+        this.toScalarString(data.task_execution_outcome_code)?.toUpperCase() ?? null;
+      const nonFollowUpReasonCode =
+        this.toScalarString(data.non_follow_up_reason_code)?.toUpperCase() ?? null;
+      const disadvantageInput = data.disadvantage_type_codes ?? [];
+      const disabilityInput = data.disability_type_codes ?? [];
+      const homeVisitExceptionCode =
+        this.toScalarString(data.home_visit_exception_code)?.toUpperCase() ?? null;
+      const executionOutcomeCode = isAssistance
+        ? submittedExecutionOutcomeCode
+        : homeVisitExceptionCode === 'STUDENT_NOT_FOUND'
+          ? 'NOT_SUCCEEDED'
+          : 'SUCCEEDED';
+      const followUpProblemCategoryCode =
+        this.toScalarString(data.follow_up_problem_category_code)?.toUpperCase() ?? null;
+      const parentalStatusCode =
+        this.toScalarString(data.parental_status_code)?.toUpperCase() ?? null;
+      const guardianTypeCode = this.toScalarString(data.guardian_type_code)?.toUpperCase() ?? null;
+      const residenceEnvironmentDetail = this.toScalarString(data.residence_environment_detail);
+      const residenceEnvironmentCodes = (data.residence_environment_codes ?? []).map((code) =>
+        code.trim().toUpperCase(),
       );
+      const [
+        executionOutcome,
+        nonFollowUpReason,
+        disadvantageTypeCodes,
+        disabilityTypeCodes,
+        homeVisitException,
+        followUpProblemCategory,
+        parentalStatus,
+        guardianType,
+        residenceEnvironments,
+      ] = await Promise.all([
+        this.caseTrackingOptions.getTaskExecutionOutcome(executionOutcomeCode),
+        this.caseTrackingOptions.getNonFollowUpReason(nonFollowUpReasonCode),
+        this.caseTrackingOptions.getCareObservationCodes('DISADVANTAGE', disadvantageInput),
+        this.caseTrackingOptions.getCareObservationCodes('DISABILITY', disabilityInput),
+        this.caseTrackingOptions.getHomeVisitException(homeVisitExceptionCode),
+        this.caseTrackingOptions.getFollowUpProblemCategory(followUpProblemCategoryCode),
+        this.caseTrackingOptions.getParentalStatus(parentalStatusCode),
+        this.caseTrackingOptions.getGuardianType(guardianTypeCode),
+        this.caseTrackingOptions.getResidenceEnvironments(
+          residenceEnvironmentCodes,
+          residenceEnvironmentDetail,
+        ),
+      ]);
+      if (nonFollowUpReason && (isAssistance || executionOutcome !== 'NOT_SUCCEEDED')) {
+        throw new BadRequestException('สาเหตุการไม่ติดตามใช้ได้เฉพาะงานติดตามที่ยังไม่สำเร็จ');
+      }
+      if (isAssistance && (disadvantageTypeCodes.length > 0 || disabilityTypeCodes.length > 0)) {
+        throw new BadRequestException('ข้อมูลจากการเยี่ยมบ้านใช้กับงานติดตามเท่านั้น');
+      }
+      // A not-found visit keeps the dedicated re-assignment lane open: it is an
+      // operational exception, not a reviewer decision. Other completed work
+      // still enters the review gate before the case can be resolved.
       const studentNotFound = homeVisitException?.code === 'STUDENT_NOT_FOUND';
       const targetCaseStatus = studentNotFound ? 'STUDENT_NOT_FOUND' : decision?.targetStatus;
-      const followUpProblemCategory = await this.caseTrackingOptions.getFollowUpProblemCategory(
-        this.toScalarString(data.follow_up_problem_category_code)?.toUpperCase() ?? null,
-      );
-      // An assistance round reports what help was given, not a home visit, so
-      // the household/visit questions do not apply to it.
-      const isAssistance = link.task_type === 'ASSIST';
-      // Nothing was observed when the student was not found, so the assessment
-      // has nothing to categorise either.
-      if (link.task_type === 'VISIT' && !studentNotFound && !followUpProblemCategory) {
-        throw new BadRequestException('กรุณาเลือกหัวข้อปัญหาของผลการติดตาม');
-      }
-      const assistedAt = isAssistance ? (this.toScalarString(data.assisted_at) ?? null) : null;
       const assistanceDetail = isAssistance
         ? (this.toScalarString(data.assistance_detail) ?? null)
         : null;
-      if (isAssistance && !assistedAt) {
-        throw new BadRequestException('กรุณาระบุวันที่และเวลาที่ให้ความช่วยเหลือ');
-      }
-      const parentalStatus = await this.caseTrackingOptions.getParentalStatus(
-        this.toScalarString(data.parental_status_code)?.toUpperCase() ?? null,
-      );
-      const guardianType = await this.caseTrackingOptions.getGuardianType(
-        this.toScalarString(data.guardian_type_code)?.toUpperCase() ?? null,
-      );
       const guardianTypeDetail = this.toScalarString(data.guardian_type_detail);
       if (guardianType?.requiresDetail && !guardianTypeDetail) {
         throw new BadRequestException('กรุณาระบุผู้ปกครอง');
       }
-      const residenceEnvironmentDetail = this.toScalarString(data.residence_environment_detail);
-      const residenceEnvironments = await this.caseTrackingOptions.getResidenceEnvironments(
-        (data.residence_environment_codes ?? []).map((code) => code.trim().toUpperCase()),
-        residenceEnvironmentDetail,
-      );
       const causeDetail = this.toScalarString(data.notes ?? data.cause_detail);
-      // A visit report carries what the visitor observed, so every household
-      // answer is required. Not finding the student is the one round with
-      // nothing to observe — then only the account of the search is required.
-      if (link.task_type === 'VISIT' && !causeDetail) {
-        throw new BadRequestException(
-          studentNotFound ? 'กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน' : 'กรุณากรอกคำอธิบายเพิ่มเติม',
-        );
-      }
-      if (link.task_type === 'VISIT' && !studentNotFound) {
-        if (!parentalStatus) {
-          throw new BadRequestException('กรุณาเลือกสถานะของบิดา-มารดา');
-        }
-        if (!guardianType) {
-          throw new BadRequestException('กรุณาเลือกผู้ปกครอง');
-        }
-        if (residenceEnvironments.length === 0) {
-          throw new BadRequestException('กรุณาเลือกสภาพแวดล้อมรอบที่พัก');
-        }
-        if (!residenceEnvironmentDetail) {
-          throw new BadRequestException('กรุณากรอกรายละเอียดสภาพแวดล้อมรอบที่พัก');
-        }
-      }
-      if (isAssistance && !assistanceDetail) {
-        throw new BadRequestException('กรุณากรอกคำอธิบายเพิ่มเติม');
-      }
       const updatedAddressLine = this.toScalarString(data.updated_address_line);
       const updatedAddressProvince = this.toScalarString(data.updated_address_province);
       const updatedAddressDistrict = this.toScalarString(data.updated_address_district);
@@ -318,16 +321,12 @@ export class TaskSubmissionService {
               updatedPostalCode,
             )
           : null;
-      const reviewId =
-        !studentNotFound && decision?.code === 'CLOSE_CASE' ? crypto.randomUUID() : null;
-      const reviewerLabel = this.toScalarString(link.assigned_to_name) ?? 'ผู้ลงพื้นที่';
-
       await this.taskRepository.withTransaction(async (executor) => {
         const live = await this.taskRepository.lockLiveTaskLink(String(link.link_id), executor);
         if (!live) {
           throw new ConflictException('ลิงก์นี้ถูกลบแล้ว');
         }
-        await this.taskRepository.insertTaskSubmission(
+        const submissionId = await this.taskRepository.insertTaskSubmission(
           {
             linkId: String(link.link_id),
             visitLat: this.normalizeNumber(data.visit_lat),
@@ -356,11 +355,18 @@ export class TaskSubmissionService {
             updatedLat: this.normalizeNumber(data.updated_lat),
             updatedLng: this.normalizeNumber(data.updated_lng),
             caseFollowUpDecision: studentNotFound ? null : (decision?.code ?? null),
-            caseResolutionOutcomeCode:
-              !studentNotFound && decision?.requiresResolutionOutcome ? resolutionOutcome : null,
+            caseResolutionOutcomeCode: null,
             assistedAt,
             assistanceDetail,
+            taskExecutionOutcomeCode: executionOutcome,
+            nonFollowUpReasonCode: nonFollowUpReason,
           },
+          executor,
+        );
+        await this.taskRepository.insertHomeVisitCareObservations(
+          submissionId,
+          disadvantageTypeCodes,
+          disabilityTypeCodes,
           executor,
         );
 
@@ -403,21 +409,6 @@ export class TaskSubmissionService {
           if (!caseTransitioned) {
             throw new ConflictException('เคสนี้ถูกดำเนินการไปแล้ว กรุณาโหลดข้อมูลล่าสุด');
           }
-          if (reviewId) {
-            await this.taskRepository.insertCaseReview(
-              {
-                reviewId,
-                caseId,
-                reviewAction: 'CLOSE',
-                reviewNote: data.notes ?? data.cause_detail ?? null,
-                reviewSummary: data.recommendation ?? null,
-                resolutionOutcome,
-                reviewedBy: reviewerLabel,
-                sourceActorUserId: null,
-              },
-              executor,
-            );
-          }
         }
 
         await this.taskRepository.updateTaskStatus(String(link.task_id), 'COMPLETED', executor);
@@ -425,21 +416,6 @@ export class TaskSubmissionService {
       });
 
       if (caseId !== null && targetCaseStatus) {
-        if (reviewId) {
-          await this.auditLog.record({
-            actorUserId: null,
-            actorLabel: reviewerLabel,
-            action: 'CASE_CLOSE',
-            targetType: 'case',
-            targetId: String(caseId),
-            metadata: {
-              source: 'VISIT_REPORT',
-              taskId: String(link.task_id),
-              resolutionOutcome,
-            },
-            ip: null,
-          });
-        }
         try {
           await this.notificationsService.notifyCaseStatusChanged({
             caseId,
@@ -455,7 +431,7 @@ export class TaskSubmissionService {
       }
 
       this.logger.log(
-        `[saveTaskSubmission] success decision=${decision?.code ?? 'NONE'} exception=${homeVisitException?.code ?? 'NONE'}`,
+        `[saveTaskSubmission] success decision=${studentNotFound ? 'REASSIGN' : (decision?.code ?? 'NONE')} exception=${homeVisitException?.code ?? 'NONE'}`,
       );
       return { success: true };
     } catch (err) {

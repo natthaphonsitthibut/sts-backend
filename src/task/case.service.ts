@@ -140,6 +140,10 @@ export class CaseService {
       assistance_measure_detail: this.normalizeText(row.assistance_measure_detail) || null,
       assisted_at: row.assisted_at ?? null,
       assistance_detail: this.normalizeText(row.assistance_detail) || null,
+      task_execution_outcome_code: this.normalizeText(row.task_execution_outcome_code) || null,
+      task_execution_outcome_label: this.normalizeText(row.task_execution_outcome_label) || null,
+      non_follow_up_reason_code: this.normalizeText(row.non_follow_up_reason_code) || null,
+      non_follow_up_reason_label: this.normalizeText(row.non_follow_up_reason_label) || null,
       created_at: row.created_at ?? null,
       initial_assignee: this.normalizeText(row.initial_assignee) || null,
       assignment_starts_at: row.assignment_starts_at ?? null,
@@ -195,6 +199,21 @@ export class CaseService {
       reviewed_by:
         this.normalizeText(row.reviewer_display) || this.normalizeText(row.reviewed_by) || null,
       reviewed_at: row.reviewed_at ?? null,
+    };
+  }
+
+  private mapCaseReferral(row: Record<string, unknown>) {
+    return {
+      id: this.normalizeText(row.id),
+      case_review_id: this.normalizeText(row.case_review_id),
+      referral_agency_id: this.normalizeNumber(row.referral_agency_id),
+      agency_name: this.normalizeText(row.agency_name),
+      agency_kind_code: this.normalizeText(row.agency_kind_code),
+      agency_kind_label: this.normalizeText(row.agency_kind_label_th),
+      status_code: this.normalizeText(row.status_code),
+      referred_at: row.referred_at ?? null,
+      referred_by: this.normalizeText(row.referred_by) || null,
+      referral_note: this.normalizeText(row.referral_note) || null,
     };
   }
 
@@ -328,10 +347,11 @@ export class CaseService {
     if (!detail) {
       throw new NotFoundException('Case not found');
     }
-    const [rounds, reviews, riskSignals] = await Promise.all([
+    const [rounds, reviews, riskSignals, referrals] = await Promise.all([
       this.taskRepository.listTasksByCase(caseId),
       this.taskRepository.listCaseReviews(caseId),
       this.taskRepository.listCaseRiskSignals(caseId),
+      this.taskRepository.listCaseReferrals(caseId),
     ]);
     return {
       success: true,
@@ -343,7 +363,31 @@ export class CaseService {
         follow_up_rounds: rounds.map((round) => this.mapFollowUpRound(round)),
         reviews: reviews.map((review) => this.mapCaseReview(review)),
         risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
+        referrals: referrals.map((referral) => this.mapCaseReferral(referral)),
       },
+    };
+  }
+
+  async listReferralAgencies(actor?: AuthenticatedRequestUser) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (
+      isRestrictedExecutive(currentActor) ||
+      !this.taskPolicyService.hasPermission(currentActor, 'dashboard')
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ดูหน่วยงานส่งต่อ');
+    }
+    const rows = await this.taskRepository.listActiveReferralAgencies();
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        id: this.normalizeNumber(row.id),
+        agencyName: this.normalizeText(row.agency_name),
+        agencyKindCode: this.normalizeText(row.agency_kind_code),
+        agencyKindLabel: this.normalizeText(row.agency_kind_label_th),
+        contactPhone: this.normalizeText(row.contact_phone) || null,
+        contactEmail: this.normalizeText(row.contact_email) || null,
+        websiteUrl: this.normalizeText(row.website_url) || null,
+      })),
     };
   }
 
@@ -408,6 +452,13 @@ export class CaseService {
     if (reviewAction.requiresResolutionOutcome && !resolutionOutcome) {
       throw new BadRequestException('resolution_outcome is required for CLOSE');
     }
+    const referralAgencyId = this.normalizeNumber(body.referral_agency_id);
+    if (reviewAction.code === 'REFER_AGENCY' && referralAgencyId === null) {
+      throw new BadRequestException('กรุณาเลือกหน่วยงานส่งต่อ');
+    }
+    if (reviewAction.code !== 'REFER_AGENCY' && referralAgencyId !== null) {
+      throw new BadRequestException('หน่วยงานส่งต่อใช้ได้เฉพาะการส่งต่อหน่วยงาน');
+    }
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     const reviewedBy = actorName || actor?.username || 'ผอ.';
     if (!reviewAction.targetStatus) {
@@ -429,6 +480,13 @@ export class CaseService {
         throw new BadRequestException('การดำเนินการนี้ใช้กับขั้นตอนปัจจุบันของเคสไม่ได้');
       }
       await this.taskRepository.withTransaction(async (executor) => {
+        const referralAgency =
+          referralAgencyId === null
+            ? null
+            : await this.taskRepository.findActiveReferralAgency(referralAgencyId, executor);
+        if (referralAgencyId !== null && !referralAgency) {
+          throw new BadRequestException('หน่วยงานส่งต่อไม่ถูกต้องหรือถูกปิดใช้งาน');
+        }
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
           nextStatus,
@@ -453,6 +511,34 @@ export class CaseService {
           },
           executor,
         );
+        if (referralAgencyId !== null) {
+          await this.taskRepository.insertCaseReferral(
+            {
+              reviewId,
+              caseId,
+              agencyId: referralAgencyId,
+              referredByUserId: resolveAuditActorId(actor),
+              note: reviewNote,
+            },
+            executor,
+          );
+        }
+        if (body.care_observation_decision) {
+          const studentUuid = this.normalizeText(caseRecord.student_uuid);
+          if (!studentUuid) {
+            throw new BadRequestException('เคสนี้ไม่มีนักเรียนสำหรับรับรองข้อมูลการดูแล');
+          }
+          await this.taskRepository.reviewPendingCareObservations(
+            {
+              caseId,
+              studentUuid,
+              decision: body.care_observation_decision,
+              reviewerUserId: resolveAuditActorId(actor),
+              reviewNote,
+            },
+            executor,
+          );
+        }
       });
 
       const reviewRecord = await this.taskRepository.findCaseReviewById(reviewId);
@@ -474,6 +560,8 @@ export class CaseService {
           completionOutcome: reviewAction.completionOutcomeCode,
           targetWorkflowPhase: reviewAction.targetWorkflowPhaseCode,
           resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
+          referralAgencyId,
+          careObservationDecision: body.care_observation_decision ?? null,
         },
         ip: null,
       });

@@ -169,6 +169,8 @@ interface TaskSubmissionInput {
   /** Assistance rounds only (task_type = 'ASSIST'). */
   assistedAt: string | null;
   assistanceDetail: string | null;
+  taskExecutionOutcomeCode: string;
+  nonFollowUpReasonCode: string | null;
 }
 
 interface AttendanceReplaceInput {
@@ -1514,6 +1516,10 @@ export class TaskRepository {
         submission.guardian_type_detail,
         submission.residence_environment_detail,
         ${RESIDENCE_ENVIRONMENTS_JSON_SQL} AS residence_environments,
+        submission.task_execution_outcome_code,
+        execution_outcome.label_th AS task_execution_outcome_label,
+        submission.non_follow_up_reason_code,
+        non_follow_up_reason.label_th AS non_follow_up_reason_label,
         submission.cause_detail,
         submission.recommendation,
         submission.submitted_at,
@@ -1529,6 +1535,10 @@ export class TaskRepository {
       LEFT JOIN guardian_type_options guardian_type
         ON guardian_type.code = submission.guardian_type_code
         AND guardian_type.deleted_at IS NULL
+      LEFT JOIN task_execution_outcome_options execution_outcome
+        ON execution_outcome.code = submission.task_execution_outcome_code
+      LEFT JOIN non_follow_up_reason_options non_follow_up_reason
+        ON non_follow_up_reason.code = submission.non_follow_up_reason_code
       WHERE submission.task_link_id = $1
         AND submission.deleted_at IS NULL
     `,
@@ -1548,6 +1558,7 @@ export class TaskRepository {
         t.case_id,
         t.task_type,
         c.student_name,
+        c.student_uuid,
         c.school_id
       FROM task_links tl
       JOIN tasks t ON t.id = tl.task_id
@@ -1562,7 +1573,7 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
-  async insertTaskSubmission(data: TaskSubmissionInput, executor?: QueryExecutor): Promise<void> {
+  async insertTaskSubmission(data: TaskSubmissionInput, executor?: QueryExecutor): Promise<number> {
     const inserted = await this.getExecutor(executor).query<{ id: number } & QueryResultRow>(
       `
       INSERT INTO task_submissions (
@@ -1591,12 +1602,14 @@ export class TaskRepository {
         case_follow_up_decision,
         case_resolution_outcome_code,
         assisted_at,
-        assistance_detail
+        assistance_detail,
+        task_execution_outcome_code,
+        non_follow_up_reason_code
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26
+        $21, $22, $23, $24, $25, $26, $27, $28
       )
       RETURNING id
     `,
@@ -1627,12 +1640,16 @@ export class TaskRepository {
         data.caseResolutionOutcomeCode,
         data.assistedAt,
         data.assistanceDetail,
+        data.taskExecutionOutcomeCode,
+        data.nonFollowUpReasonCode,
       ],
     );
 
-    if (data.residenceEnvironmentCodes.length === 0) return;
     const submissionId = inserted.rows[0]?.id;
-    if (submissionId == null) return;
+    if (submissionId == null) {
+      throw new Error('task submission insert did not return an id');
+    }
+    if (data.residenceEnvironmentCodes.length === 0) return submissionId;
     // One row per observed factor: a home can sit near a drug spot and carry a
     // violence risk at the same time, so the answer is a set, not a column.
     await this.getExecutor(executor).query(
@@ -1646,6 +1663,38 @@ export class TaskRepository {
     `,
       [submissionId, data.residenceEnvironmentCodes],
     );
+    return submissionId;
+  }
+
+  async insertHomeVisitCareObservations(
+    submissionId: number,
+    disadvantageTypeCodes: string[],
+    disabilityTypeCodes: string[],
+    executor?: QueryExecutor,
+  ): Promise<void> {
+    const target = this.getExecutor(executor);
+    if (disadvantageTypeCodes.length > 0) {
+      await target.query(
+        `
+          INSERT INTO home_visit_disadvantage_observations (
+            task_submission_id, disadvantage_type_code
+          )
+          SELECT $1, code FROM unnest($2::varchar[]) AS code
+        `,
+        [submissionId, disadvantageTypeCodes],
+      );
+    }
+    if (disabilityTypeCodes.length > 0) {
+      await target.query(
+        `
+          INSERT INTO home_visit_disability_observations (
+            task_submission_id, disability_type_code
+          )
+          SELECT $1, code FROM unnest($2::varchar[]) AS code
+        `,
+        [submissionId, disabilityTypeCodes],
+      );
+    }
   }
 
   async updateCaseAfterSubmission(
@@ -2904,6 +2953,117 @@ export class TaskRepository {
     );
   }
 
+  async findActiveReferralAgency(
+    agencyId: number,
+    executor?: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const result = await this.getExecutor(executor).query(
+      `
+        SELECT agency.id, agency.agency_name, agency.agency_kind_code,
+          kind.label_th AS agency_kind_label_th
+        FROM referral_agencies agency
+        JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+        WHERE agency.id = $1 AND agency.is_active = TRUE AND kind.is_active = TRUE
+        LIMIT 1
+        FOR KEY SHARE OF agency
+      `,
+      [agencyId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async insertCaseReferral(
+    data: {
+      reviewId: string;
+      caseId: number;
+      agencyId: number;
+      referredByUserId: number | null;
+      note: string | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<void> {
+    await executor.query(
+      `
+        INSERT INTO case_referrals (
+          case_review_id, case_id, referral_agency_id, referred_by_user_id,
+          referral_note, created_by, updated_by
+        ) VALUES ($1, $2, $3, $4, $5, $4, $4)
+      `,
+      [data.reviewId, data.caseId, data.agencyId, data.referredByUserId, data.note],
+    );
+  }
+
+  async reviewPendingCareObservations(
+    data: {
+      caseId: number;
+      studentUuid: string;
+      decision: 'APPROVE' | 'REJECT';
+      reviewerUserId: number | null;
+      reviewNote: string | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<{ disadvantageCount: number; disabilityCount: number }> {
+    const verificationStatus = data.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    const disadvantageRows = await executor.query(
+      `
+        WITH reviewed AS (
+          UPDATE home_visit_disadvantage_observations observation
+          SET verification_status = $3, reviewed_at = now(),
+              reviewed_by_user_id = $4, review_note = $5
+          FROM task_submissions submission
+          JOIN task_links link ON link.id = submission.task_link_id
+          JOIN tasks task ON task.id = link.task_id
+          WHERE observation.task_submission_id = submission.id
+            AND task.case_id = $1
+            AND observation.verification_status = 'PENDING'
+          RETURNING observation.disadvantage_type_code, observation.observed_at
+        )
+        INSERT INTO student_term_disadvantages (
+          student_uuid, disadvantage_type_code, recorded_at, recorded_by_user_id
+        )
+        SELECT $2, reviewed.disadvantage_type_code, reviewed.observed_at, $4
+        FROM reviewed
+        WHERE $3 = 'APPROVED'
+        ON CONFLICT (student_uuid, disadvantage_type_code) DO UPDATE SET
+          recorded_at = EXCLUDED.recorded_at,
+          recorded_by_user_id = EXCLUDED.recorded_by_user_id
+        RETURNING disadvantage_type_code
+      `,
+      [data.caseId, data.studentUuid, verificationStatus, data.reviewerUserId, data.reviewNote],
+    );
+    const disabilityRows = await executor.query(
+      `
+        WITH reviewed AS (
+          UPDATE home_visit_disability_observations observation
+          SET verification_status = $3, reviewed_at = now(),
+              reviewed_by_user_id = $4, review_note = $5
+          FROM task_submissions submission
+          JOIN task_links link ON link.id = submission.task_link_id
+          JOIN tasks task ON task.id = link.task_id
+          WHERE observation.task_submission_id = submission.id
+            AND task.case_id = $1
+            AND observation.verification_status = 'PENDING'
+          RETURNING observation.disability_type_code, observation.observed_at
+        )
+        INSERT INTO student_disabilities (
+          student_uuid, disability_type_code, recorded_at, recorded_by_user_id
+        )
+        SELECT $2, reviewed.disability_type_code, reviewed.observed_at, $4
+        FROM reviewed
+        WHERE $3 = 'APPROVED'
+        ON CONFLICT (student_uuid, disability_type_code) DO UPDATE SET
+          recorded_at = EXCLUDED.recorded_at,
+          recorded_by_user_id = EXCLUDED.recorded_by_user_id
+        RETURNING disability_type_code
+      `,
+      [data.caseId, data.studentUuid, verificationStatus, data.reviewerUserId, data.reviewNote],
+    );
+    return {
+      disadvantageCount: disadvantageRows.rows.length,
+      disabilityCount: disabilityRows.rows.length,
+    };
+  }
+
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
@@ -3065,6 +3225,42 @@ export class TaskRepository {
     return result.rows;
   }
 
+  async listActiveReferralAgencies(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT agency.id, agency.agency_name, agency.agency_kind_code,
+        kind.label_th AS agency_kind_label_th, agency.contact_phone,
+        agency.contact_email, agency.website_url
+      FROM referral_agencies agency
+      JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+      WHERE agency.is_active = TRUE AND kind.is_active = TRUE
+      ORDER BY kind.sort_order, agency.agency_name, agency.id
+    `);
+    return result.rows;
+  }
+
+  async listCaseReferrals(caseId: number): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(
+      `
+        SELECT referral.id, referral.case_review_id, referral.referral_agency_id,
+          agency.agency_name, agency.agency_kind_code,
+          kind.label_th AS agency_kind_label_th, referral.status_code,
+          referral.referred_at, referral.referral_note,
+          COALESCE(
+            NULLIF(trim(concat_ws(' ', actor."FirstName", actor."LastName")), ''),
+            actor.username
+          ) AS referred_by
+        FROM case_referrals referral
+        JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+        JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+        LEFT JOIN users actor ON actor.id = referral.referred_by_user_id
+        WHERE referral.case_id = $1
+        ORDER BY referral.referred_at DESC, referral.id DESC
+      `,
+      [caseId],
+    );
+    return result.rows;
+  }
+
   async listCaseRiskSignals(caseId: number): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
@@ -3154,6 +3350,74 @@ export class TaskRepository {
       WHERE is_active = TRUE AND deleted_at IS NULL
       ORDER BY sort_order, code
     `);
+    return result.rows;
+  }
+
+  async listTaskExecutionOutcomes(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th FROM task_execution_outcome_options
+      WHERE is_active = TRUE ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async findTaskExecutionOutcome(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT code, label_th FROM task_execution_outcome_options
+       WHERE code = $1 AND is_active = TRUE LIMIT 1`,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listNonFollowUpReasons(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th FROM non_follow_up_reason_options
+      WHERE is_active = TRUE ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async findNonFollowUpReason(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT code, label_th FROM non_follow_up_reason_options
+       WHERE code = $1 AND is_active = TRUE LIMIT 1`,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listDisadvantageTypes(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th FROM disadvantage_types
+      WHERE is_active = TRUE AND code <> 'NONE' ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async findDisadvantageTypes(codes: string[]): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT code, label_th FROM disadvantage_types
+       WHERE code = ANY($1::varchar[]) AND is_active = TRUE AND code <> 'NONE'`,
+      [codes],
+    );
+    return result.rows;
+  }
+
+  async listDisabilityTypes(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th FROM disability_types
+      WHERE is_active = TRUE AND code <> 'NONE' ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async findDisabilityTypes(codes: string[]): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT code, label_th FROM disability_types
+       WHERE code = ANY($1::varchar[]) AND is_active = TRUE AND code <> 'NONE'`,
+      [codes],
+    );
     return result.rows;
   }
 

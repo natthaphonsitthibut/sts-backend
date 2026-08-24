@@ -195,6 +195,28 @@ export class CreateTaskDto {
 export class SaveTaskSubmissionDto {
   @IsOptional()
   @IsString()
+  @IsIn(['SUCCEEDED', 'NOT_SUCCEEDED'])
+  task_execution_outcome_code?: 'SUCCEEDED' | 'NOT_SUCCEEDED' | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  non_follow_up_reason_code?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  disadvantage_type_codes?: string[] | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  disability_type_codes?: string[] | null;
+
+  @IsOptional()
+  @IsString()
   case_follow_up_decision?: string | null;
 
   @IsOptional()
@@ -323,6 +345,16 @@ export class ReviewCaseDto {
   @IsOptional()
   @IsIn(['RETURNED_TO_SCHOOL', 'TRANSFERRED_SCHOOL', 'ILLNESS', 'WORKING', 'UNREACHABLE', 'OTHER'])
   resolution_outcome?: CaseResolutionOutcome | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  referral_agency_id?: number | null;
+
+  @IsOptional()
+  @IsIn(['APPROVE', 'REJECT'])
+  care_observation_decision?: 'APPROVE' | 'REJECT' | null;
 
   @IsOptional()
   @IsString()

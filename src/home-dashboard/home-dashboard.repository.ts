@@ -848,8 +848,10 @@ export class HomeDashboardRepository {
     const scope = this.buildCaseScopeQuery(actor, filters);
     const whereSql = [
       'c.deleted_at IS NULL',
+      't.deleted_at IS NULL',
+      'tl.deleted_at IS NULL',
       'ts.deleted_at IS NULL',
-      'ts.follow_up_problem_category_code IS NOT NULL',
+      "t.task_type = 'VISIT'",
       scope.sql,
     ]
       .filter(Boolean)
@@ -861,18 +863,20 @@ export class HomeDashboardRepository {
     }>(
       `
         SELECT
-          ts.follow_up_problem_category_code AS category,
-          problem_category.label_th AS category_label,
+          COALESCE(ts.follow_up_problem_category_code, 'UNSPECIFIED') AS category,
+          COALESCE(problem_category.label_th, 'ไม่ระบุสาเหตุ') AS category_label,
           COUNT(*)::int AS count
         FROM task_submissions ts
         JOIN task_links tl ON tl.id = ts.task_link_id
         JOIN tasks t ON t.id = tl.task_id
         JOIN cases c ON c.id = t.case_id
-        JOIN follow_up_problem_categories problem_category
+        LEFT JOIN follow_up_problem_categories problem_category
           ON problem_category.code = ts.follow_up_problem_category_code
         LEFT JOIN schools sc ON sc.id = c.school_id
         ${whereSql ? `WHERE ${whereSql}` : ''}
-        GROUP BY ts.follow_up_problem_category_code, problem_category.label_th
+        GROUP BY
+          COALESCE(ts.follow_up_problem_category_code, 'UNSPECIFIED'),
+          COALESCE(problem_category.label_th, 'ไม่ระบุสาเหตุ')
         ORDER BY count DESC
       `,
       scope.params,

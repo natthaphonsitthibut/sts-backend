@@ -96,6 +96,10 @@ export class CaseTrackingOptionsService {
       guardianTypes,
       residenceEnvironments,
       assistanceMeasures,
+      executionOutcomes,
+      nonFollowUpReasons,
+      disadvantageTypes,
+      disabilityTypes,
     ] = await Promise.all([
       this.taskRepository.listCaseReviewActions(phaseCode ?? null),
       this.taskRepository.listCaseFollowUpDecisions(),
@@ -106,6 +110,10 @@ export class CaseTrackingOptionsService {
       this.taskRepository.listGuardianTypeOptions(),
       this.taskRepository.listResidenceEnvironmentOptions(),
       this.taskRepository.listAssistanceMeasures(),
+      this.taskRepository.listTaskExecutionOutcomes(),
+      this.taskRepository.listNonFollowUpReasons(),
+      this.taskRepository.listDisadvantageTypes(),
+      this.taskRepository.listDisabilityTypes(),
     ]);
     return {
       reviewActions: reviewActions.map((row) => ({
@@ -131,6 +139,22 @@ export class CaseTrackingOptionsService {
       guardianTypes: guardianTypes.map((row) => this.mapGuardianType(row)),
       residenceEnvironments: residenceEnvironments.map((row) => this.mapResidenceEnvironment(row)),
       assistanceMeasures: assistanceMeasures.map((row) => this.mapAssistanceMeasure(row)),
+      executionOutcomes: executionOutcomes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      nonFollowUpReasons: nonFollowUpReasons.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      disadvantageTypes: disadvantageTypes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      disabilityTypes: disabilityTypes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
     };
   }
 
@@ -241,6 +265,38 @@ export class CaseTrackingOptionsService {
     const row = await this.taskRepository.findCaseResolutionOutcome(code);
     if (!row) throw new BadRequestException('ผลลัพธ์การติดตามไม่ถูกต้อง');
     return this.stringValue(row.code);
+  }
+
+  async getTaskExecutionOutcome(code: string | null): Promise<string> {
+    if (!code) throw new BadRequestException('กรุณาเลือกผลการดำเนินงานครั้งนี้');
+    const row = await this.taskRepository.findTaskExecutionOutcome(code);
+    if (!row) throw new BadRequestException('ผลการดำเนินงานไม่ถูกต้อง');
+    return this.stringValue(row.code);
+  }
+
+  async getNonFollowUpReason(code: string | null): Promise<string | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findNonFollowUpReason(code);
+    if (!row) throw new BadRequestException('สาเหตุการไม่ติดตามไม่ถูกต้อง');
+    return this.stringValue(row.code);
+  }
+
+  async getCareObservationCodes(
+    kind: 'DISADVANTAGE' | 'DISABILITY',
+    codes: string[],
+  ): Promise<string[]> {
+    const unique = Array.from(
+      new Set(codes.map((code) => code.trim().toUpperCase()).filter(Boolean)),
+    );
+    if (unique.length === 0) return [];
+    const rows =
+      kind === 'DISADVANTAGE'
+        ? await this.taskRepository.findDisadvantageTypes(unique)
+        : await this.taskRepository.findDisabilityTypes(unique);
+    if (rows.length !== unique.length || rows.some((row) => row.code === 'NONE')) {
+      throw new BadRequestException('ข้อมูลที่ควรคำนึงในการดูแลไม่ถูกต้อง');
+    }
+    return unique;
   }
 
   async getHomeVisitException(code: string | null): Promise<HomeVisitExceptionOption | null> {

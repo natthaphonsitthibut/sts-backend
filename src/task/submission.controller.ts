@@ -53,6 +53,14 @@ export class SubmissionController {
     return normalized;
   }
 
+  private parseExecutionOutcome(value?: string): 'SUCCEEDED' | 'NOT_SUCCEEDED' {
+    const normalized = value?.trim().toUpperCase();
+    if (normalized !== 'SUCCEEDED' && normalized !== 'NOT_SUCCEEDED') {
+      throw new BadRequestException('กรุณาเลือกผลการดำเนินงานครั้งนี้');
+    }
+    return normalized;
+  }
+
   private parseOptionCode(value: string | undefined, invalidMessage: string): string | null {
     const normalized = value?.trim().toUpperCase();
     if (!normalized) return null;
@@ -123,6 +131,16 @@ export class SubmissionController {
     const causeDetail = body.cause_detail || body.notes || '';
     const addressChanged = this.parseBoolean(body.address_changed);
     const data = {
+      task_execution_outcome_code: this.parseExecutionOutcome(body.task_execution_outcome_code),
+      non_follow_up_reason_code: body.non_follow_up_reason_code?.trim().toUpperCase() || null,
+      disadvantage_type_codes: this.parseOptionCodeList(
+        (body as Record<string, unknown>).disadvantage_type_codes,
+        'ข้อมูลความด้อยโอกาสไม่ถูกต้อง',
+      ),
+      disability_type_codes: this.parseOptionCodeList(
+        (body as Record<string, unknown>).disability_type_codes,
+        'ข้อมูลความพิการไม่ถูกต้อง',
+      ),
       follow_up_problem_category_code: body.follow_up_problem_category_code,
       parental_status_code: this.parseOptionCode(
         body.parental_status_code,
