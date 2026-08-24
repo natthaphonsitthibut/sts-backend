@@ -17,6 +17,7 @@ import { AttendanceOperationsService } from './attendance-operations.service';
 import { PublicLocationsController } from './public-locations.controller';
 import { ExceptionAttendanceRepository } from './exception-attendance.repository';
 import { ExceptionAttendanceService } from './exception-attendance.service';
+import { MasterDataModule } from '../master-data/master-data.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { ExceptionAttendanceService } from './exception-attendance.service';
     RiskProfileModule,
     TokenEncryptionModule,
     FileStorageModule,
+    MasterDataModule,
   ],
   controllers: [AttendanceController, PublicLocationsController],
   providers: [

@@ -16,6 +16,7 @@ import {
   type FileStorageAdapter,
 } from '../files/storage/file-storage.types';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import { MasterDataService } from '../master-data/master-data.service';
 import { AttendanceOperationsService } from './attendance-operations.service';
 import { ATTENDANCE_STATUS_CODE } from './attendance-status';
 import type {
@@ -41,6 +42,7 @@ export class ExceptionAttendanceService {
     private readonly attendanceOperations: AttendanceOperationsService,
     private readonly audit: AuditLogService,
     private readonly riskProfiles: RiskProfileService,
+    private readonly masterData: MasterDataService,
     @Inject(FILE_STORAGE_ADAPTER) private readonly storage: FileStorageAdapter,
   ) {}
 
@@ -94,6 +96,7 @@ export class ExceptionAttendanceService {
             : Number(item.attendance_status_code) === 3
               ? ('P_LATE' as const)
               : ('P_LEAVE' as const),
+        absenceReasonCode: item.absence_reason_code,
       })),
     };
   }
@@ -133,6 +136,7 @@ export class ExceptionAttendanceService {
     this.assertActorMatches(actor, classroom);
     this.assertOperationalClassroom(classroom);
     const subjects = await this.repository.listSubjects(actor.classroomId);
+    const absenceReasons = await this.masterData.listActiveOptions('absence-reasons');
     return {
       success: true,
       data: {
@@ -155,6 +159,7 @@ export class ExceptionAttendanceService {
           code: item.code,
           nameTh: item.name_th,
         })),
+        absenceReasons,
       },
     };
   }
@@ -163,7 +168,6 @@ export class ExceptionAttendanceService {
     const classroom = await this.repository.findClassroom(actor.classroomId);
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
     this.assertActorMatches(actor, classroom);
-    this.assertOperationalClassroom(classroom);
     this.assertOperationalClassroom(classroom);
     const rows = await this.repository.listRoster(actor.classroomId);
     return {
@@ -186,6 +190,7 @@ export class ExceptionAttendanceService {
     const classroom = await this.repository.findClassroom(actor.classroomId);
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
     this.assertActorMatches(actor, classroom);
+    this.assertOperationalClassroom(classroom);
     const storageKey = await this.repository.findStudentPhotoStorageKey(
       actor.classroomId,
       studentUuid,
@@ -295,6 +300,10 @@ export class ExceptionAttendanceService {
       studentIds.add(item.studentId);
       const statusCode = ATTENDANCE_STATUS_CODE[item.status];
       if (statusCode === 1) throw new BadRequestException('ไม่ต้องส่งสถานะมาเรียนเป็น exception');
+      const suppliedReason = item.absenceReasonCode?.trim().toUpperCase() || null;
+      if (statusCode !== 2 && suppliedReason) {
+        throw new BadRequestException('สาเหตุการขาดใช้ได้เฉพาะสถานะขาด');
+      }
       const candidate = item.markedAt ? new Date(item.markedAt) : new Date();
       const markedAt =
         Number.isFinite(candidate.getTime()) &&
@@ -307,6 +316,7 @@ export class ExceptionAttendanceService {
         ...item,
         statusCode: statusCode as 2 | 3 | 4,
         markedAt: markedAt.toISOString(),
+        absenceReasonCode: statusCode === 2 ? (suppliedReason ?? 'UNKNOWN') : null,
       };
     });
   }
@@ -317,9 +327,39 @@ export class ExceptionAttendanceService {
   ): boolean {
     if (current.length !== requested.length) return false;
     const byStudent = new Map(
-      current.map((item) => [item.student_uuid, Number(item.attendance_status_code)]),
+      current.map((item) => [
+        item.student_uuid,
+        {
+          statusCode: Number(item.attendance_status_code),
+          absenceReasonCode: item.absence_reason_code,
+        },
+      ]),
     );
-    return requested.every((item) => byStudent.get(item.studentId) === item.statusCode);
+    return requested.every((item) => {
+      const stored = byStudent.get(item.studentId);
+      return (
+        stored?.statusCode === item.statusCode &&
+        stored.absenceReasonCode === item.absenceReasonCode
+      );
+    });
+  }
+
+  private async assertActiveAbsenceReasons(
+    requested: PreparedAttendanceException[],
+  ): Promise<void> {
+    const requestedCodes = new Set(
+      requested
+        .map((item) => item.absenceReasonCode)
+        .filter((code): code is string => code !== null),
+    );
+    if (requestedCodes.size === 0) return;
+
+    const activeCodes = new Set(
+      (await this.masterData.listActiveOptions('absence-reasons')).map((option) => option.code),
+    );
+    if ([...requestedCodes].some((code) => !activeCodes.has(code))) {
+      throw new BadRequestException('สาเหตุการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
+    }
   }
 
   async submit(
@@ -366,6 +406,7 @@ export class ExceptionAttendanceService {
         throw new ConflictException('สถานะรอบเช็กชื่อไม่อนุญาตให้ส่งข้อมูล');
       }
 
+      await this.assertActiveAbsenceReasons(prepared);
       await this.repository.replaceExceptions(session.id, prepared, actor, runner);
       const submitted = await this.repository.finalizeSession(
         session,
@@ -397,6 +438,7 @@ export class ExceptionAttendanceService {
         exceptions: prepared.map((item) => ({
           student_uuid: item.studentId,
           attendance_status_code: item.statusCode,
+          absence_reason_code: item.absenceReasonCode,
         })),
         roster,
         changed: true,

@@ -438,7 +438,7 @@ export class ExceptionAttendanceRepository {
   ): Promise<StoredAttendanceExceptionRow[]> {
     return (await runner.query(
       `
-        SELECT student_uuid::text, attendance_status_code
+        SELECT student_uuid::text, attendance_status_code, absence_reason_code
         FROM attendance_exceptions
         WHERE session_id = $1 AND deleted_at IS NULL
         ORDER BY student_uuid
@@ -459,16 +459,17 @@ export class ExceptionAttendanceRepository {
       `
         INSERT INTO attendance_exceptions (
           session_id, school_id, student_uuid, attendance_status_code, marked_at,
-          marked_by_teacher_membership_id, created_by, updated_by
+          absence_reason_code, marked_by_teacher_membership_id, created_by, updated_by
         )
         SELECT
           $1, session.school_id, item.student_id, item.status_code, item.marked_at,
-          $3, $4, $4
+          item.absence_reason_code, $3, $4, $4
         FROM attendance_sessions session
         CROSS JOIN jsonb_to_recordset($2::jsonb) AS item(
           student_id uuid,
           status_code smallint,
-          marked_at timestamptz
+          marked_at timestamptz,
+          absence_reason_code varchar(40)
         )
         WHERE session.id = $1
       `,
@@ -479,6 +480,7 @@ export class ExceptionAttendanceRepository {
             student_id: item.studentId,
             status_code: item.statusCode,
             marked_at: item.markedAt,
+            absence_reason_code: item.absenceReasonCode,
           })),
         ),
         actor.teacherMembershipId,

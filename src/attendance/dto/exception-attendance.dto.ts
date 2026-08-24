@@ -62,6 +62,11 @@ export class AttendanceExceptionDto {
   status!: (typeof EXCEPTION_STATUSES)[number];
 
   @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z][A-Z0-9_]{1,39}$/)
+  absenceReasonCode?: string;
+
+  @IsOptional()
   @IsISO8601({ strict: true })
   markedAt?: string;
 }
