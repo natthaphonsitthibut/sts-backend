@@ -23,7 +23,7 @@ const BROWSER_BACKEND_URL =
 const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9233);
-const SETTINGS_USERNAME = 'student_status_browser_settings';
+const MASTER_DATA_USERNAME = 'student_status_browser_master_data';
 const NO_PERMISSION_USERNAME = 'student_status_browser_no_permission';
 
 function assert(condition, message) {
@@ -316,7 +316,7 @@ async function disableActors(dataSource) {
           deactivation_note = COALESCE(deactivation_note, 'Retained automated student-status browser smoke fixture')
       WHERE username = ANY($1::text[])
     `,
-    [[SETTINGS_USERNAME, NO_PERMISSION_USERNAME]],
+    [[MASTER_DATA_USERNAME, NO_PERMISSION_USERNAME]],
   );
 }
 
@@ -388,20 +388,20 @@ async function main() {
 
   try {
     await cleanup(dataSource);
-    const settingsActor = await upsertActor(dataSource, await passwordService.hash(password), SETTINGS_USERNAME, [
+    const masterDataActor = await upsertActor(dataSource, await passwordService.hash(password), MASTER_DATA_USERNAME, [
       'home',
-      'settings',
+      'master-data',
     ]);
     const noPermissionActor = await upsertActor(dataSource, await passwordService.hash(password), NO_PERMISSION_USERNAME, [
       'home',
     ]);
-    const settingsUser = {
-      id: settingsActor.id,
-      username: SETTINGS_USERNAME,
+    const masterDataUser = {
+      id: masterDataActor.id,
+      username: MASTER_DATA_USERNAME,
       FirstName: 'Student Status',
       LastName: 'Browser Smoke',
       roles: ['ADMIN'],
-      permissions: ['home', 'settings'],
+      permissions: ['home', 'master-data'],
       data_scope: { global: true },
       must_change_password: false,
     };
@@ -415,7 +415,7 @@ async function main() {
       data_scope: { global: true },
       must_change_password: false,
     };
-    const settingsSession = createSessionCookie(sessionCookieService, settingsActor.id);
+    const masterDataSession = createSessionCookie(sessionCookieService, masterDataActor.id);
     const noPermissionSession = createSessionCookie(sessionCookieService, noPermissionActor.id);
 
     chrome = await openChrome();
@@ -432,7 +432,7 @@ async function main() {
     });
 
     await loginInBrowser(client, noPermissionUser, noPermissionSession);
-    await navigate(client, `${FRONTEND_URL}/settings/student-statuses`);
+    await navigate(client, `${FRONTEND_URL}/master-data/student-statuses`);
     await waitFor(
       async () =>
         (await evaluate(client, 'location.pathname')) === '/forbidden' &&
@@ -459,14 +459,76 @@ async function main() {
       'Logout did not return to login',
     );
 
-    await loginInBrowser(client, settingsUser, settingsSession);
-    await navigate(client, `${FRONTEND_URL}/settings/student-statuses`);
+    await loginInBrowser(client, masterDataUser, masterDataSession);
+    await navigate(client, `${FRONTEND_URL}/master-data/student-statuses`);
     await waitFor(
       async () =>
-        (await evaluate(client, 'location.pathname')) === '/settings/student-statuses' &&
-        String(await evaluate(client, 'document.body.innerText')).includes('ข้อมูลพื้นฐานสถานะนักเรียน') &&
-        String(await evaluate(client, 'document.body.innerText')).includes('เพิ่มสถานะ'),
-      'Student statuses page did not render for settings user',
+        (await evaluate(client, 'location.pathname')) === '/master-data/student-statuses' &&
+        String(await evaluate(client, 'document.body.innerText')).includes('สถานะนักเรียน') &&
+        String(await evaluate(client, 'document.body.innerText')).includes('เพิ่มสถานะ') &&
+        String(await evaluate(client, 'document.body.innerText')).includes('แสดงรายการปิดใช้งาน'),
+      'Student statuses page did not render for master-data user',
+    );
+    const statusCreateButtonWidth = Number(
+      await evaluate(
+        client,
+        `([...document.querySelectorAll('button')]
+          .find((button) => button.textContent.includes('เพิ่มสถานะ'))
+          ?.getBoundingClientRect().width ?? 0)`,
+      ),
+    );
+    assert(statusCreateButtonWidth > 0, 'Student status create button width was not measurable');
+    assert(
+      !String(await evaluate(client, 'document.body.innerText')).includes('ล้างตัวกรอง'),
+      'Student statuses page still rendered a redundant clear-filters action',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'รายการอ้างอิง')`,
+      'Reference-data tab was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === '/master-data',
+      'Reference-data tab did not navigate to master data',
+    );
+    const masterDataToolbar = await evaluate(
+      client,
+      `(() => {
+        const search = document.querySelector('input[placeholder^="ค้นหา"]')?.getBoundingClientRect();
+        const catalog = document.querySelector('#master-data-catalog')?.getBoundingClientRect();
+        const addButton = [...document.querySelectorAll('button')]
+          .find((button) => button.textContent.includes('เพิ่มรายการ'))
+          ?.getBoundingClientRect();
+        return {
+          searchTop: search?.top ?? -1,
+          searchBottom: search?.bottom ?? -1,
+          catalogTop: catalog?.top ?? -1,
+          catalogBottom: catalog?.bottom ?? -1,
+          addButtonWidth: addButton?.width ?? 0,
+          hasClearFilters: document.body.innerText.includes('ล้างตัวกรอง'),
+        };
+      })()`,
+    );
+    assert(
+      masterDataToolbar.searchTop < masterDataToolbar.catalogBottom &&
+        masterDataToolbar.catalogTop < masterDataToolbar.searchBottom,
+      'Master-data catalog select was not aligned beside search on desktop',
+    );
+    assert(!masterDataToolbar.hasClearFilters, 'Master data still rendered clear filters');
+    assert(
+      Math.abs(masterDataToolbar.addButtonWidth - statusCreateButtonWidth) <= 1,
+      'Master-data create buttons did not have equal widths',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'สถานะนักเรียน')`,
+      'Student-status tab was not found',
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === '/master-data/student-statuses',
+      'Student-status tab did not navigate back',
     );
 
     await click(
@@ -480,7 +542,7 @@ async function main() {
     );
     await fillInput(client, '#student-status-code', String(code));
     await fillInput(client, '#student-status-label', label);
-    await selectValue(client, '#student-status-category', 'ACTIVE');
+    await selectValue(client, '#student-status-category', 'STUDYING');
     await fillInput(client, '#student-status-source', 'SMOKE_BROWSER');
     await selectValue(client, '#student-status-badge', 'success');
     await fillInput(client, '#student-status-sort', '32000');
@@ -490,7 +552,7 @@ async function main() {
     await setChecked(client, 'เปิดใช้งาน', true);
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'บันทึก')`,
+      `document.querySelector('[role="dialog"] button[type="submit"]')`,
       'Dialog save button was not found',
     );
     await waitFor(
@@ -523,7 +585,7 @@ async function main() {
     await setChecked(client, 'ควรพิจารณาติดตาม', true);
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'บันทึก')`,
+      `document.querySelector('[role="dialog"] button[type="submit"]')`,
       'Dialog save button was not found for edit',
     );
     await waitFor(
@@ -562,6 +624,16 @@ async function main() {
       );
       return row?.is_enabled === false;
     }, 'Disable did not persist in the database');
+    await setChecked(client, 'แสดงรายการปิดใช้งาน', false);
+    await waitFor(
+      async () => !String(await evaluate(client, 'document.body.innerText')).includes(updatedLabel),
+      'Disabled status remained visible after hiding inactive rows',
+    );
+    await setChecked(client, 'แสดงรายการปิดใช้งาน', true);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes(updatedLabel),
+      'Disabled status did not return after showing inactive rows',
+    );
     await capture(client, '/tmp/sts-student-statuses-desktop.png');
 
     await client.call('Emulation.setDeviceMetricsOverride', {
@@ -570,7 +642,7 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: true,
     });
-    await navigate(client, `${FRONTEND_URL}/settings/student-statuses`);
+    await navigate(client, `${FRONTEND_URL}/master-data/student-statuses`);
     await waitFor(
       async () =>
         Boolean(

@@ -35,11 +35,16 @@ describe('CaseService', () => {
       | 'createCase'
       | 'withTransaction'
       | 'insertCaseReview'
+      | 'findActiveReferralAgency'
+      | 'insertCaseReferral'
+      | 'reviewPendingCareObservations'
       | 'transitionPendingReviewCase'
       | 'findCaseReviewById'
       | 'listTasksByCase'
       | 'listCaseReviews'
       | 'listCaseRiskSignals'
+      | 'listCaseReferrals'
+      | 'listActiveReferralAgencies'
       | 'claimCaseSlaWarnings'
       | 'claimCaseSlaBreaches'
     >
@@ -49,7 +54,11 @@ describe('CaseService', () => {
 
   beforeEach(() => {
     taskRepository = {
-      findCaseById: jest.fn().mockResolvedValue({ id: 10, school_id: 10010002 }),
+      findCaseById: jest.fn().mockResolvedValue({
+        id: 10,
+        school_id: 10010002,
+        student_uuid: '11111111-1111-4111-8111-111111111111',
+      }),
       findCaseDetailById: jest.fn().mockResolvedValue({
         id: 10,
         student_id: '11111111-1111-4111-8111-111111111111',
@@ -70,6 +79,14 @@ describe('CaseService', () => {
       createCase: jest.fn().mockResolvedValue(10),
       withTransaction: jest.fn(async (callback) => await callback(undefined)),
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
+      findActiveReferralAgency: jest.fn().mockResolvedValue({
+        id: 12,
+        agency_name: 'โรงพยาบาลกลาง',
+      }),
+      insertCaseReferral: jest.fn().mockResolvedValue(undefined),
+      reviewPendingCareObservations: jest
+        .fn()
+        .mockResolvedValue({ disadvantageCount: 0, disabilityCount: 0 }),
       transitionPendingReviewCase: jest.fn().mockResolvedValue(true),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
@@ -80,6 +97,8 @@ describe('CaseService', () => {
       listTasksByCase: jest.fn().mockResolvedValue([]),
       listCaseReviews: jest.fn().mockResolvedValue([]),
       listCaseRiskSignals: jest.fn().mockResolvedValue([]),
+      listCaseReferrals: jest.fn().mockResolvedValue([]),
+      listActiveReferralAgencies: jest.fn().mockResolvedValue([]),
       claimCaseSlaWarnings: jest.fn().mockResolvedValue([]),
       claimCaseSlaBreaches: jest.fn().mockResolvedValue([]),
     };
@@ -296,6 +315,7 @@ describe('CaseService', () => {
       {
         review_action: 'REFER_AGENCY',
         review_note: 'ส่งต่อหน่วยงาน',
+        referral_agency_id: 12,
         reviewed_by: 'client-forged-reviewer',
       },
       buildActor(['dashboard']),
@@ -311,6 +331,10 @@ describe('CaseService', () => {
         reviewedBy: 'ผอ. ทดสอบ',
         sourceActorUserId: 1,
       }),
+      undefined,
+    );
+    expect(taskRepository.insertCaseReferral).toHaveBeenCalledWith(
+      expect.objectContaining({ caseId: 10, agencyId: 12, referredByUserId: 1 }),
       undefined,
     );
     expect(auditLog.record).toHaveBeenCalledWith(
@@ -330,7 +354,11 @@ describe('CaseService', () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'REFER_AGENCY', review_note: 'ส่งต่อเพื่อดูแลต่อ' },
+        {
+          review_action: 'REFER_AGENCY',
+          review_note: 'ส่งต่อเพื่อดูแลต่อ',
+          referral_agency_id: 12,
+        },
         buildActor(['dashboard']),
       ),
     ).resolves.toEqual(expect.objectContaining({ success: true, case_status: 'RESOLVED' }));
@@ -397,6 +425,8 @@ describe('CaseService', () => {
       completionOutcome: 'CLOSED',
       resolutionOutcome: null,
       targetWorkflowPhase: null,
+      referralAgencyId: null,
+      careObservationDecision: null,
     });
   });
 

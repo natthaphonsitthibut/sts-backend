@@ -440,7 +440,7 @@ async function main() {
       browserUser(ids.viewer, USERS.viewer),
       createSessionCookie(sessionCookieService, ids.viewer),
     );
-    await assertAttendancePage(client, false, 'viewer');
+    await assertAttendancePage(client, true, 'viewer');
     await capture(client, '/tmp/sts-attendance-operations-viewer-desktop.png');
 
     await clearBrowserSession(client);
@@ -449,7 +449,7 @@ async function main() {
       browserUser(ids.settingsOnly, USERS.settingsOnly),
       createSessionCookie(sessionCookieService, ids.settingsOnly),
     );
-    await assertAttendancePage(client, false, 'settings-only');
+    await assertAttendancePage(client, true, 'settings-only');
 
     await clearBrowserSession(client);
     await loginInBrowser(
@@ -476,7 +476,7 @@ async function main() {
     await capture(client, '/tmp/sts-attendance-operations-admin-mobile.png');
 
     console.log(
-      'attendance operations browser smoke passed (permission split, desktop/mobile render)',
+      'attendance operations browser smoke passed (page permission, desktop/mobile render)',
     );
   } finally {
     await closeChrome(chrome);

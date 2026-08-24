@@ -9,6 +9,7 @@ const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
 const { TaskRepository } = require('../dist/task/task.repository');
+const { TaskLifecycleService } = require('../dist/task/task-lifecycle.service');
 const { FILE_STORAGE_ADAPTER } = require('../dist/files/storage/file-storage.types');
 
 if (process.env.NODE_ENV === 'production') {
@@ -29,6 +30,7 @@ const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9235);
 const CREATOR_USERNAME = 'home_visit_browser_creator';
 const NO_CREATE_USERNAME = 'home_visit_browser_no_permission';
 const REASON_FLAGGED = 'Automated home visit browser smoke';
+const REFERRAL_AGENCY_NAME = 'Automated home visit smoke agency';
 const SMTP_CAPTURE_PORT = Number(process.env.SMOKE_SMTP_PORT || 2526);
 
 function assert(condition, message) {
@@ -518,6 +520,7 @@ async function cleanupSmokeTasks(dataSource, storage) {
     await dataSource.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [taskIds]);
   }
   if (caseIds.length) {
+    await dataSource.query(`DELETE FROM case_referrals WHERE case_id = ANY($1::int[])`, [caseIds]);
     await dataSource.query(`DELETE FROM notifications WHERE case_id = ANY($1::int[])`, [caseIds]);
     await dataSource.query(
       `
@@ -532,6 +535,14 @@ async function cleanupSmokeTasks(dataSource, storage) {
       [caseIds, REASON_FLAGGED],
     );
   }
+  await dataSource.query(
+    `DELETE FROM referral_agencies agency
+     WHERE agency.agency_name = $1
+       AND NOT EXISTS (
+         SELECT 1 FROM case_referrals referral WHERE referral.referral_agency_id = agency.id
+       )`,
+    [REFERRAL_AGENCY_NAME],
+  );
 }
 
 async function findStudentFixture(dataSource) {
@@ -609,15 +620,19 @@ async function selectCombobox(client, selector, label) {
       ),
     `Combobox option did not render: ${label}`,
   );
-  await click(
+  await evaluate(
     client,
     `(() => {
       const label = ${JSON.stringify(label)};
-      return [...document.querySelectorAll('button')].find(
+      const option = [...document.querySelectorAll('button')].find(
         (button) => button.textContent.trim() === label
       );
+      if (!option) throw new Error(${JSON.stringify(`Combobox option was not found: ${label}`)});
+      // Base Select commits on mousedown so focus/blur cannot close the menu
+      // before the value is recorded; other comboboxes commit on click.
+      option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      option.click();
     })()`,
-    `Combobox option was not found: ${label}`,
   );
 }
 
@@ -670,6 +685,7 @@ async function assertOpenControlFonts(client) {
     // trigger is pressed again when nothing appeared.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await click(client, `document.querySelector(${JSON.stringify(trigger)})`, `${label} trigger was not found`);
+      await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 100))`);
       const opened = await evaluate(
         client,
         `Boolean(document.querySelector(${JSON.stringify(scope)}))`,
@@ -747,11 +763,24 @@ async function setAssignmentEnd(client) {
     month: '2-digit',
     timeZone: 'Asia/Bangkok',
   }).format(new Date());
+  const tomorrowIso = `${tomorrowParts.year}-${tomorrowParts.month}-${tomorrowParts.day}`;
 
-  await click(
-    client,
-    `document.querySelector('button[aria-label="วันที่สิ้นสุดมอบหมาย"]')`,
-    'Assignment end-date picker was not found',
+  await waitFor(
+    async () => {
+      const isOpen = Boolean(
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('[role="dialog"][aria-label="เลือกวันที่"]'))`,
+        ),
+      );
+      if (isOpen) return true;
+      await evaluate(
+        client,
+        `document.querySelector('button[aria-label="วันที่สิ้นสุดมอบหมาย"]')?.click()`,
+      );
+      return false;
+    },
+    'Assignment end-date calendar did not open',
   );
   if (tomorrowParts.month !== todayMonth) {
     await click(
@@ -762,9 +791,8 @@ async function setAssignmentEnd(client) {
   }
   await click(
     client,
-    `(() => [...document.querySelectorAll('[role="dialog"][aria-label="เลือกวันที่"] button')]
-      .find((button) => button.textContent.trim() === ${JSON.stringify(String(Number(tomorrowParts.day)))}))()`,
-    'Tomorrow was not selectable in the assignment end-date picker',
+    `document.querySelector('[role="dialog"][aria-label="เลือกวันที่"] button[aria-label="${tomorrowIso}"]')`,
+    'A valid assignment end date was not selectable',
   );
 
   await click(
@@ -951,7 +979,12 @@ async function verifyGuestOtp(client, createdLink, guestLink) {
       'Guest OTP request button was not found',
     );
 
-    await waitFor(() => smtpCapture.messages.length === 1, 'Guest OTP email was not delivered');
+    try {
+      await waitFor(() => smtpCapture.messages.length === 1, 'Guest OTP email was not delivered');
+    } catch (error) {
+      const diagnostic = String(await evaluate(client, 'document.body.innerText')).slice(0, 1_000);
+      throw new Error(`${errorMessage(error)}; body=${diagnostic}`);
+    }
     const deliveredCodes = [
       ...new Set(smtpCapture.messages[0].match(/\b\d{6}\b/g) || []),
     ];
@@ -1099,12 +1132,18 @@ async function main() {
   const passwordService = app.get(PasswordService);
   const sessionCookieService = app.get(SessionCookieService);
   const taskRepository = app.get(TaskRepository);
+  const taskLifecycleService = app.get(TaskLifecycleService);
   const storage = app.get(FILE_STORAGE_ADAPTER);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let chrome;
 
   try {
     await cleanupSmokeTasks(dataSource, storage);
+    await dataSource.query(
+      `INSERT INTO referral_agencies (agency_name, agency_kind_code)
+       VALUES ($1, 'OTHER')`,
+      [REFERRAL_AGENCY_NAME],
+    );
     const student = await findStudentFixture(dataSource);
     const creator = await upsertUser(dataSource, {
       username: CREATOR_USERNAME,
@@ -1156,6 +1195,14 @@ async function main() {
         'students',
       ]),
       createSessionCookie(sessionCookieService, creator.id),
+    );
+    const referralAgenciesResult = await fetchBrowserJson(
+      client,
+      `${BROWSER_BACKEND_URL}/api/cases/referral-agencies`,
+    );
+    assert(
+      referralAgenciesResult.status === 200 && referralAgenciesResult.body?.data?.length > 0,
+      `Referral agency API returned status=${referralAgenciesResult.status} count=${referralAgenciesResult.body?.data?.length ?? 0}`,
     );
     const openCaseResult = await postBrowserJson(client, `${BROWSER_BACKEND_URL}/api/cases`, {
       student_id: student.student_uuid,
@@ -1583,19 +1630,6 @@ async function main() {
       '#follow-up-assessment',
       'ปัญหาด้านการเรียน (เช่น หมดไฟ, เรียนไม่ทัน)',
     );
-    await click(
-      client,
-      `document.querySelector('button[type="submit"]')`,
-      'Report submit button was not found',
-    );
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes(
-          'กรุณาระบุรายละเอียดเมื่อไม่พบนักเรียน',
-        ),
-      'Student-not-found did not require a report detail',
-    );
-
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390,
       height: 844,
@@ -1719,11 +1753,43 @@ async function main() {
         .find((button) => button.textContent.includes('ส่งต่อหน่วยงาน'))?.disabled === true)()`,
     );
     assert(reviewSubmitInitiallyDisabled, 'Review dialog allowed an empty reason');
+    await selectCombobox(
+      client,
+      '#referral-agency',
+      `หน่วยงานประเภทอื่น · ${REFERRAL_AGENCY_NAME}`,
+    );
     await setInputValue(client, '#case-note', 'ส่งต่อหน่วยงานเพื่อดูแลต่อเนื่อง');
+    try {
+      await waitFor(
+        async () =>
+          Boolean(
+            await evaluate(
+              client,
+              `(() => [...document.querySelector('#case-note')?.closest('[role="dialog"]')?.querySelectorAll('button') || []]
+                .at(-1)?.disabled === false)()`,
+            ),
+          ),
+        'Refer-agency review confirmation stayed disabled after required fields were filled',
+      );
+    } catch (error) {
+      const state = await evaluate(
+        client,
+        `JSON.stringify({
+          note: document.querySelector('#case-note')?.value,
+          agency: document.querySelector('#referral-agency')?.previousElementSibling?.value,
+          buttons: [...document.querySelectorAll('[role="dialog"] button')].map((button) => ({
+            text: button.textContent.trim(),
+            disabled: button.disabled,
+          })),
+          body: document.body.innerText.slice(-500),
+        })`,
+      );
+      throw new Error(`${errorMessage(error)}; state=${state}`);
+    }
     await click(
       client,
-      `(() => [...document.querySelectorAll('[role="dialog"] button')]
-        .find((button) => button.textContent.includes('ส่งต่อหน่วยงาน')))()`,
+      `(() => [...document.querySelector('#case-note')?.closest('[role="dialog"]')?.querySelectorAll('button') || []]
+        .at(-1))()`,
       'Refer-agency review confirmation was not found',
     );
     await waitFor(
@@ -1793,11 +1859,9 @@ async function main() {
       '#follow-up-assessment',
       'ปัญหาด้านการเรียน (เช่น หมดไฟ, เรียนไม่ทัน)',
     );
-    await setInputValue(
-      client,
-      '#cause-detail',
-      'ตรวจบริเวณบ้านและสอบถามเพื่อนบ้านแล้ว ยังไม่พบนักเรียน',
-    );
+    // Optional visit questions must not block a valid outcome-only report.
+    // This also proves the relaxed public-form contract end to end.
+    await setInputValue(client, '#cause-detail', '');
     await click(
       client,
       `document.querySelector('button[type="submit"]')`,
@@ -1808,12 +1872,23 @@ async function main() {
       'Student-not-found report did not reach its receipt',
     );
     const [studentNotFoundCase] = await dataSource.query(
-      `SELECT status FROM cases WHERE id = $1`,
+      `SELECT c.status, submission.home_visit_exception_code,
+              submission.task_execution_outcome_code, submission.cause_detail
+       FROM cases c
+       JOIN tasks task ON task.case_id = c.id
+       JOIN task_links link ON link.task_id = task.id
+       JOIN task_submissions submission ON submission.task_link_id = link.id
+       WHERE c.id = $1
+       ORDER BY submission.submitted_at DESC
+       LIMIT 1`,
       [studentNotFoundCaseId],
     );
     assert(
-      studentNotFoundCase?.status === 'STUDENT_NOT_FOUND',
-      `Expected STUDENT_NOT_FOUND, received ${studentNotFoundCase?.status}`,
+      studentNotFoundCase?.status === 'STUDENT_NOT_FOUND' &&
+        studentNotFoundCase?.home_visit_exception_code === 'STUDENT_NOT_FOUND' &&
+        studentNotFoundCase?.task_execution_outcome_code === 'NOT_SUCCEEDED' &&
+        studentNotFoundCase?.cause_detail === null,
+      `Expected STUDENT_NOT_FOUND with a derived NOT_SUCCEEDED report, received ${JSON.stringify(studentNotFoundCase)}`,
     );
 
     await navigate(client, `${FRONTEND_URL}/cases/${studentNotFoundCaseId}`, 'student-not-found case');
@@ -1832,7 +1907,8 @@ async function main() {
     await click(
       client,
       `(() => [...document.querySelectorAll('button')]
-        .find((button) => button.offsetParent !== null && button.textContent.includes('มอบหมาย')))()`,
+        .find((button) => button.offsetParent !== null &&
+          button.textContent.includes('มอบหมาย') && !button.textContent.includes('อีกครั้ง')))()`,
       'Student-not-found re-assignment submit was not found',
     );
     await waitFor(
@@ -1868,9 +1944,13 @@ async function main() {
        WHERE id = $1`,
       [latestReassignment.id],
     );
+    await taskLifecycleService.sweepLapsedAssignments();
     await navigate(client, `${FRONTEND_URL}/cases/${studentNotFoundCaseId}`, 'expired assignment renewal');
     await waitFor(
-      async () => (await evaluate(client, 'document.body.innerText')).includes('ลิงก์เดิมหมดอายุแล้ว'),
+      async () =>
+        (await evaluate(client, 'document.body.innerText')).includes(
+          'หมดอายุโดยยังไม่มีการส่งรายงาน',
+        ),
       'Expired IN_PROGRESS case did not expose renewal flow',
     );
     await setAssignmentEnd(client);
@@ -1878,7 +1958,8 @@ async function main() {
     await click(
       client,
       `(() => [...document.querySelectorAll('button')]
-        .find((button) => button.offsetParent !== null && button.textContent.includes('มอบหมาย')))()`,
+        .find((button) => button.offsetParent !== null &&
+          button.textContent.includes('มอบหมาย') && !button.textContent.includes('อีกครั้ง')))()`,
       'Expired-link renewal submit was not found',
     );
     await waitFor(
@@ -1906,8 +1987,7 @@ async function main() {
     );
 
     await dataSource.query(
-      `UPDATE task_links
-       SET status = 'COMPLETED'
+      `UPDATE task_links SET status = 'COMPLETED'
        WHERE task_id IN (SELECT id FROM tasks WHERE case_id = $1)`,
       [studentNotFoundCaseId],
     );
@@ -1948,7 +2028,7 @@ async function main() {
     );
 
     console.log(
-      'home visit browser smoke passed (OPEN assignment, IN_PROGRESS report/upload, PENDING_REVIEW review, REFER_AGENCY/CLOSE resolution, STUDENT_NOT_FOUND re-assignment, expired-link renewal)',
+      'home visit browser smoke passed (assignment, report/upload, derived STUDENT_NOT_FOUND outcome, re-assignment, expired-link renewal, referral and close review)',
     );
   } finally {
     await closeChrome(chrome);

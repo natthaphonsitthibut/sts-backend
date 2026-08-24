@@ -203,7 +203,10 @@ async function loginInBrowser(client, user, sessionCookie) {
 
 async function activeCasesFromDb(dataSource) {
   const [row] = await dataSource.query(
-    `SELECT count(*)::int AS count FROM cases WHERE status = 'IN_PROGRESS' AND deleted_at IS NULL`,
+    `SELECT count(*)::int AS count
+     FROM cases
+     WHERE status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
+       AND deleted_at IS NULL`,
   );
   return Number(row?.count ?? 0);
 }
@@ -292,7 +295,11 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     await waitFor(
       async () => {
         const text = await bodyText(client);
-        return text.includes('หน้าหลัก') && text.includes('นักเรียนเสี่ยง Top 10');
+        return (
+          text.includes('นักเรียนทั้งหมด') &&
+          text.includes('พื้นที่ที่มีนักเรียนเสี่ยงสูง Top 5') &&
+          text.includes('สัดส่วนสาเหตุความเสี่ยง')
+        );
       },
       `${label} home dashboard did not render`,
     );
@@ -304,11 +311,20 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   const text = await bodyText(client);
   assert(!text.includes('ต้องดำเนินการวันนี้'), `${label} rendered the removed action queue`);
   assert(!text.includes('ทางลัดทำงานต่อ'), `${label} rendered the removed shortcut section`);
-  assert(text.includes('ทั้งหมด'), `${label} student summary metric was missing`);
+  assert(text.includes('นักเรียนทั้งหมด'), `${label} student summary metric was missing`);
   assert(
-    text.includes('นักเรียนเสี่ยง Top 10'),
+    text.includes('พื้นที่ที่มีนักเรียนเสี่ยงสูง Top 5'),
     `${label} high-risk area ranking was missing`,
   );
+  for (const metricLabel of [
+    'นักเรียนกลุ่มเสี่ยง',
+    'เคสทั้งหมด',
+    'เคสที่กำลังดำเนินการ',
+    'เคสที่เสร็จสิ้น',
+  ]) {
+    assert(text.includes(metricLabel), `${label} metric was missing: ${metricLabel}`);
+  }
+  assert(text.includes('สัดส่วนสาเหตุความเสี่ยง'), `${label} cause chart was missing`);
   const riskDimension = await evaluate(
     client,
     `document.querySelector('[data-risk-area-dimension]')?.getAttribute('data-risk-area-dimension')`,
@@ -317,15 +333,6 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     riskDimension === (expectations.riskDimension || 'PROVINCE'),
     `${label} default risk dimension was ${riskDimension}`,
   );
-  if (expectations.risk) {
-    assert(text.includes('เสี่ยง'), `${label} risk metric was missing`);
-  }
-  if (expectations.cases) {
-    assert(text.includes('รอติดตาม'), `${label} active case metric was missing`);
-    assert(text.includes('เคสที่ยังดำเนินการ'), `${label} case pipeline chart was missing`);
-  } else {
-    assert(!text.includes('เคสที่ยังดำเนินการ'), `${label} rendered case pipeline without permission`);
-  }
   assert(!text.includes('แนวโน้มการมาเรียน'), `${label} rendered the retired attendance chart`);
   assert(!text.includes('การกระจายระดับความเสี่ยง'), `${label} rendered the retired risk chart`);
   assert(!text.includes('เคสเปิดใหม่เทียบปิดแล้ว'), `${label} rendered the retired case chart`);
@@ -370,31 +377,6 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
       String(activeCaseCardText).includes(expectedActiveCases.toLocaleString()),
       `${label} did not render expected active case count ${expectedActiveCases}\n${String(activeCaseCardText)}`,
     );
-    // Address the cards by metric key: their labels are short Thai words that
-    // also appear in the sidebar, so matching on text picks up navigation links.
-    const caseMetricLinks = await evaluate(
-      client,
-      `Object.fromEntries(Array.from(document.querySelectorAll('[data-home-metric]'))
-        .map((link) => [link.getAttribute('data-home-metric'), link.getAttribute('href')]))`,
-    );
-    assert(
-      String(caseMetricLinks.activeCases).includes('status=IN_PROGRESS'),
-      `${label} in-progress case metric did not retain its filter context`,
-    );
-    assert(
-      String(caseMetricLinks.pendingReview).includes('status=PENDING_REVIEW'),
-      `${label} pending-review case metric did not retain its filter context`,
-    );
-    const pipelineLinks = await evaluate(
-      client,
-      `Array.from(document.querySelectorAll('[data-case-pipeline-status]'))
-        .map((link) => ({ status: link.getAttribute('data-case-pipeline-status'), href: link.getAttribute('href') }))`,
-    );
-    assert(
-      pipelineLinks.length === 3 &&
-        pipelineLinks.every((link) => String(link.href).includes(`status=${link.status}`)),
-      `${label} case pipeline did not expose three scoped status links`,
-    );
   }
   if (expectations.risk) {
     const riskMetricLink = await evaluate(
@@ -409,6 +391,16 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
 }
 
 async function assertMapWheelIsolation(client) {
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('[data-home-risk-map-surface]'))`,
+        ),
+      ),
+    'Home risk map interaction surface did not render',
+  );
   const before = await evaluate(
     client,
     `(async () => {
@@ -427,7 +419,7 @@ async function assertMapWheelIsolation(client) {
       };
     })()`,
   );
-  assert(before?.scrollTop !== null, 'Home risk map interaction surface was not available');
+  assert(before && before.scrollTop !== null, 'Home risk map interaction surface was not available');
 
   await client.call('Input.dispatchMouseEvent', {
     type: 'mouseMoved',
@@ -653,7 +645,7 @@ async function main() {
           credentials: 'include'
         });
         const payload = await response.json();
-        return payload.data.metrics.find((metric) => metric.key === 'activeCases')?.value;
+        return payload.data.metrics.find((metric) => metric.key === 'inProgressCases')?.value;
       })()`,
     );
     assert(

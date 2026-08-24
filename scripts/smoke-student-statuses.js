@@ -16,7 +16,7 @@ if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
   throw new Error('Refusing to run: DB_NAME must end with _smoke');
 }
 
-const SETTINGS_USERNAME = 'student_status_smoke_settings';
+const MASTER_DATA_USERNAME = 'student_status_smoke_master_data';
 const IMPORT_USERNAME = 'student_status_smoke_import';
 const NO_PERMISSION_USERNAME = 'student_status_smoke_no_permission';
 
@@ -66,7 +66,7 @@ async function disableActors(dataSource) {
           deactivation_note = COALESCE(deactivation_note, 'Retained automated student-status smoke fixture')
       WHERE username = ANY($1::text[])
     `,
-    [[SETTINGS_USERNAME, IMPORT_USERNAME, NO_PERMISSION_USERNAME]],
+    [[MASTER_DATA_USERNAME, IMPORT_USERNAME, NO_PERMISSION_USERNAME]],
   );
 }
 
@@ -159,8 +159,8 @@ async function main() {
 
   try {
     await cleanup(dataSource);
-    await upsertActor(dataSource, await passwordService.hash(password), SETTINGS_USERNAME, [
-      'settings',
+    await upsertActor(dataSource, await passwordService.hash(password), MASTER_DATA_USERNAME, [
+      'master-data',
     ]);
     await upsertActor(dataSource, await passwordService.hash(password), IMPORT_USERNAME, [
       'import-data',
@@ -169,10 +169,10 @@ async function main() {
       'home',
     ]);
 
-    const settingsLogin = await request(baseUrl, 'POST', '/api/users/login', 201, {
-      body: { username: SETTINGS_USERNAME, password },
+    const masterDataLogin = await request(baseUrl, 'POST', '/api/users/login', 201, {
+      body: { username: MASTER_DATA_USERNAME, password },
     });
-    const settingsCookie = cookieHeader(settingsLogin.response);
+    const masterDataCookie = cookieHeader(masterDataLogin.response);
     const importLogin = await request(baseUrl, 'POST', '/api/users/login', 201, {
       body: { username: IMPORT_USERNAME, password },
     });
@@ -183,7 +183,7 @@ async function main() {
     const noPermissionCookie = cookieHeader(noPermissionLogin.response);
 
     await request(baseUrl, 'GET', '/api/student-statuses?page=1&limit=10', 200, {
-      headers: { cookie: settingsCookie },
+      headers: { cookie: masterDataCookie },
     });
     await request(baseUrl, 'GET', '/api/student-statuses?page=1&limit=10', 200, {
       headers: { cookie: importCookie },
@@ -191,11 +191,18 @@ async function main() {
     await request(baseUrl, 'GET', '/api/student-statuses?page=1&limit=10', 403, {
       headers: { cookie: noPermissionCookie },
     });
+    const catalogs = await request(baseUrl, 'GET', '/api/status-catalogs', 200, {
+      headers: { cookie: masterDataCookie },
+    });
+    assert(
+      catalogs.payload?.STUDENT_STATUS_CATEGORY?.some((item) => item.code === 'STUDYING'),
+      'Student status category catalog did not expose STUDYING',
+    );
 
     const createPayload = {
       code,
       labelTh: 'สถานะนักเรียน smoke',
-      category: 'ACTIVE',
+      category: 'STUDYING',
       badgeVariant: 'success',
       isActiveForLogin: true,
       isTerminal: false,
@@ -205,7 +212,7 @@ async function main() {
       sourceSystem: 'SMOKE',
     };
     const created = await request(baseUrl, 'POST', '/api/student-statuses', 201, {
-      headers: { cookie: settingsCookie },
+      headers: { cookie: masterDataCookie },
       body: createPayload,
     });
     assertStudentStatus(created.payload?.data, createPayload);
@@ -215,7 +222,7 @@ async function main() {
       body: { ...createPayload, code: code + 1 },
     });
     await request(baseUrl, 'POST', '/api/student-statuses', 409, {
-      headers: { cookie: settingsCookie },
+      headers: { cookie: masterDataCookie },
       body: createPayload,
     });
 
@@ -224,12 +231,12 @@ async function main() {
       'GET',
       `/api/student-statuses?page=1&limit=10&searchTerm=${encodeURIComponent(String(code))}`,
       200,
-      { headers: { cookie: settingsCookie } },
+      { headers: { cookie: masterDataCookie } },
     );
     assert(list.payload?.data?.some((item) => item.code === code), 'Created status was not searchable');
 
     const getByCode = await request(baseUrl, 'GET', `/api/student-statuses/${code}`, 200, {
-      headers: { cookie: settingsCookie },
+      headers: { cookie: masterDataCookie },
     });
     assertStudentStatus(getByCode.payload?.data, createPayload);
 
@@ -245,15 +252,37 @@ async function main() {
       sourceSystem: 'SMOKE',
     };
     const updated = await request(baseUrl, 'PUT', `/api/student-statuses/${code}`, 200, {
-      headers: { cookie: settingsCookie },
+      headers: { cookie: masterDataCookie },
       body: updatePayload,
     });
     assertStudentStatus(updated.payload?.data, { ...createPayload, ...updatePayload });
 
     const disabled = await request(baseUrl, 'DELETE', `/api/student-statuses/${code}`, 200, {
-      headers: { cookie: settingsCookie },
+      headers: { cookie: masterDataCookie },
     });
     assert(disabled.payload?.data?.isEnabled === false, 'Disable did not clear isEnabled');
+    const activeOnly = await request(
+      baseUrl,
+      'GET',
+      `/api/student-statuses?page=1&limit=10&includeInactive=false&searchTerm=${code}`,
+      200,
+      { headers: { cookie: masterDataCookie } },
+    );
+    assert(
+      !activeOnly.payload?.data?.some((item) => item.code === code),
+      'Active-only status list still returned a disabled status',
+    );
+    const includingInactive = await request(
+      baseUrl,
+      'GET',
+      `/api/student-statuses?page=1&limit=10&includeInactive=true&searchTerm=${code}`,
+      200,
+      { headers: { cookie: masterDataCookie } },
+    );
+    assert(
+      includingInactive.payload?.data?.some((item) => item.code === code),
+      'Inactive-inclusive status list omitted a disabled status',
+    );
 
     const auditRows = await dataSource.query(
       `
@@ -281,15 +310,17 @@ async function main() {
       JSON.stringify({
         status: 'student_statuses_smoke_ok',
         checked: [
-          'settings user can list statuses',
+          'master-data user can list statuses',
+          'authenticated status catalogs expose the STUDYING category',
           'import-data user can list statuses read-only',
           'no-permission user cannot list statuses',
-          'settings user can create a status',
+          'master-data user can create a status',
           'import-data user cannot create a status',
           'duplicate status code is rejected',
           'created status is searchable and readable',
-          'settings user can update policy flags',
+          'master-data user can update policy flags',
           'delete soft-disables the status',
+          'includeInactive toggles disabled rows server-side',
           'MASTER_DATA_EDIT audit stores field names only',
         ],
       }),

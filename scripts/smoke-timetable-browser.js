@@ -437,7 +437,7 @@ async function upsertActor(dataSource, passwordHash, username, permissions, data
 async function upsertStudentFixture(dataSource, room) {
   const [loginStatus] = await dataSource.query(
     `SELECT code FROM student_status
-     WHERE category = 'ACTIVE' AND is_active_for_login IS TRUE AND is_enabled IS TRUE
+     WHERE category = 'STUDYING' AND is_active_for_login IS TRUE AND is_enabled IS TRUE
        AND deleted_at IS NULL
      ORDER BY code LIMIT 1`,
   );

@@ -806,12 +806,16 @@ async function main() {
       async () => String(await evaluate(client, 'document.body.innerText')).includes('เลือกห้องเรียนเพื่อเริ่มเช็กชื่อ'),
       'Internal check-in page did not render the classroom selector',
     );
-    await selectComboboxOption(client, 'ชั้น', scope.grade_label);
-    await selectComboboxOption(
-      client,
-      'ห้อง',
-      scope.room_name || `ห้อง ${scope.room_code}`,
+    await setAriaSelect(client, 'ชั้น', scope.grade_level_id);
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('select[aria-label="ห้อง"] option[value="${scope.classroom_id}"]'))`,
+        ),
+      'Room select did not load options for the selected grade',
     );
+    await setAriaSelect(client, 'ห้อง', scope.classroom_id);
     await waitFor(
       async () => await evaluate(client, 'Boolean(document.querySelector(\'button[aria-label="เลือกวันที่เช็กชื่อ"]\'))'),
       'Internal check-in workspace did not open',
@@ -961,9 +965,9 @@ async function main() {
     assert(
       await evaluate(
         client,
-        `location.hash === '' && Boolean(sessionStorage.getItem('sts_classroom_link_token'))`,
+        `location.hash === '' && sessionStorage.getItem('sts_classroom_link_token') === null`,
       ),
-      'Public token was not removed from the URL and retained only for auth handoff',
+      'Public token was not removed from the URL or leaked into browser storage',
     );
     await client.call('Network.setCookie', {
       name: CLASSROOM_LINK_SESSION_COOKIE,
@@ -1236,10 +1240,6 @@ async function main() {
       name: CLASSROOM_LINK_SESSION_COOKIE,
       url: BACKEND_URL,
     });
-    await evaluate(
-      client,
-      `sessionStorage.removeItem('sts_classroom_link_token')`,
-    );
     await navigate(client, `${FRONTEND_URL}/check-in#token=${encodeURIComponent(rawToken)}`);
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('ลิงก์นี้ใช้งานไม่ได้'),

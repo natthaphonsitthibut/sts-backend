@@ -22,6 +22,14 @@ describe('CaseTrackingOptionsService', () => {
     findResidenceEnvironmentOptions: jest.fn(),
     listAssistanceMeasures: jest.fn(),
     findAssistanceMeasures: jest.fn(),
+    listTaskExecutionOutcomes: jest.fn(),
+    findTaskExecutionOutcome: jest.fn(),
+    listNonFollowUpReasons: jest.fn(),
+    findNonFollowUpReason: jest.fn(),
+    listDisadvantageTypes: jest.fn(),
+    findDisadvantageTypes: jest.fn(),
+    listDisabilityTypes: jest.fn(),
+    findDisabilityTypes: jest.fn(),
   };
   const service = new CaseTrackingOptionsService(repository as unknown as TaskRepository);
 
@@ -99,6 +107,19 @@ describe('CaseTrackingOptionsService', () => {
       { code: 'SCHOLARSHIP', label_th: 'ให้ทุนการศึกษา', requires_detail: false },
       { code: 'OTHER', label_th: 'อื่น ๆ (ระบุในช่อง)', requires_detail: true },
     ]);
+    repository.listTaskExecutionOutcomes.mockResolvedValue([
+      { code: 'SUCCEEDED', label_th: 'สำเร็จ' },
+      { code: 'NOT_SUCCEEDED', label_th: 'ยังไม่สำเร็จ' },
+    ]);
+    repository.listNonFollowUpReasons.mockResolvedValue([
+      { code: 'UNREACHABLE', label_th: 'ติดต่อไม่ได้' },
+    ]);
+    repository.listDisadvantageTypes.mockResolvedValue([
+      { code: 'POVERTY', label_th: 'เด็กยากจน' },
+    ]);
+    repository.listDisabilityTypes.mockResolvedValue([
+      { code: 'VISUAL', label_th: 'ความพิการทางการมองเห็น' },
+    ]);
 
     await expect(service.getOptions()).resolves.toEqual({
       reviewActions: [
@@ -173,6 +194,13 @@ describe('CaseTrackingOptionsService', () => {
         { code: 'SCHOLARSHIP', label: 'ให้ทุนการศึกษา', requiresDetail: false },
         { code: 'OTHER', label: 'อื่น ๆ (ระบุในช่อง)', requiresDetail: true },
       ],
+      executionOutcomes: [
+        { code: 'SUCCEEDED', label: 'สำเร็จ' },
+        { code: 'NOT_SUCCEEDED', label: 'ยังไม่สำเร็จ' },
+      ],
+      nonFollowUpReasons: [{ code: 'UNREACHABLE', label: 'ติดต่อไม่ได้' }],
+      disadvantageTypes: [{ code: 'POVERTY', label: 'เด็กยากจน' }],
+      disabilityTypes: [{ code: 'VISUAL', label: 'ความพิการทางการมองเห็น' }],
     });
   });
 

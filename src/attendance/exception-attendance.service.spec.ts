@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import type { FileStorageAdapter } from '../files/storage/file-storage.types';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import { MasterDataService } from '../master-data/master-data.service';
 import { AttendanceOperationsService } from './attendance-operations.service';
 import { ExceptionAttendanceRepository } from './exception-attendance.repository';
 import { ExceptionAttendanceService } from './exception-attendance.service';
@@ -65,6 +66,8 @@ describe('ExceptionAttendanceService', () => {
   let attendanceOperations: jest.Mocked<Pick<AttendanceOperationsService, 'assertClassroomAccess'>>;
   let audit: jest.Mocked<Pick<AuditLogService, 'recordAtomic'>>;
   let riskProfiles: jest.Mocked<Pick<RiskProfileService, 'requestStudentRecalculation'>>;
+  let masterData: jest.Mocked<Pick<MasterDataService, 'listActiveOptions'>>;
+  let storage: jest.Mocked<Pick<FileStorageAdapter, 'resolve'>>;
   let service: ExceptionAttendanceService;
 
   beforeEach(() => {
@@ -106,15 +109,33 @@ describe('ExceptionAttendanceService', () => {
     } as unknown as jest.Mocked<ExceptionAttendanceRepository>;
     audit = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
     riskProfiles = { requestStudentRecalculation: jest.fn().mockResolvedValue(undefined) };
+    masterData = {
+      listActiveOptions: jest.fn().mockResolvedValue([
+        {
+          code: 'UNKNOWN',
+          labelTh: 'ยังไม่ทราบสาเหตุ',
+          categoryCode: null,
+          requiresDetail: null,
+        },
+        {
+          code: 'MINOR_ILLNESS',
+          labelTh: 'เจ็บป่วยเล็กน้อย',
+          categoryCode: 'HEALTH',
+          requiresDetail: null,
+        },
+      ]),
+    };
     attendanceOperations = {
       assertClassroomAccess: jest.fn().mockResolvedValue({ schoolId: 1001 }),
     };
+    storage = { resolve: jest.fn() };
     service = new ExceptionAttendanceService(
       repository,
       attendanceOperations as AttendanceOperationsService,
       audit as AuditLogService,
       riskProfiles as RiskProfileService,
-      { resolve: jest.fn() } as unknown as FileStorageAdapter,
+      masterData as MasterDataService,
+      storage as FileStorageAdapter,
     );
   });
 
@@ -138,6 +159,19 @@ describe('ExceptionAttendanceService', () => {
       teacherMembershipId: null,
       actorLabel: 'ผู้ดูแล โรงเรียน',
     });
+  });
+
+  it('blocks student photos when the classroom context is not operational', async () => {
+    repository.findClassroom.mockResolvedValueOnce({
+      ...classroom,
+      classroom_status: 'INACTIVE',
+    });
+
+    await expect(service.resolveStudentPhoto(actor, 'student-1')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(repository.findStudentPhotoStorageKey.mock.calls).toHaveLength(0);
+    expect(storage.resolve).not.toHaveBeenCalled();
   });
 
   it('starts once, freezes the roster, and keeps OPEN missing marks non-present', async () => {
@@ -206,6 +240,9 @@ describe('ExceptionAttendanceService', () => {
       'exception-attendance-submit',
     ]);
     expect(result.data).toMatchObject({ status: 'SUBMITTED', exceptionCount: 1 });
+    expect(repository.replaceExceptions.mock.calls[0]?.[1][0]).toMatchObject({
+      absenceReasonCode: 'UNKNOWN',
+    });
   });
 
   it('returns an identical duplicate submit without writing or auditing again', async () => {
@@ -218,7 +255,7 @@ describe('ExceptionAttendanceService', () => {
     });
     repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
     repository.listStoredExceptions.mockResolvedValue([
-      { student_uuid: 'student-1', attendance_status_code: 2 },
+      { student_uuid: 'student-1', attendance_status_code: 2, absence_reason_code: 'UNKNOWN' },
     ]);
 
     const result = await service.submit(actor, openSession.id, {
@@ -235,7 +272,7 @@ describe('ExceptionAttendanceService', () => {
     repository.findSessionForUpdate.mockResolvedValue({ ...openSession, status: 'SUBMITTED' });
     repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
     repository.listStoredExceptions.mockResolvedValue([
-      { student_uuid: 'student-1', attendance_status_code: 2 },
+      { student_uuid: 'student-1', attendance_status_code: 2, absence_reason_code: 'UNKNOWN' },
     ]);
 
     await expect(
@@ -255,5 +292,81 @@ describe('ExceptionAttendanceService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
     expect(audit.recordAtomic.mock.calls).toHaveLength(0);
+  });
+
+  it('stores an explicit absence reason and rejects it for late or leave', async () => {
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+
+    await service.submit(actor, openSession.id, {
+      exceptions: [
+        {
+          studentId: 'student-1',
+          status: 'P_ABSENT',
+          absenceReasonCode: 'MINOR_ILLNESS',
+        },
+      ],
+    });
+    expect(repository.replaceExceptions.mock.calls[0]?.[1][0]).toMatchObject({
+      statusCode: 2,
+      absenceReasonCode: 'MINOR_ILLNESS',
+    });
+
+    await expect(
+      service.submit(actor, openSession.id, {
+        exceptions: [
+          {
+            studentId: 'student-1',
+            status: 'P_LATE',
+            absenceReasonCode: 'MINOR_ILLNESS',
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects an unknown or inactive absence reason before writing', async () => {
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+
+    await expect(
+      service.submit(actor, openSession.id, {
+        exceptions: [
+          {
+            studentId: 'student-1',
+            status: 'P_ABSENT',
+            absenceReasonCode: 'DISABLED_REASON',
+          },
+        ],
+      }),
+    ).rejects.toThrow('สาเหตุการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
+
+    expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
+  });
+
+  it('keeps a submitted retry idempotent after its reason is deactivated', async () => {
+    repository.findSessionForUpdate.mockResolvedValue({ ...openSession, status: 'SUBMITTED' });
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+    repository.listStoredExceptions.mockResolvedValue([
+      {
+        student_uuid: 'student-1',
+        attendance_status_code: 2,
+        absence_reason_code: 'MINOR_ILLNESS',
+      },
+    ]);
+    masterData.listActiveOptions.mockResolvedValue([]);
+
+    await expect(
+      service.submit(actor, openSession.id, {
+        exceptions: [
+          {
+            studentId: 'student-1',
+            status: 'P_ABSENT',
+            absenceReasonCode: 'MINOR_ILLNESS',
+          },
+        ],
+      }),
+    ).resolves.toEqual(expect.objectContaining({ success: true }));
+
+    expect(masterData.listActiveOptions.mock.calls).toHaveLength(0);
+    expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
   });
 });

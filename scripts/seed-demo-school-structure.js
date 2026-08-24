@@ -598,7 +598,7 @@ async function seedStructure(dataSource) {
     const [activeStatus] = await manager.query(`
       SELECT code
       FROM student_status
-      WHERE category = 'ACTIVE' AND is_enabled = TRUE AND deleted_at IS NULL
+      WHERE category = 'STUDYING' AND is_enabled = TRUE AND deleted_at IS NULL
       ORDER BY sort_order, code
       LIMIT 1
     `);

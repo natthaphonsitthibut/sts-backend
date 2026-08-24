@@ -260,6 +260,8 @@ async function main() {
       caseResolutionOutcomeCode: null,
       assistedAt: new Date().toISOString(),
       assistanceDetail: 'มอบทุนการศึกษา 2,000 บาท และสมุด/อุปกรณ์',
+      taskExecutionOutcomeCode: 'SUCCEEDED',
+      nonFollowUpReasonCode: null,
     });
     await dataSource.query(`UPDATE cases SET status = 'PENDING_REVIEW' WHERE id = $1`, [caseId]);
 

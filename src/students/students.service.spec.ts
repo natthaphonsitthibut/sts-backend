@@ -17,6 +17,7 @@ describe('StudentsService', () => {
     listAttendanceByStudentId: jest.Mock;
     findStudentProfileSummary: jest.Mock;
     listStudentAttendanceCalendar: jest.Mock;
+    listStudentCareConsiderations: jest.Mock;
     listStudentSubjectAttendanceByDate: jest.Mock;
     insertPiiAccessEvent: jest.Mock;
     listActiveRevealGroups: jest.Mock;
@@ -44,6 +45,7 @@ describe('StudentsService', () => {
             listAttendanceByStudentId: jest.fn(),
             findStudentProfileSummary: jest.fn(),
             listStudentAttendanceCalendar: jest.fn(),
+            listStudentCareConsiderations: jest.fn().mockResolvedValue([]),
             listStudentSubjectAttendanceByDate: jest.fn(),
             insertPiiAccessEvent: jest.fn(),
             listActiveRevealGroups: jest.fn(),
@@ -126,7 +128,7 @@ describe('StudentsService', () => {
           school_name: 'โรงเรียนทดสอบ',
           school_id: 10010002,
           student_status_label: 'กำลังศึกษา',
-          student_status_category: 'ACTIVE',
+          student_status_category: 'STUDYING',
           student_status_badge_variant: 'success',
           photo_storage_key: 'student-photos/person/profile.webp',
           photo_updated_at: '2026-08-10T06:30:00.000Z',
@@ -365,6 +367,7 @@ describe('StudentsService', () => {
           endsOn: '2026-10-10',
         },
         grades: { termGpa: 3.21, cumulativeGpax: 3.42 },
+        careConsiderations: { disadvantages: [], disabilities: [] },
         attendance: {
           ratePercent: 94.74,
           counts: { present: 17, absent: 1, late: 1, leave: 1, total: 20 },
