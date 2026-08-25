@@ -347,7 +347,7 @@ export class StudentsRepository {
       LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid
       LEFT JOIN LATERAL (
         SELECT TRIM(teacher.first_name || ' ' || teacher.last_name) AS homeroom_teacher_name
-        FROM classroom_teacher_assignments assignment
+        FROM classroom_homeroom_teachers assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
          AND membership.school_id = assignment.school_id
@@ -358,10 +358,6 @@ export class StudentsRepository {
          AND teacher.deleted_at IS NULL
         WHERE assignment.classroom_id = s.classroom_id
           AND assignment.school_id = s."SchoolID_Onec"
-          AND assignment.assignment_kind = 'HOMEROOM'
-          AND assignment.assignment_status = 'ACTIVE'
-          AND assignment.deleted_at IS NULL
-        ORDER BY assignment.id DESC
         LIMIT 1
       ) homeroom ON true
       LEFT JOIN LATERAL (
@@ -707,7 +703,7 @@ export class StudentsRepository {
         a."AttendanceStatus" as status,
         a."Period" as period
       FROM student_term s
-      JOIN attendance a ON a.student_uuid = s.student_uuid
+      JOIN attendance_effective_records a ON a.student_uuid = s.student_uuid
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
       WHERE s.student_uuid = $1
         AND a.session_kind = 'SUBJECT'
@@ -761,7 +757,7 @@ export class StudentsRepository {
          AND term.academic_year = s."AcademicYear_Onec"
          AND term.semester = s."Semester_Onec"
          AND term.deleted_at IS NULL
-        LEFT JOIN attendance
+        LEFT JOIN attendance_effective_records attendance
           ON attendance.student_uuid = s.student_uuid
          AND attendance.session_kind = 'SUBJECT'
          AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
@@ -820,7 +816,7 @@ export class StudentsRepository {
               WHERE attendance."AttendanceStatus" IN (1, 3)
             )::int AS attended_periods
           FROM student_term s
-          JOIN attendance
+          JOIN attendance_effective_records attendance
             ON attendance.student_uuid = s.student_uuid
            AND attendance.session_kind = 'SUBJECT'
            AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
@@ -894,19 +890,15 @@ export class StudentsRepository {
             END
           ) AS recorded_by
         FROM student_term s
-        JOIN attendance
+        JOIN attendance_effective_records attendance
           ON attendance.student_uuid = s.student_uuid
          AND attendance.session_kind = 'SUBJECT'
          AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
          AND attendance."Semester_Onec" = s."Semester_Onec"
         JOIN attendance_record_statuses status
           ON status.code = attendance."AttendanceStatus"
-        LEFT JOIN attendance_sessions session
-          ON session.id = attendance.session_id
-        LEFT JOIN timetable_slots slot
-          ON slot.id = session.timetable_slot_id
         LEFT JOIN subjects subject
-          ON subject.id = COALESCE(session.subject_id, slot.subject_id)
+          ON subject.id = attendance.subject_id
         LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
         LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE s.student_uuid = $1

@@ -9,10 +9,16 @@ import { PiiExportController, PiiExportDownloadController } from './pii-export.c
 import { PiiExportRepository } from './pii-export.repository';
 import { PiiExportService } from './pii-export.service';
 import { MasterDataModule } from '../master-data/master-data.module';
+import { PiiAccessController } from './pii-access.controller';
 
 @Module({
   imports: [AuthModule, TaskModule, StudentGeocodeModule, MasterDataModule],
-  controllers: [PiiExportController, PiiExportDownloadController, StudentsController],
+  controllers: [
+    PiiAccessController,
+    PiiExportController,
+    PiiExportDownloadController,
+    StudentsController,
+  ],
   providers: [StudentsRepository, StudentsService, PiiExportRepository, PiiExportService],
   // Teacher links render the same student profile as the staff screen, so the
   // read service is shared instead of duplicated behind a guest-only query set.

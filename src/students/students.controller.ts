@@ -85,7 +85,7 @@ export class StudentsController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequirePermission('manage-students')
   @Post()
   async create(
     @Body() createStudentDto: CreateStudentDto,
@@ -98,7 +98,7 @@ export class StudentsController {
   }
 
   @Get()
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students')
   findAll(@Query() query: GetStudentsQueryDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findAll(query, resolveActorDataScope(actor), actor);
   }
@@ -106,7 +106,7 @@ export class StudentsController {
   // Declared before the dynamic `:id` route so the static segment isn't
   // captured as a student id.
   @Get('filter-options')
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students')
   getFilterOptions(
     @Query() query: GetStudentFilterOptionsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -115,7 +115,7 @@ export class StudentsController {
   }
 
   @Get('care-options')
-  @RequirePermission('students')
+  @RequirePermission('manage-students')
   async getCareOptions() {
     const [disadvantages, disabilities] = await Promise.all([
       this.masterData.listActiveOptions('disadvantage-types'),
@@ -125,19 +125,19 @@ export class StudentsController {
   }
 
   @Get('cases/by-name/:name')
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students')
   findCasesByName(@Param('name') name: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findCasesByName(name, actor, resolveActorDataScope(actor));
   }
 
   @Get(':id/cases')
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms')
   findCasesByStudentId(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findCasesByStudentId(id, actor, resolveActorDataScope(actor));
   }
 
   @Get('attendance/:id')
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms')
   findAttendanceByStudentId(
     @Param('id') id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -146,7 +146,7 @@ export class StudentsController {
   }
 
   @Get(':id/profile-summary')
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms')
   getStudentProfileSummary(
     @Param('id') id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -155,7 +155,7 @@ export class StudentsController {
   }
 
   @Get(':id/attendance-subjects')
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms')
   getStudentSubjectAttendance(
     @Param('id') id: string,
     @Query() query: GetStudentSubjectAttendanceQueryDto,
@@ -170,7 +170,7 @@ export class StudentsController {
   }
 
   @Get(':id')
-  @RequirePermission('students')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms')
   findOne(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findOne(id, actor, resolveActorDataScope(actor));
   }
@@ -188,6 +188,7 @@ export class StudentsController {
   @Get(':id/photo')
   @RequireAnyPermission(
     'students',
+    'manage-students',
     'attendance',
     'classrooms',
     'dashboard',
@@ -213,7 +214,7 @@ export class StudentsController {
     res.sendFile(result.filePath);
   }
 
-  @RequirePermission('students')
+  @RequirePermission('manage-students')
   @Patch(':id/photo')
   @UseInterceptors(FileInterceptor('photo', multerConfig))
   async updateStudentPhoto(
@@ -238,7 +239,7 @@ export class StudentsController {
 
   // Reveal a masked PII group (national id / passport) for one student.
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequirePermission('manage-students')
   @Post(':id/pii-reveal')
   revealPii(
     @Param('id') id: string,
@@ -254,7 +255,7 @@ export class StudentsController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequirePermission('manage-students')
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -273,7 +274,7 @@ export class StudentsController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('students')
+  @RequirePermission('manage-students')
   @Delete(':id')
   async remove(
     @Param('id') id: string,

@@ -43,8 +43,27 @@ export const PII_REASON_CODES = [
 
 export type PiiReasonCode = (typeof PII_REASON_CODES)[number];
 
+/** User-facing reveal reasons served to every PII dialog from one backend source. */
+export const PII_REASON_LABELS: Record<PiiReasonCode, string> = {
+  HOME_VISIT: 'เยี่ยมบ้าน/ติดตาม',
+  CONTACT_PARENT: 'ติดต่อผู้ปกครอง',
+  VERIFY_DATA: 'ตรวจสอบ/แก้ไขข้อมูล',
+  COORDINATE_AGENCY: 'ประสานหน่วยงาน',
+  OTHER: 'อื่น ๆ (ระบุ)',
+  SELF_ACCESS: 'ดูข้อมูลของตนเอง',
+};
+
 /** Reason codes that require a free-text note (enforced in DTO + service). */
 export const PII_REASON_REQUIRES_NOTE: PiiReasonCode[] = ['OTHER'];
+
+/** SELF_ACCESS is resolved by the server and is never selectable by staff. */
+export function listStaffPiiRevealReasons() {
+  return PII_REASON_CODES.filter((code) => code !== 'SELF_ACCESS').map((code) => ({
+    value: code,
+    label: PII_REASON_LABELS[code],
+    requiresNote: PII_REASON_REQUIRES_NOTE.includes(code),
+  }));
+}
 
 /**
  * Fully mask a PII value for transport. Separators are masked too so neither a

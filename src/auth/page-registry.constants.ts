@@ -36,7 +36,10 @@ export const APP_PAGES: AppPageDefinition[] = [
   { id: 'home', title: 'หน้าหลัก', group: null },
   { id: 'dashboard', title: 'รายงานสถานะนักเรียน', group: null },
   { id: 'students', title: 'รายชื่อนักเรียน', group: null },
+  { id: 'teachers', title: 'รายชื่อครู', group: null },
   { id: 'classrooms', title: 'ห้องเรียนทั้งหมด', group: null },
+  { id: 'manage-students', title: 'จัดการนักเรียน', group: APP_PAGE_GROUPS.users },
+  { id: 'manage-teachers', title: 'จัดการข้อมูลครู', group: APP_PAGE_GROUPS.users },
   {
     id: 'manage-school-structure',
     title: 'จัดการภาคเรียนและห้องเรียน',
@@ -69,11 +72,6 @@ export const APP_PAGES: AppPageDefinition[] = [
   {
     id: 'manage-users-list',
     title: 'จัดการผู้ใช้งาน',
-    group: APP_PAGE_GROUPS.users,
-  },
-  {
-    id: 'manage-teachers',
-    title: 'จัดการข้อมูลคุณครู',
     group: APP_PAGE_GROUPS.users,
   },
   {

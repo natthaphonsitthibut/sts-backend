@@ -158,7 +158,7 @@ describe('StudentsRepository roster queries', () => {
       'LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid',
     );
     expect(queries[0]).toContain("COALESCE(risk.risk_tier, 'NORMAL') as risk_tier");
-    expect(queries[0]).toContain("assignment.assignment_kind = 'HOMEROOM'");
+    expect(queries[0]).toContain('FROM classroom_homeroom_teachers assignment');
   });
 
   it('scopes the legacy case-by-name lookup through the linked enrollment', async () => {

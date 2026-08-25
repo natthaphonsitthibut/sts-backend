@@ -56,6 +56,20 @@ describe('NotificationsRepository', () => {
 
     const { params, sql } = getLastQuery();
     expect(sql).toContain("$2::text = 'read' AND n.read_at IS NOT NULL");
+    expect(sql).toContain('u.permissions ? nt.required_permission');
+    expect(sql).toContain("u.data_scope->'global' = 'true'::jsonb");
+    expect(sql).toContain('notification_case.school_id::text');
     expect(params).toEqual([42, 'read', 20, 0]);
+  });
+
+  it('rechecks current permission and scope when counting the inbox', async () => {
+    const { getLastQuery, repository } = createRepository([{ unread_count: 0, unseen_count: 0 }]);
+
+    await repository.countForRecipient(42);
+
+    const { sql } = getLastQuery();
+    expect(sql).toContain('u.permissions ? nt.required_permission');
+    expect(sql).toContain('n.case_id IS NULL AND n.student_person_uuid IS NULL');
+    expect(sql).toContain("jsonb_typeof(u.data_scope->'school_ids') = 'array'");
   });
 });
