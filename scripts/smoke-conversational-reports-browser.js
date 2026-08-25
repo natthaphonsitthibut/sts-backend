@@ -250,12 +250,50 @@ async function main() {
        ORDER BY enrollment.student_uuid LIMIT 1`,
     );
     assert(enrollment, 'need one canonical student with an assigned classroom teacher');
-    const [secondScopedSchool] = await dataSource.query(
-      `SELECT id FROM schools WHERE id <> $1 ORDER BY id LIMIT 1`,
+    const [secondScopedEnrollment] = await dataSource.query(
+      `SELECT enrollment.student_uuid, enrollment."SchoolID_Onec" AS school_id,
+              school.name AS school_name,
+              CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec") AS student_name
+       FROM student_term enrollment
+       JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+       JOIN student_current_enrollment_resolution resolution
+         ON resolution.selected_student_uuid = enrollment.student_uuid
+        AND resolution.resolution_state = 'ACTIVE'
+       WHERE enrollment."SchoolID_Onec" <> $1
+         AND NOT EXISTS (
+           SELECT 1 FROM cases current_case
+           WHERE current_case.student_uuid = enrollment.student_uuid
+             AND current_case.deleted_at IS NULL
+             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+         )
+       ORDER BY enrollment."SchoolID_Onec", enrollment.student_uuid LIMIT 1`,
       [enrollment.school_id],
     );
-    assert(secondScopedSchool, 'need two schools to prove the all-schools scoped report');
-    const actorSchoolIds = [Number(enrollment.school_id), Number(secondScopedSchool.id)];
+    assert(secondScopedEnrollment, 'need a student from a second school for the scoped report');
+    const [outOfScopeEnrollment] = await dataSource.query(
+      `SELECT enrollment.student_uuid, enrollment."SchoolID_Onec" AS school_id,
+              school.name AS school_name,
+              CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec") AS student_name
+       FROM student_term enrollment
+       JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+       JOIN student_current_enrollment_resolution resolution
+         ON resolution.selected_student_uuid = enrollment.student_uuid
+        AND resolution.resolution_state = 'ACTIVE'
+       WHERE enrollment."SchoolID_Onec" <> ALL($1::int[])
+         AND NOT EXISTS (
+           SELECT 1 FROM cases current_case
+           WHERE current_case.student_uuid = enrollment.student_uuid
+             AND current_case.deleted_at IS NULL
+             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+         )
+       ORDER BY enrollment."SchoolID_Onec", enrollment.student_uuid LIMIT 1`,
+      [[Number(enrollment.school_id), Number(secondScopedEnrollment.school_id)]],
+    );
+    assert(outOfScopeEnrollment, 'need a student outside the actor scope for the scoped report');
+    const actorSchoolIds = [
+      Number(enrollment.school_id),
+      Number(secondScopedEnrollment.school_id),
+    ];
     const [absenceReason] = await dataSource.query(
       `SELECT reason.code, reason.label_th, category.code AS category_code,
               category.label_th AS category_label
@@ -317,6 +355,21 @@ async function main() {
       [enrollment.student_uuid, enrollment.student_name, enrollment.school_id, enrollment.school_name, REASON, actorId],
     );
     caseId = Number(createdCase.id);
+    for (const scopeProofEnrollment of [secondScopedEnrollment, outOfScopeEnrollment]) {
+      await dataSource.query(
+        `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
+           status, workflow_phase_code, created_by)
+         VALUES ($1,$2,$3,$4,$5,'OPEN','FOLLOW_UP',$6)`,
+        [
+          scopeProofEnrollment.student_uuid,
+          scopeProofEnrollment.student_name,
+          scopeProofEnrollment.school_id,
+          scopeProofEnrollment.school_name,
+          `${REASON} scope proof`,
+          actorId,
+        ],
+      );
+    }
     const actorContext = {
       id: actorId,
       username: USERNAME,
@@ -774,12 +827,25 @@ async function main() {
       async () =>
         await client.evaluate(
           `document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value === 'ทุกโรงเรียนในขอบเขตสิทธิ์'
-            && document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
+            && document.querySelector(${JSON.stringify(
+              `[data-student-navigation="${enrollment.student_uuid}"]`,
+            )})?.innerText.includes(${JSON.stringify(enrollment.school_name)})
+            && document.querySelector(${JSON.stringify(
+              `[data-student-navigation="${secondScopedEnrollment.student_uuid}"]`,
+            )})?.innerText.includes(${JSON.stringify(secondScopedEnrollment.school_name)})`,
         ),
       async () =>
-        `all-schools risk report did not load scoped student rows without selecting a school: ${await client.evaluate(
+        `all-schools risk report did not identify students from both scoped schools: ${await client.evaluate(
           `document.body.innerText.slice(0, 1200)`,
         )}`,
+    );
+    assert(
+      !(await client.evaluate(
+        `Boolean(document.querySelector(${JSON.stringify(
+          `[data-student-navigation="${outOfScopeEnrollment.student_uuid}"]`,
+        )}))`,
+      )),
+      'all-schools risk report rendered a student outside the actor scope',
     );
     assert(
       !(await client.evaluate(`document.body.innerText.includes('เลือกโรงเรียนจากตัวกรองด้านบน')`)),
