@@ -92,8 +92,13 @@ export class StudentsController {
     @Req() req: Request,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    const result = this.studentsService.create(createStudentDto);
-    await this.recordStudentWriteAudit('STUDENT_CREATE', actor, req, null, createStudentDto);
+    const result = await this.studentsService.create(
+      createStudentDto,
+      actor,
+      resolveActorDataScope(actor),
+    );
+    const targetId = typeof result.id === 'string' ? result.id : null;
+    await this.recordStudentWriteAudit('STUDENT_CREATE', actor, req, targetId, createStudentDto);
     return result;
   }
 
@@ -112,6 +117,12 @@ export class StudentsController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return this.studentsService.getFilterOptions(query, resolveActorDataScope(actor), actor);
+  }
+
+  @Get('management-options')
+  @RequirePermission('manage-students')
+  getManagementOptions(@CurrentUser() actor?: AuthenticatedRequestUser) {
+    return this.studentsService.getManagementOptions(resolveActorDataScope(actor));
   }
 
   @Get('care-options')
@@ -214,7 +225,7 @@ export class StudentsController {
     res.sendFile(result.filePath);
   }
 
-  @RequirePermission('manage-students')
+  @RequireAnyPermission('students', 'manage-students')
   @Patch(':id/photo')
   @UseInterceptors(FileInterceptor('photo', multerConfig))
   async updateStudentPhoto(

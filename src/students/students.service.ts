@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -251,9 +252,107 @@ export class StudentsService {
     return await this.findOne(id, actor, userScope);
   }
 
-  create(createStudentDto: CreateStudentDto) {
-    void createStudentDto;
-    return 'This action adds a new student';
+  private normalizeGuardians(guardians: UpdateStudentDto['guardians']) {
+    if (guardians === undefined) return undefined;
+    if (guardians.filter((guardian) => guardian.is_primary).length > 1) {
+      throw new BadRequestException('เลือกผู้ติดต่อหลักได้เพียงคนเดียว');
+    }
+    return guardians.map((guardian) => {
+      if (guardian.relation === 'GUARDIAN' && !guardian.relation_note?.trim()) {
+        throw new BadRequestException('ผู้ปกครองที่ไม่ใช่บิดามารดาต้องระบุความสัมพันธ์');
+      }
+      const explicitFirstName = guardian.first_name?.trim();
+      const explicitLastName = guardian.last_name?.trim();
+      if (explicitFirstName) {
+        if (!explicitLastName) {
+          throw new BadRequestException('กรุณากรอกนามสกุลผู้ปกครอง');
+        }
+        return {
+          ...guardian,
+          first_name: explicitFirstName,
+          last_name: explicitLastName,
+          full_name: `${explicitFirstName} ${explicitLastName}`,
+        };
+      }
+      const legacyFullName = guardian.full_name?.trim();
+      if (!legacyFullName) {
+        throw new BadRequestException('กรุณากรอกชื่อและนามสกุลผู้ปกครอง');
+      }
+      const nameParts = legacyFullName.split(/\s+/);
+      const lastName = nameParts.length > 1 ? (nameParts.pop() ?? null) : null;
+      return {
+        ...guardian,
+        first_name: nameParts.join(' '),
+        last_name: lastName,
+        full_name: legacyFullName,
+      };
+    });
+  }
+
+  async getManagementOptions(userScope?: DataScope) {
+    const classrooms = await this.studentsRepository.listManagementClassrooms(userScope);
+    return {
+      data: {
+        classrooms: classrooms.map((classroom) => ({
+          id: classroom.id,
+          schoolId: classroom.school_id,
+          schoolName: classroom.school_name,
+          schoolTermId: classroom.school_term_id,
+          academicYear: classroom.academic_year,
+          semester: classroom.semester,
+          gradeLevelId: classroom.grade_level_id,
+          gradeLabel: classroom.grade_label,
+          roomCode: classroom.room_code,
+          roomName: classroom.room_name,
+        })),
+      },
+    };
+  }
+
+  async create(
+    createStudentDto: CreateStudentDto,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+  ) {
+    const normalizedGuardians = this.normalizeGuardians(createStudentDto.guardians);
+    try {
+      const created = await this.studentsRepository.createStudent(
+        {
+          ...createStudentDto,
+          VillageNumber_Onec: cleanPrefixedAddressText('หมู่', createStudentDto.VillageNumber_Onec),
+          Street_Onec: cleanPrefixedAddressText('ถนน', createStudentDto.Street_Onec),
+          Soi_Onec: cleanPrefixedAddressText('ซอย', createStudentDto.Soi_Onec),
+          Trok_Onec: cleanPrefixedAddressText('ตรอก', createStudentDto.Trok_Onec),
+          guardians: normalizedGuardians,
+        },
+        resolveAuditActorId(actor),
+        userScope,
+      );
+      if (!created) throw new NotFoundException('ไม่พบห้องเรียนในขอบเขตของคุณ');
+      if ('conflict' in created) {
+        throw new ConflictException('เลขบัตรประชาชนนี้มีข้อมูลนักเรียนอยู่ในระบบแล้ว');
+      }
+      return await this.findOne(created.studentUuid, actor, userScope);
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? String((error as { code: unknown }).code)
+          : null;
+      if (code === '23505') {
+        throw new ConflictException('เลขประจำตัวนักเรียนหรือข้อมูลการลงทะเบียนซ้ำ');
+      }
+      if (code === '23503') {
+        throw new BadRequestException('ข้อมูลห้องเรียนหรือสถานะนักเรียนไม่ถูกต้อง');
+      }
+      throw error;
+    }
   }
 
   async findAll(
@@ -697,45 +796,7 @@ export class StudentsService {
       throw new NotFoundException(`Student with ID ${id} not found`);
     }
 
-    let normalizedGuardians = guardians;
-    if (guardians !== undefined) {
-      if (guardians.filter((guardian) => guardian.is_primary).length > 1) {
-        throw new BadRequestException('เลือกผู้ติดต่อหลักได้เพียงคนเดียว');
-      }
-      for (const guardian of guardians) {
-        if (guardian.relation === 'GUARDIAN' && !guardian.relation_note?.trim()) {
-          throw new BadRequestException('ผู้ปกครองที่ไม่ใช่บิดามารดาต้องระบุความสัมพันธ์');
-        }
-      }
-      normalizedGuardians = guardians.map((guardian) => {
-        const explicitFirstName = guardian.first_name?.trim();
-        const explicitLastName = guardian.last_name?.trim();
-        if (explicitFirstName) {
-          if (!explicitLastName) {
-            throw new BadRequestException('กรุณากรอกนามสกุลผู้ปกครอง');
-          }
-          return {
-            ...guardian,
-            first_name: explicitFirstName,
-            last_name: explicitLastName,
-            full_name: `${explicitFirstName} ${explicitLastName}`,
-          };
-        }
-
-        const legacyFullName = guardian.full_name?.trim();
-        if (!legacyFullName) {
-          throw new BadRequestException('กรุณากรอกชื่อและนามสกุลผู้ปกครอง');
-        }
-        const nameParts = legacyFullName.split(/\s+/);
-        const lastName = nameParts.length > 1 ? (nameParts.pop() ?? null) : null;
-        return {
-          ...guardian,
-          first_name: nameParts.join(' '),
-          last_name: lastName,
-          full_name: legacyFullName,
-        };
-      });
-    }
+    const normalizedGuardians = this.normalizeGuardians(guardians);
 
     if (contact !== undefined || guardians !== undefined) {
       const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);

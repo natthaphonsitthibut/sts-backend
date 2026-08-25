@@ -140,6 +140,19 @@ export interface StudentSubjectAttendanceRow extends Record<string, unknown> {
   recorded_by: string | null;
 }
 
+export interface StudentManagementClassroomOption extends Record<string, unknown> {
+  id: string;
+  school_id: number;
+  school_name: string;
+  school_term_id: string;
+  academic_year: number;
+  semester: number;
+  grade_level_id: number;
+  grade_label: string;
+  room_code: string;
+  room_name: string | null;
+}
+
 export type StudentsQueryResult<T extends Record<string, unknown>> = SqlQueryResult<T>;
 
 /** One row to append to the immutable `pii_access_events` log. */

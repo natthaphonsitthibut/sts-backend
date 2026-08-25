@@ -50,6 +50,7 @@ describe('StudentStatusController access', () => {
       'settings',
       'import-data',
       'students',
+      'manage-students',
     ]);
     for (const method of ['getByCode', 'create', 'update', 'disable']) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual(['master-data']);
@@ -64,6 +65,7 @@ describe('StudentStatusController access', () => {
     expect(guard.canActivate(contextWithPermissions('list', ['settings']))).toBe(true);
     expect(guard.canActivate(contextWithPermissions('list', ['import-data']))).toBe(true);
     expect(guard.canActivate(contextWithPermissions('list', ['students']))).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('list', ['manage-students']))).toBe(true);
     expect(() => guard.canActivate(contextWithPermissions('list', ['home']))).toThrow(
       ForbiddenException,
     );

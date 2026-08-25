@@ -37,7 +37,7 @@ export class StudentStatusController {
   // Read access covers list/search screens and import admins without granting
   // settings management; mutations remain settings-only.
   @Get()
-  @RequireAnyPermission('master-data', 'settings', 'import-data', 'students')
+  @RequireAnyPermission('master-data', 'settings', 'import-data', 'students', 'manage-students')
   list(
     @CurrentUser() actor: AuthenticatedRequestUser,
     @Query() query: ListStudentStatusesQueryDto,

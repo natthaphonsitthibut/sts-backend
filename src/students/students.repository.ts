@@ -18,7 +18,9 @@ import type {
   StudentListRow,
   StudentsQueryResult,
   StudentPersonContactRow,
+  StudentManagementClassroomOption,
 } from './students.types';
+import type { CreateStudentDto } from './dto/create-student.dto';
 import type {
   StudentContactDto,
   StudentGuardianInputDto,
@@ -322,6 +324,7 @@ export class StudentsRepository {
     let query = `
       SELECT
         s.*,
+        s.student_uuid::text AS id,
         person.photo_storage_key,
         person.updated_at AS photo_updated_at,
         gl.label as grade,
@@ -404,7 +407,6 @@ export class StudentsRepository {
     // national id) — strip it from the wire shape; internal callers resolve it
     // via findPersonUuidByStudentUuid instead.
     delete (row as Record<string, unknown>).person_uuid;
-    delete (row as Record<string, unknown>).student_status_code;
     return row;
   }
 
@@ -439,6 +441,262 @@ export class StudentsRepository {
     return result.rows[0]?.person_uuid ?? null;
   }
 
+  async listManagementClassrooms(
+    userScope?: DataScope,
+  ): Promise<StudentManagementClassroomOption[]> {
+    const params: unknown[] = [];
+    let scopeSql = '';
+    if (userScope) {
+      const scope = buildDataScopeQuery(
+        userScope,
+        {
+          school_id: 'classroom.school_id',
+          grade: 'classroom.grade_level_id',
+          room: 'classroom.legacy_room_number::text',
+          province: 'school.province',
+          district: 'school.district',
+          sub_district: 'school.sub_district',
+        },
+        1,
+      );
+      scopeSql = scope.sql ? `AND (${scope.sql})` : '';
+      pushParams(params, scope.params);
+    }
+    const result = await this.query<StudentManagementClassroomOption>(
+      `
+        SELECT classroom.id::text,
+          classroom.school_id,
+          school.name AS school_name,
+          term.id::text AS school_term_id,
+          term.academic_year,
+          term.semester::int,
+          classroom.grade_level_id,
+          grade.label AS grade_label,
+          classroom.room_code,
+          classroom.room_name
+        FROM school_classrooms classroom
+        JOIN school_terms term
+          ON term.id = classroom.school_term_id
+         AND term.school_id = classroom.school_id
+         AND term.deleted_at IS NULL
+        JOIN schools school ON school.id = classroom.school_id
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        WHERE classroom.deleted_at IS NULL
+          AND classroom.classroom_status = 'ACTIVE'
+          AND term.status = 'ACTIVE'
+          ${scopeSql}
+        ORDER BY term.academic_year DESC, term.semester DESC,
+                 school.name, classroom.grade_level_id, classroom.legacy_room_number
+      `,
+      params,
+    );
+    return result.rows;
+  }
+
+  async createStudent(
+    data: CreateStudentDto,
+    actorUserId: number | null,
+    userScope?: DataScope,
+  ): Promise<{ studentUuid: string } | { conflict: 'IDENTITY' | 'ENROLLMENT' } | null> {
+    return await this.dataSource.transaction(async (manager) => {
+      const scopeParams: unknown[] = [data.classroom_id];
+      let scopeSql = '';
+      if (userScope) {
+        const scope = buildDataScopeQuery(
+          userScope,
+          {
+            school_id: 'classroom.school_id',
+            grade: 'classroom.grade_level_id',
+            room: 'classroom.legacy_room_number::text',
+            province: 'school.province',
+            district: 'school.district',
+            sub_district: 'school.sub_district',
+          },
+          2,
+        );
+        scopeSql = scope.sql ? `AND (${scope.sql})` : '';
+        pushParams(scopeParams, scope.params);
+      }
+      const classrooms = (await manager.query(
+        `
+          SELECT classroom.id, classroom.school_id, classroom.school_term_id,
+            classroom.grade_level_id, classroom.legacy_room_number,
+            term.academic_year, term.semester
+          FROM school_classrooms classroom
+          JOIN school_terms term
+            ON term.id = classroom.school_term_id
+           AND term.school_id = classroom.school_id
+           AND term.deleted_at IS NULL
+          JOIN schools school ON school.id = classroom.school_id
+          WHERE classroom.id = $1
+            AND classroom.deleted_at IS NULL
+            AND classroom.classroom_status = 'ACTIVE'
+            AND term.status = 'ACTIVE'
+            ${scopeSql}
+          FOR UPDATE OF classroom
+        `,
+        scopeParams,
+      )) as unknown as Array<{
+        id: string;
+        school_id: number;
+        school_term_id: string;
+        grade_level_id: number;
+        legacy_room_number: number;
+        academic_year: number;
+        semester: number;
+      }>;
+      const classroom = classrooms[0];
+      if (!classroom) return null;
+
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `student-national-id:${data.PersonID_Onec}`,
+      ]);
+      const existingIdentifiers = (await manager.query(
+        `
+          SELECT person_uuid
+          FROM student_person_identifier
+          WHERE identifier_type = 'NATIONAL_ID'
+            AND identifier_normalized = $1
+            AND deleted_at IS NULL
+          LIMIT 2
+        `,
+        [data.PersonID_Onec],
+      )) as unknown as Array<{ person_uuid: string }>;
+      if (existingIdentifiers.length > 0) return { conflict: 'IDENTITY' };
+
+      const people = (await manager.query(
+        `
+          INSERT INTO student_person (identity_status, created_by, updated_by)
+          VALUES ('ACTIVE', $1, $1)
+          RETURNING person_uuid
+        `,
+        [actorUserId],
+      )) as unknown as Array<{ person_uuid: string }>;
+      const personUuid = people[0]?.person_uuid;
+      if (!personUuid) throw new Error('Failed to create student identity');
+
+      await manager.query(
+        `
+          INSERT INTO student_person_identifier (
+            person_uuid, identifier_type, identifier_value,
+            identifier_normalized, source, created_by, updated_by
+          )
+          VALUES ($1, 'NATIONAL_ID', $2, $2, 'MANUAL', $3, $3)
+        `,
+        [personUuid, data.PersonID_Onec, actorUserId],
+      );
+      if (data.PassportNumber_Onec) {
+        await manager.query(
+          `
+            INSERT INTO student_person_identifier (
+              person_uuid, identifier_type, identifier_value,
+              identifier_normalized, source, created_by, updated_by
+            )
+            VALUES ($1, 'PASSPORT', $2, UPPER($2), 'MANUAL', $3, $3)
+          `,
+          [personUuid, data.PassportNumber_Onec, actorUserId],
+        );
+      }
+
+      const rows = (await manager.query(
+        `
+          INSERT INTO student_term (
+            "AcademicYear_Onec", "Semester_Onec", "SchoolID_Onec",
+            "PersonID_Onec", "PassportNumber_Onec",
+            "FirstName_Onec", "MiddleName_Onec", "LastName_Onec",
+            "GradeLevelID_Onec", "RoomID_Onec",
+            "StudentStatusID_Onec", student_status_code,
+            school_term_id, classroom_id, student_number, term_gpa,
+            address_house_no, "VillageNumber_Onec", "Street_Onec",
+            "Soi_Onec", "Trok_Onec", "ProvinceNameThai_Onec",
+            "DistrictNameThai_Onec", "SubDistrictNameThai_Onec",
+            "PostalCode_Onec", address_latitude, address_longitude,
+            person_uuid, created_by, updated_by
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+            $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $29
+          )
+          RETURNING student_uuid::text
+        `,
+        [
+          classroom.academic_year,
+          classroom.semester,
+          classroom.school_id,
+          data.PersonID_Onec,
+          data.PassportNumber_Onec ?? null,
+          data.FirstName_Onec,
+          data.MiddleName_Onec ?? null,
+          data.LastName_Onec,
+          classroom.grade_level_id,
+          classroom.legacy_room_number,
+          data.student_status_code,
+          classroom.school_term_id,
+          classroom.id,
+          data.student_number ?? null,
+          data.term_gpa ?? null,
+          data.address_house_no ?? null,
+          data.VillageNumber_Onec ?? null,
+          data.Street_Onec ?? null,
+          data.Soi_Onec ?? null,
+          data.Trok_Onec ?? null,
+          data.ProvinceNameThai_Onec ?? null,
+          data.DistrictNameThai_Onec ?? null,
+          data.SubDistrictNameThai_Onec ?? null,
+          data.PostalCode_Onec ?? null,
+          data.address_latitude ?? null,
+          data.address_longitude ?? null,
+          personUuid,
+          actorUserId,
+        ],
+      )) as unknown as Array<{ student_uuid: string }>;
+      const studentUuid = rows[0]?.student_uuid;
+      if (!studentUuid) throw new Error('Failed to create student enrollment');
+
+      if (data.contact) {
+        await manager.query(
+          `
+            INSERT INTO student_person_contact (
+              person_uuid, phone, email, line_id, created_by, updated_by
+            ) VALUES ($1, $2, $3, $4, $5, $5)
+          `,
+          [
+            personUuid,
+            data.contact.phone ?? null,
+            data.contact.email ?? null,
+            data.contact.line_id ?? null,
+            actorUserId,
+          ],
+        );
+      }
+      for (const guardian of data.guardians ?? []) {
+        await manager.query(
+          `
+            INSERT INTO student_guardian (
+              person_uuid, relation, relation_note, first_name, last_name,
+              full_name, phone, email, line_id, is_primary, created_by, updated_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+          `,
+          [
+            personUuid,
+            guardian.relation,
+            guardian.relation === 'GUARDIAN' ? (guardian.relation_note ?? null) : null,
+            guardian.first_name,
+            guardian.last_name,
+            guardian.full_name ?? `${guardian.first_name ?? ''} ${guardian.last_name ?? ''}`.trim(),
+            guardian.phone ?? null,
+            guardian.email ?? null,
+            guardian.line_id ?? null,
+            guardian.is_primary ?? false,
+            actorUserId,
+          ],
+        );
+      }
+      return { studentUuid };
+    });
+  }
+
   async updateStudentByUuid(
     studentUuid: string,
     data: Omit<UpdateStudentDto, 'contact' | 'guardians'>,
@@ -447,6 +705,9 @@ export class StudentsRepository {
       FirstName_Onec: '"FirstName_Onec"',
       MiddleName_Onec: '"MiddleName_Onec"',
       LastName_Onec: '"LastName_Onec"',
+      student_number: '"student_number"',
+      student_status_code: '"student_status_code"',
+      term_gpa: '"term_gpa"',
       address_house_no: '"address_house_no"',
       VillageNumber_Onec: '"VillageNumber_Onec"',
       Street_Onec: '"Street_Onec"',

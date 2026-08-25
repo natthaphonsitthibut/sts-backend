@@ -51,11 +51,16 @@ describe('StudentsController', () => {
       ]);
     }
 
-    for (const methodName of ['updateStudentPhoto', 'revealPii']) {
-      expect(Reflect.getMetadata(PERMISSIONS_KEY, handlerOf(methodName))).toEqual([
-        'manage-students',
-      ]);
-    }
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handlerOf('updateStudentPhoto'))).toEqual([
+      'students',
+      'manage-students',
+    ]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, handlerOf('revealPii'))).toEqual([
+      'manage-students',
+    ]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, handlerOf('getManagementOptions'))).toEqual([
+      'manage-students',
+    ]);
   });
 
   it('serves a student avatar to every page that shows one', () => {

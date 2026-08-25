@@ -22,7 +22,6 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9254);
 const ADMIN_USERNAME = 'student_contact_browser_admin';
-const STUDENT_USERNAME = 'student_contact_browser_student';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -208,7 +207,7 @@ function randomThaiNationalId() {
 
 async function upsertSmokeUser(
   dataSource,
-  { username, passwordHash, firstName, lastName, permissions, role, dataScope, personUuid },
+  { username, passwordHash, firstName, lastName, permissions, role, dataScope },
 ) {
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [username]);
   if (existing) {
@@ -216,7 +215,7 @@ async function upsertSmokeUser(
       `
         UPDATE users
         SET password = $2, "FirstName" = $3, "LastName" = $4, status = 'ACTIVE',
-            permissions = $5::jsonb, role = $6, data_scope = $7::jsonb, person_uuid = $8,
+            permissions = $5::jsonb, role = $6, data_scope = $7::jsonb,
             must_change_password = FALSE, temporary_password_issued_at = NULL,
             temporary_password_expires_at = NULL, deactivated_at = NULL, deactivated_by = NULL,
             deactivation_reason_code = NULL, deactivation_note = NULL,
@@ -232,7 +231,6 @@ async function upsertSmokeUser(
         JSON.stringify(permissions),
         role,
         JSON.stringify(dataScope),
-        personUuid ?? null,
       ],
     );
     return existing;
@@ -241,9 +239,9 @@ async function upsertSmokeUser(
     `
       INSERT INTO users (
         username, password, "FirstName", "LastName", status, permissions, role,
-        data_scope, person_uuid, must_change_password, affiliation, data_origin_code
+        data_scope, must_change_password, affiliation, data_origin_code
       )
-      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, $8, FALSE, $9, 'AUTOMATED_TEST')
+      VALUES ($1, $2, $3, $4, 'ACTIVE', $5::jsonb, $6, $7::jsonb, FALSE, $8, 'AUTOMATED_TEST')
       RETURNING id
     `,
     [
@@ -254,7 +252,6 @@ async function upsertSmokeUser(
       JSON.stringify(permissions),
       role,
       JSON.stringify(dataScope),
-      personUuid ?? null,
       'Automated student contact browser smoke',
     ],
   );
@@ -336,7 +333,7 @@ async function main() {
       passwordHash: await passwordService.hash(adminPassword),
       firstName: 'Contact',
       lastName: 'Browser Admin',
-      permissions: ['students', 'dashboard'],
+      permissions: ['students', 'manage-students', 'dashboard'],
       role: 'ADMIN',
       dataScope: { global: true },
     });
@@ -379,8 +376,120 @@ async function main() {
     );
     assert(browserLogin?.status === 201, `Browser login failed with status ${browserLogin?.status}`);
 
+    // --- Management list → avatar detail → edit → back keeps its origin. ---
+    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน..."]'))`,
+          ),
+        ),
+      'Managed student search did not render',
+    );
+    await fillInput(client, 'input[placeholder="ค้นหาชื่อนักเรียน..."]', 'อินทรกำแหง');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('พิมพ์ชนก อินทรกำแหง'),
+      'Managed student row did not render',
+    );
+    const managementControls = await evaluate(
+      client,
+      `Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('เพิ่มนักเรียน')))
+       && Boolean(document.querySelector('button[aria-label="แก้ไขข้อมูลของ พิมพ์ชนก อินทรกำแหง"]'))`,
+    );
+    assert(managementControls === true, 'Managed student list is missing add/edit actions');
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('เพิ่มนักเรียน'))`,
+      'Add-student button was not found',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')) === '/manage-students/new',
+      'Add-student button did not open the create page',
+    );
+    const createFields = await evaluate(
+      client,
+      `Boolean(document.querySelector('#student-national-id'))
+       && document.body.innerText.includes('โรงเรียน ปีการศึกษา ชั้น และห้อง')
+       && document.body.innerText.includes('สถานะนักเรียน')`,
+    );
+    assert(createFields === true, 'Student create page is missing identity or education fields');
+    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน..."]'))`,
+          ),
+        ),
+      'Managed student search did not render after returning from create',
+    );
+    await fillInput(client, 'input[placeholder="ค้นหาชื่อนักเรียน..."]', 'อินทรกำแหง');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('พิมพ์ชนก อินทรกำแหง'),
+      'Managed student row did not render after returning from create',
+    );
+    await click(
+      client,
+      `document.querySelector('button[aria-label="เปิดข้อมูลนักเรียน พิมพ์ชนก อินทรกำแหง"]')`,
+      'Student avatar did not open the detail page',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')) === `/students/${studentUuid}`,
+      'Student avatar did not preserve the management detail route',
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((button) => button.textContent.includes('แก้ไขข้อมูล'))`,
+          ),
+        ),
+      'Student detail edit button did not render',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('แก้ไขข้อมูล'))`,
+      'Student detail edit button was not found',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')).endsWith('/edit'),
+      'Student detail did not open edit page',
+    );
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#student_number'))`)),
+      'Student education fields did not render on edit page',
+    );
+    const expandedEditFields = await evaluate(
+      client,
+      `Boolean(document.querySelector('#student_number'))
+       && Boolean(document.querySelector('#student_status_code'))
+       && document.body.innerText.includes('ข้อมูลระบุตัวตน')
+       && document.body.innerText.includes('ข้อมูลการเรียน')`,
+    );
+    assert(expandedEditFields === true, 'Student edit page is missing identity/education fields');
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ย้อนกลับ')`,
+      'Edit-page back button was not found',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'location.pathname')) === `/students/${studentUuid}`,
+      'Edit-page back button did not return to student detail',
+    );
+    assert(
+      String(await evaluate(client, 'document.body.innerText')).includes('จัดการนักเรียน'),
+      'Student detail breadcrumb lost the จัดการนักเรียน origin',
+    );
+
     // --- Edit form: student contact + guardians ---
-    await navigate(client, `${FRONTEND_URL}/students/${studentUuid}/edit`);
+    await navigate(client, `${FRONTEND_URL}/manage-students/${studentUuid}/edit`);
     await waitFor(
       async () => Boolean(await evaluate(client, `Boolean(document.querySelector('#contact_phone'))`)),
       'Student contact section did not render on the edit page',
@@ -468,8 +577,25 @@ async function main() {
     await navigate(client, `${FRONTEND_URL}/students/${studentUuid}`);
     await waitFor(
       async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes('ข้อมูลผู้ปกครอง'),
-      'Detail page did not render the guardian panel',
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('button[aria-label="ดูเบอร์ติดต่อนักเรียนและผู้ปกครอง"]'))`,
+          ),
+        ),
+      'Student contact action did not render',
+    );
+    await click(
+      client,
+      'document.querySelector(\'button[aria-label="ดูเบอร์ติดต่อนักเรียนและผู้ปกครอง"]\')',
+      'Student contact action could not be opened',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'ช่องทางติดต่อนักเรียนและผู้ปกครอง',
+        ),
+      'Student contact dialog did not render',
     );
     const detailText = String(await evaluate(client, 'document.body.innerText'));
     assert(detailText.includes('สมพงษ์ อินทรกำแหง'), 'Father name missing on detail page');
@@ -478,23 +604,25 @@ async function main() {
     assert(detailText.includes('0819998877'), 'Student phone missing on detail page');
     await navigate(client, `${FRONTEND_URL}/students/${studentUuid}`);
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ข้อมูลผู้ปกครอง'),
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('button[aria-label="ดูเบอร์ติดต่อนักเรียนและผู้ปกครอง"]'))`,
+          ),
+        ),
       'Student profile did not render after returning to it',
     );
     const profileActionPresentation = await evaluate(
       client,
       `(() => {
-        const labels = ['แก้ไขข้อมูลนักเรียน', 'ย้อนกลับ'];
+        const labels = ['แก้ไขข้อมูล', 'ย้อนกลับ'];
         const buttons = labels.map((label) =>
           [...document.querySelectorAll('button')].find((button) => button.textContent.trim() === label),
         );
         const visibleButtons = buttons.filter(Boolean);
         return {
           heights: visibleButtons.map((button) => button.getBoundingClientRect().height),
-          hasHomeVisitAction: Boolean(buttons[1]),
-          primaryBackgrounds: buttons.slice(0, 2).map((button) =>
-            button ? getComputedStyle(button).backgroundColor : '',
-          ),
         };
       })()`,
     );
@@ -504,12 +632,6 @@ async function main() {
       ),
       'Student detail action buttons do not share the same height',
     );
-    assert(
-      !profileActionPresentation.hasHomeVisitAction ||
-        profileActionPresentation.primaryBackgrounds[0] ===
-          profileActionPresentation.primaryBackgrounds[1],
-      'Home-visit request action does not use the primary blue treatment',
-    );
     await capture(client, '/tmp/sts-student-contact-detail.png');
 
     console.log(
@@ -518,12 +640,16 @@ async function main() {
         screenshots: ['/tmp/sts-student-contact-edit.png', '/tmp/sts-student-contact-detail.png'],
         checked: [
           'edit page renders contact + guardian sections',
+          'managed list exposes add/edit actions',
+          'add action opens a real student form with identity and education fields',
+          'avatar → detail → edit → back keeps the จัดการนักเรียน origin',
+          'edit page exposes identity and education fields',
           'guardian rows default FATHER → MOTHER → GUARDIAN',
           'GUARDIAN row shows relation-note field',
           'first guardian defaults to primary',
           'staff saves contact for a student without an account',
           'detail page shows guardians, note, primary badge, phone',
-          'student detail actions share one height and home-visit request is primary',
+          'student detail actions share one height',
         ],
       }),
     );
@@ -543,8 +669,8 @@ async function main() {
   } finally {
     await closeChrome(chrome);
     await dataSource.query(
-      `UPDATE users SET status = 'DISABLED', person_uuid = NULL WHERE username = ANY($1::text[])`,
-      [[ADMIN_USERNAME, STUDENT_USERNAME]],
+      `UPDATE users SET status = 'DISABLED' WHERE username = $1`,
+      [ADMIN_USERNAME],
     );
     if (personUuid) {
       await dataSource.query(`DELETE FROM student_term WHERE person_uuid = $1`, [personUuid]);

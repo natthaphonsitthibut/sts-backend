@@ -27,6 +27,8 @@ describe('StudentsService', () => {
     findStudentAccountByPersonUuid: jest.Mock;
     listGuardiansByPersonUuid: jest.Mock;
     updateStudentPersonContacts: jest.Mock;
+    listManagementClassrooms: jest.Mock;
+    createStudent: jest.Mock;
   };
   let geocodeCache: { resolve: jest.Mock };
 
@@ -55,6 +57,8 @@ describe('StudentsService', () => {
             findStudentAccountByPersonUuid: jest.fn().mockResolvedValue(null),
             listGuardiansByPersonUuid: jest.fn().mockResolvedValue([]),
             updateStudentPersonContacts: jest.fn(),
+            listManagementClassrooms: jest.fn().mockResolvedValue([]),
+            createStudent: jest.fn(),
             findPersonPhotoStorageKey: jest.fn().mockResolvedValue(null),
             updatePersonPhotoStorageKey: jest.fn(),
           },
@@ -91,6 +95,52 @@ describe('StudentsService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('creates a student from an in-scope classroom and returns the persisted row', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const scope = { school_ids: [10010002] };
+    const actor = {
+      id: 5,
+      username: 'admin',
+      roles: ['ADMIN'],
+      permissions: ['manage-students'],
+    };
+    studentsRepository.createStudent.mockResolvedValue({ studentUuid });
+    studentsRepository.findStudentById.mockResolvedValue({
+      id: studentUuid,
+      student_uuid: studentUuid,
+      FirstName_Onec: 'สมชาย',
+      LastName_Onec: 'ใจดี',
+      PersonID_Onec: '1234567890123',
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(
+      '10000000-0000-4000-8000-000000000001',
+    );
+
+    await expect(
+      service.create(
+        {
+          PersonID_Onec: '1234567890123',
+          FirstName_Onec: 'สมชาย',
+          LastName_Onec: 'ใจดี',
+          classroom_id: 99,
+          student_status_code: 10,
+        },
+        actor,
+        scope,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: studentUuid }));
+    expect(studentsRepository.createStudent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        PersonID_Onec: '1234567890123',
+        classroom_id: 99,
+        student_status_code: 10,
+      }),
+      5,
+      scope,
+    );
   });
 
   it('passes geo filters to the student list query', async () => {
