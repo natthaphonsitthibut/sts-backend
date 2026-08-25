@@ -11,6 +11,7 @@ const STORED_VALUES: Record<string, string> = {
   CASE_SLA_HIGH_DAYS: '3',
   ALERT_TRIGGER_TYPE: 'SCHEDULED',
   ALERT_SCHEDULE_TIME: '18:00',
+  RISK_RECALC_SCHEDULE_TIME: '05:10',
 };
 
 describe('SettingsService catalog validation', () => {
@@ -28,7 +29,7 @@ describe('SettingsService catalog validation', () => {
   };
   let automationService: { refreshDynamicCron: jest.Mock };
   let auditLog: { recordAtomic: jest.Mock };
-  let riskProfileService: { enqueueFull: jest.Mock };
+  let riskProfileService: { enqueueFull: jest.Mock; refreshDailyRecalcCron: jest.Mock };
   let service: SettingsService;
 
   const buildRow = (overrides: Partial<SystemSettingRow> = {}): SystemSettingRow => ({
@@ -62,7 +63,10 @@ describe('SettingsService catalog validation', () => {
     };
     automationService = { refreshDynamicCron: jest.fn().mockResolvedValue(undefined) };
     auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
-    riskProfileService = { enqueueFull: jest.fn().mockResolvedValue(undefined) };
+    riskProfileService = {
+      enqueueFull: jest.fn().mockResolvedValue(undefined),
+      refreshDailyRecalcCron: jest.fn().mockResolvedValue(undefined),
+    };
     service = new SettingsService(
       settingsRepository as unknown as SettingsRepository,
       automationService as unknown as AutomationService,
@@ -141,6 +145,21 @@ describe('SettingsService catalog validation', () => {
     await service.updateSetting(actor, 'ALERT_SCHEDULE_TIME', '07:30');
 
     expect(automationService.refreshDynamicCron).toHaveBeenCalledTimes(1);
+    expect(riskProfileService.refreshDailyRecalcCron).not.toHaveBeenCalled();
+  });
+
+  it('re-registers the daily risk recalculation when its schedule changes', async () => {
+    await service.updateSetting(actor, 'RISK_RECALC_SCHEDULE_TIME', '06:30');
+
+    expect(riskProfileService.refreshDailyRecalcCron).toHaveBeenCalledTimes(1);
+    expect(automationService.refreshDynamicCron).not.toHaveBeenCalled();
+    expect(riskProfileService.enqueueFull).not.toHaveBeenCalled();
+  });
+
+  it('does not re-register the daily risk recalculation when the value is unchanged', async () => {
+    await service.updateSetting(actor, 'RISK_RECALC_SCHEDULE_TIME', '05:10');
+
+    expect(riskProfileService.refreshDailyRecalcCron).not.toHaveBeenCalled();
   });
 
   it('ignores the client-supplied description and uses the catalog description', async () => {

@@ -18,6 +18,7 @@ import type { SystemSettingResponse, SystemSettingRow } from './settings.types';
 
 const CRON_REFRESH_KEYS = new Set(['ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME']);
 const RISK_PROFILE_REFRESH_KEYS = new Set(['CASE_RISK_HIGH_ABSENCE_DAYS']);
+const RISK_RECALC_CRON_REFRESH_KEYS = new Set(['RISK_RECALC_SCHEDULE_TIME']);
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
@@ -151,6 +152,15 @@ export class SettingsService implements OnModuleInit {
     if (changed && CRON_REFRESH_KEYS.has(key)) {
       this.logger.log(`Setting ${key} changed. Triggering dynamic cron refresh.`);
       await this.automationService.refreshDynamicCron();
+    }
+    if (changed && RISK_RECALC_CRON_REFRESH_KEYS.has(key)) {
+      this.logger.log(`Setting ${key} changed. Re-registering daily risk recalculation.`);
+      await this.riskProfileService?.refreshDailyRecalcCron().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Failed to re-register the daily risk recalculation after setting edit: ${message}`,
+        );
+      });
     }
     if (changed && RISK_PROFILE_REFRESH_KEYS.has(key)) {
       await this.riskProfileService?.enqueueFull(`setting-change:${key}`).catch((error) => {

@@ -24,6 +24,7 @@ export interface SystemSettingCatalogEntry {
 const GROUP_CASE_RISK = 'เกณฑ์เปิดเคสและระดับความเสี่ยง';
 const GROUP_CASE_SLA = 'กำหนดเวลาดำเนินการเคส (SLA)';
 const GROUP_ABSENCE_MONITOR = 'รอบการตรวจขาดเรียนอัตโนมัติ';
+const GROUP_RISK_RECALC = 'รอบคำนวณระดับความเสี่ยงประจำวัน';
 
 export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
   {
@@ -65,6 +66,14 @@ export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
     group: GROUP_ABSENCE_MONITOR,
     description:
       'เวลารันตัวตรวจขาดเรียนอัตโนมัติประจำวัน (HH:MM) — ใช้เมื่อจังหวะรันเป็น SCHEDULED',
+  },
+  {
+    key: 'RISK_RECALC_SCHEDULE_TIME',
+    valueType: 'time',
+    defaultValue: '05:10',
+    group: GROUP_RISK_RECALC,
+    description:
+      'เวลาคำนวณระดับความเสี่ยงของนักเรียนใหม่ทั้งระบบประจำวัน (HH:MM) — เป็นตาข่ายกันพลาดสำหรับกรณีที่การคำนวณรายเหตุการณ์หลุดไป ควรตั้งก่อนเวลาเริ่มเรียน',
   },
 ];
 
