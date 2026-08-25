@@ -113,6 +113,8 @@ export interface RiskDashboardRow extends QueryResultRow {
   latest_case_magic_link?: string | null;
   latest_case_had_assignment: boolean;
   problem_category_label: string | null;
+  concern_level_code: 'NOTE' | 'WATCH' | 'CONCERN' | null;
+  concern_level_label: string | null;
   teacher_comment: string | null;
 }
 

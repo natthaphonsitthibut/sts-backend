@@ -6,7 +6,11 @@ import {
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
-import { GetCasesQueryDto, GetRiskDashboardQueryDto } from './dto/task.dto';
+import {
+  GetCasesQueryDto,
+  GetReferralDrilldownQueryDto,
+  GetRiskDashboardQueryDto,
+} from './dto/task.dto';
 import { TaskService } from './task.service';
 
 @UseGuards(AuthGuard)
@@ -43,6 +47,23 @@ export class StatsController {
   @Get('stats/overview')
   async getOverviewStats(@CurrentUser() actor?: AuthenticatedRequestUser) {
     return await this.taskService.getOverviewStats(actor);
+  }
+
+  @Get('dashboard/follow-up-summary')
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('dashboard')
+  async getFollowUpSummary(@CurrentUser() actor?: AuthenticatedRequestUser) {
+    return await this.taskService.getFollowUpSummary(actor);
+  }
+
+  @Get('dashboard/referrals')
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('dashboard')
+  async getReferralDrilldown(
+    @Query() query: GetReferralDrilldownQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.taskService.getReferralDrilldown(actor, query.page, query.limit);
   }
 
   @Get('dashboard/risk-watchlist')

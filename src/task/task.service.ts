@@ -1,12 +1,5 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  GoneException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { isRestrictedExecutive } from '../auth/permissions.constants';
-import { hashToken } from '../common/utils/helpers';
 import type { CreateTaskDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
@@ -27,31 +20,6 @@ export class TaskService {
     private readonly taskStatsService: TaskStatsService,
     private readonly taskRepository: TaskRepository,
   ) {}
-
-  private async assertOtpLinkUsable(token: string): Promise<void> {
-    const tokenHash = hashToken(token);
-    const link = await this.taskRepository.findTaskLinkByTokenHash(tokenHash);
-
-    if (!link) {
-      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
-    }
-
-    if (new Date(String(link.expires_at)) < new Date()) {
-      throw new GoneException('ลิงก์หมดอายุ');
-    }
-
-    if (link.admin_locked === true || Number(link.admin_locked) === 1) {
-      throw new ForbiddenException('ลิงก์นี้ถูกปิดโดยผู้ดูแลระบบ');
-    }
-
-    if (link.opens_at && new Date(link.opens_at as string) > new Date()) {
-      throw new ForbiddenException('ลิงก์นี้ยังไม่เปิดใช้งาน');
-    }
-
-    if (link.status !== 'ACTIVE') {
-      throw new ConflictException('ลิงก์นี้ไม่อยู่ในสถานะพร้อมใช้งาน');
-    }
-  }
 
   async createTask(actor: ActorContext | undefined, data: CreateTaskDto, baseUrl: string) {
     return await this.taskLifecycleService.createTask(actor, data, baseUrl);
@@ -74,19 +42,11 @@ export class TaskService {
     // guest holding the token. These fields are consumed only internally by the
     // login-verify flow (verifyMagicLogin reads the unsanitized access-service
     // result directly), so strip them from the HTTP-facing response.
-    const {
-      assigned_to_email,
-      login_role,
-      login_permissions,
-      login_data_scope,
-      otp_verified,
-      ...safe
-    } = result;
+    const { assigned_to_email, login_role, login_permissions, login_data_scope, ...safe } = result;
     void assigned_to_email;
     void login_role;
     void login_permissions;
     void login_data_scope;
-    void otp_verified;
     return safe;
   }
 
@@ -109,14 +69,16 @@ export class TaskService {
     return await this.taskSubmissionService.saveTaskSubmission(token, data, sessionToken);
   }
 
-  async requestOtp(token: string) {
-    await this.assertOtpLinkUsable(token);
-    return await this.taskAccessService.requestOtp(token);
+  async startGoogleAuthorization(token: string) {
+    return await this.taskAccessService.startGoogleAuthorization(token);
   }
 
-  async verifyOtp(token: string, otp: string) {
-    await this.assertOtpLinkUsable(token);
-    return await this.taskAccessService.verifyOtp(token, otp);
+  async completeGoogleAuthorization(code: string, state: string): Promise<string> {
+    return await this.taskAccessService.completeGoogleAuthorization(code, state);
+  }
+
+  async completeDevelopmentGoogleAuthorization(token: string, email: string): Promise<string> {
+    return await this.taskAccessService.completeDevelopmentGoogleAuthorization(token, email);
   }
 
   async createAraIdChallenge(token: string, baseUrl: string) {
@@ -169,6 +131,14 @@ export class TaskService {
 
   async getOverviewStats(actor?: ActorContext) {
     return await this.taskStatsService.getOverviewStats(actor);
+  }
+
+  async getFollowUpSummary(actor?: ActorContext) {
+    return await this.taskStatsService.getFollowUpSummary(actor);
+  }
+
+  async getReferralDrilldown(actor?: ActorContext, page?: number, limit?: number) {
+    return await this.taskStatsService.getReferralDrilldown(actor, page, limit);
   }
 
   async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {

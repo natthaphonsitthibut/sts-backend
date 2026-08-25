@@ -1,7 +1,7 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
-  it('keeps task-link audit ids separate from OTP verification', async () => {
+  it('persists task links without legacy OTP columns', async () => {
     const executor = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     const repository = new TaskRepository({} as never, undefined as never, undefined as never);
 
@@ -22,19 +22,18 @@ describe('TaskRepository', () => {
         subject: null,
         assignmentNote: 'ติดตามที่บ้าน',
         subjectId: null,
-        otpVerified: 0,
         createdBy: 460,
       },
       executor,
     );
 
     const [sql, params] = executor.query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toMatch(
-      /otp_verified,[\s\S]*created_by,[\s\S]*updated_by[\s\S]*\$15,[\s\S]*\$16,[\s\S]*\$16/,
-    );
+    expect(sql).not.toMatch(/otp_/i);
+    expect(sql).toMatch(/created_by,[\s\S]*updated_by,[\s\S]*opens_at/);
+    expect(params).toHaveLength(16);
     expect(params[9]).toBe(42);
-    expect(params[14]).toBe(0);
-    expect(params[15]).toBe(460);
+    expect(params[14]).toBe(460);
+    expect(params[15]).toBe('2026-08-13T10:00:00.000Z');
   });
 
   it('checks visit attachments against the authenticated case scope', async () => {
@@ -415,7 +414,7 @@ describe('TaskRepository', () => {
     expect(queries[2].sql).toContain('LIMIT $5 OFFSET $6');
   });
 
-  it('sorts the watchlist by problem category and keeps the raw comment available', async () => {
+  it('sorts the watchlist by problem category and selects only prioritized signals', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -447,10 +446,13 @@ describe('TaskRepository', () => {
       { highAbsentDays: 3 },
     );
 
-    // Both tabs show the catalog label; the risk tab keeps the absence summary
-    // as its fallback, and the watchlist column reads the label field directly.
+    // NOTE remains history-only; a CONCERN wins over a newer WATCH for the same student.
     expect(queries[0].sql).toContain('latest_comment.problem_category_label');
-    expect(queries[0].sql).not.toContain('latest_comment.problem_description');
+    expect(queries[0].sql).toContain('latest_comment.problem_description');
+    expect(queries[0].sql).toContain("comment.concern_level_code IN ('WATCH', 'CONCERN')");
+    expect(queries[0].sql).toContain(
+      'ORDER BY concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
+    );
     expect(queries[2].sql).toContain(
       'ORDER BY problem_category_label DESC NULLS LAST, student_name ASC',
     );
@@ -676,6 +678,9 @@ describe('TaskRepository', () => {
       'LEFT JOIN users actor ON actor.id = review.source_actor_user_id',
     );
     expect(queries[0].sql).toContain('AS reviewer_display');
+    expect(queries[0].sql).not.toContain('review.*');
+    expect(queries[0].sql).not.toContain('review.created_by');
+    expect(queries[0].sql).not.toContain('review.source_actor_user_id,');
   });
 
   it('loads system risk signals separately from human reviews', async () => {
@@ -701,5 +706,68 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('FROM case_risk_signals');
     expect(queries[0].sql).toContain('ORDER BY detected_at DESC');
     expect(queries[0].sql).not.toContain('case_reviews');
+  });
+
+  it('loads repeat prefill from the latest prior VISIT with an explicit allowlist', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    await repository.findRepeatVisitPrefill(1254, '00000000-0000-4000-8000-000000000001');
+
+    expect(queries[0].params).toEqual([1254, '00000000-0000-4000-8000-000000000001']);
+    expect(queries[0].sql).toContain("task.task_type = 'VISIT'");
+    expect(queries[0].sql).toContain('source_task_id <> $2');
+    expect(queries[0].sql).toContain('contact_person_name');
+    expect(queries[0].sql).toContain('residence_environment_codes');
+    expect(queries[0].sql).not.toContain('photo_paths');
+    expect(queries[0].sql).not.toContain('task_execution_outcome_code');
+    expect(queries[0].sql).not.toContain('case_referrals');
+  });
+
+  it('scopes follow-up aggregate queries through the authoritative case school', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: jest.fn(() => queryRunner) } as never,
+      undefined as never,
+      undefined as never,
+    );
+    const actor = {
+      id: 7,
+      username: 'director',
+      roles: ['DIRECTOR'],
+      permissions: ['dashboard'],
+      data_scope: { school_ids: [101] },
+    };
+
+    await repository.getFollowUpOutcomeAggregate(actor);
+    await repository.getReferralAggregate(actor);
+
+    expect(queries).toHaveLength(2);
+    expect(queries[0].sql).toContain('c.school_id = ANY($1::int[])');
+    expect(queries[1].sql).toContain('c.school_id = ANY($1::int[])');
+    expect(queries[0].params).toEqual([[101]]);
+    expect(queries[1].params).toEqual([[101]]);
+    expect(queries[0].sql).not.toContain('student_name');
+    expect(queries[1].sql).not.toContain('student_name');
   });
 });

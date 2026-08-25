@@ -35,9 +35,9 @@ describe('CaseService', () => {
       | 'createCase'
       | 'withTransaction'
       | 'insertCaseReview'
+      | 'insertCaseReviewAssistanceMeasures'
       | 'findActiveReferralAgency'
       | 'insertCaseReferral'
-      | 'reviewPendingCareObservations'
       | 'transitionPendingReviewCase'
       | 'findCaseReviewById'
       | 'listTasksByCase'
@@ -79,14 +79,12 @@ describe('CaseService', () => {
       createCase: jest.fn().mockResolvedValue(10),
       withTransaction: jest.fn(async (callback) => await callback(undefined)),
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
+      insertCaseReviewAssistanceMeasures: jest.fn().mockResolvedValue(undefined),
       findActiveReferralAgency: jest.fn().mockResolvedValue({
         id: 12,
         agency_name: 'โรงพยาบาลกลาง',
       }),
       insertCaseReferral: jest.fn().mockResolvedValue(undefined),
-      reviewPendingCareObservations: jest
-        .fn()
-        .mockResolvedValue({ disadvantageCount: 0, disabilityCount: 0 }),
       transitionPendingReviewCase: jest.fn().mockResolvedValue(true),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
@@ -148,13 +146,22 @@ describe('CaseService', () => {
               requiresResolutionOutcome: false,
               completionOutcomeCode: null,
               requiredPermission: 'dashboard',
-              availablePhaseCode: 'FOLLOW_UP',
+              availablePhaseCode: null,
               targetWorkflowPhaseCode: 'ASSISTANCE',
             });
           }
           throw new Error('การดำเนินการกับเคสไม่ถูกต้อง');
         }),
         assertResolutionOutcome: jest.fn((code: string | null) => Promise.resolve(code)),
+        getAssistanceMeasures: jest.fn((codes: string[]) =>
+          Promise.resolve(
+            codes.map((code) => ({
+              code,
+              label: code === 'SCHOLARSHIP' ? 'ให้ทุนการศึกษา' : code,
+              requiresDetail: false,
+            })),
+          ),
+        ),
       } as unknown as CaseTrackingOptionsService,
     );
   });
@@ -426,14 +433,18 @@ describe('CaseService', () => {
       resolutionOutcome: null,
       targetWorkflowPhase: null,
       referralAgencyId: null,
-      careObservationDecision: null,
+      proposedAssistanceMeasureCodes: [],
     });
   });
 
   it('sends a follow-up case into the assistance phase on ASSIST', async () => {
     const result = await service.reviewCase(
       10,
-      { review_action: 'ASSIST', review_note: 'ควรให้ทุนการศึกษา' },
+      {
+        review_action: 'ASSIST',
+        review_note: 'ควรให้ทุนการศึกษา',
+        assistance_measure_codes: ['SCHOLARSHIP'],
+      },
       buildActor(['dashboard']),
     );
 
@@ -446,9 +457,14 @@ describe('CaseService', () => {
       expect.objectContaining({ id: 1 }),
       'ASSISTANCE',
     );
+    expect(taskRepository.insertCaseReviewAssistanceMeasures).toHaveBeenCalledWith(
+      expect.any(String),
+      ['SCHOLARSHIP'],
+      undefined,
+    );
   });
 
-  it('refuses ASSIST on a case already in the assistance phase', async () => {
+  it('allows ASSIST again on a case already in the assistance phase', async () => {
     taskRepository.findCaseById.mockResolvedValueOnce({
       id: 10,
       student_name: 'นักเรียน ทดสอบ',
@@ -459,11 +475,22 @@ describe('CaseService', () => {
     await expect(
       service.reviewCase(
         10,
-        { review_action: 'ASSIST', review_note: 'ช่วยเหลือรอบสอง' },
+        {
+          review_action: 'ASSIST',
+          review_note: 'ช่วยเหลือรอบสอง',
+          assistance_measure_codes: ['SCHOLARSHIP'],
+        },
         buildActor(['dashboard']),
       ),
-    ).rejects.toThrow('การดำเนินการนี้ใช้กับขั้นตอนปัจจุบันของเคสไม่ได้');
-    expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ case_status: 'OPEN' });
+    expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
+      10,
+      'OPEN',
+      null,
+      undefined,
+      expect.objectContaining({ id: 1 }),
+      'ASSISTANCE',
+    );
   });
 
   // Reviewing, closing and referring used to be three separate permissions;

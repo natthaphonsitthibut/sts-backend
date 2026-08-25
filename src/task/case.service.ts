@@ -142,6 +142,7 @@ export class CaseService {
       assistance_detail: this.normalizeText(row.assistance_detail) || null,
       task_execution_outcome_code: this.normalizeText(row.task_execution_outcome_code) || null,
       task_execution_outcome_label: this.normalizeText(row.task_execution_outcome_label) || null,
+      execution_outcome_detail: this.normalizeText(row.execution_outcome_detail) || null,
       non_follow_up_reason_code: this.normalizeText(row.non_follow_up_reason_code) || null,
       non_follow_up_reason_label: this.normalizeText(row.non_follow_up_reason_label) || null,
       created_at: row.created_at ?? null,
@@ -162,13 +163,21 @@ export class CaseService {
         this.normalizeText(row.follow_up_problem_category_label) || null,
       follow_up_problem_category_guidance:
         this.normalizeText(row.follow_up_problem_category_guidance) || null,
+      absence_reason_code: this.normalizeText(row.absence_reason_code) || null,
+      absence_reason_label: this.normalizeText(row.absence_reason_label) || null,
+      absence_reason_category_label: this.normalizeText(row.absence_reason_category_label) || null,
       parental_status_code: this.normalizeText(row.parental_status_code) || null,
       parental_status_label: this.normalizeText(row.parental_status_label) || null,
       guardian_type_code: this.normalizeText(row.guardian_type_code) || null,
       guardian_type_label: this.normalizeText(row.guardian_type_label) || null,
       guardian_type_detail: this.normalizeText(row.guardian_type_detail) || null,
+      contact_person_name: this.normalizeText(row.contact_person_name) || null,
+      contact_channel_code: this.normalizeText(row.contact_channel_code) || null,
+      contact_channel_label: this.normalizeText(row.contact_channel_label) || null,
       residence_environments: this.mapCodeLabelList(row.residence_environments),
       residence_environment_detail: this.normalizeText(row.residence_environment_detail) || null,
+      observed_disadvantage_types: this.mapCodeLabelList(row.observed_disadvantage_types),
+      observed_disability_types: this.mapCodeLabelList(row.observed_disability_types),
       cause_detail: this.normalizeText(row.cause_detail) || null,
       recommendation: this.normalizeText(row.recommendation) || null,
       visit_lat: row.visit_lat ?? null,
@@ -176,6 +185,7 @@ export class CaseService {
       photo_paths: photoPaths,
       address_changed: row.address_changed === true,
       home_visit_exception_code: this.normalizeText(row.home_visit_exception_code) || null,
+      home_visit_exception_label: this.normalizeText(row.home_visit_exception_label) || null,
       updated_student_address: this.normalizeText(row.updated_student_address) || null,
       updated_address_line: this.normalizeText(row.updated_address_line) || null,
       updated_address_province: this.normalizeText(row.updated_address_province) || null,
@@ -195,6 +205,9 @@ export class CaseService {
       review_action: this.normalizeText(row.review_action),
       review_note: this.normalizeText(row.review_note) || null,
       review_summary: this.normalizeText(row.review_summary) || null,
+      proposed_assistance_measures: this.mapCodeLabelList(row.proposed_assistance_measures),
+      proposed_assistance_measure_detail:
+        this.normalizeText(row.proposed_assistance_measure_detail) || null,
       resolution_outcome: this.normalizeText(row.resolution_outcome) || null,
       reviewed_by:
         this.normalizeText(row.reviewer_display) || this.normalizeText(row.reviewed_by) || null,
@@ -459,6 +472,21 @@ export class CaseService {
     if (reviewAction.code !== 'REFER_AGENCY' && referralAgencyId !== null) {
       throw new BadRequestException('หน่วยงานส่งต่อใช้ได้เฉพาะการส่งต่อหน่วยงาน');
     }
+    const proposedAssistanceMeasureDetail =
+      clean(this.normalizeText(body.assistance_measure_detail)) || null;
+    const proposedAssistanceMeasures =
+      reviewAction.code === 'ASSIST'
+        ? await this.caseTrackingOptions.getAssistanceMeasures(
+            body.assistance_measure_codes ?? [],
+            proposedAssistanceMeasureDetail,
+          )
+        : [];
+    if (
+      reviewAction.code !== 'ASSIST' &&
+      ((body.assistance_measure_codes?.length ?? 0) > 0 || proposedAssistanceMeasureDetail)
+    ) {
+      throw new BadRequestException('มาตรการช่วยเหลือใช้ได้เฉพาะการมอบหมายช่วยเหลือ');
+    }
     const actorName = [actor?.FirstName, actor?.LastName].filter(Boolean).join(' ').trim();
     const reviewedBy = actorName || actor?.username || 'ผอ.';
     if (!reviewAction.targetStatus) {
@@ -508,7 +536,17 @@ export class CaseService {
             resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
             reviewedBy,
             sourceActorUserId: resolveAuditActorId(actor),
+            proposedAssistanceMeasureDetail: proposedAssistanceMeasures.some(
+              (measure) => measure.requiresDetail,
+            )
+              ? proposedAssistanceMeasureDetail
+              : null,
           },
+          executor,
+        );
+        await this.taskRepository.insertCaseReviewAssistanceMeasures(
+          reviewId,
+          proposedAssistanceMeasures.map((measure) => measure.code),
           executor,
         );
         if (referralAgencyId !== null) {
@@ -519,22 +557,6 @@ export class CaseService {
               agencyId: referralAgencyId,
               referredByUserId: resolveAuditActorId(actor),
               note: reviewNote,
-            },
-            executor,
-          );
-        }
-        if (body.care_observation_decision) {
-          const studentUuid = this.normalizeText(caseRecord.student_uuid);
-          if (!studentUuid) {
-            throw new BadRequestException('เคสนี้ไม่มีนักเรียนสำหรับรับรองข้อมูลการดูแล');
-          }
-          await this.taskRepository.reviewPendingCareObservations(
-            {
-              caseId,
-              studentUuid,
-              decision: body.care_observation_decision,
-              reviewerUserId: resolveAuditActorId(actor),
-              reviewNote,
             },
             executor,
           );
@@ -561,7 +583,7 @@ export class CaseService {
           targetWorkflowPhase: reviewAction.targetWorkflowPhaseCode,
           resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
           referralAgencyId,
-          careObservationDecision: body.care_observation_decision ?? null,
+          proposedAssistanceMeasureCodes: proposedAssistanceMeasures.map((measure) => measure.code),
         },
         ip: null,
       });

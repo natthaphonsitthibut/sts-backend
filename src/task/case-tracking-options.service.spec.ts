@@ -26,10 +26,14 @@ describe('CaseTrackingOptionsService', () => {
     findTaskExecutionOutcome: jest.fn(),
     listNonFollowUpReasons: jest.fn(),
     findNonFollowUpReason: jest.fn(),
+    listAbsenceReasons: jest.fn(),
+    findAbsenceReason: jest.fn(),
     listDisadvantageTypes: jest.fn(),
     findDisadvantageTypes: jest.fn(),
     listDisabilityTypes: jest.fn(),
     findDisabilityTypes: jest.fn(),
+    listContactChannelOptions: jest.fn(),
+    findContactChannelOption: jest.fn(),
   };
   const service = new CaseTrackingOptionsService(repository as unknown as TaskRepository);
 
@@ -108,17 +112,28 @@ describe('CaseTrackingOptionsService', () => {
       { code: 'OTHER', label_th: 'อื่น ๆ (ระบุในช่อง)', requires_detail: true },
     ]);
     repository.listTaskExecutionOutcomes.mockResolvedValue([
-      { code: 'SUCCEEDED', label_th: 'สำเร็จ' },
-      { code: 'NOT_SUCCEEDED', label_th: 'ยังไม่สำเร็จ' },
+      { code: 'SUCCEEDED', label_th: 'ช่วยเหลือสำเร็จ', visit_label_th: 'พบนักเรียน' },
+      { code: 'NOT_SUCCEEDED', label_th: 'ยังช่วยเหลือไม่สำเร็จ', visit_label_th: 'ไม่พบนักเรียน' },
     ]);
     repository.listNonFollowUpReasons.mockResolvedValue([
       { code: 'UNREACHABLE', label_th: 'ติดต่อไม่ได้' },
+    ]);
+    repository.listAbsenceReasons.mockResolvedValue([
+      {
+        code: 'MINOR_ILLNESS',
+        label_th: 'ป่วยไม่รุนแรง',
+        category_code: 'PERSONAL_FAMILY',
+        category_label_th: 'สาเหตุส่วนตัว / ครอบครัว',
+      },
     ]);
     repository.listDisadvantageTypes.mockResolvedValue([
       { code: 'POVERTY', label_th: 'เด็กยากจน' },
     ]);
     repository.listDisabilityTypes.mockResolvedValue([
       { code: 'VISUAL', label_th: 'ความพิการทางการมองเห็น' },
+    ]);
+    repository.listContactChannelOptions.mockResolvedValue([
+      { code: 'IN_PERSON', label_th: 'พบด้วยตนเอง' },
     ]);
 
     await expect(service.getOptions()).resolves.toEqual({
@@ -195,12 +210,25 @@ describe('CaseTrackingOptionsService', () => {
         { code: 'OTHER', label: 'อื่น ๆ (ระบุในช่อง)', requiresDetail: true },
       ],
       executionOutcomes: [
-        { code: 'SUCCEEDED', label: 'สำเร็จ' },
-        { code: 'NOT_SUCCEEDED', label: 'ยังไม่สำเร็จ' },
+        { code: 'SUCCEEDED', label: 'ช่วยเหลือสำเร็จ', visitLabel: 'พบนักเรียน' },
+        {
+          code: 'NOT_SUCCEEDED',
+          label: 'ยังช่วยเหลือไม่สำเร็จ',
+          visitLabel: 'ไม่พบนักเรียน',
+        },
       ],
       nonFollowUpReasons: [{ code: 'UNREACHABLE', label: 'ติดต่อไม่ได้' }],
+      absenceReasons: [
+        {
+          code: 'MINOR_ILLNESS',
+          label: 'ป่วยไม่รุนแรง',
+          categoryCode: 'PERSONAL_FAMILY',
+          categoryLabel: 'สาเหตุส่วนตัว / ครอบครัว',
+        },
+      ],
       disadvantageTypes: [{ code: 'POVERTY', label: 'เด็กยากจน' }],
       disabilityTypes: [{ code: 'VISUAL', label: 'ความพิการทางการมองเห็น' }],
+      contactChannels: [{ code: 'IN_PERSON', label: 'พบด้วยตนเอง' }],
     });
   });
 
@@ -271,5 +299,16 @@ describe('CaseTrackingOptionsService', () => {
     await expect(service.getFollowUpDecision('RETIRED')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it('resolves the contact channel from the catalog instead of an inline list', async () => {
+    repository.findContactChannelOption.mockResolvedValue({
+      code: 'PHONE',
+      label_th: 'โทรศัพท์',
+    });
+    await expect(service.getContactChannel('PHONE')).resolves.toBe('PHONE');
+    await expect(service.getContactChannel(null)).resolves.toBeNull();
+    repository.findContactChannelOption.mockResolvedValue(null);
+    await expect(service.getContactChannel('RETIRED')).rejects.toBeInstanceOf(BadRequestException);
   });
 });

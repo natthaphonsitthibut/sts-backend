@@ -6,7 +6,6 @@ import { TaskController } from './task.controller';
 import { AdminController } from './admin.controller';
 import { StatsController } from './stats.controller';
 import { SubmissionController } from './submission.controller';
-import { EmailModule } from '../common/email/email.module';
 import { CaseController } from './case.controller';
 import { CaseService } from './case.service';
 import { AutomationModule } from '../automation/automation.module';
@@ -23,6 +22,7 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 import { CaseTrackingOptionsController } from './case-tracking-options.controller';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
+import { GoogleLoginModule } from '../google-login/google-login.module';
 
 @Module({
   imports: [
@@ -32,7 +32,7 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
     NotificationsModule,
     RiskProfileModule,
     TokenEncryptionModule,
-    EmailModule,
+    GoogleLoginModule,
   ],
   controllers: [
     TaskController,

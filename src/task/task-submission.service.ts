@@ -9,7 +9,6 @@ import {
 } from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { hashToken } from '../common/utils/helpers';
@@ -29,7 +28,6 @@ export class TaskSubmissionService {
     private readonly taskRepository: TaskRepository,
     private readonly taskAccessService: TaskAccessService,
     private readonly automationService: AutomationService,
-    private readonly attendanceWriteService: AttendanceWriteService,
     private readonly notificationsService: NotificationsService,
     private readonly auditLog: AuditLogService,
     private readonly caseTrackingOptions: CaseTrackingOptionsService,
@@ -105,7 +103,7 @@ export class TaskSubmissionService {
     }
 
     if (link.auth_required === true) {
-      throw new ForbiddenException('กรุณายืนยัน OTP ก่อนบันทึกข้อมูล');
+      throw new ForbiddenException('กรุณายืนยันตัวตนด้วย Google หรือ AraID ก่อนบันทึกข้อมูล');
     }
 
     return link;
@@ -226,6 +224,7 @@ export class TaskSubmissionService {
         this.toScalarString(data.non_follow_up_reason_code)?.toUpperCase() ?? null;
       const disadvantageInput = data.disadvantage_type_codes ?? [];
       const disabilityInput = data.disability_type_codes ?? [];
+      const studentUuid = this.toScalarString(link.student_uuid);
       const homeVisitExceptionCode =
         this.toScalarString(data.home_visit_exception_code)?.toUpperCase() ?? null;
       const executionOutcomeCode = isAssistance
@@ -235,6 +234,8 @@ export class TaskSubmissionService {
           : 'SUCCEEDED';
       const followUpProblemCategoryCode =
         this.toScalarString(data.follow_up_problem_category_code)?.toUpperCase() ?? null;
+      const absenceReasonCode =
+        this.toScalarString(data.absence_reason_code)?.toUpperCase() ?? null;
       const parentalStatusCode =
         this.toScalarString(data.parental_status_code)?.toUpperCase() ?? null;
       const guardianTypeCode = this.toScalarString(data.guardian_type_code)?.toUpperCase() ?? null;
@@ -242,6 +243,9 @@ export class TaskSubmissionService {
       const residenceEnvironmentCodes = (data.residence_environment_codes ?? []).map((code) =>
         code.trim().toUpperCase(),
       );
+      const requestedContactChannelCode = isAssistance
+        ? null
+        : (this.toScalarString(data.contact_channel_code)?.toUpperCase() ?? null);
       const [
         executionOutcome,
         nonFollowUpReason,
@@ -249,9 +253,11 @@ export class TaskSubmissionService {
         disabilityTypeCodes,
         homeVisitException,
         followUpProblemCategory,
+        absenceReason,
         parentalStatus,
         guardianType,
         residenceEnvironments,
+        contactChannelCode,
       ] = await Promise.all([
         this.caseTrackingOptions.getTaskExecutionOutcome(executionOutcomeCode),
         this.caseTrackingOptions.getNonFollowUpReason(nonFollowUpReasonCode),
@@ -259,18 +265,26 @@ export class TaskSubmissionService {
         this.caseTrackingOptions.getCareObservationCodes('DISABILITY', disabilityInput),
         this.caseTrackingOptions.getHomeVisitException(homeVisitExceptionCode),
         this.caseTrackingOptions.getFollowUpProblemCategory(followUpProblemCategoryCode),
+        this.caseTrackingOptions.getAbsenceReason(absenceReasonCode),
         this.caseTrackingOptions.getParentalStatus(parentalStatusCode),
         this.caseTrackingOptions.getGuardianType(guardianTypeCode),
         this.caseTrackingOptions.getResidenceEnvironments(
           residenceEnvironmentCodes,
           residenceEnvironmentDetail,
         ),
+        this.caseTrackingOptions.getContactChannel(requestedContactChannelCode),
       ]);
       if (nonFollowUpReason && (isAssistance || executionOutcome !== 'NOT_SUCCEEDED')) {
         throw new BadRequestException('สาเหตุการไม่ติดตามใช้ได้เฉพาะงานติดตามที่ยังไม่สำเร็จ');
       }
       if (isAssistance && (disadvantageTypeCodes.length > 0 || disabilityTypeCodes.length > 0)) {
         throw new BadRequestException('ข้อมูลจากการเยี่ยมบ้านใช้กับงานติดตามเท่านั้น');
+      }
+      if ((disadvantageTypeCodes.length > 0 || disabilityTypeCodes.length > 0) && !studentUuid) {
+        throw new BadRequestException('เคสนี้ไม่มีนักเรียนสำหรับบันทึกข้อมูลจากการติดตาม');
+      }
+      if (isAssistance && absenceReason) {
+        throw new BadRequestException('สาเหตุการขาดใช้กับงานติดตามเท่านั้น');
       }
       // A not-found visit keeps the dedicated re-assignment lane open: it is an
       // operational exception, not a reviewer decision. Other completed work
@@ -280,11 +294,21 @@ export class TaskSubmissionService {
       const assistanceDetail = isAssistance
         ? (this.toScalarString(data.assistance_detail) ?? null)
         : null;
+      const executionOutcomeDetail =
+        isAssistance && executionOutcome === 'NOT_SUCCEEDED'
+          ? (this.toScalarString(data.execution_outcome_detail) ?? null)
+          : null;
+      const contactPersonName = isAssistance
+        ? null
+        : (this.toScalarString(data.contact_person_name) ?? null);
       const guardianTypeDetail = this.toScalarString(data.guardian_type_detail);
       if (guardianType?.requiresDetail && !guardianTypeDetail) {
         throw new BadRequestException('กรุณาระบุผู้ปกครอง');
       }
       const causeDetail = this.toScalarString(data.notes ?? data.cause_detail);
+      if (studentNotFound && !causeDetail) {
+        throw new BadRequestException('กรุณาระบุสิ่งที่ตรวจสอบและแนวทางติดตามต่อ');
+      }
       const updatedAddressLine = this.toScalarString(data.updated_address_line);
       const updatedAddressProvince = this.toScalarString(data.updated_address_province);
       const updatedAddressDistrict = this.toScalarString(data.updated_address_district);
@@ -333,6 +357,7 @@ export class TaskSubmissionService {
             visitLng: this.normalizeNumber(data.visit_lng),
             visitedAt,
             followUpProblemCategoryCode: followUpProblemCategory?.code ?? null,
+            absenceReasonCode: absenceReason,
             parentalStatusCode: parentalStatus?.code ?? null,
             guardianTypeCode: guardianType?.code ?? null,
             // A detail without a guardian type has nothing to qualify, and the
@@ -359,12 +384,16 @@ export class TaskSubmissionService {
             assistedAt,
             assistanceDetail,
             taskExecutionOutcomeCode: executionOutcome,
+            executionOutcomeDetail,
+            contactPersonName,
+            contactChannelCode,
             nonFollowUpReasonCode: nonFollowUpReason,
           },
           executor,
         );
         await this.taskRepository.insertHomeVisitCareObservations(
           submissionId,
+          studentUuid ?? '',
           disadvantageTypeCodes,
           disabilityTypeCodes,
           executor,

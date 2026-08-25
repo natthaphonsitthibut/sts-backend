@@ -226,9 +226,9 @@ export class TaskLifecycleService {
 
     // A round for a student the system knows goes to a teacher in that student's
     // school — there is no guest assignee any more, and recording the real
-    // teacher is what AraID verification depends on. A manual visit that opens a case
-    // for a student with no record yet has no roster to pick from, so it keeps
-    // the free-text assignee and stays on email OTP.
+    // teacher is authoritative for ownership and history. A manual visit that opens
+    // a case for a student with no record yet has no roster to pick from, so it keeps
+    // the free-text assignee while access still verifies an active teacher in the case school.
     const requiresTeacherAssignee =
       taskType === 'ASSIST' || (taskType === 'VISIT' && Boolean(clean(data.student_id)));
     if (requiresTeacherAssignee && selectedTeacherId === null) {
@@ -508,9 +508,6 @@ export class TaskLifecycleService {
             subject: clean(data.subject),
             assignmentNote: clean(data.assignment_note),
             subjectId,
-            // Email-assigned links require OTP (start unverified); links with no
-            // email can't be OTP'd, so mark them pre-verified to skip the gate.
-            otpVerified: assignedEmail ? 0 : 1,
             createdBy: resolveAuditActorId(currentActor),
           },
           executor,

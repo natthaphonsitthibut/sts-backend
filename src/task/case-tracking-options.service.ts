@@ -98,8 +98,10 @@ export class CaseTrackingOptionsService {
       assistanceMeasures,
       executionOutcomes,
       nonFollowUpReasons,
+      absenceReasons,
       disadvantageTypes,
       disabilityTypes,
+      contactChannels,
     ] = await Promise.all([
       this.taskRepository.listCaseReviewActions(phaseCode ?? null),
       this.taskRepository.listCaseFollowUpDecisions(),
@@ -112,8 +114,10 @@ export class CaseTrackingOptionsService {
       this.taskRepository.listAssistanceMeasures(),
       this.taskRepository.listTaskExecutionOutcomes(),
       this.taskRepository.listNonFollowUpReasons(),
+      this.taskRepository.listAbsenceReasons(),
       this.taskRepository.listDisadvantageTypes(),
       this.taskRepository.listDisabilityTypes(),
+      this.taskRepository.listContactChannelOptions(),
     ]);
     return {
       reviewActions: reviewActions.map((row) => ({
@@ -142,16 +146,29 @@ export class CaseTrackingOptionsService {
       executionOutcomes: executionOutcomes.map((row) => ({
         code: this.stringValue(row.code),
         label: this.stringValue(row.label_th),
+        // A follow-up round found the student or did not; only assistance
+        // succeeds or fails, so each flow asks in its own words.
+        visitLabel: this.stringValue(row.visit_label_th) || this.stringValue(row.label_th),
       })),
       nonFollowUpReasons: nonFollowUpReasons.map((row) => ({
         code: this.stringValue(row.code),
         label: this.stringValue(row.label_th),
+      })),
+      absenceReasons: absenceReasons.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+        categoryCode: this.stringValue(row.category_code) || null,
+        categoryLabel: this.stringValue(row.category_label_th) || null,
       })),
       disadvantageTypes: disadvantageTypes.map((row) => ({
         code: this.stringValue(row.code),
         label: this.stringValue(row.label_th),
       })),
       disabilityTypes: disabilityTypes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      contactChannels: contactChannels.map((row) => ({
         code: this.stringValue(row.code),
         label: this.stringValue(row.label_th),
       })),
@@ -274,10 +291,24 @@ export class CaseTrackingOptionsService {
     return this.stringValue(row.code);
   }
 
+  async getContactChannel(code: string | null): Promise<string | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findContactChannelOption(code);
+    if (!row) throw new BadRequestException('ช่องทางติดต่อไม่ถูกต้อง');
+    return this.stringValue(row.code);
+  }
+
   async getNonFollowUpReason(code: string | null): Promise<string | null> {
     if (!code) return null;
     const row = await this.taskRepository.findNonFollowUpReason(code);
     if (!row) throw new BadRequestException('สาเหตุการไม่ติดตามไม่ถูกต้อง');
+    return this.stringValue(row.code);
+  }
+
+  async getAbsenceReason(code: string | null): Promise<string | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findAbsenceReason(code);
+    if (!row) throw new BadRequestException('สาเหตุการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
     return this.stringValue(row.code);
   }
 

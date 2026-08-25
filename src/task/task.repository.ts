@@ -117,11 +117,7 @@ interface CreateTaskLinkInput {
   assignedToLastName: string | null;
   assignedToPhone: string | null;
   assignedToEmail: string | null;
-  /**
-   * The teacher this link was issued to. AraID verification compares the
-   * verified citizen id against this user, so it must be the authoritative
-   * reference — not the denormalised name/email beside it.
-   */
+  /** Authoritative assignee reference used for task ownership and history. */
   assignedTeacherId: number | null;
   expiresAt: string;
   /** Optional future open time; null = usable immediately. */
@@ -129,7 +125,6 @@ interface CreateTaskLinkInput {
   subject: string | null;
   assignmentNote: string | null;
   subjectId: number | null;
-  otpVerified: number;
   createdBy: number | null;
 }
 
@@ -146,6 +141,7 @@ interface TaskSubmissionInput {
   visitLng: number | null;
   visitedAt: string | null;
   followUpProblemCategoryCode: string | null;
+  absenceReasonCode: string | null;
   parentalStatusCode: string | null;
   guardianTypeCode: string | null;
   guardianTypeDetail: string | null;
@@ -170,19 +166,10 @@ interface TaskSubmissionInput {
   assistedAt: string | null;
   assistanceDetail: string | null;
   taskExecutionOutcomeCode: string;
+  executionOutcomeDetail: string | null;
+  contactPersonName: string | null;
+  contactChannelCode: string | null;
   nonFollowUpReasonCode: string | null;
-}
-
-interface AttendanceReplaceInput {
-  studentUuid: string;
-  attendanceDate: string;
-  attendanceStatus: number;
-  recordedBy: string;
-  schoolId: number;
-  gradeLevelId: number;
-  roomId: number;
-  semester: number;
-  academicYear: number;
 }
 
 interface CaseSubmissionUpdateInput {
@@ -201,12 +188,6 @@ interface CaseSubmissionUpdateInput {
   clearMissingCoordinates: boolean;
 }
 
-interface TaskLinkOtpInput {
-  linkId: string;
-  otpCode: string;
-  otpExpiresAt: string;
-}
-
 interface AdminLockUpdateInput {
   linkId: string;
   locked: boolean;
@@ -223,6 +204,7 @@ interface CaseReviewInput {
   resolutionOutcome: string | null;
   reviewedBy: string;
   sourceActorUserId: number | null;
+  proposedAssistanceMeasureDetail: string | null;
 }
 
 interface CountRow extends QueryResultRow {
@@ -719,12 +701,9 @@ export class TaskRepository {
           teacher_person.email,
           EXISTS (
             SELECT 1
-            FROM classroom_teacher_assignments assignment
+            FROM classroom_homeroom_teachers assignment
             WHERE assignment.classroom_id = current_student.classroom_id
               AND assignment.teacher_membership_id = membership.id
-              AND assignment.assignment_kind = 'HOMEROOM'
-              AND assignment.assignment_status = 'ACTIVE'
-              AND assignment.deleted_at IS NULL
           ) AS is_homeroom
         FROM current_student
         JOIN school_teacher_memberships membership
@@ -1172,7 +1151,6 @@ export class TaskRepository {
         subject,
         assignment_note,
         subject_id,
-        otp_verified,
         created_by,
         updated_by,
         opens_at
@@ -1193,9 +1171,8 @@ export class TaskRepository {
         $13,
         $14,
         $15,
-        $16,
-        $16,
-        $17
+        $15,
+        $16
       )
     `,
       [
@@ -1213,7 +1190,6 @@ export class TaskRepository {
         data.subject,
         data.assignmentNote,
         data.subjectId,
-        data.otpVerified,
         data.createdBy,
         data.opensAt,
       ],
@@ -1348,6 +1324,53 @@ export class TaskRepository {
     return result.rows;
   }
 
+  async findRepeatVisitPrefill(
+    caseId: number,
+    currentTaskId: string,
+  ): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      WITH ranked_visits AS (
+        SELECT
+          submission.id AS source_submission_id,
+          task.id AS source_task_id,
+          submission.submitted_at AS source_submitted_at,
+          ROW_NUMBER() OVER (
+            ORDER BY task.created_at, submission.submitted_at, submission.id
+          ) AS source_round_number,
+          submission.parental_status_code,
+          submission.guardian_type_code,
+          submission.guardian_type_detail,
+          submission.contact_person_name,
+          submission.contact_channel_code,
+          submission.residence_environment_detail,
+          COALESCE((
+            SELECT json_agg(environment.residence_environment_code ORDER BY environment.residence_environment_code)
+            FROM task_submission_residence_environments environment
+            WHERE environment.task_submission_id = submission.id
+          ), '[]'::json) AS residence_environment_codes
+        FROM tasks task
+        JOIN task_links link
+          ON link.task_id = task.id
+          AND link.deleted_at IS NULL
+        JOIN task_submissions submission
+          ON submission.task_link_id = link.id
+          AND submission.deleted_at IS NULL
+        WHERE task.case_id = $1
+          AND task.task_type = 'VISIT'
+          AND task.deleted_at IS NULL
+      )
+      SELECT *
+      FROM ranked_visits
+      WHERE source_task_id <> $2
+      ORDER BY source_submitted_at DESC, source_submission_id DESC
+      LIMIT 1
+      `,
+      [caseId, currentTaskId],
+    );
+    return result.rows[0] || null;
+  }
+
   async listPublicCaseContactChannels(caseId: number): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
@@ -1471,8 +1494,8 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
-  // Chain view — explicit safe column list (no token_hash / otp_code / otp_* /
-  // assigned_to_phone / login_* ) to keep secrets out of the task-chain response.
+  // Chain view — explicit safe column list (no token_hash, assigned_to_phone,
+  // or login fields) to keep secrets out of the task-chain response.
   async listTaskLinksByTaskId(taskId: string): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
@@ -1509,6 +1532,9 @@ export class TaskRepository {
         submission.follow_up_problem_category_code,
         problem_category.label_th AS follow_up_problem_category_label,
         problem_category.guidance_th AS follow_up_problem_category_guidance,
+        submission.absence_reason_code,
+        absence_reason.label_th AS absence_reason_label,
+        absence_category.label_th AS absence_reason_category_label,
         submission.parental_status_code,
         parental_status.label_th AS parental_status_label,
         submission.guardian_type_code,
@@ -1517,7 +1543,15 @@ export class TaskRepository {
         submission.residence_environment_detail,
         ${RESIDENCE_ENVIRONMENTS_JSON_SQL} AS residence_environments,
         submission.task_execution_outcome_code,
-        execution_outcome.label_th AS task_execution_outcome_label,
+        CASE
+          WHEN chain_task.task_type = 'VISIT'
+          THEN COALESCE(execution_outcome.visit_label_th, execution_outcome.label_th)
+          ELSE execution_outcome.label_th
+        END AS task_execution_outcome_label,
+        submission.execution_outcome_detail,
+        submission.contact_person_name,
+        submission.contact_channel_code,
+        contact_channel.label_th AS contact_channel_label,
         submission.non_follow_up_reason_code,
         non_follow_up_reason.label_th AS non_follow_up_reason_label,
         submission.cause_detail,
@@ -1529,6 +1563,10 @@ export class TaskRepository {
       FROM task_submissions submission
       LEFT JOIN follow_up_problem_categories problem_category
         ON problem_category.code = submission.follow_up_problem_category_code
+      LEFT JOIN absence_reasons absence_reason
+        ON absence_reason.code = submission.absence_reason_code
+      LEFT JOIN absence_reason_categories absence_category
+        ON absence_category.code = absence_reason.category_code
       LEFT JOIN parental_status_options parental_status
         ON parental_status.code = submission.parental_status_code
         AND parental_status.deleted_at IS NULL
@@ -1539,6 +1577,10 @@ export class TaskRepository {
         ON execution_outcome.code = submission.task_execution_outcome_code
       LEFT JOIN non_follow_up_reason_options non_follow_up_reason
         ON non_follow_up_reason.code = submission.non_follow_up_reason_code
+      LEFT JOIN contact_channel_options contact_channel
+        ON contact_channel.code = submission.contact_channel_code
+      JOIN task_links chain_link ON chain_link.id = submission.task_link_id
+      JOIN tasks chain_task ON chain_task.id = chain_link.task_id
       WHERE submission.task_link_id = $1
         AND submission.deleted_at IS NULL
     `,
@@ -1582,6 +1624,7 @@ export class TaskRepository {
         visit_lng,
         visited_at,
         follow_up_problem_category_code,
+        absence_reason_code,
         parental_status_code,
         guardian_type_code,
         guardian_type_detail,
@@ -1604,12 +1647,15 @@ export class TaskRepository {
         assisted_at,
         assistance_detail,
         task_execution_outcome_code,
+        execution_outcome_detail,
+        contact_person_name,
+        contact_channel_code,
         non_follow_up_reason_code
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
       )
       RETURNING id
     `,
@@ -1619,6 +1665,7 @@ export class TaskRepository {
         data.visitLng,
         data.visitedAt,
         data.followUpProblemCategoryCode,
+        data.absenceReasonCode,
         data.parentalStatusCode,
         data.guardianTypeCode,
         data.guardianTypeDetail,
@@ -1641,6 +1688,9 @@ export class TaskRepository {
         data.assistedAt,
         data.assistanceDetail,
         data.taskExecutionOutcomeCode,
+        data.executionOutcomeDetail,
+        data.contactPersonName,
+        data.contactChannelCode,
         data.nonFollowUpReasonCode,
       ],
     );
@@ -1668,6 +1718,7 @@ export class TaskRepository {
 
   async insertHomeVisitCareObservations(
     submissionId: number,
+    studentUuid: string,
     disadvantageTypeCodes: string[],
     disabilityTypeCodes: string[],
     executor?: QueryExecutor,
@@ -1683,6 +1734,17 @@ export class TaskRepository {
         `,
         [submissionId, disadvantageTypeCodes],
       );
+      await target.query(
+        `
+          INSERT INTO student_term_disadvantages (
+            student_uuid, disadvantage_type_code, recorded_at, recorded_by_user_id
+          )
+          SELECT $1, code, now(), NULL FROM unnest($2::varchar[]) AS code
+          ON CONFLICT (student_uuid, disadvantage_type_code) DO UPDATE SET
+            recorded_at = EXCLUDED.recorded_at
+        `,
+        [studentUuid, disadvantageTypeCodes],
+      );
     }
     if (disabilityTypeCodes.length > 0) {
       await target.query(
@@ -1693,6 +1755,17 @@ export class TaskRepository {
           SELECT $1, code FROM unnest($2::varchar[]) AS code
         `,
         [submissionId, disabilityTypeCodes],
+      );
+      await target.query(
+        `
+          INSERT INTO student_disabilities (
+            student_uuid, disability_type_code, recorded_at, recorded_by_user_id
+          )
+          SELECT $1, code, now(), NULL FROM unnest($2::varchar[]) AS code
+          ON CONFLICT (student_uuid, disability_type_code) DO UPDATE SET
+            recorded_at = EXCLUDED.recorded_at
+        `,
+        [studentUuid, disabilityTypeCodes],
       );
     }
   }
@@ -1835,51 +1908,6 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
-  async replaceAttendanceRecord(
-    data: AttendanceReplaceInput,
-    executor?: QueryExecutor,
-  ): Promise<void> {
-    const queryExecutor = this.getExecutor(executor);
-
-    await queryExecutor.query(
-      `
-      DELETE FROM attendance
-      WHERE "AttendanceDate" = $1 AND student_uuid = $2
-    `,
-      [data.attendanceDate, data.studentUuid],
-    );
-
-    await queryExecutor.query(
-      `
-      INSERT INTO attendance (
-        student_uuid,
-        "SchoolID_Onec",
-        "GradeLevelID_Onec",
-        "RoomID_Onec",
-        "AttendanceDate",
-        "Semester_Onec",
-        "AcademicYear_Onec",
-        "AttendanceStatus",
-        "Period",
-        "RecordedBy"
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    `,
-      [
-        data.studentUuid,
-        data.schoolId,
-        data.gradeLevelId,
-        data.roomId,
-        data.attendanceDate,
-        data.semester,
-        data.academicYear,
-        data.attendanceStatus,
-        1,
-        data.recordedBy,
-      ],
-    );
-  }
-
   async getSystemSettingValue(settingKey: string): Promise<string | null> {
     const result = await this.query<SettingValueRow>(
       `SELECT setting_value FROM system_settings WHERE setting_key = $1`,
@@ -1892,114 +1920,6 @@ export class TaskRepository {
 
     const value = result.rows[0]?.setting_value;
     return normalizeScalar(value) || null;
-  }
-
-  async findOtpLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {
-    const result = await this.query<QueryResultRow>(
-      `
-      SELECT
-        tl.id,
-        tl.assigned_to_email,
-        tl.otp_code,
-        tl.otp_expires_at,
-        tl.otp_attempts,
-        tl.otp_locked_until
-      FROM task_links tl
-      JOIN tasks t ON t.id = tl.task_id
-      WHERE tl.token_hash = $1
-        AND tl.deleted_at IS NULL
-        AND t.deleted_at IS NULL
-    `,
-      [tokenHash],
-    );
-
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Same as findOtpLinkByTokenHash but takes a row lock (FOR UPDATE) so the OTP
-   * verify path (lock-check → compare → increment/clear) runs serialized within
-   * a transaction. Without this, concurrent guesses could each read the row
-   * before the lock is set and slip past the attempt cap.
-   */
-  async findOtpLinkByTokenHashForUpdate(
-    tokenHash: string,
-    executor: QueryExecutor,
-  ): Promise<QueryResultRow | null> {
-    const result = await executor.query(
-      `
-      SELECT
-        tl.id,
-        tl.otp_code,
-        tl.otp_expires_at,
-        tl.otp_attempts,
-        tl.otp_locked_until
-      FROM task_links tl
-      JOIN tasks t ON t.id = tl.task_id
-      WHERE tl.token_hash = $1
-        AND tl.deleted_at IS NULL
-        AND t.deleted_at IS NULL
-      FOR UPDATE OF tl
-    `,
-      [tokenHash],
-    );
-
-    return result.rows[0] || null;
-  }
-
-  async updateLinkOtp(data: TaskLinkOtpInput, executor?: QueryExecutor): Promise<void> {
-    // Issuing a fresh OTP resets the brute-force counter and clears any lockout:
-    // a new code is a new challenge, so the previous failed guesses no longer apply.
-    await this.getExecutor(executor).query(
-      `
-      UPDATE task_links
-      SET otp_code = $1, otp_expires_at = $2, otp_verified = 0,
-          otp_attempts = 0, otp_locked_until = NULL
-      WHERE id = $3
-    `,
-      [data.otpCode, data.otpExpiresAt, data.linkId],
-    );
-  }
-
-  /**
-   * Record one failed OTP guess and lock the link once `maxAttempts` is reached.
-   * The increment + conditional lock happen in a single UPDATE so concurrent
-   * guesses cannot race past the cap. Returns the new attempt count and lock time.
-   */
-  async registerFailedOtpAttempt(
-    linkId: string,
-    maxAttempts: number,
-    lockSeconds: number,
-    executor?: QueryExecutor,
-  ): Promise<{ attempts: number; lockedUntil: Date | null }> {
-    const result = await this.getExecutor(executor).query(
-      `
-      UPDATE task_links
-      SET otp_attempts = otp_attempts + 1,
-          otp_locked_until = CASE
-            WHEN otp_attempts + 1 >= $2 THEN now() + ($3 || ' seconds')::interval
-            ELSE otp_locked_until
-          END
-      WHERE id = $1
-      RETURNING otp_attempts, otp_locked_until
-    `,
-      [linkId, maxAttempts, lockSeconds],
-    );
-    const row = result.rows[0] as
-      | { otp_attempts: number; otp_locked_until: Date | null }
-      | undefined;
-    return {
-      attempts: Number(row?.otp_attempts ?? 0),
-      lockedUntil: row?.otp_locked_until ? new Date(String(row.otp_locked_until)) : null,
-    };
-  }
-
-  /** Clear the OTP brute-force counter after a successful verification. */
-  async clearOtpAttempts(linkId: string, executor?: QueryExecutor): Promise<void> {
-    await this.getExecutor(executor).query(
-      `UPDATE task_links SET otp_attempts = 0, otp_locked_until = NULL WHERE id = $1`,
-      [linkId],
-    );
   }
 
   async findTaskLinkById(linkId: string): Promise<QueryResultRow | null> {
@@ -2036,7 +1956,7 @@ export class TaskRepository {
   }
 
   /**
-   * Admin link detail by id — explicit safe column list (no token_hash / otp_code)
+   * Admin link detail by id — explicit safe column list (no token_hash)
    * plus school name. Returns the row regardless of locked/expired status so the
    * admin detail page can render and manage a closed link.
    */
@@ -2702,8 +2622,10 @@ export class TaskRepository {
           latest_case_assignment.had_assignment AS latest_case_had_assignment,
           latest_comment.id AS latest_comment_id,
           latest_comment.problem_category_label,
+          latest_comment.concern_level_code,
+          latest_comment.concern_level_label,
           COALESCE(
-            latest_comment.problem_category_label,
+            latest_comment.problem_description,
             CASE
               WHEN profile.absence_reset_after_date IS NULL
                 THEN CONCAT('ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0), ' วัน')
@@ -2755,13 +2677,21 @@ export class TaskRepository {
           ) AS had_assignment
         ) latest_case_assignment ON TRUE
         LEFT JOIN LATERAL (
-          SELECT comment.id, category.label_th AS problem_category_label
+          SELECT
+            comment.id,
+            category.label_th AS problem_category_label,
+            comment.problem_description,
+            concern_level.code AS concern_level_code,
+            concern_level.label_th AS concern_level_label
           FROM classroom_student_comments comment
           JOIN classroom_student_problem_categories category
             ON category.code = comment.problem_category_code
+          JOIN classroom_student_comment_concern_levels concern_level
+            ON concern_level.code = comment.concern_level_code
           WHERE comment.classroom_id = s.classroom_id
             AND comment.person_uuid = s.person_uuid
-          ORDER BY comment.created_at DESC, comment.id DESC
+            AND comment.concern_level_code IN ('WATCH', 'CONCERN')
+          ORDER BY concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC
           LIMIT 1
         ) latest_comment ON TRUE
         ${whereSql}
@@ -2903,6 +2833,8 @@ export class TaskRepository {
           latest_case_link_token_encrypted,
           latest_case_had_assignment,
           problem_category_label,
+          concern_level_code,
+          concern_level_label,
           teacher_comment
         FROM filtered
         ORDER BY ${orderBy}
@@ -2936,9 +2868,10 @@ export class TaskRepository {
         review_summary,
         resolution_outcome,
         reviewed_by,
-        source_actor_user_id
+        source_actor_user_id,
+        proposed_assistance_measure_detail
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     `,
       [
         data.reviewId,
@@ -2949,7 +2882,25 @@ export class TaskRepository {
         data.resolutionOutcome,
         data.reviewedBy,
         data.sourceActorUserId,
+        data.proposedAssistanceMeasureDetail,
       ],
+    );
+  }
+
+  async insertCaseReviewAssistanceMeasures(
+    reviewId: string,
+    codes: string[],
+    executor?: QueryExecutor,
+  ): Promise<void> {
+    if (codes.length === 0) return;
+    await this.getExecutor(executor).query(
+      `
+        INSERT INTO case_review_assistance_measures (
+          case_review_id, assistance_measure_code
+        )
+        SELECT $1, code FROM unnest($2::varchar[]) AS code
+      `,
+      [reviewId, codes],
     );
   }
 
@@ -2991,77 +2942,6 @@ export class TaskRepository {
       `,
       [data.reviewId, data.caseId, data.agencyId, data.referredByUserId, data.note],
     );
-  }
-
-  async reviewPendingCareObservations(
-    data: {
-      caseId: number;
-      studentUuid: string;
-      decision: 'APPROVE' | 'REJECT';
-      reviewerUserId: number | null;
-      reviewNote: string | null;
-    },
-    executor: QueryExecutor,
-  ): Promise<{ disadvantageCount: number; disabilityCount: number }> {
-    const verificationStatus = data.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-    const disadvantageRows = await executor.query(
-      `
-        WITH reviewed AS (
-          UPDATE home_visit_disadvantage_observations observation
-          SET verification_status = $3, reviewed_at = now(),
-              reviewed_by_user_id = $4, review_note = $5
-          FROM task_submissions submission
-          JOIN task_links link ON link.id = submission.task_link_id
-          JOIN tasks task ON task.id = link.task_id
-          WHERE observation.task_submission_id = submission.id
-            AND task.case_id = $1
-            AND observation.verification_status = 'PENDING'
-          RETURNING observation.disadvantage_type_code, observation.observed_at
-        )
-        INSERT INTO student_term_disadvantages (
-          student_uuid, disadvantage_type_code, recorded_at, recorded_by_user_id
-        )
-        SELECT $2, reviewed.disadvantage_type_code, reviewed.observed_at, $4
-        FROM reviewed
-        WHERE $3 = 'APPROVED'
-        ON CONFLICT (student_uuid, disadvantage_type_code) DO UPDATE SET
-          recorded_at = EXCLUDED.recorded_at,
-          recorded_by_user_id = EXCLUDED.recorded_by_user_id
-        RETURNING disadvantage_type_code
-      `,
-      [data.caseId, data.studentUuid, verificationStatus, data.reviewerUserId, data.reviewNote],
-    );
-    const disabilityRows = await executor.query(
-      `
-        WITH reviewed AS (
-          UPDATE home_visit_disability_observations observation
-          SET verification_status = $3, reviewed_at = now(),
-              reviewed_by_user_id = $4, review_note = $5
-          FROM task_submissions submission
-          JOIN task_links link ON link.id = submission.task_link_id
-          JOIN tasks task ON task.id = link.task_id
-          WHERE observation.task_submission_id = submission.id
-            AND task.case_id = $1
-            AND observation.verification_status = 'PENDING'
-          RETURNING observation.disability_type_code, observation.observed_at
-        )
-        INSERT INTO student_disabilities (
-          student_uuid, disability_type_code, recorded_at, recorded_by_user_id
-        )
-        SELECT $2, reviewed.disability_type_code, reviewed.observed_at, $4
-        FROM reviewed
-        WHERE $3 = 'APPROVED'
-        ON CONFLICT (student_uuid, disability_type_code) DO UPDATE SET
-          recorded_at = EXCLUDED.recorded_at,
-          recorded_by_user_id = EXCLUDED.recorded_by_user_id
-        RETURNING disability_type_code
-      `,
-      [data.caseId, data.studentUuid, verificationStatus, data.reviewerUserId, data.reviewNote],
-    );
-    return {
-      disadvantageCount: disadvantageRows.rows.length,
-      disabilityCount: disabilityRows.rows.length,
-    };
   }
 
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {
@@ -3122,13 +3002,21 @@ export class TaskRepository {
         latest_submission.follow_up_problem_category_code,
         latest_submission.follow_up_problem_category_label,
         latest_submission.follow_up_problem_category_guidance,
+        latest_submission.absence_reason_code,
+        latest_submission.absence_reason_label,
+        latest_submission.absence_reason_category_label,
         latest_submission.parental_status_code,
         latest_submission.parental_status_label,
         latest_submission.guardian_type_code,
         latest_submission.guardian_type_label,
         latest_submission.guardian_type_detail,
+        latest_submission.contact_person_name,
+        latest_submission.contact_channel_code,
+        latest_submission.contact_channel_label,
         latest_submission.residence_environments,
         latest_submission.residence_environment_detail,
+        latest_submission.observed_disadvantage_types,
+        latest_submission.observed_disability_types,
         latest_submission.cause_detail,
         latest_submission.recommendation,
         latest_submission.visit_lat,
@@ -3136,6 +3024,7 @@ export class TaskRepository {
         latest_submission.photo_paths,
         latest_submission.address_changed,
         latest_submission.home_visit_exception_code,
+        latest_submission.home_visit_exception_label,
         latest_submission.updated_student_address,
         latest_submission.updated_address_line,
         latest_submission.updated_address_province,
@@ -3147,7 +3036,12 @@ export class TaskRepository {
         latest_submission.case_follow_up_decision,
         latest_submission.case_resolution_outcome_code,
         latest_submission.assisted_at,
-        latest_submission.assistance_detail
+        latest_submission.assistance_detail,
+        latest_submission.task_execution_outcome_code,
+        latest_submission.task_execution_outcome_label,
+        latest_submission.execution_outcome_detail,
+        latest_submission.non_follow_up_reason_code,
+        latest_submission.non_follow_up_reason_label
       FROM tasks t
       LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.deleted_at IS NULL
       LEFT JOIN users cancelled_by_user ON cancelled_by_user.id = tl.cancelled_by
@@ -3159,17 +3053,44 @@ export class TaskRepository {
                submission.follow_up_problem_category_code,
                problem_category.label_th AS follow_up_problem_category_label,
                problem_category.guidance_th AS follow_up_problem_category_guidance,
+               submission.absence_reason_code,
+               absence_reason.label_th AS absence_reason_label,
+               absence_category.label_th AS absence_reason_category_label,
                submission.parental_status_code,
                parental_status.label_th AS parental_status_label,
                submission.guardian_type_code,
                guardian_type.label_th AS guardian_type_label,
                submission.guardian_type_detail,
+               submission.contact_person_name,
+               submission.contact_channel_code,
+               contact_channel.label_th AS contact_channel_label,
                ${RESIDENCE_ENVIRONMENTS_JSON_SQL} AS residence_environments,
                submission.residence_environment_detail,
+               COALESCE((
+                 SELECT json_agg(
+                   json_build_object('code', option.code, 'label', option.label_th)
+                   ORDER BY option.sort_order, option.code
+                 )
+                 FROM home_visit_disadvantage_observations observation
+                 JOIN disadvantage_types option
+                   ON option.code = observation.disadvantage_type_code
+                 WHERE observation.task_submission_id = submission.id
+               ), '[]'::json) AS observed_disadvantage_types,
+               COALESCE((
+                 SELECT json_agg(
+                   json_build_object('code', option.code, 'label', option.label_th)
+                   ORDER BY option.sort_order, option.code
+                 )
+                 FROM home_visit_disability_observations observation
+                 JOIN disability_types option
+                   ON option.code = observation.disability_type_code
+                 WHERE observation.task_submission_id = submission.id
+               ), '[]'::json) AS observed_disability_types,
                submission.cause_detail,
                submission.recommendation, submission.visit_lat, submission.visit_lng,
                submission.photo_paths, submission.address_changed,
                submission.home_visit_exception_code,
+               home_visit_exception.label_th AS home_visit_exception_label,
                submission.updated_student_address, submission.updated_address_line,
                submission.updated_address_province, submission.updated_address_district,
                submission.updated_address_sub_district, submission.updated_postal_code,
@@ -3177,17 +3098,38 @@ export class TaskRepository {
                submission.case_follow_up_decision,
                submission.case_resolution_outcome_code,
                submission.assisted_at,
-               submission.assistance_detail
+               submission.assistance_detail,
+               submission.task_execution_outcome_code,
+               CASE
+                 WHEN t.task_type = 'VISIT'
+                 THEN COALESCE(execution_outcome.visit_label_th, execution_outcome.label_th)
+                 ELSE execution_outcome.label_th
+               END AS task_execution_outcome_label,
+               submission.execution_outcome_detail,
+               submission.non_follow_up_reason_code,
+               non_follow_up_reason.label_th AS non_follow_up_reason_label
         FROM task_links round_link
         JOIN task_submissions submission ON submission.task_link_id = round_link.id
         LEFT JOIN follow_up_problem_categories problem_category
           ON problem_category.code = submission.follow_up_problem_category_code
+        LEFT JOIN absence_reasons absence_reason
+          ON absence_reason.code = submission.absence_reason_code
+        LEFT JOIN absence_reason_categories absence_category
+          ON absence_category.code = absence_reason.category_code
         LEFT JOIN parental_status_options parental_status
           ON parental_status.code = submission.parental_status_code
           AND parental_status.deleted_at IS NULL
         LEFT JOIN guardian_type_options guardian_type
           ON guardian_type.code = submission.guardian_type_code
           AND guardian_type.deleted_at IS NULL
+        LEFT JOIN task_execution_outcome_options execution_outcome
+          ON execution_outcome.code = submission.task_execution_outcome_code
+        LEFT JOIN non_follow_up_reason_options non_follow_up_reason
+          ON non_follow_up_reason.code = submission.non_follow_up_reason_code
+        LEFT JOIN contact_channel_options contact_channel
+          ON contact_channel.code = submission.contact_channel_code
+        LEFT JOIN home_visit_exception_options home_visit_exception
+          ON home_visit_exception.code = submission.home_visit_exception_code
         WHERE round_link.task_id = t.id
           AND round_link.deleted_at IS NULL
           AND submission.deleted_at IS NULL
@@ -3204,11 +3146,31 @@ export class TaskRepository {
     return result.rows;
   }
 
+  // Explicit safe column list (no created_by/updated_by/source actor ids) so a
+  // new case_reviews column never leaks into the case response by accident.
   async listCaseReviews(caseId: number): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
-        review.*,
+        review.id,
+        review.case_id,
+        review.review_action,
+        review.review_note,
+        review.review_summary,
+        review.resolution_outcome,
+        review.reviewed_by,
+        review.reviewed_at,
+        review.proposed_assistance_measure_detail,
+        COALESCE((
+          SELECT json_agg(
+            json_build_object('code', measure.code, 'label', measure.label_th)
+            ORDER BY measure.sort_order, measure.code
+          )
+          FROM case_review_assistance_measures proposed
+          JOIN assistance_measure_options measure
+            ON measure.code = proposed.assistance_measure_code
+          WHERE proposed.case_review_id = review.id
+        ), '[]'::json) AS proposed_assistance_measures,
         COALESCE(
           NULLIF(trim(concat_ws(' ', actor."FirstName", actor."LastName")), ''),
           actor.username,
@@ -3236,6 +3198,142 @@ export class TaskRepository {
       ORDER BY kind.sort_order, agency.agency_name, agency.id
     `);
     return result.rows;
+  }
+
+  async getFollowUpOutcomeAggregate(actor: ActorContext): Promise<QueryResultRow[]> {
+    const scope = this.buildCaseScopeQuery(actor, 1);
+    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT task.task_type, submission.task_execution_outcome_code,
+        COUNT(*)::int AS activity_count
+      FROM task_submissions submission
+      JOIN task_links link ON link.id = submission.task_link_id AND link.deleted_at IS NULL
+      JOIN tasks task ON task.id = link.task_id AND task.deleted_at IS NULL
+      JOIN cases c ON c.id = task.case_id AND c.deleted_at IS NULL
+      WHERE submission.deleted_at IS NULL
+        AND task.task_type IN ('VISIT', 'ASSIST')${scopeSql}
+      GROUP BY task.task_type, submission.task_execution_outcome_code
+      ORDER BY task.task_type, submission.task_execution_outcome_code
+      `,
+      scope.params,
+    );
+    return result.rows;
+  }
+
+  async getAssistanceMeasureAggregate(actor: ActorContext): Promise<QueryResultRow[]> {
+    const scope = this.buildCaseScopeQuery(actor, 1);
+    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT measure.code, measure.label_th,
+        COUNT(*) FILTER (WHERE submission.task_execution_outcome_code = 'SUCCEEDED')::int
+          AS succeeded_count,
+        COUNT(*) FILTER (WHERE submission.task_execution_outcome_code = 'NOT_SUCCEEDED')::int
+          AS not_succeeded_count,
+        COUNT(*)::int AS total_count
+      FROM task_submissions submission
+      JOIN task_links link ON link.id = submission.task_link_id AND link.deleted_at IS NULL
+      JOIN tasks task ON task.id = link.task_id AND task.deleted_at IS NULL
+      JOIN cases c ON c.id = task.case_id AND c.deleted_at IS NULL
+      JOIN task_assistance_measures task_measure ON task_measure.task_id = task.id
+      JOIN assistance_measure_options measure
+        ON measure.code = task_measure.assistance_measure_code
+      WHERE submission.deleted_at IS NULL
+        AND task.task_type = 'ASSIST'${scopeSql}
+      GROUP BY measure.code, measure.label_th, measure.sort_order
+      ORDER BY measure.sort_order, measure.code
+      `,
+      scope.params,
+    );
+    return result.rows;
+  }
+
+  async getReferralAggregate(actor: ActorContext): Promise<QueryResultRow[]> {
+    const scope = this.buildCaseScopeQuery(actor, 1);
+    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT referral.status_code, agency.agency_name,
+        COUNT(*)::int AS referral_count,
+        COUNT(*) FILTER (
+          WHERE referral.status_code IN ('REFERRED', 'ACCEPTED')
+            AND referral.referred_at < now() - INTERVAL '14 days'
+        )::int AS overdue_count
+      FROM case_referrals referral
+      JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
+      JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+      WHERE 1=1${scopeSql}
+      GROUP BY referral.status_code, agency.agency_name
+      ORDER BY referral.status_code, agency.agency_name
+      `,
+      scope.params,
+    );
+    return result.rows;
+  }
+
+  async countRepeatedUnsuccessfulCases(actor: ActorContext): Promise<number> {
+    const scope = this.buildCaseScopeQuery(actor, 1);
+    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const result = await this.query<CountRow>(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM (
+        SELECT c.id
+        FROM task_submissions submission
+        JOIN task_links link ON link.id = submission.task_link_id AND link.deleted_at IS NULL
+        JOIN tasks task ON task.id = link.task_id AND task.deleted_at IS NULL
+        JOIN cases c ON c.id = task.case_id AND c.deleted_at IS NULL
+        WHERE submission.deleted_at IS NULL
+          AND submission.task_execution_outcome_code = 'NOT_SUCCEEDED'${scopeSql}
+        GROUP BY c.id
+        HAVING COUNT(*) >= 2
+      ) repeated_cases
+      `,
+      scope.params,
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async listReferralDrilldown(
+    actor: ActorContext,
+    page: number,
+    limit: number,
+  ): Promise<{ rows: QueryResultRow[]; totalCount: number }> {
+    const offset = (page - 1) * limit;
+    const scope = this.buildCaseScopeQuery(actor, 3);
+    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const countScope = this.buildCaseScopeQuery(actor, 1);
+    const countScopeSql = countScope.sql ? ` AND ${countScope.sql}` : '';
+    const params: unknown[] = [limit, offset, ...scope.params];
+    const [rows, count] = await Promise.all([
+      this.query<QueryResultRow>(
+        `
+        SELECT referral.id, referral.case_id, c.student_name, c.school_id,
+          school.name AS school_name, referral.status_code, referral.referred_at,
+          agency.agency_name, kind.label_th AS agency_kind_label
+        FROM case_referrals referral
+        JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
+        LEFT JOIN schools school ON school.id = c.school_id
+        JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+        JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+        WHERE 1=1${scopeSql}
+        ORDER BY referral.referred_at DESC, referral.id DESC
+        LIMIT $1 OFFSET $2
+        `,
+        params,
+      ),
+      this.query<CountRow>(
+        `
+        SELECT COUNT(*)::int AS count
+        FROM case_referrals referral
+        JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
+        WHERE 1=1${countScopeSql}
+        `,
+        countScope.params,
+      ),
+    ]);
+    return { rows: rows.rows, totalCount: Number(count.rows[0]?.count ?? 0) };
   }
 
   async listCaseReferrals(caseId: number): Promise<QueryResultRow[]> {
@@ -3299,27 +3397,59 @@ export class TaskRepository {
     return result.rows;
   }
 
-  /**
-   * The identity AraID verification must match: the citizen id of the teacher
-   * this link was issued to. Resolved through `assigned_teacher_id`, never the
-   * denormalised email — an email is not a unique identity.
-   */
+  /** School scope used by external identity verification for a task link. */
   async findTaskLinkAraIdIdentity(linkId: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
         link.id AS link_id,
-        link.assigned_teacher_id,
-        link.assigned_to_name,
-        teacher.citizen_id AS teacher_citizen_id
+        task.target_school_id
       FROM task_links link
-      LEFT JOIN teachers teacher
-        ON teacher.id = link.assigned_teacher_id
-       AND teacher.deleted_at IS NULL
+      JOIN tasks task ON task.id = link.task_id AND task.deleted_at IS NULL
       WHERE link.id = $1 AND link.deleted_at IS NULL
       LIMIT 1
     `,
       [linkId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findActiveTeacherInSchoolByEmail(
+    email: string,
+    schoolId: number,
+  ): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT teacher.id::text AS teacher_id
+       FROM teachers teacher
+       JOIN school_teacher_memberships membership ON membership.teacher_id = teacher.id
+       WHERE lower(btrim(teacher.email)) = lower(btrim($1))
+         AND teacher.teacher_status = 'ACTIVE'
+         AND teacher.deleted_at IS NULL
+         AND membership.school_id = $2
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+       LIMIT 1`,
+      [email, schoolId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findActiveTeacherInSchoolByCitizenId(
+    citizenId: string,
+    schoolId: number,
+  ): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT teacher.id::text AS teacher_id
+       FROM teachers teacher
+       JOIN school_teacher_memberships membership ON membership.teacher_id = teacher.id
+       WHERE teacher.citizen_id = $1
+         AND teacher.teacher_status = 'ACTIVE'
+         AND teacher.deleted_at IS NULL
+         AND membership.school_id = $2
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+       LIMIT 1`,
+      [citizenId, schoolId],
     );
     return result.rows[0] ?? null;
   }
@@ -3355,7 +3485,7 @@ export class TaskRepository {
 
   async listTaskExecutionOutcomes(): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(`
-      SELECT code, label_th FROM task_execution_outcome_options
+      SELECT code, label_th, visit_label_th FROM task_execution_outcome_options
       WHERE is_active = TRUE ORDER BY sort_order, code
     `);
     return result.rows;
@@ -3376,6 +3506,45 @@ export class TaskRepository {
       WHERE is_active = TRUE ORDER BY sort_order, code
     `);
     return result.rows;
+  }
+
+  async listAbsenceReasons(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT reason.code, reason.label_th, reason.category_code,
+        category.label_th AS category_label_th
+      FROM absence_reasons reason
+      LEFT JOIN absence_reason_categories category ON category.code = reason.category_code
+      WHERE reason.is_active = TRUE AND reason.code <> 'UNKNOWN'
+      ORDER BY category.sort_order, reason.sort_order, reason.code
+    `);
+    return result.rows;
+  }
+
+  async findAbsenceReason(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT code, label_th, category_code FROM absence_reasons
+       WHERE code = $1 AND is_active = TRUE AND code <> 'UNKNOWN' LIMIT 1`,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listContactChannelOptions(): Promise<QueryResultRow[]> {
+    const result = await this.query<QueryResultRow>(`
+      SELECT code, label_th FROM contact_channel_options
+      WHERE is_active = TRUE
+      ORDER BY sort_order, code
+    `);
+    return result.rows;
+  }
+
+  async findContactChannelOption(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT code, label_th FROM contact_channel_options
+       WHERE code = $1 AND is_active = TRUE LIMIT 1`,
+      [code],
+    );
+    return result.rows[0] ?? null;
   }
 
   async findNonFollowUpReason(code: string): Promise<QueryResultRow | null> {
@@ -3470,7 +3639,7 @@ export class TaskRepository {
       SELECT code, label_th, guidance_th
       FROM follow_up_problem_categories
       WHERE is_active = TRUE
-      ORDER BY sort_order, code
+      ORDER BY is_fallback, sort_order, code
     `);
     return result.rows;
   }

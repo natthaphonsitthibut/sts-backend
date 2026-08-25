@@ -1,6 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
-import { AttendanceWriteService } from '../attendance/attendance-write.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { TaskAccessService } from './task-access.service';
 import { TaskRepository } from './task.repository';
@@ -8,11 +7,6 @@ import { TaskSubmissionService } from './task-submission.service';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { SaveTaskSubmissionDto } from './dto/task.dto';
-
-const STUDENT_IDS = [
-  '00000000-0000-4000-8000-000000000001',
-  '00000000-0000-4000-8000-000000000002',
-];
 
 describe('TaskSubmissionService', () => {
   let service: TaskSubmissionService;
@@ -32,9 +26,6 @@ describe('TaskSubmissionService', () => {
       | 'updateTaskLinkStatus'
     >
   >;
-  let attendanceWriteService: jest.Mocked<
-    Pick<AttendanceWriteService, 'saveAttendanceGroupsWithinTransaction'>
-  >;
   let notificationsService: { [k: string]: jest.Mock };
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
   let trackingOptions: jest.Mocked<
@@ -49,6 +40,8 @@ describe('TaskSubmissionService', () => {
       | 'getResidenceEnvironments'
       | 'getTaskExecutionOutcome'
       | 'getNonFollowUpReason'
+      | 'getAbsenceReason'
+      | 'getContactChannel'
       | 'getCareObservationCodes'
     >
   >;
@@ -75,11 +68,6 @@ describe('TaskSubmissionService', () => {
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
       updateTaskStatus: jest.fn().mockResolvedValue(undefined),
       updateTaskLinkStatus: jest.fn().mockResolvedValue(undefined),
-    };
-    attendanceWriteService = {
-      saveAttendanceGroupsWithinTransaction: jest
-        .fn()
-        .mockResolvedValue([{ calendarConfigured: false, affectedStudentIds: STUDENT_IDS }]),
     };
     notificationsService = {
       notifyCaseStatusChanged: jest.fn().mockResolvedValue([]),
@@ -121,6 +109,8 @@ describe('TaskSubmissionService', () => {
           : Promise.reject(new BadRequestException('กรุณาเลือกผลการดำเนินงานครั้งนี้')),
       ),
       getNonFollowUpReason: jest.fn((code: string | null) => Promise.resolve(code)),
+      getAbsenceReason: jest.fn((code: string | null) => Promise.resolve(code)),
+      getContactChannel: jest.fn((code: string | null) => Promise.resolve(code)),
       getCareObservationCodes: jest.fn((_kind, codes: string[]) => Promise.resolve(codes)),
     };
 
@@ -128,14 +118,13 @@ describe('TaskSubmissionService', () => {
       taskRepository as unknown as TaskRepository,
       taskAccessService as unknown as TaskAccessService,
       {} as AutomationService,
-      attendanceWriteService as unknown as AttendanceWriteService,
       notificationsService as unknown as NotificationsService,
       auditLog as unknown as AuditLogService,
       trackingOptions as unknown as CaseTrackingOptionsService,
     );
   });
 
-  it('rejects visit submission when OTP authentication is still required', async () => {
+  it('rejects visit submission when identity verification is still required', async () => {
     taskAccessService.getTaskByToken.mockResolvedValue({
       task_type: 'VISIT',
       auth_required: true,
@@ -202,7 +191,85 @@ describe('TaskSubmissionService', () => {
       }),
     ).resolves.toEqual({ success: true });
     expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
-      expect.objectContaining({ taskExecutionOutcomeCode: 'SUCCEEDED' }),
+      expect.objectContaining({
+        taskExecutionOutcomeCode: 'SUCCEEDED',
+        executionOutcomeDetail: null,
+      }),
+      undefined,
+    );
+  });
+
+  it('stores a verified absence reason with VISIT evidence only', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+    });
+
+    await service.saveTaskSubmission(
+      'public-token',
+      validVisitData({ absence_reason_code: 'MINOR_ILLNESS' }),
+    );
+
+    expect(trackingOptions.getAbsenceReason).toHaveBeenCalledWith('MINOR_ILLNESS');
+    expect(taskRepository.insertTaskSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ absenceReasonCode: 'MINOR_ILLNESS' }),
+      undefined,
+    );
+
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'ASSIST',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-2',
+      task_type: 'ASSIST',
+      case_id: 10,
+    });
+    await expect(
+      service.saveTaskSubmission('public-token', {
+        assisted_at: '2026-07-31T02:30:00.000Z',
+        task_execution_outcome_code: 'SUCCEEDED',
+        absence_reason_code: 'MINOR_ILLNESS',
+      }),
+    ).rejects.toThrow('สาเหตุการขาดใช้กับงานติดตามเท่านั้น');
+  });
+
+  it('stores unsuccessful ASSIST detail separately and drops visit contact snapshots from ASSIST', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'ASSIST',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'ASSIST',
+      case_id: 10,
+    });
+
+    await service.saveTaskSubmission('public-token', {
+      assisted_at: '2026-07-31T02:30:00.000Z',
+      task_execution_outcome_code: 'NOT_SUCCEEDED',
+      execution_outcome_detail: 'ผู้ปกครองยังไม่พร้อม',
+      contact_person_name: 'ค่าที่ client ไม่ควรเขียนใน ASSIST',
+      contact_channel_code: 'PHONE',
+    });
+
+    expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        executionOutcomeDetail: 'ผู้ปกครองยังไม่พร้อม',
+        contactPersonName: null,
+        contactChannelCode: null,
+      }),
       undefined,
     );
   });
@@ -238,6 +305,33 @@ describe('TaskSubmissionService', () => {
     );
 
     expect(taskRepository.insertTaskSubmission).toHaveBeenCalled();
+  });
+
+  it('requires the checks performed and next action when the student was not found', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+    });
+    trackingOptions.getHomeVisitException.mockResolvedValueOnce({
+      code: 'STUDENT_NOT_FOUND',
+      label: 'ไม่พบนักเรียน',
+      requiresUpdatedAddress: false,
+    });
+
+    await expect(
+      service.saveTaskSubmission(
+        'public-token',
+        validVisitData({ home_visit_exception_code: 'STUDENT_NOT_FOUND' }),
+      ),
+    ).rejects.toThrow('กรุณาระบุสิ่งที่ตรวจสอบและแนวทางติดตามต่อ');
+    expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
   });
 
   it('keeps the visit problem assessment optional', async () => {
@@ -517,7 +611,7 @@ describe('TaskSubmissionService', () => {
     );
   });
 
-  it('keeps an explanation optional when the student was not found', async () => {
+  it('requires an explanation when the student was not found', async () => {
     taskAccessService.getTaskByToken.mockResolvedValue({
       task_type: 'VISIT',
       auth_required: false,
@@ -542,9 +636,9 @@ describe('TaskSubmissionService', () => {
           home_visit_exception_code: 'STUDENT_NOT_FOUND',
         }),
       ),
-    ).resolves.toEqual({ success: true });
+    ).rejects.toThrow('กรุณาระบุสิ่งที่ตรวจสอบและแนวทางติดตามต่อ');
 
-    expect(taskRepository.insertTaskSubmission).toHaveBeenCalled();
+    expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
   });
 
   it('keeps a not-found visit in the re-assignment lane', async () => {

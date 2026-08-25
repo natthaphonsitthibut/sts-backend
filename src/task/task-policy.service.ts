@@ -248,10 +248,9 @@ export class TaskPolicyService {
   }
 
   assertCanCreateTask(actor: ActorContext, taskType: string): void {
-    // VISIT (follow-up) and ASSIST (assistance round) are the only types there
-    // are: per-classroom attendance links moved to teacher_access_grants and the
-    // magic-login link was retired. Reject anything else here so the API answers
-    // 400 instead of tripping the task_types FK with a 500.
+    // VISIT (follow-up) and ASSIST (assistance round) are the only task-link
+    // types that remain. Reject anything else here so the API answers 400
+    // instead of tripping the task_types FK with a 500.
     if (taskType !== 'VISIT' && taskType !== 'ASSIST') {
       throw new BadRequestException('ประเภทลิงก์นี้ถูกยกเลิกแล้ว');
     }

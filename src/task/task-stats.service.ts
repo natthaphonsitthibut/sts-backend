@@ -110,6 +110,100 @@ export class TaskStatsService {
     }
   }
 
+  async getFollowUpSummary(actor?: ActorContext) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    const [outcomeRows, assistanceMeasures, referralRows, repeatedUnsuccessfulCaseCount] =
+      await Promise.all([
+        this.taskRepository.getFollowUpOutcomeAggregate(currentActor),
+        this.taskRepository.getAssistanceMeasureAggregate(currentActor),
+        this.taskRepository.getReferralAggregate(currentActor),
+        this.taskRepository.countRepeatedUnsuccessfulCases(currentActor),
+      ]);
+    const buildOutcome = (taskType: 'VISIT' | 'ASSIST') => {
+      const rows = outcomeRows.filter((row) => row.task_type === taskType);
+      const succeeded = Number(
+        rows.find((row) => row.task_execution_outcome_code === 'SUCCEEDED')?.activity_count ?? 0,
+      );
+      const notSucceeded = Number(
+        rows.find((row) => row.task_execution_outcome_code === 'NOT_SUCCEEDED')?.activity_count ??
+          0,
+      );
+      const total = succeeded + notSucceeded;
+      return {
+        succeeded,
+        notSucceeded,
+        total,
+        successRate: total === 0 ? null : Math.round((succeeded / total) * 1000) / 10,
+      };
+    };
+    const byStatus: Record<string, number> = {};
+    const byAgency = new Map<string, number>();
+    let referralTotal = 0;
+    let overdue = 0;
+    referralRows.forEach((row) => {
+      const status = String(row.status_code);
+      const agencyName = String(row.agency_name);
+      const count = Number(row.referral_count ?? 0);
+      byStatus[status] = (byStatus[status] ?? 0) + count;
+      byAgency.set(agencyName, (byAgency.get(agencyName) ?? 0) + count);
+      referralTotal += count;
+      overdue += Number(row.overdue_count ?? 0);
+    });
+    return {
+      success: true,
+      data: {
+        outcomes: { visit: buildOutcome('VISIT'), assist: buildOutcome('ASSIST') },
+        assistanceMeasures: assistanceMeasures.map((row) => ({
+          code: String(row.code),
+          label: String(row.label_th),
+          succeeded: Number(row.succeeded_count ?? 0),
+          notSucceeded: Number(row.not_succeeded_count ?? 0),
+          total: Number(row.total_count ?? 0),
+        })),
+        referrals: {
+          total: referralTotal,
+          overdue,
+          byStatus,
+          byAgency: [...byAgency.entries()].map(([agencyName, count]) => ({ agencyName, count })),
+        },
+        repeatedUnsuccessfulCaseCount,
+      },
+    };
+  }
+
+  async getReferralDrilldown(
+    actor?: ActorContext,
+    requestedPage?: number,
+    requestedLimit?: number,
+  ) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (isRestrictedExecutive(currentActor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะจำนวนรวม ไม่สามารถเปิดรายชื่อได้');
+    }
+    const page = resolvePage(requestedPage);
+    const limit = resolveLimit(requestedLimit);
+    const { rows, totalCount } = await this.taskRepository.listReferralDrilldown(
+      currentActor,
+      page,
+      limit,
+    );
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        id: row.id,
+        caseId: Number(row.case_id),
+        studentName: row.student_name,
+        schoolId: row.school_id == null ? null : Number(row.school_id),
+        schoolName: row.school_name ?? null,
+        statusCode: row.status_code,
+        referredAt: row.referred_at,
+        agencyName: row.agency_name,
+        agencyKindLabel: row.agency_kind_label,
+      })),
+      meta: buildPaginationMeta(page, limit, totalCount),
+    };
+  }
+
   private parsePositiveInteger(value: string | null, fallback: number): number {
     const parsed = value ? Number.parseInt(value, 10) : fallback;
     return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -205,6 +299,8 @@ export class TaskStatsService {
           problemCategoryLabel: canViewTeacherComments
             ? (row.problem_category_label ?? null)
             : null,
+          concernLevelCode: canViewTeacherComments ? (row.concern_level_code ?? null) : null,
+          concernLevelLabel: canViewTeacherComments ? (row.concern_level_label ?? null) : null,
           teacherComment: canViewTeacherComments ? (row.teacher_comment ?? null) : null,
         })),
         meta: {

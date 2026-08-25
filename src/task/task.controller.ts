@@ -7,12 +7,14 @@ import {
   Body,
   Headers,
   Param,
+  Query,
   Req,
   Res,
   HttpException,
   HttpStatus,
   UnauthorizedException,
   UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
@@ -21,8 +23,9 @@ import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service
 import { AuthGuard, CurrentUser, Public } from '../auth';
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
 import { appConfig } from '../config/app.config';
-import { ThrottleOtpRequest, ThrottleOtpVerify } from '../config/throttle.decorators';
-import { CreateTaskDto, SaveTaskSubmissionDto } from './dto/task.dto';
+import { ThrottleIdentityStart, ThrottleIdentityVerify } from '../config/throttle.decorators';
+import { DevelopmentGoogleLoginDto } from '../google-login/dto/development-google-login.dto';
+import { CreateTaskDto, SaveTaskSubmissionDto, TaskGoogleCallbackDto } from './dto/task.dto';
 import {
   getHeaderValue,
   getTaskErrorMessage,
@@ -106,17 +109,50 @@ export class TaskController {
   }
 
   @Public()
-  @ThrottleOtpRequest()
-  @Post(':token/otp')
-  async requestOtp(@Param('token') token: string) {
-    return await this.taskService.requestOtp(token);
+  @ThrottleIdentityStart()
+  @Post(':token/google/start')
+  async startGoogle(@Param('token') token: string) {
+    return { success: true, data: await this.taskService.startGoogleAuthorization(token) };
   }
 
   @Public()
-  @ThrottleOtpVerify()
-  @Post(':token/verify')
-  async verifyOtp(@Param('token') token: string, @Body('otp') otp: string) {
-    return await this.taskService.verifyOtp(token, otp);
+  @ThrottleIdentityVerify()
+  @Post(':token/google/development')
+  async developmentGoogle(@Param('token') token: string, @Body() body: DevelopmentGoogleLoginDto) {
+    return {
+      success: true,
+      data: {
+        sessionToken: await this.taskService.completeDevelopmentGoogleAuthorization(
+          token,
+          body.email,
+        ),
+      },
+    };
+  }
+
+  @Public()
+  @ThrottleIdentityVerify()
+  @Get('google/callback')
+  async googleCallback(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: TaskGoogleCallbackDto,
+    @Res() response: Response,
+  ): Promise<void> {
+    const redirect = new URL('/task/google-callback', this.runtimeConfig.frontendBaseUrl);
+    if (query.error || !query.code || !query.state) {
+      redirect.hash = 'error=google_login_failed';
+      response.redirect(redirect.toString());
+      return;
+    }
+    try {
+      const sessionToken = await this.taskService.completeGoogleAuthorization(
+        query.code,
+        query.state,
+      );
+      redirect.hash = new URLSearchParams({ sessionToken }).toString();
+    } catch {
+      redirect.hash = 'error=google_login_failed';
+    }
+    response.redirect(redirect.toString());
   }
 
   /**
@@ -125,7 +161,7 @@ export class TaskController {
    * it can never be redeemed through another flow.
    */
   @Public()
-  @ThrottleOtpRequest()
+  @ThrottleIdentityStart()
   @Post(':token/araid/challenge')
   async createAraIdChallenge(@Param('token') token: string, @Req() request: Request) {
     const baseUrl = resolveExternalBaseUrl(request, this.runtimeConfig.frontendBaseUrl);
@@ -133,7 +169,7 @@ export class TaskController {
   }
 
   @Public()
-  @ThrottleOtpRequest()
+  @ThrottleIdentityStart()
   @Post('araid/challenge/begin')
   async beginAraIdChallenge(
     @Headers('x-task-araid-challenge') rawChallenge: string | undefined,
@@ -156,7 +192,7 @@ export class TaskController {
   }
 
   @Public()
-  @ThrottleOtpVerify()
+  @ThrottleIdentityVerify()
   @Post('araid/challenge/approve')
   async approveAraIdChallenge(
     @Req() request: Request,
@@ -178,7 +214,7 @@ export class TaskController {
   }
 
   @Public()
-  @ThrottleOtpVerify()
+  @ThrottleIdentityVerify()
   @Post('araid/challenge/status')
   async pollAraIdChallenge(@Headers('x-task-araid-challenge') rawChallenge: string | undefined) {
     return await this.taskService.pollTaskAraIdChallenge((rawChallenge ?? '').trim());

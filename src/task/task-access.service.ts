@@ -1,32 +1,27 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   GoneException,
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
-import * as crypto from 'crypto';
 import * as QRCode from 'qrcode';
-import { authConfig } from '../config/auth.config';
-import { clean, hashToken, maskEmailAddress } from '../common/utils/helpers';
+import { clean, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { EmailService } from '../common/email/email.service';
 import { TaskPolicyService } from './task-policy.service';
 import type { ActorContext } from './task.types';
 import { TaskRepository } from './task.repository';
-import {} from '../common/pagination/pagination.util';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 import { AraIdChallengeStore, type AraIdChallengeScope } from '../araid/araid-challenge.store';
 import { AraIdService } from '../araid/araid.service';
+import { GoogleOidcProvider } from '../classroom-attendance-links/google-oidc.provider';
+import { googleLoginConfig } from '../config/google-login.config';
+import { ScopedGoogleLoginStateStore } from '../google-login/scoped-google-login-state.store';
 
 /** Every AraID challenge in this service belongs to a follow-up/assistance link. */
 const ARAID_SCOPE: AraIdChallengeScope = 'task-link';
@@ -49,20 +44,97 @@ export class TaskAccessService {
   constructor(
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
-    private readonly emailService: EmailService,
     private readonly auditLog: AuditLogService,
-    @Inject(authConfig.KEY)
-    private readonly authRuntimeConfig: ConfigType<typeof authConfig>,
     private readonly magicSessionStore: MagicSessionStoreService,
     private readonly araIdChallengeStore: AraIdChallengeStore,
     private readonly araIdService: AraIdService,
+    private readonly google: GoogleOidcProvider,
+    private readonly googleStates: ScopedGoogleLoginStateStore,
+    @Inject(googleLoginConfig.KEY)
+    private readonly googleConfig: ConfigType<typeof googleLoginConfig>,
   ) {}
 
-  /**
-   * A task link can be verified with AraID instead of the emailed OTP. The
-   * identity that may approve it is the teacher the link was issued to — read
-   * through `assigned_teacher_id`, never the denormalised email.
-   */
+  async startGoogleAuthorization(token: string): Promise<{ authorizationUrl: string }> {
+    const link = await this.findUsableLinkForVerification(token);
+    const schoolId = Number(link.target_school_id);
+    if (!Number.isInteger(schoolId) || schoolId <= 0) {
+      throw new ConflictException('ลิงก์นี้ไม่มีโรงเรียนที่ใช้ตรวจสอบตัวตน');
+    }
+    const login = await this.googleStates.create('task-link', {
+      subjectId: String(link.id),
+      tokenHash: hashToken(token.trim()),
+      schoolId,
+    });
+    return {
+      authorizationUrl: this.google.authorizationUrl(
+        login.state,
+        login.nonce,
+        this.googleConfig.taskCallbackUrl,
+      ),
+    };
+  }
+
+  async completeGoogleAuthorization(code: string, state: string): Promise<string> {
+    const login = await this.googleStates.consume('task-link', state);
+    if (!login) throw new GoneException('คำขอ Google Login หมดอายุหรือถูกใช้แล้ว');
+    const link = await this.taskRepository.findTaskLinkByTokenHash(login.tokenHash);
+    this.assertLinkRecordUsable(link);
+    if (String(link.id) !== login.subjectId || Number(link.target_school_id) !== login.schoolId) {
+      throw new GoneException('ลิงก์งานถูกเปลี่ยนหรือหมดอายุแล้ว');
+    }
+    const identity = await this.google.exchange(
+      code,
+      login.nonce,
+      this.googleConfig.taskCallbackUrl,
+    );
+    const teacher = await this.taskRepository.findActiveTeacherInSchoolByEmail(
+      identity.email,
+      login.schoolId,
+    );
+    if (!teacher) {
+      throw new ForbiddenException('Google นี้ไม่ตรงกับครูที่เปิดใช้งานในโรงเรียนของลิงก์');
+    }
+    const sessionToken = await this.magicSessionStore.issue(login.subjectId);
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: null,
+      action: 'TASK_LINK_GOOGLE_VERIFY',
+      targetType: 'task_links',
+      targetId: login.subjectId,
+      metadata: { authMethod: 'GOOGLE' },
+      ip: null,
+    });
+    return sessionToken;
+  }
+
+  async completeDevelopmentGoogleAuthorization(token: string, email: string): Promise<string> {
+    const identity = this.google.developmentIdentity(email);
+    const link = await this.findUsableLinkForVerification(token);
+    const schoolId = Number(link.target_school_id);
+    if (!Number.isInteger(schoolId) || schoolId <= 0) {
+      throw new ConflictException('ลิงก์นี้ไม่มีโรงเรียนที่ใช้ตรวจสอบตัวตน');
+    }
+    const teacher = await this.taskRepository.findActiveTeacherInSchoolByEmail(
+      identity.email,
+      schoolId,
+    );
+    if (!teacher) {
+      throw new ForbiddenException('อีเมลนี้ไม่ตรงกับครูที่เปิดใช้งานในโรงเรียนของลิงก์');
+    }
+    const sessionToken = await this.magicSessionStore.issue(String(link.id));
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: null,
+      action: 'TASK_LINK_GOOGLE_VERIFY',
+      targetType: 'task_links',
+      targetId: String(link.id),
+      metadata: { authMethod: 'GOOGLE_DEVELOPMENT' },
+      ip: null,
+    });
+    return sessionToken;
+  }
+
+  /** Starts the AraID alternative for any active teacher in the link's school. */
   async createAraIdChallenge(token: string, baseUrl: string) {
     const link = await this.findUsableLinkForVerification(token);
     const challenge = await this.araIdChallengeStore.create(ARAID_SCOPE, String(link.id));
@@ -159,6 +231,13 @@ export class TaskAccessService {
       throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
     }
     const link = await this.taskRepository.findTaskLinkByTokenHash(hashToken(trimmed));
+    this.assertLinkRecordUsable(link);
+    return link;
+  }
+
+  private assertLinkRecordUsable(
+    link: Record<string, unknown> | null,
+  ): asserts link is Record<string, unknown> {
     if (!link) throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
     if (new Date(String(link.expires_at)) < new Date()) {
       throw new GoneException('ลิงก์นี้หมดอายุแล้ว');
@@ -169,34 +248,29 @@ export class TaskAccessService {
     if (link.status === 'COMPLETED') {
       throw new ConflictException('ลิงก์นี้ถูกบันทึกเรียบร้อยแล้ว');
     }
-    return link;
+    if (link.status === 'CANCELLED') {
+      throw new GoneException('ลิงก์นี้ถูกยกเลิกแล้ว');
+    }
+    if (typeof link.opens_at === 'string' && new Date(link.opens_at) > new Date()) {
+      throw new ForbiddenException('ลิงก์นี้ยังไม่เปิดใช้งาน');
+    }
   }
 
-  /**
-   * The AraID-verified citizen id must belong to the teacher the link was
-   * issued to. A link with no bound teacher (issued before that column existed)
-   * cannot be verified this way and stays on the emailed OTP.
-   */
+  /** AraID may be used by any active teacher membership in the link's school. */
   private async assertAraIdIdentityMatchesLink(
     linkId: string,
     araIdProfileId: string,
   ): Promise<void> {
     const identity = await this.taskRepository.findTaskLinkAraIdIdentity(linkId);
-    const rawCitizenId = identity?.teacher_citizen_id;
-    const expected = typeof rawCitizenId === 'string' ? (clean(rawCitizenId) ?? '') : '';
-    if (!/^\d{13}$/.test(expected)) {
-      throw new ConflictException(
-        'ครูผู้รับมอบหมายยังไม่มีเลขบัตรประชาชนในระบบ กรุณายืนยันผ่านอีเมลแทน',
-      );
+    const schoolId = Number(identity?.target_school_id);
+    if (!Number.isInteger(schoolId) || schoolId <= 0) {
+      throw new ConflictException('ลิงก์นี้ไม่มีโรงเรียนที่ใช้ตรวจสอบตัวตน');
     }
     const verified = await this.araIdService.getVerifiedIdentityNumber(araIdProfileId);
-    const expectedBuffer = Buffer.from(expected);
-    const verifiedBuffer = Buffer.from(verified.trim());
-    const matches =
-      expectedBuffer.length === verifiedBuffer.length &&
-      crypto.timingSafeEqual(expectedBuffer, verifiedBuffer);
-    if (!matches) {
-      throw new ForbiddenException('AraID นี้ไม่ตรงกับครูผู้รับมอบหมายของลิงก์');
+    if (
+      !(await this.taskRepository.findActiveTeacherInSchoolByCitizenId(verified.trim(), schoolId))
+    ) {
+      throw new ForbiddenException('AraID นี้ไม่ตรงกับครูที่เปิดใช้งานในโรงเรียนของลิงก์');
     }
   }
 
@@ -233,29 +307,21 @@ export class TaskAccessService {
       return { error: 'Task already completed', status: 'COMPLETED' };
     }
 
-    const sessionVerified = !link.otp_verified
-      ? await this.magicSessionStore.isVerified(String(link.id), sessionToken)
-      : false;
+    const sessionVerified = await this.magicSessionStore.isVerified(String(link.id), sessionToken);
 
     // Every public link proves identity before it hands anything over — one
     // rule shared with the teacher access link and the LINE verification link,
     // both of which gate unconditionally.
     //
-    // It deliberately does NOT depend on the mail transport. AraID is the other
-    // way through this gate, so tying the requirement to SMTP would silently
-    // drop a deployment without email configured to single-factor links that
-    // hand a minor's name, address and phone to anyone holding the URL. Whether
-    // the assigned teacher actually has a citizen id or a reachable mailbox is
-    // the school's data-entry problem: the attempt fails with a clear message
-    // instead of the gate disappearing.
-    const authRequired = !link.otp_verified && !sessionVerified;
+    // Google and AraID both issue the same short-lived, link-scoped session.
+    // The URL alone never reveals a minor's name, address or phone.
+    const authRequired = !sessionVerified;
 
     const result: Record<string, unknown> = {
       task_id: link.task_id,
       link_id: link.id,
       type: link.task_type,
       task_type: link.task_type,
-      otp_verified: link.otp_verified,
       assigned_to_email: link.assigned_to_email,
       target_grade: link.target_grade,
       target_room: link.target_room,
@@ -353,125 +419,50 @@ export class TaskAccessService {
               exception_label: typeof row.exception_label === 'string' ? row.exception_label : null,
             }))
           : [];
+        if (link.task_type === 'VISIT' && Number.isInteger(caseId)) {
+          const prefill = await this.taskRepository.findRepeatVisitPrefill(
+            caseId,
+            String(link.task_id),
+          );
+          if (prefill) {
+            result.prefill = {
+              source_submission_id: Number(prefill.source_submission_id),
+              source_round_number: Number(prefill.source_round_number),
+              source_submitted_at: prefill.source_submitted_at ?? null,
+              parental_status_code:
+                typeof prefill.parental_status_code === 'string'
+                  ? prefill.parental_status_code
+                  : null,
+              guardian_type_code:
+                typeof prefill.guardian_type_code === 'string' ? prefill.guardian_type_code : null,
+              guardian_type_detail:
+                typeof prefill.guardian_type_detail === 'string'
+                  ? prefill.guardian_type_detail
+                  : null,
+              contact_person_name:
+                typeof prefill.contact_person_name === 'string'
+                  ? prefill.contact_person_name
+                  : null,
+              contact_channel_code:
+                typeof prefill.contact_channel_code === 'string'
+                  ? prefill.contact_channel_code
+                  : null,
+              residence_environment_codes: Array.isArray(prefill.residence_environment_codes)
+                ? prefill.residence_environment_codes.filter(
+                    (code): code is string => typeof code === 'string',
+                  )
+                : [],
+              residence_environment_detail:
+                typeof prefill.residence_environment_detail === 'string'
+                  ? prefill.residence_environment_detail
+                  : null,
+            };
+          }
+        }
       }
     }
 
     return result;
-  }
-
-  async requestOtp(token: string) {
-    const tokenHash = hashToken(token);
-    const link = await this.taskRepository.findOtpLinkByTokenHash(tokenHash);
-
-    if (!link) {
-      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
-    }
-
-    const email = typeof link.assigned_to_email === 'string' ? link.assigned_to_email.trim() : '';
-    if (!email) {
-      throw new BadRequestException('ลิงก์นี้ไม่มีอีเมลผู้ใช้งานที่เชื่อมโยง');
-    }
-
-    const otpTtlSeconds = this.authRuntimeConfig.otpTtlSeconds;
-    const otp = crypto.randomInt(100000, 1000000).toString();
-    const expiresAt = new Date(Date.now() + otpTtlSeconds * 1000);
-
-    await this.taskRepository.updateLinkOtp({
-      linkId: String(link.id),
-      otpCode: otp,
-      otpExpiresAt: expiresAt.toISOString(),
-    });
-
-    try {
-      await this.emailService.sendOTP(email, otp, Math.round(otpTtlSeconds / 60));
-      return {
-        success: true,
-        message: 'OTP sent successfully',
-        expires_at: expiresAt.toISOString(),
-        method: 'EMAIL',
-        maskedEmail: maskEmailAddress(email),
-        expiresAt: expiresAt.toISOString(),
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to send OTP: ${message}`);
-      throw err;
-    }
-  }
-
-  async verifyOtp(token: string, otp: string) {
-    // Use HTTP exceptions (not plain Error) so a wrong/expired code returns a
-    // 4xx with a readable message instead of a 500 Internal Server Error.
-    if (!otp) {
-      throw new BadRequestException('กรุณากรอกรหัส OTP');
-    }
-
-    const tokenHash = hashToken(token);
-
-    // The whole check runs in one transaction with the row locked (FOR UPDATE)
-    // so concurrent guesses on the same link are serialized — without this they
-    // could each read the row before the lock is set and slip past the cap. The
-    // transaction must COMMIT even on a wrong guess (to persist the incremented
-    // attempt), so the outcome is returned and the 4xx is thrown afterwards
-    // rather than thrown inside (which would roll the increment back).
-    const result = await this.taskRepository.withTransaction(async (executor) => {
-      const link = await this.taskRepository.findOtpLinkByTokenHashForUpdate(tokenHash, executor);
-      if (!link) {
-        return { outcome: 'not_found' as const };
-      }
-
-      // Brute-force lockout: a link that has exhausted its OTP attempts stays
-      // locked until the cool-down passes (or a new OTP is requested, which
-      // resets the counter). Checked before comparing the code so a locked link
-      // cannot be probed further.
-      const lockedRaw = link.otp_locked_until as string | Date | null;
-      const lockedUntil = lockedRaw ? new Date(lockedRaw) : null;
-      if (lockedUntil && lockedUntil > new Date()) {
-        return { outcome: 'locked' as const };
-      }
-
-      if (new Date(String(link.otp_expires_at)) < new Date()) {
-        return { outcome: 'expired' as const };
-      }
-
-      if (!link.otp_code || link.otp_code !== otp) {
-        const { lockedUntil: nowLocked } = await this.taskRepository.registerFailedOtpAttempt(
-          String(link.id),
-          this.authRuntimeConfig.otpMaxAttempts,
-          this.authRuntimeConfig.otpLockSeconds,
-          executor,
-        );
-        const justLocked = !!nowLocked && nowLocked > new Date();
-        return { outcome: justLocked ? ('locked' as const) : ('wrong' as const) };
-      }
-
-      // Correct code — clear the brute-force counter and issue the session.
-      await this.taskRepository.clearOtpAttempts(String(link.id), executor);
-      return { outcome: 'ok' as const, linkId: String(link.id) };
-    });
-
-    if (result.outcome === 'not_found') {
-      throw new NotFoundException('ไม่พบลิงก์หรือลิงก์ไม่ถูกต้อง');
-    }
-    if (result.outcome === 'locked') {
-      throw new HttpException(
-        'ลองรหัส OTP ผิดหลายครั้งเกินไป กรุณาขอรหัสใหม่หรือลองอีกครั้งภายหลัง',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-    if (result.outcome === 'expired') {
-      throw new BadRequestException('รหัส OTP หมดอายุ กรุณาขอรหัสใหม่');
-    }
-    if (result.outcome === 'wrong') {
-      throw new BadRequestException('รหัส OTP ไม่ถูกต้อง');
-    }
-    if (!result.linkId) {
-      throw new InternalServerErrorException('ไม่สามารถยืนยัน OTP ได้');
-    }
-
-    const sessionToken = await this.magicSessionStore.issue(result.linkId);
-
-    return { success: true, session_token: sessionToken };
   }
 
   async adminLockLink(
@@ -579,7 +570,7 @@ export class TaskAccessService {
    * Admin-only link detail by id (not token). Unlike the public token endpoint
    * this returns the link even when it is closed/expired, so the admin detail
    * page can render and manage it. Same scope gate as adminLockLink. Returns an
-   * explicit shape (never the raw row) so token_hash / otp are never leaked.
+   * explicit shape (never the raw row) so the token hash is never leaked.
    */
   async getAdminLinkDetail(actor: ActorContext | undefined, linkId: string) {
     try {

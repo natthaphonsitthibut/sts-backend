@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsDateString,
   IsIn,
@@ -24,6 +25,25 @@ export type CaseResolutionOutcome =
   | 'WORKING'
   | 'UNREACHABLE'
   | 'OTHER';
+
+export class GetReferralDrilldownQueryDto extends PaginationQueryDto {}
+
+export class TaskGoogleCallbackDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  error?: string;
+}
 
 // Fields are intentionally loose unions (string | number | null) because the
 // service coerces them downstream. Every property carries at least @IsOptional()
@@ -241,6 +261,11 @@ export class SaveTaskSubmissionDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  absence_reason_code?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
   parental_status_code?: string | null;
 
   @IsOptional()
@@ -273,6 +298,22 @@ export class SaveTaskSubmissionDto {
   @IsString()
   @MaxLength(2000)
   assistance_detail?: string | null;
+
+  /** Optional explanation for an unsuccessful ASSIST round. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  execution_outcome_detail?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  contact_person_name?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  contact_channel_code?: string | null;
 
   @IsOptional()
   cause_detail?: string | null;
@@ -343,6 +384,18 @@ export class ReviewCaseDto {
   review_note!: string;
 
   @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  assistance_measure_codes?: string[] | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  assistance_measure_detail?: string | null;
+
+  @IsOptional()
   @IsIn(['RETURNED_TO_SCHOOL', 'TRANSFERRED_SCHOOL', 'ILLNESS', 'WORKING', 'UNREACHABLE', 'OTHER'])
   resolution_outcome?: CaseResolutionOutcome | null;
 
@@ -351,10 +404,6 @@ export class ReviewCaseDto {
   @IsInt()
   @Min(1)
   referral_agency_id?: number | null;
-
-  @IsOptional()
-  @IsIn(['APPROVE', 'REJECT'])
-  care_observation_decision?: 'APPROVE' | 'REJECT' | null;
 
   @IsOptional()
   @IsString()
@@ -502,42 +551,6 @@ export class GetRiskDashboardQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(RISK_DASHBOARD_SORT_DIRECTIONS)
   sortDirection?: (typeof RISK_DASHBOARD_SORT_DIRECTIONS)[number];
-}
-
-export class GetLoginLinksQueryDto extends PaginationQueryDto {
-  @IsOptional()
-  @IsIn(['ALL', 'ACTIVE', 'LOCKED', 'EXPIRED'])
-  status?: string;
-
-  @IsOptional()
-  @IsString()
-  searchTerm?: string;
-
-  @IsOptional()
-  @IsString()
-  province?: string;
-
-  @IsOptional()
-  @IsString()
-  district?: string;
-
-  @IsOptional()
-  @IsString()
-  subDistrict?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  schoolId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  gradeLevelId?: number;
-
-  @IsOptional()
-  @IsString()
-  room?: string;
 }
 
 export class AdminLockLinkDto {
