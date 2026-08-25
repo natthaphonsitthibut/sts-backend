@@ -190,51 +190,6 @@ export class StudentExitEventEntity {
   sourceRecordSnapshot!: Record<string, unknown>;
 }
 
-@Entity({ name: 'attendance' })
-export class AttendanceEntity {
-  @PrimaryGeneratedColumn({ name: 'AttendanceID' })
-  attendanceId!: number;
-
-  @Column({ name: 'student_uuid', type: 'uuid' })
-  studentUuid!: string;
-
-  @Column({ name: 'session_id', type: 'uuid', nullable: true })
-  sessionId!: string | null;
-
-  @Column({ name: 'SchoolID_Onec', type: 'integer' })
-  schoolIdOnec!: number;
-
-  @Column({ name: 'GradeLevelID_Onec', type: 'integer' })
-  gradeLevelIdOnec!: number;
-
-  @Column({ name: 'RoomID_Onec', type: 'integer' })
-  roomIdOnec!: number;
-
-  @Column({ name: 'AcademicYear_Onec', type: 'integer' })
-  academicYearOnec!: number;
-
-  @Column({ name: 'Semester_Onec', type: 'integer' })
-  semesterOnec!: number;
-
-  @Column({ name: 'AttendanceDate', type: 'date' })
-  attendanceDate!: string;
-
-  @Column({ name: 'Period', type: 'integer' })
-  period!: number;
-
-  @Column({ name: 'session_kind', type: 'varchar', length: 16, default: 'SUBJECT' })
-  sessionKind!: 'SUBJECT';
-
-  @Column({ name: 'AttendanceStatus', type: 'smallint' })
-  attendanceStatus!: number;
-
-  @Column({ name: 'RecordedAt', type: 'timestamptz', nullable: true })
-  recordedAt!: Date | null;
-
-  @Column({ name: 'RecordedBy', type: 'varchar', length: 100, nullable: true })
-  recordedBy!: string | null;
-}
-
 @Entity({ name: 'student_risk_profiles' })
 @Index('idx_student_risk_profiles_scope', ['schoolId', 'gradeLevelId', 'roomId'])
 @Index('idx_student_risk_profiles_tier', ['riskTier'])

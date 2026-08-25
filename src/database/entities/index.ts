@@ -17,7 +17,6 @@ import {
   StudentStatusEntity,
 } from './master-data.entities';
 import {
-  AttendanceEntity,
   StudentExitEventEntity,
   StudentGuardianEntity,
   StudentPersonContactEntity,
@@ -57,7 +56,6 @@ export const DATABASE_ENTITIES = [
   StudentExitEventEntity,
   StudentGuardianEntity,
   StudentPersonContactEntity,
-  AttendanceEntity,
   SchoolTermEntity,
   SchoolCalendarDayEntity,
   AttendanceSessionEntity,
@@ -80,7 +78,6 @@ export {
   AbsenceReasonCategoryEntity,
   AbsenceReasonEntity,
   AssistanceMeasureEntity,
-  AttendanceEntity,
   AttendanceSessionEntity,
   CaseEntity,
   CaseRiskSignalEntity,
