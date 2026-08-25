@@ -2,7 +2,6 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import type { FileStorageAdapter } from '../files/storage/file-storage.types';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
-import { MasterDataService } from '../master-data/master-data.service';
 import { AttendanceOperationsService } from './attendance-operations.service';
 import { ExceptionAttendanceRepository } from './exception-attendance.repository';
 import { ExceptionAttendanceService } from './exception-attendance.service';
@@ -49,7 +48,6 @@ describe('ExceptionAttendanceService', () => {
     room_id: 1,
     classroom_id: '42',
     classroom_subject_id: '84',
-    subject_id: 1,
     attendance_date: '2026-08-21',
     period: null,
     status: 'OPEN',
@@ -66,7 +64,6 @@ describe('ExceptionAttendanceService', () => {
   let attendanceOperations: jest.Mocked<Pick<AttendanceOperationsService, 'assertClassroomAccess'>>;
   let audit: jest.Mocked<Pick<AuditLogService, 'recordAtomic'>>;
   let riskProfiles: jest.Mocked<Pick<RiskProfileService, 'requestStudentRecalculation'>>;
-  let masterData: jest.Mocked<Pick<MasterDataService, 'listActiveOptions'>>;
   let storage: jest.Mocked<Pick<FileStorageAdapter, 'resolve'>>;
   let service: ExceptionAttendanceService;
 
@@ -85,7 +82,6 @@ describe('ExceptionAttendanceService', () => {
         calendar_day_type: 'SCHOOL_DAY',
       }),
       insertTargetSession: jest.fn().mockResolvedValue(true),
-      hasLegacyFullRosterSession: jest.fn().mockResolvedValue(false),
       findTargetSessionForUpdate: jest
         .fn()
         .mockResolvedValue({ ...openSession, expected_roster_count: 0 }),
@@ -109,22 +105,6 @@ describe('ExceptionAttendanceService', () => {
     } as unknown as jest.Mocked<ExceptionAttendanceRepository>;
     audit = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
     riskProfiles = { requestStudentRecalculation: jest.fn().mockResolvedValue(undefined) };
-    masterData = {
-      listActiveOptions: jest.fn().mockResolvedValue([
-        {
-          code: 'UNKNOWN',
-          labelTh: 'ยังไม่ทราบสาเหตุ',
-          categoryCode: null,
-          requiresDetail: null,
-        },
-        {
-          code: 'MINOR_ILLNESS',
-          labelTh: 'เจ็บป่วยเล็กน้อย',
-          categoryCode: 'HEALTH',
-          requiresDetail: null,
-        },
-      ]),
-    };
     attendanceOperations = {
       assertClassroomAccess: jest.fn().mockResolvedValue({ schoolId: 1001 }),
     };
@@ -134,7 +114,6 @@ describe('ExceptionAttendanceService', () => {
       attendanceOperations as AttendanceOperationsService,
       audit as AuditLogService,
       riskProfiles as RiskProfileService,
-      masterData as MasterDataService,
       storage as FileStorageAdapter,
     );
   });
@@ -201,16 +180,6 @@ describe('ExceptionAttendanceService', () => {
     });
   });
 
-  it('rejects an exception-only session when legacy full-roster data already exists', async () => {
-    repository.hasLegacyFullRosterSession.mockResolvedValue(true);
-
-    await expect(
-      service.start(actor, { date: '2026-08-21', classroomSubjectId: 84 }),
-    ).rejects.toBeInstanceOf(ConflictException);
-    expect(repository.insertTargetSession.mock.calls).toHaveLength(0);
-    expect(repository.insertRosterSnapshot.mock.calls).toHaveLength(0);
-  });
-
   it('submits only exceptions in one transaction and recalculates the frozen roster', async () => {
     repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
 
@@ -240,9 +209,9 @@ describe('ExceptionAttendanceService', () => {
       'exception-attendance-submit',
     ]);
     expect(result.data).toMatchObject({ status: 'SUBMITTED', exceptionCount: 1 });
-    expect(repository.replaceExceptions.mock.calls[0]?.[1][0]).toMatchObject({
-      absenceReasonCode: 'UNKNOWN',
-    });
+    expect(repository.replaceExceptions.mock.calls[0]?.[1][0]).not.toHaveProperty(
+      'absenceReasonCode',
+    );
   });
 
   it('returns an identical duplicate submit without writing or auditing again', async () => {
@@ -255,7 +224,7 @@ describe('ExceptionAttendanceService', () => {
     });
     repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
     repository.listStoredExceptions.mockResolvedValue([
-      { student_uuid: 'student-1', attendance_status_code: 2, absence_reason_code: 'UNKNOWN' },
+      { student_uuid: 'student-1', attendance_status_code: 2 },
     ]);
 
     const result = await service.submit(actor, openSession.id, {
@@ -272,7 +241,7 @@ describe('ExceptionAttendanceService', () => {
     repository.findSessionForUpdate.mockResolvedValue({ ...openSession, status: 'SUBMITTED' });
     repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
     repository.listStoredExceptions.mockResolvedValue([
-      { student_uuid: 'student-1', attendance_status_code: 2, absence_reason_code: 'UNKNOWN' },
+      { student_uuid: 'student-1', attendance_status_code: 2 },
     ]);
 
     await expect(
@@ -292,81 +261,5 @@ describe('ExceptionAttendanceService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
     expect(audit.recordAtomic.mock.calls).toHaveLength(0);
-  });
-
-  it('stores an explicit absence reason and rejects it for late or leave', async () => {
-    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
-
-    await service.submit(actor, openSession.id, {
-      exceptions: [
-        {
-          studentId: 'student-1',
-          status: 'P_ABSENT',
-          absenceReasonCode: 'MINOR_ILLNESS',
-        },
-      ],
-    });
-    expect(repository.replaceExceptions.mock.calls[0]?.[1][0]).toMatchObject({
-      statusCode: 2,
-      absenceReasonCode: 'MINOR_ILLNESS',
-    });
-
-    await expect(
-      service.submit(actor, openSession.id, {
-        exceptions: [
-          {
-            studentId: 'student-1',
-            status: 'P_LATE',
-            absenceReasonCode: 'MINOR_ILLNESS',
-          },
-        ],
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('rejects an unknown or inactive absence reason before writing', async () => {
-    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
-
-    await expect(
-      service.submit(actor, openSession.id, {
-        exceptions: [
-          {
-            studentId: 'student-1',
-            status: 'P_ABSENT',
-            absenceReasonCode: 'DISABLED_REASON',
-          },
-        ],
-      }),
-    ).rejects.toThrow('สาเหตุการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
-
-    expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
-  });
-
-  it('keeps a submitted retry idempotent after its reason is deactivated', async () => {
-    repository.findSessionForUpdate.mockResolvedValue({ ...openSession, status: 'SUBMITTED' });
-    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
-    repository.listStoredExceptions.mockResolvedValue([
-      {
-        student_uuid: 'student-1',
-        attendance_status_code: 2,
-        absence_reason_code: 'MINOR_ILLNESS',
-      },
-    ]);
-    masterData.listActiveOptions.mockResolvedValue([]);
-
-    await expect(
-      service.submit(actor, openSession.id, {
-        exceptions: [
-          {
-            studentId: 'student-1',
-            status: 'P_ABSENT',
-            absenceReasonCode: 'MINOR_ILLNESS',
-          },
-        ],
-      }),
-    ).resolves.toEqual(expect.objectContaining({ success: true }));
-
-    expect(masterData.listActiveOptions.mock.calls).toHaveLength(0);
-    expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
   });
 });

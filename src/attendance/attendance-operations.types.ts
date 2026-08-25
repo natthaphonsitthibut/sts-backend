@@ -93,17 +93,3 @@ export interface SchoolTermInput {
   status: SchoolTermStatus;
   actorUserId: number | null;
 }
-
-export interface AttendanceSessionIdentity {
-  schoolTermId: string;
-  schoolId: number;
-  classroomId: number;
-  classroomSubjectId: number;
-  gradeLevelId: number;
-  roomId: number;
-  attendanceDate: string;
-  period: number;
-  sessionKind: 'SUBJECT';
-  subjectId?: number | null;
-  timetableSlotId?: number | null;
-}

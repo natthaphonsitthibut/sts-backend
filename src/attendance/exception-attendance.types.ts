@@ -53,7 +53,6 @@ export interface ExceptionAttendanceSessionRow extends Record<string, unknown> {
   room_id: number;
   classroom_id: string;
   classroom_subject_id: string;
-  subject_id: number;
   attendance_date: string;
   period: number | null;
   status: 'OPEN' | 'SUBMITTED' | 'REOPENED' | 'VOIDED';
@@ -69,14 +68,9 @@ export interface ExceptionAttendanceSessionRow extends Record<string, unknown> {
 export interface StoredAttendanceExceptionRow extends Record<string, unknown> {
   student_uuid: string;
   attendance_status_code: number;
-  absence_reason_code: string | null;
 }
 
-export interface PreparedAttendanceException extends Omit<
-  AttendanceExceptionDto,
-  'absenceReasonCode'
-> {
+export interface PreparedAttendanceException extends AttendanceExceptionDto {
   statusCode: 2 | 3 | 4;
   markedAt: string;
-  absenceReasonCode: string | null;
 }

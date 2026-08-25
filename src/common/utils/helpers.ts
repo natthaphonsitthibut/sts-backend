@@ -8,19 +8,6 @@ export function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-export function maskName(name: string): string {
-  if (!name) return name;
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    const prefix = parts[0];
-    const firstName = parts[1];
-    const masked = firstName.length > 2 ? firstName.slice(0, 2) + '****' : firstName + '****';
-    return prefix + ' ' + masked;
-  }
-  if (name.length <= 2) return name;
-  return name.slice(0, 2) + '****';
-}
-
 /** Keeps only the requested local-part prefix so a recipient can recognise the address. */
 export function maskEmailAddress(
   email: string,

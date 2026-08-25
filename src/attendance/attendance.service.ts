@@ -1,17 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import type { AuthenticatedRequestUser } from '../auth';
 import type { DataScope } from '../common/utils/authorization';
 import { AttendanceLookupService } from './attendance-lookup.service';
 import { AttendanceReadService } from './attendance-read.service';
-import { AttendanceWriteService } from './attendance-write.service';
-import type { AttendanceSaveRecordInput } from './attendance.types';
 
 @Injectable()
 export class AttendanceService {
   constructor(
     private readonly attendanceLookupService: AttendanceLookupService,
     private readonly attendanceReadService: AttendanceReadService,
-    private readonly attendanceWriteService: AttendanceWriteService,
   ) {}
 
   async getGradeLevels() {
@@ -49,40 +45,8 @@ export class AttendanceService {
     userScope?: DataScope,
     schoolId?: number | null,
     sessionKind?: 'SUBJECT',
-    timetableSlotId?: number,
   ) {
-    return await this.attendanceReadService.getHistory(
-      date,
-      userScope,
-      schoolId,
-      sessionKind,
-      timetableSlotId,
-    );
-  }
-
-  async saveAttendance(
-    records: AttendanceSaveRecordInput[],
-    actor?: AuthenticatedRequestUser,
-    timetableSlotId?: number,
-    date?: string,
-  ) {
-    return await this.attendanceWriteService.saveAttendance(records, actor, timetableSlotId, date);
-  }
-
-  async saveDraftMarks(
-    records: AttendanceSaveRecordInput[],
-    actor?: AuthenticatedRequestUser,
-    timetableSlotId?: number,
-    date?: string,
-    clearedStudentIds: string[] = [],
-  ) {
-    return await this.attendanceWriteService.saveDraftMarks(
-      records,
-      actor,
-      timetableSlotId,
-      date,
-      clearedStudentIds,
-    );
+    return await this.attendanceReadService.getHistory(date, userScope, schoolId, sessionKind);
   }
 
   async getRooms(gradeLabel: string, schoolId?: string, userScope?: DataScope) {

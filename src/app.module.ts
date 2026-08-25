@@ -23,10 +23,8 @@ import { StudentsModule } from './students/students.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { appConfig } from './config/app.config';
 import { araIdConfig } from './config/araid.config';
-import { attendanceImportConfig } from './config/attendance-import.config';
 import { authConfig } from './config/auth.config';
 import { databaseConfig } from './config/database.config';
-import { emailConfig } from './config/email.config';
 import { encryptionConfig } from './config/encryption.config';
 import { geoConfig } from './config/geo.config';
 import { lineConfig } from './config/line.config';
@@ -41,18 +39,14 @@ import { GeoModule } from './geo/geo.module';
 import { StatusCatalogModule } from './status-catalog/status-catalog.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SubjectsModule } from './subjects/subjects.module';
-import { TimetableModule } from './timetable/timetable.module';
 import { RedisModule } from './redis/redis.module';
 import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
 import { HomeDashboardModule } from './home-dashboard/home-dashboard.module';
 import { DataExportsModule } from './data-exports/data-exports.module';
 import { SchoolStructureModule } from './school-structure/school-structure.module';
 import { TeachersModule } from './teachers/teachers.module';
-import { CurriculumModule } from './curriculum/curriculum.module';
-import { StudentObservationsModule } from './student-observations/student-observations.module';
-import { StudentObservationSummaryModule } from './student-observation-summaries/student-observation-summary.module';
 import { AraIdModule } from './araid/araid.module';
-import { ObservationReviewsModule } from './observation-reviews/observation-reviews.module';
+import { TeacherCommentsModule } from './teacher-comments/teacher-comments.module';
 import { ClassroomAttendanceLinksModule } from './classroom-attendance-links/classroom-attendance-links.module';
 import { googleLoginConfig } from './config/google-login.config';
 
@@ -63,10 +57,8 @@ import { googleLoginConfig } from './config/google-login.config';
       load: [
         appConfig,
         araIdConfig,
-        attendanceImportConfig,
         authConfig,
         databaseConfig,
-        emailConfig,
         encryptionConfig,
         geoConfig,
         googleLoginConfig,
@@ -93,8 +85,16 @@ import { googleLoginConfig } from './config/google-login.config';
         storage,
         throttlers: [
           { name: 'login', ttl: config.login.ttlMs, limit: config.login.limit },
-          { name: 'otpRequest', ttl: config.otpRequest.ttlMs, limit: config.otpRequest.limit },
-          { name: 'otpVerify', ttl: config.otpVerify.ttlMs, limit: config.otpVerify.limit },
+          {
+            name: 'identityStart',
+            ttl: config.identityStart.ttlMs,
+            limit: config.identityStart.limit,
+          },
+          {
+            name: 'identityVerify',
+            ttl: config.identityVerify.ttlMs,
+            limit: config.identityVerify.limit,
+          },
           { name: 'araidLogin', ttl: config.araidLogin.ttlMs, limit: config.araidLogin.limit },
           { name: 'araidPin', ttl: config.araidPin.ttlMs, limit: config.araidPin.limit },
           { name: 'geocode', ttl: config.geocode.ttlMs, limit: config.geocode.limit },
@@ -135,15 +135,11 @@ import { googleLoginConfig } from './config/google-login.config';
     StatusCatalogModule,
     NotificationsModule,
     SubjectsModule,
-    TimetableModule,
     HomeDashboardModule,
     DataExportsModule,
     SchoolStructureModule,
     TeachersModule,
-    CurriculumModule,
-    StudentObservationsModule,
-    ObservationReviewsModule,
-    StudentObservationSummaryModule,
+    TeacherCommentsModule,
     AraIdModule,
     ClassroomAttendanceLinksModule,
   ],

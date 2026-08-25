@@ -136,19 +136,4 @@ export interface AttendanceInsertRecord {
   metadata: StudentAttendanceMetadataRow;
 }
 
-export interface AttendanceWriteContext {
-  actorUserId: number | null;
-  actorLabel: string;
-  recorder: string;
-  /** `teachers.id` when a teacher recorded it; null for staff, who are not teachers. */
-  recorderTeacherId?: number | null;
-  allowedStudentIds?: string[];
-  session?: {
-    kind: 'SUBJECT';
-    period: number;
-    subjectId?: number | null;
-    timetableSlotId?: number | null;
-  };
-}
-
 export type AttendanceScope = DataScope | undefined;

@@ -12,7 +12,6 @@ const session: ExceptionAttendanceSessionRow = {
   room_id: 1,
   classroom_id: '1',
   classroom_subject_id: '1',
-  subject_id: 1,
   attendance_date: '2026-08-23',
   period: null,
   status: 'OPEN',

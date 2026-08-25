@@ -121,15 +121,14 @@ describe('DataExportsService', () => {
     });
 
     expect(result.success).toBe(true);
-    // รายชื่อนักเรียน also carries the observation product and รายงานสถานะนักเรียน
-    // carries the case products, now that each page grants what is done on it.
+    // รายงานสถานะนักเรียน carries the case products, now that each page grants
+    // what is done on it.
     expect(result.data.map((item) => item.code)).toEqual([
       'student_roster_basic',
       'student_pii',
       'student_risk',
       'case_summary',
       'case_operational',
-      'observation_aggregate',
     ]);
     expect(
       result.data.every((item) => !item.workflowPath || item.workflowPath.startsWith('/')),
@@ -228,7 +227,7 @@ describe('DataExportsService', () => {
     expect(repository.createJob).not.toHaveBeenCalled();
   });
 
-  it('publishes minimized school and observation products by permission', async () => {
+  it('publishes minimized school products by permission', async () => {
     const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
@@ -242,7 +241,6 @@ describe('DataExportsService', () => {
         'school_teacher_roster',
         'school_classroom_structure',
         'classroom_assignments',
-        'observation_aggregate',
       ]),
     );
     for (const item of result.data.filter((candidate) => candidate.deliveryMode === 'ASYNC_JOB')) {
@@ -562,17 +560,7 @@ describe('DataExportsService', () => {
     ['case_operational', { caseId: 10 }, 'c.id >'],
     ['school_teacher_roster', { membershipId: '10' }, 'membership.id >'],
     ['school_classroom_structure', { classroomId: '10' }, 'classroom.id >'],
-    ['classroom_assignments', { assignmentId: '10' }, 'assignment.id >'],
-    [
-      'observation_aggregate',
-      {
-        observationDate: '2026-07-01',
-        schoolId: 1,
-        dimensionCode: 'LEARNING',
-        concernLevel: 'WATCH',
-      },
-      'observation.observed_at::date',
-    ],
+    ['classroom_assignments', { assignmentId: '10' }, 'assignment.classroom_id >'],
   ])('uses a stable keyset query for %s', async (datasetCode, cursor, keysetSql) => {
     const query = jest.fn().mockResolvedValue({ records: [], affected: 0 });
     const dataSource = {

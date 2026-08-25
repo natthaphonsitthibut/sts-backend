@@ -246,17 +246,17 @@ export class ExceptionAttendanceRepository {
       `
         INSERT INTO attendance_sessions (
           school_term_id, school_id, grade_level_id, room_id, classroom_id,
-          attendance_date, period, session_kind, subject_id, classroom_subject_id,
-          timetable_slot_id, status, expected_roster_count, recorded_count,
+          attendance_date, period, session_kind, classroom_subject_id,
+          status, expected_roster_count, recorded_count,
           exception_count, record_storage_mode, checking_started_at,
           started_by_teacher_membership_id, created_by, updated_by
         )
         VALUES (
           $1, $2, $3, $4, $5,
-          $6, NULL, 'SUBJECT', $7, $8,
-          NULL, 'OPEN', 0, 0,
+          $6, NULL, 'SUBJECT', $7,
+          'OPEN', 0, 0,
           0, 'EXCEPTIONS', now(),
-          $9, $10, $10
+          $8, $9, $9
         )
         ON CONFLICT (
           school_term_id, classroom_id, classroom_subject_id, attendance_date
@@ -270,7 +270,6 @@ export class ExceptionAttendanceRepository {
         context.legacy_room_number,
         context.classroom_id,
         input.attendanceDate,
-        context.subject_id,
         context.classroom_subject_id,
         input.actor.teacherMembershipId,
         input.actor.actorUserId,
@@ -292,7 +291,7 @@ export class ExceptionAttendanceRepository {
       `
         SELECT
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
-          classroom_id::text, classroom_subject_id::text, subject_id,
+          classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
           recorded_count, exception_count, revision, record_storage_mode,
           checking_started_at, submitted_at
@@ -308,26 +307,6 @@ export class ExceptionAttendanceRepository {
       [input.schoolTermId, input.classroomId, input.classroomSubjectId, input.attendanceDate],
     )) as ExceptionAttendanceSessionRow[];
     return rows[0] ?? null;
-  }
-
-  async hasLegacyFullRosterSession(
-    input: { schoolTermId: string; classroomId: string; subjectId: number; attendanceDate: string },
-    runner: QueryRunner,
-  ): Promise<boolean> {
-    const rows = (await runner.query(
-      `SELECT id
-       FROM attendance_sessions
-       WHERE school_term_id = $1
-         AND classroom_id = $2
-         AND subject_id = $3
-         AND attendance_date = $4
-         AND record_storage_mode = 'FULL_ROSTER'
-         AND deleted_at IS NULL
-       LIMIT 1
-       FOR UPDATE`,
-      [input.schoolTermId, input.classroomId, input.subjectId, input.attendanceDate],
-    )) as Array<{ id: string }>;
-    return rows.length > 0;
   }
 
   async insertRosterSnapshot(
@@ -386,7 +365,7 @@ export class ExceptionAttendanceRepository {
       `
         SELECT
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
-          classroom_id::text, classroom_subject_id::text, subject_id,
+          classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
           recorded_count, exception_count, revision, record_storage_mode,
           checking_started_at, submitted_at
@@ -406,7 +385,7 @@ export class ExceptionAttendanceRepository {
       `
         SELECT
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
-          classroom_id::text, classroom_subject_id::text, subject_id,
+          classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
           recorded_count, exception_count, revision, record_storage_mode,
           checking_started_at, submitted_at
@@ -438,7 +417,7 @@ export class ExceptionAttendanceRepository {
   ): Promise<StoredAttendanceExceptionRow[]> {
     return (await runner.query(
       `
-        SELECT student_uuid::text, attendance_status_code, absence_reason_code
+        SELECT student_uuid::text, attendance_status_code
         FROM attendance_exceptions
         WHERE session_id = $1 AND deleted_at IS NULL
         ORDER BY student_uuid
@@ -459,17 +438,16 @@ export class ExceptionAttendanceRepository {
       `
         INSERT INTO attendance_exceptions (
           session_id, school_id, student_uuid, attendance_status_code, marked_at,
-          absence_reason_code, marked_by_teacher_membership_id, created_by, updated_by
+          marked_by_teacher_membership_id, created_by, updated_by
         )
         SELECT
           $1, session.school_id, item.student_id, item.status_code, item.marked_at,
-          item.absence_reason_code, $3, $4, $4
+          $3, $4, $4
         FROM attendance_sessions session
         CROSS JOIN jsonb_to_recordset($2::jsonb) AS item(
           student_id uuid,
           status_code smallint,
-          marked_at timestamptz,
-          absence_reason_code varchar(40)
+          marked_at timestamptz
         )
         WHERE session.id = $1
       `,
@@ -480,7 +458,6 @@ export class ExceptionAttendanceRepository {
             student_id: item.studentId,
             status_code: item.statusCode,
             marked_at: item.markedAt,
-            absence_reason_code: item.absenceReasonCode,
           })),
         ),
         actor.teacherMembershipId,
@@ -513,7 +490,7 @@ export class ExceptionAttendanceRepository {
         WHERE id = $1
         RETURNING
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
-          classroom_id::text, classroom_subject_id::text, subject_id,
+          classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
           recorded_count, exception_count, revision, record_storage_mode,
           checking_started_at, submitted_at
