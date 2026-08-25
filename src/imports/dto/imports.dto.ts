@@ -46,10 +46,7 @@ export class BulkImportUploadDto {
   @Min(1)
   schoolTermId?: number;
 
-  @ValidateIf(
-    (value: BulkImportUploadDto) =>
-      value.target === 'student_term' || value.target === 'classroom_teacher_assignment',
-  )
+  @ValidateIf((value: BulkImportUploadDto) => value.target === 'student_term')
   @IsDefined()
   @Type(() => Number)
   @IsInt()
@@ -78,10 +75,7 @@ export class PreviewImportUploadDto {
   @Min(1)
   schoolTermId?: number;
 
-  @ValidateIf(
-    (value: PreviewImportUploadDto) =>
-      value.target === 'student_term' || value.target === 'classroom_teacher_assignment',
-  )
+  @ValidateIf((value: PreviewImportUploadDto) => value.target === 'student_term')
   @IsDefined()
   @Type(() => Number)
   @IsInt()

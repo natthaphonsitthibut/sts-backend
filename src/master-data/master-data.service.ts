@@ -49,33 +49,6 @@ export class MasterDataService {
     throw new NotFoundException('ไม่พบชุดข้อมูลพื้นฐาน');
   }
 
-  getManifest() {
-    return {
-      data: [
-        {
-          id: 'students',
-          labelTh: 'นักเรียน',
-          catalogs: ['student-statuses', 'disadvantage-types', 'disability-types'],
-        },
-        {
-          id: 'attendance',
-          labelTh: 'การเช็กชื่อ',
-          catalogs: ['absence-reasons'],
-        },
-        {
-          id: 'follow-up',
-          labelTh: 'การติดตามและช่วยเหลือ',
-          catalogs: ['assistance-measures', 'referral-agencies', 'non-follow-up-reasons'],
-        },
-        {
-          id: 'school-structure',
-          labelTh: 'โครงสร้างสถานศึกษา',
-          catalogs: [],
-        },
-      ],
-    };
-  }
-
   private toCodedResponse(row: CodedMasterDataRow) {
     return {
       code: row.code,
@@ -83,6 +56,7 @@ export class MasterDataService {
       sortOrder: row.sort_order,
       isActive: row.is_active,
       categoryCode: row.category_code,
+      categoryLabelTh: row.category_label_th,
       sourceOnecCode: row.source_onec_code,
       requiresDetail: row.requires_detail,
       usageCount: row.usage_count,
@@ -131,6 +105,7 @@ export class MasterDataService {
         code: row.code,
         labelTh: row.label_th,
         categoryCode: row.category_code,
+        categoryLabelTh: row.category_label_th,
         requiresDetail: row.requires_detail,
       }));
   }

@@ -65,18 +65,6 @@ export interface ClassroomImportReferenceRow extends Record<string, unknown> {
   legacy_room_number: number | null;
 }
 
-export interface AssignmentTeacherReferenceRow extends Record<string, unknown> {
-  membership_id: string;
-  citizen_id: string;
-}
-
-export interface ClassroomAssignmentReferenceRow extends Record<string, unknown> {
-  id: string;
-  teacher_membership_id: string;
-  subject_id: number | null;
-  assignment_kind: 'HOMEROOM' | 'SUBJECT';
-}
-
 @Injectable()
 export class ImportsRepository {
   constructor(private readonly dataSource: DataSource) {}
@@ -221,89 +209,6 @@ export class ImportsRepository {
         input.gradeLevelId,
         input.roomCode,
         input.roomName,
-        input.actorUserId,
-      ],
-    );
-    return result.rows[0]?.id ?? null;
-  }
-
-  async findAssignmentTeacherReferences(
-    schoolId: number,
-    citizenIds: string[],
-    executor?: QueryExecutor,
-  ): Promise<AssignmentTeacherReferenceRow[]> {
-    if (citizenIds.length === 0) return [];
-    const result = await this.getExecutor(executor).query<AssignmentTeacherReferenceRow>(
-      `SELECT membership.id::text AS membership_id, teacher.citizen_id
-       FROM school_teacher_memberships membership
-       JOIN teachers teacher
-         ON teacher.id = membership.teacher_id
-        AND teacher.teacher_status = 'ACTIVE'
-        AND teacher.deleted_at IS NULL
-       WHERE membership.school_id = $1
-         AND membership.membership_status = 'ACTIVE'
-         AND membership.deleted_at IS NULL
-         AND teacher.citizen_id = ANY($2::text[])`,
-      [schoolId, citizenIds],
-    );
-    return result.rows;
-  }
-
-  async findExistingSubjectIds(subjectIds: number[], executor?: QueryExecutor): Promise<number[]> {
-    if (subjectIds.length === 0) return [];
-    const result = await this.getExecutor(executor).query<{ id: number }>(
-      `SELECT id FROM subjects WHERE id = ANY($1::int[])`,
-      [subjectIds],
-    );
-    return result.rows.map((row) => Number(row.id));
-  }
-
-  async findClassroomAssignmentReferences(
-    schoolId: number,
-    classroomId: number,
-    executor?: QueryExecutor,
-  ): Promise<ClassroomAssignmentReferenceRow[]> {
-    const result = await this.getExecutor(executor).query<ClassroomAssignmentReferenceRow>(
-      `SELECT id::text, teacher_membership_id::text, subject_id, assignment_kind
-       FROM classroom_teacher_assignments
-       WHERE school_id = $1
-         AND classroom_id = $2
-         AND assignment_status = 'ACTIVE'
-         AND deleted_at IS NULL`,
-      [schoolId, classroomId],
-    );
-    return result.rows;
-  }
-
-  async insertClassroomAssignmentImportRow(
-    input: {
-      schoolId: number;
-      classroomId: number;
-      teacherMembershipId: string;
-      subjectId: number | null;
-      assignmentKind: 'HOMEROOM' | 'SUBJECT';
-      effectiveOn: string | null;
-      effectiveUntil: string | null;
-      actorUserId: number | null;
-    },
-    executor: QueryExecutor,
-  ): Promise<string | null> {
-    const result = await executor.query<{ id: string }>(
-      `INSERT INTO classroom_teacher_assignments (
-         school_id, classroom_id, teacher_membership_id, subject_id,
-         assignment_kind, effective_on, effective_until, created_by, updated_by
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-       ON CONFLICT DO NOTHING
-       RETURNING id::text`,
-      [
-        input.schoolId,
-        input.classroomId,
-        input.teacherMembershipId,
-        input.subjectId,
-        input.assignmentKind,
-        input.effectiveOn,
-        input.effectiveUntil,
         input.actorUserId,
       ],
     );

@@ -15,6 +15,7 @@ const CODED_ROW = {
   sort_order: 10,
   is_active: true,
   category_code: 'PERSONAL_FAMILY',
+  category_label_th: 'สาเหตุส่วนตัว / ครอบครัว',
   source_onec_code: null,
   requires_detail: null,
   usage_count: 3,
@@ -64,6 +65,7 @@ describe('MasterDataService', () => {
           sortOrder: 10,
           isActive: true,
           categoryCode: 'PERSONAL_FAMILY',
+          categoryLabelTh: 'สาเหตุส่วนตัว / ครอบครัว',
           sourceOnecCode: null,
           requiresDetail: null,
           usageCount: 3,
@@ -81,6 +83,7 @@ describe('MasterDataService', () => {
         code: 'MINOR_ILLNESS',
         labelTh: 'ป่วยไม่รุนแรง',
         categoryCode: 'PERSONAL_FAMILY',
+        categoryLabelTh: 'สาเหตุส่วนตัว / ครอบครัว',
         requiresDetail: null,
       },
     ]);

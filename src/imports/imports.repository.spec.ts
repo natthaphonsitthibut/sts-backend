@@ -58,53 +58,6 @@ describe('ImportsRepository bulk student-term import', () => {
     );
   });
 
-  it('resolves assignment teachers only through active membership in the selected school', async () => {
-    const executor = { query: jest.fn().mockResolvedValue({ rows: [] }) };
-    const repository = new ImportsRepository({} as never);
-
-    await repository.findAssignmentTeacherReferences(1001, ['teacher.a'], executor);
-
-    expect(executor.query).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /school_teacher_memberships membership[\s\S]*membership\.school_id = \$1[\s\S]*membership_status = 'ACTIVE'/,
-      ),
-      [1001, ['teacher.a']],
-    );
-  });
-
-  it('writes classroom assignments with server-injected school and classroom references', async () => {
-    const executor = {
-      query: jest.fn().mockResolvedValue({ rows: [{ id: '901' }], rowCount: 1 }),
-    };
-    const repository = new ImportsRepository({} as never);
-
-    await expect(
-      repository.insertClassroomAssignmentImportRow(
-        {
-          schoolId: 1001,
-          classroomId: 501,
-          teacherMembershipId: '701',
-          subjectId: null,
-          assignmentKind: 'HOMEROOM',
-          effectiveOn: null,
-          effectiveUntil: null,
-          actorUserId: 11,
-        },
-        executor,
-      ),
-    ).resolves.toBe('901');
-    expect(executor.query).toHaveBeenCalledWith(expect.stringContaining('ON CONFLICT DO NOTHING'), [
-      1001,
-      501,
-      '701',
-      null,
-      'HOMEROOM',
-      null,
-      null,
-      11,
-    ]);
-  });
-
   it('upserts student terms in one statement per chunk and counts insert/update results', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const executor = {

@@ -5,7 +5,6 @@ export const IMPORT_CATALOG_VERSION = '2026-08-02' as const;
 export const IMPORT_CATALOG_TARGETS = [
   'school_teacher_membership',
   'school_classroom',
-  'classroom_teacher_assignment',
   'student_term',
 ] as const;
 
@@ -131,37 +130,6 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
     ],
   },
   {
-    target: 'classroom_teacher_assignment',
-    version: IMPORT_CATALOG_VERSION,
-    label: 'การมอบหมายครูประจำห้อง',
-    capability: 'import-data',
-    dependencyOrder: 30,
-    dependsOn: ['school_teacher_membership', 'school_classroom'],
-    canonicalContext: [SCHOOL_CONTEXT, TERM_CONTEXT, CLASSROOM_CONTEXT],
-    fields: [
-      field(
-        'citizenId',
-        'เลขประจำตัวประชาชนครู',
-        true,
-        ['เลขบัตรประชาชน', 'เลขประจำตัวประชาชน', 'citizenId', 'nationalId'],
-        'string',
-        'school_teacher_memberships',
-      ),
-      field(
-        'assignmentKind',
-        'ประเภทการมอบหมาย',
-        true,
-        ['kind', 'ประเภท', 'หน้าที่'],
-        'enum',
-        null,
-        ['HOMEROOM', 'SUBJECT'],
-      ),
-      field('subjectId', 'รหัสวิชา', false, ['subject', 'วิชา'], 'integer', 'subjects'),
-      field('effectiveOn', 'วันที่เริ่ม', false, ['startDate', 'วันที่เริ่ม'], 'date'),
-      field('effectiveUntil', 'วันที่สิ้นสุด', false, ['endDate', 'วันที่สิ้นสุด'], 'date'),
-    ],
-  },
-  {
     target: 'student_term',
     version: IMPORT_CATALOG_VERSION,
     label: 'ข้อมูลนักเรียนในระบบ (รายภาคเรียน)',
@@ -198,10 +166,6 @@ const TARGET_DEFINITIONS: ReadonlyArray<Omit<ImportCatalogTargetDefinition, 'all
       field('PrefixID_Onec', 'รหัสคำนำหน้า', false, ['prefixId']),
       field('GenderID_Onec', 'รหัสเพศ', false, ['genderId']),
       field('NationalityID_Onec', 'รหัสสัญชาติ', false, ['nationalityId']),
-      field('DisabilityID_Onec', 'รหัสความพิการ', false, ['disabilityId']),
-      field('DisadvantageEducationID_Onec', 'รหัสความด้อยโอกาส', false, [
-        'disadvantageEducationId',
-      ]),
       field(
         'StudentStatusID_Onec',
         'สถานะนักเรียน',

@@ -16,6 +16,7 @@ export interface CodedMasterDataRow extends Record<string, unknown> {
   sort_order: number;
   is_active: boolean;
   category_code: string | null;
+  category_label_th: string | null;
   source_onec_code: number | null;
   requires_detail: boolean | null;
   usage_count: number;

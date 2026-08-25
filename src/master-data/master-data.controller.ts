@@ -38,11 +38,6 @@ import { MasterDataService } from './master-data.service';
 export class MasterDataController {
   constructor(private readonly service: MasterDataService) {}
 
-  @Get()
-  getManifest() {
-    return this.service.getManifest();
-  }
-
   @Get('referral-agencies')
   listReferralAgencies(@Query() query: ListMasterDataQueryDto) {
     return this.service.listReferralAgencies(query);

@@ -26,7 +26,7 @@ const CATALOGS: Record<CodedMasterDataCatalog, CatalogDefinition> = {
     categoryColumn: 'category_code',
     categoryCatalog: 'absence-reason-categories',
     usageSql:
-      '(SELECT COUNT(*)::int FROM attendance_exceptions usage WHERE usage.absence_reason_code = item.code)',
+      '(SELECT COUNT(*)::int FROM task_submissions usage WHERE usage.absence_reason_code = item.code AND usage.deleted_at IS NULL)',
   },
   'disadvantage-types': {
     table: 'disadvantage_types',
@@ -124,6 +124,14 @@ export class MasterDataRepository {
       conditions.push(`(item.code ILIKE $1 OR item.label_th ILIKE $1)`);
     }
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const categoryDefinition = definition.categoryCatalog
+      ? CATALOGS[definition.categoryCatalog]
+      : null;
+    const categoryJoinSql =
+      definition.categoryColumn && categoryDefinition
+        ? `LEFT JOIN ${categoryDefinition.table} category
+             ON category.code = item.${definition.categoryColumn}`
+        : '';
     const countRows = (await executor.query(
       `SELECT COUNT(*)::int AS total FROM ${definition.table} item ${whereSql}`,
       params,
@@ -135,10 +143,12 @@ export class MasterDataRepository {
       `
         SELECT item.code, item.label_th, item.sort_order, item.is_active,
           ${definition.categoryColumn ? `item.${definition.categoryColumn}` : 'NULL::varchar'} AS category_code,
+          ${categoryDefinition ? 'category.label_th' : 'NULL::varchar'} AS category_label_th,
           ${definition.sourceColumn ? `item.${definition.sourceColumn}` : 'NULL::smallint'} AS source_onec_code,
           ${definition.requiresDetailColumn ? `item.${definition.requiresDetailColumn}` : 'NULL::boolean'} AS requires_detail,
           ${definition.usageSql} AS usage_count
         FROM ${definition.table} item
+        ${categoryJoinSql}
         ${whereSql}
         ORDER BY item.sort_order, item.label_th, item.code
         LIMIT $${limitIndex} OFFSET $${offsetIndex}
