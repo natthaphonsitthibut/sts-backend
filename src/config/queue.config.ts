@@ -3,6 +3,10 @@ import { registerAs } from '@nestjs/config';
 export interface QueueRuntimeConfig {
   redisUrl?: string;
   requireRedis: boolean;
+  failedJobRetention: {
+    ageSeconds: number;
+    count: number;
+  };
   riskProfile: {
     queueName: string;
     attempts: number;
@@ -34,6 +38,14 @@ export function getQueueConfigFromEnv(): QueueRuntimeConfig {
   return {
     redisUrl,
     requireRedis: nodeEnv === 'production',
+    // Failed jobs are the only queue entries nothing removes on its own. Redis
+    // runs with noeviction, so an unbounded tail eventually refuses new writes
+    // instead of quietly dropping old keys; the failure detail also reaches the
+    // application log, so keeping it in Redis forever buys nothing.
+    failedJobRetention: {
+      ageSeconds: parsePositiveInt(process.env.QUEUE_FAILED_RETENTION_SECONDS, 7 * 24 * 60 * 60),
+      count: parsePositiveInt(process.env.QUEUE_FAILED_RETENTION_COUNT, 1_000),
+    },
     riskProfile: {
       queueName: clean(process.env.RISK_PROFILE_QUEUE_NAME) ?? 'student-risk-profile',
       attempts: parsePositiveInt(process.env.RISK_PROFILE_QUEUE_ATTEMPTS, 3),

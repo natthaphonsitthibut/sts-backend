@@ -1,5 +1,24 @@
+import type { CronJob } from 'cron';
 import { RiskProfileRepository } from './risk-profile.repository';
 import { RiskProfileService } from './risk-profile.service';
+
+/** Captures what the service registers so the schedule can be asserted without waiting for it. */
+class FakeSchedulerRegistry {
+  jobs = new Map<string, CronJob>();
+
+  doesExist(type: string, name: string): boolean {
+    return type === 'cron' && this.jobs.has(name);
+  }
+
+  addCronJob(name: string, job: CronJob): void {
+    this.jobs.set(name, job);
+  }
+
+  deleteCronJob(name: string): void {
+    void this.jobs.get(name)?.stop();
+    this.jobs.delete(name);
+  }
+}
 
 /**
  * Minimal in-memory stand-in for the Redis commands the coalescing path uses.
@@ -91,10 +110,12 @@ describe('RiskProfileService', () => {
       | 'recalculateAll'
       | 'recalculateStudents'
       | 'listMissingActiveProfileStudentUuids'
+      | 'getSystemSettingValue'
     >
   >;
   let service: RiskProfileService;
   let redis: FakeRedis;
+  let scheduler: FakeSchedulerRegistry;
   let queue: {
     add: jest.MockedFunction<(name: string, data: unknown, options: unknown) => Promise<void>>;
   };
@@ -112,14 +133,19 @@ describe('RiskProfileService', () => {
       recalculateAll: jest.fn().mockResolvedValue({ evaluated: 10, changed: 0, skipped: 10 }),
       recalculateStudents: jest.fn().mockResolvedValue({ evaluated: 2, changed: 1, skipped: 1 }),
       listMissingActiveProfileStudentUuids: jest.fn().mockResolvedValue([]),
+      getSystemSettingValue: jest.fn().mockResolvedValue(null),
     };
     redis = new FakeRedis();
+    scheduler = new FakeSchedulerRegistry();
     queue = {
       add: jest.fn<Promise<void>, [string, unknown, unknown]>().mockResolvedValue(undefined),
     };
-    service = new RiskProfileService(repository as unknown as RiskProfileRepository, undefined, {
-      getClient: () => redis,
-    } as never);
+    service = new RiskProfileService(
+      repository as unknown as RiskProfileRepository,
+      scheduler as never,
+      undefined,
+      { getClient: () => redis } as never,
+    );
     (service as unknown as { queue: typeof queue }).queue = queue;
   });
 
@@ -263,12 +289,14 @@ describe('RiskProfileService', () => {
   it('queues a background full pass when missing profiles exceed the startup batch', async () => {
     service = new RiskProfileService(
       repository as unknown as RiskProfileRepository,
+      scheduler as never,
       {
         redisUrl: 'redis://placeholder',
         requireRedis: true,
+        failedJobRetention: { ageSeconds: 604_800, count: 1_000 },
         riskProfile: { queueName: 'student-risk-profile', attempts: 3, backoffMs: 30_000 },
         dataExport: { queueName: 'data-export', attempts: 3, backoffMs: 30_000 },
-      },
+      } as never,
       { getClient: () => redis } as never,
     );
     (service as unknown as { queue: typeof queue }).queue = queue;
@@ -331,9 +359,12 @@ describe('RiskProfileService', () => {
   });
 
   it('fails closed when Redis is unavailable', async () => {
-    service = new RiskProfileService(repository as unknown as RiskProfileRepository, undefined, {
-      getClient: () => undefined,
-    } as never);
+    service = new RiskProfileService(
+      repository as unknown as RiskProfileRepository,
+      scheduler as never,
+      undefined,
+      { getClient: () => undefined } as never,
+    );
     (service as unknown as { queue: typeof queue }).queue = queue;
 
     await expect(service.enqueueFull('settings-change')).rejects.toThrow(
@@ -360,5 +391,76 @@ describe('RiskProfileService', () => {
     expect(drainLog).toContain('batchSize=500');
     expect(drainLog).toContain('reason=attendance-save');
     expect(drainLog).not.toContain('00000000-0000-4000-8000-000000000001');
+  });
+
+  describe('daily recalculation schedule', () => {
+    afterEach(() => {
+      scheduler.deleteCronJob('risk-profile-full-recalculate');
+    });
+
+    function registeredCronSource(): string | undefined {
+      const job = scheduler.jobs.get('risk-profile-full-recalculate');
+      return (job as unknown as { cronTime: { source: string } } | undefined)?.cronTime.source;
+    }
+
+    it('registers the schedule stored in system settings', async () => {
+      repository.getSystemSettingValue.mockResolvedValue('06:30');
+
+      await service.refreshDailyRecalcCron();
+
+      expect(repository.getSystemSettingValue).toHaveBeenCalledWith('RISK_RECALC_SCHEDULE_TIME');
+      expect(registeredCronSource()).toBe('0 30 6 * * *');
+    });
+
+    it('falls back to the default time when the setting is missing', async () => {
+      repository.getSystemSettingValue.mockResolvedValue(null);
+
+      await service.refreshDailyRecalcCron();
+
+      expect(registeredCronSource()).toBe('0 10 5 * * *');
+    });
+
+    it('falls back and reports when the stored value is not a valid time', async () => {
+      repository.getSystemSettingValue.mockResolvedValue('25:99');
+      const errors: string[] = [];
+      jest
+        .spyOn(
+          (service as unknown as { logger: { error: (message: string) => void } }).logger,
+          'error',
+        )
+        .mockImplementation((message: string) => {
+          errors.push(message);
+        });
+
+      await service.refreshDailyRecalcCron();
+
+      expect(registeredCronSource()).toBe('0 10 5 * * *');
+      expect(errors.some((entry) => entry.includes('RISK_RECALC_SCHEDULE_TIME'))).toBe(true);
+    });
+
+    it('keeps the safety net running when the setting cannot be read', async () => {
+      repository.getSystemSettingValue.mockRejectedValue(new Error('database unavailable'));
+      jest
+        .spyOn(
+          (service as unknown as { logger: { error: (message: string) => void } }).logger,
+          'error',
+        )
+        .mockImplementation(() => undefined);
+
+      await service.refreshDailyRecalcCron();
+
+      expect(registeredCronSource()).toBe('0 10 5 * * *');
+    });
+
+    it('replaces the previous registration instead of stacking a second one', async () => {
+      repository.getSystemSettingValue.mockResolvedValue('06:30');
+      await service.refreshDailyRecalcCron();
+      repository.getSystemSettingValue.mockResolvedValue('07:45');
+
+      await service.refreshDailyRecalcCron();
+
+      expect(scheduler.jobs.size).toBe(1);
+      expect(registeredCronSource()).toBe('0 45 7 * * *');
+    });
   });
 });

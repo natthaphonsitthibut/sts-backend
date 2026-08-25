@@ -27,6 +27,21 @@ const DEFAULT_RISK_PROFILE_THRESHOLDS: RiskDashboardThresholds = {
 export class RiskProfileRepository {
   constructor(private readonly dataSource: DataSource) {}
 
+  /**
+   * Reads one operational setting. The daily recalculation schedule lives in
+   * `system_settings` like every other operator-tunable value, and is read here
+   * rather than through SettingsService because that service already depends on
+   * RiskProfileService.
+   */
+  async getSystemSettingValue(key: string): Promise<string | null> {
+    const result = await queryDataSource<{ setting_value: string }>(
+      this.dataSource,
+      `SELECT setting_value FROM system_settings WHERE setting_key = $1`,
+      [key],
+    );
+    return result.rows[0]?.setting_value ?? null;
+  }
+
   /** Loads every risk threshold in one round trip instead of one query per key. */
   private async getRiskSettingValues(keys: string[]): Promise<Map<string, string>> {
     const result = await queryDataSource<{ setting_key: string; setting_value: string }>(

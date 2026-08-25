@@ -7,14 +7,20 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
-import { Cron } from '@nestjs/schedule';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { Queue, Worker } from 'bullmq';
+import { CronJob } from 'cron';
 import type { Redis } from 'ioredis';
+import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import { queueConfig } from '../config/queue.config';
 import { RedisClientService } from '../redis/redis-client.service';
 import { RiskProfileRepository } from './risk-profile.repository';
 
-const DAILY_FULL_RECALC_CRON = '0 10 5 * * *';
+/** Operator-tunable wall-clock time (HH:MM) of the daily safety-net recalculation. */
+const RECALC_SCHEDULE_SETTING_KEY = 'RISK_RECALC_SCHEDULE_TIME';
+/** Used when the setting is missing or unreadable, so the safety net still runs. */
+const DEFAULT_RECALC_SCHEDULE_TIME = '05:10';
+const RECALC_CRON_JOB_NAME = 'risk-profile-full-recalculate';
 
 /** At or below this many students, recalculate inline so the change is visible at once. */
 const INLINE_RECALCULATION_LIMIT = 5;
@@ -67,6 +73,7 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
 
   constructor(
     private readonly riskProfileRepository: RiskProfileRepository,
+    private readonly schedulerRegistry: SchedulerRegistry,
     @Optional()
     @Inject(queueConfig.KEY)
     private readonly runtimeQueueConfig?: ConfigType<typeof queueConfig>,
@@ -90,9 +97,11 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
       this.logger.error(`Risk profile startup repair failed: ${this.errorMessage(error)}`);
       throw error;
     }
+    await this.refreshDailyRecalcCron();
   }
 
   async onApplicationShutdown(): Promise<void> {
+    this.removeDailyRecalcCron();
     await this.closeBullQueue();
   }
 
@@ -151,12 +160,67 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
     await this.scheduleDrain(reason);
   }
 
-  @Cron(DAILY_FULL_RECALC_CRON, {
-    name: 'risk-profile-full-recalculate',
-    timeZone: 'Asia/Bangkok',
-  })
   async recalculateAllDaily(): Promise<void> {
     await this.enqueueFull('daily-safety-net');
+  }
+
+  /**
+   * (Re)registers the daily safety-net recalculation from its system setting.
+   * Registration is dynamic rather than a `@Cron` decorator because a decorator
+   * binds its schedule at import time, before the setting can be read.
+   */
+  async refreshDailyRecalcCron(): Promise<void> {
+    let scheduleTime = DEFAULT_RECALC_SCHEDULE_TIME;
+    try {
+      scheduleTime =
+        (await this.riskProfileRepository.getSystemSettingValue(RECALC_SCHEDULE_SETTING_KEY)) ??
+        DEFAULT_RECALC_SCHEDULE_TIME;
+    } catch (error) {
+      this.logger.error(
+        `Failed to read ${RECALC_SCHEDULE_SETTING_KEY}, using ${DEFAULT_RECALC_SCHEDULE_TIME}: ${this.errorMessage(error)}`,
+      );
+    }
+
+    const cronTime = this.toDailyCronTime(scheduleTime);
+    this.removeDailyRecalcCron();
+
+    const job = CronJob.from({
+      cronTime,
+      timeZone: BANGKOK_TIME_ZONE,
+      onTick: () => {
+        void this.recalculateAllDaily().catch((error) => {
+          this.logger.error(`Daily risk profile recalculation failed: ${this.errorMessage(error)}`);
+        });
+      },
+    });
+    this.schedulerRegistry.addCronJob(RECALC_CRON_JOB_NAME, job);
+    job.start();
+    this.logger.log(
+      `Registered daily risk profile recalculation at ${cronTime} (${BANGKOK_TIME_ZONE})`,
+    );
+  }
+
+  /** Converts an `HH:MM` setting into a cron expression, falling back when invalid. */
+  private toDailyCronTime(scheduleTime: string): string {
+    const [rawHour, rawMinute] = scheduleTime.trim().split(':');
+    const hour = Number.parseInt(rawHour ?? '', 10);
+    const minute = Number.parseInt(rawMinute ?? '', 10);
+    const validHour = Number.isInteger(hour) && hour >= 0 && hour <= 23;
+    const validMinute = Number.isInteger(minute) && minute >= 0 && minute <= 59;
+    if (!validHour || !validMinute) {
+      this.logger.error(
+        `Invalid ${RECALC_SCHEDULE_SETTING_KEY} value "${scheduleTime}". Expected HH:MM. Using ${DEFAULT_RECALC_SCHEDULE_TIME}.`,
+      );
+      const [fallbackHour, fallbackMinute] = DEFAULT_RECALC_SCHEDULE_TIME.split(':');
+      return `0 ${Number(fallbackMinute)} ${Number(fallbackHour)} * * *`;
+    }
+    return `0 ${minute} ${hour} * * *`;
+  }
+
+  private removeDailyRecalcCron(): void {
+    if (this.schedulerRegistry.doesExist('cron', RECALC_CRON_JOB_NAME)) {
+      this.schedulerRegistry.deleteCronJob(RECALC_CRON_JOB_NAME);
+    }
   }
 
   /**
@@ -208,6 +272,10 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
       this.runtimeQueueConfig ?? {
         redisUrl: undefined,
         requireRedis: false,
+        failedJobRetention: {
+          ageSeconds: 7 * 24 * 60 * 60,
+          count: 1_000,
+        },
         riskProfile: {
           queueName: 'student-risk-profile',
           attempts: 3,
@@ -238,7 +306,10 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
         attempts: config.riskProfile.attempts,
         backoff: { type: 'exponential', delay: config.riskProfile.backoffMs },
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: {
+          age: config.failedJobRetention.ageSeconds,
+          count: config.failedJobRetention.count,
+        },
       },
     });
     this.worker = new Worker(
