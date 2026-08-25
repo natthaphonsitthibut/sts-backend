@@ -7,7 +7,6 @@ import { authConfig } from '../config/auth.config';
 const ARAID_COOKIE_NAME = 'araid_session';
 const ARAID_SESSION_PURPOSE = 'ARAID_SESSION';
 const ARAID_LINE_AUTHORIZATION_COOKIE_NAME = 'araid_line_authorization';
-const ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME = 'araid_teacher_access_authorization';
 const ARAID_TASK_LINK_AUTHORIZATION_COOKIE_NAME = 'araid_task_link_authorization';
 const ARAID_ADMIN_LOGIN_AUTHORIZATION_COOKIE_NAME = 'araid_admin_login_authorization';
 const ARAID_CLASSROOM_CHECK_IN_AUTHORIZATION_COOKIE_NAME = 'araid_classroom_check_in_authorization';
@@ -65,23 +64,6 @@ export class AraIdSessionCookieService {
 
   clearLineAuthorization(response: Response): void {
     response.clearCookie(ARAID_LINE_AUTHORIZATION_COOKIE_NAME, { path: '/' });
-  }
-
-  setTeacherAccessAuthorization(response: Response, token: string, maxAgeSeconds: number): void {
-    this.setOpaqueAuthorization(
-      response,
-      ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME,
-      token,
-      maxAgeSeconds,
-    );
-  }
-
-  readTeacherAccessAuthorization(cookieHeader: string | undefined): string | null {
-    return this.readCookie(cookieHeader, ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME);
-  }
-
-  clearTeacherAccessAuthorization(response: Response): void {
-    response.clearCookie(ARAID_TEACHER_ACCESS_AUTHORIZATION_COOKIE_NAME, { path: '/' });
   }
 
   setTaskLinkAuthorization(response: Response, token: string, maxAgeSeconds: number): void {

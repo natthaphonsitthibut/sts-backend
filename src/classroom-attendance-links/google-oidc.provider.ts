@@ -35,6 +35,12 @@ interface GoogleJwksResponse {
   keys?: GoogleJwk[];
 }
 
+interface GoogleIdentity {
+  subject: string;
+  email: string;
+  persistIdentity: boolean;
+}
+
 @Injectable()
 export class GoogleOidcProvider {
   private jwks = new Map<string, GoogleJwk>();
@@ -45,11 +51,16 @@ export class GoogleOidcProvider {
     private readonly config: ConfigType<typeof googleLoginConfig>,
   ) {}
 
-  authorizationUrl(state: string, nonce: string): string {
-    this.assertConfigured();
+  authorizationUrl(state: string, nonce: string, redirectUri: string): string {
+    this.assertConfigured(redirectUri);
+    if (this.config.mode === 'development') {
+      throw new ServiceUnavailableException(
+        'Google Login development mode ต้องยืนยันผ่านฟอร์มอีเมลใน local',
+      );
+    }
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     url.searchParams.set('client_id', this.config.clientId);
-    url.searchParams.set('redirect_uri', this.config.callbackUrl);
+    url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'openid email');
     url.searchParams.set('state', state);
@@ -58,8 +69,15 @@ export class GoogleOidcProvider {
     return url.toString();
   }
 
-  async exchange(code: string, expectedNonce: string): Promise<{ subject: string; email: string }> {
-    this.assertConfigured();
+  async exchange(
+    code: string,
+    expectedNonce: string,
+    redirectUri: string,
+  ): Promise<GoogleIdentity> {
+    this.assertConfigured(redirectUri);
+    if (this.config.mode === 'development') {
+      throw new UnauthorizedException('Google Login development mode ไม่รับ OAuth callback');
+    }
     const response = await this.request('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -67,7 +85,7 @@ export class GoogleOidcProvider {
         code,
         client_id: this.config.clientId,
         client_secret: this.config.clientSecret,
-        redirect_uri: this.config.callbackUrl,
+        redirect_uri: redirectUri,
         grant_type: 'authorization_code',
       }),
     });
@@ -85,7 +103,24 @@ export class GoogleOidcProvider {
     ) {
       throw new UnauthorizedException('Google identity ไม่ผ่านการตรวจสอบ');
     }
-    return { subject: info.sub, email: info.email.trim().toLowerCase() };
+    return {
+      subject: info.sub,
+      email: info.email.trim().toLowerCase(),
+      persistIdentity: true,
+    };
+  }
+
+  developmentIdentity(rawEmail: string): GoogleIdentity {
+    this.assertDevelopmentMode();
+    const email = rawEmail.trim().toLowerCase();
+    if (!email || email.length > 254 || !email.includes('@')) {
+      throw new UnauthorizedException('อีเมลสำหรับ development ไม่ถูกต้อง');
+    }
+    return {
+      subject: 'sts-local-development',
+      email,
+      persistIdentity: false,
+    };
   }
 
   private async verifyIdToken(token: string): Promise<GoogleIdTokenClaims> {
@@ -174,9 +209,24 @@ export class GoogleOidcProvider {
     return left.length === right.length && timingSafeEqual(left, right);
   }
 
-  private assertConfigured(): void {
-    if (!this.config.clientId || !this.config.clientSecret || !this.config.callbackUrl) {
+  private assertConfigured(redirectUri: string): void {
+    if (this.config.mode === 'development') {
+      this.assertDevelopmentMode();
+      if (!redirectUri) {
+        throw new ServiceUnavailableException('Google Login development mode ยังไม่ได้ตั้งค่า');
+      }
+      return;
+    }
+    if (!this.config.clientId || !this.config.clientSecret || !redirectUri) {
       throw new ServiceUnavailableException('Google Login ยังไม่ได้ตั้งค่า');
+    }
+  }
+
+  private assertDevelopmentMode(): void {
+    if (this.config.mode !== 'development' || this.config.nodeEnv !== 'development') {
+      throw new ServiceUnavailableException(
+        'Google Login development mode ใช้ได้เฉพาะ local development',
+      );
     }
   }
 

@@ -29,13 +29,13 @@ describe('RedisThrottlerStorage', () => {
       getClient: jest.fn().mockReturnValue(redis),
     } as unknown as RedisClientService);
 
-    const result = await storage.increment('hashed-key', 60_000, 1, 30_000, 'otpVerify');
+    const result = await storage.increment('hashed-key', 60_000, 1, 30_000, 'identityVerify');
 
     expect(redis.eval).toHaveBeenCalledWith(
       expect.any(String),
       2,
-      'sts:throttle:otpVerify:hashed-key:hits',
-      'sts:throttle:otpVerify:hashed-key:block',
+      'sts:throttle:identityVerify:hashed-key:hits',
+      'sts:throttle:identityVerify:hashed-key:block',
       '60000',
       '1',
       '30000',

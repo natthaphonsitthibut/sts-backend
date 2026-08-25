@@ -54,7 +54,9 @@ export interface ClassroomLinkListRow extends Record<string, unknown> {
   rotated_at: Date | string | null;
   last_used_at: Date | string | null;
   homeroom_teacher_membership_id: string | null;
+  homeroom_teacher_id: string | null;
   homeroom_teacher_name: string | null;
+  homeroom_teacher_has_photo: boolean;
   line_provider_user_id: string | null;
   line_friend_state: 'FRIEND' | 'NOT_FRIEND' | 'BLOCKED' | 'UNKNOWN' | null;
   line_delivery_teacher_membership_id: string | null;

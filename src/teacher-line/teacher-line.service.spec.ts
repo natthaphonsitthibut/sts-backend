@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  GoneException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 import type { TeacherLineRepository } from './teacher-line.repository';
 import { TeacherLineService } from './teacher-line.service';
@@ -64,6 +59,7 @@ function createHarness() {
     hasActiveAccountForTeacher: jest.fn().mockResolvedValue(false),
     findActiveAccountByProviderUser: jest.fn().mockResolvedValue(null),
     hasActiveTeacherMembership: jest.fn().mockResolvedValue(true),
+    hasActiveHomeroomTeacherMembership: jest.fn().mockResolvedValue(true),
     unlinkAccount: jest.fn().mockResolvedValue(undefined),
     unlinkActiveAccountForTeacher: jest.fn().mockResolvedValue(true),
     insertAccount: jest.fn().mockResolvedValue('1'),
@@ -86,6 +82,7 @@ function createHarness() {
     createBindingSession: jest.fn().mockResolvedValue('binding-token'),
     readBindingSession: jest.fn().mockResolvedValue({
       teacherId: TEACHER.teacher_id,
+      verificationMethod: 'ARAID',
     }),
     clearBindingSession: jest.fn().mockResolvedValue(undefined),
     createOAuthState: jest.fn().mockResolvedValue('state-value'),
@@ -95,11 +92,6 @@ function createHarness() {
       nonce: 'nonce-value',
     }),
   };
-  const otpStore = {
-    issue: jest.fn().mockResolvedValue(new Date()),
-    verify: jest.fn().mockResolvedValue('ok'),
-  };
-  const emailService = { sendOTP: jest.fn().mockResolvedValue({ success: true }) };
   const araIdService = {
     getVerifiedIdentityNumber: jest.fn().mockResolvedValue('1101700200018'),
   };
@@ -130,31 +122,48 @@ function createHarness() {
     sendMessages: jest.fn(),
     verifyWebhookSignature: jest.fn(),
   };
+  const google = {
+    authorizationUrl: jest.fn().mockReturnValue('https://accounts.google.com/o/oauth2/v2/auth'),
+    exchange: jest.fn().mockResolvedValue({
+      subject: 'google-subject',
+      email: TEACHER.email,
+      persistIdentity: true,
+    }),
+    developmentIdentity: jest.fn().mockReturnValue({
+      subject: 'sts-local-development',
+      email: TEACHER.email,
+      persistIdentity: false,
+    }),
+  };
+  const googleStates = {
+    create: jest.fn().mockResolvedValue({ state: 'google-state', nonce: 'google-nonce' }),
+    consume: jest.fn().mockResolvedValue(null),
+  };
   const service = new TeacherLineService(
     repository as unknown as TeacherLineRepository,
     sessionStore as never,
     tokenEncryption as never,
-    otpStore as never,
-    emailService as never,
     auditLog as never,
     araIdService as never,
     araIdChallengeStore as never,
     messaging,
     { messagingChannelId: '2000000002', invitationTtlHours: 24 } as never,
     { frontendBaseUrl: 'https://sts.test' } as never,
-    { otpTtlSeconds: 600 } as never,
+    google as never,
+    googleStates as never,
+    { teacherLineCallbackUrl: 'https://api.sts.test/api/line/link/google/callback' } as never,
   );
   return {
     service,
     repository,
     sessionStore,
-    otpStore,
-    emailService,
     auditLog,
     araIdService,
     araIdChallengeStore,
     messaging,
     tokenEncryption,
+    google,
+    googleStates,
   };
 }
 
@@ -186,34 +195,118 @@ describe('TeacherLineService', () => {
     expect(tokenEncryption.decrypt).toHaveBeenCalledWith(GROUP_INVITATION.token_encrypted);
   });
 
-  it('rejects group OTP requests after the shared link expires', async () => {
-    const { service, repository, emailService } = createHarness();
-    repository.findActiveGroupInvitationByTokenHash.mockResolvedValue(null);
+  it('starts shared Google verification with school-scoped single-use state', async () => {
+    const { service, google, googleStates } = createHarness();
 
-    await expect(service.requestOtp(TEACHER.email, null, GROUP_TOKEN)).rejects.toBeInstanceOf(
-      GoneException,
+    await expect(service.startGroupGoogleAuthorization(GROUP_TOKEN)).resolves.toBe(
+      'https://accounts.google.com/o/oauth2/v2/auth',
     );
-    expect(emailService.sendOTP).not.toHaveBeenCalled();
+
+    expect(googleStates.create).toHaveBeenCalledWith('teacher-line-group', {
+      subjectId: GROUP_INVITATION.id,
+      tokenHash: GROUP_INVITATION.token_hash,
+      schoolId: GROUP_INVITATION.school_id,
+    });
+    expect(google.authorizationUrl).toHaveBeenCalledWith(
+      'google-state',
+      'google-nonce',
+      'https://api.sts.test/api/line/link/google/callback',
+    );
   });
 
-  it('answers the same way whether or not the address belongs to a teacher', async () => {
-    const known = createHarness();
-    const unknown = createHarness();
-    unknown.repository.findActiveTeacherByEmail.mockResolvedValue(null);
-
-    const knownAnswer = await known.service.requestOtp(TEACHER.email, null, GROUP_TOKEN);
-    const unknownAnswer = await unknown.service.requestOtp(
-      'stranger@example.com',
-      null,
-      GROUP_TOKEN,
+  it('accepts Google only when it resolves to an active homeroom teacher in the link school', async () => {
+    const { service, repository, sessionStore, googleStates } = createHarness();
+    googleStates.consume.mockImplementation((flow: string) =>
+      flow === 'teacher-line-group'
+        ? {
+            flow,
+            subjectId: GROUP_INVITATION.id,
+            tokenHash: GROUP_INVITATION.token_hash,
+            schoolId: GROUP_INVITATION.school_id,
+            nonce: 'google-nonce',
+          }
+        : null,
     );
 
-    // Identical wording is the whole point: a differing response would turn this
-    // public form into a way to enumerate staff addresses.
-    expect(knownAnswer).toEqual(unknownAnswer);
-    expect(known.repository.findActiveTeacherByEmail).toHaveBeenCalledWith(TEACHER.email, 7);
-    expect(known.emailService.sendOTP).toHaveBeenCalledTimes(1);
-    expect(unknown.emailService.sendOTP).not.toHaveBeenCalled();
+    await expect(service.completeGoogleAuthorization('google-code', 'google-state')).resolves.toBe(
+      'https://access.line.me/authorize',
+    );
+    expect(repository.findActiveTeacherByEmail).toHaveBeenCalledWith(
+      TEACHER.email,
+      GROUP_INVITATION.school_id,
+    );
+    expect(sessionStore.createBindingSession).toHaveBeenCalledWith({
+      teacherId: TEACHER.teacher_id,
+      schoolId: GROUP_INVITATION.school_id,
+      verificationMethod: 'GOOGLE',
+    });
+  });
+
+  it('uses an entered local email for shared LINE verification with homeroom scope', async () => {
+    const { service, google, repository, sessionStore } = createHarness();
+
+    await expect(
+      service.developmentGroupGoogleAuthorization(GROUP_TOKEN, ' Teacher@School.test '),
+    ).resolves.toBe('https://access.line.me/authorize');
+
+    expect(google.developmentIdentity).toHaveBeenCalledWith(' Teacher@School.test ');
+    expect(repository.findActiveTeacherByEmail).toHaveBeenCalledWith(
+      TEACHER.email,
+      GROUP_INVITATION.school_id,
+    );
+    expect(sessionStore.createBindingSession).toHaveBeenCalledWith({
+      teacherId: TEACHER.teacher_id,
+      schoolId: GROUP_INVITATION.school_id,
+      verificationMethod: 'GOOGLE',
+    });
+  });
+
+  it('rejects an entered local email that is not an active homeroom teacher', async () => {
+    const { service, repository } = createHarness();
+    repository.findActiveTeacherByEmail.mockResolvedValue(null);
+
+    await expect(
+      service.developmentGroupGoogleAuthorization(GROUP_TOKEN, 'outside@example.com'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('keeps an entered local email scoped to the owner of an individual LINE invitation', async () => {
+    const { service, repository, sessionStore } = createHarness();
+
+    await expect(
+      service.developmentInvitationGoogleAuthorization('a'.repeat(64), 'somchai@school.ac.th'),
+    ).resolves.toBe('https://access.line.me/authorize');
+
+    expect(repository.findActiveTeacherByEmail).toHaveBeenCalledWith(
+      TEACHER.email,
+      INVITATION.school_id,
+    );
+    expect(sessionStore.createBindingSession).toHaveBeenCalledWith({
+      teacherId: TEACHER.teacher_id,
+      invitationId: INVITATION.id,
+      schoolId: INVITATION.school_id,
+      verificationMethod: 'GOOGLE',
+    });
+  });
+
+  it('rejects a Google account that is not an active homeroom teacher in the link school', async () => {
+    const { service, repository, googleStates } = createHarness();
+    googleStates.consume.mockImplementation((flow: string) =>
+      flow === 'teacher-line-group'
+        ? {
+            flow,
+            subjectId: GROUP_INVITATION.id,
+            tokenHash: GROUP_INVITATION.token_hash,
+            schoolId: GROUP_INVITATION.school_id,
+            nonce: 'google-nonce',
+          }
+        : null,
+    );
+    repository.findActiveTeacherByEmail.mockResolvedValue(null);
+
+    await expect(
+      service.completeGoogleAuthorization('google-code', 'google-state'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('matches AraID only against an active teacher in the invitation school', async () => {
@@ -291,60 +384,7 @@ describe('TeacherLineService', () => {
     });
   });
 
-  it('refuses to hand out a binding session on a wrong code', async () => {
-    const { service, otpStore, sessionStore } = createHarness();
-    otpStore.verify.mockResolvedValue('wrong');
-
-    await expect(
-      service.verifyOtp(TEACHER.email, '000000', null, GROUP_TOKEN),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(sessionStore.createBindingSession).not.toHaveBeenCalled();
-  });
-
-  it('does not issue another binding session when the teacher already has LINE', async () => {
-    const { service, repository, sessionStore } = createHarness();
-    repository.hasActiveAccountForTeacher.mockResolvedValue(true);
-
-    await expect(
-      service.verifyOtp(TEACHER.email, '123456', null, GROUP_TOKEN),
-    ).rejects.toBeInstanceOf(ConflictException);
-    expect(sessionStore.createBindingSession).not.toHaveBeenCalled();
-  });
-
-  it('gives an unknown address the same rejection as a wrong code', async () => {
-    const { service, repository, otpStore } = createHarness();
-    repository.findActiveTeacherByEmail.mockResolvedValue(null);
-
-    await expect(
-      service.verifyOtp('stranger@example.com', '123456', null, GROUP_TOKEN),
-    ).rejects.toThrow('อีเมลหรือรหัสยืนยันไม่ถูกต้อง');
-    expect(otpStore.verify).not.toHaveBeenCalled();
-  });
-
-  it.each(['wrong', 'missing', 'expired', 'locked'])(
-    'does not reveal OTP state for a known address (%s)',
-    async (outcome) => {
-      const { service, otpStore } = createHarness();
-      otpStore.verify.mockResolvedValue(outcome);
-
-      await expect(service.verifyOtp(TEACHER.email, '000000', null, GROUP_TOKEN)).rejects.toThrow(
-        'อีเมลหรือรหัสยืนยันไม่ถูกต้อง',
-      );
-    },
-  );
-
-  it('keeps the generic request response when delivery fails', async () => {
-    const known = createHarness();
-    const unknown = createHarness();
-    known.emailService.sendOTP.mockRejectedValue(new Error('mail unavailable'));
-    unknown.repository.findActiveTeacherByEmail.mockResolvedValue(null);
-
-    await expect(known.service.requestOtp(TEACHER.email, null, GROUP_TOKEN)).resolves.toEqual(
-      await unknown.service.requestOtp('stranger@example.com', null, GROUP_TOKEN),
-    );
-  });
-
-  it('binds the account once the OTP passed and the teacher added the account', async () => {
+  it('binds the account once identity verification passed and the teacher added the account', async () => {
     const { service, repository, sessionStore } = createHarness();
 
     const result = await service.completeAuthorization('code', 'state-value', null);
@@ -373,8 +413,8 @@ describe('TeacherLineService', () => {
     expect(result.outcome).toBe('NOT_FRIEND');
     expect(result.addContactUrl).toBe('https://line.me/R/ti/p/@sts');
     expect(repository.insertAccount).not.toHaveBeenCalled();
-    // The OTP proof survives so the teacher can add the account and retry
-    // without going through their inbox again.
+    // The short-lived identity proof survives so the teacher can add the
+    // account and retry without authenticating again.
     expect(sessionStore.clearBindingSession).not.toHaveBeenCalled();
   });
 
@@ -468,47 +508,6 @@ describe('TeacherLineService', () => {
     });
   });
 
-  it('binds an invitation session only after its OTP and consumes it atomically', async () => {
-    const { service, sessionStore, repository } = createHarness();
-    sessionStore.readBindingSession.mockResolvedValue({
-      teacherId: TEACHER.teacher_id,
-      invitationId: INVITATION.id,
-    });
-
-    await expect(service.verifyInvitationOtp('b'.repeat(64), '123456', null)).resolves.toEqual({
-      bindingToken: 'binding-token',
-      teacherName: 'สมชาย ใจดี',
-    });
-    expect(sessionStore.createBindingSession).toHaveBeenCalledWith(
-      expect.objectContaining({ invitationId: INVITATION.id, teacherId: TEACHER.teacher_id }),
-    );
-
-    await expect(service.completeAuthorization('code', 'state-value', null)).resolves.toMatchObject(
-      {
-        outcome: 'SUCCESS',
-      },
-    );
-    expect(repository.findInvitationById).toHaveBeenCalledWith(
-      INVITATION.id,
-      expect.anything(),
-      true,
-    );
-    expect(repository.consumeInvitation).toHaveBeenCalledWith(INVITATION.id, expect.anything());
-  });
-
-  it('rejects a consumed invitation before issuing OTP', async () => {
-    const { service, repository, emailService } = createHarness();
-    repository.findInvitationByTokenHash.mockResolvedValue({
-      ...INVITATION,
-      consumed_at: new Date().toISOString(),
-    });
-
-    await expect(service.requestInvitationOtp('b'.repeat(64), null)).rejects.toBeInstanceOf(
-      GoneException,
-    );
-    expect(emailService.sendOTP).not.toHaveBeenCalled();
-  });
-
   it('treats a replayed callback as expired instead of binding again', async () => {
     const { service, sessionStore, repository } = createHarness();
     sessionStore.consumeOAuthState.mockResolvedValue(null);
@@ -519,11 +518,23 @@ describe('TeacherLineService', () => {
     expect(repository.insertAccount).not.toHaveBeenCalled();
   });
 
+  it('rejects a legacy binding session that has no Google or AraID proof', async () => {
+    const { service, sessionStore, repository } = createHarness();
+    sessionStore.readBindingSession.mockResolvedValue({ teacherId: TEACHER.teacher_id });
+
+    await expect(service.completeAuthorization('code', 'state-value', null)).resolves.toEqual({
+      outcome: 'EXPIRED',
+      addContactUrl: null,
+    });
+    expect(sessionStore.clearBindingSession).toHaveBeenCalledWith('binding-token');
+    expect(repository.insertAccount).not.toHaveBeenCalled();
+  });
+
   it('refuses every step while the integration is switched off', async () => {
     const { service, messaging } = createHarness();
     messaging.isEnabled.mockReturnValue(false);
 
-    await expect(service.requestOtp(TEACHER.email, null, GROUP_TOKEN)).rejects.toBeInstanceOf(
+    await expect(service.startGroupGoogleAuthorization(GROUP_TOKEN)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
     await expect(service.startAuthorization('binding-token')).rejects.toBeInstanceOf(

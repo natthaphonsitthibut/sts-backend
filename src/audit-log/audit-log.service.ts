@@ -142,19 +142,6 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'schoolId', label: 'โรงเรียน' },
     ],
   },
-  TEACHER_ACCESS_OTP_REQUEST: {
-    domain: 'tasks',
-    label: 'ขอรหัส OTP ของลิงก์ครู',
-    detailKeys: [{ key: 'teacherName', label: 'ครู' }],
-  },
-  TEACHER_ACCESS_OTP_FAILED: {
-    domain: 'tasks',
-    label: 'ยืนยัน OTP ของลิงก์ครูไม่สำเร็จ',
-    detailKeys: [
-      { key: 'teacherName', label: 'ครู' },
-      { key: 'outcome', label: 'ผลลัพธ์' },
-    ],
-  },
   TEACHER_ACCESS_ARAID_VERIFY: {
     domain: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ครูสำเร็จ',
@@ -163,6 +150,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   TASK_LINK_ARAID_VERIFY: {
     domain: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
+    detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
+  },
+  TASK_LINK_GOOGLE_VERIFY: {
+    domain: 'tasks',
+    label: 'ยืนยัน Google ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
   TEACHER_ACCESS_ARAID_FAILED: {

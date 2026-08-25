@@ -11,6 +11,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import type { QueryRunner } from 'typeorm';
 import {
   isUnconfiguredDataScope,
@@ -26,8 +27,11 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
 import { generateToken, hashToken } from '../common/utils/helpers';
+import { googleLoginConfig } from '../config/google-login.config';
+import { TeacherLineService } from '../teacher-line/teacher-line.service';
 import type {
   BulkCreateClassroomAttendanceLinksDto,
+  ClassroomLineGroupInvitationDto,
   ListClassroomAttendanceLinksDto,
   ResendClassroomAttendanceLinkLineDto,
 } from './dto/classroom-attendance-links.dto';
@@ -44,7 +48,7 @@ import type {
   ExternalTeacherRow,
 } from './classroom-attendance-links.types';
 import { ClassroomLinkSessionStore } from './classroom-link-session.store';
-import { GoogleLoginStateStore } from './google-login-state.store';
+import { ScopedGoogleLoginStateStore } from '../google-login/scoped-google-login-state.store';
 import { GoogleOidcProvider } from './google-oidc.provider';
 
 @Injectable()
@@ -55,12 +59,15 @@ export class ClassroomAttendanceLinksService {
     private readonly repository: ClassroomAttendanceLinksRepository,
     private readonly encryption: TokenEncryptionService,
     private readonly sessions: ClassroomLinkSessionStore,
-    private readonly googleStates: GoogleLoginStateStore,
+    private readonly googleStates: ScopedGoogleLoginStateStore,
     private readonly google: GoogleOidcProvider,
     private readonly araId: AraIdService,
     private readonly araIdChallenges: AraIdChallengeStore,
     private readonly audit: AuditLogService,
     @Inject(MESSAGING_PROVIDER) private readonly messaging: MessagingProvider,
+    private readonly teacherLine: TeacherLineService,
+    @Inject(googleLoginConfig.KEY)
+    private readonly googleConfig: ConfigType<typeof googleLoginConfig>,
   ) {}
 
   private actorScope(actor: AuthenticatedRequestUser): DataScope {
@@ -75,6 +82,26 @@ export class ClassroomAttendanceLinksService {
     const id = resolveAuditActorId(actor);
     if (id === null) throw new ForbiddenException('ไม่พบผู้ใช้ที่จัดการลิงก์');
     return id;
+  }
+
+  private groupInvitationScope(actor: AuthenticatedRequestUser): DataScope {
+    const scope = this.actorScope(actor);
+    if ((scope.grade_levels?.length ?? 0) > 0 || (scope.room_ids?.length ?? 0) > 0) {
+      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้จัดการลิงก์ระดับโรงเรียน');
+    }
+    return scope;
+  }
+
+  private async requireGroupInvitationSchool(
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+  ): Promise<{ id: number; name: string }> {
+    const school = await this.repository.findActiveSchoolInScope(
+      schoolId,
+      this.groupInvitationScope(actor),
+    );
+    if (!school) throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
+    return school;
   }
 
   private status(row: ClassroomLinkListRow): 'ACTIVE' | 'INACTIVE' | 'NOT_CREATED' {
@@ -103,7 +130,11 @@ export class ClassroomAttendanceLinksService {
       gradeLabel: row.grade_label,
       roomNumber: row.legacy_room_number,
       roomName: row.room_name,
+      homeroomTeacherId: row.homeroom_teacher_id,
       homeroomTeacherName: row.homeroom_teacher_name,
+      homeroomTeacherPhotoUrl: row.homeroom_teacher_has_photo
+        ? `/api/teacher-profiles/${row.homeroom_teacher_id}/photo`
+        : null,
       lineDelivery: row.id ? this.lineDeliveryPresentation(row as ClassroomLinkRow) : null,
       status: this.status(row),
       issuedAt: row.issued_at ? new Date(row.issued_at).toISOString() : null,
@@ -177,6 +208,99 @@ export class ClassroomAttendanceLinksService {
         totalPages: Math.ceil(result.total / query.limit),
       },
     };
+  }
+
+  async issueLineGroupInvitation(
+    input: ClassroomLineGroupInvitationDto,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const actorId = this.actorId(actor);
+    const school = await this.requireGroupInvitationSchool(input.schoolId, actor);
+    const result = await this.teacherLine.issueGroupInvitation({
+      schoolId: school.id,
+      schoolName: school.name,
+      issuedBy: actorId,
+      startsAt: new Date(input.startsAt),
+      expiresAt: new Date(input.expiresAt),
+      baseUrl,
+    });
+    await this.audit.record({
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      action: 'TEACHER_LINE_INVITATION_ISSUE',
+      targetType: 'teacher_line_group_invitation',
+      targetId: result.id,
+      metadata: {
+        invitationMode: 'GROUP',
+        schoolId: school.id,
+        startsAt: result.startsAt,
+        expiresAt: result.expiresAt,
+      },
+      ip: null,
+    });
+    return { success: true, data: result };
+  }
+
+  async getLineGroupInvitation(schoolId: number, actor: AuthenticatedRequestUser, baseUrl: string) {
+    await this.requireGroupInvitationSchool(schoolId, actor);
+    return {
+      success: true,
+      data: await this.teacherLine.getActiveGroupInvitation(schoolId, baseUrl),
+    };
+  }
+
+  async updateLineGroupInvitation(
+    invitationId: string,
+    input: ClassroomLineGroupInvitationDto,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const actorId = this.actorId(actor);
+    await this.requireGroupInvitationSchool(input.schoolId, actor);
+    const result = await this.teacherLine.updateGroupInvitation({
+      id: invitationId,
+      schoolId: input.schoolId,
+      startsAt: new Date(input.startsAt),
+      expiresAt: new Date(input.expiresAt),
+      baseUrl,
+    });
+    await this.audit.record({
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      action: 'TEACHER_LINE_INVITATION_ISSUE',
+      targetType: 'teacher_line_group_invitation',
+      targetId: invitationId,
+      metadata: {
+        invitationMode: 'GROUP_UPDATE',
+        schoolId: input.schoolId,
+        startsAt: result.startsAt,
+        expiresAt: result.expiresAt,
+      },
+      ip: null,
+    });
+    return { success: true, data: result };
+  }
+
+  async revokeLineGroupInvitation(
+    invitationId: string,
+    schoolId: number,
+    actor: AuthenticatedRequestUser,
+  ) {
+    const actorId = this.actorId(actor);
+    await this.requireGroupInvitationSchool(schoolId, actor);
+    const revoked = await this.teacherLine.revokeGroupInvitation(invitationId, schoolId, actorId);
+    if (!revoked) throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
+    await this.audit.record({
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      action: 'TEACHER_LINE_INVITATION_REVOKE',
+      targetType: 'teacher_line_group_invitation',
+      targetId: invitationId,
+      metadata: { invitationMode: 'GROUP', schoolId, reason: 'REVOKED_BY_ADMIN' },
+      ip: null,
+    });
+    return { success: true, data: { revoked: true } };
   }
 
   async bulkCreate(
@@ -421,23 +545,47 @@ export class ClassroomAttendanceLinksService {
 
   async googleStart(rawToken: string) {
     const link = await this.usableLink(rawToken);
-    const login = await this.googleStates.create(link.id, link.token_hash);
+    const login = await this.googleStates.create('classroom-link', {
+      subjectId: link.id,
+      tokenHash: link.token_hash,
+      schoolId: link.school_id,
+    });
     return {
       success: true,
-      data: { authorizationUrl: this.google.authorizationUrl(login.state, login.nonce) },
+      data: {
+        authorizationUrl: this.google.authorizationUrl(
+          login.state,
+          login.nonce,
+          this.googleConfig.classroomCallbackUrl,
+        ),
+      },
     };
   }
 
   async googleCallback(code: string, state: string): Promise<string> {
-    const login = await this.googleStates.consume(state);
+    const login = await this.googleStates.consume('classroom-link', state);
     if (!login) throw new GoneException('คำขอ Google Login หมดอายุหรือถูกใช้แล้ว');
     const link = await this.repository.findUsableByTokenHash(login.tokenHash);
-    if (!link || link.id !== login.linkId)
+    if (!link || link.id !== login.subjectId || link.school_id !== login.schoolId)
       throw new GoneException('ลิงก์ห้องเรียนถูกเปลี่ยนหรือปิดแล้ว');
-    const identity = await this.google.exchange(code, login.nonce);
+    const identity = await this.google.exchange(
+      code,
+      login.nonce,
+      this.googleConfig.classroomCallbackUrl,
+    );
     const teacher = await this.repository.findTeacherByEmail(identity.email, link.school_id);
     this.assertActiveTeacher(teacher);
-    await this.bindIdentity(teacher!, 'GOOGLE', identity.subject, identity.email);
+    if (identity.persistIdentity !== false) {
+      await this.bindIdentity(teacher!, 'GOOGLE', identity.subject, identity.email);
+    }
+    return await this.issueSession(link, teacher!, 'GOOGLE');
+  }
+
+  async googleDevelopment(rawToken: string, email: string): Promise<string> {
+    const identity = this.google.developmentIdentity(email);
+    const link = await this.usableLink(rawToken);
+    const teacher = await this.repository.findTeacherByEmail(identity.email, link.school_id);
+    this.assertActiveTeacher(teacher);
     return await this.issueSession(link, teacher!, 'GOOGLE');
   }
 

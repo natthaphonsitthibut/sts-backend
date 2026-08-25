@@ -28,9 +28,13 @@ function idToken(nonce: string): string {
 
 describe('GoogleOidcProvider', () => {
   const config = {
+    mode: 'oidc' as const,
+    nodeEnv: 'test',
     clientId: 'client-id',
     clientSecret: 'client-secret',
-    callbackUrl: 'https://api.example/api/check-in/auth/google/callback',
+    classroomCallbackUrl: 'https://api.example/api/check-in/auth/google/callback',
+    teacherLineCallbackUrl: 'https://api.example/api/line/link/google/callback',
+    taskCallbackUrl: 'https://api.example/api/tasks/google/callback',
   };
 
   afterEach(() => jest.restoreAllMocks());
@@ -52,12 +56,17 @@ describe('GoogleOidcProvider', () => {
         ),
       );
 
-    const url = new URL(provider.authorizationUrl('state-value', 'expected-nonce'));
+    const url = new URL(
+      provider.authorizationUrl('state-value', 'expected-nonce', config.classroomCallbackUrl),
+    );
     expect(url.searchParams.get('state')).toBe('state-value');
     expect(url.searchParams.get('nonce')).toBe('expected-nonce');
-    await expect(provider.exchange('code', 'expected-nonce')).resolves.toEqual({
+    await expect(
+      provider.exchange('code', 'expected-nonce', config.classroomCallbackUrl),
+    ).resolves.toEqual({
       subject: 'provider-subject',
       email: 'teacher@example.com',
+      persistIdentity: true,
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -78,17 +87,74 @@ describe('GoogleOidcProvider', () => {
         ),
       );
 
-    await expect(provider.exchange('code', 'expected-nonce')).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(
+      provider.exchange('code', 'expected-nonce', config.classroomCallbackUrl),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('fails closed when Google is not configured', () => {
     const provider = new GoogleOidcProvider({
+      mode: 'oidc',
+      nodeEnv: 'test',
       clientId: '',
       clientSecret: '',
-      callbackUrl: '',
+      classroomCallbackUrl: '',
+      teacherLineCallbackUrl: '',
+      taskCallbackUrl: '',
     });
-    expect(() => provider.authorizationUrl('state', 'nonce')).toThrow(ServiceUnavailableException);
+    expect(() => provider.authorizationUrl('state', 'nonce', '')).toThrow(
+      ServiceUnavailableException,
+    );
+  });
+
+  it('accepts an email entered in local development without contacting Google', () => {
+    const provider = new GoogleOidcProvider({
+      mode: 'development',
+      nodeEnv: 'development',
+      clientId: '',
+      clientSecret: '',
+      classroomCallbackUrl: 'http://localhost:3000/api/check-in/auth/google/callback',
+      teacherLineCallbackUrl: 'http://localhost:3000/api/line/link/google/callback',
+      taskCallbackUrl: 'http://localhost:3000/api/tasks/google/callback',
+    });
+    const fetchMock = jest.spyOn(global, 'fetch');
+
+    expect(provider.developmentIdentity(' Teacher@Example.com ')).toEqual({
+      subject: 'sts-local-development',
+      email: 'teacher@example.com',
+      persistIdentity: false,
+    });
+    expect(() =>
+      provider.authorizationUrl(
+        'state-value',
+        'unused-nonce',
+        'http://localhost:3000/api/check-in/auth/google/callback',
+      ),
+    ).toThrow(ServiceUnavailableException);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when development mode is configured outside local development', () => {
+    const provider = new GoogleOidcProvider({
+      mode: 'development',
+      nodeEnv: 'production',
+      clientId: '',
+      clientSecret: '',
+      classroomCallbackUrl: 'https://api.example/api/check-in/auth/google/callback',
+      teacherLineCallbackUrl: 'https://api.example/api/line/link/google/callback',
+      taskCallbackUrl: 'https://api.example/api/tasks/google/callback',
+    });
+
+    expect(() => provider.developmentIdentity('teacher@example.com')).toThrow(
+      ServiceUnavailableException,
+    );
+  });
+
+  it('never accepts a client-entered development email in oidc mode', () => {
+    const provider = new GoogleOidcProvider(config);
+
+    expect(() => provider.developmentIdentity('teacher@example.com')).toThrow(
+      ServiceUnavailableException,
+    );
   });
 });

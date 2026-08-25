@@ -9,9 +9,8 @@ describe('AraIdSessionCookieService', () => {
     jwtSecret: 'JWT_SECRET_PLACEHOLDER_32_CHARS',
     sessionSecret: 'SESSION_SECRET_PLACEHOLDER_32_CHARS',
     magicSessionTtlSeconds: 21_600,
-    otpTtlSeconds: 600,
-    otpMaxAttempts: 5,
-    otpLockSeconds: 900,
+    araIdChallengeEntryTtlSeconds: 90,
+    araIdChallengeAuthorizationTtlSeconds: 600,
     cookieName: 'sts_session',
     cookieSecure: false,
     cookieSameSite: 'lax',
@@ -57,25 +56,21 @@ describe('AraIdSessionCookieService', () => {
     expect(service.readProfileId(`araid_session=${token}`)).toBeNull();
   });
 
-  it.each([
-    ['araid_line_authorization', 'setLineAuthorization', 'readLineAuthorization'],
-    [
-      'araid_teacher_access_authorization',
-      'setTeacherAccessAuthorization',
-      'readTeacherAccessAuthorization',
-    ],
-  ] as const)('keeps the %s credential in an httpOnly cookie', (name, setter, reader) => {
-    const cookie = jest.fn<void, [string, string, Record<string, unknown>]>();
-    const response = { cookie } as unknown as Response;
+  it.each([['araid_line_authorization', 'setLineAuthorization', 'readLineAuthorization']] as const)(
+    'keeps the %s credential in an httpOnly cookie',
+    (name, setter, reader) => {
+      const cookie = jest.fn<void, [string, string, Record<string, unknown>]>();
+      const response = { cookie } as unknown as Response;
 
-    service[setter](response, 'opaque-token', 600);
+      service[setter](response, 'opaque-token', 600);
 
-    expect(cookie).toHaveBeenCalledWith(
-      name,
-      'opaque-token',
-      expect.objectContaining({ httpOnly: true, maxAge: 600_000, path: '/' }),
-    );
-    expect(service[reader](`${name}=opaque-token`)).toBe('opaque-token');
-    expect(service[reader](`${name}=%E0%A4%A`)).toBeNull();
-  });
+      expect(cookie).toHaveBeenCalledWith(
+        name,
+        'opaque-token',
+        expect.objectContaining({ httpOnly: true, maxAge: 600_000, path: '/' }),
+      );
+      expect(service[reader](`${name}=opaque-token`)).toBe('opaque-token');
+      expect(service[reader](`${name}=%E0%A4%A`)).toBeNull();
+    },
+  );
 });

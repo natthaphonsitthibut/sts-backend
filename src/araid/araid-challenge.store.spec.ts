@@ -42,25 +42,25 @@ describe('AraIdChallengeStore', () => {
 
   it('claims, resumes, approves, and consumes an in-memory challenge once', async () => {
     const store = buildStore();
-    const challenge = await store.create('teacher-access', 'grant-1');
+    const challenge = await store.create('task-link', 'task-1');
 
-    await expect(store.read('teacher-access', challenge.token)).resolves.toMatchObject({
-      subjectId: 'grant-1',
+    await expect(store.read('task-link', challenge.token)).resolves.toMatchObject({
+      subjectId: 'task-1',
       status: 'PENDING',
     });
-    const authorization = await store.claimOrRenew('teacher-access', challenge.token);
+    const authorization = await store.claimOrRenew('task-link', challenge.token);
     expect(authorization).not.toBeNull();
     await expect(
-      store.resume('teacher-access', challenge.token, authorization!.authorizationToken),
+      store.resume('task-link', challenge.token, authorization!.authorizationToken),
     ).resolves.toMatchObject({ authorizationToken: authorization!.authorizationToken });
     await expect(
-      store.approveAuthorization('teacher-access', authorization!.authorizationToken),
+      store.approveAuthorization('task-link', authorization!.authorizationToken),
     ).resolves.toBe(true);
-    await expect(store.consumeApproved('teacher-access', challenge.token)).resolves.toMatchObject({
-      subjectId: 'grant-1',
+    await expect(store.consumeApproved('task-link', challenge.token)).resolves.toMatchObject({
+      subjectId: 'task-1',
       status: 'APPROVED',
     });
-    await expect(store.consumeApproved('teacher-access', challenge.token)).resolves.toBeNull();
+    await expect(store.consumeApproved('task-link', challenge.token)).resolves.toBeNull();
   });
 
   it('does not consume a challenge before mobile approval', async () => {
@@ -75,12 +75,12 @@ describe('AraIdChallengeStore', () => {
 
   it('does not resume an authorization for a different challenge', async () => {
     const store = buildStore();
-    const first = await store.create('teacher-access', 'grant-1');
-    const second = await store.create('teacher-access', 'grant-2');
-    const authorization = await store.claimOrRenew('teacher-access', first.token);
+    const first = await store.create('task-link', 'task-1');
+    const second = await store.create('task-link', 'task-2');
+    const authorization = await store.claimOrRenew('task-link', first.token);
 
     await expect(
-      store.resume('teacher-access', second.token, authorization!.authorizationToken),
+      store.resume('task-link', second.token, authorization!.authorizationToken),
     ).resolves.toBeNull();
   });
 
@@ -88,16 +88,16 @@ describe('AraIdChallengeStore', () => {
     const store = buildStore();
     const challenge = await store.create('task-link', 'link-1');
 
-    await expect(store.read('teacher-access', challenge.token)).resolves.toBeNull();
-    await expect(store.claimOrRenew('teacher-access', challenge.token)).resolves.toBeNull();
+    await expect(store.read('admin-login', challenge.token)).resolves.toBeNull();
+    await expect(store.claimOrRenew('admin-login', challenge.token)).resolves.toBeNull();
 
     const authorization = await store.claimOrRenew('task-link', challenge.token);
     expect(authorization).not.toBeNull();
     await expect(
-      store.readAuthorization('teacher-access', authorization!.authorizationToken),
+      store.readAuthorization('admin-login', authorization!.authorizationToken),
     ).resolves.toBeNull();
     await expect(
-      store.approveAuthorization('teacher-access', authorization!.authorizationToken),
+      store.approveAuthorization('admin-login', authorization!.authorizationToken),
     ).resolves.toBe(false);
   });
 
@@ -105,7 +105,7 @@ describe('AraIdChallengeStore', () => {
     const store = buildStore();
     const challenge = await store.create('admin-login', 'admin-login');
 
-    await expect(store.read('teacher-access', challenge.token)).resolves.toBeNull();
+    await expect(store.read('task-link', challenge.token)).resolves.toBeNull();
     await expect(store.claimOrRenew('task-link', challenge.token)).resolves.toBeNull();
   });
 

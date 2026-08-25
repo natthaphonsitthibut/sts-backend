@@ -81,6 +81,7 @@ describe('ClassroomAttendanceLinksService', () => {
       findTeacherByEmail: jest.fn(),
       findTeacherByCitizenId: jest.fn(),
       findActiveMembership: jest.fn(),
+      findActiveSchoolInScope: jest.fn(),
       bindExternalIdentity: jest.fn(),
       touchLinkUsed: jest.fn(),
     };
@@ -90,7 +91,15 @@ describe('ClassroomAttendanceLinksService', () => {
     };
     const sessions = { issue: jest.fn().mockResolvedValue('session-token'), read: jest.fn() };
     const googleStates = { create: jest.fn(), consume: jest.fn() };
-    const google = { authorizationUrl: jest.fn(), exchange: jest.fn() };
+    const google = {
+      authorizationUrl: jest.fn(),
+      exchange: jest.fn(),
+      developmentIdentity: jest.fn().mockReturnValue({
+        subject: 'sts-local-development',
+        email: TEACHER.normalized_email,
+        persistIdentity: false,
+      }),
+    };
     const araId = { getVerifiedIdentityClaim: jest.fn() };
     const araIdChallenges = {
       create: jest.fn(),
@@ -106,6 +115,12 @@ describe('ClassroomAttendanceLinksService', () => {
       isEnabled: jest.fn().mockReturnValue(true),
       sendMessages: jest.fn().mockResolvedValue([{ providerUserId: 'U123', delivered: true }]),
     };
+    const teacherLine = {
+      issueGroupInvitation: jest.fn(),
+      getActiveGroupInvitation: jest.fn(),
+      updateGroupInvitation: jest.fn(),
+      revokeGroupInvitation: jest.fn(),
+    };
     return {
       service: new ClassroomAttendanceLinksService(
         repository as never,
@@ -117,6 +132,10 @@ describe('ClassroomAttendanceLinksService', () => {
         araIdChallenges as never,
         audit as never,
         messaging as never,
+        teacherLine as never,
+        {
+          classroomCallbackUrl: 'https://api.example/api/check-in/auth/google/callback',
+        } as never,
       ),
       repository,
       sessions,
@@ -126,8 +145,94 @@ describe('ClassroomAttendanceLinksService', () => {
       araIdChallenges,
       messaging,
       audit,
+      teacherLine,
     };
   }
+
+  it('returns an app-served homeroom photo URL without exposing the storage key', async () => {
+    const { service, repository } = setup();
+    repository.list.mockResolvedValue({
+      rows: [
+        {
+          ...LINK,
+          school_status: 'ACTIVE',
+          homeroom_teacher_id: '7',
+          homeroom_teacher_has_photo: true,
+          latest_session_id: null,
+          latest_session_date: null,
+          latest_session_status: null,
+          latest_session_submitted_at: null,
+        },
+      ],
+      total: 1,
+    });
+
+    const result = await service.list(
+      { schoolId: 10, schoolTermId: 20, page: 1, limit: 20 },
+      ACTOR,
+    );
+
+    expect(result.data[0]).toMatchObject({
+      homeroomTeacherName: 'ครูประจำชั้น',
+      homeroomTeacherId: '7',
+      homeroomTeacherPhotoUrl: '/api/teacher-profiles/7/photo',
+    });
+    expect(JSON.stringify(result)).not.toContain('photo_storage_key');
+  });
+
+  it('issues the school LINE invitation only after server-side school scope validation', async () => {
+    const { service, repository, teacherLine, audit } = setup();
+    repository.findActiveSchoolInScope.mockResolvedValue({
+      id: 10,
+      name: 'โรงเรียนหนึ่ง',
+    });
+    teacherLine.issueGroupInvitation.mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      schoolId: 10,
+      schoolName: 'โรงเรียนหนึ่ง',
+      url: 'https://sts.example/line-link#token=secret',
+      startsAt: '2026-08-24T12:00:00.000Z',
+      expiresAt: '2026-08-31T12:00:00.000Z',
+    });
+
+    await expect(
+      service.issueLineGroupInvitation(
+        {
+          schoolId: 10,
+          startsAt: '2026-08-24T12:00:00.000Z',
+          expiresAt: '2026-08-31T12:00:00.000Z',
+        },
+        ACTOR,
+        'https://sts.example',
+      ),
+    ).resolves.toMatchObject({ success: true, data: { schoolId: 10 } });
+    expect(repository.findActiveSchoolInScope).toHaveBeenCalledWith(10, {
+      school_ids: [10],
+    });
+    expect(teacherLine.issueGroupInvitation).toHaveBeenCalledWith(
+      expect.objectContaining({ schoolId: 10, schoolName: 'โรงเรียนหนึ่ง' }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'TEACHER_LINE_INVITATION_ISSUE',
+        targetType: 'teacher_line_group_invitation',
+      }),
+    );
+  });
+
+  it('rejects school-wide LINE invitation management from grade or room scope', async () => {
+    const { service, repository, teacherLine } = setup();
+    const scopedActor: AuthenticatedRequestUser = {
+      ...ACTOR,
+      data_scope: { school_ids: [10], grade_levels: [3] },
+    };
+
+    await expect(
+      service.getLineGroupInvitation(10, scopedActor, 'https://sts.example'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.findActiveSchoolInScope).not.toHaveBeenCalled();
+    expect(teacherLine.getActiveGroupInvitation).not.toHaveBeenCalled();
+  });
 
   it('sends a classroom link to the reachable current homeroom membership', async () => {
     const { service, repository, messaging, audit } = setup();
@@ -306,14 +411,17 @@ describe('ClassroomAttendanceLinksService', () => {
   it('authenticates a verified Google email against any active same-school teacher membership', async () => {
     const { service, repository, sessions, googleStates, google } = setup();
     googleStates.consume.mockResolvedValue({
-      linkId: LINK.id,
+      flow: 'classroom-link',
+      subjectId: LINK.id,
       tokenHash: LINK.token_hash,
+      schoolId: LINK.school_id,
       nonce: 'nonce',
     });
     repository.findUsableByTokenHash.mockResolvedValue(LINK);
     google.exchange.mockResolvedValue({
       subject: 'google-subject',
       email: TEACHER.normalized_email,
+      persistIdentity: true,
     });
     repository.findTeacherByEmail.mockResolvedValue(TEACHER);
 
@@ -337,11 +445,63 @@ describe('ClassroomAttendanceLinksService', () => {
     );
   });
 
+  it('does not persist a synthetic identity for local Google development mode', async () => {
+    const { service, repository, googleStates, google } = setup();
+    googleStates.consume.mockResolvedValue({
+      flow: 'classroom-link',
+      subjectId: LINK.id,
+      tokenHash: LINK.token_hash,
+      schoolId: LINK.school_id,
+      nonce: 'nonce',
+    });
+    repository.findUsableByTokenHash.mockResolvedValue(LINK);
+    google.exchange.mockResolvedValue({
+      subject: 'sts-local-development',
+      email: TEACHER.normalized_email,
+      persistIdentity: false,
+    });
+    repository.findTeacherByEmail.mockResolvedValue(TEACHER);
+
+    await expect(service.googleCallback('code', 'state')).resolves.toBe('session-token');
+
+    expect(repository.bindExternalIdentity).not.toHaveBeenCalled();
+  });
+
+  it('uses the entered local email only after matching an active teacher in the link school', async () => {
+    const { service, repository, google, sessions } = setup();
+    repository.findUsableByTokenHash.mockResolvedValue(LINK);
+    repository.findTeacherByEmail.mockResolvedValue(TEACHER);
+
+    await expect(service.googleDevelopment('a'.repeat(64), ' Teacher@Example.com ')).resolves.toBe(
+      'session-token',
+    );
+
+    expect(google.developmentIdentity).toHaveBeenCalledWith(' Teacher@Example.com ');
+    expect(repository.findTeacherByEmail).toHaveBeenCalledWith(
+      TEACHER.normalized_email,
+      LINK.school_id,
+    );
+    expect(repository.bindExternalIdentity).not.toHaveBeenCalled();
+    expect(sessions.issue).toHaveBeenCalled();
+  });
+
+  it('rejects an entered local email outside the link school', async () => {
+    const { service, repository } = setup();
+    repository.findUsableByTokenHash.mockResolvedValue(LINK);
+    repository.findTeacherByEmail.mockResolvedValue(null);
+
+    await expect(
+      service.googleDevelopment('a'.repeat(64), 'outside@example.com'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('denies a verified Google identity without an active membership in the link school', async () => {
     const { service, repository, googleStates, google } = setup();
     googleStates.consume.mockResolvedValue({
-      linkId: LINK.id,
+      flow: 'classroom-link',
+      subjectId: LINK.id,
       tokenHash: LINK.token_hash,
+      schoolId: LINK.school_id,
       nonce: 'nonce',
     });
     repository.findUsableByTokenHash.mockResolvedValue(LINK);
@@ -356,8 +516,10 @@ describe('ClassroomAttendanceLinksService', () => {
   it('denies an inactive teacher even when email and school membership match', async () => {
     const { service, repository, googleStates, google } = setup();
     googleStates.consume.mockResolvedValue({
-      linkId: LINK.id,
+      flow: 'classroom-link',
+      subjectId: LINK.id,
       tokenHash: LINK.token_hash,
+      schoolId: LINK.school_id,
       nonce: 'nonce',
     });
     repository.findUsableByTokenHash.mockResolvedValue(LINK);

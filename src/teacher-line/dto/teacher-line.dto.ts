@@ -4,35 +4,6 @@ import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from 'cl
 const trimText = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
-export class RequestTeacherLineOtpDto {
-  @Transform(trimText)
-  @IsString()
-  @Matches(/^[0-9a-f]{64}$/i, { message: 'ลิงก์ยืนยัน LINE ไม่ถูกต้อง' })
-  token!: string;
-
-  @Transform(trimText)
-  @IsEmail()
-  @MaxLength(255)
-  email!: string;
-}
-
-export class VerifyTeacherLineOtpDto {
-  @Transform(trimText)
-  @IsString()
-  @Matches(/^[0-9a-f]{64}$/i, { message: 'ลิงก์ยืนยัน LINE ไม่ถูกต้อง' })
-  token!: string;
-
-  @Transform(trimText)
-  @IsEmail()
-  @MaxLength(255)
-  email!: string;
-
-  @Transform(trimText)
-  @IsString()
-  @Matches(/^[0-9]{6}$/, { message: 'รหัสยืนยันต้องเป็นตัวเลข 6 หลัก' })
-  code!: string;
-}
-
 export class StartTeacherLineAuthorizationDto {
   @Transform(trimText)
   @IsString()
@@ -48,18 +19,19 @@ export class TeacherLineInvitationTokenDto {
   token!: string;
 }
 
+export class TeacherLineDevelopmentGoogleDto extends TeacherLineInvitationTokenDto {
+  @Transform(trimText)
+  @IsString()
+  @IsEmail({}, { message: 'รูปแบบอีเมลไม่ถูกต้อง' })
+  @MaxLength(254)
+  email!: string;
+}
+
 export class TeacherLineAraIdChallengeTokenDto {
   @Transform(trimText)
   @IsString()
   @Matches(/^[A-Za-z0-9_-]{32,128}$/, { message: 'คำขอยืนยัน AraID ไม่ถูกต้อง' })
   challengeToken!: string;
-}
-
-export class VerifyTeacherLineInvitationOtpDto extends TeacherLineInvitationTokenDto {
-  @Transform(trimText)
-  @IsString()
-  @Matches(/^[0-9]{6}$/, { message: 'รหัสยืนยันต้องเป็นตัวเลข 6 หลัก' })
-  code!: string;
 }
 
 /**

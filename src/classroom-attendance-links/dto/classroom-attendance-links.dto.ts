@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsInt,
   IsIn,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -88,6 +89,19 @@ export class ResendClassroomAttendanceLinkLineDto {
   /** Stable across transport retries so LINE can deduplicate this recipient. */
   @IsUUID('4')
   deliveryRequestId!: string;
+}
+
+export class ClassroomLineGroupInvitationDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
+
+  @IsISO8601({ strict: true })
+  startsAt!: string;
+
+  @IsISO8601({ strict: true })
+  expiresAt!: string;
 }
 
 export class GoogleCallbackDto {

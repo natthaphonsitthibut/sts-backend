@@ -1,7 +1,8 @@
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   GoneException,
   Inject,
   Injectable,
@@ -14,13 +15,13 @@ import * as QRCode from 'qrcode';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AraIdService } from '../araid/araid.service';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
-import { EmailService } from '../common/email/email.service';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
-import { OtpStore } from '../common/otp/otp.store';
 import { hashToken, maskEmailAddress } from '../common/utils/helpers';
 import { appConfig } from '../config/app.config';
-import { authConfig } from '../config/auth.config';
 import { lineConfig } from '../config/line.config';
+import { googleLoginConfig } from '../config/google-login.config';
+import { GoogleOidcProvider } from '../classroom-attendance-links/google-oidc.provider';
+import { ScopedGoogleLoginStateStore } from '../google-login/scoped-google-login-state.store';
 import { TeacherLineRepository } from './teacher-line.repository';
 import {
   type AraIdChallenge as StoredTeacherLineAraIdChallenge,
@@ -49,24 +50,6 @@ import type {
   TeacherLineLinkOutcome,
 } from './teacher-line.types';
 
-/**
- * Identical whether or not the address belongs to a teacher. Telling an
- * anonymous caller "no such teacher" would turn this public form into a way to
- * discover which staff emails exist.
- */
-const GENERIC_OTP_REQUEST_MESSAGE =
-  'ถ้าอีเมลนี้อยู่ในระบบ เราได้ส่งรหัสยืนยันไปให้แล้ว กรุณาตรวจสอบกล่องจดหมาย';
-const GENERIC_OTP_VERIFY_MESSAGE = 'อีเมลหรือรหัสยืนยันไม่ถูกต้อง';
-
-/** Namespaces this feature's codes in the shared OTP store. */
-function otpKey(teacherId: string): string {
-  return `line-link:${teacherId}`;
-}
-
-function invitationOtpKey(invitationId: string): string {
-  return `line-link-invitation:${invitationId}`;
-}
-
 @Injectable()
 export class TeacherLineService {
   private readonly logger = new Logger(TeacherLineService.name);
@@ -75,8 +58,6 @@ export class TeacherLineService {
     private readonly repository: TeacherLineRepository,
     private readonly sessionStore: TeacherLineSessionStore,
     private readonly tokenEncryption: TokenEncryptionService,
-    private readonly otpStore: OtpStore,
-    private readonly emailService: EmailService,
     private readonly auditLog: AuditLogService,
     private readonly araIdService: AraIdService,
     private readonly araIdChallengeStore: AraIdChallengeStore,
@@ -86,8 +67,10 @@ export class TeacherLineService {
     private readonly line: ConfigType<typeof lineConfig>,
     @Inject(appConfig.KEY)
     private readonly app: ConfigType<typeof appConfig>,
-    @Inject(authConfig.KEY)
-    private readonly auth: ConfigType<typeof authConfig>,
+    private readonly google: GoogleOidcProvider,
+    private readonly googleStates: ScopedGoogleLoginStateStore,
+    @Inject(googleLoginConfig.KEY)
+    private readonly googleConfig: ConfigType<typeof googleLoginConfig>,
   ) {}
 
   isEnabled(): boolean {
@@ -135,6 +118,7 @@ export class TeacherLineService {
     url: string;
     startsAt: string;
     expiresAt: string;
+    status: 'PENDING' | 'ACTIVE';
   }> {
     this.assertEnabled();
     const { startsAt, expiresAt } = this.validateGroupInvitationTiming(
@@ -164,6 +148,7 @@ export class TeacherLineService {
       url: url.toString(),
       startsAt: new Date(startsAt).toISOString(),
       expiresAt: new Date(expiresAt).toISOString(),
+      status: new Date(startsAt).getTime() > Date.now() ? 'PENDING' : 'ACTIVE',
     };
   }
 
@@ -297,6 +282,143 @@ export class TeacherLineService {
     return invitation;
   }
 
+  async startGroupGoogleAuthorization(rawToken: string): Promise<string> {
+    this.assertEnabled();
+    const invitation = await this.assertGroupInvitationActive(rawToken);
+    const login = await this.googleStates.create('teacher-line-group', {
+      subjectId: invitation.id,
+      tokenHash: invitation.token_hash,
+      schoolId: invitation.school_id,
+    });
+    return this.google.authorizationUrl(
+      login.state,
+      login.nonce,
+      this.googleConfig.teacherLineCallbackUrl,
+    );
+  }
+
+  async startInvitationGoogleAuthorization(rawToken: string): Promise<string> {
+    this.assertEnabled();
+    const invitation = await this.repository.findInvitationByTokenHash(hashToken(rawToken.trim()));
+    this.assertInvitationUsable(invitation);
+    const login = await this.googleStates.create('teacher-line-invitation', {
+      subjectId: invitation.id,
+      tokenHash: invitation.token_hash,
+      schoolId: invitation.school_id,
+    });
+    return this.google.authorizationUrl(
+      login.state,
+      login.nonce,
+      this.googleConfig.teacherLineCallbackUrl,
+    );
+  }
+
+  async developmentGroupGoogleAuthorization(rawToken: string, email: string): Promise<string> {
+    this.assertEnabled();
+    const identity = this.google.developmentIdentity(email);
+    const invitation = await this.assertGroupInvitationActive(rawToken);
+    const bindingToken = await this.createGroupGoogleBinding(invitation.school_id, identity.email);
+    return await this.startAuthorization(bindingToken);
+  }
+
+  async developmentInvitationGoogleAuthorization(rawToken: string, email: string): Promise<string> {
+    this.assertEnabled();
+    const identity = this.google.developmentIdentity(email);
+    const invitation = await this.repository.findInvitationByTokenHash(hashToken(rawToken.trim()));
+    this.assertInvitationUsable(invitation);
+    const bindingToken = await this.createInvitationGoogleBinding(
+      invitation.id,
+      invitation.teacher_id,
+      invitation.school_id,
+      identity.email,
+    );
+    return await this.startAuthorization(bindingToken);
+  }
+
+  async completeGoogleAuthorization(code: string, state: string): Promise<string> {
+    this.assertEnabled();
+    const group = await this.googleStates.consume('teacher-line-group', state);
+    const individual = group
+      ? null
+      : await this.googleStates.consume('teacher-line-invitation', state);
+    const login = group ?? individual;
+    if (!login) throw new GoneException('คำขอ Google Login หมดอายุหรือถูกใช้แล้ว');
+
+    const identity = await this.google.exchange(
+      code,
+      login.nonce,
+      this.googleConfig.teacherLineCallbackUrl,
+    );
+    let bindingToken: string;
+    if (login.flow === 'teacher-line-group') {
+      const invitation = await this.repository.findActiveGroupInvitationByTokenHash(
+        login.tokenHash,
+      );
+      if (
+        !invitation ||
+        invitation.id !== login.subjectId ||
+        invitation.school_id !== login.schoolId ||
+        new Date(invitation.starts_at).getTime() > Date.now()
+      ) {
+        throw new GoneException('ลิงก์ยืนยัน LINE ถูกปิดหรือหมดอายุแล้ว');
+      }
+      bindingToken = await this.createGroupGoogleBinding(login.schoolId, identity.email);
+    } else {
+      const invitation = await this.repository.findInvitationByTokenHash(login.tokenHash);
+      this.assertInvitationUsable(invitation);
+      if (invitation.id !== login.subjectId || invitation.school_id !== login.schoolId) {
+        throw new GoneException('ลิงก์ยืนยัน LINE ถูกเปลี่ยนหรือหมดอายุแล้ว');
+      }
+      bindingToken = await this.createInvitationGoogleBinding(
+        invitation.id,
+        invitation.teacher_id,
+        login.schoolId,
+        identity.email,
+      );
+    }
+    return await this.startAuthorization(bindingToken);
+  }
+
+  private async createGroupGoogleBinding(schoolId: number, email: string): Promise<string> {
+    const teacher = await this.repository.findActiveTeacherByEmail(email, schoolId);
+    if (!teacher) {
+      throw new ForbiddenException('Google นี้ไม่ตรงกับครูประจำชั้นที่เปิดใช้งานในโรงเรียนนี้');
+    }
+    await this.assertTeacherLineAvailable(teacher.teacher_id);
+    return await this.sessionStore.createBindingSession({
+      teacherId: teacher.teacher_id,
+      schoolId,
+      verificationMethod: 'GOOGLE',
+    });
+  }
+
+  private async createInvitationGoogleBinding(
+    invitationId: string,
+    invitationTeacherId: string,
+    schoolId: number,
+    email: string,
+  ): Promise<string> {
+    const teacher = await this.repository.findActiveTeacherByEmail(email, schoolId);
+    if (!teacher || teacher.teacher_id !== invitationTeacherId) {
+      throw new ForbiddenException('Google นี้ไม่ตรงกับครูประจำชั้นเจ้าของคำเชิญ');
+    }
+    await this.assertTeacherLineAvailable(teacher.teacher_id);
+    return await this.sessionStore.createBindingSession({
+      teacherId: teacher.teacher_id,
+      invitationId,
+      schoolId,
+      verificationMethod: 'GOOGLE',
+    });
+  }
+
+  private async assertTeacherLineAvailable(teacherId: string): Promise<void> {
+    if (await this.repository.hasActiveAccountForTeacher(teacherId, this.line.messagingChannelId)) {
+      throw new ConflictException(
+        'บัญชีนี้เชื่อม LINE แล้ว หากต้องการเปลี่ยนกรุณาติดต่อผู้ดูแลระบบ',
+      );
+    }
+  }
+
   async issueInvitation(
     input: {
       teacherMembershipId: number;
@@ -363,179 +485,6 @@ export class TeacherLineService {
     };
   }
 
-  async requestInvitationOtp(rawToken: string, ip: string | null): Promise<{ message: string }> {
-    this.assertEnabled();
-    const invitation = await this.repository.findInvitationByTokenHash(hashToken(rawToken.trim()));
-    this.assertInvitationUsable(invitation);
-    if (
-      await this.repository.hasActiveAccountForTeacher(
-        invitation.teacher_id,
-        this.line.messagingChannelId,
-      )
-    ) {
-      throw new ConflictException(
-        'บัญชีนี้เชื่อม LINE แล้ว หากต้องการเปลี่ยนกรุณาติดต่อผู้ดูแลระบบ',
-      );
-    }
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    await this.otpStore.issue(invitationOtpKey(invitation.id), code);
-    await this.emailService.sendOTP(
-      invitation.email,
-      code,
-      Math.floor(this.auth.otpTtlSeconds / 60),
-    );
-    await this.auditLog.record({
-      actorUserId: null,
-      actorLabel: 'line-invitation',
-      action: 'TEACHER_ACCESS_OTP_REQUEST',
-      targetType: 'teacher_line_invitations',
-      targetId: invitation.id,
-      metadata: { via: 'LINE_INVITATION', schoolId: invitation.school_id },
-      ip,
-    });
-    return { message: 'ส่งรหัสยืนยันไปยังอีเมลที่ลงทะเบียนแล้ว' };
-  }
-
-  async verifyInvitationOtp(
-    rawToken: string,
-    code: string,
-    ip: string | null,
-  ): Promise<{ bindingToken: string; teacherName: string }> {
-    this.assertEnabled();
-    const invitation = await this.repository.findInvitationByTokenHash(hashToken(rawToken.trim()));
-    this.assertInvitationUsable(invitation);
-    const outcome = await this.otpStore.verify(invitationOtpKey(invitation.id), code.trim());
-    if (outcome !== 'ok') {
-      await this.auditLog.record({
-        actorUserId: null,
-        actorLabel: 'line-invitation',
-        action: 'TEACHER_ACCESS_OTP_FAILED',
-        targetType: 'teacher_line_invitations',
-        targetId: invitation.id,
-        metadata: { via: 'LINE_INVITATION', outcome, schoolId: invitation.school_id },
-        ip,
-      });
-      throw new BadRequestException('รหัสยืนยันไม่ถูกต้องหรือหมดอายุแล้ว');
-    }
-    if (
-      await this.repository.hasActiveAccountForTeacher(
-        invitation.teacher_id,
-        this.line.messagingChannelId,
-      )
-    ) {
-      throw new ConflictException(
-        'บัญชีนี้เชื่อม LINE แล้ว หากต้องการเปลี่ยนกรุณาติดต่อผู้ดูแลระบบ',
-      );
-    }
-    return {
-      bindingToken: await this.sessionStore.createBindingSession({
-        teacherId: invitation.teacher_id,
-        invitationId: invitation.id,
-      }),
-      teacherName: `${invitation.first_name} ${invitation.last_name}`.trim(),
-    };
-  }
-
-  /**
-   * Step 1. Emails a code to the address the teacher typed. The response never
-   * varies, so a caller learns nothing from it.
-   */
-  async requestOtp(
-    email: string,
-    ip: string | null,
-    groupToken: string,
-  ): Promise<{ message: string }> {
-    this.assertEnabled();
-    const invitation = await this.assertGroupInvitationActive(groupToken);
-    const teacher = await this.repository.findActiveTeacherByEmail(email, invitation.school_id);
-    if (!teacher) {
-      // Logged so a burst of attempts against unknown addresses is still visible.
-      this.logger.warn('LINE link OTP requested for an address with no active teacher');
-      return { message: GENERIC_OTP_REQUEST_MESSAGE };
-    }
-
-    try {
-      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-      await this.otpStore.issue(otpKey(teacher.teacher_id), code);
-      await this.emailService.sendOTP(
-        teacher.email,
-        code,
-        Math.floor(this.auth.otpTtlSeconds / 60),
-      );
-      await this.auditLog.record({
-        actorUserId: null,
-        actorLabel: 'line-link',
-        action: 'TEACHER_ACCESS_OTP_REQUEST',
-        targetType: 'teachers',
-        targetId: teacher.teacher_id,
-        metadata: { via: 'LINE_LINK' },
-        ip,
-      });
-    } catch {
-      // Keep the public response indistinguishable from an unknown address.
-      // Operational failures remain visible in server logs without exposing
-      // the address or proving that a teacher account exists.
-      this.logger.error('LINE link OTP delivery failed');
-    }
-    return { message: GENERIC_OTP_REQUEST_MESSAGE };
-  }
-
-  /**
-   * Step 2. A correct code proves the caller controls that teacher's mailbox and
-   * yields the short-lived session the LINE sign-in is allowed to attach to.
-   */
-  async verifyOtp(
-    email: string,
-    code: string,
-    ip: string | null,
-    groupToken: string,
-  ): Promise<{ bindingToken: string; teacherName: string }> {
-    this.assertEnabled();
-    const invitation = await this.assertGroupInvitationActive(groupToken);
-    const teacher = await this.repository.findActiveTeacherByEmail(email, invitation.school_id);
-    if (!teacher) {
-      // Same message as a wrong code: the pair is either right or it is not.
-      throw new BadRequestException(GENERIC_OTP_VERIFY_MESSAGE);
-    }
-
-    const outcome = await this.otpStore.verify(otpKey(teacher.teacher_id), code.trim());
-    if (outcome !== 'ok') {
-      try {
-        await this.auditLog.record({
-          actorUserId: null,
-          actorLabel: 'line-link',
-          action: 'TEACHER_ACCESS_OTP_FAILED',
-          targetType: 'teachers',
-          targetId: teacher.teacher_id,
-          metadata: { via: 'LINE_LINK', outcome },
-          ip,
-        });
-      } catch {
-        this.logger.error('LINE link OTP failure audit failed');
-      }
-      throw new BadRequestException(GENERIC_OTP_VERIFY_MESSAGE);
-    }
-
-    if (
-      await this.repository.hasActiveAccountForTeacher(
-        teacher.teacher_id,
-        this.line.messagingChannelId,
-      )
-    ) {
-      throw new ConflictException(
-        'บัญชีนี้เชื่อม LINE แล้ว หากต้องการเปลี่ยนกรุณาติดต่อผู้ดูแลระบบ',
-      );
-    }
-
-    return {
-      bindingToken: await this.sessionStore.createBindingSession({
-        teacherId: teacher.teacher_id,
-        schoolId: invitation.school_id,
-      }),
-      teacherName: `${teacher.first_name} ${teacher.last_name}`.trim(),
-    };
-  }
-
   async verifyAraId(
     groupToken: string,
     araIdProfileId: string,
@@ -561,6 +510,7 @@ export class TeacherLineService {
     const bindingToken = await this.sessionStore.createBindingSession({
       teacherId: teacher.teacher_id,
       schoolId: invitation.school_id,
+      verificationMethod: 'ARAID',
     });
     await this.auditLog.record({
       actorUserId: null,
@@ -639,6 +589,7 @@ export class TeacherLineService {
     const bindingToken = await this.sessionStore.createBindingSession({
       teacherId: teacher.teacher_id,
       schoolId: challenge.schoolId,
+      verificationMethod: 'ARAID',
     });
     const approved = await this.araIdChallengeStore.approveAuthorization(
       ARAID_SCOPE,
@@ -746,11 +697,16 @@ export class TeacherLineService {
       return { outcome: 'EXPIRED', addContactUrl: null };
     }
     // The binding session is intentionally NOT consumed yet: a teacher who has
-    // not added the account needs to add it and retry without redoing the OTP.
+    // not added the account needs to add it and retry without redoing identity verification.
     const session = await this.sessionStore.readBindingSession(pending.bindingToken);
     if (!session || session.teacherId !== pending.teacherId) {
       return { outcome: 'EXPIRED', addContactUrl: null };
     }
+    if (session.verificationMethod !== 'GOOGLE' && session.verificationMethod !== 'ARAID') {
+      await this.sessionStore.clearBindingSession(pending.bindingToken);
+      return { outcome: 'EXPIRED', addContactUrl: null };
+    }
+    const verificationMethod = session.verificationMethod;
 
     let identity;
     let friendState;
@@ -784,13 +740,13 @@ export class TeacherLineService {
         }
         if (
           session.schoolId &&
-          !(await this.repository.hasActiveTeacherMembership(
+          !(await this.repository.hasActiveHomeroomTeacherMembership(
             session.teacherId,
-            queryRunner,
             session.schoolId,
+            queryRunner,
           ))
         ) {
-          throw new GoneException('ข้อมูลครูไม่อยู่ในขอบเขตโรงเรียนของลิงก์นี้แล้ว');
+          throw new GoneException('ครูไม่ได้เป็นครูประจำชั้นที่เปิดใช้งานในโรงเรียนนี้แล้ว');
         }
         let heldByOther = await this.repository.findActiveAccountByProviderUser(
           channelId,
@@ -834,6 +790,7 @@ export class TeacherLineService {
                 providerUserId: identity.providerUserId,
                 displayName: identity.displayName,
                 friendState,
+                verifiedVia: verificationMethod,
               },
               queryRunner,
             );

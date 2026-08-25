@@ -4,8 +4,8 @@ import type { ThrottleName } from './throttle.config';
 
 const ALL_THROTTLERS: ThrottleName[] = [
   'login',
-  'otpRequest',
-  'otpVerify',
+  'identityStart',
+  'identityVerify',
   'araidLogin',
   'araidPin',
   'geocode',
@@ -35,8 +35,8 @@ function only(name: ThrottleName) {
 }
 
 export const ThrottleLogin = () => only('login');
-export const ThrottleOtpRequest = () => only('otpRequest');
-export const ThrottleOtpVerify = () => only('otpVerify');
+export const ThrottleIdentityStart = () => only('identityStart');
+export const ThrottleIdentityVerify = () => only('identityVerify');
 export const ThrottleAraIdLogin = () => only('araidLogin');
 export const ThrottleAraIdPin = () => only('araidPin');
 export const ThrottleGeocode = () => only('geocode');

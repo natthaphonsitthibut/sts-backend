@@ -5,6 +5,8 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { AuthModule } from '../auth/auth.module';
 import { TokenEncryptionModule } from '../common/crypto/token-encryption.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
+import { GoogleLoginModule } from '../google-login/google-login.module';
+import { TeacherLineModule } from '../teacher-line/teacher-line.module';
 import {
   ClassroomAttendanceLinksAdminController,
   ClassroomCheckInAuthController,
@@ -13,8 +15,6 @@ import { ClassroomAttendanceLinksRepository } from './classroom-attendance-links
 import { ClassroomAttendanceLinksService } from './classroom-attendance-links.service';
 import { ClassroomLinkCookieService } from './classroom-link-cookie.service';
 import { ClassroomLinkSessionStore } from './classroom-link-session.store';
-import { GoogleLoginStateStore } from './google-login-state.store';
-import { GoogleOidcProvider } from './google-oidc.provider';
 
 @Module({
   imports: [
@@ -23,6 +23,8 @@ import { GoogleOidcProvider } from './google-oidc.provider';
     AuditLogModule,
     AttendanceModule,
     MessagingModule,
+    GoogleLoginModule,
+    TeacherLineModule,
     TokenEncryptionModule,
   ],
   controllers: [ClassroomAttendanceLinksAdminController, ClassroomCheckInAuthController],
@@ -31,8 +33,6 @@ import { GoogleOidcProvider } from './google-oidc.provider';
     ClassroomAttendanceLinksService,
     ClassroomLinkCookieService,
     ClassroomLinkSessionStore,
-    GoogleLoginStateStore,
-    GoogleOidcProvider,
   ],
   exports: [ClassroomAttendanceLinksService],
 })

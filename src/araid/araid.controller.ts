@@ -204,7 +204,6 @@ export class AraIdSessionController {
   logout(@Res({ passthrough: true }) response: Response) {
     this.sessionCookie.clearSession(response);
     this.sessionCookie.clearLineAuthorization(response);
-    this.sessionCookie.clearTeacherAccessAuthorization(response);
     return { success: true };
   }
 }

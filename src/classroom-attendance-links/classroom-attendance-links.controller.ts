@@ -5,7 +5,9 @@ import {
   Headers,
   Inject,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -27,8 +29,10 @@ import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service
 import { resolveExternalBaseUrl } from '../common/utils/request-url';
 import { appConfig } from '../config/app.config';
 import { ThrottleTeacherAccess } from '../config/throttle.decorators';
+import { DevelopmentGoogleLoginDto } from '../google-login/dto/development-google-login.dto';
 import {
   BulkCreateClassroomAttendanceLinksDto,
+  ClassroomLineGroupInvitationDto,
   GoogleCallbackDto,
   ListClassroomAttendanceLinksDto,
   ResendClassroomAttendanceLinkLineDto,
@@ -72,6 +76,56 @@ export class ClassroomAttendanceLinksAdminController {
       actor,
       resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
     );
+  }
+
+  @Post('line-group-invitation')
+  issueLineGroupInvitation(
+    @Body() body: ClassroomLineGroupInvitationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.issueLineGroupInvitation(
+      body,
+      actor,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Get('line-group-invitation')
+  getLineGroupInvitation(
+    @Query('schoolId', ParseIntPipe) schoolId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.getLineGroupInvitation(
+      schoolId,
+      actor,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Patch('line-group-invitation/:invitationId')
+  updateLineGroupInvitation(
+    @Param('invitationId', ParseUUIDPipe) invitationId: string,
+    @Body() body: ClassroomLineGroupInvitationDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.updateLineGroupInvitation(
+      invitationId,
+      body,
+      actor,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('line-group-invitation/:invitationId/revoke')
+  revokeLineGroupInvitation(
+    @Param('invitationId', ParseUUIDPipe) invitationId: string,
+    @Query('schoolId', ParseIntPipe) schoolId: number,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.revokeLineGroupInvitation(invitationId, schoolId, actor);
   }
 
   @Get(':id/link')
@@ -262,6 +316,21 @@ export class ClassroomCheckInAuthController {
     const redirect = new URL('/check-in', this.app.frontendBaseUrl || 'http://localhost:5173');
     redirect.searchParams.set('auth', 'google');
     response.redirect(302, redirect.toString());
+  }
+
+  @Post('auth/google/development')
+  @ThrottleTeacherAccess()
+  async googleDevelopment(
+    @Headers(CLASSROOM_LINK_TOKEN_HEADER) rawToken: string | string[] | undefined,
+    @Body() body: DevelopmentGoogleLoginDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const token = this.header(rawToken);
+    if (!token) throw new UnauthorizedException('กรุณาเปิดจากลิงก์ห้องเรียน');
+    const session = await this.service.googleDevelopment(token, body.email);
+    this.cookies.set(response, session);
+    return { success: true, data: { authenticated: true } };
   }
 
   @Post('auth/araid/challenge')

@@ -7,8 +7,8 @@ import { RedisClientService } from '../redis/redis-client.service';
 /**
  * One AraID QR-approval mechanism for every flow that needs it.
  *
- * The teacher-access grant, the LINE invitation and the follow-up/assistance
- * task link all approve the same way — issue a short-lived challenge, let the
+ * The LINE invitation and the follow-up/assistance task link approve the same
+ * way — issue a short-lived challenge, let the
  * AraID app claim it, require a fresh PIN, then approve and hand back a session.
  * Only the subject being approved differs, so it is a `scope` + `subjectId`
  * here rather than a copy of this file per flow.
@@ -17,7 +17,6 @@ import { RedisClientService } from '../redis/redis-client.service';
  * be redeemed by another, and the existing per-flow keys stay byte-identical.
  */
 export type AraIdChallengeScope =
-  | 'teacher-access'
   | 'teacher-line'
   | 'task-link'
   | 'admin-login'

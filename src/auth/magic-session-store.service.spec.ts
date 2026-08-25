@@ -7,14 +7,12 @@ const authConfig: AuthRuntimeConfig = {
   jwtSecret: 'test-jwt-secret-value',
   sessionSecret: 'test-session-secret-value',
   magicSessionTtlSeconds: 60,
-  otpTtlSeconds: 60,
-  otpMaxAttempts: 5,
-  otpLockSeconds: 60,
+  araIdChallengeEntryTtlSeconds: 90,
+  araIdChallengeAuthorizationTtlSeconds: 600,
   cookieName: 'sts_session',
   cookieSecure: false,
   cookieSameSite: 'lax',
   tokenTtlSeconds: 60,
-  thaidMode: 'mock',
 };
 
 function signMagicSession(payload: Record<string, unknown>, secret: string): string {

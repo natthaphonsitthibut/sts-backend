@@ -80,6 +80,33 @@ export class ClassroomAttendanceLinksRepository {
     `;
   }
 
+  async findActiveSchoolInScope(
+    schoolId: number,
+    scope: DataScope,
+  ): Promise<{ id: number; name: string } | null> {
+    const scopeQuery = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+      },
+      2,
+    );
+    const result = await queryDataSource<{ id: number; name: string }>(
+      this.dataSource,
+      `SELECT school.id, school.name
+       FROM schools school
+       WHERE school.id = $1
+         AND school.school_status = 'ACTIVE'
+         AND ${scopeQuery.sql || 'TRUE'}
+       LIMIT 1`,
+      [schoolId, ...scopeQuery.params],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async list(input: {
     schoolId: number;
     schoolTermId: number;
@@ -205,7 +232,9 @@ export class ClassroomAttendanceLinksRepository {
               classroom.classroom_status, link.token_hash, link.token_encrypted,
               link.link_status, link.issued_at, link.rotated_at, link.last_used_at,
               membership.id::text AS homeroom_teacher_membership_id,
+              teacher.id::text AS homeroom_teacher_id,
               TRIM(teacher.first_name || ' ' || teacher.last_name) AS homeroom_teacher_name,
+              (teacher.photo_storage_key IS NOT NULL) AS homeroom_teacher_has_photo,
               line_account.provider_user_id AS line_provider_user_id,
               line_account.friend_state AS line_friend_state,
               link.line_delivery_teacher_membership_id::text,

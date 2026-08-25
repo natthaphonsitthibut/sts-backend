@@ -10,9 +10,9 @@ import { registerAs } from '@nestjs/config';
  * decorators evaluate. The `@nestjs/throttler` TTL is in milliseconds.
  *
  * NOTE: the throttler uses an in-memory store — correct for the current single
- * instance. Before horizontal scaling these counters (and the DB-backed OTP
- * lockout) must move to a shared store (Redis) or attackers can spread requests
- * across instances. See task-performance-scaling.md.
+ * instance. Before horizontal scaling these counters must move to a shared
+ * store (Redis) or attackers can spread requests across instances. See
+ * task-performance-scaling.md.
  */
 export interface ThrottleRule {
   /** Max requests allowed within the window. */
@@ -24,8 +24,8 @@ export interface ThrottleRule {
 /** Named throttlers, referenced by the per-route decorators in throttle.decorators.ts. */
 export type ThrottleName =
   | 'login'
-  | 'otpRequest'
-  | 'otpVerify'
+  | 'identityStart'
+  | 'identityVerify'
   | 'araidLogin'
   | 'araidPin'
   | 'geocode'
@@ -53,9 +53,8 @@ function rule(
 /**
  * Per-endpoint rules. Conservative defaults:
  *  - login        5 / minute   (password guessing)
- *  - otpRequest   3 / 5 min    (OTP email spam)
- *  - otpVerify   10 / minute   (IP-level OTP guessing; the per-link DB lockout
- *                               is the primary cap, this caps IP rotation)
+ *  - identityStart   10 / 5 min (public Google/AraID challenge creation)
+ *  - identityVerify  20 / minute (public identity callbacks/approval polling)
  *  - araidLogin  90 / minute   (staff AraID QR login: the browser polls one
  *                               challenge every 2s while the phone approves,
  *                               so a single honest login is ~30 requests/min)
@@ -72,13 +71,18 @@ function rule(
  */
 export const throttleConfig = registerAs('throttle', () => ({
   login: rule(process.env.RATE_LIMIT_LOGIN, process.env.RATE_LIMIT_LOGIN_TTL, 5, 60),
-  otpRequest: rule(
-    process.env.RATE_LIMIT_OTP_REQUEST,
-    process.env.RATE_LIMIT_OTP_REQUEST_TTL,
-    3,
+  identityStart: rule(
+    process.env.RATE_LIMIT_IDENTITY_START,
+    process.env.RATE_LIMIT_IDENTITY_START_TTL,
+    10,
     300,
   ),
-  otpVerify: rule(process.env.RATE_LIMIT_OTP_VERIFY, process.env.RATE_LIMIT_OTP_VERIFY_TTL, 10, 60),
+  identityVerify: rule(
+    process.env.RATE_LIMIT_IDENTITY_VERIFY,
+    process.env.RATE_LIMIT_IDENTITY_VERIFY_TTL,
+    20,
+    60,
+  ),
   araidLogin: rule(
     process.env.RATE_LIMIT_ARAID_LOGIN,
     process.env.RATE_LIMIT_ARAID_LOGIN_TTL,
