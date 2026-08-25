@@ -155,9 +155,6 @@ export class AbsenceMonitorService {
                 riskProfileStudentUuids.add(caseStudentUuid);
               }
             }
-            this.logger.log(
-              `Deleted / Canceled Case ${openCase.id} for ${caseStudentName || caseStudentUuid} due to attendance correction.`,
-            );
           }
         }
 
@@ -179,16 +176,12 @@ export class AbsenceMonitorService {
               ? student.school_id_onec
               : null;
 
-          this.logger.log(`Checking existing cases for: ${studentName}`);
-
           const existingCase = await this.automationRepository.findActiveAbsenceCaseByStudent(
             studentUuid ?? '',
             studentName,
             schoolId,
             executor,
           );
-
-          this.logger.log(`Existing case count for ${studentName}: ${existingCase ? 1 : 0}`);
 
           const reason = `ขาดเรียนหลังปิดเคสล่าสุด ${student.absent_days_since_case_reset} วัน`;
           const slaDueAt = this.addDays(new Date(), slaDays);
@@ -204,8 +197,6 @@ export class AbsenceMonitorService {
             `School ID: ${this.normalizeText(student.school_id_onec)}`;
           const address = this.buildStudentTermAddress(student) || null;
 
-          this.logger.log(`Inserting Case for ${studentName} with Reason: ${reason}`);
-
           const caseId = await this.automationRepository.createAutomatedCase(
             {
               studentName,
@@ -220,7 +211,6 @@ export class AbsenceMonitorService {
             executor,
           );
 
-          this.logger.log(`Generated Case ${caseId} for ${studentName}`);
           newCases.push({
             case_id: caseId,
             student_name: studentName,
@@ -233,6 +223,10 @@ export class AbsenceMonitorService {
           }
         }
       });
+
+      this.logger.log(
+        `Absence monitor changes: created=${newCases.length}, cancelled=${autoCancelAuditEvents.length}`,
+      );
 
       for (const event of autoCancelAuditEvents) {
         await this.auditLog.record({

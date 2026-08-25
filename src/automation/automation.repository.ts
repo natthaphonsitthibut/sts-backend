@@ -108,7 +108,7 @@ export class AutomationRepository {
               COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4) > 0
               AND COUNT(*) FILTER (WHERE a."AttendanceStatus" IN (1, 3)) = 0
             ) AS is_absent_day
-          FROM attendance a
+          FROM attendance_effective_records a
           JOIN student_term enrollment
             ON enrollment.student_uuid = a.student_uuid
            AND enrollment."AcademicYear_Onec" = a."AcademicYear_Onec"
@@ -131,7 +131,7 @@ export class AutomationRepository {
           WHERE is_absent_day
             AND NOT EXISTS (
               SELECT 1
-              FROM attendance demo_distribution
+              FROM attendance_effective_records demo_distribution
               WHERE demo_distribution.student_uuid = classified_days.student_uuid
                 AND demo_distribution."RecordedBy" = 'SYSTEM:DEMO_RISK_DISTRIBUTION'
             )
@@ -183,7 +183,7 @@ export class AutomationRepository {
           WHERE s.deleted_at IS NULL
         )
         SELECT DISTINCT attendance.student_uuid
-        FROM attendance
+        FROM attendance_effective_records attendance
         JOIN current_enrollments enrollment
           ON enrollment.student_uuid = attendance.student_uuid
          AND enrollment.academic_year = attendance."AcademicYear_Onec"
