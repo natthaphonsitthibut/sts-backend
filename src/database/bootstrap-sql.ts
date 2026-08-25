@@ -1180,7 +1180,7 @@ export const CASE_ASSISTANCE_PHASE_SQL = `
     available_phase_code, target_workflow_phase_code
   ) VALUES
     ('ASSIST', 'ให้ความช่วยเหลือ', 'OPEN', NULL, FALSE, 'dashboard', 5,
-     'FOLLOW_UP', 'ASSISTANCE')
+     NULL, 'ASSISTANCE')
   ON CONFLICT (code) DO UPDATE SET
     label_th = EXCLUDED.label_th,
     target_case_status_code = EXCLUDED.target_case_status_code,
@@ -1667,7 +1667,7 @@ export const DATA_RECORD_ORIGINS_SQL = `
   ${auditUpdatedAtTriggerSql('data_record_origins')}
   INSERT INTO data_record_origins (code, label_th, is_visible_by_default, sort_order) VALUES
     ('OPERATIONAL', 'ข้อมูลใช้งานจริง', TRUE, 10),
-    ('DEMO', 'ข้อมูลสาธิต', TRUE, 20),
+    ('DEMO', 'ข้อมูลสำหรับการนำเสนอ', FALSE, 20),
     ('AUTOMATED_TEST', 'ข้อมูลทดสอบอัตโนมัติ', FALSE, 30)
   ON CONFLICT (code) DO NOTHING;
 `;
@@ -1944,11 +1944,6 @@ export const DATABASE_BASELINE_SQL = `
       CHECK (assigned_to_last_name IS NULL OR BTRIM(assigned_to_last_name) <> ''),
     assigned_to_phone TEXT,
     assigned_to_email TEXT,
-    otp_code TEXT,
-    otp_expires_at TIMESTAMP,
-    otp_verified INTEGER DEFAULT 0,
-    otp_attempts INTEGER NOT NULL DEFAULT 0,
-    otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
     assignment_note TEXT CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000),
     status TEXT DEFAULT 'ACTIVE',
@@ -2339,7 +2334,6 @@ export const DATABASE_BASELINE_SQL = `
     ON school_calendar_days (school_term_id, day_type, deleted_at, calendar_date);
 
   ALTER TABLE task_links ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE;
-  ALTER TABLE task_links ALTER COLUMN otp_expires_at TYPE TIMESTAMP WITH TIME ZONE USING otp_expires_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN admin_lock_at TYPE TIMESTAMP WITH TIME ZONE USING admin_lock_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
