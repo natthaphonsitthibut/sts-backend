@@ -167,6 +167,7 @@ describe('HomeDashboardRepository', () => {
     expect(queries[0].sql).toContain("profile.risk_tier = 'HIGH'");
     expect(queries[0].sql).toContain('COUNT(DISTINCT s.student_uuid)');
     expect(queries[0].sql).toContain('GROUP BY sc.district');
+    expect(queries[0].sql).toContain('sc.district_code AS "areaCode"');
     // No LIMIT on purpose: the province map colours every province from these
     // rows, so cutting the query to a top-N would leave most of the map blank.
     // The order is what has to hold, since the list view takes the first few.
