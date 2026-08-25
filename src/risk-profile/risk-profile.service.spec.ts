@@ -266,6 +266,7 @@ describe('RiskProfileService', () => {
       {
         redisUrl: 'redis://placeholder',
         requireRedis: true,
+        failedJobRetention: { ageSeconds: 604_800, count: 1_000 },
         riskProfile: { queueName: 'student-risk-profile', attempts: 3, backoffMs: 30_000 },
         dataExport: { queueName: 'data-export', attempts: 3, backoffMs: 30_000 },
       },

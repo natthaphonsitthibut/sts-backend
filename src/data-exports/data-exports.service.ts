@@ -263,6 +263,10 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       this.runtimeQueueConfig ?? {
         redisUrl: undefined,
         requireRedis: false,
+        failedJobRetention: {
+          ageSeconds: 7 * 24 * 60 * 60,
+          count: 1_000,
+        },
         riskProfile: {
           queueName: 'student-risk-profile',
           attempts: 3,
@@ -290,7 +294,10 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         attempts: config.dataExport.attempts,
         backoff: { type: 'exponential', delay: config.dataExport.backoffMs },
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: {
+          age: config.failedJobRetention.ageSeconds,
+          count: config.failedJobRetention.count,
+        },
       },
     });
     this.worker = new Worker(
