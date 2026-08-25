@@ -22,6 +22,7 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9254);
 const ADMIN_USERNAME = 'student_contact_browser_admin';
+const LIMITED_USERNAME = 'student_contact_browser_limited';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -270,6 +271,8 @@ async function main() {
   let chrome;
   let personUuid = null;
   let studentUuid = null;
+  let createdPersonUuid = null;
+  let createdStudentUuid = null;
 
   try {
     const staleStudents = await dataSource.query(
@@ -283,7 +286,7 @@ async function main() {
 
     const [classroom] = await dataSource.query(
       `
-        SELECT c.school_id, c.grade_level_id, c.legacy_room_number,
+        SELECT c.id, c.school_id, c.grade_level_id, c.legacy_room_number,
                t.academic_year, t.semester
         FROM school_classrooms c
         JOIN school_terms t ON t.id = c.school_term_id
@@ -293,6 +296,19 @@ async function main() {
       `,
     );
     assert(classroom, 'Smoke DB has no ACTIVE classroom — seed the smoke database first');
+    const [outsideClassroom] = await dataSource.query(
+      `
+        SELECT c.id, c.school_id
+        FROM school_classrooms c
+        JOIN school_terms t ON t.id = c.school_term_id
+        WHERE c.classroom_status = 'ACTIVE' AND c.deleted_at IS NULL AND t.deleted_at IS NULL
+          AND c.school_id <> $1
+        ORDER BY t.academic_year DESC, t.semester DESC, c.id
+        LIMIT 1
+      `,
+      [classroom.school_id],
+    );
+    assert(outsideClassroom, 'Smoke DB needs ACTIVE classrooms from at least two schools');
     const [loginStatus] = await dataSource.query(
       `
         SELECT code FROM student_status
@@ -336,6 +352,15 @@ async function main() {
       permissions: ['students', 'manage-students', 'dashboard'],
       role: 'ADMIN',
       dataScope: { global: true },
+    });
+    await upsertSmokeUser(dataSource, {
+      username: LIMITED_USERNAME,
+      passwordHash: await passwordService.hash(adminPassword),
+      firstName: 'Contact',
+      lastName: 'Browser Limited',
+      permissions: ['students', 'manage-students'],
+      role: 'ADMIN',
+      dataScope: { school_ids: [classroom.school_id] },
     });
     chrome = await openChrome();
     const { client } = chrome;
@@ -416,6 +441,81 @@ async function main() {
        && document.body.innerText.includes('สถานะนักเรียน')`,
     );
     assert(createFields === true, 'Student create page is missing identity or education fields');
+    const createdNationalId = randomThaiNationalId();
+    const createResult = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/students`)}, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            PersonID_Onec: ${JSON.stringify(createdNationalId)},
+            FirstName_Onec: 'สร้างจริง',
+            LastName_Onec: 'ผ่านเบราว์เซอร์',
+            classroom_id: ${Number(classroom.id)},
+            student_status_code: ${Number(loginStatus.code)},
+            contact: { phone: '0811112233' },
+            guardians: [{
+              relation: 'MOTHER',
+              first_name: 'ผู้ปกครอง',
+              last_name: 'ทดสอบ',
+              is_primary: true,
+            }],
+          }),
+        });
+        return { status: response.status, body: await response.json() };
+      })()`,
+    );
+    assert(createResult?.status === 201, `Creating a student failed with ${createResult?.status}`);
+    const [createdRow] = await dataSource.query(
+      `
+        SELECT enrollment.student_uuid, enrollment.person_uuid,
+          enrollment.classroom_id, enrollment.student_status_code,
+          contact.phone,
+          COUNT(guardian.id)::int AS guardian_count,
+          COUNT(profile.student_uuid)::int AS risk_profile_count
+        FROM student_person_identifier identifier
+        JOIN student_term enrollment ON enrollment.person_uuid = identifier.person_uuid
+        LEFT JOIN student_person_contact contact ON contact.person_uuid = enrollment.person_uuid
+        LEFT JOIN student_guardian guardian
+          ON guardian.person_uuid = enrollment.person_uuid AND guardian.deleted_at IS NULL
+        LEFT JOIN student_risk_profiles profile ON profile.student_uuid = enrollment.student_uuid
+        WHERE identifier.identifier_type = 'NATIONAL_ID'
+          AND identifier.identifier_normalized = $1
+          AND identifier.deleted_at IS NULL
+        GROUP BY enrollment.student_uuid, enrollment.person_uuid,
+          enrollment.classroom_id, enrollment.student_status_code, contact.phone
+      `,
+      [createdNationalId],
+    );
+    assert(createdRow, 'Created student was not persisted');
+    createdStudentUuid = createdRow.student_uuid;
+    createdPersonUuid = createdRow.person_uuid;
+    assert(String(createdRow.classroom_id) === String(classroom.id), 'Created student lost classroom');
+    assert(
+      Number(createdRow.student_status_code) === Number(loginStatus.code),
+      'Created student lost status',
+    );
+    assert(createdRow.phone === '0811112233', 'Created student contact was not atomic');
+    assert(createdRow.guardian_count === 1, 'Created student guardian was not persisted');
+    assert(createdRow.risk_profile_count === 1, 'Created student risk profile was not recalculated');
+
+    const duplicateResult = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/students`)}, {
+          method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            PersonID_Onec: ${JSON.stringify(createdNationalId)}, FirstName_Onec: 'ซ้ำ',
+            LastName_Onec: 'ทดสอบ', classroom_id: ${Number(classroom.id)},
+            student_status_code: ${Number(loginStatus.code)}
+          }),
+        });
+        return { status: response.status };
+      })()`,
+    );
+    assert(duplicateResult?.status === 409, `Duplicate student returned ${duplicateResult?.status}`);
     await navigate(client, `${FRONTEND_URL}/manage-students`);
     await waitFor(
       async () =>
@@ -634,6 +734,43 @@ async function main() {
     );
     await capture(client, '/tmp/sts-student-contact-detail.png');
 
+    const limitedLogin = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/users/login`)}, {
+          method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            username: ${JSON.stringify(LIMITED_USERNAME)},
+            password: ${JSON.stringify(adminPassword)},
+          }),
+        });
+        return { status: response.status };
+      })()`,
+    );
+    assert(limitedLogin?.status === 201, `Limited-scope login failed with ${limitedLogin?.status}`);
+    const deniedNationalId = randomThaiNationalId();
+    const deniedCreate = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/students`)}, {
+          method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            PersonID_Onec: ${JSON.stringify(deniedNationalId)}, FirstName_Onec: 'นอก',
+            LastName_Onec: 'ขอบเขต', classroom_id: ${Number(outsideClassroom.id)},
+            student_status_code: ${Number(loginStatus.code)}
+          }),
+        });
+        return { status: response.status };
+      })()`,
+    );
+    assert(deniedCreate?.status === 404, `Out-of-scope create returned ${deniedCreate?.status}`);
+    const [deniedPersisted] = await dataSource.query(
+      `SELECT 1 FROM student_person_identifier
+       WHERE identifier_type = 'NATIONAL_ID' AND identifier_normalized = $1 AND deleted_at IS NULL`,
+      [deniedNationalId],
+    );
+    assert(!deniedPersisted, 'Out-of-scope create persisted an identity');
+
     console.log(
       JSON.stringify({
         status: 'student_contact_browser_smoke_ok',
@@ -642,6 +779,9 @@ async function main() {
           'edit page renders contact + guardian sections',
           'managed list exposes add/edit actions',
           'add action opens a real student form with identity and education fields',
+          'create API persists identity, enrollment, contact, guardian, and risk profile',
+          'duplicate identity returns 409',
+          'out-of-scope classroom creation returns 404 without persistence',
           'avatar → detail → edit → back keeps the จัดการนักเรียน origin',
           'edit page exposes identity and education fields',
           'guardian rows default FATHER → MOTHER → GUARDIAN',
@@ -669,9 +809,18 @@ async function main() {
   } finally {
     await closeChrome(chrome);
     await dataSource.query(
-      `UPDATE users SET status = 'DISABLED' WHERE username = $1`,
-      [ADMIN_USERNAME],
+      `UPDATE users SET status = 'DISABLED' WHERE username = ANY($1::text[])`,
+      [[ADMIN_USERNAME, LIMITED_USERNAME]],
     );
+    if (createdPersonUuid) {
+      if (createdStudentUuid) {
+        await dataSource.query(`DELETE FROM student_risk_profiles WHERE student_uuid = $1`, [
+          createdStudentUuid,
+        ]);
+      }
+      await dataSource.query(`DELETE FROM student_term WHERE person_uuid = $1`, [createdPersonUuid]);
+      await dataSource.query(`DELETE FROM student_person WHERE person_uuid = $1`, [createdPersonUuid]);
+    }
     if (personUuid) {
       await dataSource.query(`DELETE FROM student_term WHERE person_uuid = $1`, [personUuid]);
       await dataSource.query(`DELETE FROM student_person WHERE person_uuid = $1`, [personUuid]);

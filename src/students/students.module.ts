@@ -10,9 +10,10 @@ import { PiiExportRepository } from './pii-export.repository';
 import { PiiExportService } from './pii-export.service';
 import { MasterDataModule } from '../master-data/master-data.module';
 import { PiiAccessController } from './pii-access.controller';
+import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 
 @Module({
-  imports: [AuthModule, TaskModule, StudentGeocodeModule, MasterDataModule],
+  imports: [AuthModule, TaskModule, StudentGeocodeModule, MasterDataModule, RiskProfileModule],
   controllers: [
     PiiAccessController,
     PiiExportController,

@@ -43,6 +43,7 @@ import {
   normalizeNationalIdValue,
 } from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import type { StudentEnrollmentState, StudentListFilters } from './students.types';
 import type { AuthenticatedRequestUser } from '../auth';
 
@@ -181,7 +182,17 @@ export class StudentsService {
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
+    private readonly riskProfileService: RiskProfileService,
   ) {}
+
+  private async recalculateStudentRisk(studentUuid: string, reason: string): Promise<void> {
+    try {
+      await this.riskProfileService.requestStudentRecalculation([studentUuid], reason);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to recalculate student risk after management write: ${message}`);
+    }
+  }
 
   /**
    * Profile photo read. Goes through the app so the same scope check as the
@@ -329,9 +340,13 @@ export class StudentsService {
         userScope,
       );
       if (!created) throw new NotFoundException('ไม่พบห้องเรียนในขอบเขตของคุณ');
+      if ('invalidStatus' in created) {
+        throw new BadRequestException('สถานะนักเรียนไม่พร้อมใช้งานหรือเป็นสถานะทางเทคนิค');
+      }
       if ('conflict' in created) {
         throw new ConflictException('เลขบัตรประชาชนนี้มีข้อมูลนักเรียนอยู่ในระบบแล้ว');
       }
+      await this.recalculateStudentRisk(created.studentUuid, 'student-create');
       return await this.findOne(created.studentUuid, actor, userScope);
     } catch (error) {
       if (
@@ -798,29 +813,37 @@ export class StudentsService {
 
     const normalizedGuardians = this.normalizeGuardians(guardians);
 
-    if (contact !== undefined || guardians !== undefined) {
-      const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
-      if (!personUuid) {
-        throw new BadRequestException(
-          'นักเรียนคนนี้ยังไม่ได้เชื่อมข้อมูลตัวตน จึงบันทึกข้อมูลติดต่อไม่ได้',
-        );
-      }
-      await this.studentsRepository.updateStudentPersonContacts(
-        personUuid,
+    if (hasTermEdit || contact !== undefined || guardians !== undefined) {
+      const result = await this.studentsRepository.updateStudent(
+        id,
+        {
+          ...termFields,
+          VillageNumber_Onec: cleanPrefixedAddressText('หมู่', termFields.VillageNumber_Onec),
+          Street_Onec: cleanPrefixedAddressText('ถนน', termFields.Street_Onec),
+          Soi_Onec: cleanPrefixedAddressText('ซอย', termFields.Soi_Onec),
+          Trok_Onec: cleanPrefixedAddressText('ตรอก', termFields.Trok_Onec),
+        },
         contact,
         normalizedGuardians,
         resolveAuditActorId(actor),
       );
-    }
-
-    if (hasTermEdit) {
-      await this.studentsRepository.updateStudentByUuid(id, {
-        ...termFields,
-        VillageNumber_Onec: cleanPrefixedAddressText('หมู่', termFields.VillageNumber_Onec),
-        Street_Onec: cleanPrefixedAddressText('ถนน', termFields.Street_Onec),
-        Soi_Onec: cleanPrefixedAddressText('ซอย', termFields.Soi_Onec),
-        Trok_Onec: cleanPrefixedAddressText('ตรอก', termFields.Trok_Onec),
-      });
+      if ('notFound' in result) {
+        throw new NotFoundException(`Student with ID ${id} not found`);
+      }
+      if ('missingPerson' in result) {
+        throw new BadRequestException(
+          'นักเรียนคนนี้ยังไม่ได้เชื่อมข้อมูลตัวตน จึงบันทึกข้อมูลติดต่อไม่ได้',
+        );
+      }
+      if ('invalidStatus' in result) {
+        throw new BadRequestException('สถานะนักเรียนไม่พร้อมใช้งานหรือเป็นสถานะทางเทคนิค');
+      }
+      if (
+        termFields.student_status_code !== undefined &&
+        Number(existing.student_status_code) !== termFields.student_status_code
+      ) {
+        await this.recalculateStudentRisk(id, 'student-status-update');
+      }
     }
 
     return await this.findOne(id, actor, userScope);

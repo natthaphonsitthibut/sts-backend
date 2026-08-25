@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 import { buildDataScopeQuery, type DataScope } from '../common/utils/authorization';
 import { queryDataSource } from '../database/sql-query';
 import type {
@@ -497,7 +497,12 @@ export class StudentsRepository {
     data: CreateStudentDto,
     actorUserId: number | null,
     userScope?: DataScope,
-  ): Promise<{ studentUuid: string } | { conflict: 'IDENTITY' | 'ENROLLMENT' } | null> {
+  ): Promise<
+    | { studentUuid: string }
+    | { conflict: 'IDENTITY' | 'ENROLLMENT' }
+    | { invalidStatus: true }
+    | null
+  > {
     return await this.dataSource.transaction(async (manager) => {
       const scopeParams: unknown[] = [data.classroom_id];
       let scopeSql = '';
@@ -547,6 +552,20 @@ export class StudentsRepository {
       }>;
       const classroom = classrooms[0];
       if (!classroom) return null;
+
+      const statuses = (await manager.query(
+        `
+          SELECT code
+          FROM student_status
+          WHERE code = $1
+            AND is_enabled = TRUE
+            AND category <> 'UNMATCHED'
+            AND deleted_at IS NULL
+          FOR SHARE
+        `,
+        [data.student_status_code],
+      )) as unknown as Array<{ code: number }>;
+      if (!statuses[0]) return { invalidStatus: true };
 
       await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `student-national-id:${data.PersonID_Onec}`,
@@ -616,7 +635,7 @@ export class StudentsRepository {
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-            $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $29
+            $20, $21, $22, $23, $24, $25, $26, $27, $28, $28
           )
           RETURNING student_uuid::text
         `,
@@ -697,7 +716,8 @@ export class StudentsRepository {
     });
   }
 
-  async updateStudentByUuid(
+  private async updateStudentTermWithManager(
+    manager: EntityManager,
     studentUuid: string,
     data: Omit<UpdateStudentDto, 'contact' | 'guardians'>,
   ): Promise<void> {
@@ -736,7 +756,7 @@ export class StudentsRepository {
       values.push(typeof value === 'string' ? value.trim() || null : value);
       return `${columnByField[field]} = $${values.length}`;
     });
-    await this.query(
+    await manager.query(
       `UPDATE student_term SET ${assignments.join(', ')} WHERE student_uuid = $1`,
       values,
     );
@@ -771,83 +791,126 @@ export class StudentsRepository {
     return result.rows;
   }
 
-  /**
-   * Replace the person's guardian list in one transaction. Existing live rows
-   * are soft-deleted (history stays queryable) and the submitted set is
-   * inserted fresh — the form always sends the whole list.
-   */
-  async updateStudentPersonContacts(
+  private async updateStudentPersonContactsWithManager(
+    manager: EntityManager,
     personUuid: string,
     contact: StudentContactDto | undefined,
     guardians: StudentGuardianInputDto[] | undefined,
     actorUserId: number | null,
   ): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      if (contact !== undefined) {
-        const hasPhone = contact.phone !== undefined;
-        const hasEmail = contact.email !== undefined;
-        const hasLineId = contact.line_id !== undefined;
+    if (contact !== undefined) {
+      const hasPhone = contact.phone !== undefined;
+      const hasEmail = contact.email !== undefined;
+      const hasLineId = contact.line_id !== undefined;
+      await manager.query(
+        `
+          INSERT INTO student_person_contact (
+            person_uuid, phone, email, line_id, created_by, updated_by
+          )
+          VALUES ($1, $2, $3, $4, $8, $8)
+          ON CONFLICT (person_uuid) DO UPDATE
+          SET phone = CASE WHEN $5 THEN EXCLUDED.phone ELSE student_person_contact.phone END,
+              email = CASE WHEN $6 THEN EXCLUDED.email ELSE student_person_contact.email END,
+              line_id = CASE WHEN $7 THEN EXCLUDED.line_id ELSE student_person_contact.line_id END,
+              updated_by = $8,
+              deleted_at = NULL,
+              deleted_by = NULL
+        `,
+        [
+          personUuid,
+          contact.phone ?? null,
+          contact.email ?? null,
+          contact.line_id ?? null,
+          hasPhone,
+          hasEmail,
+          hasLineId,
+          actorUserId,
+        ],
+      );
+    }
+
+    if (guardians !== undefined) {
+      await manager.query(
+        `
+          UPDATE student_guardian
+          SET deleted_at = now(), deleted_by = $2
+          WHERE person_uuid = $1 AND deleted_at IS NULL
+        `,
+        [personUuid, actorUserId],
+      );
+      for (const guardian of guardians) {
         await manager.query(
           `
-            INSERT INTO student_person_contact (
-              person_uuid, phone, email, line_id, created_by, updated_by
+            INSERT INTO student_guardian (
+              person_uuid, relation, relation_note, first_name, last_name, full_name,
+              phone, email, line_id, is_primary, created_by, updated_by
             )
-            VALUES ($1, $2, $3, $4, $8, $8)
-            ON CONFLICT (person_uuid) DO UPDATE
-            SET phone = CASE WHEN $5 THEN EXCLUDED.phone ELSE student_person_contact.phone END,
-                email = CASE WHEN $6 THEN EXCLUDED.email ELSE student_person_contact.email END,
-                line_id = CASE WHEN $7 THEN EXCLUDED.line_id ELSE student_person_contact.line_id END,
-                updated_by = $8,
-                deleted_at = NULL,
-                deleted_by = NULL
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
           `,
           [
             personUuid,
-            contact.phone ?? null,
-            contact.email ?? null,
-            contact.line_id ?? null,
-            hasPhone,
-            hasEmail,
-            hasLineId,
+            guardian.relation,
+            guardian.relation === 'GUARDIAN' ? (guardian.relation_note ?? null) : null,
+            guardian.first_name?.trim() ?? null,
+            guardian.last_name?.trim() || null,
+            guardian.full_name?.trim() ?? '',
+            guardian.phone ?? null,
+            guardian.email ?? null,
+            guardian.line_id ?? null,
+            guardian.is_primary ?? false,
             actorUserId,
           ],
         );
       }
+    }
+  }
 
-      if (guardians !== undefined) {
-        await manager.query(
+  /** Enrollment, contact and guardian changes commit or roll back together. */
+  async updateStudent(
+    studentUuid: string,
+    data: Omit<UpdateStudentDto, 'contact' | 'guardians'>,
+    contact: StudentContactDto | undefined,
+    guardians: StudentGuardianInputDto[] | undefined,
+    actorUserId: number | null,
+  ): Promise<
+    { updated: true } | { notFound: true } | { missingPerson: true } | { invalidStatus: true }
+  > {
+    return await this.dataSource.transaction(async (manager) => {
+      const enrollments = (await manager.query(
+        `SELECT person_uuid FROM student_term WHERE student_uuid = $1 FOR UPDATE`,
+        [studentUuid],
+      )) as unknown as Array<{ person_uuid: string | null }>;
+      const enrollment = enrollments[0];
+      if (!enrollment) return { notFound: true };
+
+      if (data.student_status_code !== undefined) {
+        const statuses = (await manager.query(
           `
-            UPDATE student_guardian
-            SET deleted_at = now(), deleted_by = $2
-            WHERE person_uuid = $1 AND deleted_at IS NULL
+            SELECT code
+            FROM student_status
+            WHERE code = $1
+              AND is_enabled = TRUE
+              AND category <> 'UNMATCHED'
+              AND deleted_at IS NULL
+            FOR SHARE
           `,
-          [personUuid, actorUserId],
-        );
-        for (const guardian of guardians) {
-          await manager.query(
-            `
-              INSERT INTO student_guardian (
-                person_uuid, relation, relation_note, first_name, last_name, full_name,
-                phone, email, line_id, is_primary, created_by, updated_by
-              )
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
-            `,
-            [
-              personUuid,
-              guardian.relation,
-              guardian.relation === 'GUARDIAN' ? (guardian.relation_note ?? null) : null,
-              guardian.first_name?.trim() ?? null,
-              guardian.last_name?.trim() || null,
-              guardian.full_name?.trim() ?? '',
-              guardian.phone ?? null,
-              guardian.email ?? null,
-              guardian.line_id ?? null,
-              guardian.is_primary ?? false,
-              actorUserId,
-            ],
-          );
-        }
+          [data.student_status_code],
+        )) as unknown as Array<{ code: number }>;
+        if (!statuses[0]) return { invalidStatus: true };
       }
+
+      if (contact !== undefined || guardians !== undefined) {
+        if (!enrollment.person_uuid) return { missingPerson: true };
+        await this.updateStudentPersonContactsWithManager(
+          manager,
+          enrollment.person_uuid,
+          contact,
+          guardians,
+          actorUserId,
+        );
+      }
+      await this.updateStudentTermWithManager(manager, studentUuid, data);
+      return { updated: true };
     });
   }
 
@@ -1082,6 +1145,13 @@ export class StudentsRepository {
            AND attendance.session_kind = 'SUBJECT'
            AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
            AND attendance."Semester_Onec" = s."Semester_Onec"
+          JOIN attendance_sessions attendance_session
+            ON attendance_session.id = attendance.session_id
+          JOIN school_calendar_days calendar_day
+            ON calendar_day.school_term_id = attendance_session.school_term_id
+           AND calendar_day.calendar_date = attendance_session.attendance_date
+           AND calendar_day.day_type = 'SCHOOL_DAY'
+           AND calendar_day.deleted_at IS NULL
           WHERE s.student_uuid = $1
           GROUP BY attendance."AttendanceDate"
         )
@@ -1161,13 +1231,20 @@ export class StudentsRepository {
           ON status.code = attendance."AttendanceStatus"
         JOIN attendance_sessions attendance_session
           ON attendance_session.id = attendance.session_id
+        JOIN school_calendar_days calendar_day
+          ON calendar_day.school_term_id = attendance_session.school_term_id
+         AND calendar_day.calendar_date = attendance_session.attendance_date
+         AND calendar_day.day_type = 'SCHOOL_DAY'
+         AND calendar_day.deleted_at IS NULL
         LEFT JOIN subjects subject
           ON subject.id = attendance.subject_id
         LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
         LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE s.student_uuid = $1
           AND attendance."AttendanceDate" = $2::date
-        ORDER BY subject.name_th ASC NULLS LAST, subject.code ASC NULLS LAST,
+        ORDER BY attendance_session.checking_started_at ASC NULLS LAST,
+                 attendance_session.submitted_at ASC NULLS LAST,
+                 subject.name_th ASC NULLS LAST, subject.code ASC NULLS LAST,
                  attendance."AttendanceID" ASC
       `,
       [id, date],
