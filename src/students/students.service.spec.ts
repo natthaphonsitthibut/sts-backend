@@ -411,7 +411,6 @@ describe('StudentsService', () => {
     studentsRepository.listStudentSubjectAttendanceByDate.mockResolvedValue([
       {
         date: '2026-08-02',
-        period: 2,
         subject_code: 'TH101',
         subject_name: 'ภาษาไทย',
         status_code: 1,
@@ -419,6 +418,8 @@ describe('StudentsService', () => {
         status_label: 'มาเรียน',
         status_badge_variant: 'success',
         recorded_at: '2026-08-02T08:30:00.000Z',
+        checking_started_at: '2026-08-02T08:27:00.000Z',
+        submitted_at: '2026-08-02T08:32:00.000Z',
         recorded_by: 'ครูสมใจ ใจดี',
       },
     ]);
@@ -428,6 +429,8 @@ describe('StudentsService', () => {
       data: [
         expect.objectContaining({
           recordedAt: '2026-08-02T08:30:00.000Z',
+          checkingStartedAt: '2026-08-02T08:27:00.000Z',
+          submittedAt: '2026-08-02T08:32:00.000Z',
           recordedBy: 'ครูสมใจ ใจดี',
         }),
       ],

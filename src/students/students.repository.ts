@@ -873,7 +873,6 @@ export class StudentsRepository {
       `
         SELECT
           attendance."AttendanceDate"::text AS date,
-          attendance."Period"::int AS period,
           subject.code AS subject_code,
           subject.name_th AS subject_name,
           status.code AS status_code,
@@ -881,6 +880,8 @@ export class StudentsRepository {
           status.label_th AS status_label,
           status.badge_variant AS status_badge_variant,
           attendance."RecordedAt" AS recorded_at,
+          attendance_session.checking_started_at,
+          attendance_session.submitted_at,
           COALESCE(
             NULLIF(BTRIM(CONCAT_WS(' ', recorder.first_name, recorder.last_name)), ''),
             NULLIF(BTRIM(CONCAT_WS(' ', recorder_user."FirstName", recorder_user."LastName")), ''),
@@ -897,13 +898,16 @@ export class StudentsRepository {
          AND attendance."Semester_Onec" = s."Semester_Onec"
         JOIN attendance_record_statuses status
           ON status.code = attendance."AttendanceStatus"
+        JOIN attendance_sessions attendance_session
+          ON attendance_session.id = attendance.session_id
         LEFT JOIN subjects subject
           ON subject.id = attendance.subject_id
         LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id
         LEFT JOIN users recorder_user ON recorder_user.username = attendance."RecordedBy"
         WHERE s.student_uuid = $1
           AND attendance."AttendanceDate" = $2::date
-        ORDER BY attendance."Period" ASC, attendance."AttendanceID" ASC
+        ORDER BY subject.name_th ASC NULLS LAST, subject.code ASC NULLS LAST,
+                 attendance."AttendanceID" ASC
       `,
       [id, date],
     );

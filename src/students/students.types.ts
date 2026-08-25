@@ -128,7 +128,6 @@ export interface StudentAttendanceCalendarRow extends Record<string, unknown> {
 
 export interface StudentSubjectAttendanceRow extends Record<string, unknown> {
   date: string;
-  period: number;
   status_code: number;
   status_internal_code: string;
   status_label: string;
@@ -136,6 +135,8 @@ export interface StudentSubjectAttendanceRow extends Record<string, unknown> {
   subject_code: string | null;
   subject_name: string | null;
   recorded_at: string | Date | null;
+  checking_started_at: string | Date | null;
+  submitted_at: string | Date | null;
   recorded_by: string | null;
 }
 

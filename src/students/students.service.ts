@@ -667,7 +667,6 @@ export class StudentsService {
       success: true,
       data: rows.map((row) => ({
         date: row.date,
-        period: Number(row.period),
         subjectCode: row.subject_code,
         subjectName: row.subject_name,
         statusCode: Number(row.status_code),
@@ -675,6 +674,8 @@ export class StudentsService {
         statusLabel: row.status_label,
         statusBadgeVariant: row.status_badge_variant,
         recordedAt: row.recorded_at,
+        checkingStartedAt: row.checking_started_at,
+        submittedAt: row.submitted_at,
         recordedBy: row.recorded_by,
       })),
     };
