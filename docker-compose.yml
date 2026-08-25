@@ -19,11 +19,50 @@ services:
       # stays under GitHub's 100MB file limit. The postgres entrypoint runs
       # *.sql.gz directly — no manual decompression step.
       - ./data/backups/sts_backup.sql.gz:/docker-entrypoint-initdb.d/01-sts_backup.sql.gz:ro
+      - ./data/baseline/verify-dev-baseline.sql:/docker-entrypoint-initdb.d/02-verify-dev-baseline.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d sts"]
       interval: 5s
       timeout: 5s
       retries: 20
+
+  baseline-db:
+    image: postgres:15-alpine
+    container_name: sts-baseline-verify-postgres
+    profiles: ["baseline-verify"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${BASELINE_VERIFY_POSTGRES_PASSWORD:-baseline-restore-only}
+      POSTGRES_DB: sts
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./data/backups/sts_backup.sql.gz:/docker-entrypoint-initdb.d/01-sts_backup.sql.gz:ro
+      - ./data/baseline/verify-dev-baseline.sql:/docker-entrypoint-initdb.d/02-verify-dev-baseline.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sts"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  baseline-export:
+    image: postgres:15-alpine
+    profiles: ["baseline-export"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - ./data/backups:/output
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - >-
+        pg_dump --host=db --username=postgres --dbname=sts_task12_baseline
+        --clean --if-exists --no-owner --no-privileges
+        | gzip -9 > /output/sts_backup.sql.gz.next;
+        gzip -t /output/sts_backup.sql.gz.next;
+        mv /output/sts_backup.sql.gz.next /output/sts_backup.sql.gz
 
   redis:
     image: redis:7-alpine

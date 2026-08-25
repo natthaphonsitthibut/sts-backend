@@ -1,0 +1,33 @@
+{
+  "capturedAt": "2026-08-24T17:40:00+07:00",
+  "source": "Supabase production aggregate metadata (read-only) + local target migrations",
+  "postgresMajor": 15,
+  "artifact": {
+    "path": "data/backups/sts_backup.sql.gz",
+    "compressedBytes": 3512868,
+    "sha256": "5b1c8d36dc0be1df64060c044c0d6fe58d90a17ea9d952dd85f1f805cc23f098"
+  },
+  "productionSource": {
+    "migrations": 221,
+    "schools": 10,
+    "schoolTerms": 10,
+    "schoolClassrooms": 441,
+    "teachers": 451,
+    "activeTeacherMemberships": 451,
+    "studentTerm": 6000,
+    "legacyAttendanceRows": 179396,
+    "legacyAttendanceSessions": 13232
+  },
+  "canonicalTarget": {
+    "migrations": 237,
+    "schools": 10,
+    "schoolTerms": 10,
+    "schoolClassrooms": 441,
+    "teachers": 451,
+    "activeTeacherMemberships": 451,
+    "studentTerm": 6000,
+    "legacyRelations": 0,
+    "activeRuntimeCredentials": 0,
+    "backupTableRows": 0
+  }
+}
