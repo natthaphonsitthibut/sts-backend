@@ -377,6 +377,7 @@ describe('SchoolStructureRepository scope', () => {
         42,
         '00000000-0000-4000-8000-000000000001',
         'ACADEMIC',
+        'WATCH',
         'ติดตาม',
         7,
         runner as never,
@@ -390,9 +391,9 @@ describe('SchoolStructureRepository scope', () => {
     // enrollment the caller addressed, so the history survives a term change.
     expect(runner.query).toHaveBeenCalledWith(
       expect.stringMatching(
-        /INSERT INTO classroom_student_comments[\s\S]*problem_category[\s\S]*problem_description[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
+        /INSERT INTO classroom_student_comments[\s\S]*problem_category[\s\S]*concern_level_code[\s\S]*problem_description[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
       ),
-      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'ติดตาม', 7],
+      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'WATCH', 'ติดตาม', 7],
       true,
     );
   });

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import {
   hasAreaDataScope,
+  isClassInScope,
   isUnconfiguredDataScope,
   normalizeDataScope,
   type AuthenticatedRequestUser,
@@ -98,8 +99,8 @@ export class SchoolStructureService {
         'manage-classroom-links',
         'import-data',
         'manage-role-groups',
-        // จัดการข้อมูลคุณครู reuses this endpoint for its school picker.
-        'manage-teachers',
+        // จัดการข้อมูลครู reuses this endpoint for its school picker.
+        'teachers',
       ].some((permission) => hasPermission(actor.roles, actor.permissions, permission));
     if (!canManageStructure && !canUseRelatedRead) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการโครงสร้างโรงเรียน');
@@ -129,6 +130,38 @@ export class SchoolStructureService {
       this.resolveScope(actor, allowRelatedRead),
     );
     if (!allowed) throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
+  }
+
+  private resolveCommentScope(actor: AuthenticatedRequestUser): DataScope {
+    const canComment = ['classrooms', 'manage-school-structure', 'attendance', 'students'].some(
+      (permission) => hasPermission(actor.roles, actor.permissions, permission),
+    );
+    if (!canComment) {
+      throw new ForbiddenException('ไม่มีสิทธิ์บันทึกความคิดเห็นนักเรียน');
+    }
+    const scope = normalizeDataScope(actor.data_scope) ?? {};
+    if (scope.own_only === true || isUnconfiguredDataScope(scope)) {
+      throw new ForbiddenException('ไม่พบขอบเขตนักเรียนที่ใช้งานได้');
+    }
+    if (scope.global !== true && !hasAreaDataScope(scope)) {
+      throw new ForbiddenException('ไม่พบขอบเขตนักเรียนที่ใช้งานได้');
+    }
+    return scope;
+  }
+
+  private async assertClassroomCommentAccess(
+    classroom: SchoolClassroomRow,
+    actor: AuthenticatedRequestUser,
+  ): Promise<void> {
+    const scope = this.resolveCommentScope(actor);
+    const schoolAllowed = await this.repository.isSchoolInScope(classroom.school_id, scope);
+    const classroomAllowed = isClassInScope(scope, {
+      gradeLevelId: classroom.grade_level_id,
+      roomId: classroom.id,
+    });
+    if (!schoolAllowed || !classroomAllowed) {
+      throw new NotFoundException('ไม่พบห้องเรียนในขอบเขตของคุณ');
+    }
   }
 
   private toClassroom(row: SchoolClassroomRow) {
@@ -736,22 +769,16 @@ export class SchoolStructureService {
         if (membership.school_id !== classroom.school_id) {
           throw new BadRequestException('ครูและห้องเรียนต้องอยู่โรงเรียนเดียวกัน');
         }
-        // Reassigning a homeroom replaces the previous teacher; the old row is
-        // retired first so the one-active-homeroom index still holds.
-        if (dto.assignmentKind === 'HOMEROOM') {
-          await this.repository.deactivateHomeroomAssignments(
-            dto.classroomId,
-            actorId,
-            queryRunner,
-          );
+        if (dto.assignmentKind !== 'HOMEROOM') {
+          throw new BadRequestException('การมอบหมายรายวิชาใช้หน้ารายวิชาในระดับชั้น');
         }
         const created = await this.repository.createAssignment(
           {
             schoolId: classroom.school_id,
             classroomId: dto.classroomId,
             teacherMembershipId: dto.teacherMembershipId,
-            subjectId: dto.assignmentKind === 'SUBJECT' ? (dto.subjectId ?? null) : null,
-            assignmentKind: dto.assignmentKind,
+            subjectId: null,
+            assignmentKind: 'HOMEROOM',
             effectiveOn: dto.effectiveOn ?? null,
             effectiveUntil: dto.effectiveUntil ?? null,
             actorId,
@@ -763,7 +790,7 @@ export class SchoolStructureService {
             actorUserId: actorId,
             actorLabel: actor.username,
             action: 'MASTER_DATA_EDIT',
-            targetType: 'classroom_teacher_assignments',
+            targetType: 'classroom_homeroom_teachers',
             targetId: created.id,
             metadata: {
               op: 'create',
@@ -843,19 +870,20 @@ export class SchoolStructureService {
     dto: CreateClassroomStudentCommentDto,
     actor: AuthenticatedRequestUser,
   ) {
-    this.resolveScope(actor);
+    this.resolveCommentScope(actor);
     const actorId = resolveAuditActorId(actor);
     if (!actorId) throw new ForbiddenException('บัญชีนี้ไม่รองรับการบันทึกความคิดเห็น');
 
     const classroom = await this.repository.findClassroomById(classroomId);
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
-    await this.assertSchoolAccess(classroom.school_id, actor);
+    await this.assertClassroomCommentAccess(classroom, actor);
 
     const created = await this.repository.withTransaction(async (queryRunner) => {
       const comment = await this.repository.createStudentComment(
         classroomId,
         studentUuid,
         dto.problemCategory,
+        dto.concernLevelCode,
         dto.problemDescription,
         actorId,
         queryRunner,
@@ -875,6 +903,7 @@ export class SchoolStructureService {
             classroomId,
             studentUuid,
             problemCategory: dto.problemCategory,
+            concernLevelCode: dto.concernLevelCode,
             descriptionLength: dto.problemDescription.length,
           },
           ip: null,
@@ -884,13 +913,13 @@ export class SchoolStructureService {
       return comment;
     });
 
-    // A teacher comment is what puts a student on เฝ้าระวัง, so the profile has
-    // to be recalculated now rather than at the next nightly pass.
-    await this.riskProfileService
-      .requestStudentRecalculation([studentUuid], 'classroom-comment')
-      .catch(() => {
-        this.logger.warn(`Unable to refresh risk profile for student ${studentUuid}`);
-      });
+    if (dto.concernLevelCode !== 'NOTE') {
+      await this.riskProfileService
+        .requestStudentRecalculation([studentUuid], 'classroom-comment')
+        .catch(() => {
+          this.logger.warn('Unable to refresh risk profile after classroom comment');
+        });
+    }
 
     return {
       data: {
@@ -899,6 +928,8 @@ export class SchoolStructureService {
         problemCategory: created.problem_category_code as ClassroomStudentProblemCategory,
         problemCategoryLabel: created.problem_category_label,
         problemCategoryGuidance: created.problem_category_guidance,
+        concernLevelCode: created.concern_level_code,
+        concernLevelLabel: created.concern_level_label,
         problemDescription: created.problem_description,
         createdAt: created.created_at,
       },
@@ -1025,5 +1056,9 @@ export class SchoolStructureService {
 
   async listStudentProblemCategories() {
     return { data: await this.repository.listStudentProblemCategories() };
+  }
+
+  async listStudentCommentConcernLevels() {
+    return { data: await this.repository.listStudentCommentConcernLevels() };
   }
 }

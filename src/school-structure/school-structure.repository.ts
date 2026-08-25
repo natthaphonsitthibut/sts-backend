@@ -21,7 +21,10 @@ import type {
   StructureStatus,
   TeacherAssignmentKind,
 } from './school-structure.types';
-import type { ClassroomStudentProblemCategoryOption } from './classroom-student-comment.constants';
+import type {
+  ClassroomStudentCommentConcernLevelOption,
+  ClassroomStudentProblemCategoryOption,
+} from './classroom-student-comment.constants';
 
 /**
  * Free-text match on an enrolled student (school-owned number or full name).
@@ -183,7 +186,7 @@ export class SchoolStructureRepository {
         )
         OR EXISTS (
           SELECT 1
-          FROM classroom_teacher_assignments search_assignment
+          FROM classroom_homeroom_teachers search_assignment
           JOIN school_teacher_memberships search_membership
             ON search_membership.id = search_assignment.teacher_membership_id
            AND search_membership.membership_status = 'ACTIVE'
@@ -192,9 +195,6 @@ export class SchoolStructureRepository {
             ON search_teacher_person.id = search_membership.teacher_id
            AND search_teacher_person.deleted_at IS NULL
           WHERE search_assignment.classroom_id = classroom.id
-            AND search_assignment.assignment_kind = 'HOMEROOM'
-            AND search_assignment.assignment_status = 'ACTIVE'
-            AND search_assignment.deleted_at IS NULL
             AND CONCAT_WS(' ', search_teacher_person.first_name, search_teacher_person.last_name)
                 ILIKE ${searchParam} ESCAPE '\\'
         )
@@ -225,11 +225,9 @@ export class SchoolStructureRepository {
           (
             SELECT COUNT(DISTINCT membership.teacher_id)::int
             FROM filtered_classrooms classroom
-            JOIN classroom_teacher_assignments assignment
+            JOIN classroom_homeroom_teachers assignment
               ON assignment.classroom_id = classroom.id
              AND assignment.school_id = classroom.school_id
-             AND assignment.assignment_status = 'ACTIVE'
-             AND assignment.deleted_at IS NULL
             JOIN school_teacher_memberships membership
               ON membership.id = assignment.teacher_membership_id
              AND membership.school_id = assignment.school_id
@@ -288,7 +286,7 @@ export class SchoolStructureRepository {
         LEFT JOIN LATERAL (
           SELECT TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
                  AS homeroom_teacher_name
-          FROM classroom_teacher_assignments assignment
+          FROM classroom_homeroom_teachers assignment
           JOIN school_teacher_memberships membership
             ON membership.id = assignment.teacher_membership_id
            AND membership.school_id = assignment.school_id
@@ -298,10 +296,6 @@ export class SchoolStructureRepository {
           AND teacher_person.deleted_at IS NULL
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
-            AND assignment.assignment_kind = 'HOMEROOM'
-            AND assignment.assignment_status = 'ACTIVE'
-            AND assignment.deleted_at IS NULL
-          ORDER BY assignment.id DESC
           LIMIT 1
         ) homeroom ON TRUE
         WHERE ${conditions.join(' AND ')}
@@ -385,7 +379,7 @@ export class SchoolStructureRepository {
         favorite.created_at AS favorited_at,
         (
           SELECT TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
-          FROM classroom_teacher_assignments assignment
+          FROM classroom_homeroom_teachers assignment
           JOIN school_teacher_memberships membership
             ON membership.id = assignment.teacher_membership_id
            AND membership.school_id = assignment.school_id
@@ -395,10 +389,6 @@ export class SchoolStructureRepository {
           AND teacher_person.deleted_at IS NULL
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
-            AND assignment.assignment_kind = 'HOMEROOM'
-            AND assignment.assignment_status = 'ACTIVE'
-            AND assignment.deleted_at IS NULL
-          ORDER BY assignment.id DESC
           LIMIT 1
         ) AS homeroom_teacher_name,
         (SELECT COUNT(*)::int FROM student_term enrollment
@@ -556,10 +546,8 @@ export class SchoolStructureRepository {
             WHERE enrollment.classroom_id = $1 AND enrollment.deleted_at IS NULL
           ) AS student_count,
           (
-            SELECT COUNT(*)::int FROM classroom_teacher_assignments assignment
-            WHERE assignment.classroom_id = $1
-              AND assignment.assignment_status = 'ACTIVE'
-              AND assignment.deleted_at IS NULL
+            SELECT COUNT(*)::int FROM classroom_homeroom_teachers homeroom
+            WHERE homeroom.classroom_id = $1
           ) AS assignment_count
       `;
     const result = queryRunner
@@ -726,11 +714,9 @@ export class SchoolStructureRepository {
         ON teacher_person.id = membership.teacher_id
        AND teacher_person.teacher_status = 'ACTIVE'
        AND teacher_person.deleted_at IS NULL
-      JOIN classroom_teacher_assignments assignment
+      JOIN classroom_homeroom_teachers assignment
         ON assignment.teacher_membership_id = membership.id
        AND assignment.school_id = membership.school_id
-       AND assignment.assignment_status = 'ACTIVE'
-       AND assignment.deleted_at IS NULL
       JOIN school_classrooms classroom
         ON classroom.id = assignment.classroom_id
        AND classroom.school_id = assignment.school_id
@@ -943,11 +929,8 @@ export class SchoolStructureRepository {
     if (status === 'INACTIVE') {
       await queryRunner.query(
         `
-          UPDATE classroom_teacher_assignments
-          SET assignment_status = 'INACTIVE', updated_by = $2
+          DELETE FROM classroom_homeroom_teachers
           WHERE teacher_membership_id = $1
-            AND assignment_status = 'ACTIVE'
-            AND deleted_at IS NULL
         `,
         [membershipId, actorId],
       );
@@ -970,55 +953,30 @@ export class SchoolStructureRepository {
       this.dataSource,
       `
         SELECT
-          assignment.id::text,
+          assignment.classroom_id::text AS id,
           assignment.school_id,
           assignment.classroom_id::text,
           assignment.teacher_membership_id::text,
           membership.teacher_id::text AS teacher_id,
           TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS teacher_name,
-          assignment.subject_id,
-          subject.code AS subject_code,
-          subject.name_th AS subject_name,
-          assignment.assignment_kind,
-          assignment.assignment_status,
-          assignment.effective_on::text,
-          assignment.effective_until::text
-        FROM classroom_teacher_assignments assignment
+          NULL::int AS subject_id,
+          NULL::text AS subject_code,
+          NULL::text AS subject_name,
+          'HOMEROOM'::text AS assignment_kind,
+          'ACTIVE'::text AS assignment_status,
+          NULL::text AS effective_on,
+          NULL::text AS effective_until
+        FROM classroom_homeroom_teachers assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
         JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN subjects subject ON subject.id = assignment.subject_id
-        WHERE assignment.classroom_id = $1 AND assignment.deleted_at IS NULL
-        ORDER BY assignment.assignment_kind, teacher_name, assignment.id
+        WHERE assignment.classroom_id = $1
+        ORDER BY teacher_name
       `,
       [classroomId],
     );
     return result.rows;
-  }
-
-  /**
-   * Ends the classroom's current homeroom assignment so a replacement can be
-   * inserted. A classroom may hold only one ACTIVE homeroom assignment
-   * (`uq_classroom_teacher_assignments_homeroom`); the previous row is kept as
-   * history rather than deleted.
-   */
-  async deactivateHomeroomAssignments(
-    classroomId: number,
-    actorId: number | null,
-    queryRunner: QueryRunner,
-  ): Promise<void> {
-    await createSqlQueryExecutor(queryRunner).query(
-      `
-        UPDATE classroom_teacher_assignments
-        SET assignment_status = 'INACTIVE', updated_by = $2
-        WHERE classroom_id = $1
-          AND assignment_kind = 'HOMEROOM'
-          AND assignment_status = 'ACTIVE'
-          AND deleted_at IS NULL
-      `,
-      [classroomId, actorId],
-    );
   }
 
   async createAssignment(
@@ -1034,53 +992,45 @@ export class SchoolStructureRepository {
     },
     queryRunner: QueryRunner,
   ): Promise<ClassroomTeacherAssignmentRow> {
-    const result = await createSqlQueryExecutor(queryRunner).query<{ id: string }>(
+    await createSqlQueryExecutor(queryRunner).query(
       `
-        INSERT INTO classroom_teacher_assignments (
-          school_id, classroom_id, teacher_membership_id, subject_id,
-          assignment_kind, effective_on, effective_until, created_by, updated_by
+        INSERT INTO classroom_homeroom_teachers (
+          school_id, classroom_id, teacher_membership_id, created_by, updated_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $8)
-        RETURNING id::text
+        VALUES ($1, $2, $3, $4, $4)
+        ON CONFLICT (classroom_id) DO UPDATE
+        SET school_id = EXCLUDED.school_id,
+            teacher_membership_id = EXCLUDED.teacher_membership_id,
+            updated_by = EXCLUDED.updated_by
       `,
-      [
-        input.schoolId,
-        input.classroomId,
-        input.teacherMembershipId,
-        input.subjectId,
-        input.assignmentKind,
-        input.effectiveOn,
-        input.effectiveUntil,
-        input.actorId,
-      ],
+      [input.schoolId, input.classroomId, input.teacherMembershipId, input.actorId],
     );
     const assignments = await createSqlQueryExecutor(
       queryRunner,
     ).query<ClassroomTeacherAssignmentRow>(
       `
         SELECT
-          assignment.id::text,
+          assignment.classroom_id::text AS id,
           assignment.school_id,
           assignment.classroom_id::text,
           assignment.teacher_membership_id::text,
           membership.teacher_id::text AS teacher_id,
           TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS teacher_name,
-          assignment.subject_id,
-          subject.code AS subject_code,
-          subject.name_th AS subject_name,
-          assignment.assignment_kind,
-          assignment.assignment_status,
-          assignment.effective_on::text,
-          assignment.effective_until::text
-        FROM classroom_teacher_assignments assignment
+          NULL::int AS subject_id,
+          NULL::text AS subject_code,
+          NULL::text AS subject_name,
+          'HOMEROOM'::text AS assignment_kind,
+          'ACTIVE'::text AS assignment_status,
+          NULL::text AS effective_on,
+          NULL::text AS effective_until
+        FROM classroom_homeroom_teachers assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
         JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
           AND teacher_person.deleted_at IS NULL
-        LEFT JOIN subjects subject ON subject.id = assignment.subject_id
-        WHERE assignment.id = $1
+        WHERE assignment.classroom_id = $1
       `,
-      [result.rows[0].id],
+      [input.classroomId],
     );
     return assignments.rows[0];
   }
@@ -1188,6 +1138,7 @@ export class SchoolStructureRepository {
     classroomId: number,
     studentUuid: string,
     problemCategory: string,
+    concernLevel: string,
     problemDescription: string,
     authoredByUserId: number,
     queryRunner: QueryRunner,
@@ -1196,6 +1147,8 @@ export class SchoolStructureRepository {
     problem_category_code: string;
     problem_category_label: string;
     problem_category_guidance: string | null;
+    concern_level_code: string;
+    concern_level_label: string;
     problem_description: string;
     created_at: Date;
   } | null> {
@@ -1204,6 +1157,8 @@ export class SchoolStructureRepository {
       problem_category_code: string;
       problem_category_label: string;
       problem_category_guidance: string | null;
+      concern_level_code: string;
+      concern_level_label: string;
       problem_description: string;
       created_at: Date;
     }>(
@@ -1213,29 +1168,42 @@ export class SchoolStructureRepository {
             classroom_id,
             person_uuid,
             problem_category_code,
+            concern_level_code,
             problem_description,
             authored_by_user_id
           )
-          SELECT $1, enrollment.person_uuid, $3, $4, $5
+          SELECT $1, enrollment.person_uuid, $3, $4, $5, $6
           FROM student_term enrollment
           WHERE enrollment.student_uuid = $2
             AND enrollment.classroom_id = $1
             AND enrollment.deleted_at IS NULL
             AND enrollment.person_uuid IS NOT NULL
-          RETURNING id, problem_category_code, problem_description, created_at
+          RETURNING id, problem_category_code, concern_level_code,
+            problem_description, created_at
         )
         SELECT
           inserted.id::text,
           inserted.problem_category_code,
           category.label_th AS problem_category_label,
           category.guidance_th AS problem_category_guidance,
+          inserted.concern_level_code,
+          concern_level.label_th AS concern_level_label,
           inserted.problem_description,
           inserted.created_at
         FROM inserted
         JOIN classroom_student_problem_categories category
           ON category.code = inserted.problem_category_code
+        JOIN classroom_student_comment_concern_levels concern_level
+          ON concern_level.code = inserted.concern_level_code
       `,
-      [classroomId, studentUuid, problemCategory, problemDescription, authoredByUserId],
+      [
+        classroomId,
+        studentUuid,
+        problemCategory,
+        concernLevel,
+        problemDescription,
+        authoredByUserId,
+      ],
     );
     return result.rows[0] ?? null;
   }
@@ -1496,6 +1464,20 @@ export class SchoolStructureRepository {
       this.dataSource,
       `SELECT code, label_th AS label, guidance_th AS guidance
        FROM classroom_student_problem_categories
+       WHERE is_active = TRUE
+       ORDER BY sort_order, code`,
+    );
+    return result.rows;
+  }
+
+  async listStudentCommentConcernLevels(): Promise<ClassroomStudentCommentConcernLevelOption[]> {
+    const result = await queryDataSource<{
+      code: ClassroomStudentCommentConcernLevelOption['code'];
+      label: string;
+    }>(
+      this.dataSource,
+      `SELECT code, label_th AS label
+       FROM classroom_student_comment_concern_levels
        WHERE is_active = TRUE
        ORDER BY sort_order, code`,
     );

@@ -59,6 +59,13 @@ export class SchoolStructureController {
     return this.service.listStudentProblemCategories();
   }
 
+  @Get('student-comment-concern-levels')
+  @RequirePermission()
+  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
+  listStudentCommentConcernLevels() {
+    return this.service.listStudentCommentConcernLevels();
+  }
+
   @Get('schools')
   @RequirePermission()
   @RequireAnyPermission(
@@ -68,7 +75,7 @@ export class SchoolStructureController {
     'attendance',
     'import-data',
     'manage-role-groups',
-    'manage-teachers',
+    'teachers',
   )
   listSchools(@CurrentUser() actor: AuthenticatedRequestUser) {
     return this.service.listSchools(actor);

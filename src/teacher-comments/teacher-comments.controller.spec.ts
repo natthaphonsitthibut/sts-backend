@@ -3,37 +3,16 @@ import { AuthGuard, PermissionsGuard } from '../auth';
 import { ANY_PERMISSIONS_KEY, PERMISSIONS_KEY } from '../auth/permissions.decorator';
 import {
   StudentClassroomCommentsController,
-  StudentRiskReviewController,
   TeacherCommentReportsController,
-  TeacherWatchlistController,
-} from './observation-reviews.controller';
+} from './teacher-comments.controller';
 
-describe('Observation review controller security metadata', () => {
-  it('requires manager permission for human risk decisions', () => {
-    expect(Reflect.getMetadata(GUARDS_METADATA, StudentRiskReviewController)).toEqual([
-      AuthGuard,
-      PermissionsGuard,
-    ]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, StudentRiskReviewController)).toEqual(['students']);
-  });
-
-  it('keeps the teacher comment report behind auth and manage permission', () => {
+describe('Teacher comment controller security metadata', () => {
+  it('keeps the teacher comment report behind auth and the students page', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, TeacherCommentReportsController)).toEqual([
       AuthGuard,
       PermissionsGuard,
     ]);
     expect(Reflect.getMetadata(PERMISSIONS_KEY, TeacherCommentReportsController)).toEqual([
-      'students',
-    ]);
-  });
-
-  it('requires both case-review and observation permissions for the teacher watchlist', () => {
-    expect(Reflect.getMetadata(GUARDS_METADATA, TeacherWatchlistController)).toEqual([
-      AuthGuard,
-      PermissionsGuard,
-    ]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, TeacherWatchlistController)).toEqual([
-      'dashboard',
       'students',
     ]);
   });
