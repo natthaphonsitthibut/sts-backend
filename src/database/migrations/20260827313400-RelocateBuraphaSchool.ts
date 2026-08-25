@@ -7,6 +7,8 @@ const TARGET_SCHOOL_ID = 10010004;
  * Chonburi. Student locations are deterministic: 70% resolve to Saen Suk and
  * the remainder to nearby sub-districts in Mueang Chonburi. A migration-only
  * backup table retains the exact former student address fields for rollback.
+ * A multi-school user aborts the migration because area dimensions cannot
+ * represent different locations per school without broadening or losing scope.
  */
 export class RelocateBuraphaSchool20260827313400 implements MigrationInterface {
   name = 'RelocateBuraphaSchool20260827313400';
@@ -19,7 +21,13 @@ export class RelocateBuraphaSchool20260827313400 implements MigrationInterface {
         SELECT COUNT(*) INTO target_count
         FROM schools
         WHERE id = ${TARGET_SCHOOL_ID}
-          AND name = 'โรงเรียนเทพศิรินทร์ราชดำริ';
+          AND name = 'โรงเรียนเทพศิรินทร์ราชดำริ'
+          AND province = 'กรุงเทพมหานคร'
+          AND district = 'ดอนเมือง'
+          AND sub_district = 'สีกัน'
+          AND province_code = '10'
+          AND district_code = '1036'
+          AND sub_district_code = '103602';
 
         IF target_count <> 1 THEN
           RAISE EXCEPTION
@@ -31,6 +39,20 @@ export class RelocateBuraphaSchool20260827313400 implements MigrationInterface {
           SELECT 1 FROM student_term WHERE "SchoolID_Onec" = ${TARGET_SCHOOL_ID}
         ) THEN
           RAISE EXCEPTION 'School % has no student enrollments to relocate', ${TARGET_SCHOOL_ID};
+        END IF;
+
+        IF EXISTS (
+          SELECT 1
+          FROM users
+          WHERE data_scope @> '{"school_ids":[${TARGET_SCHOOL_ID}]}'::jsonb
+            AND (
+              jsonb_typeof(data_scope->'school_ids') IS DISTINCT FROM 'array'
+              OR jsonb_array_length(data_scope->'school_ids') <> 1
+            )
+        ) THEN
+          RAISE EXCEPTION
+            'School % relocation cannot safely rewrite a multi-school user scope',
+            ${TARGET_SCHOOL_ID};
         END IF;
       END
       $target_school_guard$

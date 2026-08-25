@@ -11,6 +11,9 @@ describe('RelocateBuraphaSchool migration', () => {
     expect(source).toContain('const TARGET_SCHOOL_ID = 10010004');
     expect(source).toContain('WHERE id = ${TARGET_SCHOOL_ID}');
     expect(source).toContain("name = 'โรงเรียนเทพศิรินทร์ราชดำริ'");
+    expect(source).toContain("province = 'กรุงเทพมหานคร'");
+    expect(source).toContain("district = 'ดอนเมือง'");
+    expect(source).toContain("sub_district = 'สีกัน'");
     expect(source).toContain("province_code = '20'");
     expect(source).toContain("district_code = '2001'");
     expect(source).toContain("sub_district_code = '200104'");
@@ -33,6 +36,8 @@ describe('RelocateBuraphaSchool migration', () => {
     expect(source).toContain("WHEN value = 'ดอนเมือง' THEN 'เมืองชลบุรี'");
     expect(source).toContain("WHEN value = 'สีกัน' THEN 'แสนสุข'");
     expect(source).toContain('SET data_scope = backup.data_scope');
+    expect(source).toContain("jsonb_array_length(data_scope->'school_ids') <> 1");
+    expect(source).toContain('cannot safely rewrite a multi-school user scope');
   });
 
   it('restores exact student addresses and the former school on down', () => {
