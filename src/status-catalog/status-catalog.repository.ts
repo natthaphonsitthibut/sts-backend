@@ -26,6 +26,10 @@ export class StatusCatalogRepository {
                sort_order
         FROM case_workflow_statuses WHERE is_active = TRUE AND deleted_at IS NULL
         UNION ALL
+        SELECT 'CASE_REFERRAL', code::text, NULL, NULL, label_th, badge_variant, NULL,
+               sort_order
+        FROM case_referral_statuses WHERE is_active = TRUE AND deleted_at IS NULL
+        UNION ALL
         SELECT 'STUDENT_RISK_TIER', code::text, NULL, NULL, label_th, badge_variant, summary_tone,
                sort_order
         FROM student_risk_tiers WHERE is_active = TRUE AND deleted_at IS NULL
