@@ -18,6 +18,11 @@ describe('DropLegacyAttendanceContracts migration', () => {
     expect(sql).toContain('live_provenance');
     expect(sql).toContain('legacy_welfare');
     expect(sql).toContain('CREATE TEMP TABLE legacy_attendance_logical');
+    expect(sql).toContain('AS recorded_by_teacher_id');
+    expect(sql).toContain('AS recorded_by_user_id');
+    expect(sql).toContain('LEFT JOIN school_teacher_memberships recorder_membership');
+    expect(sql).toContain('AS last_marked_at');
+    expect(sql).toContain('MAX(session.revision), MAX(logical.last_marked_at)');
     expect(sql).toContain('logical_rows <> roster_rows');
     expect(sql).toContain('logical_exceptions <> stored_exceptions');
     expect(sql).toContain('status_mismatches <> 0');

@@ -235,12 +235,27 @@ export class DropLegacyAttendanceContracts20260827310000 implements MigrationInt
         END::smallint AS attendance_status_code,
         MIN(COALESCE(mark.marked_at, mark."RecordedAt", session.submitted_at,
                      session.checking_started_at)) AS marked_at,
+        MAX(COALESCE(mark.marked_at, mark."RecordedAt", session.submitted_at,
+                     session.checking_started_at)) AS last_marked_at,
         MIN(COALESCE(mark.created_at, session.created_at, NOW())) AS created_at,
         MIN(mark.created_by) AS created_by,
         MAX(COALESCE(mark.updated_at, mark.created_at, session.updated_at, NOW())) AS updated_at,
-        MAX(mark.updated_by) AS updated_by
+        MAX(mark.updated_by) AS updated_by,
+        (ARRAY_AGG(
+          mark.recorded_by_teacher_id
+          ORDER BY COALESCE(mark.marked_at, mark."RecordedAt", session.submitted_at,
+                            session.checking_started_at), mark."AttendanceID"
+        ) FILTER (WHERE mark.recorded_by_teacher_id IS NOT NULL))[1]
+          AS recorded_by_teacher_id,
+        (ARRAY_AGG(
+          recorder_user.id
+          ORDER BY COALESCE(mark.marked_at, mark."RecordedAt", session.submitted_at,
+                            session.checking_started_at), mark."AttendanceID"
+        ) FILTER (WHERE recorder_user.id IS NOT NULL))[1]
+          AS recorded_by_user_id
       FROM attendance mark
       JOIN attendance_sessions session ON session.id = mark.session_id
+      LEFT JOIN users recorder_user ON recorder_user.username = mark."RecordedBy"
       WHERE session.record_storage_mode = 'FULL_ROSTER'
         AND session.deleted_at IS NULL
       GROUP BY session.school_term_id, session.school_id, session.classroom_id,
@@ -264,24 +279,44 @@ export class DropLegacyAttendanceContracts20260827310000 implements MigrationInt
         CASE WHEN BOOL_OR(session.status = 'REOPENED') THEN 'REOPENED' ELSE 'SUBMITTED' END,
         COUNT(DISTINCT logical.student_uuid)::int,
         COUNT(DISTINCT logical.student_uuid)::int,
-        MAX(session.revision), MAX(session.submitted_at),
-        (ARRAY_AGG(session.submitted_by ORDER BY session.submitted_at DESC NULLS LAST)
-          FILTER (WHERE session.submitted_by IS NOT NULL))[1],
+        MAX(session.revision), MAX(logical.last_marked_at),
+        COALESCE(
+          (ARRAY_AGG(session.submitted_by ORDER BY session.submitted_at DESC NULLS LAST)
+            FILTER (WHERE session.submitted_by IS NOT NULL))[1],
+          (ARRAY_AGG(logical.recorded_by_user_id ORDER BY logical.marked_at)
+            FILTER (WHERE logical.recorded_by_user_id IS NOT NULL))[1]
+        ),
         MIN(session.created_at), MIN(session.created_by), MAX(session.updated_at),
-        MAX(session.updated_by), MIN(session.checking_started_at),
+        MAX(session.updated_by),
+        MIN(COALESCE(session.checking_started_at, logical.marked_at)),
         COUNT(DISTINCT logical.student_uuid)
           FILTER (WHERE logical.attendance_status_code <> 1)::int,
         'EXCEPTIONS',
-        (ARRAY_AGG(session.started_by_teacher_membership_id)
-          FILTER (WHERE session.started_by_teacher_membership_id IS NOT NULL))[1],
-        (ARRAY_AGG(session.submitted_by_teacher_membership_id)
-          FILTER (WHERE session.submitted_by_teacher_membership_id IS NOT NULL))[1]
+        COALESCE(
+          (ARRAY_AGG(session.started_by_teacher_membership_id)
+            FILTER (WHERE session.started_by_teacher_membership_id IS NOT NULL))[1],
+          (ARRAY_AGG(recorder_membership.id ORDER BY
+            (recorder_membership.membership_status = 'ACTIVE') DESC,
+            recorder_membership.id
+          ) FILTER (WHERE recorder_membership.id IS NOT NULL))[1]
+        ),
+        COALESCE(
+          (ARRAY_AGG(session.submitted_by_teacher_membership_id)
+            FILTER (WHERE session.submitted_by_teacher_membership_id IS NOT NULL))[1],
+          (ARRAY_AGG(recorder_membership.id ORDER BY
+            (recorder_membership.membership_status = 'ACTIVE') DESC,
+            recorder_membership.id
+          ) FILTER (WHERE recorder_membership.id IS NOT NULL))[1]
+        )
       FROM attendance_sessions session
       JOIN legacy_attendance_logical logical
         ON logical.school_term_id = session.school_term_id
        AND logical.classroom_id = session.classroom_id
        AND logical.classroom_subject_id = session.classroom_subject_id
        AND logical.attendance_date = session.attendance_date
+      LEFT JOIN school_teacher_memberships recorder_membership
+        ON recorder_membership.teacher_id = logical.recorded_by_teacher_id
+       AND recorder_membership.school_id = session.school_id
       WHERE session.record_storage_mode = 'FULL_ROSTER'
         AND session.deleted_at IS NULL
       GROUP BY session.school_term_id, session.school_id, session.classroom_id,
