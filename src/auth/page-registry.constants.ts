@@ -22,6 +22,8 @@ export interface AppPageDefinition {
   title: string;
   /** Sidebar section header, or null for a top-level entry. */
   group: string | null;
+  /** Extra data-scope boundary enforced for page CRUD, if any. */
+  scopePolicy?: 'global-only';
 }
 
 export const APP_PAGE_GROUPS = {
@@ -34,19 +36,28 @@ export const APP_PAGES: AppPageDefinition[] = [
   { id: 'home', title: 'หน้าหลัก', group: null },
   { id: 'dashboard', title: 'รายงานสถานะนักเรียน', group: null },
   { id: 'students', title: 'รายชื่อนักเรียน', group: null },
+  { id: 'teachers', title: 'รายชื่อครู', group: null },
   { id: 'classrooms', title: 'ห้องเรียนทั้งหมด', group: null },
+  { id: 'manage-students', title: 'จัดการนักเรียน', group: APP_PAGE_GROUPS.users },
+  { id: 'manage-teachers', title: 'จัดการข้อมูลครู', group: APP_PAGE_GROUPS.users },
   {
     id: 'manage-school-structure',
     title: 'จัดการภาคเรียนและห้องเรียน',
     group: APP_PAGE_GROUPS.data,
   },
   {
-    id: 'manage-curriculum',
-    title: 'จัดการข้อมูลหลักสูตร',
+    id: 'manage-subjects',
+    title: 'จัดการหลักสูตร',
     group: APP_PAGE_GROUPS.data,
   },
   { id: 'import-data', title: 'นำเข้าข้อมูล', group: APP_PAGE_GROUPS.data },
   { id: 'export-data', title: 'ส่งออกข้อมูล', group: APP_PAGE_GROUPS.data },
+  {
+    id: 'master-data',
+    title: 'ข้อมูลพื้นฐาน',
+    group: APP_PAGE_GROUPS.data,
+    scopePolicy: 'global-only',
+  },
   {
     id: 'attendance-dashboard',
     title: 'ความครบถ้วน',
@@ -54,23 +65,13 @@ export const APP_PAGES: AppPageDefinition[] = [
   },
   { id: 'attendance', title: 'เช็กชื่อ', group: APP_PAGE_GROUPS.attendance },
   {
-    id: 'manage-teacher-access',
-    title: 'จัดการลิงก์เช็กชื่อ',
-    group: APP_PAGE_GROUPS.attendance,
-  },
-  {
-    id: 'timetable',
-    title: 'ตารางสอน',
+    id: 'manage-classroom-links',
+    title: 'จัดการลิงก์ห้องเรียน',
     group: APP_PAGE_GROUPS.attendance,
   },
   {
     id: 'manage-users-list',
     title: 'จัดการผู้ใช้งาน',
-    group: APP_PAGE_GROUPS.users,
-  },
-  {
-    id: 'manage-teachers',
-    title: 'จัดการข้อมูลคุณครู',
     group: APP_PAGE_GROUPS.users,
   },
   {

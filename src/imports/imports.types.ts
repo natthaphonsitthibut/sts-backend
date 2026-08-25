@@ -5,8 +5,7 @@ export type ImportBatchTarget =
   | ImportTarget
   | 'student_exit_events'
   | 'school_teacher_membership'
-  | 'school_classroom'
-  | 'classroom_teacher_assignment';
+  | 'school_classroom';
 
 /**
  * Per-target whitelist of column identifiers that may be written by an import.
@@ -30,8 +29,6 @@ export const IMPORT_TARGET_COLUMNS: Record<ImportTarget, ReadonlySet<string>> = 
     'LastName_Onec',
     'GenderID_Onec',
     'NationalityID_Onec',
-    'DisabilityID_Onec',
-    'DisadvantageEducationID_Onec',
     'VillageNumber_Onec',
     'Street_Onec',
     'Soi_Onec',
@@ -78,8 +75,6 @@ export const STUDENT_TERM_MUTABLE_IMPORT_COLUMNS: ReadonlySet<string> = new Set(
   'LastName_Onec',
   'GenderID_Onec',
   'NationalityID_Onec',
-  'DisabilityID_Onec',
-  'DisadvantageEducationID_Onec',
   'VillageNumber_Onec',
   'Street_Onec',
   'Soi_Onec',

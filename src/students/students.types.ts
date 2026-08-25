@@ -109,6 +109,13 @@ export interface StudentProfileSummaryRow extends Record<string, unknown> {
   total_count: string | number;
 }
 
+export interface StudentCareConsiderationRow extends Record<string, unknown> {
+  care_kind: 'DISADVANTAGE' | 'DISABILITY';
+  code: string;
+  label_th: string;
+  recorded_at: string;
+}
+
 export interface StudentAttendanceCalendarRow extends Record<string, unknown> {
   attendance_category: 'ALL_PERIODS' | 'SOME_PERIODS' | 'NO_PERIODS';
   attendance_category_label: string;
@@ -121,7 +128,6 @@ export interface StudentAttendanceCalendarRow extends Record<string, unknown> {
 
 export interface StudentSubjectAttendanceRow extends Record<string, unknown> {
   date: string;
-  period: number;
   status_code: number;
   status_internal_code: string;
   status_label: string;
@@ -129,7 +135,22 @@ export interface StudentSubjectAttendanceRow extends Record<string, unknown> {
   subject_code: string | null;
   subject_name: string | null;
   recorded_at: string | Date | null;
+  checking_started_at: string | Date | null;
+  submitted_at: string | Date | null;
   recorded_by: string | null;
+}
+
+export interface StudentManagementClassroomOption extends Record<string, unknown> {
+  id: string;
+  school_id: number;
+  school_name: string;
+  school_term_id: string;
+  academic_year: number;
+  semester: number;
+  grade_level_id: number;
+  grade_label: string;
+  room_code: string;
+  room_name: string | null;
 }
 
 export type StudentsQueryResult<T extends Record<string, unknown>> = SqlQueryResult<T>;
@@ -140,7 +161,7 @@ export interface PiiAccessEventInput {
   actorRoles: string[];
   actorKind: 'STAFF' | 'GUEST';
   subjectStudentRef: string;
-  subjectType: 'STUDENT' | 'USER';
+  subjectType: 'STUDENT' | 'USER' | 'TEACHER';
   subjectRef: string;
   subjectRefKeyVersion: number;
   fieldGroup: string;

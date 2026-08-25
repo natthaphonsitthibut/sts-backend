@@ -17,8 +17,9 @@ describe('demo school structure seed security contract', () => {
     expect(source).toContain('A generated demo teacher still has a login account');
   });
 
-  it('gives every generated teacher a realistic demo email and an active membership', () => {
-    expect(source).toContain('email: `${identity.username}@sts-demo.ac.th`');
+  it('gives every generated teacher a presentation email and an active membership', () => {
+    expect(source).toContain('email: `${identity.username}@${PRESENTATION_EMAIL_DOMAIN}`');
+    expect(source).toContain("const PRESENTATION_EMAIL_DOMAIN = 'school.sts.local'");
     expect(source).toContain('synthetic_teacher_status_issues');
     expect(source).toContain('synthetic_teachers_without_membership');
     // Re-running the seed must find the same teacher by the email that is

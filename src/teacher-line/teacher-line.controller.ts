@@ -15,26 +15,19 @@ import {
 import type { Request, Response } from 'express';
 import { Public } from '../auth';
 import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service';
+import { ThrottleTeacherAccess } from '../config/throttle.decorators';
 import {
-  ThrottleOtpRequest,
-  ThrottleOtpVerify,
-  ThrottleTeacherAccess,
-} from '../config/throttle.decorators';
-import {
-  RequestTeacherLineOtpDto,
   StartTeacherLineAuthorizationDto,
   TeacherLineAraIdChallengeTokenDto,
   TeacherLineCallbackDto,
+  TeacherLineDevelopmentGoogleDto,
   TeacherLineInvitationTokenDto,
-  VerifyTeacherLineOtpDto,
-  VerifyTeacherLineInvitationOtpDto,
 } from './dto/teacher-line.dto';
 import { TeacherLineService } from './teacher-line.service';
 
 /**
  * Public because a teacher linking their LINE account has no account to sign in
- * with — the emailed OTP is the authentication. Every route is rate limited, and
- * the OTP routes reuse the same limiters as every other one-time-code endpoint.
+ * with — Google/AraID verifies the teacher before LINE OAuth. Every route is rate limited.
  *
  * The path is LINE-shaped on purpose: `code`/`state` are that provider's OAuth
  * contract, and the callback URL is registered character-for-character in the
@@ -52,24 +45,6 @@ export class TeacherLineController {
   @Get('status')
   status() {
     return { success: true, data: { enabled: this.service.isEnabled() } };
-  }
-
-  @Post('otp/request')
-  @ThrottleOtpRequest()
-  async requestOtp(@Body() body: RequestTeacherLineOtpDto, @Req() request: Request) {
-    return {
-      success: true,
-      data: await this.service.requestOtp(body.email, request.ip ?? null, body.token),
-    };
-  }
-
-  @Post('otp/verify')
-  @ThrottleOtpVerify()
-  async verifyOtp(@Body() body: VerifyTeacherLineOtpDto, @Req() request: Request) {
-    return {
-      success: true,
-      data: await this.service.verifyOtp(body.email, body.code, request.ip ?? null, body.token),
-    };
   }
 
   @Post('araid/verify')
@@ -151,31 +126,76 @@ export class TeacherLineController {
     return { success: true, data: await this.service.resolveGroupInvitation(body.token) };
   }
 
+  @Post('google/start')
+  @ThrottleTeacherAccess()
+  async startGroupGoogle(@Body() body: TeacherLineInvitationTokenDto) {
+    return {
+      success: true,
+      data: { authorizationUrl: await this.service.startGroupGoogleAuthorization(body.token) },
+    };
+  }
+
+  @Post('invitation/google/start')
+  @ThrottleTeacherAccess()
+  async startInvitationGoogle(@Body() body: TeacherLineInvitationTokenDto) {
+    return {
+      success: true,
+      data: {
+        authorizationUrl: await this.service.startInvitationGoogleAuthorization(body.token),
+      },
+    };
+  }
+
+  @Post('google/development')
+  @ThrottleTeacherAccess()
+  async developmentGroupGoogle(@Body() body: TeacherLineDevelopmentGoogleDto) {
+    return {
+      success: true,
+      data: {
+        authorizationUrl: await this.service.developmentGroupGoogleAuthorization(
+          body.token,
+          body.email,
+        ),
+      },
+    };
+  }
+
+  @Post('invitation/google/development')
+  @ThrottleTeacherAccess()
+  async developmentInvitationGoogle(@Body() body: TeacherLineDevelopmentGoogleDto) {
+    return {
+      success: true,
+      data: {
+        authorizationUrl: await this.service.developmentInvitationGoogleAuthorization(
+          body.token,
+          body.email,
+        ),
+      },
+    };
+  }
+
+  @Get('google/callback')
+  @ThrottleTeacherAccess()
+  async googleCallback(
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: TeacherLineCallbackDto,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (query.error || !query.code || !query.state) {
+      response.redirect(this.service.buildResultUrl('FAILED', null));
+      return;
+    }
+    try {
+      response.redirect(await this.service.completeGoogleAuthorization(query.code, query.state));
+    } catch {
+      response.redirect(this.service.buildResultUrl('FAILED', null));
+    }
+  }
+
   @Post('invitation/resolve')
   @ThrottleTeacherAccess()
   async resolveInvitation(@Body() body: TeacherLineInvitationTokenDto) {
     return { success: true, data: await this.service.resolveInvitation(body.token) };
-  }
-
-  @Post('invitation/otp/request')
-  @ThrottleOtpRequest()
-  async requestInvitationOtp(@Body() body: TeacherLineInvitationTokenDto, @Req() request: Request) {
-    return {
-      success: true,
-      data: await this.service.requestInvitationOtp(body.token, request.ip ?? null),
-    };
-  }
-
-  @Post('invitation/otp/verify')
-  @ThrottleOtpVerify()
-  async verifyInvitationOtp(
-    @Body() body: VerifyTeacherLineInvitationOtpDto,
-    @Req() request: Request,
-  ) {
-    return {
-      success: true,
-      data: await this.service.verifyInvitationOtp(body.token, body.code, request.ip ?? null),
-    };
   }
 
   /** The proof token stays in the POST body, never browser history or access logs. */

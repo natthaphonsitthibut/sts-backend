@@ -7,14 +7,8 @@ export interface AuthRuntimeConfig {
   jwtSecret: string;
   /** Secret for the magic-link signed tokens (HMAC). */
   sessionSecret: string;
-  /** Lifetime of an OTP-verified magic session before re-verification is required. */
+  /** Lifetime of a verified external-identity session before re-verification is required. */
   magicSessionTtlSeconds: number;
-  /** Validity window of a one-time OTP code itself (request → verify). */
-  otpTtlSeconds: number;
-  /** Failed OTP guesses allowed per link before it is locked (brute-force cap). */
-  otpMaxAttempts: number;
-  /** How long a link stays locked after hitting the OTP attempt cap. */
-  otpLockSeconds: number;
   /** How long an AraID QR stays scannable before anyone claims it. */
   araIdChallengeEntryTtlSeconds: number;
   /** How long the scanning device then has to finish PIN + approval. */
@@ -69,14 +63,8 @@ export function getAuthConfigFromEnv(): AuthRuntimeConfig {
   return {
     jwtSecret: requireSecret('JWT_SECRET', process.env.JWT_SECRET),
     sessionSecret: requireSecret('AUTH_SESSION_SECRET', process.env.AUTH_SESSION_SECRET),
-    // OTP-verified magic session TTL — default 6h (re-OTP after, capped anyway by
-    // the link's own expiry). The instant is checked against the token's `ts`.
+    // External-identity magic session TTL — default 6h, capped by the link expiry.
     magicSessionTtlSeconds: parsePositiveInt(process.env.MAGIC_SESSION_TTL_SECONDS, 6 * 60 * 60),
-    otpTtlSeconds: parsePositiveInt(process.env.OTP_TTL_SECONDS, 10 * 60),
-    // Brute-force cap: lock a link after N wrong OTP guesses for a cool-down
-    // window. A fresh OTP request resets both (see TaskRepository.updateLinkOtp).
-    otpMaxAttempts: parsePositiveInt(process.env.OTP_MAX_ATTEMPTS, 5),
-    otpLockSeconds: parsePositiveInt(process.env.OTP_LOCK_SECONDS, 15 * 60),
     cookieName: process.env.AUTH_COOKIE_NAME?.trim() || 'sts_session',
     araIdChallengeEntryTtlSeconds: parseBoundedInt(
       process.env.ARAID_CHALLENGE_ENTRY_TTL_SECONDS,

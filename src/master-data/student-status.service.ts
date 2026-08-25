@@ -42,7 +42,7 @@ export class StudentStatusService {
     };
   }
 
-  async list(query: ListStudentStatusesQueryDto) {
+  async list(query: ListStudentStatusesQueryDto, options?: { includeTechnical?: boolean }) {
     const page = resolvePage(query.page);
     const limit = resolveLimit(query.limit);
     const { rows, totalCount } = await this.repository.list({
@@ -51,6 +51,8 @@ export class StudentStatusService {
       searchTerm: query.searchTerm?.trim() || undefined,
       sortBy: query.sortBy ?? 'sortOrder',
       sortDirection: query.sortDirection ?? 'asc',
+      includeTechnical: options?.includeTechnical === true,
+      includeInactive: query.includeInactive !== false,
     });
     return {
       data: rows.map((row) => this.toResponse(row)),

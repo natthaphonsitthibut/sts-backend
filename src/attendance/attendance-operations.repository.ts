@@ -7,7 +7,6 @@ import type {
   AttendanceClassMetadataRow,
   AttendanceReconciliationRow,
   AttendanceSessionAnomalyRow,
-  AttendanceSessionIdentity,
   AttendanceSessionRow,
   CalendarDayRow,
   CalendarDayType,
@@ -389,6 +388,7 @@ export class AttendanceOperationsRepository {
       `
         SELECT
           s.student_uuid,
+          s.classroom_id,
           s."SchoolID_Onec" AS school_id,
           s."GradeLevelID_Onec" AS grade_level_id,
           gl.label AS grade_label,
@@ -522,187 +522,6 @@ export class AttendanceOperationsRepository {
     return result.rows[0] ?? null;
   }
 
-  async findOrCreateSessionForUpdate(
-    identity: AttendanceSessionIdentity,
-    expectedRosterCount: number,
-    actorUserId: number | null,
-    executor: QueryExecutor,
-  ): Promise<AttendanceSessionRow> {
-    const sessionKind = 'SUBJECT';
-    await executor.query(
-      `
-        INSERT INTO attendance_sessions (
-          school_term_id, school_id, grade_level_id, room_id, attendance_date,
-          period, session_kind, subject_id, timetable_slot_id, status, expected_roster_count, recorded_count,
-          created_by, updated_by
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', $10, 0, $11, $11)
-        ON CONFLICT (
-          school_term_id, grade_level_id, room_id, attendance_date, period, session_kind
-        ) DO NOTHING
-      `,
-      [
-        identity.schoolTermId,
-        identity.schoolId,
-        identity.gradeLevelId,
-        identity.roomId,
-        identity.attendanceDate,
-        identity.period,
-        sessionKind,
-        identity.subjectId ?? null,
-        identity.timetableSlotId ?? null,
-        expectedRosterCount,
-        actorUserId,
-      ],
-    );
-    const result = await executor.query<AttendanceSessionRow>(
-      `
-        SELECT
-          id,
-          school_term_id::text,
-          school_id,
-          grade_level_id,
-          room_id,
-          attendance_date::text,
-          period,
-          session_kind,
-          status,
-          expected_roster_count,
-          recorded_count,
-          revision,
-          submitted_at,
-          correction_reason
-        FROM attendance_sessions
-        WHERE school_term_id = $1
-          AND grade_level_id = $2
-          AND room_id = $3
-          AND attendance_date = $4
-          AND period = $5
-          AND session_kind = $6
-        FOR UPDATE
-      `,
-      [
-        identity.schoolTermId,
-        identity.gradeLevelId,
-        identity.roomId,
-        identity.attendanceDate,
-        identity.period,
-        sessionKind,
-      ],
-    );
-    return result.rows[0];
-  }
-
-  async findSessionContext(
-    schoolId: number,
-    gradeLabel: string,
-    roomId: number,
-    date: string,
-    timetableSlotId?: number,
-  ): Promise<{
-    metadata: AttendanceClassMetadataRow | null;
-    term: SchoolTermRow | null;
-    calendarDay: CalendarDayRow | null;
-    session: AttendanceSessionRow | null;
-    expectedRosterCount: number;
-  }> {
-    const metadataResult = await queryDataSource<AttendanceClassMetadataRow>(
-      this.dataSource,
-      `
-        SELECT
-          MIN(s.student_uuid::text)::uuid AS student_uuid,
-          s."SchoolID_Onec" AS school_id,
-          s."GradeLevelID_Onec" AS grade_level_id,
-          gl.label AS grade_label,
-          s."RoomID_Onec" AS room_id,
-          s."AcademicYear_Onec" AS academic_year,
-          s."Semester_Onec" AS semester
-        FROM student_term s
-        ${CURRENT_ENROLLMENT_JOIN}
-        JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
-        WHERE s."SchoolID_Onec" = $1
-          AND gl.label = $2
-          AND s."RoomID_Onec" = $3
-          AND s.deleted_at IS NULL
-        GROUP BY s."SchoolID_Onec", s."GradeLevelID_Onec", gl.label,
-          s."RoomID_Onec", s."AcademicYear_Onec", s."Semester_Onec"
-        ORDER BY s."AcademicYear_Onec" DESC, s."Semester_Onec" DESC
-        LIMIT 1
-      `,
-      [schoolId, gradeLabel, roomId],
-    );
-    const metadata = metadataResult.rows[0] ?? null;
-    if (!metadata) {
-      return {
-        metadata: null,
-        term: null,
-        calendarDay: null,
-        session: null,
-        expectedRosterCount: 0,
-      };
-    }
-    const terms = await queryDataSource<SchoolTermRow>(
-      this.dataSource,
-      `
-        SELECT
-          st.id::text,
-          st.school_id,
-          sc.name AS school_name,
-          st.academic_year,
-          st.semester,
-          st.starts_on::text,
-          st.ends_on::text,
-          st.status,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.deleted_at IS NULL) AS calendar_day_count,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.day_type = 'SCHOOL_DAY'
-              AND cd.deleted_at IS NULL) AS school_day_count
-        FROM school_terms st
-        JOIN schools sc ON sc.id = st.school_id
-        WHERE st.school_id = $1 AND st.academic_year = $2 AND st.semester = $3
-          AND st.deleted_at IS NULL
-      `,
-      [schoolId, metadata.academic_year, metadata.semester],
-    );
-    const term = terms.rows[0] ?? null;
-    if (!term) {
-      return { metadata, term: null, calendarDay: null, session: null, expectedRosterCount: 0 };
-    }
-    const sessionCondition = timetableSlotId
-      ? `AND attendance_date = $4 AND session_kind = 'SUBJECT' AND timetable_slot_id = $5`
-      : `AND FALSE`;
-    // The no-slot branch's SQL is `... room_id = $3 AND FALSE` — it never
-    // references $4, so date must not be bound here either.
-    const sessionParams = timetableSlotId
-      ? [term.id, metadata.grade_level_id, roomId, date, timetableSlotId]
-      : [term.id, metadata.grade_level_id, roomId];
-    const [calendarDay, rosterIds, sessionResult] = await Promise.all([
-      this.findCalendarDay(term.id, date),
-      this.listRosterIds(metadata),
-      queryDataSource<AttendanceSessionRow>(
-        this.dataSource,
-        `
-          SELECT id, school_term_id::text, school_id, grade_level_id, room_id,
-            attendance_date::text, period, session_kind, status,
-            expected_roster_count, recorded_count, revision, submitted_at,
-            correction_reason
-          FROM attendance_sessions
-          WHERE school_term_id = $1 AND grade_level_id = $2 AND room_id = $3
-            ${sessionCondition}
-        `,
-        sessionParams,
-      ),
-    ]);
-    return {
-      metadata,
-      term,
-      calendarDay,
-      session: sessionResult.rows[0] ?? null,
-      expectedRosterCount: rosterIds.length,
-    };
-  }
-
   /**
    * `recorded_count` is derived from the rows that actually exist for the
    * session rather than the payload length, so incremental draft saves and the
@@ -718,7 +537,8 @@ export class AttendanceOperationsRepository {
         UPDATE attendance_sessions session
         SET status = 'SUBMITTED',
             recorded_count = (
-              SELECT COUNT(*) FROM attendance record WHERE record.session_id = session.id
+              SELECT COUNT(*) FROM attendance_session_roster roster
+              WHERE roster.session_id = session.id
             ),
             submitted_at = now(),
             submitted_by = $2,
@@ -743,7 +563,8 @@ export class AttendanceOperationsRepository {
       `
         UPDATE attendance_sessions session
         SET recorded_count = (
-              SELECT COUNT(*) FROM attendance record WHERE record.session_id = session.id
+              SELECT COUNT(*) FROM attendance_session_roster roster
+              WHERE roster.session_id = session.id
             ),
             updated_by = $2,
             updated_at = now()
@@ -792,7 +613,7 @@ export class AttendanceOperationsRepository {
     }>(
       `
         SELECT student_uuid::text, "AttendanceStatus"::int AS attendance_status
-        FROM attendance
+        FROM attendance_effective_records
         WHERE session_id = $1
         ORDER BY student_uuid
       `,
@@ -954,23 +775,18 @@ export class AttendanceOperationsRepository {
           END AS operational_status
           FROM roster
           LEFT JOIN LATERAL (
-            SELECT
-              MIN(session.id::text) AS id,
-              BOOL_AND(
-                session.id IS NOT NULL
-                AND session.status = 'SUBMITTED'
+            SELECT MIN(session.id::text) AS id,
+              BOOL_OR(
+                session.status = 'SUBMITTED'
                 AND session.recorded_count = roster.expected_roster_count
               ) AS is_complete
-            FROM timetable_slots slot
-            LEFT JOIN attendance_sessions session
-              ON session.timetable_slot_id = slot.id
-             AND session.attendance_date = $${datePlaceholder}
-             AND session.session_kind = 'SUBJECT'
-             AND session.deleted_at IS NULL
-            WHERE slot.school_term_id = $${termPlaceholder}
-              AND slot.classroom_id = roster.classroom_id
-              AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
-              AND slot.deleted_at IS NULL
+            FROM attendance_sessions session
+            WHERE session.school_term_id = $${termPlaceholder}
+              AND session.classroom_id = roster.classroom_id
+              AND session.attendance_date = $${datePlaceholder}
+              AND session.record_storage_mode = 'EXCEPTIONS'
+              AND session.deleted_at IS NULL
+            HAVING COUNT(*) > 0
           ) sess ON TRUE
         )
         SELECT
@@ -1005,31 +821,26 @@ export class AttendanceOperationsRepository {
           END AS operational_status
         FROM roster
         LEFT JOIN LATERAL (
-          SELECT
-            MIN(session.id::text) AS id,
-            MIN(session.recorded_count)::int AS recorded_count,
+          SELECT MAX(session.id::text) AS id,
+            MAX(session.recorded_count)::int AS recorded_count,
             CASE
-              WHEN BOOL_AND(session.status = 'SUBMITTED') THEN 'SUBMITTED'
+              WHEN BOOL_OR(session.status = 'SUBMITTED') THEN 'SUBMITTED'
               WHEN BOOL_OR(session.status = 'REOPENED') THEN 'REOPENED'
               WHEN BOOL_OR(session.status = 'OPEN') THEN 'OPEN'
               ELSE NULL
             END AS status,
             MAX(session.revision)::int AS revision,
-            BOOL_AND(
-              session.id IS NOT NULL
-              AND session.status = 'SUBMITTED'
+            BOOL_OR(
+              session.status = 'SUBMITTED'
               AND session.recorded_count = roster.expected_roster_count
             ) AS is_complete
-          FROM timetable_slots slot
-          LEFT JOIN attendance_sessions session
-            ON session.timetable_slot_id = slot.id
-           AND session.attendance_date = $${datePlaceholder}
-           AND session.session_kind = 'SUBJECT'
-           AND session.deleted_at IS NULL
-          WHERE slot.school_term_id = $${termPlaceholder}
-            AND slot.classroom_id = roster.classroom_id
-            AND slot.day_of_week = EXTRACT(ISODOW FROM $${datePlaceholder}::date)::int
-            AND slot.deleted_at IS NULL
+          FROM attendance_sessions session
+          WHERE session.school_term_id = $${termPlaceholder}
+            AND session.classroom_id = roster.classroom_id
+            AND session.attendance_date = $${datePlaceholder}
+            AND session.record_storage_mode = 'EXCEPTIONS'
+            AND session.deleted_at IS NULL
+          HAVING COUNT(*) > 0
         ) sess ON TRUE
         ORDER BY roster.grade_level_id, roster.room_id
         LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}

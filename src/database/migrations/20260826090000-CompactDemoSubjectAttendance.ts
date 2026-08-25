@@ -1,7 +1,7 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
 const SHOWCASE_SCHOOL_ID = 10010004;
-const CALENDAR_REASON = 'ข้อมูลสาธิตการเช็กชื่อรายวิชาแบบย่อ';
+const CALENDAR_REASON = 'วันเรียนตามปฏิทินโรงเรียน';
 const DEMO_ACADEMIC_YEAR = 2569;
 const DEMO_SEMESTER = 1;
 const DEMO_TERM_START = '2026-05-16';

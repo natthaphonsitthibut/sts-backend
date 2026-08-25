@@ -14,39 +14,151 @@ const KINDERGARTEN_LABELS = ['อ.1', 'อ.2', 'อ.3'];
 const REQUIRED_KINDERGARTEN_LABELS = ['อ.1', 'อ.2'];
 const STUDENTS_PER_KINDERGARTEN_CLASSROOM = 12;
 const TEACHER_PERMISSIONS = ['home', 'attendance'];
+const PRESENTATION_EMAIL_DOMAIN = 'school.sts.local';
 
 const TEACHER_FIRST_NAMES = [
-  'กมลชนก', 'กิตติพงศ์', 'จันทร์เพ็ญ', 'ชลธิชา', 'ณัฐวุฒิ', 'ดวงกมล', 'ธนกฤต', 'นภัสสร',
-  'ปกรณ์', 'ปรียานุช', 'พงศกร', 'พิชญา', 'ภัทรวดี', 'รัตนา', 'วรเมธ', 'ศิริพร',
-  'สุภาวดี', 'อรทัย', 'อัครเดช', 'อัญชลี', 'เกรียงไกร', 'เบญจมาศ', 'เมธาวี', 'เอกชัย',
+  'กมลชนก',
+  'กิตติพงศ์',
+  'จันทร์เพ็ญ',
+  'ชลธิชา',
+  'ณัฐวุฒิ',
+  'ดวงกมล',
+  'ธนกฤต',
+  'นภัสสร',
+  'ปกรณ์',
+  'ปรียานุช',
+  'พงศกร',
+  'พิชญา',
+  'ภัทรวดี',
+  'รัตนา',
+  'วรเมธ',
+  'ศิริพร',
+  'สุภาวดี',
+  'อรทัย',
+  'อัครเดช',
+  'อัญชลี',
+  'เกรียงไกร',
+  'เบญจมาศ',
+  'เมธาวี',
+  'เอกชัย',
 ];
 const TEACHER_FIRST_USERNAMES = [
-  'kamonchanok', 'kittiphong', 'chanphen', 'chonthicha', 'nattawut', 'duangkamol',
-  'thanakrit', 'napatsorn', 'pakorn', 'preeyanuch', 'phongsakorn', 'pitchaya',
-  'phattarawadee', 'rattana', 'woramet', 'siriporn', 'suphawadee', 'orathai',
-  'akkharadet', 'anchalee', 'kriengkrai', 'benchamat', 'methavee', 'ekkachai',
+  'kamonchanok',
+  'kittiphong',
+  'chanphen',
+  'chonthicha',
+  'nattawut',
+  'duangkamol',
+  'thanakrit',
+  'napatsorn',
+  'pakorn',
+  'preeyanuch',
+  'phongsakorn',
+  'pitchaya',
+  'phattarawadee',
+  'rattana',
+  'woramet',
+  'siriporn',
+  'suphawadee',
+  'orathai',
+  'akkharadet',
+  'anchalee',
+  'kriengkrai',
+  'benchamat',
+  'methavee',
+  'ekkachai',
 ];
 const TEACHER_LAST_NAMES = [
-  'กุลวงศ์', 'แก้วประเสริฐ', 'ใจดี', 'ชูศรี', 'ทองอินทร์', 'ธรรมรักษ์', 'บุญเรือง', 'พัฒนกิจ',
-  'มณีรัตน์', 'รุ่งเรือง', 'วงศ์คำ', 'ศรีสวัสดิ์', 'สมบูรณ์', 'สิงห์ทอง', 'สุวรรณดี', 'แสงมณี',
-  'อินทร์แก้ว', 'อุดมทรัพย์',
+  'กุลวงศ์',
+  'แก้วประเสริฐ',
+  'ใจดี',
+  'ชูศรี',
+  'ทองอินทร์',
+  'ธรรมรักษ์',
+  'บุญเรือง',
+  'พัฒนกิจ',
+  'มณีรัตน์',
+  'รุ่งเรือง',
+  'วงศ์คำ',
+  'ศรีสวัสดิ์',
+  'สมบูรณ์',
+  'สิงห์ทอง',
+  'สุวรรณดี',
+  'แสงมณี',
+  'อินทร์แก้ว',
+  'อุดมทรัพย์',
 ];
 const TEACHER_LAST_USERNAMES = [
-  'kulwong', 'kaewprasert', 'jaidee', 'chusri', 'thongin', 'thammarak',
-  'boonruang', 'pattanakit', 'maneerat', 'rungruang', 'wongkham', 'srisawat',
-  'somboon', 'singthong', 'suwandee', 'saengmanee', 'inkaew', 'udomsap',
+  'kulwong',
+  'kaewprasert',
+  'jaidee',
+  'chusri',
+  'thongin',
+  'thammarak',
+  'boonruang',
+  'pattanakit',
+  'maneerat',
+  'rungruang',
+  'wongkham',
+  'srisawat',
+  'somboon',
+  'singthong',
+  'suwandee',
+  'saengmanee',
+  'inkaew',
+  'udomsap',
 ];
 const STUDENT_FIRST_NAMES = [
-  'อชิรญา', 'กัญญาวีร์', 'ชนัญชิดา', 'ณิชาภัทร', 'ธัญชนก', 'นภสร',
-  'ปุณณภา', 'พิมพ์ชนก', 'ภูริณัฐ', 'รวิสรา', 'วรัญญา', 'ศุภกฤต',
-  'สิรินดา', 'อชิระ', 'อริสรา', 'อินทัช', 'กฤตภาส', 'ชญาดา',
-  'ญาณิศา', 'ณัฐณิชา', 'ธนภัทร', 'ปภาวรินทร์', 'พชรพล', 'ภัทราพร',
+  'อชิรญา',
+  'กัญญาวีร์',
+  'ชนัญชิดา',
+  'ณิชาภัทร',
+  'ธัญชนก',
+  'นภสร',
+  'ปุณณภา',
+  'พิมพ์ชนก',
+  'ภูริณัฐ',
+  'รวิสรา',
+  'วรัญญา',
+  'ศุภกฤต',
+  'สิรินดา',
+  'อชิระ',
+  'อริสรา',
+  'อินทัช',
+  'กฤตภาส',
+  'ชญาดา',
+  'ญาณิศา',
+  'ณัฐณิชา',
+  'ธนภัทร',
+  'ปภาวรินทร์',
+  'พชรพล',
+  'ภัทราพร',
 ];
 const STUDENT_LAST_NAMES = [
-  'วัฒนากุล', 'ศรีประเสริฐ', 'สุขเกษม', 'บุญช่วย', 'แก้วกาญจน์', 'พงษ์พิพัฒน์',
-  'จิตต์มั่น', 'อินทรสุวรรณ', 'มณีวงศ์', 'ชูศักดิ์', 'ทองมี', 'รัตนโชติ',
-  'นาคเจริญ', 'พูลสวัสดิ์', 'แสงทอง', 'สมบัติสุข', 'จันทร์ดี', 'ประสิทธิ์พร',
-  'วงศ์วัฒนา', 'คำแสน', 'ศรีสุข', 'ธรรมโชติ', 'กิตติวงศ์', 'รุ่งวัฒนา',
+  'วัฒนากุล',
+  'ศรีประเสริฐ',
+  'สุขเกษม',
+  'บุญช่วย',
+  'แก้วกาญจน์',
+  'พงษ์พิพัฒน์',
+  'จิตต์มั่น',
+  'อินทรสุวรรณ',
+  'มณีวงศ์',
+  'ชูศักดิ์',
+  'ทองมี',
+  'รัตนโชติ',
+  'นาคเจริญ',
+  'พูลสวัสดิ์',
+  'แสงทอง',
+  'สมบัติสุข',
+  'จันทร์ดี',
+  'ประสิทธิ์พร',
+  'วงศ์วัฒนา',
+  'คำแสน',
+  'ศรีสุข',
+  'ธรรมโชติ',
+  'กิตติวงศ์',
+  'รุ่งวัฒนา',
 ];
 
 function assert(condition, message) {
@@ -67,10 +179,11 @@ function syntheticNationalId(schoolSequence, gradeId, roomNumber, studentSequenc
 
 function teacherIdentity(classroomId) {
   const combinationCount = TEACHER_FIRST_NAMES.length * TEACHER_LAST_NAMES.length;
-  const identityIndex = createHash('sha256')
-    .update(`school-classroom-teacher:${classroomId}`)
-    .digest()
-    .readUInt32BE(0) % combinationCount;
+  const identityIndex =
+    createHash('sha256')
+      .update(`school-classroom-teacher:${classroomId}`)
+      .digest()
+      .readUInt32BE(0) % combinationCount;
   const firstNameIndex = identityIndex % TEACHER_FIRST_NAMES.length;
   const lastNameIndex = Math.floor(identityIndex / TEACHER_FIRST_NAMES.length);
   return {
@@ -83,12 +196,16 @@ function teacherIdentity(classroomId) {
 function studentName(index) {
   return {
     firstName: STUDENT_FIRST_NAMES[index % STUDENT_FIRST_NAMES.length],
-    lastName: STUDENT_LAST_NAMES[Math.floor(index / STUDENT_FIRST_NAMES.length) % STUDENT_LAST_NAMES.length],
+    lastName:
+      STUDENT_LAST_NAMES[
+        Math.floor(index / STUDENT_FIRST_NAMES.length) % STUDENT_LAST_NAMES.length
+      ],
   };
 }
 
 async function auditStructure(dataSource) {
-  const [audit] = await dataSource.query(`
+  const [audit] = await dataSource.query(
+    `
     WITH active_schools AS (
       SELECT id FROM schools WHERE school_status = 'ACTIVE'
     ), active_terms AS (
@@ -116,7 +233,7 @@ async function auditStructure(dataSource) {
       WHERE classroom.classroom_status = 'ACTIVE' AND classroom.deleted_at IS NULL
     ), valid_homerooms AS (
       SELECT DISTINCT assignment.classroom_id
-      FROM classroom_teacher_assignments assignment
+      FROM classroom_homeroom_teachers assignment
       JOIN school_teacher_memberships membership
         ON membership.id = assignment.teacher_membership_id
        AND membership.school_id = assignment.school_id
@@ -126,9 +243,6 @@ async function auditStructure(dataSource) {
         ON teacher.id = membership.teacher_id
        AND teacher.teacher_status = 'ACTIVE'
        AND teacher.deleted_at IS NULL
-      WHERE assignment.assignment_kind = 'HOMEROOM'
-        AND assignment.assignment_status = 'ACTIVE'
-        AND assignment.deleted_at IS NULL
     ), kindergarten_rosters AS (
       SELECT classroom.id, COUNT(enrollment.student_uuid)::int AS student_count
       FROM active_classrooms classroom
@@ -151,16 +265,16 @@ async function auditStructure(dataSource) {
       (SELECT COALESCE(MIN(student_count), 0)::int FROM kindergarten_rosters) AS minimum_kindergarten_students,
       (SELECT COUNT(*)::int FROM teachers
         WHERE deleted_at IS NULL
-          AND lower(btrim(COALESCE(email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@sts-demo\\.ac\\.th$'
+          AND lower(btrim(COALESCE(email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@school\\.sts\\.local$'
       ) AS synthetic_teachers,
       (SELECT COUNT(*)::int FROM teachers
         WHERE deleted_at IS NULL
-          AND lower(btrim(COALESCE(email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@sts-demo\\.ac\\.th$'
+          AND lower(btrim(COALESCE(email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@school\\.sts\\.local$'
           AND teacher_status <> 'ACTIVE'
       ) AS synthetic_teacher_status_issues,
       (SELECT COUNT(*)::int FROM teachers teacher
         WHERE teacher.deleted_at IS NULL
-          AND lower(btrim(COALESCE(teacher.email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@sts-demo\\.ac\\.th$'
+          AND lower(btrim(COALESCE(teacher.email, ''))) ~ '^[a-z]+\\.[a-z]+\\.[0-9]+@school\\.sts\\.local$'
           AND NOT EXISTS (
             SELECT 1 FROM school_teacher_memberships membership
             WHERE membership.teacher_id = teacher.id
@@ -171,30 +285,40 @@ async function auditStructure(dataSource) {
       -- Teachers do not sign in. A login account for one would be a regression,
       -- not a fixture, so the audit fails on the first sign of one.
       (SELECT COUNT(*)::int FROM users
-        WHERE lower(btrim(COALESCE(email, ''))) LIKE '%@sts-demo.ac.th'
+        WHERE lower(btrim(COALESCE(email, ''))) LIKE '%@school.sts.local'
           AND username ~ '^[a-z]+\\.[a-z]+\\.[0-9]+$'
       ) AS synthetic_teacher_accounts,
       (SELECT COUNT(*)::int FROM student_person_identifier WHERE source = $3 AND deleted_at IS NULL) AS synthetic_students
-  `, [
-    KINDERGARTEN_LABELS,
-    STUDENTS_PER_KINDERGARTEN_CLASSROOM,
-    SEED_SOURCE,
-  ]);
+  `,
+    [KINDERGARTEN_LABELS, STUDENTS_PER_KINDERGARTEN_CLASSROOM, SEED_SOURCE],
+  );
 
   assert(audit.active_schools > 0, 'No active schools are available');
   assert(audit.kindergarten_grade_levels === 3, 'Kindergarten grade catalog is incomplete');
   assert(audit.schools_missing_required_kindergarten === 0, 'Some schools are missing อ.1 or อ.2');
   assert(audit.schools_with_k3 > 0, 'No school offers อ.3');
   assert(audit.schools_without_k3 > 0, 'The demo set must include schools without อ.3');
-  assert(audit.classrooms_without_valid_homeroom === 0, 'Some active classrooms have no valid homeroom teacher');
-  assert(audit.kindergarten_classrooms_below_minimum === 0, 'Some kindergarten classrooms have too few students');
+  assert(
+    audit.classrooms_without_valid_homeroom === 0,
+    'Some active classrooms have no valid homeroom teacher',
+  );
+  assert(
+    audit.kindergarten_classrooms_below_minimum === 0,
+    'Some kindergarten classrooms have too few students',
+  );
   assert(audit.synthetic_teachers > 0, 'No generated demo teacher was found');
-  assert(audit.synthetic_teacher_status_issues === 0, 'Some generated demo teachers are not active');
+  assert(
+    audit.synthetic_teacher_status_issues === 0,
+    'Some generated demo teachers are not active',
+  );
   assert(
     audit.synthetic_teachers_without_membership === 0,
     'Some generated demo teachers have no active school membership',
   );
-  assert(audit.synthetic_teacher_accounts === 0, 'A generated demo teacher still has a login account');
+  assert(
+    audit.synthetic_teacher_accounts === 0,
+    'A generated demo teacher still has a login account',
+  );
   return audit;
 }
 
@@ -221,7 +345,8 @@ async function seedStructure(dataSource) {
     `);
     assert(termTemplate, 'No school term is available as a demo date template');
 
-    await manager.query(`
+    await manager.query(
+      `
       WITH latest_terms AS (
         SELECT school.id AS school_id, (
           SELECT term.id
@@ -248,9 +373,12 @@ async function seedStructure(dataSource) {
           deleted_by = NULL
       FROM latest_terms latest
       WHERE term.id = latest.school_term_id
-    `, [actor.id, termTemplate.starts_on, termTemplate.ends_on]);
+    `,
+      [actor.id, termTemplate.starts_on, termTemplate.ends_on],
+    );
 
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO school_terms (
         school_id, academic_year, semester, starts_on, ends_on,
         status, created_by, updated_by
@@ -264,13 +392,15 @@ async function seedStructure(dataSource) {
           WHERE term.school_id = school.id AND term.deleted_at IS NULL
         )
       ON CONFLICT (school_id, academic_year, semester) DO NOTHING
-    `, [
-      actor.id,
-      termTemplate.academic_year,
-      termTemplate.semester,
-      termTemplate.starts_on,
-      termTemplate.ends_on,
-    ]);
+    `,
+      [
+        actor.id,
+        termTemplate.academic_year,
+        termTemplate.semester,
+        termTemplate.starts_on,
+        termTemplate.ends_on,
+      ],
+    );
 
     const schools = await manager.query(`
       SELECT school.id, school.name, term.id AS school_term_id,
@@ -309,9 +439,8 @@ async function seedStructure(dataSource) {
 
     const kindergartenPlan = [];
     schools.forEach((school, schoolIndex) => {
-      const labels = (schoolIndex + 1) % 3 === 0
-        ? REQUIRED_KINDERGARTEN_LABELS
-        : KINDERGARTEN_LABELS;
+      const labels =
+        (schoolIndex + 1) % 3 === 0 ? REQUIRED_KINDERGARTEN_LABELS : KINDERGARTEN_LABELS;
       for (const label of labels) {
         for (const rawRoomNumber of school.room_numbers) {
           const roomNumber = Number(rawRoomNumber);
@@ -327,7 +456,8 @@ async function seedStructure(dataSource) {
       }
     });
 
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO school_classrooms (
         school_term_id, school_id, grade_level_id, legacy_room_number,
         room_code, room_name, classroom_status, created_by, updated_by
@@ -339,14 +469,21 @@ async function seedStructure(dataSource) {
         room_number INTEGER, room_code VARCHAR(32), room_name VARCHAR(120)
       )
       ON CONFLICT DO NOTHING
-    `, [JSON.stringify(kindergartenPlan.map((item) => ({
-      school_term_id: item.schoolTermId,
-      school_id: item.schoolId,
-      grade_level_id: item.gradeLevelId,
-      room_number: item.roomNumber,
-      room_code: item.roomCode,
-      room_name: item.roomName,
-    }))), actor.id]);
+    `,
+      [
+        JSON.stringify(
+          kindergartenPlan.map((item) => ({
+            school_term_id: item.schoolTermId,
+            school_id: item.schoolId,
+            grade_level_id: item.gradeLevelId,
+            room_number: item.roomNumber,
+            room_code: item.roomCode,
+            room_name: item.roomName,
+          })),
+        ),
+        actor.id,
+      ],
+    );
 
     const classrooms = await manager.query(`
       SELECT classroom.id, classroom.school_id, classroom.school_term_id,
@@ -375,7 +512,7 @@ async function seedStructure(dataSource) {
         username: identity.username,
         first_name: identity.firstName,
         last_name: identity.lastName,
-        email: `${identity.username}@sts-demo.ac.th`,
+        email: `${identity.username}@${PRESENTATION_EMAIL_DOMAIN}`,
         school_name: classroom.school_name,
       };
     });
@@ -392,15 +529,19 @@ async function seedStructure(dataSource) {
         school_name TEXT NOT NULL
       ) ON COMMIT DROP;
     `);
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO demo_teacher_plan_20260716
       SELECT * FROM jsonb_to_recordset($1::jsonb) AS plan(
         classroom_id BIGINT, school_id INTEGER, legacy_username TEXT, username TEXT,
         first_name TEXT, last_name TEXT, email TEXT, school_name TEXT
       )
-    `, [JSON.stringify(teacherPlan)]);
+    `,
+      [JSON.stringify(teacherPlan)],
+    );
 
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO teachers (
         first_name, last_name, email, teacher_status, created_by, updated_by
       )
@@ -414,7 +555,9 @@ async function seedStructure(dataSource) {
         deleted_at = NULL,
         deleted_by = NULL,
         updated_by = EXCLUDED.updated_by
-    `, [actor.id]);
+    `,
+      [actor.id],
+    );
 
     const [{ missing_teachers: missingTeachers }] = await manager.query(`
       SELECT COUNT(*)::int AS missing_teachers
@@ -426,7 +569,8 @@ async function seedStructure(dataSource) {
     `);
     assert(missingTeachers === 0, 'A generated teacher could not be prepared safely');
 
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO school_teacher_memberships (
         school_id, teacher_id, membership_status, started_on, created_by, updated_by
       )
@@ -443,17 +587,14 @@ async function seedStructure(dataSource) {
           AND membership.deleted_at IS NULL
       )
       ON CONFLICT DO NOTHING
-    `, [actor.id]);
+    `,
+      [actor.id],
+    );
 
-    await manager.query(`
-      UPDATE classroom_teacher_assignments assignment
-      SET assignment_status = 'INACTIVE',
-          effective_until = GREATEST(CURRENT_DATE, assignment.effective_on),
-          updated_by = $1
-      WHERE assignment.assignment_kind = 'HOMEROOM'
-        AND assignment.assignment_status = 'ACTIVE'
-        AND assignment.deleted_at IS NULL
-        AND assignment.classroom_id IN (SELECT classroom_id FROM demo_teacher_plan_20260716)
+    await manager.query(
+      `
+      DELETE FROM classroom_homeroom_teachers assignment
+      WHERE assignment.classroom_id IN (SELECT classroom_id FROM demo_teacher_plan_20260716)
         AND NOT EXISTS (
           SELECT 1
           FROM school_teacher_memberships membership
@@ -465,15 +606,16 @@ async function seedStructure(dataSource) {
             AND teacher.teacher_status = 'ACTIVE'
             AND teacher.deleted_at IS NULL
         )
-    `, [actor.id]);
+    `,
+      [actor.id],
+    );
 
-    await manager.query(`
-      INSERT INTO classroom_teacher_assignments (
-        school_id, classroom_id, teacher_membership_id, subject_id,
-        assignment_kind, assignment_status, effective_on, created_by, updated_by
+    await manager.query(
+      `
+      INSERT INTO classroom_homeroom_teachers (
+        school_id, classroom_id, teacher_membership_id, created_by, updated_by
       )
-      SELECT plan.school_id, plan.classroom_id, membership.id, NULL,
-        'HOMEROOM', 'ACTIVE', CURRENT_DATE, $1::int, $1::int
+      SELECT plan.school_id, plan.classroom_id, membership.id, $1::int, $1::int
       FROM demo_teacher_plan_20260716 plan
       JOIN teachers teacher
         ON lower(btrim(teacher.email)) = lower(btrim(plan.email))
@@ -483,32 +625,37 @@ async function seedStructure(dataSource) {
        AND membership.teacher_id = teacher.id
        AND membership.membership_status = 'ACTIVE'
        AND membership.deleted_at IS NULL
-      WHERE NOT EXISTS (
-        SELECT 1 FROM classroom_teacher_assignments assignment
-        WHERE assignment.classroom_id = plan.classroom_id
-          AND assignment.assignment_kind = 'HOMEROOM'
-          AND assignment.assignment_status = 'ACTIVE'
-          AND assignment.deleted_at IS NULL
-      )
-      ON CONFLICT DO NOTHING
-    `, [actor.id]);
+      ON CONFLICT (classroom_id) DO UPDATE SET
+        school_id = EXCLUDED.school_id,
+        teacher_membership_id = EXCLUDED.teacher_membership_id,
+        updated_by = EXCLUDED.updated_by
+    `,
+      [actor.id],
+    );
 
-    const schoolSequenceById = new Map(schools.map((school, index) => [Number(school.id), index + 1]));
+    const schoolSequenceById = new Map(
+      schools.map((school, index) => [Number(school.id), index + 1]),
+    );
     const kindergartenPlanKeys = new Set(
-      kindergartenPlan.map((item) =>
-        `${item.schoolTermId}:${item.gradeLevelId}:${item.roomNumber}`,
+      kindergartenPlan.map(
+        (item) => `${item.schoolTermId}:${item.gradeLevelId}:${item.roomNumber}`,
       ),
     );
-    const kindergartenClassrooms = classrooms.filter((classroom) =>
-      KINDERGARTEN_LABELS.includes(classroom.grade_label) &&
-      kindergartenPlanKeys.has(
-        `${classroom.school_term_id}:${classroom.grade_level_id}:${classroom.legacy_room_number}`,
-      ),
+    const kindergartenClassrooms = classrooms.filter(
+      (classroom) =>
+        KINDERGARTEN_LABELS.includes(classroom.grade_label) &&
+        kindergartenPlanKeys.has(
+          `${classroom.school_term_id}:${classroom.grade_level_id}:${classroom.legacy_room_number}`,
+        ),
     );
     const studentPlan = [];
     let studentNameIndex = 0;
     for (const classroom of kindergartenClassrooms) {
-      for (let studentSequence = 1; studentSequence <= STUDENTS_PER_KINDERGARTEN_CLASSROOM; studentSequence += 1) {
+      for (
+        let studentSequence = 1;
+        studentSequence <= STUDENTS_PER_KINDERGARTEN_CLASSROOM;
+        studentSequence += 1
+      ) {
         const schoolSequence = schoolSequenceById.get(Number(classroom.school_id));
         const nationalId = syntheticNationalId(
           schoolSequence,
@@ -520,7 +667,9 @@ async function seedStructure(dataSource) {
         studentNameIndex += 1;
         studentPlan.push({
           person_uuid: deterministicUuid(`${LEGACY_SEED_SOURCE}:person:${nationalId}`),
-          student_uuid: deterministicUuid(`${LEGACY_SEED_SOURCE}:enrollment:${nationalId}:${classroom.school_term_id}`),
+          student_uuid: deterministicUuid(
+            `${LEGACY_SEED_SOURCE}:enrollment:${nationalId}:${classroom.school_term_id}`,
+          ),
           person_id: nationalId,
           first_name: name.firstName,
           last_name: name.lastName,
@@ -551,7 +700,8 @@ async function seedStructure(dataSource) {
         classroom_id BIGINT NOT NULL
       ) ON COMMIT DROP;
     `);
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO demo_student_plan_20260716
       SELECT * FROM jsonb_to_recordset($1::jsonb) AS plan(
         person_uuid UUID, student_uuid UUID, person_id TEXT,
@@ -559,18 +709,24 @@ async function seedStructure(dataSource) {
         grade_level_id INTEGER, room_number INTEGER, academic_year INTEGER,
         semester INTEGER, school_term_id BIGINT, classroom_id BIGINT
       )
-    `, [JSON.stringify(studentPlan)]);
+    `,
+      [JSON.stringify(studentPlan)],
+    );
 
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO student_person (person_uuid, identity_status, created_by, updated_by)
       SELECT person_uuid, 'ACTIVE', $1::int, $1::int
       FROM demo_student_plan_20260716
       ON CONFLICT (person_uuid) DO UPDATE
       SET identity_status = 'ACTIVE', updated_by = EXCLUDED.updated_by,
           deleted_at = NULL, deleted_by = NULL
-    `, [actor.id]);
+    `,
+      [actor.id],
+    );
 
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO student_person_identifier (
         person_uuid, identifier_type, identifier_value, identifier_normalized,
         is_primary, source, created_by, updated_by
@@ -585,26 +741,32 @@ async function seedStructure(dataSource) {
           AND identifier.identifier_normalized = plan.person_id
           AND identifier.deleted_at IS NULL
       )
-    `, [actor.id, SEED_SOURCE]);
+    `,
+      [actor.id, SEED_SOURCE],
+    );
 
-    await manager.query(`
+    await manager.query(
+      `
       UPDATE student_person_identifier identifier
       SET source = $2, updated_by = $3::int
       WHERE identifier.person_uuid IN (SELECT person_uuid FROM demo_student_plan_20260716)
         AND identifier.source = $1
         AND identifier.deleted_at IS NULL
-    `, [LEGACY_SEED_SOURCE, SEED_SOURCE, actor.id]);
+    `,
+      [LEGACY_SEED_SOURCE, SEED_SOURCE, actor.id],
+    );
 
     const [activeStatus] = await manager.query(`
       SELECT code
       FROM student_status
-      WHERE category = 'ACTIVE' AND is_enabled = TRUE AND deleted_at IS NULL
+      WHERE category = 'STUDYING' AND is_enabled = TRUE AND deleted_at IS NULL
       ORDER BY sort_order, code
       LIMIT 1
     `);
     assert(activeStatus?.code, 'No active student status is available');
 
-    await manager.query(`
+    await manager.query(
+      `
       INSERT INTO student_term (
         student_uuid, person_uuid, "PersonID_Onec", "FirstName_Onec", "LastName_Onec",
         "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
@@ -630,7 +792,9 @@ async function seedStructure(dataSource) {
         updated_by = EXCLUDED.updated_by,
         deleted_at = NULL,
         deleted_by = NULL
-    `, [actor.id, activeStatus.code]);
+    `,
+      [actor.id, activeStatus.code],
+    );
 
     return {
       plannedKindergartenClassrooms: kindergartenPlan.length,
@@ -649,7 +813,9 @@ async function main() {
       seedResult = await seedStructure(dataSource);
     }
     const audit = await auditStructure(dataSource);
-    console.log(JSON.stringify({ mode: AUDIT_ONLY ? 'audit' : 'seed', seed: seedResult, audit }, null, 2));
+    console.log(
+      JSON.stringify({ mode: AUDIT_ONLY ? 'audit' : 'seed', seed: seedResult, audit }, null, 2),
+    );
   } finally {
     await dataSource.destroy();
   }

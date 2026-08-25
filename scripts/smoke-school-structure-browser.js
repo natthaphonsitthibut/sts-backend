@@ -411,7 +411,7 @@ async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) 
     await dataSource.query(`DELETE FROM student_import_batches WHERE id=ANY($1::uuid[])`, [ids]);
   }
   await dataSource.query(
-    `DELETE FROM classroom_teacher_assignments WHERE school_id=$1 AND created_by=$2`,
+    `DELETE FROM classroom_homeroom_teachers WHERE school_id=$1 AND created_by=$2`,
     [schoolId, actorId],
   );
   await dataSource.query(
@@ -463,7 +463,7 @@ async function main() {
     )[0];
     const status = (
       await dataSource.query(
-        `SELECT code FROM student_status WHERE category <> 'UNMAPPED' ORDER BY code LIMIT 1`,
+        `SELECT code FROM student_status WHERE category <> 'UNMATCHED' ORDER BY code LIMIT 1`,
       )
     )[0];
     const password = `Structure-Smoke-${Date.now()}`;

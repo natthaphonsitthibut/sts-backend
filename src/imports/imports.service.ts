@@ -216,7 +216,7 @@ interface StructureRowEvaluation {
 }
 
 export interface CatalogStructureImportPreviewResult {
-  target: 'school_classroom' | 'classroom_teacher_assignment';
+  target: 'school_classroom';
   targetLabel: string;
   canImport: boolean;
   headers: string[];
@@ -479,14 +479,14 @@ export class ImportsService {
 
   /**
    * Codes usable as a real student status for import. A placeholder row whose
-   * category is UNMAPPED (e.g. seeded "ยังไม่ได้จับคู่") exists in master data but
+   * category is UNMATCHED (e.g. seeded "ยังไม่ได้จับคู่") exists in master data but
    * must still be treated as not mapped, otherwise quarantined rows would
    * auto-pass retry without any correction.
    */
   private mappedStudentStatusCodes(statuses: ImportReferenceRow[]): Set<number> {
     return new Set(
       statuses
-        .filter((status) => status.category !== 'UNMAPPED')
+        .filter((status) => status.category !== 'UNMATCHED')
         .map((status) => Number(status.id)),
     );
   }
@@ -495,7 +495,7 @@ export class ImportsService {
     label?: string | null;
     category?: string | null;
   }): string | null {
-    if (!status?.label || status.category === 'UNMAPPED') return null;
+    if (!status?.label || status.category === 'UNMATCHED') return null;
     return status.label.replace(/\s*\(ตัวอย่าง\)\s*$/u, '').trim() || status.label;
   }
 
@@ -1103,166 +1103,16 @@ export class ImportsService {
     });
   }
 
-  private async evaluateAssignmentRows(
-    rows: StructureImportRow[],
-    schoolId: number,
-    classroomId: number,
-    executor?: QueryExecutor,
-  ): Promise<StructureRowEvaluation[]> {
-    const citizenIds = [
-      ...new Set(rows.map((row) => row.values.citizenId?.trim()).filter(Boolean)),
-    ];
-    const subjectIds = [
-      ...new Set(
-        rows
-          .map((row) => Number(row.values.subjectId))
-          .filter((value) => Number.isInteger(value) && value > 0),
-      ),
-    ];
-    const [memberships, knownSubjectIds, existing] = await Promise.all([
-      this.importsRepository.findAssignmentTeacherReferences(schoolId, citizenIds, executor),
-      this.importsRepository.findExistingSubjectIds(subjectIds, executor),
-      this.importsRepository.findClassroomAssignmentReferences(schoolId, classroomId, executor),
-    ]);
-    const membershipByCitizenId = new Map(
-      memberships.map((membership) => [membership.citizen_id, membership.membership_id]),
-    );
-    const knownSubjects = new Set(knownSubjectIds);
-    const duplicateCounts = new Map<string, number>();
-    for (const row of rows) {
-      const citizenId = row.values.citizenId?.trim() ?? '';
-      const kind = row.values.assignmentKind?.trim().toUpperCase() ?? '';
-      const subjectId = Number(row.values.subjectId);
-      const key = kind === 'HOMEROOM' ? 'HOMEROOM' : `${kind}:${citizenId}:${subjectId}`;
-      duplicateCounts.set(key, (duplicateCounts.get(key) ?? 0) + 1);
-    }
-    return rows.map((row) => {
-      const citizenId = row.values.citizenId?.trim() ?? '';
-      const assignmentKind = row.values.assignmentKind?.trim().toUpperCase() ?? '';
-      const subjectRaw = row.values.subjectId?.trim() ?? '';
-      const subjectId = subjectRaw ? Number(subjectRaw) : null;
-      const effectiveOn = row.values.effectiveOn?.trim() || null;
-      const effectiveUntil = row.values.effectiveUntil?.trim() || null;
-      if (!citizenId) {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'MISSING_IMPORT_FIELD',
-          issue: 'ไม่มีเลขประจำตัวประชาชนครู',
-        };
-      }
-      if (assignmentKind !== 'HOMEROOM' && assignmentKind !== 'SUBJECT') {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'INVALID_ASSIGNMENT_KIND',
-          issue: 'ประเภทการมอบหมายต้องเป็น HOMEROOM หรือ SUBJECT',
-        };
-      }
-      if (
-        (assignmentKind === 'HOMEROOM' && subjectId !== null) ||
-        (assignmentKind === 'SUBJECT' &&
-          (subjectId === null || !Number.isInteger(subjectId) || subjectId <= 0))
-      ) {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'MISSING_IMPORT_FIELD',
-          issue: 'ครูประจำชั้นต้องไม่มีวิชา และครูผู้สอนต้องระบุรหัสวิชา',
-        };
-      }
-      if (
-        !this.isValidIsoDate(effectiveOn) ||
-        !this.isValidIsoDate(effectiveUntil) ||
-        (effectiveOn && effectiveUntil && effectiveUntil < effectiveOn)
-      ) {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'INVALID_IMPORT_DATE',
-          issue: 'ช่วงวันที่การมอบหมายไม่ถูกต้อง',
-        };
-      }
-      const teacherMembershipId = membershipByCitizenId.get(citizenId);
-      if (!teacherMembershipId) {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'TEACHER_MEMBERSHIP_NOT_FOUND',
-          issue: 'ไม่พบครูในรายชื่อครูของโรงเรียน',
-        };
-      }
-      if (subjectId !== null && !knownSubjects.has(subjectId)) {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'SUBJECT_NOT_FOUND',
-          issue: 'ไม่พบวิชาในข้อมูลหลัก',
-        };
-      }
-      const duplicateKey =
-        assignmentKind === 'HOMEROOM' ? 'HOMEROOM' : `${assignmentKind}:${citizenId}:${subjectId}`;
-      if ((duplicateCounts.get(duplicateKey) ?? 0) > 1) {
-        return {
-          row,
-          action: 'quarantine',
-          reason: 'DUPLICATE_ROW_IN_FILE',
-          issue: 'พบการมอบหมายซ้ำในไฟล์',
-        };
-      }
-      const existingMatch = existing.find((assignment) =>
-        assignmentKind === 'HOMEROOM'
-          ? assignment.assignment_kind === 'HOMEROOM'
-          : assignment.assignment_kind === 'SUBJECT' &&
-            assignment.teacher_membership_id === teacherMembershipId &&
-            Number(assignment.subject_id) === subjectId,
-      );
-      if (existingMatch) {
-        if (
-          assignmentKind === 'HOMEROOM' &&
-          existingMatch.teacher_membership_id !== teacherMembershipId
-        ) {
-          return {
-            row,
-            action: 'quarantine',
-            reason: 'ASSIGNMENT_CONFLICT',
-            issue: 'ห้องเรียนมีครูประจำชั้นที่ใช้งานอยู่แล้ว',
-          };
-        }
-        return { row, action: 'skip', reason: null, issue: null };
-      }
-      return {
-        row,
-        action: 'insert',
-        reason: null,
-        issue: null,
-        resolved: {
-          teacherMembershipId,
-          subjectId,
-          assignmentKind,
-        },
-      };
-    });
-  }
-
   private async previewStructureImport(
     file: Express.Multer.File,
-    target: 'school_classroom' | 'classroom_teacher_assignment',
+    target: 'school_classroom',
     mappingStr: string,
     actor: AuthenticatedRequestUser,
     context: CatalogImportContext,
   ): Promise<CatalogStructureImportPreviewResult> {
     const schoolId = this.requirePositiveContextId(context, 'schoolId');
     const schoolTermId = this.requirePositiveContextId(context, 'schoolTermId');
-    const classroomId =
-      target === 'classroom_teacher_assignment'
-        ? this.requirePositiveContextId(context, 'classroomId')
-        : undefined;
-    if (classroomId) {
-      await this.assertClassroomImportContext(schoolId, schoolTermId, classroomId, actor);
-    } else {
-      await this.assertSchoolTermImportContext(schoolId, schoolTermId, actor);
-    }
+    await this.assertSchoolTermImportContext(schoolId, schoolTermId, actor);
     const data = this.readWorksheetRows(file);
     if (data.length === 0)
       throw new BadRequestException('The uploaded file is empty or unreadable');
@@ -1272,10 +1122,7 @@ export class ImportsService {
       .filter((catalogField) => catalogField.required && !mapping[catalogField.key])
       .map((catalogField) => catalogField.key);
     const rows = this.parseStructureImportRows(data, mapping);
-    const evaluations =
-      target === 'school_classroom'
-        ? await this.evaluateClassroomRows(rows, schoolId, schoolTermId)
-        : await this.evaluateAssignmentRows(rows, schoolId, classroomId!);
+    const evaluations = await this.evaluateClassroomRows(rows, schoolId, schoolTermId);
     const rowsReady = evaluations.filter((row) => row.action === 'insert').length;
     const rowsSkipped = evaluations.filter((row) => row.action === 'skip').length;
     const rowsToQuarantine = evaluations.filter((row) => row.action === 'quarantine').length;
@@ -1303,7 +1150,7 @@ export class ImportsService {
 
   private async processStructureImport(
     file: Express.Multer.File,
-    target: 'school_classroom' | 'classroom_teacher_assignment',
+    target: 'school_classroom',
     mappingStr: string,
     actor: AuthenticatedRequestUser,
     auditMeta: { ip?: string | null },
@@ -1317,10 +1164,6 @@ export class ImportsService {
     }
     const schoolId = this.requirePositiveContextId(context, 'schoolId');
     const schoolTermId = this.requirePositiveContextId(context, 'schoolTermId');
-    const classroomId =
-      target === 'classroom_teacher_assignment'
-        ? this.requirePositiveContextId(context, 'classroomId')
-        : undefined;
     const mapping = preview.mapping;
     const rows = this.parseStructureImportRows(this.readWorksheetRows(file), mapping);
     const actorUserId = resolveAuditActorId(actor);
@@ -1331,17 +1174,18 @@ export class ImportsService {
         ...actor.data_scope,
         selectedSchoolId: schoolId,
         selectedSchoolTermId: schoolTermId,
-        ...(classroomId ? { selectedClassroomId: classroomId } : {}),
       },
       totalRows: rows.length,
       actorUserId,
     });
     try {
       return await this.importsRepository.withTransaction(async (executor) => {
-        const evaluations =
-          target === 'school_classroom'
-            ? await this.evaluateClassroomRows(rows, schoolId, schoolTermId, executor)
-            : await this.evaluateAssignmentRows(rows, schoolId, classroomId!, executor);
+        const evaluations = await this.evaluateClassroomRows(
+          rows,
+          schoolId,
+          schoolTermId,
+          executor,
+        );
         let inserted = 0;
         let skipped = 0;
         let quarantined = 0;
@@ -1356,7 +1200,6 @@ export class ImportsService {
                   target,
                   schoolId,
                   schoolTermId,
-                  classroomId,
                   values: evaluation.row.values,
                 }),
                 reasonCode: evaluation.reason,
@@ -1364,7 +1207,6 @@ export class ImportsService {
                   ...evaluation.row.values,
                   schoolId,
                   schoolTermId,
-                  ...(classroomId ? { classroomId } : {}),
                 },
                 actorUserId,
               },
@@ -1377,34 +1219,17 @@ export class ImportsService {
             skipped += 1;
             continue;
           }
-          let insertedId: string | null;
-          if (target === 'school_classroom') {
-            insertedId = await this.importsRepository.insertClassroomImportRow(
-              {
-                schoolId,
-                schoolTermId,
-                gradeLevelId: evaluation.resolved!.gradeLevelId!,
-                roomCode: evaluation.row.values.roomCode.trim(),
-                roomName: evaluation.row.values.roomName?.trim() || null,
-                actorUserId,
-              },
-              executor,
-            );
-          } else {
-            insertedId = await this.importsRepository.insertClassroomAssignmentImportRow(
-              {
-                schoolId,
-                classroomId: classroomId!,
-                teacherMembershipId: evaluation.resolved!.teacherMembershipId!,
-                subjectId: evaluation.resolved!.subjectId ?? null,
-                assignmentKind: evaluation.resolved!.assignmentKind!,
-                effectiveOn: evaluation.row.values.effectiveOn?.trim() || null,
-                effectiveUntil: evaluation.row.values.effectiveUntil?.trim() || null,
-                actorUserId,
-              },
-              executor,
-            );
-          }
+          const insertedId = await this.importsRepository.insertClassroomImportRow(
+            {
+              schoolId,
+              schoolTermId,
+              gradeLevelId: evaluation.resolved!.gradeLevelId!,
+              roomCode: evaluation.row.values.roomCode.trim(),
+              roomName: evaluation.row.values.roomName?.trim() || null,
+              actorUserId,
+            },
+            executor,
+          );
           if (insertedId) inserted += 1;
           else skipped += 1;
         }
@@ -1418,14 +1243,12 @@ export class ImportsService {
             actorUserId,
             actorLabel: this.actorLabel(actor),
             action: 'DATA_IMPORT',
-            targetType:
-              target === 'school_classroom' ? 'school_classrooms' : 'classroom_teacher_assignments',
+            targetType: 'school_classrooms',
             targetId: batchId,
             metadata: {
               target,
               schoolId,
               schoolTermId,
-              ...(classroomId ? { classroomId } : {}),
               rowsProcessed: rows.length,
               rowsInserted: inserted,
               rowsSkipped: skipped,
@@ -2043,7 +1866,7 @@ export class ImportsService {
           hasDifferentSchoolSnapshot,
           studentStatusCode: studentStatusCode || '-',
           studentStatusLabel: this.importStatusLabel(studentStatus) ?? 'ยังไม่ได้จับคู่',
-          studentStatusCategory: studentStatus?.category ?? 'UNMAPPED',
+          studentStatusCategory: studentStatus?.category ?? 'UNMATCHED',
         };
       });
 

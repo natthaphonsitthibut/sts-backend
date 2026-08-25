@@ -7,6 +7,7 @@ export interface TeacherLineBindingSession {
   teacherId: string;
   invitationId?: string;
   schoolId?: number;
+  verificationMethod?: 'GOOGLE' | 'ARAID';
 }
 
 /** One in-flight sign-in: ties the provider's `state` back to a binding session. */
@@ -29,7 +30,7 @@ interface StoredValue<T> {
  *
  * Deliberately not in Postgres: these records live for minutes, are written once
  * and read once, and must be shared across instances — the same reasoning as the
- * OTP store next to it. Without Redis a per-process map stands in, which is
+ * Other short-lived auth stores use the same pattern. Without Redis a per-process map stands in, which is
  * single-instance behaviour and fine for local development only.
  *
  * Binding tokens are stored hashed, so a Redis dump cannot be replayed into
@@ -41,7 +42,7 @@ export class TeacherLineSessionStore {
 
   constructor(private readonly redisClientService: RedisClientService) {}
 
-  /** Issued once email OTP or AraID is verified; the raw token goes to the browser only. */
+  /** Issued once Google or AraID is verified; the raw token goes to the browser only. */
   async createBindingSession(session: TeacherLineBindingSession): Promise<string> {
     const token = randomBytes(32).toString('hex');
     await this.write(this.bindingKey(token), session, BINDING_TTL_SECONDS);

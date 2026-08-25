@@ -139,7 +139,6 @@ describe('TaskLifecycleService', () => {
       expect.objectContaining({
         assignedToName: 'ครูประจำชั้น',
         assignedToEmail: null,
-        otpVerified: 1,
       }),
       undefined,
     );

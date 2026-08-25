@@ -1,115 +1,602 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
+import { escapeLikePattern } from '../common/utils/helpers';
 import { queryDataSource } from '../database/sql-query';
-import type { SubjectRow } from './subjects.types';
-
-interface ListOptions {
-  page: number;
-  limit: number;
-  searchTerm?: string;
-  isActive?: boolean;
-}
+import type {
+  ClassroomSubjectRow,
+  GradeSchoolSubjectRow,
+  GradeSubjectClassroomRow,
+  SchoolSubjectRow,
+  SubjectGradeRow,
+} from './subjects.types';
 
 interface CountRow extends Record<string, unknown> {
   total: number;
 }
 
-const SELECT_COLUMNS = `id, code, name_th, is_active, created_at, updated_at`;
+interface ClassroomScopeRow extends Record<string, unknown> {
+  id: string;
+  school_id: number;
+  grade_level_id: number;
+}
 
 @Injectable()
 export class SubjectsRepository {
   constructor(private readonly dataSource: DataSource) {}
 
-  async list(options: ListOptions): Promise<{ rows: SubjectRow[]; totalCount: number }> {
-    const params: unknown[] = [];
-    const conditions: string[] = [];
+  async listSchoolCatalog(options: {
+    schoolId: number;
+    page: number;
+    limit: number;
+    searchTerm?: string;
+    status?: 'ACTIVE' | 'INACTIVE';
+  }): Promise<{ rows: SchoolSubjectRow[]; totalCount: number }> {
+    const params: unknown[] = [options.schoolId];
+    const conditions = [
+      'school_subject.school_id = $1',
+      'school_subject.deleted_at IS NULL',
+      'subject.deleted_at IS NULL',
+    ];
     if (options.searchTerm) {
-      params.push(`%${options.searchTerm}%`);
-      conditions.push(`(code ILIKE $${params.length} OR name_th ILIKE $${params.length})`);
+      params.push(`%${escapeLikePattern(options.searchTerm)}%`);
+      conditions.push(
+        `(subject.code ILIKE $${params.length} OR subject.name_th ILIKE $${params.length})`,
+      );
     }
-    if (options.isActive !== undefined) {
-      params.push(options.isActive);
-      conditions.push(`is_active = $${params.length}`);
+    if (options.status) {
+      params.push(options.status);
+      conditions.push(`school_subject.subject_status = $${params.length}`);
     }
-    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    const countResult = await queryDataSource<CountRow>(
+    const whereSql = conditions.join(' AND ');
+    const count = await queryDataSource<CountRow>(
       this.dataSource,
-      `SELECT COUNT(*)::int AS total FROM subjects ${whereSql}`,
+      `
+        SELECT COUNT(*)::int AS total
+        FROM school_subjects school_subject
+        JOIN subjects subject ON subject.id = school_subject.subject_id
+        WHERE ${whereSql}
+      `,
       params,
     );
     const offset = (options.page - 1) * options.limit;
     const listParams = [...params, options.limit, offset];
-    const limitPlaceholder = listParams.length - 1;
-    const offsetPlaceholder = listParams.length;
-    const result = await queryDataSource<SubjectRow>(
+    const rows = await queryDataSource<SchoolSubjectRow>(
       this.dataSource,
       `
-        SELECT ${SELECT_COLUMNS}
-        FROM subjects
-        ${whereSql}
-        ORDER BY code ASC
-        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+        SELECT
+          school_subject.id::text,
+          school_subject.school_id,
+          school_subject.subject_id,
+          subject.code,
+          subject.name_th,
+          school_subject.subject_status,
+          COUNT(classroom_subject.id)::int AS classroom_count,
+          school_subject.created_at,
+          school_subject.updated_at
+        FROM school_subjects school_subject
+        JOIN subjects subject ON subject.id = school_subject.subject_id
+        LEFT JOIN classroom_subjects classroom_subject
+          ON classroom_subject.school_subject_id = school_subject.id
+         AND classroom_subject.offering_status = 'ACTIVE'
+         AND classroom_subject.deleted_at IS NULL
+        WHERE ${whereSql}
+        GROUP BY school_subject.id, subject.id
+        ORDER BY subject.code, school_subject.id
+        LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
       `,
       listParams,
     );
-
-    return { rows: result.rows, totalCount: countResult.rows[0]?.total ?? 0 };
+    return { rows: rows.rows, totalCount: count.rows[0]?.total ?? 0 };
   }
 
-  async findById(id: number): Promise<SubjectRow | null> {
-    const result = await queryDataSource<SubjectRow>(
+  async createSchoolSubject(
+    input: { schoolId: number; code: string; nameTh: string; actorId: number | null },
+    queryRunner: QueryRunner,
+  ): Promise<SchoolSubjectRow | null> {
+    const rows = (await queryRunner.query(
+      `
+        WITH target_subject AS (
+          INSERT INTO subjects (code, name_th, is_active, created_by, updated_by)
+          VALUES ($2, $3, TRUE, $4, $4)
+          ON CONFLICT (code) DO UPDATE SET
+            name_th = EXCLUDED.name_th,
+            is_active = TRUE,
+            deleted_at = NULL,
+            deleted_by = NULL,
+            updated_by = EXCLUDED.updated_by
+          WHERE subjects.name_th = EXCLUDED.name_th
+             OR subjects.deleted_at IS NOT NULL
+             OR NOT subjects.is_active
+          RETURNING id, code, name_th
+        ), target_school_subject AS (
+          INSERT INTO school_subjects (
+            school_id, subject_id, subject_status, created_by, updated_by
+          )
+          SELECT $1, subject.id, 'ACTIVE', $4, $4
+          FROM target_subject subject
+          ON CONFLICT (school_id, subject_id) WHERE deleted_at IS NULL
+          DO UPDATE SET
+            subject_status = 'ACTIVE',
+            deleted_at = NULL,
+            deleted_by = NULL,
+            updated_by = EXCLUDED.updated_by
+          RETURNING *
+        )
+        SELECT
+          school_subject.id::text,
+          school_subject.school_id,
+          school_subject.subject_id,
+          subject.code,
+          subject.name_th,
+          school_subject.subject_status,
+          0::int AS classroom_count,
+          school_subject.created_at,
+          school_subject.updated_at
+        FROM target_school_subject school_subject
+        JOIN target_subject subject ON subject.id = school_subject.subject_id
+      `,
+      [input.schoolId, input.code, input.nameTh, input.actorId],
+    )) as SchoolSubjectRow[];
+    return rows[0] ?? null;
+  }
+
+  async findSchoolSubjectById(
+    schoolSubjectId: number,
+    queryRunner: QueryRunner,
+  ): Promise<SchoolSubjectRow | null> {
+    const rows = (await queryRunner.query(
+      `
+        SELECT
+          school_subject.id::text,
+          school_subject.school_id,
+          school_subject.subject_id,
+          subject.code,
+          subject.name_th,
+          school_subject.subject_status,
+          (
+            SELECT COUNT(*)::int
+            FROM classroom_subjects classroom_subject
+            WHERE classroom_subject.school_subject_id = school_subject.id
+              AND classroom_subject.offering_status = 'ACTIVE'
+              AND classroom_subject.deleted_at IS NULL
+          ) AS classroom_count,
+          school_subject.created_at,
+          school_subject.updated_at
+        FROM school_subjects school_subject
+        JOIN subjects subject ON subject.id = school_subject.subject_id
+        WHERE school_subject.id = $1
+          AND school_subject.deleted_at IS NULL
+          AND subject.deleted_at IS NULL
+        FOR UPDATE OF school_subject
+      `,
+      [schoolSubjectId],
+    )) as SchoolSubjectRow[];
+    return rows[0] ?? null;
+  }
+
+  async updateSchoolSubjectStatus(
+    schoolSubjectId: number,
+    status: 'ACTIVE' | 'INACTIVE',
+    actorId: number | null,
+    queryRunner: QueryRunner,
+  ): Promise<SchoolSubjectRow> {
+    await queryRunner.query(
+      `
+        UPDATE school_subjects
+        SET subject_status = $2, updated_by = $3
+        WHERE id = $1 AND deleted_at IS NULL
+      `,
+      [schoolSubjectId, status, actorId],
+    );
+    if (status === 'INACTIVE') {
+      await queryRunner.query(
+        `
+          UPDATE classroom_subjects
+          SET offering_status = 'INACTIVE', updated_by = $2
+          WHERE school_subject_id = $1
+            AND offering_status = 'ACTIVE'
+            AND deleted_at IS NULL
+        `,
+        [schoolSubjectId, actorId],
+      );
+    }
+    return (await this.findSchoolSubjectById(schoolSubjectId, queryRunner))!;
+  }
+
+  async findClassroomScope(classroomId: number): Promise<ClassroomScopeRow | null> {
+    const result = await queryDataSource<ClassroomScopeRow>(
       this.dataSource,
-      `SELECT ${SELECT_COLUMNS} FROM subjects WHERE id = $1`,
-      [id],
+      `
+        SELECT id::text, school_id, grade_level_id
+        FROM school_classrooms
+        WHERE id = $1
+          AND classroom_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [classroomId],
     );
     return result.rows[0] ?? null;
   }
 
-  async findByCode(code: string): Promise<SubjectRow | null> {
-    const result = await queryDataSource<SubjectRow>(
+  async listClassroomOfferings(classroomId: number): Promise<ClassroomSubjectRow[]> {
+    const result = await queryDataSource<ClassroomSubjectRow>(
       this.dataSource,
-      `SELECT ${SELECT_COLUMNS} FROM subjects WHERE code = $1`,
-      [code],
+      `
+        SELECT
+          classroom_subject.id::text,
+          classroom_subject.school_id,
+          classroom_subject.classroom_id::text,
+          classroom_subject.school_subject_id::text,
+          school_subject.subject_id,
+          subject.code,
+          subject.name_th,
+          classroom_subject.offering_status
+        FROM classroom_subjects classroom_subject
+        JOIN school_subjects school_subject
+          ON school_subject.id = classroom_subject.school_subject_id
+         AND school_subject.school_id = classroom_subject.school_id
+        JOIN subjects subject ON subject.id = school_subject.subject_id
+        WHERE classroom_subject.classroom_id = $1
+          AND classroom_subject.offering_status = 'ACTIVE'
+          AND classroom_subject.deleted_at IS NULL
+          AND school_subject.subject_status = 'ACTIVE'
+          AND school_subject.deleted_at IS NULL
+          AND subject.is_active
+          AND subject.deleted_at IS NULL
+        ORDER BY subject.code
+      `,
+      [classroomId],
     );
-    return result.rows[0] ?? null;
+    return result.rows;
   }
 
-  async create(
-    code: string,
+  async countActiveSchoolSubjects(
+    schoolId: number,
+    schoolSubjectIds: number[],
+    queryRunner: QueryRunner,
+  ): Promise<number> {
+    if (schoolSubjectIds.length === 0) return 0;
+    const rows = (await queryRunner.query(
+      `
+        SELECT COUNT(*)::int AS total
+        FROM school_subjects school_subject
+        JOIN subjects subject ON subject.id = school_subject.subject_id
+        WHERE school_subject.school_id = $1
+          AND school_subject.id = ANY($2::bigint[])
+          AND school_subject.subject_status = 'ACTIVE'
+          AND school_subject.deleted_at IS NULL
+          AND subject.is_active
+          AND subject.deleted_at IS NULL
+      `,
+      [schoolId, schoolSubjectIds],
+    )) as CountRow[];
+    return Number(rows[0]?.total ?? 0);
+  }
+
+  async replaceClassroomOfferings(
+    input: {
+      classroomId: number;
+      schoolId: number;
+      schoolSubjectIds: number[];
+      actorId: number | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await queryRunner.query(
+      `SELECT id FROM school_classrooms WHERE id = $1 AND school_id = $2 FOR UPDATE`,
+      [input.classroomId, input.schoolId],
+    );
+    const desired = Array.from(new Set(input.schoolSubjectIds));
+
+    await queryRunner.query(
+      `
+        UPDATE classroom_subjects
+        SET offering_status = 'INACTIVE', updated_by = $3
+        WHERE classroom_id = $1
+          AND school_id = $2
+          AND NOT (school_subject_id = ANY($4::bigint[]))
+          AND offering_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [input.classroomId, input.schoolId, input.actorId, desired],
+    );
+    await queryRunner.query(
+      `
+        INSERT INTO classroom_subjects (
+          school_id, classroom_id, school_subject_id, offering_status, created_by, updated_by
+        )
+        SELECT $2, $1, desired.id, 'ACTIVE', $3, $3
+        FROM unnest($4::bigint[]) desired(id)
+        ON CONFLICT (classroom_id, school_subject_id) WHERE deleted_at IS NULL
+        DO UPDATE SET
+          offering_status = 'ACTIVE',
+          deleted_at = NULL,
+          deleted_by = NULL,
+          updated_by = EXCLUDED.updated_by
+      `,
+      [input.classroomId, input.schoolId, input.actorId, desired],
+    );
+  }
+
+  async listSubjectGrades(input: {
+    schoolId: number;
+    termId?: number;
+    searchTerm?: string;
+  }): Promise<SubjectGradeRow[]> {
+    const params: unknown[] = [input.schoolId];
+    const termSql = input.termId
+      ? `AND classroom.school_term_id = $${params.push(input.termId)}`
+      : '';
+    const searchSql = input.searchTerm
+      ? `AND grade.label ILIKE $${params.push(`%${escapeLikePattern(input.searchTerm)}%`)} ESCAPE '\\'`
+      : '';
+    const result = await queryDataSource<SubjectGradeRow>(
+      this.dataSource,
+      `
+        SELECT
+          grade.id AS grade_level_id,
+          grade.label AS grade_label,
+          grade.category AS grade_category,
+          COUNT(DISTINCT classroom_subject.school_subject_id)::int AS subject_count
+        FROM school_classrooms classroom
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        LEFT JOIN classroom_subjects classroom_subject
+          ON classroom_subject.classroom_id = classroom.id
+         AND classroom_subject.offering_status = 'ACTIVE'
+         AND classroom_subject.deleted_at IS NULL
+        LEFT JOIN school_subjects school_subject
+          ON school_subject.id = classroom_subject.school_subject_id
+         AND school_subject.subject_status = 'ACTIVE'
+         AND school_subject.deleted_at IS NULL
+        WHERE classroom.school_id = $1
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+          ${termSql}
+          ${searchSql}
+        GROUP BY grade.id, grade.label, grade.category
+        ORDER BY grade.id
+      `,
+      params,
+    );
+    return result.rows;
+  }
+
+  async listGradeSchoolSubjects(input: {
+    schoolId: number;
+    termId: number;
+    gradeLevelId: number;
+    page: number;
+    limit: number;
+    searchTerm?: string;
+    schoolSubjectId?: number;
+  }): Promise<{ rows: GradeSchoolSubjectRow[]; totalCount: number }> {
+    const params: unknown[] = [input.schoolId, input.termId, input.gradeLevelId];
+    const searchSql = input.searchTerm
+      ? `AND (subject.code ILIKE $${params.push(`%${escapeLikePattern(input.searchTerm)}%`)} ESCAPE '\\' OR subject.name_th ILIKE $${params.length} ESCAPE '\\')`
+      : '';
+    const schoolSubjectSql = input.schoolSubjectId
+      ? `AND school_subject.id = $${params.push(input.schoolSubjectId)}`
+      : '';
+    const fromSql = `
+      FROM school_subjects school_subject
+      JOIN subjects subject ON subject.id = school_subject.subject_id
+      JOIN classroom_subjects classroom_subject
+        ON classroom_subject.school_subject_id = school_subject.id
+       AND classroom_subject.school_id = school_subject.school_id
+       AND classroom_subject.offering_status = 'ACTIVE'
+       AND classroom_subject.deleted_at IS NULL
+      JOIN school_classrooms classroom
+        ON classroom.id = classroom_subject.classroom_id
+       AND classroom.school_id = school_subject.school_id
+       AND classroom.school_term_id = $2
+       AND classroom.grade_level_id = $3
+       AND classroom.classroom_status = 'ACTIVE'
+       AND classroom.deleted_at IS NULL
+      JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+      WHERE school_subject.school_id = $1
+        AND school_subject.subject_status = 'ACTIVE'
+        AND school_subject.deleted_at IS NULL
+        AND subject.is_active
+        AND subject.deleted_at IS NULL
+        ${searchSql}
+        ${schoolSubjectSql}
+    `;
+    const count = await queryDataSource<CountRow>(
+      this.dataSource,
+      `SELECT COUNT(DISTINCT school_subject.id)::int AS total ${fromSql}`,
+      params,
+    );
+    const rows = await queryDataSource<GradeSchoolSubjectRow>(
+      this.dataSource,
+      `
+        SELECT
+          school_subject.id::text,
+          school_subject.school_id,
+          school_subject.subject_id,
+          subject.code,
+          subject.name_th,
+          school_subject.subject_status,
+          COUNT(DISTINCT classroom.id)::int AS classroom_count,
+          school_subject.created_at,
+          school_subject.updated_at,
+          grade.id AS grade_level_id,
+          grade.label AS grade_label
+        ${fromSql}
+        GROUP BY school_subject.id, subject.id, grade.id, grade.label
+        ORDER BY subject.name_th, subject.code
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `,
+      [...params, input.limit, (input.page - 1) * input.limit],
+    );
+    return { rows: rows.rows, totalCount: Number(count.rows[0]?.total ?? 0) };
+  }
+
+  async listGradeSubjectClassrooms(input: {
+    schoolSubjectIds: number[];
+    schoolId: number;
+    termId: number;
+    gradeLevelId: number;
+  }): Promise<GradeSubjectClassroomRow[]> {
+    if (input.schoolSubjectIds.length === 0) return [];
+    const result = await queryDataSource<GradeSubjectClassroomRow>(
+      this.dataSource,
+      `
+        SELECT
+          classroom_subject.school_subject_id::text,
+          classroom.id::text AS classroom_id,
+          grade.label || '/' || classroom.room_code AS classroom_label
+        FROM classroom_subjects classroom_subject
+        JOIN school_classrooms classroom
+          ON classroom.id = classroom_subject.classroom_id
+         AND classroom.school_id = classroom_subject.school_id
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        WHERE classroom_subject.school_subject_id = ANY($1::bigint[])
+          AND classroom_subject.school_id = $2
+          AND classroom.school_term_id = $3
+          AND classroom.grade_level_id = $4
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+          AND classroom_subject.offering_status = 'ACTIVE'
+          AND classroom_subject.deleted_at IS NULL
+        ORDER BY classroom.room_code, classroom.id
+      `,
+      [input.schoolSubjectIds, input.schoolId, input.termId, input.gradeLevelId],
+    );
+    return result.rows;
+  }
+
+  async assertGradeClassrooms(
+    input: {
+      classroomIds: number[];
+      schoolId: number;
+      termId: number;
+      gradeLevelId: number;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    const rows = (await queryRunner.query(
+      `
+        WITH locked_classrooms AS (
+          SELECT classroom.id
+          FROM school_classrooms classroom
+          WHERE classroom.id = ANY($1::bigint[])
+            AND classroom.school_id = $2
+            AND classroom.school_term_id = $3
+            AND classroom.grade_level_id = $4
+            AND classroom.classroom_status = 'ACTIVE'
+            AND classroom.deleted_at IS NULL
+          FOR SHARE
+        )
+        SELECT COUNT(*)::int AS total FROM locked_classrooms
+      `,
+      [input.classroomIds, input.schoolId, input.termId, input.gradeLevelId],
+    )) as CountRow[];
+    return Number(rows[0]?.total ?? 0) === input.classroomIds.length;
+  }
+
+  async updateSubjectName(
+    subjectId: number,
     nameTh: string,
     actorId: number | null,
     queryRunner: QueryRunner,
-  ): Promise<SubjectRow> {
-    const rows = (await queryRunner.query(
-      `
-        INSERT INTO subjects (code, name_th, created_by, updated_by)
-        VALUES ($1, $2, $3, $3)
-        RETURNING ${SELECT_COLUMNS}
-      `,
-      [code, nameTh, actorId],
-    )) as SubjectRow[];
-    return rows[0];
+  ): Promise<void> {
+    await queryRunner.query(
+      `UPDATE subjects SET name_th = $2, updated_by = $3 WHERE id = $1 AND deleted_at IS NULL`,
+      [subjectId, nameTh, actorId],
+    );
   }
 
-  async update(
-    id: number,
-    values: { nameTh?: string; isActive?: boolean },
-    actorId: number | null,
+  async isSubjectSharedWithAnotherSchool(
+    subjectId: number,
+    schoolId: number,
     queryRunner: QueryRunner,
-  ): Promise<SubjectRow | null> {
+  ): Promise<boolean> {
     const rows = (await queryRunner.query(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM school_subjects
+         WHERE subject_id = $1
+           AND school_id <> $2
+           AND deleted_at IS NULL
+       ) AS shared`,
+      [subjectId, schoolId],
+    )) as Array<{ shared: boolean }>;
+    return rows[0]?.shared === true;
+  }
+
+  async replaceGradeSubjectClassrooms(
+    input: {
+      schoolSubjectId: number;
+      schoolId: number;
+      termId: number;
+      gradeLevelId: number;
+      classroomIds: number[];
+      actorId: number | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await queryRunner.query(
       `
-        UPDATE subjects
-        SET name_th = COALESCE($2, name_th),
-            is_active = COALESCE($3, is_active),
-            updated_by = $4
-        WHERE id = $1
-        RETURNING ${SELECT_COLUMNS}
+        UPDATE classroom_subjects classroom_subject
+        SET offering_status = 'INACTIVE', updated_by = $6
+        FROM school_classrooms classroom
+        WHERE classroom.id = classroom_subject.classroom_id
+          AND classroom_subject.school_subject_id = $1
+          AND classroom_subject.school_id = $2
+          AND classroom.school_term_id = $3
+          AND classroom.grade_level_id = $4
+          AND classroom_subject.offering_status = 'ACTIVE'
+          AND classroom_subject.deleted_at IS NULL
+          AND NOT (classroom.id = ANY($5::bigint[]))
       `,
-      [id, values.nameTh ?? null, values.isActive ?? null, actorId],
-    )) as SubjectRow[];
-    return rows[0] ?? null;
+      [
+        input.schoolSubjectId,
+        input.schoolId,
+        input.termId,
+        input.gradeLevelId,
+        input.classroomIds,
+        input.actorId,
+      ],
+    );
+    await queryRunner.query(
+      `
+        INSERT INTO classroom_subjects (
+          school_id, classroom_id, school_subject_id, offering_status, created_by, updated_by
+        )
+        SELECT $2::bigint, classroom_id, $1::bigint, 'ACTIVE', $4::bigint, $4::bigint
+        FROM unnest($3::bigint[]) classroom_id
+        ON CONFLICT (classroom_id, school_subject_id) WHERE deleted_at IS NULL
+        DO UPDATE SET offering_status = 'ACTIVE', updated_by = EXCLUDED.updated_by
+      `,
+      [input.schoolSubjectId, input.schoolId, input.classroomIds, input.actorId],
+    );
+  }
+
+  async removeGradeSubjectClassrooms(
+    input: {
+      schoolSubjectId: number;
+      schoolId: number;
+      termId: number;
+      gradeLevelId: number;
+      actorId: number | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await queryRunner.query(
+      `
+        UPDATE classroom_subjects classroom_subject
+        SET offering_status = 'INACTIVE', updated_by = $5
+        FROM school_classrooms classroom
+        WHERE classroom.id = classroom_subject.classroom_id
+          AND classroom_subject.school_subject_id = $1
+          AND classroom_subject.school_id = $2
+          AND classroom.school_term_id = $3
+          AND classroom.grade_level_id = $4
+          AND classroom_subject.offering_status = 'ACTIVE'
+          AND classroom_subject.deleted_at IS NULL
+      `,
+      [input.schoolSubjectId, input.schoolId, input.termId, input.gradeLevelId, input.actorId],
+    );
   }
 
   async withTransaction<T>(operation: (queryRunner: QueryRunner) => Promise<T>): Promise<T> {

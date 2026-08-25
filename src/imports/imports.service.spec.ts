@@ -77,7 +77,7 @@ describe('ImportsService', () => {
       findGradeLabels: jest.fn().mockResolvedValue([{ id: 101, label: 'ป.1' }]),
       findStudentStatusLabels: jest
         .fn()
-        .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'ACTIVE' }]),
+        .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'STUDYING' }]),
       ...quarantineLookupMocks(),
     };
     const auditLog = {
@@ -751,7 +751,7 @@ describe('ImportsService', () => {
       action: 'quarantine',
       studentStatusCode: '999',
       studentStatusLabel: 'ยังไม่ได้จับคู่',
-      studentStatusCategory: 'UNMAPPED',
+      studentStatusCategory: 'UNMATCHED',
       issues: ['สถานะนักเรียนยังไม่ได้จับคู่'],
     });
   });
@@ -759,7 +759,7 @@ describe('ImportsService', () => {
   it('treats a placeholder UNMAPPED-category status as still unmapped in preview', async () => {
     const { repository, service } = createService();
     repository.findStudentStatusLabels.mockResolvedValue([
-      { id: 90, label: 'ยังไม่ได้จับคู่ (ตัวอย่าง)', category: 'UNMAPPED' },
+      { id: 90, label: 'ยังไม่ได้จับคู่ (ตัวอย่าง)', category: 'UNMATCHED' },
     ]);
     const file = makeImportFile([
       {
@@ -779,7 +779,7 @@ describe('ImportsService', () => {
       action: 'quarantine',
       studentStatusCode: '90',
       studentStatusLabel: 'ยังไม่ได้จับคู่',
-      studentStatusCategory: 'UNMAPPED',
+      studentStatusCategory: 'UNMATCHED',
       issues: ['สถานะนักเรียนยังไม่ได้จับคู่'],
     });
   });
@@ -1094,7 +1094,7 @@ describe('ImportsService', () => {
         .mockResolvedValue([{ id: 1001, province: null, district: null, sub_district: null }]),
       findStudentStatusLabels: jest
         .fn()
-        .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'ACTIVE' }]),
+        .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'STUDYING' }]),
       findGradeLabels: jest.fn().mockResolvedValue([]),
       createImportBatch: jest.fn().mockResolvedValue('batch-id'),
       findPersonUuidMatchesByNationalIds: jest.fn().mockResolvedValue([]),
@@ -1473,7 +1473,7 @@ describe('ImportsService', () => {
       findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
       findStudentStatusLabels: jest
         .fn()
-        .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'ACTIVE' }]),
+        .mockResolvedValue([{ id: 10, label: 'กำลังศึกษา', category: 'STUDYING' }]),
       findGradeLabels: jest.fn().mockResolvedValue([]),
       insertImportRow: jest.fn().mockResolvedValue('inserted'),
       resolveQuarantineRow: jest.fn(),
@@ -1697,7 +1697,9 @@ describe('ImportsService', () => {
       findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
       findStudentStatusLabels: jest
         .fn()
-        .mockResolvedValue([{ id: 90, label: 'ยังไม่ได้จับคู่ (ตัวอย่าง)', category: 'UNMAPPED' }]),
+        .mockResolvedValue([
+          { id: 90, label: 'ยังไม่ได้จับคู่ (ตัวอย่าง)', category: 'UNMATCHED' },
+        ]),
       insertImportRow: jest.fn(),
       resolveQuarantineRow: jest.fn(),
     };

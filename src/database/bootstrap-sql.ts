@@ -1180,7 +1180,7 @@ export const CASE_ASSISTANCE_PHASE_SQL = `
     available_phase_code, target_workflow_phase_code
   ) VALUES
     ('ASSIST', 'ให้ความช่วยเหลือ', 'OPEN', NULL, FALSE, 'dashboard', 5,
-     'FOLLOW_UP', 'ASSISTANCE')
+     NULL, 'ASSISTANCE')
   ON CONFLICT (code) DO UPDATE SET
     label_th = EXCLUDED.label_th,
     target_case_status_code = EXCLUDED.target_case_status_code,
@@ -1667,13 +1667,18 @@ export const DATA_RECORD_ORIGINS_SQL = `
   ${auditUpdatedAtTriggerSql('data_record_origins')}
   INSERT INTO data_record_origins (code, label_th, is_visible_by_default, sort_order) VALUES
     ('OPERATIONAL', 'ข้อมูลใช้งานจริง', TRUE, 10),
-    ('DEMO', 'ข้อมูลสาธิต', TRUE, 20),
+    ('DEMO', 'ข้อมูลสำหรับการนำเสนอ', FALSE, 20),
     ('AUTOMATED_TEST', 'ข้อมูลทดสอบอัตโนมัติ', FALSE, 30)
   ON CONFLICT (code) DO NOTHING;
 `;
 
-export const STUDENT_CURRENT_ENROLLMENT_VIEW_SQL = `
-  CREATE OR REPLACE VIEW student_current_enrollment_resolution AS
+export function studentCurrentEnrollmentViewSql(
+  activeStatusCategory: 'ACTIVE' | 'STUDYING',
+  unresolvedStatusCategory: 'UNMAPPED' | 'UNMATCHED',
+): string {
+  return `
+  CREATE OR REPLACE VIEW student_current_enrollment_resolution
+  WITH (security_invoker = true) AS
   WITH ranked_enrollments AS (
     SELECT
       enrollment.person_uuid,
@@ -1709,28 +1714,28 @@ export const STUDENT_CURRENT_ENROLLMENT_VIEW_SQL = `
     MAX(semester) AS semester,
     COUNT(*)::integer AS latest_enrollment_count,
     COUNT(*) FILTER (
-      WHERE status_category = 'ACTIVE'
+      WHERE status_category = '${activeStatusCategory}'
         AND is_active_for_login IS TRUE
         AND is_enabled IS TRUE
     )::integer AS active_enrollment_count,
     COUNT(*) FILTER (
       WHERE status_category IS NULL
-         OR status_category = 'UNMAPPED'
+         OR status_category = '${unresolvedStatusCategory}'
          OR is_enabled IS NOT TRUE
     )::integer AS unresolved_status_count,
     CASE
       WHEN COUNT(*) FILTER (
         WHERE status_category IS NULL
-           OR status_category = 'UNMAPPED'
+           OR status_category = '${unresolvedStatusCategory}'
            OR is_enabled IS NOT TRUE
       ) > 0 THEN 'STATUS_UNRESOLVED'
       WHEN COUNT(*) FILTER (
-        WHERE status_category = 'ACTIVE'
+        WHERE status_category = '${activeStatusCategory}'
           AND is_active_for_login IS TRUE
           AND is_enabled IS TRUE
       ) = 1 THEN 'ACTIVE'
       WHEN COUNT(*) FILTER (
-        WHERE status_category = 'ACTIVE'
+        WHERE status_category = '${activeStatusCategory}'
           AND is_active_for_login IS TRUE
           AND is_enabled IS TRUE
       ) > 1 THEN 'AMBIGUOUS_ACTIVE'
@@ -1738,14 +1743,34 @@ export const STUDENT_CURRENT_ENROLLMENT_VIEW_SQL = `
     END::varchar(32) AS resolution_state,
     (
       ARRAY_AGG(student_uuid ORDER BY student_uuid) FILTER (
-        WHERE status_category = 'ACTIVE'
+        WHERE status_category = '${activeStatusCategory}'
           AND is_active_for_login IS TRUE
           AND is_enabled IS TRUE
       )
     )[1] AS selected_student_uuid
   FROM latest_term
   GROUP BY person_uuid;
+
+  DO $secure_current_enrollment_view$
+  DECLARE role_name TEXT;
+  BEGIN
+    FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+        EXECUTE format(
+          'REVOKE ALL PRIVILEGES ON TABLE student_current_enrollment_resolution FROM %I',
+          role_name
+        );
+      END IF;
+    END LOOP;
+  END
+  $secure_current_enrollment_view$;
 `;
+}
+
+export const STUDENT_CURRENT_ENROLLMENT_VIEW_SQL = studentCurrentEnrollmentViewSql(
+  'STUDYING',
+  'UNMATCHED',
+);
 
 export const NOTIFICATION_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS notification_types (
@@ -1919,11 +1944,6 @@ export const DATABASE_BASELINE_SQL = `
       CHECK (assigned_to_last_name IS NULL OR BTRIM(assigned_to_last_name) <> ''),
     assigned_to_phone TEXT,
     assigned_to_email TEXT,
-    otp_code TEXT,
-    otp_expires_at TIMESTAMP,
-    otp_verified INTEGER DEFAULT 0,
-    otp_attempts INTEGER NOT NULL DEFAULT 0,
-    otp_locked_until TIMESTAMP WITH TIME ZONE,
     subject TEXT,
     assignment_note TEXT CHECK (assignment_note IS NULL OR length(assignment_note) <= 2000),
     status TEXT DEFAULT 'ACTIVE',
@@ -2314,7 +2334,6 @@ export const DATABASE_BASELINE_SQL = `
     ON school_calendar_days (school_term_id, day_type, deleted_at, calendar_date);
 
   ALTER TABLE task_links ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE;
-  ALTER TABLE task_links ALTER COLUMN otp_expires_at TYPE TIMESTAMP WITH TIME ZONE USING otp_expires_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN admin_lock_at TYPE TIMESTAMP WITH TIME ZONE USING admin_lock_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
@@ -2589,58 +2608,10 @@ export const DATABASE_BASELINE_SQL = `
   );
   ${auditUpdatedAtTriggerSql('school_affiliations')}
 
-  CREATE TABLE IF NOT EXISTS disability_types (
-    id BIGSERIAL PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    note TEXT,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    legal_category TEXT,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_disability_types_code CHECK (length(trim(code)) > 0),
-    CONSTRAINT chk_disability_types_name CHECK (length(trim(name)) > 0)
-  );
-  ${auditUpdatedAtTriggerSql('disability_types')}
-
-  CREATE TABLE IF NOT EXISTS absence_reason_categories (
-    id BIGSERIAL PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    note TEXT,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_absence_reason_categories_code CHECK (length(trim(code)) > 0),
-    CONSTRAINT chk_absence_reason_categories_name CHECK (length(trim(name)) > 0)
-  );
-  ${auditUpdatedAtTriggerSql('absence_reason_categories')}
-
-  CREATE TABLE IF NOT EXISTS absence_reasons (
-    id BIGSERIAL PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    category_id BIGINT NOT NULL REFERENCES absence_reason_categories(id)
-      ON DELETE RESTRICT ON UPDATE CASCADE,
-    note TEXT,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_absence_reasons_code CHECK (length(trim(code)) > 0),
-    CONSTRAINT chk_absence_reasons_name CHECK (length(trim(name)) > 0)
-  );
-  ${auditUpdatedAtTriggerSql('absence_reasons')}
-  CREATE INDEX IF NOT EXISTS idx_absence_reasons_category_id
-    ON absence_reasons (category_id);
-
-  CREATE TABLE IF NOT EXISTS non_follow_up_reasons (
-    id BIGSERIAL PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    note TEXT,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_non_follow_up_reasons_code CHECK (length(trim(code)) > 0),
-    CONSTRAINT chk_non_follow_up_reasons_name CHECK (length(trim(name)) > 0)
-  );
-  ${auditUpdatedAtTriggerSql('non_follow_up_reasons')}
+  -- Attendance/student-care catalogs are owned by the additive Task 13
+  -- migrations. Do not duplicate their evolving schema here: the retired
+  -- runtime bootstrap previously carried incompatible id/name stubs under the
+  -- same table names as the canonical code/label_th contracts.
 
   INSERT INTO school_affiliations (code, name)
   VALUES
@@ -2649,20 +2620,6 @@ export const DATABASE_BASELINE_SQL = `
     ('อปท', 'องค์กรปกครองส่วนท้องถิ่น'),
     ('กทม', 'กรุงเทพมหานคร'),
     ('มกท', 'เมืองพัทยา')
-  ON CONFLICT (code) DO NOTHING;
-
-  INSERT INTO disability_types (code, name, legal_category)
-  VALUES
-    ('NONE', 'ไม่มีความพิการ', NULL),
-    ('VISUAL', 'ความบกพร่องทางการเห็น', 'ความพิการทางการเห็น'),
-    ('HEARING', 'ความบกพร่องทางการได้ยินหรือสื่อความหมาย', 'ความพิการทางการได้ยินหรือสื่อความหมาย'),
-    ('INTELLECTUAL', 'ความบกพร่องทางสติปัญญา', 'ความพิการทางสติปัญญา'),
-    ('PHYSICAL_HEALTH', 'ความบกพร่องทางร่างกายหรือสุขภาพ', 'ความพิการทางร่างกายหรือการเคลื่อนไหว'),
-    ('LEARNING', 'ความบกพร่องทางการเรียนรู้', 'ความพิการทางการเรียนรู้'),
-    ('SPEECH_LANGUAGE', 'ความบกพร่องทางการพูดและภาษา', 'ความพิการทางการพูดและภาษา'),
-    ('BEHAVIOR_EMOTION', 'ความบกพร่องทางพฤติกรรมหรืออารมณ์', 'ความพิการทางพฤติกรรมหรืออารมณ์'),
-    ('AUTISM', 'ออทิสติก', 'ออทิสติก'),
-    ('MULTIPLE', 'ความพิการซ้อน', 'ความพิการซ้อน')
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS student_status_categories (
@@ -2675,12 +2632,14 @@ export const DATABASE_BASELINE_SQL = `
   );
   ${auditUpdatedAtTriggerSql('student_status_categories')}
   INSERT INTO student_status_categories (code, label_th, sort_order) VALUES
-    ('ACTIVE', 'กำลังศึกษา', 10),
-    ('GRADUATED', 'สำเร็จการศึกษา', 20),
-    ('WITHDRAWN', 'ลาออก/พ้นสภาพ', 30),
+    ('STUDYING', 'กำลังศึกษา', 10),
+    ('SUSPENDED', 'พักการเรียน', 20),
+    ('GRADUATED', 'สำเร็จการศึกษา', 30),
     ('TRANSFERRED', 'ย้ายสถานศึกษา', 40),
-    ('DECEASED', 'เสียชีวิต', 50),
-    ('UNMAPPED', 'ยังไม่ได้จับคู่', 60)
+    ('WITHDRAWN', 'ลาออก', 50),
+    ('DISCHARGED', 'พ้นสภาพ/จำหน่าย', 60),
+    ('DECEASED', 'เสียชีวิต', 70),
+    ('UNMATCHED', 'ยังไม่ได้จับคู่', 90)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS student_status (
@@ -2710,10 +2669,14 @@ export const DATABASE_BASELINE_SQL = `
     requires_followup, is_enabled, sort_order, source_system
   )
   VALUES
-    (10, 'กำลังศึกษา', 'ACTIVE', 'success', TRUE, FALSE, FALSE, TRUE, 10, 'ONEC'),
-    (20, 'จบการศึกษา', 'GRADUATED', 'secondary', FALSE, TRUE, FALSE, TRUE, 20, 'ONEC'),
-    (30, 'ลาออก/จำหน่าย', 'WITHDRAWN', 'secondary', FALSE, TRUE, TRUE, TRUE, 30, 'ONEC'),
-    (40, 'ย้ายสถานศึกษา', 'TRANSFERRED', 'secondary', FALSE, TRUE, FALSE, TRUE, 40, 'ONEC')
+    (10, 'กำลังศึกษา', 'STUDYING', 'success', TRUE, FALSE, FALSE, TRUE, 10, 'ONEC'),
+    (15, 'พักการเรียน', 'SUSPENDED', 'warning', FALSE, FALSE, TRUE, TRUE, 20, 'INTERNAL'),
+    (20, 'สำเร็จการศึกษา', 'GRADUATED', 'secondary', FALSE, TRUE, FALSE, TRUE, 30, 'ONEC'),
+    (30, 'ลาออก', 'WITHDRAWN', 'secondary', FALSE, TRUE, TRUE, TRUE, 50, 'ONEC'),
+    (35, 'พ้นสภาพ/จำหน่าย', 'DISCHARGED', 'secondary', FALSE, TRUE, TRUE, TRUE, 60, 'INTERNAL'),
+    (40, 'ย้ายสถานศึกษา', 'TRANSFERRED', 'secondary', FALSE, TRUE, FALSE, TRUE, 40, 'ONEC'),
+    (50, 'เสียชีวิต', 'DECEASED', 'destructive', FALSE, TRUE, TRUE, TRUE, 70, 'ONEC'),
+    (90, 'ยังไม่ได้จับคู่', 'UNMATCHED', 'warning', FALSE, FALSE, TRUE, FALSE, 90, 'ONEC')
   ON CONFLICT (code) DO NOTHING;
 
   ALTER TABLE student_term ADD COLUMN IF NOT EXISTS student_status_code INTEGER;

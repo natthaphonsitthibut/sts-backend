@@ -96,6 +96,12 @@ export class CaseTrackingOptionsService {
       guardianTypes,
       residenceEnvironments,
       assistanceMeasures,
+      executionOutcomes,
+      nonFollowUpReasons,
+      absenceReasons,
+      disadvantageTypes,
+      disabilityTypes,
+      contactChannels,
     ] = await Promise.all([
       this.taskRepository.listCaseReviewActions(phaseCode ?? null),
       this.taskRepository.listCaseFollowUpDecisions(),
@@ -106,6 +112,12 @@ export class CaseTrackingOptionsService {
       this.taskRepository.listGuardianTypeOptions(),
       this.taskRepository.listResidenceEnvironmentOptions(),
       this.taskRepository.listAssistanceMeasures(),
+      this.taskRepository.listTaskExecutionOutcomes(),
+      this.taskRepository.listNonFollowUpReasons(),
+      this.taskRepository.listAbsenceReasons(),
+      this.taskRepository.listDisadvantageTypes(),
+      this.taskRepository.listDisabilityTypes(),
+      this.taskRepository.listContactChannelOptions(),
     ]);
     return {
       reviewActions: reviewActions.map((row) => ({
@@ -131,6 +143,35 @@ export class CaseTrackingOptionsService {
       guardianTypes: guardianTypes.map((row) => this.mapGuardianType(row)),
       residenceEnvironments: residenceEnvironments.map((row) => this.mapResidenceEnvironment(row)),
       assistanceMeasures: assistanceMeasures.map((row) => this.mapAssistanceMeasure(row)),
+      executionOutcomes: executionOutcomes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+        // A follow-up round found the student or did not; only assistance
+        // succeeds or fails, so each flow asks in its own words.
+        visitLabel: this.stringValue(row.visit_label_th) || this.stringValue(row.label_th),
+      })),
+      nonFollowUpReasons: nonFollowUpReasons.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      absenceReasons: absenceReasons.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+        categoryCode: this.stringValue(row.category_code) || null,
+        categoryLabel: this.stringValue(row.category_label_th) || null,
+      })),
+      disadvantageTypes: disadvantageTypes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      disabilityTypes: disabilityTypes.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
+      contactChannels: contactChannels.map((row) => ({
+        code: this.stringValue(row.code),
+        label: this.stringValue(row.label_th),
+      })),
     };
   }
 
@@ -241,6 +282,76 @@ export class CaseTrackingOptionsService {
     const row = await this.taskRepository.findCaseResolutionOutcome(code);
     if (!row) throw new BadRequestException('ผลลัพธ์การติดตามไม่ถูกต้อง');
     return this.stringValue(row.code);
+  }
+
+  async getTaskExecutionOutcome(code: string | null): Promise<string> {
+    if (!code) throw new BadRequestException('กรุณาเลือกผลการดำเนินงานครั้งนี้');
+    const row = await this.taskRepository.findTaskExecutionOutcome(code);
+    if (!row) throw new BadRequestException('ผลการดำเนินงานไม่ถูกต้อง');
+    return this.stringValue(row.code);
+  }
+
+  async getContactChannel(code: string | null): Promise<string | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findContactChannelOption(code);
+    if (!row) throw new BadRequestException('ช่องทางติดต่อไม่ถูกต้อง');
+    return this.stringValue(row.code);
+  }
+
+  async getNonFollowUpReason(code: string | null): Promise<string | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findNonFollowUpReason(code);
+    if (!row) throw new BadRequestException('สาเหตุการไม่ติดตามไม่ถูกต้อง');
+    return this.stringValue(row.code);
+  }
+
+  async getAbsenceReason(code: string | null): Promise<string | null> {
+    if (!code) return null;
+    const row = await this.taskRepository.findAbsenceReason(code);
+    if (!row) throw new BadRequestException('สาเหตุการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
+    return this.stringValue(row.code);
+  }
+
+  async getAbsenceSelection(
+    reasonCode: string | null,
+    categoryCode: string | null,
+  ): Promise<{ reasonCode: string | null; categoryCode: string | null }> {
+    const [reason, category] = await Promise.all([
+      reasonCode ? this.taskRepository.findAbsenceReason(reasonCode) : null,
+      categoryCode ? this.taskRepository.findAbsenceReasonCategory(categoryCode) : null,
+    ]);
+    if (reasonCode && !reason) {
+      throw new BadRequestException('สาเหตุการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
+    }
+    if (categoryCode && !category) {
+      throw new BadRequestException('ประเภทการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
+    }
+    const reasonCategoryCode = reason ? this.stringValue(reason.category_code) : null;
+    if (categoryCode && reasonCategoryCode && categoryCode !== reasonCategoryCode) {
+      throw new BadRequestException('สาเหตุการขาดไม่อยู่ในประเภทที่เลือก');
+    }
+    return {
+      reasonCode: reason ? this.stringValue(reason.code) : null,
+      categoryCode: categoryCode ?? reasonCategoryCode,
+    };
+  }
+
+  async getCareObservationCodes(
+    kind: 'DISADVANTAGE' | 'DISABILITY',
+    codes: string[],
+  ): Promise<string[]> {
+    const unique = Array.from(
+      new Set(codes.map((code) => code.trim().toUpperCase()).filter(Boolean)),
+    );
+    if (unique.length === 0) return [];
+    const rows =
+      kind === 'DISADVANTAGE'
+        ? await this.taskRepository.findDisadvantageTypes(unique)
+        : await this.taskRepository.findDisabilityTypes(unique);
+    if (rows.length !== unique.length || rows.some((row) => row.code === 'NONE')) {
+      throw new BadRequestException('ข้อมูลที่ควรคำนึงในการดูแลไม่ถูกต้อง');
+    }
+    return unique;
   }
 
   async getHomeVisitException(code: string | null): Promise<HomeVisitExceptionOption | null> {

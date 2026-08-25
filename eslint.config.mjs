@@ -6,7 +6,12 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    ignores: [
+      'eslint.config.mjs',
+      // Generated from the pinned DOPA catalog; typechecked by the build and
+      // validated by its migration test instead of reparsing 7,436 data rows in ESLint.
+      'src/database/administrative-area-catalog.ts',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

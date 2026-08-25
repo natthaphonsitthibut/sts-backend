@@ -5,6 +5,9 @@ describe('CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL', () => {
     const sql = CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL;
     const dependencyMarkers = [
       'school_classrooms',
+      'classroom_teacher_assignments',
+      'classroom_homeroom_teachers',
+      'classroom_attendance_links',
       'teacher_access_grants',
       'student_observations',
       'student_observation_risk_reviews',
@@ -22,6 +25,9 @@ describe('CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL', () => {
       'school_classrooms',
       'school_teacher_memberships',
       'classroom_teacher_assignments',
+      'teacher_external_identities',
+      'classroom_homeroom_teachers',
+      'classroom_attendance_links',
       'school_structure_backfill_issues',
       'teacher_access_grants',
       'teacher_access_grant_capabilities',
@@ -55,7 +61,24 @@ describe('CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL', () => {
     expect(sql).toContain(
       'REFERENCES classroom_teacher_assignments(id, teacher_membership_id, school_id, classroom_id)',
     );
+    expect(sql).toContain('REFERENCES teachers(id)');
+    expect(sql).toContain('REFERENCES school_classrooms(id, school_term_id, school_id)');
+    expect(sql).toContain('REFERENCES school_teacher_memberships(id, school_id)');
     expect(sql).toContain('ON DELETE RESTRICT ON UPDATE CASCADE');
+  });
+
+  it('keeps the new room-link foundation private and legacy-write compatible', () => {
+    const sql = CUSTOMER_ALIGNMENT_FEATURE_TABLES_SQL;
+    expect(sql).toContain('ALTER TABLE teacher_external_identities ENABLE ROW LEVEL SECURITY');
+    expect(sql).toContain('ALTER TABLE classroom_homeroom_teachers ENABLE ROW LEVEL SECURITY');
+    expect(sql).toContain('ALTER TABLE classroom_attendance_links ENABLE ROW LEVEL SECURITY');
+    expect(sql).toContain('line_delivery_teacher_membership_id BIGINT');
+    expect(sql).toContain('chk_classroom_attendance_links_line_delivery_state');
+    expect(sql).toContain('idx_classroom_attendance_links_line_delivery');
+    expect(sql).toContain("ARRAY['anon', 'authenticated']");
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION sync_classroom_homeroom_teacher(');
+    expect(sql).toContain('DELETE FROM classroom_homeroom_teachers');
+    expect(sql).toContain('AFTER INSERT OR UPDATE OR DELETE ON classroom_teacher_assignments');
   });
 
   it('keeps import targets, quarantine codes, indexes and triggers idempotent', () => {

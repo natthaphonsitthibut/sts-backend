@@ -131,7 +131,7 @@ async function main() {
     if (fixtureIds.size > 0) {
       const ids = [...fixtureIds];
       await runner.query(
-        `DELETE FROM classroom_teacher_assignments
+        `DELETE FROM classroom_homeroom_teachers
          WHERE teacher_membership_id IN (
            SELECT id FROM school_teacher_memberships WHERE teacher_id = ANY($1::bigint[])
          )`,

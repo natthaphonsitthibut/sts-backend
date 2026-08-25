@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsEmail,
   IsIn,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -115,6 +116,25 @@ export class UpdateStudentDto {
   @IsString()
   @MaxLength(100)
   LastName_Onec?: string;
+
+  @IsOptional()
+  @Transform(trimOptionalText)
+  @IsString()
+  @MaxLength(50)
+  student_number?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  student_status_code?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(4)
+  term_gpa?: number | null;
 
   @IsOptional()
   @IsString()

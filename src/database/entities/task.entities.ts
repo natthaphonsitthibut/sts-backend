@@ -92,25 +92,6 @@ export class TaskLinkEntity {
   @Column({ name: 'assigned_to_email', type: 'text', nullable: true })
   assignedToEmail!: string | null;
 
-  @Column({ name: 'otp_code', type: 'text', nullable: true })
-  otpCode!: string | null;
-
-  @Column({
-    name: 'otp_expires_at',
-    type: 'timestamptz',
-    nullable: true,
-  })
-  otpExpiresAt!: Date | null;
-
-  @Column({ name: 'otp_verified', type: 'integer', default: 0 })
-  otpVerified!: number;
-
-  @Column({ name: 'otp_attempts', type: 'integer', default: 0 })
-  otpAttempts!: number;
-
-  @Column({ name: 'otp_locked_until', type: 'timestamptz', nullable: true })
-  otpLockedUntil!: Date | null;
-
   @Column({ name: 'subject', type: 'text', nullable: true })
   subject!: string | null;
 
@@ -158,6 +139,12 @@ export class TaskSubmissionEntity {
 
   @Column({ name: 'follow_up_problem_category_code', type: 'varchar', length: 32, nullable: true })
   followUpProblemCategoryCode!: string | null;
+
+  @Column({ name: 'absence_reason_code', type: 'varchar', length: 40, nullable: true })
+  absenceReasonCode!: string | null;
+
+  @Column({ name: 'absence_reason_category_code', type: 'varchar', length: 40, nullable: true })
+  absenceReasonCategoryCode!: string | null;
 
   @Column({ name: 'parental_status_code', type: 'varchar', length: 40, nullable: true })
   parentalStatusCode!: string | null;
@@ -230,6 +217,9 @@ export class CaseReviewEntity {
 
   @Column({ name: 'resolution_outcome', type: 'varchar', length: 40, nullable: true })
   resolutionOutcome!: string | null;
+
+  @Column({ name: 'proposed_assistance_measure_detail', type: 'text', nullable: true })
+  proposedAssistanceMeasureDetail!: string | null;
 
   @Column({ name: 'reviewed_by', type: 'text', nullable: true })
   reviewedBy!: string | null;

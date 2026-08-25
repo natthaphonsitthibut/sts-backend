@@ -225,7 +225,7 @@ export class RiskProfileRepository {
             a.student_uuid,
             COUNT(*)::int AS subject_late_count,
             MAX(a."AttendanceDate")::timestamptz AS latest_subject_late_at
-          FROM attendance a
+          FROM attendance_effective_records a
           JOIN selected_students s ON s.student_uuid = a.student_uuid
           JOIN attendance_sessions sess ON sess.id = a.session_id
           WHERE a."AcademicYear_Onec" = s.academic_year
@@ -240,14 +240,9 @@ export class RiskProfileRepository {
         teacher_signal_events AS (
           SELECT comment.person_uuid, comment.created_at
           FROM classroom_student_comments comment
-          UNION ALL
-          SELECT enrollment.person_uuid, observation.created_at
-          FROM student_observations observation
-          JOIN student_term enrollment ON enrollment.student_uuid = observation.student_uuid
-          WHERE observation.deleted_at IS NULL
+          WHERE comment.concern_level_code IN ('WATCH', 'CONCERN')
         ),
-        -- เฝ้าระวัง comes from either classroom comments or the legacy teacher
-        -- observations that remain part of the student's cross-term history.
+        -- เฝ้าระวัง comes from the teacher comments a student carries across terms.
         teacher_signal_summary AS (
           SELECT
             s.student_uuid,

@@ -5,22 +5,18 @@ import { isUnconfiguredDataScope } from '../auth/auth.types';
 import { appConfig } from '../config/app.config';
 import { buildDataScopeQuery, type DataScope } from '../common/utils/authorization';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
-import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
+import { queryDataSource } from '../database/sql-query';
 import type {
   AttendanceHistoryRow,
-  AttendanceInsertRecord,
   AttendanceStudentRow,
   GradeLevelRow,
   LocationDistrictRow,
   LocationProvinceRow,
   LocationSubDistrictRow,
-  QueryExecutor,
   QueryResultLike,
   RoomRow,
   SchoolFilters,
   SchoolRow,
-  SettingValueRow,
-  StudentAttendanceMetadataRow,
   StudentFilters,
 } from './attendance.types';
 
@@ -67,24 +63,6 @@ export class AttendanceRepository {
     params?: unknown[],
   ): Promise<QueryResultLike<T>> {
     return await queryDataSource<T>(this.dataSource, sql, params);
-  }
-
-  private getExecutor(executor?: QueryExecutor): QueryExecutor {
-    if (executor) {
-      return executor;
-    }
-
-    return {
-      query: async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) => {
-        return await this.query<T>(sql, params);
-      },
-    };
-  }
-
-  async withTransaction<T>(callback: (executor: QueryExecutor) => Promise<T>): Promise<T> {
-    return await withDataSourceTransaction(this.dataSource, async (executor) => {
-      return await callback(executor);
-    });
   }
 
   async listGradeLevels(): Promise<GradeLevelRow[]> {
@@ -277,7 +255,6 @@ export class AttendanceRepository {
     userScope?: DataScope,
     schoolId?: number | null,
     sessionKind?: 'SUBJECT',
-    timetableSlotId?: number,
   ): Promise<AttendanceHistoryRow[]> {
     // Self-only actors own no history rows (see listSchools note).
     if (userScope?.own_only === true) {
@@ -301,8 +278,7 @@ export class AttendanceRepository {
         COALESCE(gl.label, 'ไม่ทราบ') as grade,
         s."RoomID_Onec"::text as room,
         a."AttendanceStatus" as status
-      FROM attendance a
-      LEFT JOIN attendance_sessions sess ON sess.id = a.session_id
+      FROM attendance_effective_records a
       JOIN student_term s ON s.student_uuid = a.student_uuid
       LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
       LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
@@ -315,11 +291,6 @@ export class AttendanceRepository {
     if (sessionKind) {
       params.push(sessionKind);
       query += ` AND a.session_kind = $${params.length}`;
-    }
-
-    if (Number.isInteger(timetableSlotId)) {
-      params.push(timetableSlotId);
-      query += ` AND sess.timetable_slot_id = $${params.length}`;
     }
 
     if (userScope) {
@@ -394,260 +365,5 @@ export class AttendanceRepository {
     const result = await this.query<RoomRow>(query, params);
 
     return result.rows;
-  }
-
-  async deleteAttendanceBatchForDate(
-    date: string,
-    studentIds: string[],
-    executor?: QueryExecutor,
-  ): Promise<void> {
-    if (studentIds.length === 0) {
-      return;
-    }
-
-    const queryExecutor = this.getExecutor(executor);
-    await queryExecutor.query(
-      `
-        DELETE FROM attendance
-        WHERE "AttendanceDate" = $1
-          AND student_uuid = ANY($2::uuid[])
-      `,
-      [date, studentIds],
-    );
-  }
-
-  async findStudentAttendanceMetadata(
-    studentId: string,
-    executor?: QueryExecutor,
-  ): Promise<StudentAttendanceMetadataRow | null> {
-    const queryExecutor = this.getExecutor(executor);
-    const result = await queryExecutor.query<StudentAttendanceMetadataRow>(
-      `
-        SELECT
-          "SchoolID_Onec",
-          "GradeLevelID_Onec",
-          "RoomID_Onec",
-          "AcademicYear_Onec",
-          "Semester_Onec"
-        FROM student_term
-        WHERE student_uuid = $1
-      `,
-      [studentId],
-    );
-
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Return the subset of studentIds whose student_term row falls within the
-   * actor's data scope. Mirrors the scope clause used by listStudents so write
-   * authorization matches read visibility. Empty scope (global admin) imposes no
-   * scope filter, so all existing requested ids are returned.
-   */
-  async filterStudentIdsInScope(
-    studentIds: string[],
-    userScope?: DataScope,
-    executor?: QueryExecutor,
-  ): Promise<string[]> {
-    if (studentIds.length === 0) {
-      return [];
-    }
-    // Self-only actors may not validate/write roster attendance at all.
-    if (userScope?.own_only === true) {
-      return [];
-    }
-
-    const params: unknown[] = [studentIds];
-    const conditions: string[] = [`s.student_uuid = ANY($1::uuid[])`];
-
-    if (userScope) {
-      const scopeResult = buildDataScopeQuery(
-        userScope,
-        {
-          school_id: `s."SchoolID_Onec"`,
-          grade: `s."GradeLevelID_Onec"`,
-          room: `s."RoomID_Onec"::text`,
-          province: 'sc.province',
-          district: 'sc.district',
-          sub_district: 'sc.sub_district',
-        },
-        params.length + 1,
-      );
-
-      if (scopeResult.sql) {
-        conditions.push(`(${scopeResult.sql})`);
-        pushScopeParams(params, scopeResult.params);
-      }
-    }
-
-    const result = await this.getExecutor(executor).query<{ id: string }>(
-      `
-        SELECT s.student_uuid AS id
-        FROM student_term s
-        ${CURRENT_ENROLLMENT_JOIN}
-        LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
-        WHERE ${conditions.join(' AND ')}
-      `,
-      params,
-    );
-
-    return result.rows.map((row) => String(row.id));
-  }
-
-  async insertAttendanceRecord(
-    data: AttendanceInsertRecord,
-    executor?: QueryExecutor,
-  ): Promise<void> {
-    const queryExecutor = this.getExecutor(executor);
-    await queryExecutor.query(
-      `
-        INSERT INTO attendance (
-          student_uuid,
-          "SchoolID_Onec",
-          "GradeLevelID_Onec",
-          "RoomID_Onec",
-          "AcademicYear_Onec",
-          "Semester_Onec",
-          "AttendanceDate",
-          "Period",
-          "AttendanceStatus",
-          "RecordedBy",
-          recorded_by_teacher_id,
-          session_id
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      `,
-      [
-        data.studentUuid,
-        data.metadata.SchoolID_Onec,
-        data.metadata.GradeLevelID_Onec,
-        data.metadata.RoomID_Onec,
-        data.metadata.AcademicYear_Onec,
-        data.metadata.Semester_Onec,
-        data.date,
-        data.period,
-        data.statusCode,
-        data.recordedBy,
-        data.recordedByTeacherId ?? null,
-        data.sessionId,
-      ],
-    );
-  }
-
-  /**
-   * Removes marks a teacher took back during a check-in in progress. Tapping the
-   * same status twice clears the student, so the stored row has to go — leaving
-   * it would make the next prefill resurrect a status the teacher undid.
-   */
-  async deleteAttendanceMarks(
-    input: { sessionId: string; studentIds: string[] },
-    executor: QueryExecutor,
-  ): Promise<void> {
-    if (input.studentIds.length === 0) {
-      return;
-    }
-    await executor.query(
-      `
-        DELETE FROM attendance
-        WHERE session_id = $1 AND student_uuid = ANY($2::uuid[])
-      `,
-      [input.sessionId, input.studentIds],
-    );
-  }
-
-  async upsertAttendanceBatch(
-    input: {
-      studentIds: string[];
-      statusCodes: number[];
-      /** Per-student tap time (already clamped); `null` where unknown. */
-      markedAt: Array<string | null>;
-      date: string;
-      period: number;
-      sessionKind: 'SUBJECT';
-      recordedBy: string;
-      recordedByTeacherId?: number | null;
-      sessionId: string;
-      metadata: StudentAttendanceMetadataRow;
-    },
-    executor: QueryExecutor,
-  ): Promise<void> {
-    const sessionKind = 'SUBJECT';
-    const conflictTarget = `ON CONFLICT (student_uuid, "AttendanceDate", "Period") WHERE session_kind = 'SUBJECT' DO UPDATE SET`;
-
-    await executor.query(
-      `
-        INSERT INTO attendance (
-          student_uuid,
-          "SchoolID_Onec",
-          "GradeLevelID_Onec",
-          "RoomID_Onec",
-          "AcademicYear_Onec",
-          "Semester_Onec",
-          "AttendanceDate",
-          "Period",
-          session_kind,
-          "AttendanceStatus",
-          "RecordedAt",
-          marked_at,
-          "RecordedBy",
-          recorded_by_teacher_id,
-          session_id
-        )
-        SELECT
-          input.student_uuid,
-          $3,
-          $4,
-          $5,
-          $6,
-          $7,
-          $8,
-          $9,
-          $10,
-          input.status_code,
-          now(),
-          input.marked_at,
-          $11,
-          $14,
-          $12
-        FROM UNNEST($1::uuid[], $2::smallint[], $13::timestamptz[])
-          AS input(student_uuid, status_code, marked_at)
-        ${conflictTarget}
-          "SchoolID_Onec" = EXCLUDED."SchoolID_Onec",
-          "GradeLevelID_Onec" = EXCLUDED."GradeLevelID_Onec",
-          "RoomID_Onec" = EXCLUDED."RoomID_Onec",
-          "AcademicYear_Onec" = EXCLUDED."AcademicYear_Onec",
-          "Semester_Onec" = EXCLUDED."Semester_Onec",
-          "AttendanceStatus" = EXCLUDED."AttendanceStatus",
-          "RecordedAt" = now(),
-          marked_at = EXCLUDED.marked_at,
-          "RecordedBy" = EXCLUDED."RecordedBy",
-          recorded_by_teacher_id = EXCLUDED.recorded_by_teacher_id,
-          session_id = EXCLUDED.session_id
-      `,
-      [
-        input.studentIds,
-        input.statusCodes,
-        input.metadata.SchoolID_Onec,
-        input.metadata.GradeLevelID_Onec,
-        input.metadata.RoomID_Onec,
-        input.metadata.AcademicYear_Onec,
-        input.metadata.Semester_Onec,
-        input.date,
-        input.period,
-        sessionKind,
-        input.recordedBy,
-        input.sessionId,
-        input.markedAt,
-        input.recordedByTeacherId ?? null,
-      ],
-    );
-  }
-
-  async getAlertTriggerType(): Promise<string> {
-    const result = await this.query<SettingValueRow>(
-      "SELECT setting_value FROM system_settings WHERE setting_key = 'ALERT_TRIGGER_TYPE'",
-    );
-
-    return result.rowCount && result.rowCount > 0 ? result.rows[0].setting_value : 'SCHEDULED';
   }
 }

@@ -300,8 +300,8 @@ async function createFixtures(dataSource, actorId) {
   await dataSource.query(
     `INSERT INTO student_status (code, label_th, category, sort_order, source_system, created_by, updated_by)
      VALUES
-       ($1, 'สถานะสำหรับ smoke', 'ACTIVE', 200, 'SMOKE', $3, $3),
-       ($2, 'ยังไม่ได้จับคู่ (smoke)', 'UNMAPPED', 201, 'SMOKE', $3, $3)
+       ($1, 'สถานะสำหรับ smoke', 'STUDYING', 200, 'SMOKE', $3, $3),
+       ($2, 'ยังไม่ได้จับคู่ (smoke)', 'UNMATCHED', 201, 'SMOKE', $3, $3)
      ON CONFLICT (code) DO NOTHING`,
     [REAL_STATUS_CODE, PLACEHOLDER_STATUS_CODE, actorId],
   );
@@ -537,7 +537,7 @@ async function main() {
     );
     assert(fixed.payload?.status === 'RESOLVED', 'Inline quarantine correction did not resolve');
 
-    // A placeholder status (category UNMAPPED) exists in master data but must
+    // A placeholder status (category UNMATCHED) exists in master data but must
     // not count as mapped: not retry-eligible, and rejected as a fix value.
     const unmappedSummary = await request(
       baseUrl,
@@ -548,7 +548,7 @@ async function main() {
     );
     assert(
       unmappedSummary.payload?.readyCount === 0,
-      'Placeholder UNMAPPED-category status was counted as retry-ready',
+      'Placeholder UNMATCHED-category status was counted as retry-ready',
     );
     await request(
       baseUrl,

@@ -108,6 +108,27 @@ describe('HomeDashboardRepository', () => {
     expect(queries[0].sql).not.toContain('COALESCE(c.created_at, c.updated_at)');
   });
 
+  it('includes uncategorized visit reports in the cause distribution', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+
+    await repository.getCauseCategoryDistribution(
+      {
+        id: 1,
+        username: 'admin',
+        roles: ['ADMIN'],
+        permissions: ['home'],
+        data_scope: { global: true },
+      },
+      {},
+    );
+
+    expect(queries[0].sql).toContain("t.task_type = 'VISIT'");
+    expect(queries[0].sql).toContain('LEFT JOIN follow_up_problem_categories');
+    expect(queries[0].sql).toContain("COALESCE(ts.follow_up_problem_category_code, 'UNSPECIFIED')");
+    expect(queries[0].sql).toContain("COALESCE(problem_category.label_th, 'ไม่ระบุสาเหตุ')");
+    expect(queries[0].sql).not.toContain('ts.follow_up_problem_category_code IS NOT NULL');
+  });
+
   it('counts incomplete attendance sessions instead of roster join rows', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
 
@@ -146,6 +167,7 @@ describe('HomeDashboardRepository', () => {
     expect(queries[0].sql).toContain("profile.risk_tier = 'HIGH'");
     expect(queries[0].sql).toContain('COUNT(DISTINCT s.student_uuid)');
     expect(queries[0].sql).toContain('GROUP BY sc.district');
+    expect(queries[0].sql).toContain('sc.district_code AS "areaCode"');
     // No LIMIT on purpose: the province map colours every province from these
     // rows, so cutting the query to a top-N would leave most of the map blank.
     // The order is what has to hold, since the list view takes the first few.

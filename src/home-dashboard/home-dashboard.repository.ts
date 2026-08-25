@@ -52,6 +52,7 @@ interface RiskAreaRankingRow extends Record<string, unknown> {
   key: string;
   label: string;
   count: number | string;
+  areaCode: string | null;
 }
 
 const CURRENT_ENROLLMENT_JOIN = `
@@ -316,26 +317,30 @@ export class HomeDashboardRepository {
     const scope = this.buildStudentScopeQuery(actor, filters);
     const dimensions: Record<
       HomeDashboardRiskAreaDimension,
-      { key: string; label: string; present: string }
+      { key: string; label: string; areaCode: string; present: string }
     > = {
       PROVINCE: {
         key: 'sc.province',
         label: 'sc.province',
+        areaCode: 'sc.province_code',
         present: `NULLIF(BTRIM(sc.province), '') IS NOT NULL`,
       },
       DISTRICT: {
         key: 'sc.district',
         label: 'sc.district',
+        areaCode: 'sc.district_code',
         present: `NULLIF(BTRIM(sc.district), '') IS NOT NULL`,
       },
       SUB_DISTRICT: {
         key: 'sc.sub_district',
         label: 'sc.sub_district',
+        areaCode: 'sc.sub_district_code',
         present: `NULLIF(BTRIM(sc.sub_district), '') IS NOT NULL`,
       },
       SCHOOL: {
         key: 'sc.id::text',
         label: `COALESCE(NULLIF(BTRIM(sc.name), ''), 'โรงเรียน ' || sc.id::text)`,
+        areaCode: 'NULL::text',
         present: 'sc.id IS NOT NULL',
       },
     };
@@ -348,6 +353,7 @@ export class HomeDashboardRepository {
         SELECT
           ${selected.key} AS key,
           ${selected.label} AS label,
+          ${selected.areaCode} AS "areaCode",
           COUNT(DISTINCT s.student_uuid)::int AS count
         FROM student_term s
         ${CURRENT_ENROLLMENT_JOIN}
@@ -355,7 +361,7 @@ export class HomeDashboardRepository {
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         INNER JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
         WHERE ${whereSql}
-        GROUP BY ${selected.key}, ${selected.label}
+        GROUP BY ${selected.key}, ${selected.label}, ${selected.areaCode}
         ORDER BY count DESC, label ASC
       `,
       scope.params,
@@ -364,6 +370,7 @@ export class HomeDashboardRepository {
       key: String(row.key),
       label: String(row.label),
       count: toNumber(row.count),
+      areaCode: row.areaCode ? String(row.areaCode) : null,
     }));
   }
 
@@ -848,8 +855,10 @@ export class HomeDashboardRepository {
     const scope = this.buildCaseScopeQuery(actor, filters);
     const whereSql = [
       'c.deleted_at IS NULL',
+      't.deleted_at IS NULL',
+      'tl.deleted_at IS NULL',
       'ts.deleted_at IS NULL',
-      'ts.follow_up_problem_category_code IS NOT NULL',
+      "t.task_type = 'VISIT'",
       scope.sql,
     ]
       .filter(Boolean)
@@ -861,18 +870,20 @@ export class HomeDashboardRepository {
     }>(
       `
         SELECT
-          ts.follow_up_problem_category_code AS category,
-          problem_category.label_th AS category_label,
+          COALESCE(ts.follow_up_problem_category_code, 'UNSPECIFIED') AS category,
+          COALESCE(problem_category.label_th, 'ไม่ระบุสาเหตุ') AS category_label,
           COUNT(*)::int AS count
         FROM task_submissions ts
         JOIN task_links tl ON tl.id = ts.task_link_id
         JOIN tasks t ON t.id = tl.task_id
         JOIN cases c ON c.id = t.case_id
-        JOIN follow_up_problem_categories problem_category
+        LEFT JOIN follow_up_problem_categories problem_category
           ON problem_category.code = ts.follow_up_problem_category_code
         LEFT JOIN schools sc ON sc.id = c.school_id
         ${whereSql ? `WHERE ${whereSql}` : ''}
-        GROUP BY ts.follow_up_problem_category_code, problem_category.label_th
+        GROUP BY
+          COALESCE(ts.follow_up_problem_category_code, 'UNSPECIFIED'),
+          COALESCE(problem_category.label_th, 'ไม่ระบุสาเหตุ')
         ORDER BY count DESC
       `,
       scope.params,

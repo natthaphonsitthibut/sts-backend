@@ -17,6 +17,15 @@ export class SchoolEntity {
   @Column({ name: 'sub_district', type: 'text', nullable: true })
   subDistrict!: string | null;
 
+  @Column({ name: 'province_code', type: 'varchar', length: 2, nullable: true })
+  provinceCode!: string | null;
+
+  @Column({ name: 'district_code', type: 'varchar', length: 4, nullable: true })
+  districtCode!: string | null;
+
+  @Column({ name: 'sub_district_code', type: 'varchar', length: 6, nullable: true })
+  subDistrictCode!: string | null;
+
   @Column({ name: 'school_status', type: 'varchar', length: 16, default: 'ACTIVE' })
   schoolStatus!: 'ACTIVE' | 'INACTIVE';
 }

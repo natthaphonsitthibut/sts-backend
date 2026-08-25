@@ -18,3 +18,6 @@ export function buildSubjectStudentRef(
   const digest = createHmac('sha256', pepper).update(`v${keyVersion}:${canonical}`).digest('hex');
   return `v${keyVersion}$${digest}`;
 }
+
+/** Generic alias for non-student PII subjects that use the same HMAC format. */
+export const buildPiiSubjectRef = buildSubjectStudentRef;

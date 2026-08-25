@@ -63,6 +63,7 @@ describe('school structure DTOs', () => {
   it('trims classroom comments and rejects empty or oversized content', () => {
     const valid = plainToInstance(CreateClassroomStudentCommentDto, {
       problemCategory: 'ACADEMIC',
+      concernLevelCode: 'NOTE',
       problemDescription: '  ติดตามการส่งงาน  ',
     });
     expect(validateSync(valid)).toHaveLength(0);
@@ -71,6 +72,7 @@ describe('school structure DTOs', () => {
       validateSync(
         plainToInstance(CreateClassroomStudentCommentDto, {
           problemCategory: 'ACADEMIC',
+          concernLevelCode: 'NOTE',
           problemDescription: '   ',
         }),
       ),
@@ -79,6 +81,7 @@ describe('school structure DTOs', () => {
       validateSync(
         plainToInstance(CreateClassroomStudentCommentDto, {
           problemCategory: 'ACADEMIC',
+          concernLevelCode: 'NOTE',
           problemDescription: 'ก'.repeat(2001),
         }),
       ),
@@ -87,10 +90,33 @@ describe('school structure DTOs', () => {
       validateSync(
         plainToInstance(CreateClassroomStudentCommentDto, {
           problemCategory: 'UNKNOWN',
+          concernLevelCode: 'NOTE',
           problemDescription: 'ติดตาม',
         }),
       ),
     ).not.toHaveLength(0);
+    expect(
+      validateSync(
+        plainToInstance(CreateClassroomStudentCommentDto, {
+          problemCategory: 'ACADEMIC',
+          concernLevelCode: 'URGENT',
+          problemDescription: 'ติดตาม',
+        }),
+      ),
+    ).not.toHaveLength(0);
+    for (const forbiddenField of ['concernLevel', 'outcome', 'recommendation', 'caseAction']) {
+      expect(
+        validateSync(
+          plainToInstance(CreateClassroomStudentCommentDto, {
+            problemCategory: 'ACADEMIC',
+            concernLevelCode: 'WATCH',
+            problemDescription: 'ติดตาม',
+            [forbiddenField]: 'SHOULD_NOT_EXIST',
+          }),
+          { forbidNonWhitelisted: true, whitelist: true },
+        ),
+      ).not.toHaveLength(0);
+    }
   });
 
   it('validates classroom attendance history views and optional filters', () => {

@@ -251,7 +251,7 @@ async function seedNotifications(dataSource, userId) {
   await dataSource.query(
     `INSERT INTO notifications
        (recipient_user_id, type_code, title, body, ref_entity, ref_id, created_at,
-        student_person_uuid, case_id, case_status_code, student_name_masked, reason_text)
+        student_person_uuid, case_id, case_status_code, student_name_snapshot, reason_text)
      VALUES
        ($1, 'CASE_STATUS_CHANGED', 'Browser smoke case', 'BODY_MUST_NOT_RENDER', 'case', $2, now(),
         $3, $4, 'OPEN', 'ด.ช. ทด****', 'ขาดเรียนติดต่อกัน 3 วัน'),
@@ -405,11 +405,20 @@ async function main() {
     );
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('Browser smoke case'),
-      'Notification dialog did not render fixtures',
+      'Notification tray did not render fixtures',
+    );
+    assert(
+      await evaluate(
+        client,
+        `Boolean(document.querySelector('[role="region"][aria-label="การแจ้งเตือน"]')) &&
+         document.querySelector('button[aria-label*="รายการแจ้งเตือน"]')
+           ?.getAttribute('aria-haspopup') === 'true'`,
+      ),
+      'Notification tray did not expose non-modal region semantics',
     );
     const dropdownText = String(await evaluate(client, 'document.body.innerText'));
     // The API resolves the student's name from the case and only falls back to
-    // the stored `student_name_masked`, so the rendered body is "<name> · <reason>"
+    // the stored `student_name_snapshot`, so the rendered body is "<name> · <reason>"
     // with the recipient's own scoped view of the name — asserting the seeded
     // literal would be asserting the fallback, which is not what recipients see.
     assert(
@@ -484,7 +493,7 @@ async function main() {
               button.textContent.trim() === 'อ่านแล้ว')`,
           ),
         ),
-      'Notification dialog did not reopen',
+      'Notification tray did not reopen',
     );
     await evaluate(
       client,
@@ -548,7 +557,7 @@ async function main() {
     await capture(client, '/tmp/sts-notifications-mobile.png');
 
     console.log(
-      'notification browser smoke passed (bell dialog, read filter, inbox desktop/mobile, case deep-link/read)',
+      'notification browser smoke passed (bell tray, region semantics, read filter, inbox desktop/mobile, case deep-link/read)',
     );
   } finally {
     await closeChrome(chrome);

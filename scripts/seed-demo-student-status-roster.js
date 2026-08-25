@@ -27,7 +27,7 @@ const DEMO_STATUSES = [
   {
     code: 90,
     label: 'ยังไม่ได้จับคู่',
-    category: 'UNMAPPED',
+    category: 'UNMATCHED',
     badgeVariant: 'warning',
     isActiveForLogin: false,
     isTerminal: false,
@@ -423,7 +423,7 @@ const STUDENTS = [
   ],
 
   [
-    'UNMAPPED',
+    'UNMATCHED',
     'สรวิชญ์',
     'ภูผา',
     90,
@@ -442,7 +442,7 @@ const STUDENTS = [
     98.9612,
   ],
   [
-    'UNMAPPED',
+    'UNMATCHED',
     'รินรดา',
     'นาคะวารี',
     90,
@@ -461,7 +461,7 @@ const STUDENTS = [
     102.8281,
   ],
   [
-    'UNMAPPED',
+    'UNMATCHED',
     'พัชรพล',
     'สายทอง',
     90,
@@ -480,7 +480,7 @@ const STUDENTS = [
     102.7819,
   ],
   [
-    'UNMAPPED',
+    'UNMATCHED',
     'จิรัชญา',
     'เมืองแก้ว',
     90,

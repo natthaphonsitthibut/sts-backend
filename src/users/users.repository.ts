@@ -164,8 +164,6 @@ const USER_OPERATIONAL_REFERENCE_CHECKS = [
   { table: 'task_submissions', column: 'deleted_by' },
   { table: 'case_reviews', column: 'created_by' },
   { table: 'case_reviews', column: 'updated_by' },
-  { table: 'attendance', column: 'created_by' },
-  { table: 'attendance', column: 'updated_by' },
   { table: 'system_settings', column: 'created_by' },
   { table: 'system_settings', column: 'updated_by' },
   { table: 'schools', column: 'created_by' },

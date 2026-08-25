@@ -45,7 +45,12 @@ function scopeDimensionPresentSql(key: string): string {
   )`;
 }
 
-const SCOPE_COVERS_EVENT_SQL = `
+function scopeCoversEventSql(
+  schoolValueSql: string,
+  gradeValueSql: string,
+  roomValueSql: string,
+): string {
+  return `
   (
     u.data_scope->'global' = 'true'::jsonb
     OR (
@@ -59,19 +64,57 @@ const SCOPE_COVERS_EVENT_SQL = `
         OR ${scopeDimensionPresentSql('grade_levels')}
         OR ${scopeDimensionPresentSql('room_ids')}
       )
-      AND ${scopeDimensionSql('school_ids', '$7::text')}
+      AND ${scopeDimensionSql('school_ids', schoolValueSql)}
       AND ${scopeDimensionSql('provinces', 'sc.province')}
       AND ${scopeDimensionSql('districts', 'sc.district')}
       AND ${scopeDimensionSql('sub_districts', 'sc.sub_district')}
-      AND ${scopeDimensionSql(
-        'grade_levels',
-        'COALESCE($8::text, notification_case_student."GradeLevelID_Onec"::text, notification_student."GradeLevelID_Onec"::text)',
-      )}
-      AND ${scopeDimensionSql(
-        'room_ids',
-        'COALESCE($9::text, notification_case_student."RoomID_Onec"::text, notification_student."RoomID_Onec"::text)',
-      )}
+      AND ${scopeDimensionSql('grade_levels', gradeValueSql)}
+      AND ${scopeDimensionSql('room_ids', roomValueSql)}
     )
+  )
+`;
+}
+
+const SCOPE_COVERS_EVENT_SQL = scopeCoversEventSql(
+  '$7::text',
+  'COALESCE($8::text, notification_case_student."GradeLevelID_Onec"::text, notification_student."GradeLevelID_Onec"::text)',
+  'COALESCE($9::text, notification_case_student."RoomID_Onec"::text, notification_student."RoomID_Onec"::text)',
+);
+
+const CURRENT_RECIPIENT_ACCESS_JOINS_SQL = `
+  JOIN users u ON u.id = n.recipient_user_id
+  LEFT JOIN roles r ON r.name = u.role
+  LEFT JOIN cases notification_case ON notification_case.id = n.case_id
+  LEFT JOIN student_term notification_case_student
+    ON notification_case_student.student_uuid = notification_case.student_uuid
+   AND notification_case_student.deleted_at IS NULL
+  LEFT JOIN student_current_enrollment_resolution notification_student_resolution
+    ON notification_student_resolution.person_uuid = n.student_person_uuid
+   AND notification_student_resolution.resolution_state = 'ACTIVE'
+  LEFT JOIN student_term notification_student
+    ON notification_student.student_uuid = notification_student_resolution.selected_student_uuid
+   AND notification_student.deleted_at IS NULL
+  LEFT JOIN schools sc ON sc.id = COALESCE(
+    notification_case.school_id,
+    notification_case_student."SchoolID_Onec",
+    notification_student."SchoolID_Onec"
+  )
+`;
+
+const CURRENT_RECIPIENT_ACCESS_WHERE_SQL = `
+  u.status = 'ACTIVE'
+  AND CASE
+    WHEN jsonb_typeof(u.permissions) = 'array'
+      THEN u.permissions ? nt.required_permission
+    ELSE COALESCE(r.default_permissions ? nt.required_permission, FALSE)
+  END
+  AND (
+    (n.case_id IS NULL AND n.student_person_uuid IS NULL)
+    OR ${scopeCoversEventSql(
+      'COALESCE(notification_case.school_id::text, notification_case_student."SchoolID_Onec"::text, notification_student."SchoolID_Onec"::text)',
+      'COALESCE(notification_case_student."GradeLevelID_Onec"::text, notification_student."GradeLevelID_Onec"::text)',
+      'COALESCE(notification_case_student."RoomID_Onec"::text, notification_student."RoomID_Onec"::text)',
+    )}
   )
 `;
 
@@ -201,7 +244,7 @@ export class NotificationsRepository {
         ) latest_comment ON TRUE
         LEFT JOIN LATERAL (
           SELECT attendance."AttendanceDate"::date AS attendance_date
-          FROM attendance
+          FROM attendance_effective_records attendance
           WHERE attendance.student_uuid = c.student_uuid
             AND attendance.session_kind = 'SUBJECT'
           GROUP BY attendance."AttendanceDate"::date
@@ -281,9 +324,10 @@ export class NotificationsRepository {
           n.created_at,
           COUNT(*) OVER ()::int AS total_count
         FROM notifications n
-        LEFT JOIN notification_types nt ON nt.code = n.type_code
-        LEFT JOIN cases notification_case ON notification_case.id = n.case_id
+        JOIN notification_types nt ON nt.code = n.type_code
+        ${CURRENT_RECIPIENT_ACCESS_JOINS_SQL}
         WHERE n.recipient_user_id = $1
+          AND ${CURRENT_RECIPIENT_ACCESS_WHERE_SQL}
           AND (
             $2::text = 'all'
             OR ($2::text = 'unread' AND n.read_at IS NULL)
@@ -307,8 +351,11 @@ export class NotificationsRepository {
         SELECT
           COUNT(*) FILTER (WHERE read_at IS NULL)::int AS unread_count,
           COUNT(*) FILTER (WHERE seen_at IS NULL)::int AS unseen_count
-        FROM notifications
-        WHERE recipient_user_id = $1
+        FROM notifications n
+        JOIN notification_types nt ON nt.code = n.type_code
+        ${CURRENT_RECIPIENT_ACCESS_JOINS_SQL}
+        WHERE n.recipient_user_id = $1
+          AND ${CURRENT_RECIPIENT_ACCESS_WHERE_SQL}
       `,
       [recipientUserId],
     );

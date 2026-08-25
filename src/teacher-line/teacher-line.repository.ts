@@ -254,6 +254,19 @@ export class TeacherLineRepository {
           AND EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
+            JOIN classroom_homeroom_teachers homeroom
+              ON homeroom.teacher_membership_id = membership.id
+             AND homeroom.school_id = membership.school_id
+            JOIN school_classrooms classroom
+              ON classroom.id = homeroom.classroom_id
+             AND classroom.school_id = homeroom.school_id
+             AND classroom.classroom_status = 'ACTIVE'
+             AND classroom.deleted_at IS NULL
+            JOIN school_terms term
+              ON term.id = classroom.school_term_id
+             AND term.school_id = classroom.school_id
+             AND term.status = 'ACTIVE'
+             AND term.deleted_at IS NULL
             WHERE membership.teacher_id = teacher.id
               AND membership.school_id = $2
               AND membership.membership_status = 'ACTIVE'
@@ -283,6 +296,19 @@ export class TeacherLineRepository {
           AND EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
+            JOIN classroom_homeroom_teachers homeroom
+              ON homeroom.teacher_membership_id = membership.id
+             AND homeroom.school_id = membership.school_id
+            JOIN school_classrooms classroom
+              ON classroom.id = homeroom.classroom_id
+             AND classroom.school_id = homeroom.school_id
+             AND classroom.classroom_status = 'ACTIVE'
+             AND classroom.deleted_at IS NULL
+            JOIN school_terms term
+              ON term.id = classroom.school_term_id
+             AND term.school_id = classroom.school_id
+             AND term.status = 'ACTIVE'
+             AND term.deleted_at IS NULL
             WHERE membership.teacher_id = teacher.id
               AND membership.school_id = $2
               AND membership.membership_status = 'ACTIVE'
@@ -579,6 +605,43 @@ export class TeacherLineRepository {
     return result.rows.length > 0;
   }
 
+  async hasActiveHomeroomTeacherMembership(
+    teacherId: string,
+    schoolId: number,
+    queryRunner: QueryRunner,
+  ): Promise<boolean> {
+    const result = await this.executor(queryRunner).query(
+      `
+        SELECT 1
+        FROM teachers teacher
+        JOIN school_teacher_memberships membership
+          ON membership.teacher_id = teacher.id
+         AND membership.school_id = $2::bigint
+        JOIN classroom_homeroom_teachers homeroom
+          ON homeroom.teacher_membership_id = membership.id
+         AND homeroom.school_id = membership.school_id
+        JOIN school_classrooms classroom
+          ON classroom.id = homeroom.classroom_id
+         AND classroom.school_id = homeroom.school_id
+         AND classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+        JOIN school_terms term
+          ON term.id = classroom.school_term_id
+         AND term.school_id = classroom.school_id
+         AND term.status = 'ACTIVE'
+         AND term.deleted_at IS NULL
+        WHERE teacher.id = $1::bigint
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [teacherId, schoolId],
+    );
+    return result.rows.length > 0;
+  }
+
   async insertAccount(
     input: {
       teacherId: string;
@@ -586,6 +649,7 @@ export class TeacherLineRepository {
       providerUserId: string;
       displayName: string | null;
       friendState: MessagingFriendState;
+      verifiedVia: 'GOOGLE' | 'ARAID';
     },
     queryRunner: QueryRunner,
   ): Promise<string> {
@@ -595,7 +659,7 @@ export class TeacherLineRepository {
           teacher_id, provider, provider_channel_id, provider_user_id,
           display_name, friend_state, friend_checked_at, verified_at, verified_via
         )
-        VALUES ($1::bigint, 'LINE', $2, $3, $4, $5, now(), now(), 'EMAIL_OTP')
+        VALUES ($1::bigint, 'LINE', $2, $3, $4, $5, now(), now(), $6)
         RETURNING id::text AS id
       `,
       [
@@ -604,6 +668,7 @@ export class TeacherLineRepository {
         input.providerUserId,
         input.displayName,
         input.friendState,
+        input.verifiedVia,
       ],
     );
     return result.rows[0].id;

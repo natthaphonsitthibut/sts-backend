@@ -1,84 +1,225 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { SchoolStructureRepository } from '../school-structure/school-structure.repository';
 import { SubjectsRepository } from './subjects.repository';
 import { SubjectsService } from './subjects.service';
-import type { SubjectRow } from './subjects.types';
+import type { ClassroomSubjectRow, SchoolSubjectRow } from './subjects.types';
 
 describe('SubjectsService', () => {
   let service: SubjectsService;
-  let repository: jest.Mocked<
-    Pick<SubjectsRepository, 'list' | 'findById' | 'create' | 'update' | 'withTransaction'>
-  >;
+  let repository: jest.Mocked<SubjectsRepository>;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'recordAtomic'>>;
+  let schoolStructureRepository: jest.Mocked<Pick<SchoolStructureRepository, 'isSchoolInScope'>>;
 
   const actor = {
     id: 3,
     username: 'admin1',
     roles: ['ADMIN'],
-    permissions: ['timetable'],
+    permissions: ['manage-subjects'],
     data_scope: { global: true },
   };
 
-  function subjectRow(overrides: Partial<SubjectRow> = {}): SubjectRow {
+  function schoolSubjectRow(overrides: Partial<SchoolSubjectRow> = {}): SchoolSubjectRow {
     return {
-      id: 1,
+      id: '10',
+      school_id: 1001,
+      subject_id: 1,
       code: 'MATH101',
       name_th: 'คณิตศาสตร์',
-      is_active: true,
-      created_at: new Date('2026-07-07T00:00:00Z'),
-      updated_at: new Date('2026-07-07T00:00:00Z'),
+      subject_status: 'ACTIVE',
+      classroom_count: 2,
+      created_at: new Date('2026-08-23T00:00:00Z'),
+      updated_at: new Date('2026-08-23T00:00:00Z'),
+      ...overrides,
+    };
+  }
+
+  function classroomSubjectRow(overrides: Partial<ClassroomSubjectRow> = {}): ClassroomSubjectRow {
+    return {
+      id: '20',
+      school_id: 1001,
+      classroom_id: '42',
+      school_subject_id: '10',
+      subject_id: 1,
+      code: 'MATH101',
+      name_th: 'คณิตศาสตร์',
+      offering_status: 'ACTIVE',
       ...overrides,
     };
   }
 
   beforeEach(() => {
     repository = {
-      list: jest.fn().mockResolvedValue({ rows: [subjectRow()], totalCount: 1 }),
-      findById: jest.fn().mockResolvedValue(subjectRow()),
-      create: jest.fn().mockResolvedValue(subjectRow()),
-      update: jest.fn().mockResolvedValue(subjectRow({ name_th: 'คณิตศาสตร์ (แก้ไข)' })),
-      withTransaction: jest.fn((operation) => operation({} as never)),
-    };
+      withTransaction: jest.fn((operation: (queryRunner: unknown) => unknown) => operation({})),
+      listSchoolCatalog: jest.fn().mockResolvedValue({ rows: [schoolSubjectRow()], totalCount: 1 }),
+      createSchoolSubject: jest.fn().mockResolvedValue(schoolSubjectRow()),
+      findSchoolSubjectById: jest.fn().mockResolvedValue(schoolSubjectRow()),
+      updateSchoolSubjectStatus: jest
+        .fn()
+        .mockResolvedValue(schoolSubjectRow({ subject_status: 'INACTIVE' })),
+      findClassroomScope: jest
+        .fn()
+        .mockResolvedValue({ id: '42', school_id: 1001, grade_level_id: 4 }),
+      listClassroomOfferings: jest.fn().mockResolvedValue([classroomSubjectRow()]),
+      countActiveSchoolSubjects: jest.fn().mockResolvedValue(1),
+      replaceClassroomOfferings: jest.fn().mockResolvedValue(undefined),
+      listSubjectGrades: jest.fn().mockResolvedValue([
+        {
+          grade_level_id: 4,
+          grade_label: 'อ.1',
+          grade_category: 'KINDERGARTEN',
+          subject_count: 2,
+        },
+      ]),
+      listGradeSchoolSubjects: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            ...schoolSubjectRow(),
+            grade_level_id: 4,
+            grade_label: 'อ.1',
+          },
+        ],
+        totalCount: 1,
+      }),
+      listGradeSubjectClassrooms: jest.fn().mockResolvedValue([
+        {
+          school_subject_id: '10',
+          classroom_id: '42',
+          classroom_label: 'อ.1/1',
+        },
+      ]),
+      assertGradeClassrooms: jest.fn().mockResolvedValue(true),
+      updateSubjectName: jest.fn().mockResolvedValue(undefined),
+      isSubjectSharedWithAnotherSchool: jest.fn().mockResolvedValue(false),
+      replaceGradeSubjectClassrooms: jest.fn().mockResolvedValue(undefined),
+      removeGradeSubjectClassrooms: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<SubjectsRepository>;
     auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
+    schoolStructureRepository = { isSchoolInScope: jest.fn().mockResolvedValue(true) };
     service = new SubjectsService(
-      repository as unknown as SubjectsRepository,
+      repository,
       auditLog as unknown as AuditLogService,
+      schoolStructureRepository as unknown as SchoolStructureRepository,
     );
   });
 
-  it('creates a subject and audits SUBJECT_CREATE', async () => {
-    const result = await service.create(actor, { code: 'MATH101', nameTh: 'คณิตศาสตร์' });
+  it('lists the school catalog only after server-side school scope succeeds', async () => {
+    const result = await service.listSchoolCatalog(actor, { schoolId: 1001, page: 1, limit: 20 });
 
-    expect(result.data.code).toBe('MATH101');
-    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'SUBJECT_CREATE' }),
+    expect(schoolStructureRepository.isSchoolInScope.mock.calls).toContainEqual([
+      1001,
+      { global: true },
+    ]);
+    expect(result.data[0]).toMatchObject({ id: 10, code: 'MATH101', classroomCount: 2 });
+  });
+
+  it('treats every school subject uniformly when changing status', async () => {
+    await expect(
+      service.updateSchoolSubject(actor, 10, { status: 'INACTIVE' }),
+    ).resolves.toMatchObject({ data: { status: 'INACTIVE' } });
+  });
+
+  it('replaces classroom offerings atomically after validating every school subject', async () => {
+    const result = await service.replaceClassroomOfferings(actor, 42, {
+      schoolSubjectIds: [10],
+    });
+
+    expect(repository.replaceClassroomOfferings.mock.calls).toContainEqual([
+      expect.objectContaining({ classroomId: 42, schoolId: 1001, schoolSubjectIds: [10] }),
       expect.anything(),
-    );
+    ]);
+    expect(auditLog.recordAtomic.mock.calls).toContainEqual([
+      expect.objectContaining({ action: 'CLASSROOM_SUBJECTS_REPLACE' }),
+      expect.anything(),
+    ]);
+    expect(result.data).toHaveLength(1);
   });
 
-  it('maps a unique-code violation to ConflictException', async () => {
-    repository.create.mockRejectedValue({ code: '23505' });
+  it('rejects classroom offerings from another school', async () => {
+    repository.countActiveSchoolSubjects.mockResolvedValue(0);
 
     await expect(
-      service.create(actor, { code: 'MATH101', nameTh: 'คณิตศาสตร์' }),
-    ).rejects.toBeInstanceOf(ConflictException);
+      service.replaceClassroomOfferings(actor, 42, { schoolSubjectIds: [999] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.replaceClassroomOfferings.mock.calls).toHaveLength(0);
   });
 
-  it('rejects updating a subject that does not exist', async () => {
-    repository.findById.mockResolvedValue(null);
+  it('lists grade subjects with classroom labels from the replacement relation', async () => {
+    const result = await service.listGradeSchoolSubjects(actor, {
+      schoolId: 1001,
+      termId: 30,
+      gradeLevelId: 4,
+      page: 1,
+      limit: 20,
+    });
 
-    await expect(service.update(actor, 999, { nameTh: 'x' })).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    expect(result.data[0]).toMatchObject({
+      id: 10,
+      subjectName: 'คณิตศาสตร์',
+      classrooms: [{ id: 42, label: 'อ.1/1' }],
+    });
+    expect(repository.listGradeSubjectClassrooms.mock.calls).toContainEqual([
+      {
+        schoolSubjectIds: [10],
+        schoolId: 1001,
+        termId: 30,
+        gradeLevelId: 4,
+      },
+    ]);
   });
 
-  it('updates a subject and audits SUBJECT_UPDATE', async () => {
-    const result = await service.update(actor, 1, { nameTh: 'คณิตศาสตร์ (แก้ไข)' });
+  it('creates a grade subject and classroom offerings in one transaction', async () => {
+    const result = await service.saveGradeSchoolSubject(actor, null, {
+      schoolId: 1001,
+      termId: 30,
+      gradeLevelId: 4,
+      code: 'ค11101',
+      nameTh: 'คณิตศาสตร์',
+      classroomIds: [42],
+    });
 
-    expect(result.data.name_th).toBe('คณิตศาสตร์ (แก้ไข)');
-    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'SUBJECT_UPDATE' }),
+    expect(repository.assertGradeClassrooms.mock.calls).toContainEqual([
+      expect.objectContaining({ classroomIds: [42], schoolId: 1001, termId: 30 }),
       expect.anything(),
-    );
+    ]);
+    expect(repository.replaceGradeSubjectClassrooms.mock.calls).toContainEqual([
+      expect.objectContaining({ schoolSubjectId: 10, classroomIds: [42] }),
+      expect.anything(),
+    ]);
+    expect(result.data.classrooms).toEqual([{ id: 42, label: 'อ.1/1' }]);
+  });
+
+  it('rejects a room outside the selected school, term, or grade', async () => {
+    repository.assertGradeClassrooms.mockResolvedValue(false);
+
+    await expect(
+      service.saveGradeSchoolSubject(actor, null, {
+        schoolId: 1001,
+        termId: 30,
+        gradeLevelId: 4,
+        code: 'ค11101',
+        nameTh: 'คณิตศาสตร์',
+        classroomIds: [999],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.createSchoolSubject.mock.calls).toHaveLength(0);
+    expect(repository.replaceGradeSubjectClassrooms.mock.calls).toHaveLength(0);
+  });
+
+  it('rejects renaming a global subject shared with another school', async () => {
+    repository.isSubjectSharedWithAnotherSchool.mockResolvedValue(true);
+
+    await expect(
+      service.saveGradeSchoolSubject(actor, 10, {
+        schoolId: 1001,
+        termId: 30,
+        gradeLevelId: 4,
+        code: 'MATH101',
+        nameTh: 'ชื่อใหม่',
+        classroomIds: [42],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(repository.updateSubjectName.mock.calls).toHaveLength(0);
+    expect(repository.replaceGradeSubjectClassrooms.mock.calls).toHaveLength(0);
   });
 });

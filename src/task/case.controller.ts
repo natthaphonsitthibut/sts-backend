@@ -36,6 +36,13 @@ export class CaseController {
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('dashboard')
+  @Get('referral-agencies')
+  listReferralAgencies(@CurrentUser() actor?: AuthenticatedRequestUser) {
+    return this.caseService.listReferralAgencies(actor);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('dashboard')
   @Get(':caseId')
   async getCase(
     @Param('caseId', ParseIntPipe) caseId: number,

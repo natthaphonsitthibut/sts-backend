@@ -43,8 +43,9 @@ describe('RiskProfileRepository', () => {
     expect(queries[0].sql).toContain('(day."AttendanceStatus" = 2) AS is_absent_day');
     expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
     expect(queries[0].sql).toContain('teacher_signal_summary');
-    expect(queries[0].sql).toContain('FROM student_observations observation');
-    expect(queries[0].sql).toContain('WHERE observation.deleted_at IS NULL');
+    expect(queries[0].sql).toContain("comment.concern_level_code IN ('WATCH', 'CONCERN')");
+    // Teacher concern now has one source: the comment a teacher writes.
+    expect(queries[0].sql).not.toContain('student_observations');
     expect(queries[0].sql).toContain('ON CONFLICT (student_uuid) DO UPDATE SET');
     expect(queries[0].sql).toContain('JOIN student_current_enrollment_resolution');
     expect(queries[0].sql).toContain('case_completion_baselines');

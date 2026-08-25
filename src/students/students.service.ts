@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -42,6 +43,7 @@ import {
   normalizeNationalIdValue,
 } from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import type { StudentEnrollmentState, StudentListFilters } from './students.types';
 import type { AuthenticatedRequestUser } from '../auth';
 
@@ -180,7 +182,17 @@ export class StudentsService {
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
+    private readonly riskProfileService: RiskProfileService,
   ) {}
+
+  private async recalculateStudentRisk(studentUuid: string, reason: string): Promise<void> {
+    try {
+      await this.riskProfileService.requestStudentRecalculation([studentUuid], reason);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to recalculate student risk after management write: ${message}`);
+    }
+  }
 
   /**
    * Profile photo read. Goes through the app so the same scope check as the
@@ -251,9 +263,111 @@ export class StudentsService {
     return await this.findOne(id, actor, userScope);
   }
 
-  create(createStudentDto: CreateStudentDto) {
-    void createStudentDto;
-    return 'This action adds a new student';
+  private normalizeGuardians(guardians: UpdateStudentDto['guardians']) {
+    if (guardians === undefined) return undefined;
+    if (guardians.filter((guardian) => guardian.is_primary).length > 1) {
+      throw new BadRequestException('เลือกผู้ติดต่อหลักได้เพียงคนเดียว');
+    }
+    return guardians.map((guardian) => {
+      if (guardian.relation === 'GUARDIAN' && !guardian.relation_note?.trim()) {
+        throw new BadRequestException('ผู้ปกครองที่ไม่ใช่บิดามารดาต้องระบุความสัมพันธ์');
+      }
+      const explicitFirstName = guardian.first_name?.trim();
+      const explicitLastName = guardian.last_name?.trim();
+      if (explicitFirstName) {
+        if (!explicitLastName) {
+          throw new BadRequestException('กรุณากรอกนามสกุลผู้ปกครอง');
+        }
+        return {
+          ...guardian,
+          first_name: explicitFirstName,
+          last_name: explicitLastName,
+          full_name: `${explicitFirstName} ${explicitLastName}`,
+        };
+      }
+      const legacyFullName = guardian.full_name?.trim();
+      if (!legacyFullName) {
+        throw new BadRequestException('กรุณากรอกชื่อและนามสกุลผู้ปกครอง');
+      }
+      const nameParts = legacyFullName.split(/\s+/);
+      const lastName = nameParts.length > 1 ? (nameParts.pop() ?? null) : null;
+      return {
+        ...guardian,
+        first_name: nameParts.join(' '),
+        last_name: lastName,
+        full_name: legacyFullName,
+      };
+    });
+  }
+
+  async getManagementOptions(userScope?: DataScope) {
+    const classrooms = await this.studentsRepository.listManagementClassrooms(userScope);
+    return {
+      data: {
+        classrooms: classrooms.map((classroom) => ({
+          id: classroom.id,
+          schoolId: classroom.school_id,
+          schoolName: classroom.school_name,
+          schoolTermId: classroom.school_term_id,
+          academicYear: classroom.academic_year,
+          semester: classroom.semester,
+          gradeLevelId: classroom.grade_level_id,
+          gradeLabel: classroom.grade_label,
+          roomCode: classroom.room_code,
+          roomName: classroom.room_name,
+        })),
+      },
+    };
+  }
+
+  async create(
+    createStudentDto: CreateStudentDto,
+    actor?: AuthenticatedRequestUser,
+    userScope?: DataScope,
+  ) {
+    const normalizedGuardians = this.normalizeGuardians(createStudentDto.guardians);
+    try {
+      const created = await this.studentsRepository.createStudent(
+        {
+          ...createStudentDto,
+          VillageNumber_Onec: cleanPrefixedAddressText('หมู่', createStudentDto.VillageNumber_Onec),
+          Street_Onec: cleanPrefixedAddressText('ถนน', createStudentDto.Street_Onec),
+          Soi_Onec: cleanPrefixedAddressText('ซอย', createStudentDto.Soi_Onec),
+          Trok_Onec: cleanPrefixedAddressText('ตรอก', createStudentDto.Trok_Onec),
+          guardians: normalizedGuardians,
+        },
+        resolveAuditActorId(actor),
+        userScope,
+      );
+      if (!created) throw new NotFoundException('ไม่พบห้องเรียนในขอบเขตของคุณ');
+      if ('invalidStatus' in created) {
+        throw new BadRequestException('สถานะนักเรียนไม่พร้อมใช้งานหรือเป็นสถานะทางเทคนิค');
+      }
+      if ('conflict' in created) {
+        throw new ConflictException('เลขบัตรประชาชนนี้มีข้อมูลนักเรียนอยู่ในระบบแล้ว');
+      }
+      await this.recalculateStudentRisk(created.studentUuid, 'student-create');
+      return await this.findOne(created.studentUuid, actor, userScope);
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? String((error as { code: unknown }).code)
+          : null;
+      if (code === '23505') {
+        throw new ConflictException('เลขประจำตัวนักเรียนหรือข้อมูลการลงทะเบียนซ้ำ');
+      }
+      if (code === '23503') {
+        throw new BadRequestException('ข้อมูลห้องเรียนหรือสถานะนักเรียนไม่ถูกต้อง');
+      }
+      throw error;
+    }
   }
 
   async findAll(
@@ -570,9 +684,10 @@ export class StudentsService {
       throw new NotFoundException('Student not found');
     }
 
-    const [summary, calendarRows] = await Promise.all([
+    const [summary, calendarRows, careRows] = await Promise.all([
       this.studentsRepository.findStudentProfileSummary(id),
       this.studentsRepository.listStudentAttendanceCalendar(id),
+      this.studentsRepository.listStudentCareConsiderations(id),
     ]);
     if (!summary) {
       throw new NotFoundException('Student profile summary not found');
@@ -603,6 +718,22 @@ export class StudentsService {
         grades: {
           termGpa: summary.term_gpa === null ? null : Number(summary.term_gpa),
           cumulativeGpax: summary.cumulative_gpax === null ? null : Number(summary.cumulative_gpax),
+        },
+        careConsiderations: {
+          disadvantages: careRows
+            .filter((row) => row.care_kind === 'DISADVANTAGE')
+            .map((row) => ({
+              code: row.code,
+              labelTh: row.label_th,
+              recordedAt: row.recorded_at,
+            })),
+          disabilities: careRows
+            .filter((row) => row.care_kind === 'DISABILITY')
+            .map((row) => ({
+              code: row.code,
+              labelTh: row.label_th,
+              recordedAt: row.recorded_at,
+            })),
         },
         attendance: {
           ratePercent: attendanceRatePercent,
@@ -650,7 +781,6 @@ export class StudentsService {
       success: true,
       data: rows.map((row) => ({
         date: row.date,
-        period: Number(row.period),
         subjectCode: row.subject_code,
         subjectName: row.subject_name,
         statusCode: Number(row.status_code),
@@ -658,6 +788,8 @@ export class StudentsService {
         statusLabel: row.status_label,
         statusBadgeVariant: row.status_badge_variant,
         recordedAt: row.recorded_at,
+        checkingStartedAt: row.checking_started_at,
+        submittedAt: row.submitted_at,
         recordedBy: row.recorded_by,
       })),
     };
@@ -679,69 +811,39 @@ export class StudentsService {
       throw new NotFoundException(`Student with ID ${id} not found`);
     }
 
-    let normalizedGuardians = guardians;
-    if (guardians !== undefined) {
-      if (guardians.filter((guardian) => guardian.is_primary).length > 1) {
-        throw new BadRequestException('เลือกผู้ติดต่อหลักได้เพียงคนเดียว');
-      }
-      for (const guardian of guardians) {
-        if (guardian.relation === 'GUARDIAN' && !guardian.relation_note?.trim()) {
-          throw new BadRequestException('ผู้ปกครองที่ไม่ใช่บิดามารดาต้องระบุความสัมพันธ์');
-        }
-      }
-      normalizedGuardians = guardians.map((guardian) => {
-        const explicitFirstName = guardian.first_name?.trim();
-        const explicitLastName = guardian.last_name?.trim();
-        if (explicitFirstName) {
-          if (!explicitLastName) {
-            throw new BadRequestException('กรุณากรอกนามสกุลผู้ปกครอง');
-          }
-          return {
-            ...guardian,
-            first_name: explicitFirstName,
-            last_name: explicitLastName,
-            full_name: `${explicitFirstName} ${explicitLastName}`,
-          };
-        }
+    const normalizedGuardians = this.normalizeGuardians(guardians);
 
-        const legacyFullName = guardian.full_name?.trim();
-        if (!legacyFullName) {
-          throw new BadRequestException('กรุณากรอกชื่อและนามสกุลผู้ปกครอง');
-        }
-        const nameParts = legacyFullName.split(/\s+/);
-        const lastName = nameParts.length > 1 ? (nameParts.pop() ?? null) : null;
-        return {
-          ...guardian,
-          first_name: nameParts.join(' '),
-          last_name: lastName,
-          full_name: legacyFullName,
-        };
-      });
-    }
-
-    if (contact !== undefined || guardians !== undefined) {
-      const personUuid = await this.studentsRepository.findPersonUuidByStudentUuid(id);
-      if (!personUuid) {
-        throw new BadRequestException(
-          'นักเรียนคนนี้ยังไม่ได้เชื่อมข้อมูลตัวตน จึงบันทึกข้อมูลติดต่อไม่ได้',
-        );
-      }
-      await this.studentsRepository.updateStudentPersonContacts(
-        personUuid,
+    if (hasTermEdit || contact !== undefined || guardians !== undefined) {
+      const result = await this.studentsRepository.updateStudent(
+        id,
+        {
+          ...termFields,
+          VillageNumber_Onec: cleanPrefixedAddressText('หมู่', termFields.VillageNumber_Onec),
+          Street_Onec: cleanPrefixedAddressText('ถนน', termFields.Street_Onec),
+          Soi_Onec: cleanPrefixedAddressText('ซอย', termFields.Soi_Onec),
+          Trok_Onec: cleanPrefixedAddressText('ตรอก', termFields.Trok_Onec),
+        },
         contact,
         normalizedGuardians,
         resolveAuditActorId(actor),
       );
-    }
-
-    if (hasTermEdit) {
-      await this.studentsRepository.updateStudentByUuid(id, {
-        ...termFields,
-        VillageNumber_Onec: cleanPrefixedAddressText('หมู่', termFields.VillageNumber_Onec),
-        Street_Onec: cleanPrefixedAddressText('ถนน', termFields.Street_Onec),
-        Soi_Onec: cleanPrefixedAddressText('ซอย', termFields.Soi_Onec),
-        Trok_Onec: cleanPrefixedAddressText('ตรอก', termFields.Trok_Onec),
-      });
+      if ('notFound' in result) {
+        throw new NotFoundException(`Student with ID ${id} not found`);
+      }
+      if ('missingPerson' in result) {
+        throw new BadRequestException(
+          'นักเรียนคนนี้ยังไม่ได้เชื่อมข้อมูลตัวตน จึงบันทึกข้อมูลติดต่อไม่ได้',
+        );
+      }
+      if ('invalidStatus' in result) {
+        throw new BadRequestException('สถานะนักเรียนไม่พร้อมใช้งานหรือเป็นสถานะทางเทคนิค');
+      }
+      if (
+        termFields.student_status_code !== undefined &&
+        Number(existing.student_status_code) !== termFields.student_status_code
+      ) {
+        await this.recalculateStudentRisk(id, 'student-status-update');
+      }
     }
 
     return await this.findOne(id, actor, userScope);

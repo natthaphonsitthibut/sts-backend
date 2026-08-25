@@ -20,7 +20,6 @@ const ACTOR_USERNAME = 'canonical_import_smoke_actor';
 // A teacher is matched by citizen id now — there is no login account to name.
 // The 97 prefix keeps the smoke out of any real citizen-id range.
 const TEACHER_CITIZEN_ID = '9700000000001';
-const MISSING_TEACHER_CITIZEN_ID = '9700000000099';
 const ACADEMIC_YEAR = 9901;
 const SEMESTER = 1;
 const ROOM_CODE = '1999999901';
@@ -140,7 +139,7 @@ async function cleanup(dataSource, actorId, schoolId) {
     ]);
   }
   await dataSource.query(
-    `DELETE FROM classroom_teacher_assignments WHERE school_id = $1 AND created_by = $2`,
+    `DELETE FROM classroom_homeroom_teachers WHERE school_id = $1 AND created_by = $2`,
     [schoolId, actorId],
   );
   await dataSource.query(
@@ -225,8 +224,7 @@ async function main() {
       `SELECT id, name FROM schools WHERE school_status = 'ACTIVE' ORDER BY id LIMIT 1`,
     );
     const [grade] = await dataSource.query(`SELECT id FROM grade_levels ORDER BY id LIMIT 1`);
-    const [subject] = await dataSource.query(`SELECT id FROM subjects ORDER BY id LIMIT 1`);
-    assert(school && grade && subject, 'Smoke requires an active school, grade, and subject');
+    assert(school && grade, 'Smoke requires an active school and grade');
 
     const passwordHash = await passwordService.hash(password);
     actor = await upsertUser(dataSource, passwordHash, {
@@ -357,52 +355,6 @@ async function main() {
     );
     assert(classroom?.id, 'Imported classroom was not persisted');
 
-    const assignmentFields = {
-      target: 'classroom_teacher_assignment',
-      mapping: '{}',
-      schoolId: school.id,
-      schoolTermId: term.id,
-      classroomId: classroom.id,
-    };
-    const assignmentCsv = [
-      'citizenId,assignmentKind,subjectId',
-      `${TEACHER_CITIZEN_ID},HOMEROOM,`,
-      `${MISSING_TEACHER_CITIZEN_ID},SUBJECT,${subject.id}`,
-    ].join('\n');
-    const assignmentPreview = await csvRequest(
-      baseUrl,
-      cookie,
-      '/api/imports/preview',
-      assignmentFields,
-      assignmentCsv,
-    );
-    assert(
-      assignmentPreview.rowsToInsert === 1 && assignmentPreview.rowsToQuarantine === 1,
-      'Assignment preview did not split ready and quarantined rows',
-    );
-    const assignmentFirst = await csvRequest(
-      baseUrl,
-      cookie,
-      '/api/imports/bulk',
-      assignmentFields,
-      assignmentCsv,
-    );
-    assert(
-      assignmentFirst.rowsInserted === 1 && assignmentFirst.rowsQuarantined === 1,
-      'Assignment import did not persist one row and quarantine one row',
-    );
-    const assignmentSecond = await csvRequest(
-      baseUrl,
-      cookie,
-      '/api/imports/bulk',
-      assignmentFields,
-      assignmentCsv,
-    );
-    assert(
-      assignmentSecond.rowsInserted === 0 && assignmentSecond.rowsSkipped === 1,
-      'Assignment import rerun was not idempotent',
-    );
-
     const [state] = await dataSource.query(
       `SELECT
          (SELECT COUNT(*)::int
@@ -410,20 +362,15 @@ async function main() {
           WHERE school_id = $1 AND school_term_id = $2 AND room_code = $3
             AND deleted_at IS NULL) AS classroom_count,
          (SELECT COUNT(*)::int
-          FROM classroom_teacher_assignments
-          WHERE school_id = $1 AND classroom_id = $4 AND assignment_kind = 'HOMEROOM'
-            AND assignment_status = 'ACTIVE' AND deleted_at IS NULL) AS assignment_count,
-         (SELECT COUNT(*)::int
           FROM student_import_quarantine_rows quarantine
           JOIN student_import_batches batch ON batch.id = quarantine.batch_id
-          WHERE batch.created_by = $5
-            AND quarantine.reason_code IN ('GRADE_NOT_FOUND', 'TEACHER_MEMBERSHIP_NOT_FOUND')
+          WHERE batch.created_by = $4
+            AND quarantine.reason_code = 'GRADE_NOT_FOUND'
             AND quarantine.status = 'PENDING' AND quarantine.deleted_at IS NULL) AS quarantine_count`,
-      [school.id, term.id, ROOM_CODE, classroom.id, actor.id],
+      [school.id, term.id, ROOM_CODE, actor.id],
     );
     assert(state.classroom_count === 1, 'Classroom rerun created a duplicate row');
-    assert(state.assignment_count === 1, 'Assignment rerun created a duplicate row');
-    assert(state.quarantine_count === 2, 'Canonical import quarantine rows were not idempotent');
+    assert(state.quarantine_count === 1, 'Canonical import quarantine rows were not idempotent');
 
     const studentFields = {
       target: 'student_term',

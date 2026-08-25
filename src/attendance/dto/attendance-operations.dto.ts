@@ -6,7 +6,6 @@ import {
   IsArray,
   IsIn,
   IsInt,
-  IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
@@ -87,32 +86,6 @@ export class UpdateSchoolCalendarDayDto {
   reason?: string;
 }
 
-export class AttendanceSessionContextQueryDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  schoolId!: number;
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(50)
-  grade!: string;
-
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  room!: number;
-
-  @IsString()
-  @Matches(ISO_DATE_PATTERN)
-  date!: string;
-
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  timetableSlotId!: number;
-}
-
 export class AttendanceReconciliationQueryDto extends PaginatedSearchQueryDto {
   @Type(() => Number)
   @IsInt()
@@ -153,11 +126,4 @@ export class AttendanceReconciliationAnomaliesQueryDto extends PaginatedSearchQu
   @IsInt()
   @Min(1)
   room?: number;
-}
-
-export class ReopenAttendanceSessionDto {
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(500)
-  reason!: string;
 }

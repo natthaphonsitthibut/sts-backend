@@ -1,6 +1,54 @@
 import { SchoolStructureRepository } from './school-structure.repository';
 
 describe('SchoolStructureRepository scope', () => {
+  it('creates the HOMEROOM offering in the same transaction as a new classroom', async () => {
+    const runner = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([{ id: '42' }])
+        .mockResolvedValueOnce([{ id: '84' }])
+        .mockResolvedValueOnce([
+          {
+            id: '42',
+            school_term_id: '21',
+            school_id: '1001',
+            grade_level_id: '4',
+            legacy_room_number: 1,
+            room_code: '1',
+            room_name: null,
+            classroom_status: 'ACTIVE',
+            student_count: '0',
+            is_favorite: false,
+          },
+        ]),
+    };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await expect(
+      repository.createClassroom(
+        {
+          schoolTermId: 21,
+          schoolId: 1001,
+          gradeLevelId: 4,
+          roomCode: '1',
+          roomNumber: 1,
+          roomName: null,
+          actorId: 7,
+        },
+        runner as never,
+      ),
+    ).resolves.toMatchObject({ id: '42', school_id: '1001' });
+
+    expect(runner.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(
+        /FROM subjects[\s\S]*code = \$1[\s\S]*INSERT INTO school_subjects[\s\S]*INSERT INTO classroom_subjects/,
+      ),
+      ['HOMEROOM101', 1001, 7, '42'],
+      true,
+    );
+  });
+
   it('lists active schools with the authenticated scope embedded in SQL', async () => {
     const runner = {
       connect: jest.fn(),
@@ -329,6 +377,7 @@ describe('SchoolStructureRepository scope', () => {
         42,
         '00000000-0000-4000-8000-000000000001',
         'ACADEMIC',
+        'WATCH',
         'ติดตาม',
         7,
         runner as never,
@@ -342,9 +391,9 @@ describe('SchoolStructureRepository scope', () => {
     // enrollment the caller addressed, so the history survives a term change.
     expect(runner.query).toHaveBeenCalledWith(
       expect.stringMatching(
-        /INSERT INTO classroom_student_comments[\s\S]*problem_category[\s\S]*problem_description[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
+        /INSERT INTO classroom_student_comments[\s\S]*problem_category[\s\S]*concern_level_code[\s\S]*problem_description[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
       ),
-      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'ติดตาม', 7],
+      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'WATCH', 'ติดตาม', 7],
       true,
     );
   });

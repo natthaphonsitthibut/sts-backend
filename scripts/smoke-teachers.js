@@ -155,7 +155,7 @@ async function main() {
     await cleanupFixtures(dataSource, 'teachers.smoke.%@smoke.invalid');
     await upsertActor(dataSource, await passwordService.hash(password), {
       username: USERNAME,
-      permissions: ['manage-teachers'],
+      permissions: ['teachers'],
     });
     await upsertActor(dataSource, await passwordService.hash(password), {
       username: NO_PERMISSION_USERNAME,
@@ -244,7 +244,7 @@ async function main() {
         citizenId: duplicateCitizenId,
       },
     });
-    checked.push('an account without manage-teachers is refused');
+    checked.push('an account without teachers is refused');
 
     console.log(JSON.stringify({ status: 'teachers_api_smoke_ok', checked }));
   } finally {

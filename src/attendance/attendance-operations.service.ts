@@ -169,90 +169,6 @@ export class AttendanceOperationsService {
     };
   }
 
-  async getSessionContext(
-    schoolId: number,
-    grade: string,
-    room: number,
-    date: string,
-    actor?: AuthenticatedRequestUser,
-    timetableSlotId?: number,
-  ) {
-    await this.assertSchoolAccess(schoolId, actor);
-    const context = await this.repository.findSessionContext(
-      schoolId,
-      grade,
-      room,
-      date,
-      timetableSlotId,
-    );
-    if (context.metadata) {
-      this.assertClassScope(context.metadata.grade_level_id, room, actor);
-    }
-    return {
-      data: {
-        calendarConfigured: context.term?.status === 'ACTIVE',
-        term: context.term
-          ? {
-              id: context.term.id,
-              academicYear: context.term.academic_year,
-              semester: context.term.semester,
-              status: context.term.status,
-            }
-          : null,
-        dayType: context.calendarDay?.day_type ?? null,
-        expectedRosterCount: context.expectedRosterCount,
-        session: context.session ? this.toSessionResponse(context.session) : null,
-      },
-    };
-  }
-
-  async reopenSession(sessionId: string, reason: string, actor?: AuthenticatedRequestUser) {
-    const session = await this.repository.findSessionById(sessionId);
-    if (!session) throw new NotFoundException('ไม่พบรอบเช็กชื่อ');
-    await this.assertSchoolAccess(session.school_id, actor);
-    this.assertClassScope(session.grade_level_id, session.room_id, actor);
-    const updated = await this.repository.withTransaction(async (executor) => {
-      const reopened = await this.repository.reopenSession(
-        sessionId,
-        reason.trim(),
-        actor?.id ?? null,
-        executor,
-      );
-      if (reopened) {
-        const baselineStatuses = await this.repository.listSessionAttendanceStatuses(
-          sessionId,
-          executor,
-        );
-        await this.repository.recordSessionAudit(
-          {
-            action: 'ATTENDANCE_REOPEN',
-            sessionId,
-            actorUserId: actor?.id ?? null,
-            actorLabel: actor?.username || (actor?.id ? `user#${actor.id}` : 'unknown-user'),
-            metadata: {
-              schoolId: reopened.school_id,
-              gradeLevelId: reopened.grade_level_id,
-              roomId: reopened.room_id,
-              attendanceDate: reopened.attendance_date,
-              revision: reopened.revision,
-              reason: reason.trim(),
-              baselineStatuses: baselineStatuses.map((row) => ({
-                studentUuid: row.student_uuid,
-                statusCode: row.attendance_status,
-              })),
-            },
-          },
-          executor,
-        );
-      }
-      return reopened;
-    });
-    if (!updated) {
-      throw new ConflictException('เปิดแก้ไขได้เฉพาะรอบที่ส่งเรียบร้อยแล้ว');
-    }
-    return { data: this.toSessionResponse(updated) };
-  }
-
   async getReconciliation(
     termId: number,
     date: string,
@@ -446,25 +362,5 @@ export class AttendanceOperationsService {
       'code' in error &&
       (error as { code?: unknown }).code === '23505'
     );
-  }
-
-  private toSessionResponse(session: {
-    id: string;
-    status: string;
-    revision: number;
-    expected_roster_count: number;
-    recorded_count: number;
-    submitted_at: string | Date | null;
-    correction_reason: string | null;
-  }) {
-    return {
-      id: session.id,
-      status: session.status,
-      revision: session.revision,
-      expectedRosterCount: session.expected_roster_count,
-      recordedCount: session.recorded_count,
-      submittedAt: session.submitted_at,
-      correctionReason: session.correction_reason,
-    };
   }
 }

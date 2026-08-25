@@ -20,7 +20,7 @@ import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RequireRoles } from '../auth/permissions.decorator';
-import { ThrottleLogin } from '../config/throttle.decorators';
+import { ThrottleAraIdPin } from '../config/throttle.decorators';
 import { AraIdSessionCookieService } from './araid-session-cookie.service';
 import { AraIdService } from './araid.service';
 import {
@@ -125,7 +125,7 @@ export class AraIdSessionController {
   ) {}
 
   @Public()
-  @ThrottleLogin()
+  @ThrottleAraIdPin()
   @Post('login')
   async login(
     @Body() body: AraIdLoginDto,
@@ -165,7 +165,7 @@ export class AraIdSessionController {
   }
 
   @Public()
-  @ThrottleLogin()
+  @ThrottleAraIdPin()
   @Post('reauthenticate')
   async reauthenticate(
     @Body() body: AraIdReauthenticateDto,
@@ -204,7 +204,6 @@ export class AraIdSessionController {
   logout(@Res({ passthrough: true }) response: Response) {
     this.sessionCookie.clearSession(response);
     this.sessionCookie.clearLineAuthorization(response);
-    this.sessionCookie.clearTeacherAccessAuthorization(response);
     return { success: true };
   }
 }

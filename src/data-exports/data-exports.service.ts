@@ -873,8 +873,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         return await this.loadSchoolClassroomStructure(job, limit, cursor);
       case 'classroom_assignments':
         return await this.loadClassroomAssignments(job, limit, cursor);
-      case 'observation_aggregate':
-        return await this.loadObservationAggregate(job, limit, cursor);
       default:
         throw new Error('Unsupported data export dataset');
     }
@@ -1016,7 +1014,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
                COUNT(*) FILTER (WHERE a."AttendanceStatus" = 1)::int AS present_count,
                COUNT(*) FILTER (WHERE a."AttendanceStatus" = 2)::int AS absent_count,
                COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late_count
-        FROM attendance a
+        FROM attendance_effective_records a
         JOIN student_term s ON s.student_uuid = a.student_uuid
         JOIN student_current_enrollment_resolution current_enrollment
           ON current_enrollment.person_uuid = s.person_uuid
@@ -1158,7 +1156,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     if (gradeLevels.length > 0 || roomIds.length > 0) {
       const assignmentScope = [
         'scoped_assignment.teacher_membership_id = membership.id',
-        'scoped_assignment.deleted_at IS NULL',
         'scoped_classroom.deleted_at IS NULL',
       ];
       if (gradeLevels.length > 0) {
@@ -1174,7 +1171,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       }
       conditions.push(`EXISTS (
         SELECT 1
-        FROM classroom_teacher_assignments scoped_assignment
+        FROM classroom_homeroom_teachers scoped_assignment
         JOIN school_classrooms scoped_classroom
           ON scoped_classroom.id = scoped_assignment.classroom_id
         WHERE ${assignmentScope.join(' AND ')}
@@ -1192,7 +1189,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
                COALESCE(
                  NULLIF(TRIM(teacher.first_name || ' ' || teacher.last_name), ''),
                  'ไม่ระบุชื่อ'
-               ) AS teacher_name,
+               ) AS teacher_name
                membership.membership_status,
                membership.started_on::text,
                membership.ended_on::text
@@ -1300,7 +1297,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
     const scope = this.buildSchoolAreaScopeWhere(job.scope_snapshot, job.filter_snapshot);
     const normalizedScope = normalizeDataScope(job.scope_snapshot);
     const conditions = [
-      'assignment.deleted_at IS NULL',
       'classroom.deleted_at IS NULL',
       'membership.deleted_at IS NULL',
       'term.deleted_at IS NULL',
@@ -1323,21 +1319,19 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       ['semester', 'term.semester'],
       ['grade', 'grade.label'],
       ['room', 'classroom.room_code'],
-      ['assignmentKind', 'assignment.assignment_kind'],
-      ['structureStatus', 'assignment.assignment_status'],
     ] as const) {
       if (job.filter_snapshot[key]) {
         conditions.push(`${sql} = $${params.push(job.filter_snapshot[key])}`);
       }
     }
     if (cursor?.assignmentId) {
-      conditions.push(`assignment.id > $${params.push(cursor.assignmentId)}::bigint`);
+      conditions.push(`assignment.classroom_id > $${params.push(cursor.assignmentId)}::bigint`);
     }
     params.push(limit);
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,
       `
-        SELECT assignment.id::text AS cursor_assignment_id,
+        SELECT assignment.classroom_id::text AS cursor_assignment_id,
                school.name AS school_name,
                term.academic_year,
                term.semester,
@@ -1347,14 +1341,8 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
                COALESCE(
                  NULLIF(TRIM(teacher.first_name || ' ' || teacher.last_name), ''),
                  'ไม่ระบุชื่อ'
-               ) AS teacher_name,
-               subject.code AS subject_code,
-               subject.name_th AS subject_name,
-               assignment.assignment_kind,
-               assignment.assignment_status,
-               assignment.effective_on::text,
-               assignment.effective_until::text
-        FROM classroom_teacher_assignments assignment
+                   ) AS teacher_name
+        FROM classroom_homeroom_teachers assignment
         JOIN school_classrooms classroom ON classroom.id = assignment.classroom_id
         JOIN schools school ON school.id = assignment.school_id
         JOIN school_terms term ON term.id = classroom.school_term_id
@@ -1362,9 +1350,8 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
         JOIN teachers teacher ON teacher.id = membership.teacher_id
-        LEFT JOIN subjects subject ON subject.id = assignment.subject_id
         WHERE ${conditions.filter(Boolean).join(' AND ')}
-        ORDER BY assignment.id
+        ORDER BY assignment.classroom_id
         LIMIT $${params.length}
       `,
       params,
@@ -1378,107 +1365,9 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'room_code',
         'room_name',
         'teacher_name',
-        'subject_code',
-        'subject_name',
-        'assignment_kind',
-        'assignment_status',
-        'effective_on',
-        'effective_until',
       ],
       rows: result.rows,
       nextCursor: this.cursorFromLastRow(result.rows, { assignmentId: 'cursor_assignment_id' }),
-    };
-  }
-
-  private async loadObservationAggregate(
-    job: DataExportJobRow,
-    limit: number,
-    cursor: ExportCursor | null,
-  ): Promise<ExportRowsResult> {
-    const scope = this.buildStudentScopeWhere(job.scope_snapshot, job.filter_snapshot);
-    const conditions = ['observation.deleted_at IS NULL', scope.sql];
-    const params = [...scope.params];
-    if (job.filter_snapshot.concernLevel) {
-      conditions.push(
-        `observation.concern_level = $${params.push(job.filter_snapshot.concernLevel)}`,
-      );
-    }
-    if (job.filter_snapshot.dateFrom) {
-      conditions.push(
-        `observation.observed_at::date >= $${params.push(job.filter_snapshot.dateFrom)}::date`,
-      );
-    }
-    if (job.filter_snapshot.dateTo) {
-      conditions.push(
-        `observation.observed_at::date <= $${params.push(job.filter_snapshot.dateTo)}::date`,
-      );
-    }
-    if (cursor?.observationDate && cursor.schoolId && cursor.dimensionCode && cursor.concernLevel) {
-      params.push(
-        cursor.observationDate,
-        cursor.schoolId,
-        cursor.dimensionCode,
-        cursor.concernLevel,
-      );
-      conditions.push(`(
-        observation.observed_at::date,
-        observation.school_id,
-        dimension.code,
-        observation.concern_level
-      ) > ($${params.length - 3}::date, $${params.length - 2}::integer, $${
-        params.length - 1
-      }::text, $${params.length}::text)`);
-    }
-    params.push(limit);
-    const result = await queryDataSource<Record<string, unknown>>(
-      this.dataSource,
-      `
-        SELECT observation.observed_at::date::text AS observation_date,
-               observation.school_id AS cursor_school_id,
-               school.name AS school_name,
-               dimension.code AS dimension_code,
-               dimension.label_th AS dimension_label,
-               observation.concern_level,
-               COUNT(*)::int AS observation_count,
-               COUNT(DISTINCT observation.student_uuid)::int AS student_count
-        FROM student_observations observation
-        JOIN student_term s ON s.student_uuid = observation.student_uuid
-                           AND s."SchoolID_Onec" = observation.school_id
-        JOIN student_current_enrollment_resolution current_enrollment
-          ON current_enrollment.person_uuid = s.person_uuid
-         AND current_enrollment.selected_student_uuid = s.student_uuid
-         AND current_enrollment.resolution_state = 'ACTIVE'
-        JOIN schools school ON school.id = observation.school_id
-        JOIN schools sc ON sc.id = s."SchoolID_Onec"
-        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
-        JOIN observation_dimensions dimension
-          ON dimension.id = observation.observation_dimension_id
-        WHERE ${conditions.filter(Boolean).join(' AND ')}
-        GROUP BY observation.observed_at::date, observation.school_id, school.name,
-                 dimension.code, dimension.label_th, observation.concern_level
-        ORDER BY observation.observed_at::date, observation.school_id,
-                 dimension.code, observation.concern_level
-        LIMIT $${params.length}
-      `,
-      params,
-    );
-    return {
-      headers: [
-        'observation_date',
-        'school_name',
-        'dimension_code',
-        'dimension_label',
-        'concern_level',
-        'observation_count',
-        'student_count',
-      ],
-      rows: result.rows,
-      nextCursor: this.cursorFromLastRow(result.rows, {
-        observationDate: 'observation_date',
-        schoolId: 'cursor_school_id',
-        dimensionCode: 'dimension_code',
-        concernLevel: 'concern_level',
-      }),
     };
   }
 

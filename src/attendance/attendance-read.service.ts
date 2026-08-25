@@ -43,14 +43,12 @@ export class AttendanceReadService {
     userScope?: DataScope,
     schoolId?: number | null,
     sessionKind?: 'SUBJECT',
-    timetableSlotId?: number,
   ) {
     const rows = await this.attendanceRepository.listAttendanceHistory(
       date,
       userScope,
       schoolId,
       sessionKind,
-      timetableSlotId,
     );
 
     const data = rows.map((row) => ({

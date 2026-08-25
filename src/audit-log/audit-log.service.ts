@@ -142,19 +142,6 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'schoolId', label: 'โรงเรียน' },
     ],
   },
-  TEACHER_ACCESS_OTP_REQUEST: {
-    domain: 'tasks',
-    label: 'ขอรหัส OTP ของลิงก์ครู',
-    detailKeys: [{ key: 'teacherName', label: 'ครู' }],
-  },
-  TEACHER_ACCESS_OTP_FAILED: {
-    domain: 'tasks',
-    label: 'ยืนยัน OTP ของลิงก์ครูไม่สำเร็จ',
-    detailKeys: [
-      { key: 'teacherName', label: 'ครู' },
-      { key: 'outcome', label: 'ผลลัพธ์' },
-    ],
-  },
   TEACHER_ACCESS_ARAID_VERIFY: {
     domain: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ครูสำเร็จ',
@@ -163,6 +150,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   TASK_LINK_ARAID_VERIFY: {
     domain: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
+    detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
+  },
+  TASK_LINK_GOOGLE_VERIFY: {
+    domain: 'tasks',
+    label: 'ยืนยัน Google ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
   TEACHER_ACCESS_ARAID_FAILED: {
@@ -495,6 +487,39 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'schoolId', label: 'โรงเรียน' },
     ],
   },
+  CLASSROOM_ATTENDANCE_LINK_BULK_CREATE: {
+    domain: 'attendance',
+    label: 'สร้างลิงก์ห้องเรียน',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'count', label: 'จำนวนลิงก์' },
+    ],
+  },
+  CLASSROOM_ATTENDANCE_LINK_ROTATE: {
+    domain: 'attendance',
+    label: 'หมุนลิงก์ห้องเรียน',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'classroomId', label: 'ห้องเรียน' },
+    ],
+  },
+  CLASSROOM_ATTENDANCE_LINK_DEACTIVATE: {
+    domain: 'attendance',
+    label: 'ปิดลิงก์ห้องเรียน',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'classroomId', label: 'ห้องเรียน' },
+    ],
+  },
+  CLASSROOM_ATTENDANCE_LINK_LINE_SEND: {
+    domain: 'attendance',
+    label: 'ส่งลิงก์ห้องเรียนผ่าน LINE',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'classroomId', label: 'ห้องเรียน' },
+      { key: 'delivered', label: 'ส่งสำเร็จ' },
+    ],
+  },
   SUBJECT_CREATE: {
     domain: 'timetable',
     label: 'เพิ่มรายวิชา',
@@ -504,6 +529,31 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     domain: 'timetable',
     label: 'แก้ไขรายวิชา',
     detailKeys: [{ key: 'code', label: 'รหัสวิชา' }],
+  },
+  SCHOOL_SUBJECT_UPSERT: {
+    domain: 'subjects',
+    label: 'เพิ่มรายวิชาของโรงเรียน',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'code', label: 'รหัสวิชา' },
+    ],
+  },
+  SCHOOL_SUBJECT_STATUS_UPDATE: {
+    domain: 'subjects',
+    label: 'เปลี่ยนสถานะรายวิชาของโรงเรียน',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'status', label: 'สถานะ' },
+    ],
+  },
+  CLASSROOM_SUBJECTS_REPLACE: {
+    domain: 'subjects',
+    label: 'กำหนดรายวิชาของห้องเรียน',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'selectedSubjectCount', label: 'จำนวนวิชา' },
+      { key: 'classroomCount', label: 'จำนวนห้องเรียน' },
+    ],
   },
   TIMETABLE_SLOT_CREATE: {
     domain: 'timetable',
@@ -555,7 +605,8 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   cases: ['dashboard'],
   tasks: ['dashboard', 'attendance-dashboard'],
   attendance: ['attendance', 'attendance-dashboard'],
-  timetable: ['timetable'],
+  timetable: ['manage-subjects'],
+  subjects: ['manage-subjects'],
 };
 
 const LINK_HISTORY_ACTIONS: AuditAction[] = [

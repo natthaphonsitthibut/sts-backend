@@ -13,9 +13,13 @@ import {
 import {
   AuthGuard,
   CurrentUser,
+  GlobalScopeGuard,
   PermissionsGuard,
   RequireAnyPermission,
+  RequireGlobalScope,
   RequirePermission,
+  RequireRoles,
+  RolesGuard,
   type AuthenticatedRequestUser,
 } from '../auth';
 import {
@@ -25,7 +29,7 @@ import {
 } from './dto/student-status.dto';
 import { StudentStatusService } from './student-status.service';
 
-@UseGuards(AuthGuard, PermissionsGuard)
+@UseGuards(AuthGuard, PermissionsGuard, RolesGuard, GlobalScopeGuard)
 @Controller('api/student-statuses')
 export class StudentStatusController {
   constructor(private readonly service: StudentStatusService) {}
@@ -33,25 +37,37 @@ export class StudentStatusController {
   // Read access covers list/search screens and import admins without granting
   // settings management; mutations remain settings-only.
   @Get()
-  @RequireAnyPermission('settings', 'import-data', 'students')
-  list(@Query() query: ListStudentStatusesQueryDto) {
-    return this.service.list(query);
+  @RequireAnyPermission('master-data', 'settings', 'import-data', 'students', 'manage-students')
+  list(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Query() query: ListStudentStatusesQueryDto,
+  ) {
+    return this.service.list(query, {
+      includeTechnical:
+        actor.permissions.includes('master-data') && actor.data_scope?.global === true,
+    });
   }
 
   @Get(':code')
-  @RequirePermission('settings')
+  @RequirePermission('master-data')
+  @RequireRoles('ADMIN')
+  @RequireGlobalScope()
   getByCode(@Param('code', ParseIntPipe) code: number) {
     return this.service.getByCode(code);
   }
 
   @Post()
-  @RequirePermission('settings')
+  @RequirePermission('master-data')
+  @RequireRoles('ADMIN')
+  @RequireGlobalScope()
   create(@CurrentUser() actor: AuthenticatedRequestUser, @Body() body: CreateStudentStatusDto) {
     return this.service.create(actor, body);
   }
 
   @Put(':code')
-  @RequirePermission('settings')
+  @RequirePermission('master-data')
+  @RequireRoles('ADMIN')
+  @RequireGlobalScope()
   update(
     @CurrentUser() actor: AuthenticatedRequestUser,
     @Param('code', ParseIntPipe) code: number,
@@ -61,7 +77,9 @@ export class StudentStatusController {
   }
 
   @Delete(':code')
-  @RequirePermission('settings')
+  @RequirePermission('master-data')
+  @RequireRoles('ADMIN')
+  @RequireGlobalScope()
   disable(
     @CurrentUser() actor: AuthenticatedRequestUser,
     @Param('code', ParseIntPipe) code: number,

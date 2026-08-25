@@ -3,7 +3,13 @@ import { JwtModule } from '@nestjs/jwt';
 import type { ConfigType } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { PasswordService } from './password.service';
-import { AuthGuard, OptionalAuthGuard, PermissionsGuard, RolesGuard } from './auth.guard';
+import {
+  AuthGuard,
+  GlobalScopeGuard,
+  OptionalAuthGuard,
+  PermissionsGuard,
+  RolesGuard,
+} from './auth.guard';
 import { AuthActorService } from './auth-actor.service';
 import { AraIdLoginService } from './araid-login.service';
 import { SessionCookieService } from './session-cookie.service';
@@ -37,17 +43,20 @@ import { AraIdChallengeStore } from '../araid/araid-challenge.store';
     AuthGuard,
     PermissionsGuard,
     RolesGuard,
+    GlobalScopeGuard,
     OptionalAuthGuard,
   ],
   exports: [
     PasswordService,
     AuthActorService,
     AraIdLoginService,
+    AraIdChallengeStore,
     SessionCookieService,
     MagicSessionStoreService,
     AuthGuard,
     PermissionsGuard,
     RolesGuard,
+    GlobalScopeGuard,
     OptionalAuthGuard,
   ],
 })

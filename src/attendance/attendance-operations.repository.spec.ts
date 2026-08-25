@@ -65,15 +65,6 @@ describe('AttendanceOperationsRepository roster policy', () => {
     expectCurrentEnrollmentPolicy(queries[0].sql);
   });
 
-  it('resolves attendance session context through current enrollment policy', async () => {
-    const { queries, repository } = createRepositoryWithQueryCapture();
-
-    await repository.findSessionContext(10010002, 'ม.1', 1, '2026-07-04');
-
-    expect(queries).toHaveLength(1);
-    expectCurrentEnrollmentPolicy(queries[0].sql);
-  });
-
   it('counts reconciliation rosters through current enrollment policy', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
 

@@ -9,16 +9,23 @@ const SCHOOL_ACTOR = {
   data_scope: { school_ids: [1001] },
 };
 
-const TEACHER_ACCESS_ACTOR = {
+const CLASSROOM_LINK_ACTOR = {
   ...SCHOOL_ACTOR,
   roles: [],
-  permissions: ['manage-teacher-access'],
+  permissions: ['manage-classroom-links'],
 };
 
 const IMPORT_ACTOR = {
   ...SCHOOL_ACTOR,
   roles: [],
   permissions: ['import-data'],
+};
+
+const CLASSROOM_COMMENT_ACTOR = {
+  ...SCHOOL_ACTOR,
+  roles: [],
+  permissions: ['students'],
+  data_scope: { school_ids: [1001], grade_levels: [423], room_ids: [11] },
 };
 
 const CLASSROOM = {
@@ -88,6 +95,8 @@ describe('SchoolStructureService', () => {
         problem_category_code: 'ACADEMIC',
         problem_category_label: 'ปัญหาด้านการเรียน',
         problem_category_guidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+        concern_level_code: 'WATCH',
+        concern_level_label: 'ควรเฝ้าดู',
         problem_description: 'ควรติดตามการส่งงาน',
         created_at: new Date('2026-08-01T03:00:00.000Z'),
       }),
@@ -133,22 +142,22 @@ describe('SchoolStructureService', () => {
     expect(repository.listScopedSchools).toHaveBeenCalledWith({ school_ids: [1001] });
   });
 
-  it('allows teacher-access administrators to read schools and teachers only', async () => {
+  it('allows classroom-link administrators to read schools and teachers only', async () => {
     const { service, repository } = setup();
 
-    await expect(service.listSchools(TEACHER_ACCESS_ACTOR)).resolves.toMatchObject({
+    await expect(service.listSchools(CLASSROOM_LINK_ACTOR)).resolves.toMatchObject({
       data: [{ id: 1001 }],
     });
     await expect(
-      service.listTeachers({ schoolId: 1001 }, TEACHER_ACCESS_ACTOR),
+      service.listTeachers({ schoolId: 1001 }, CLASSROOM_LINK_ACTOR),
     ).resolves.toMatchObject({ data: [], meta: { totalCount: 0 } });
     await expect(
-      service.listTeacherOptions({ schoolId: 1001 }, TEACHER_ACCESS_ACTOR),
+      service.listTeacherOptions({ schoolId: 1001 }, CLASSROOM_LINK_ACTOR),
     ).resolves.toEqual({ data: [] });
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, { school_ids: [1001] });
 
     await expect(
-      service.createTeacherMembership({ schoolId: 1001, teacherUserId: 41 }, TEACHER_ACCESS_ACTOR),
+      service.createTeacherMembership({ schoolId: 1001, teacherUserId: 41 }, CLASSROOM_LINK_ACTOR),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -338,6 +347,7 @@ describe('SchoolStructureService', () => {
         studentUuid,
         {
           problemCategory: 'ACADEMIC',
+          concernLevelCode: 'WATCH',
           problemDescription: 'ควรติดตามการส่งงาน',
         },
         SCHOOL_ACTOR,
@@ -349,6 +359,8 @@ describe('SchoolStructureService', () => {
         problemCategory: 'ACADEMIC',
         problemCategoryLabel: 'ปัญหาด้านการเรียน',
         problemCategoryGuidance: 'เช่น หมดไฟ, เรียนไม่ทัน',
+        concernLevelCode: 'WATCH',
+        concernLevelLabel: 'ควรเฝ้าดู',
         problemDescription: 'ควรติดตามการส่งงาน',
       },
     });
@@ -356,6 +368,7 @@ describe('SchoolStructureService', () => {
       11,
       studentUuid,
       'ACADEMIC',
+      'WATCH',
       'ควรติดตามการส่งงาน',
       SCHOOL_ACTOR.id,
       expect.anything(),
@@ -370,12 +383,55 @@ describe('SchoolStructureService', () => {
           classroomId: 11,
           studentUuid,
           problemCategory: 'ACADEMIC',
+          concernLevelCode: 'WATCH',
           descriptionLength: 'ควรติดตามการส่งงาน'.length,
         },
       }),
       expect.anything(),
     );
     expect(JSON.stringify(auditLog.recordAtomic.mock.calls[0])).not.toContain('ควรติดตาม');
+  });
+
+  it('allows the student-page permission within the actor classroom scope', async () => {
+    const { service, repository } = setup();
+
+    await expect(
+      service.createStudentComment(
+        11,
+        '00000000-0000-4000-8000-000000000001',
+        {
+          problemCategory: 'ACADEMIC',
+          concernLevelCode: 'NOTE',
+          problemDescription: 'ข้อมูลจากหน้ารายชื่อนักเรียน',
+        },
+        CLASSROOM_COMMENT_ACTOR,
+      ),
+    ).resolves.toMatchObject({ data: { concernLevelCode: 'WATCH' } });
+    expect(repository.isSchoolInScope).toHaveBeenCalledWith(
+      1001,
+      CLASSROOM_COMMENT_ACTOR.data_scope,
+    );
+  });
+
+  it('hides a classroom outside the actor room scope', async () => {
+    const { service, repository } = setup();
+
+    await expect(
+      service.createStudentComment(
+        11,
+        '00000000-0000-4000-8000-000000000001',
+        {
+          problemCategory: 'ACADEMIC',
+          concernLevelCode: 'NOTE',
+          problemDescription: 'ต้องไม่ถูกบันทึก',
+        },
+        {
+          ...CLASSROOM_COMMENT_ACTOR,
+          data_scope: { school_ids: [1001], grade_levels: [423], room_ids: [12] },
+        },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.createStudentComment).not.toHaveBeenCalled();
   });
 
   it('rejects a comment when the student is not enrolled in the scoped classroom', async () => {
@@ -386,10 +442,37 @@ describe('SchoolStructureService', () => {
       service.createStudentComment(
         11,
         '00000000-0000-4000-8000-000000000099',
-        { problemCategory: 'OTHER', problemDescription: 'ทดสอบ' },
+        { problemCategory: 'OTHER', concernLevelCode: 'NOTE', problemDescription: 'ทดสอบ' },
         SCHOOL_ACTOR,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('keeps NOTE as history without queuing a risk recalculation', async () => {
+    const { service, repository, riskProfileService } = setup();
+    repository.createStudentComment.mockResolvedValueOnce({
+      id: '92',
+      problem_category_code: 'OTHER',
+      problem_category_label: 'อื่น ๆ',
+      problem_category_guidance: 'ระบุในคำอธิบาย',
+      concern_level_code: 'NOTE',
+      concern_level_label: 'บันทึกทั่วไป',
+      problem_description: 'ข้อมูลประกอบทั่วไป',
+      created_at: new Date('2026-08-01T03:00:00.000Z'),
+    });
+
+    await service.createStudentComment(
+      11,
+      '00000000-0000-4000-8000-000000000001',
+      {
+        problemCategory: 'OTHER',
+        concernLevelCode: 'NOTE',
+        problemDescription: 'ข้อมูลประกอบทั่วไป',
+      },
+      SCHOOL_ACTOR,
+    );
+
+    expect(riskProfileService.requestStudentRecalculation).not.toHaveBeenCalled();
   });
 
   it('returns scoped daily attendance summaries with paginated counts', async () => {

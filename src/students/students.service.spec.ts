@@ -5,6 +5,7 @@ import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-c
 import { FILE_STORAGE_ADAPTER } from '../files/storage/file-storage.types';
 import { piiConfig } from '../config/pii.config';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 
 describe('StudentsService', () => {
   let service: StudentsService;
@@ -17,17 +18,20 @@ describe('StudentsService', () => {
     listAttendanceByStudentId: jest.Mock;
     findStudentProfileSummary: jest.Mock;
     listStudentAttendanceCalendar: jest.Mock;
+    listStudentCareConsiderations: jest.Mock;
     listStudentSubjectAttendanceByDate: jest.Mock;
     insertPiiAccessEvent: jest.Mock;
     listActiveRevealGroups: jest.Mock;
-    updateStudentByUuid: jest.Mock;
+    updateStudent: jest.Mock;
     findPersonUuidByStudentUuid: jest.Mock;
     findStudentPersonContact: jest.Mock;
     findStudentAccountByPersonUuid: jest.Mock;
     listGuardiansByPersonUuid: jest.Mock;
-    updateStudentPersonContacts: jest.Mock;
+    listManagementClassrooms: jest.Mock;
+    createStudent: jest.Mock;
   };
   let geocodeCache: { resolve: jest.Mock };
+  let riskProfileService: { requestStudentRecalculation: jest.Mock };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -44,15 +48,17 @@ describe('StudentsService', () => {
             listAttendanceByStudentId: jest.fn(),
             findStudentProfileSummary: jest.fn(),
             listStudentAttendanceCalendar: jest.fn(),
+            listStudentCareConsiderations: jest.fn().mockResolvedValue([]),
             listStudentSubjectAttendanceByDate: jest.fn(),
             insertPiiAccessEvent: jest.fn(),
             listActiveRevealGroups: jest.fn(),
-            updateStudentByUuid: jest.fn(),
+            updateStudent: jest.fn().mockResolvedValue({ updated: true }),
             findPersonUuidByStudentUuid: jest.fn(),
             findStudentPersonContact: jest.fn().mockResolvedValue(null),
             findStudentAccountByPersonUuid: jest.fn().mockResolvedValue(null),
             listGuardiansByPersonUuid: jest.fn().mockResolvedValue([]),
-            updateStudentPersonContacts: jest.fn(),
+            listManagementClassrooms: jest.fn().mockResolvedValue([]),
+            createStudent: jest.fn(),
             findPersonPhotoStorageKey: jest.fn().mockResolvedValue(null),
             updatePersonPhotoStorageKey: jest.fn(),
           },
@@ -61,6 +67,12 @@ describe('StudentsService', () => {
           provide: StudentGeocodeCacheService,
           useValue: {
             resolve: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: RiskProfileService,
+          useValue: {
+            requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
@@ -85,10 +97,96 @@ describe('StudentsService', () => {
     service = module.get<StudentsService>(StudentsService);
     studentsRepository = module.get(StudentsRepository);
     geocodeCache = module.get(StudentGeocodeCacheService);
+    riskProfileService = module.get(RiskProfileService);
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('creates a student from an in-scope classroom and returns the persisted row', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const scope = { school_ids: [10010002] };
+    const actor = {
+      id: 5,
+      username: 'admin',
+      roles: ['ADMIN'],
+      permissions: ['manage-students'],
+    };
+    studentsRepository.createStudent.mockResolvedValue({ studentUuid });
+    studentsRepository.findStudentById.mockResolvedValue({
+      id: studentUuid,
+      student_uuid: studentUuid,
+      FirstName_Onec: 'สมชาย',
+      LastName_Onec: 'ใจดี',
+      PersonID_Onec: '1234567890123',
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(
+      '10000000-0000-4000-8000-000000000001',
+    );
+
+    await expect(
+      service.create(
+        {
+          PersonID_Onec: '1234567890123',
+          FirstName_Onec: 'สมชาย',
+          LastName_Onec: 'ใจดี',
+          classroom_id: 99,
+          student_status_code: 10,
+        },
+        actor,
+        scope,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: studentUuid }));
+    expect(studentsRepository.createStudent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        PersonID_Onec: '1234567890123',
+        classroom_id: 99,
+        student_status_code: 10,
+      }),
+      5,
+      scope,
+    );
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
+      [studentUuid],
+      'student-create',
+    );
+  });
+
+  it('rejects disabled or technical status codes before creating a student', async () => {
+    studentsRepository.createStudent.mockResolvedValue({ invalidStatus: true });
+
+    await expect(
+      service.create({
+        PersonID_Onec: '1234567890123',
+        FirstName_Onec: 'สมชาย',
+        LastName_Onec: 'ใจดี',
+        classroom_id: 99,
+        student_status_code: 999,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(riskProfileService.requestStudentRecalculation).not.toHaveBeenCalled();
+    expect(studentsRepository.findStudentById).not.toHaveBeenCalled();
+  });
+
+  it('does not create a student outside the actor school scope', async () => {
+    studentsRepository.createStudent.mockResolvedValue(null);
+
+    await expect(
+      service.create(
+        {
+          PersonID_Onec: '1234567890123',
+          FirstName_Onec: 'สมชาย',
+          LastName_Onec: 'ใจดี',
+          classroom_id: 99,
+          student_status_code: 10,
+        },
+        undefined,
+        { school_ids: [10010002] },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(riskProfileService.requestStudentRecalculation).not.toHaveBeenCalled();
   });
 
   it('passes geo filters to the student list query', async () => {
@@ -126,7 +224,7 @@ describe('StudentsService', () => {
           school_name: 'โรงเรียนทดสอบ',
           school_id: 10010002,
           student_status_label: 'กำลังศึกษา',
-          student_status_category: 'ACTIVE',
+          student_status_category: 'STUDYING',
           student_status_badge_variant: 'success',
           photo_storage_key: 'student-photos/person/profile.webp',
           photo_updated_at: '2026-08-10T06:30:00.000Z',
@@ -278,9 +376,43 @@ describe('StudentsService', () => {
     expect(studentsRepository.findStudentById).toHaveBeenCalledWith(student.student_uuid, {
       school_ids: [10010002],
     });
-    expect(studentsRepository.updateStudentByUuid).toHaveBeenCalledWith(student.student_uuid, {
-      FirstName_Onec: 'สมศรี',
+    expect(studentsRepository.updateStudent).toHaveBeenCalledWith(
+      student.student_uuid,
+      expect.objectContaining({ FirstName_Onec: 'สมศรี' }),
+      undefined,
+      undefined,
+      5,
+    );
+  });
+
+  it('rejects a disabled status update without recalculating risk', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: studentUuid,
+      student_status_code: 10,
     });
+    studentsRepository.updateStudent.mockResolvedValue({ invalidStatus: true });
+
+    await expect(service.update(studentUuid, { student_status_code: 999 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(riskProfileService.requestStudentRecalculation).not.toHaveBeenCalled();
+  });
+
+  it('recalculates risk after a persisted status change', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: studentUuid,
+      student_status_code: 10,
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+
+    await service.update(studentUuid, { student_status_code: 20 });
+
+    expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
+      [studentUuid],
+      'student-status-update',
+    );
   });
 
   it('findOne skips the geocode cache when the row already has a confirmed home coordinate', async () => {
@@ -365,6 +497,7 @@ describe('StudentsService', () => {
           endsOn: '2026-10-10',
         },
         grades: { termGpa: 3.21, cumulativeGpax: 3.42 },
+        careConsiderations: { disadvantages: [], disabilities: [] },
         attendance: {
           ratePercent: 94.74,
           counts: { present: 17, absent: 1, late: 1, leave: 1, total: 20 },
@@ -408,7 +541,6 @@ describe('StudentsService', () => {
     studentsRepository.listStudentSubjectAttendanceByDate.mockResolvedValue([
       {
         date: '2026-08-02',
-        period: 2,
         subject_code: 'TH101',
         subject_name: 'ภาษาไทย',
         status_code: 1,
@@ -416,6 +548,8 @@ describe('StudentsService', () => {
         status_label: 'มาเรียน',
         status_badge_variant: 'success',
         recorded_at: '2026-08-02T08:30:00.000Z',
+        checking_started_at: '2026-08-02T08:27:00.000Z',
+        submitted_at: '2026-08-02T08:32:00.000Z',
         recorded_by: 'ครูสมใจ ใจดี',
       },
     ]);
@@ -425,6 +559,8 @@ describe('StudentsService', () => {
       data: [
         expect.objectContaining({
           recordedAt: '2026-08-02T08:30:00.000Z',
+          checkingStartedAt: '2026-08-02T08:27:00.000Z',
+          submittedAt: '2026-08-02T08:32:00.000Z',
           recordedBy: 'ครูสมใจ ใจดี',
         }),
       ],
@@ -463,7 +599,7 @@ describe('StudentsService', () => {
         staff,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(studentsRepository.updateStudentPersonContacts).not.toHaveBeenCalled();
+    expect(studentsRepository.updateStudent).not.toHaveBeenCalled();
   });
 
   it('lets staff add student contact when no login account is linked', async () => {
@@ -481,8 +617,9 @@ describe('StudentsService', () => {
       { contact: { phone: '0812345678' } },
       { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['students'] },
     );
-    expect(studentsRepository.updateStudentPersonContacts).toHaveBeenCalledWith(
-      '10000000-0000-4000-8000-000000000001',
+    expect(studentsRepository.updateStudent).toHaveBeenCalledWith(
+      studentUuid,
+      expect.any(Object),
       { phone: '0812345678' },
       undefined,
       5,

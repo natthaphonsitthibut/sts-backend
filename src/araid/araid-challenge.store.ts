@@ -7,8 +7,8 @@ import { RedisClientService } from '../redis/redis-client.service';
 /**
  * One AraID QR-approval mechanism for every flow that needs it.
  *
- * The teacher-access grant, the LINE invitation and the follow-up/assistance
- * task link all approve the same way — issue a short-lived challenge, let the
+ * The LINE invitation and the follow-up/assistance task link approve the same
+ * way — issue a short-lived challenge, let the
  * AraID app claim it, require a fresh PIN, then approve and hand back a session.
  * Only the subject being approved differs, so it is a `scope` + `subjectId`
  * here rather than a copy of this file per flow.
@@ -16,7 +16,11 @@ import { RedisClientService } from '../redis/redis-client.service';
  * `scope` is part of the Redis key, so a challenge minted for one flow can never
  * be redeemed by another, and the existing per-flow keys stay byte-identical.
  */
-export type AraIdChallengeScope = 'teacher-access' | 'teacher-line' | 'task-link' | 'admin-login';
+export type AraIdChallengeScope =
+  | 'teacher-line'
+  | 'task-link'
+  | 'admin-login'
+  | 'classroom-check-in';
 
 type ChallengeStatus = 'PENDING' | 'CLAIMED' | 'APPROVED';
 
@@ -61,6 +65,7 @@ export class AraIdChallengeStore {
     subjectId: string,
     context: Record<string, unknown> = {},
   ): Promise<AraIdChallenge> {
+    this.pruneMemory();
     const token = randomBytes(32).toString('base64url');
     const entryTtlSeconds = this.config.araIdChallengeEntryTtlSeconds;
     const expiresAt = Date.now() + entryTtlSeconds * 1000;
@@ -97,6 +102,7 @@ export class AraIdChallengeStore {
     scope: AraIdChallengeScope,
     token: string,
   ): Promise<{ authorizationToken: string; expiresAt: number } | null> {
+    this.pruneMemory();
     const challengeKey = this.key(scope, token);
     const authorizationToken = randomBytes(32).toString('base64url');
     const authorizationKey = this.authorizationKey(scope, authorizationToken);
@@ -166,6 +172,7 @@ export class AraIdChallengeStore {
     token: string,
     authorizationToken: string,
   ): Promise<{ authorizationToken: string; expiresAt: number } | null> {
+    this.pruneMemory();
     const challengeKey = this.key(scope, token);
     const authorizationKey = this.authorizationKey(scope, authorizationToken);
     const client = this.redisClientService.getClient();
@@ -192,6 +199,7 @@ export class AraIdChallengeStore {
     scope: AraIdChallengeScope,
     authorizationToken: string,
   ): Promise<{ challenge: StoredChallenge; minimumAuthenticatedAt: number } | null> {
+    this.pruneMemory();
     const authorizationKey = this.authorizationKey(scope, authorizationToken);
     const client = this.redisClientService.getClient();
     const raw = client
@@ -233,6 +241,7 @@ export class AraIdChallengeStore {
     authorizationToken: string,
     result: Record<string, unknown> = {},
   ): Promise<boolean> {
+    this.pruneMemory();
     const authorizationKey = this.authorizationKey(scope, authorizationToken);
     const client = this.redisClientService.getClient();
     if (!client) {
@@ -279,6 +288,7 @@ export class AraIdChallengeStore {
   }
 
   async read(scope: AraIdChallengeScope, token: string): Promise<StoredChallenge | null> {
+    this.pruneMemory();
     const key = this.key(scope, token);
     const client = this.redisClientService.getClient();
     const raw = client ? await client.get(key) : this.memory.get(key);
@@ -301,6 +311,7 @@ export class AraIdChallengeStore {
     scope: AraIdChallengeScope,
     token: string,
   ): Promise<StoredChallenge | null> {
+    this.pruneMemory();
     const key = this.key(scope, token);
     const client = this.redisClientService.getClient();
     if (!client) {
@@ -335,5 +346,18 @@ export class AraIdChallengeStore {
 
   private authorizationKey(scope: AraIdChallengeScope, token: string): string {
     return `sts:${scope}:araid-auth:${createHash('sha256').update(token).digest('hex')}`;
+  }
+
+  private pruneMemory(): void {
+    const now = Date.now();
+    for (const [key, value] of this.memory) {
+      const expiresAt = value.status === 'PENDING' ? value.entryExpiresAt : value.expiresAt;
+      if (expiresAt <= now) this.memory.delete(key);
+    }
+    for (const [key, value] of this.memoryAuthorizations) {
+      if (value.expiresAt <= now || !this.memory.has(value.challengeKey)) {
+        this.memoryAuthorizations.delete(key);
+      }
+    }
   }
 }

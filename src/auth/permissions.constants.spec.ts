@@ -42,6 +42,20 @@ describe('hasPermission', () => {
     expect(admin?.default_permissions).toEqual(expected);
   });
 
+  it('publishes master-data as a global-only ADMIN page', () => {
+    const item = PERMISSION_CATALOG.find((permission) => permission.id === 'master-data');
+    const admin = SYSTEM_ROLE_DEFINITIONS.find((role) => role.name === 'ADMIN');
+    const director = SYSTEM_ROLE_DEFINITIONS.find((role) => role.name === 'DIRECTOR');
+
+    expect(item).toEqual({
+      id: 'master-data',
+      label: 'ข้อมูลพื้นฐาน',
+      scopePolicy: 'global-only',
+    });
+    expect(admin?.default_permissions).toContain('master-data');
+    expect(director?.default_permissions).not.toContain('master-data');
+  });
+
   it('keeps student self-service internal and retires the STUDENT role', () => {
     expect(PERMISSION_CATALOG.map((permission) => permission.id)).not.toContain('student-self');
     expect(SYSTEM_ROLE_DEFINITIONS.map((role) => role.name)).not.toContain('STUDENT');

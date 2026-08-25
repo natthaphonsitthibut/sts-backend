@@ -8,10 +8,18 @@ import { StudentsRepository } from './students.repository';
 import { PiiExportController, PiiExportDownloadController } from './pii-export.controller';
 import { PiiExportRepository } from './pii-export.repository';
 import { PiiExportService } from './pii-export.service';
+import { MasterDataModule } from '../master-data/master-data.module';
+import { PiiAccessController } from './pii-access.controller';
+import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 
 @Module({
-  imports: [AuthModule, TaskModule, StudentGeocodeModule],
-  controllers: [PiiExportController, PiiExportDownloadController, StudentsController],
+  imports: [AuthModule, TaskModule, StudentGeocodeModule, MasterDataModule, RiskProfileModule],
+  controllers: [
+    PiiAccessController,
+    PiiExportController,
+    PiiExportDownloadController,
+    StudentsController,
+  ],
   providers: [StudentsRepository, StudentsService, PiiExportRepository, PiiExportService],
   // Teacher links render the same student profile as the staff screen, so the
   // read service is shared instead of duplicated behind a guest-only query set.

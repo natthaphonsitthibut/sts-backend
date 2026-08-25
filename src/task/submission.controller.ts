@@ -53,6 +53,14 @@ export class SubmissionController {
     return normalized;
   }
 
+  private parseExecutionOutcome(value?: string): 'SUCCEEDED' | 'NOT_SUCCEEDED' {
+    const normalized = value?.trim().toUpperCase();
+    if (normalized !== 'SUCCEEDED' && normalized !== 'NOT_SUCCEEDED') {
+      throw new BadRequestException('กรุณาเลือกผลการดำเนินงานครั้งนี้');
+    }
+    return normalized;
+  }
+
   private parseOptionCode(value: string | undefined, invalidMessage: string): string | null {
     const normalized = value?.trim().toUpperCase();
     if (!normalized) return null;
@@ -123,7 +131,19 @@ export class SubmissionController {
     const causeDetail = body.cause_detail || body.notes || '';
     const addressChanged = this.parseBoolean(body.address_changed);
     const data = {
+      task_execution_outcome_code: this.parseExecutionOutcome(body.task_execution_outcome_code),
+      non_follow_up_reason_code: body.non_follow_up_reason_code?.trim().toUpperCase() || null,
+      disadvantage_type_codes: this.parseOptionCodeList(
+        (body as Record<string, unknown>).disadvantage_type_codes,
+        'ข้อมูลความด้อยโอกาสไม่ถูกต้อง',
+      ),
+      disability_type_codes: this.parseOptionCodeList(
+        (body as Record<string, unknown>).disability_type_codes,
+        'ข้อมูลความพิการไม่ถูกต้อง',
+      ),
       follow_up_problem_category_code: body.follow_up_problem_category_code,
+      absence_reason_code: body.absence_reason_code?.trim().toUpperCase() || null,
+      absence_reason_category_code: body.absence_reason_category_code?.trim().toUpperCase() || null,
       parental_status_code: this.parseOptionCode(
         body.parental_status_code,
         'สถานะของบิดา-มารดาไม่ถูกต้อง',
@@ -141,6 +161,9 @@ export class SubmissionController {
       visited_at: body.visited_at?.trim() || null,
       assisted_at: body.assisted_at?.trim() || null,
       assistance_detail: body.assistance_detail?.trim() || null,
+      execution_outcome_detail: body.execution_outcome_detail?.trim() || null,
+      contact_person_name: body.contact_person_name?.trim() || null,
+      contact_channel_code: body.contact_channel_code?.trim().toUpperCase() || null,
       recommendation: body.recommendation,
       notes: causeDetail,
       status: body.status || 'COMPLETED',

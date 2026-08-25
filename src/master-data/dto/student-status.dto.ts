@@ -25,6 +25,14 @@ function trimIfString(value: unknown): unknown {
 
 export class ListStudentStatusesQueryDto extends PaginationQueryDto {
   @IsOptional()
+  @Transform(({ key, obj }) => {
+    const value = (obj as Record<string, unknown>)[key];
+    return value === true || value === 'true';
+  })
+  @IsBoolean()
+  includeInactive?: boolean;
+
+  @IsOptional()
   @IsString()
   @MaxLength(100)
   searchTerm?: string;

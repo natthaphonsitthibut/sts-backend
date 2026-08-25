@@ -43,9 +43,11 @@ describe('SchoolStructureController access', () => {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([]);
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
         'manage-school-structure',
+        ...(method === 'listSchools' ? ['manage-classroom-links'] : []),
+        ...(method === 'listSchools' ? ['manage-subjects', 'attendance'] : []),
         'import-data',
-        // The school picker is also reachable from จัดการกลุ่มเมนู and จัดการข้อมูลคุณครู.
-        ...(method === 'listSchools' ? ['manage-role-groups', 'manage-teachers'] : []),
+        // The school picker is also reachable from จัดการกลุ่มเมนู and จัดการข้อมูลครู.
+        ...(method === 'listSchools' ? ['manage-role-groups', 'teachers'] : []),
       ]);
       expect(() => guard.canActivate(context(method))).toThrow();
     }
@@ -62,6 +64,44 @@ describe('SchoolStructureController access', () => {
     expect(() => guard.canActivate(context('createTeacherMembership'))).toThrow();
     expect(() => guard.canActivate(context('updateTeacherMembership'))).toThrow();
   });
+
+  it('allows the classroom-link page to load only its scoped school picker', () => {
+    const guard = new PermissionsGuard(new Reflector());
+    const context = (method: keyof SchoolStructureController) =>
+      ({
+        getHandler: () => handler(method),
+        getClass: () => SchoolStructureController,
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: { roles: [], permissions: ['manage-classroom-links'] },
+          }),
+        }),
+      }) as never;
+
+    expect(guard.canActivate(context('listSchools'))).toBe(true);
+    expect(() => guard.canActivate(context('listClassrooms'))).toThrow();
+  });
+
+  it.each(['manage-subjects', 'attendance'])(
+    'allows the %s page to read scoped school and classroom options',
+    (permission) => {
+      const guard = new PermissionsGuard(new Reflector());
+      const context = (method: keyof SchoolStructureController) =>
+        ({
+          getHandler: () => handler(method),
+          getClass: () => SchoolStructureController,
+          switchToHttp: () => ({
+            getRequest: () => ({
+              user: { id: 1, username: 'page-user', roles: [], permissions: [permission] },
+            }),
+          }),
+        }) as never;
+
+      expect(guard.canActivate(context('listSchools'))).toBe(true);
+      expect(guard.canActivate(context('listClassroomOptions'))).toBe(true);
+      expect(() => guard.canActivate(context('createClassroom'))).toThrow();
+    },
+  );
 
   it('allows import actors to read scoped schools and classrooms but not write them', () => {
     const guard = new PermissionsGuard(new Reflector());

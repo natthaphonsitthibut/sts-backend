@@ -1,7 +1,7 @@
 export type TeacherStatus = 'ACTIVE' | 'INACTIVE';
 
 /**
- * One teacher as shown on จัดการข้อมูลคุณครู — the person record joined to the
+ * One teacher as shown on จัดการข้อมูลครู — the person record joined to the
  * membership that puts them in the school currently being managed.
  */
 export interface TeacherRow extends Record<string, unknown> {

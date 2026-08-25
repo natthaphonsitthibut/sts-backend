@@ -4,6 +4,72 @@ import { TaskStatsService } from './task-stats.service';
 import { ForbiddenException } from '@nestjs/common';
 
 describe('TaskStatsService', () => {
+  it('returns aggregate-only follow-up outcomes and referral backlog to an EXECUTIVE', async () => {
+    const actor = {
+      id: 70,
+      username: 'executive',
+      roles: ['EXECUTIVE'],
+      permissions: ['dashboard'],
+      data_scope: { provinces: ['เชียงใหม่'] },
+    };
+    const taskRepository = {
+      getFollowUpOutcomeAggregate: jest.fn().mockResolvedValue([
+        { task_type: 'VISIT', task_execution_outcome_code: 'SUCCEEDED', activity_count: 8 },
+        { task_type: 'VISIT', task_execution_outcome_code: 'NOT_SUCCEEDED', activity_count: 2 },
+        { task_type: 'ASSIST', task_execution_outcome_code: 'SUCCEEDED', activity_count: 3 },
+      ]),
+      getAssistanceMeasureAggregate: jest.fn().mockResolvedValue([]),
+      getReferralAggregate: jest.fn().mockResolvedValue([
+        {
+          status_code: 'REFERRED',
+          agency_name: 'หน่วยงาน ก',
+          referral_count: 4,
+          overdue_count: 1,
+        },
+      ]),
+      countRepeatedUnsuccessfulCases: jest.fn().mockResolvedValue(2),
+    };
+    const taskPolicyService = { ensureActor: jest.fn().mockReturnValue(actor) };
+    const service = new TaskStatsService(
+      taskRepository as unknown as TaskRepository,
+      taskPolicyService as unknown as TaskPolicyService,
+    );
+
+    const result = await service.getFollowUpSummary(actor);
+    expect(result.data.outcomes).toEqual({
+      visit: { succeeded: 8, notSucceeded: 2, total: 10, successRate: 80 },
+      assist: { succeeded: 3, notSucceeded: 0, total: 3, successRate: 100 },
+    });
+    expect(result.data.referrals).toMatchObject({
+      total: 4,
+      overdue: 1,
+      byStatus: { REFERRED: 4 },
+    });
+    expect(result.data.repeatedUnsuccessfulCaseCount).toBe(2);
+    expect(JSON.stringify(result)).not.toContain('studentName');
+  });
+
+  it('denies referral PII drill-down to an EXECUTIVE', async () => {
+    const actor = {
+      id: 70,
+      username: 'executive',
+      roles: ['EXECUTIVE'],
+      permissions: ['dashboard'],
+      data_scope: { global: true },
+    };
+    const taskRepository = { listReferralDrilldown: jest.fn() };
+    const taskPolicyService = { ensureActor: jest.fn().mockReturnValue(actor) };
+    const service = new TaskStatsService(
+      taskRepository as unknown as TaskRepository,
+      taskPolicyService as unknown as TaskPolicyService,
+    );
+
+    await expect(service.getReferralDrilldown(actor, 1, 20)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(taskRepository.listReferralDrilldown).not.toHaveBeenCalled();
+  });
+
   it('denies raw case lists to an EXECUTIVE even when review-cases is re-granted', async () => {
     const actor = {
       id: 70,
@@ -202,6 +268,8 @@ describe('TaskStatsService', () => {
             room: '1',
             risk_tier: 'WATCH',
             problem_category_label: 'ปัญหาด้านสุขภาพ',
+            concern_level_code: 'CONCERN',
+            concern_level_label: 'น่ากังวล',
             teacher_comment: 'Covid',
           },
         ],
@@ -228,6 +296,8 @@ describe('TaskStatsService', () => {
         {
           studentId: 'student-1',
           problemCategoryLabel: 'ปัญหาด้านสุขภาพ',
+          concernLevelCode: 'CONCERN',
+          concernLevelLabel: 'น่ากังวล',
           teacherComment: 'Covid',
         },
       ],

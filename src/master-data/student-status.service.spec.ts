@@ -5,7 +5,7 @@ import type { StudentStatusRow } from './student-status.types';
 const ACTIVE_ROW: StudentStatusRow = {
   code: 10,
   label_th: 'กำลังศึกษา',
-  category: 'ACTIVE',
+  category: 'STUDYING',
   badge_variant: 'success',
   is_active_for_login: true,
   is_terminal: false,
@@ -53,7 +53,7 @@ describe('StudentStatusService', () => {
         {
           code: 10,
           labelTh: 'กำลังศึกษา',
-          category: 'ACTIVE',
+          category: 'STUDYING',
           badgeVariant: 'success',
           isActiveForLogin: true,
           isTerminal: false,
@@ -66,6 +66,20 @@ describe('StudentStatusService', () => {
       ],
       meta: { page: 1, limit: 20, totalCount: 1, totalPages: 1 },
     });
+    expect(repository.list).toHaveBeenCalledWith(
+      expect.objectContaining({ includeInactive: true }),
+    );
+  });
+
+  it('passes the active-only filter to the repository', async () => {
+    const { service, repository } = setup();
+    repository.list.mockResolvedValue({ rows: [], totalCount: 0 });
+
+    await service.list({ page: 1, limit: 20, includeInactive: false });
+
+    expect(repository.list).toHaveBeenCalledWith(
+      expect.objectContaining({ includeInactive: false }),
+    );
   });
 
   it('updates policy metadata without creating or mutating a case', async () => {
@@ -107,7 +121,7 @@ describe('StudentStatusService', () => {
       service.create(actor, {
         code: 10,
         labelTh: 'กำลังศึกษา',
-        category: 'ACTIVE',
+        category: 'STUDYING',
         badgeVariant: 'success',
         isActiveForLogin: true,
         isTerminal: false,

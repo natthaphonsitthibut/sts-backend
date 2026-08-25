@@ -9,7 +9,7 @@ function handlerOf(methodName: string): () => unknown {
 }
 
 describe('StudentsController', () => {
-  it('protects student write routes with the รายชื่อนักเรียน page permission', () => {
+  it('protects student write routes with the จัดการนักเรียน page permission', () => {
     const classGuards = Reflect.getMetadata(GUARDS_METADATA, StudentsController) as unknown[];
 
     expect(classGuards).toEqual([AuthGuard, PermissionsGuard]);
@@ -18,7 +18,7 @@ describe('StudentsController', () => {
       const methodGuards = Reflect.getMetadata(GUARDS_METADATA, handler) as unknown[];
 
       expect(methodGuards).toEqual([AuthGuard, PermissionsGuard]);
-      expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['students']);
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['manage-students']);
     }
 
     const updateHandler = handlerOf('update');
@@ -26,29 +26,41 @@ describe('StudentsController', () => {
       AuthGuard,
       PermissionsGuard,
     ]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, updateHandler)).toEqual(['students']);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, updateHandler)).toEqual(['manage-students']);
   });
 
-  it('requires staff student access for every student endpoint', () => {
-    for (const methodName of [
-      'findAll',
-      'getFilterOptions',
-      'findCasesByName',
-      'findCasesByStudentId',
-    ]) {
-      expect(Reflect.getMetadata(PERMISSIONS_KEY, handlerOf(methodName))).toEqual(['students']);
+  it('separates directory reads, classroom profile reads, and management writes', () => {
+    for (const methodName of ['findAll', 'getFilterOptions', 'findCasesByName']) {
+      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handlerOf(methodName))).toEqual([
+        'students',
+        'manage-students',
+      ]);
     }
 
     for (const methodName of [
       'findOne',
+      'findCasesByStudentId',
       'findAttendanceByStudentId',
       'getStudentProfileSummary',
       'getStudentSubjectAttendance',
-      'updateStudentPhoto',
-      'revealPii',
     ]) {
-      expect(Reflect.getMetadata(PERMISSIONS_KEY, handlerOf(methodName))).toEqual(['students']);
+      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handlerOf(methodName))).toEqual([
+        'students',
+        'manage-students',
+        'classrooms',
+      ]);
     }
+
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handlerOf('updateStudentPhoto'))).toEqual([
+      'students',
+      'manage-students',
+    ]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, handlerOf('revealPii'))).toEqual([
+      'manage-students',
+    ]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, handlerOf('getManagementOptions'))).toEqual([
+      'manage-students',
+    ]);
   });
 
   it('serves a student avatar to every page that shows one', () => {
@@ -61,6 +73,7 @@ describe('StudentsController', () => {
     expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toBeUndefined();
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler)).toEqual([
       'students',
+      'manage-students',
       'attendance',
       'classrooms',
       'dashboard',
