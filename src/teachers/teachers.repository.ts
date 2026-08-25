@@ -163,6 +163,123 @@ export class TeachersRepository {
   }
 
   /**
+   * Read-only profile access for classroom-link operators. The teacher must be
+   * an active homeroom teacher of at least one classroom inside the actor's
+   * school/grade/room scope; a guessed id outside that scope returns no row.
+   */
+  async findActiveHomeroomTeacherInScope(
+    teacherId: string,
+    scope: DataScope,
+  ): Promise<TeacherRow | null> {
+    const scopeQuery = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+        grade: 'classroom.grade_level_id',
+        room: 'classroom.legacy_room_number',
+      },
+      2,
+    );
+    const result = await queryDataSource<TeacherRow>(
+      this.dataSource,
+      `
+        SELECT ${TEACHER_SELECT_SQL}
+        FROM teachers teacher
+        JOIN school_teacher_memberships membership
+          ON membership.teacher_id = teacher.id
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+        JOIN schools school
+          ON school.id = membership.school_id
+         AND school.school_status = 'ACTIVE'
+        WHERE teacher.id = $1
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM classroom_homeroom_teachers homeroom
+            JOIN school_classrooms classroom
+              ON classroom.id = homeroom.classroom_id
+             AND classroom.school_id = homeroom.school_id
+             AND classroom.classroom_status = 'ACTIVE'
+             AND classroom.deleted_at IS NULL
+            JOIN school_terms term
+              ON term.id = classroom.school_term_id
+             AND term.school_id = classroom.school_id
+             AND term.status = 'ACTIVE'
+             AND term.deleted_at IS NULL
+            WHERE homeroom.teacher_membership_id = membership.id
+              AND homeroom.school_id = membership.school_id
+              AND ${scopeQuery.sql || 'TRUE'}
+          )
+        ORDER BY membership.started_on DESC, membership.id DESC
+        LIMIT 1
+      `,
+      [teacherId, ...scopeQuery.params],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listActivePiiRevealGroups(
+    actorUserId: number,
+    subjectRef: string,
+    ttlSeconds: number,
+  ): Promise<string[]> {
+    const result = await queryDataSource<{ field_group: string }>(
+      this.dataSource,
+      `
+        SELECT DISTINCT field_group
+        FROM pii_access_events
+        WHERE actor_user_id = $1
+          AND subject_type = 'TEACHER'
+          AND subject_ref = $2
+          AND created_at >= now() - ($3 * interval '1 second')
+      `,
+      [actorUserId, subjectRef, ttlSeconds],
+    );
+    return result.rows.map((row) => row.field_group);
+  }
+
+  async insertPiiAccessEvent(input: {
+    actorUserId: number | null;
+    actorRoles: string[];
+    subjectRef: string;
+    subjectRefKeyVersion: number;
+    reasonCode: string;
+    reasonNote: string | null;
+    requestId: string | null;
+    ip: string | null;
+    userAgent: string | null;
+  }): Promise<void> {
+    await queryDataSource(
+      this.dataSource,
+      `
+        INSERT INTO pii_access_events (
+          actor_user_id, actor_roles, actor_kind, subject_student_ref,
+          subject_type, subject_ref, subject_ref_key_version, field_group,
+          reason_code, reason_note, purpose_link_id, request_id, ip, user_agent
+        )
+        VALUES ($1, $2::jsonb, 'STAFF', $3, 'TEACHER', $3, $4,
+                'NATIONAL_ID', $5, $6, NULL, $7, $8, $9)
+      `,
+      [
+        input.actorUserId,
+        JSON.stringify(input.actorRoles),
+        input.subjectRef,
+        input.subjectRefKeyVersion,
+        input.reasonCode,
+        input.reasonNote,
+        input.requestId,
+        input.ip,
+        input.userAgent,
+      ],
+    );
+  }
+
+  /**
    * Existing person with the same national id, so a transferring teacher is
    * re-used instead of duplicated. Only well-formed ids are ever stored, so a
    * blank id can never collide.
@@ -321,10 +438,7 @@ export class TeachersRepository {
     return result.rows[0];
   }
 
-  /**
-   * Soft delete: the membership is ended and the person is marked inactive, so
-   * attendance, timetable and audit rows that point at them stay intact.
-   */
+  /** Ends the membership and removes its current homeroom relation. */
   async deactivateTeacher(
     input: { teacherId: string; membershipId: string; actorId: number | null },
     queryRunner: QueryRunner,
@@ -341,27 +455,8 @@ export class TeachersRepository {
       [input.membershipId, input.actorId],
     );
     await executor.query(
-      `
-        UPDATE curriculum_subject_teachers
-        SET deleted_at = now(),
-            deleted_by = $2,
-            updated_by = $2
-        WHERE teacher_membership_id = $1
-          AND deleted_at IS NULL
-      `,
-      [input.membershipId, input.actorId],
-    );
-    await executor.query(
-      `
-        UPDATE classroom_teacher_assignments
-        SET assignment_status = 'INACTIVE',
-            updated_by = $2,
-            updated_at = now()
-        WHERE teacher_membership_id = $1
-          AND assignment_status = 'ACTIVE'
-          AND deleted_at IS NULL
-      `,
-      [input.membershipId, input.actorId],
+      `DELETE FROM classroom_homeroom_teachers WHERE teacher_membership_id = $1`,
+      [input.membershipId],
     );
     await executor.query(
       `

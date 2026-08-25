@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthenticatedRequestUser, DataScope } from '../auth';
+import type { ConfigType } from '@nestjs/config';
 import {
   hasAreaDataScope,
   hasPermission,
@@ -16,6 +17,16 @@ import {
 } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { buildPiiSubjectRef } from '../common/utils/pii-ref.util';
+import { piiConfig } from '../config/pii.config';
+import {
+  maskNationalIdValue,
+  normalizeNationalIdValue,
+  PII_REASON_CODES,
+  PII_REASON_REQUIRES_NOTE,
+  type PiiReasonCode,
+} from '../students/pii-fields.config';
+import type { PiiRevealDto } from '../students/dto/pii-reveal.dto';
 import { processImageUpload } from '../common/file-upload/visit-photo.util';
 import {
   FILE_STORAGE_ADAPTER,
@@ -64,6 +75,8 @@ export class TeachersService {
     private readonly auditLog: AuditLogService,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
+    @Inject(piiConfig.KEY)
+    private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
   ) {}
 
   /**
@@ -104,7 +117,8 @@ export class TeachersService {
       firstName: row.first_name,
       lastName: row.last_name,
       fullName: `${row.first_name} ${row.last_name}`.trim(),
-      citizenId: row.citizen_id,
+      citizenId: row.citizen_id ? maskNationalIdValue(row.citizen_id) : null,
+      maskedFields: row.citizen_id ? ['citizenId'] : [],
       phone: row.phone,
       email: row.email,
       lineId: row.line_id,
@@ -118,6 +132,177 @@ export class TeachersService {
       startedOn: row.started_on,
       endedOn: row.ended_on,
     };
+  }
+
+  private async findProfileTeacher(
+    teacherId: string,
+    actor: AuthenticatedRequestUser,
+  ): Promise<TeacherRow> {
+    const scope = normalizeDataScope(actor.data_scope) ?? {};
+    const hasWholeSchoolTeacherScope =
+      scope.own_only !== true &&
+      !isUnconfiguredDataScope(scope) &&
+      (scope.grade_levels?.length ?? 0) === 0 &&
+      (scope.room_ids?.length ?? 0) === 0 &&
+      (scope.global === true || hasAreaDataScope(scope));
+
+    if (
+      ['teachers', 'manage-teachers'].some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      ) &&
+      hasWholeSchoolTeacherScope
+    ) {
+      const teacher = await this.repository.findTeacherById(teacherId);
+      if (!teacher) throw new NotFoundException('ไม่พบข้อมูลครู');
+      const allowed = await this.repository.isSchoolInScope(teacher.school_id, scope);
+      if (!allowed) throw new NotFoundException('ไม่พบข้อมูลครู');
+      return teacher;
+    }
+
+    if (!hasPermission(actor.roles, actor.permissions, 'manage-classroom-links')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ดูข้อมูลครู');
+    }
+    if (scope.own_only === true || isUnconfiguredDataScope(scope)) {
+      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้ดูข้อมูลครู');
+    }
+    const teacher = await this.repository.findActiveHomeroomTeacherInScope(teacherId, scope);
+    if (!teacher) throw new NotFoundException('ไม่พบข้อมูลครู');
+    return teacher;
+  }
+
+  private toProfileResponse(row: TeacherRow) {
+    return {
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      fullName: `${row.first_name} ${row.last_name}`.trim(),
+      citizenId: row.citizen_id ? maskNationalIdValue(row.citizen_id) : null,
+      maskedFields: row.citizen_id ? ['citizenId'] : [],
+      phone: row.phone,
+      email: row.email,
+      lineId: row.line_id,
+      photoUrl: row.photo_storage_key
+        ? `/api/teacher-profiles/${row.id}/photo?v=${encodeURIComponent(row.updated_at)}`
+        : null,
+      teacherStatus: row.teacher_status,
+      schoolId: row.school_id,
+      membershipStatus: row.membership_status,
+    };
+  }
+
+  async findProfile(teacherId: string, actor: AuthenticatedRequestUser) {
+    const teacher = await this.findProfileTeacher(teacherId, actor);
+    return { success: true, data: this.toProfileResponse(teacher) };
+  }
+
+  async listProfiles(query: ListTeachersQueryDto, actor: AuthenticatedRequestUser) {
+    if (
+      !['teachers', 'manage-teachers'].some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      )
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ดูรายชื่อครู');
+    }
+    const scope = normalizeDataScope(actor.data_scope) ?? {};
+    if (
+      scope.own_only === true ||
+      isUnconfiguredDataScope(scope) ||
+      (scope.grade_levels?.length ?? 0) > 0 ||
+      (scope.room_ids?.length ?? 0) > 0 ||
+      (scope.global !== true && !hasAreaDataScope(scope))
+    ) {
+      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้ดูรายชื่อครูระดับโรงเรียน');
+    }
+    const allowed = await this.repository.isSchoolInScope(query.schoolId, scope);
+    if (!allowed) throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const { rows, totalCount } = await this.repository.listTeachers({
+      schoolId: query.schoolId,
+      searchTerm: query.searchTerm?.trim() || undefined,
+      teacherStatus: query.teacherStatus,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
+      page,
+      limit,
+    });
+    return {
+      success: true,
+      data: rows.map((row) => this.toProfileResponse(row)),
+      meta: buildPaginationMeta(page, limit, totalCount),
+    };
+  }
+
+  async resolveProfilePhoto(
+    teacherId: string,
+    actor: AuthenticatedRequestUser,
+  ): Promise<FileServeResult> {
+    const teacher = await this.findProfileTeacher(teacherId, actor);
+    if (!teacher.photo_storage_key) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+    const result = await this.storage.resolve(teacher.photo_storage_key);
+    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+    return result;
+  }
+
+  async revealNationalId(
+    teacherId: string,
+    actor: AuthenticatedRequestUser,
+    dto: PiiRevealDto,
+    meta: { requestId: string | null; ip: string | null; userAgent: string | null },
+  ) {
+    if (
+      !['teachers', 'manage-teachers'].some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      )
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์เปิดดูเลขบัตรครู');
+    }
+    if (dto.field_group !== 'NATIONAL_ID') {
+      throw new BadRequestException('field_group must be NATIONAL_ID');
+    }
+    if (
+      !dto.reason_code ||
+      dto.reason_code === 'SELF_ACCESS' ||
+      !PII_REASON_CODES.includes(dto.reason_code as PiiReasonCode)
+    ) {
+      throw new BadRequestException('valid reason_code is required');
+    }
+    const reasonCode = dto.reason_code as PiiReasonCode;
+    const reasonNote = dto.reason_note?.trim() || null;
+    if (PII_REASON_REQUIRES_NOTE.includes(reasonCode) && !reasonNote) {
+      throw new BadRequestException('reason_note is required for this reason code');
+    }
+    if (reasonNote && /\d(?:[\s-]*\d){9,}/u.test(reasonNote)) {
+      throw new BadRequestException('reason_note must not contain ID or document numbers');
+    }
+
+    const teacher = await this.findProfileTeacher(teacherId, actor);
+    const citizenId = normalizeNationalIdValue(teacher.citizen_id);
+    if (!citizenId) throw new NotFoundException('ไม่พบเลขบัตรประชาชนครู');
+    const subjectRef = buildPiiSubjectRef(
+      `teacher:${teacherId}`,
+      this.piiRuntimeConfig.hashPepper,
+      this.piiRuntimeConfig.hashKeyVersion,
+    );
+    const activeGroups = await this.repository.listActivePiiRevealGroups(
+      actor.id,
+      subjectRef,
+      this.piiRuntimeConfig.revealTtlSeconds,
+    );
+    if (!activeGroups.includes('NATIONAL_ID')) {
+      await this.repository.insertPiiAccessEvent({
+        actorUserId: resolveAuditActorId(actor),
+        actorRoles: actor.roles,
+        subjectRef,
+        subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+        reasonCode,
+        reasonNote,
+        requestId: meta.requestId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return { field_group: 'NATIONAL_ID', values: { citizenId } };
   }
 
   async list(query: ListTeachersQueryDto, actor: AuthenticatedRequestUser) {
