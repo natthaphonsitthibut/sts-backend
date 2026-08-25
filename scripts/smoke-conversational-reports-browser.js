@@ -250,6 +250,12 @@ async function main() {
        ORDER BY enrollment.student_uuid LIMIT 1`,
     );
     assert(enrollment, 'need one canonical student with an assigned classroom teacher');
+    const [secondScopedSchool] = await dataSource.query(
+      `SELECT id FROM schools WHERE id <> $1 ORDER BY id LIMIT 1`,
+      [enrollment.school_id],
+    );
+    assert(secondScopedSchool, 'need two schools to prove the all-schools scoped report');
+    const actorSchoolIds = [Number(enrollment.school_id), Number(secondScopedSchool.id)];
     const [absenceReason] = await dataSource.query(
       `SELECT reason.code, reason.label_th, category.code AS category_code,
               category.label_th AS category_label
@@ -289,7 +295,7 @@ async function main() {
        ON CONFLICT (username) DO UPDATE SET status='ACTIVE', permissions=$2::jsonb,
          data_scope=$3::jsonb, data_origin_code='AUTOMATED_TEST'
        RETURNING id`,
-      [USERNAME, JSON.stringify(permissions), JSON.stringify({ school_ids: [Number(enrollment.school_id)] })],
+      [USERNAME, JSON.stringify(permissions), JSON.stringify({ school_ids: actorSchoolIds })],
     );
     actorId = Number(actor.id);
     await cleanupActorFixtures(dataSource, actorId);
@@ -764,6 +770,21 @@ async function main() {
       async () => await client.evaluate(`document.body.innerText.includes('ผลการติดตามและการส่งต่อ')`),
       'follow-up aggregate panel did not render',
     );
+    await waitFor(
+      async () =>
+        await client.evaluate(
+          `document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value === 'ทุกโรงเรียนในขอบเขตสิทธิ์'
+            && document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
+        ),
+      async () =>
+        `all-schools risk report did not load scoped student rows without selecting a school: ${await client.evaluate(
+          `document.body.innerText.slice(0, 1200)`,
+        )}`,
+    );
+    assert(
+      !(await client.evaluate(`document.body.innerText.includes('เลือกโรงเรียนจากตัวกรองด้านบน')`)),
+      'risk report still blocks on a school selection',
+    );
     await client.clickText('ดูรายการส่งต่อ');
     await waitFor(
       async () => await client.evaluate(`document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`),
@@ -792,7 +813,7 @@ async function main() {
     assert(drilldownStatus === 403, `executive referral drill-down returned ${drilldownStatus}`);
 
     console.log(
-      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-question flow, contact choice, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, local draft navigation, mobile/keyboard/reduced-motion, single submit, repeat ASSIST, aggregate/drill-down scope)',
+      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-question flow, contact choice, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, local draft navigation, mobile/keyboard/reduced-motion, single submit, repeat ASSIST, all-schools scoped report, aggregate/drill-down scope)',
     );
   } finally {
     if (chrome) chrome.close();
