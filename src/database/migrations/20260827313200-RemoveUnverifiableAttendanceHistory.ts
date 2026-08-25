@@ -1,17 +1,14 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Removes attendance sessions whose destructive legacy conversion no longer
- * carries any verifiable recorder. The preceding conversion now preserves a
- * teacher membership (or a real submitter user) from the legacy rows, so a
- * correctly converted production database is unaffected. Databases converted
- * by the earlier implementation cannot safely reconstruct that actor after the
- * timetable/assignment tables were dropped; retaining `classroom-check-in`
- * would present a technical scope name as if it were a person.
+ * Fails closed when a legacy conversion loses recorder provenance. Attendance
+ * history is student data and must never be deleted merely because the actor
+ * cannot be reconstructed. The preceding conversion preserves a teacher
+ * membership (or a real submitter user), so a correctly converted database
+ * passes this guard without changing any rows.
  *
- * This is intentionally destructive. The affected rows are not soft-deleted:
- * unverifiable history must not continue contributing to attendance or risk
- * calculations. Rollback requires restoring a pre-migration backup.
+ * Keep the historical class/file name because the migration has already been
+ * recorded in local ledgers. Its contract is now validation-only.
  */
 export class RemoveUnverifiableAttendanceHistory20260827313200 implements MigrationInterface {
   name = 'RemoveUnverifiableAttendanceHistory20260827313200';
@@ -45,54 +42,22 @@ export class RemoveUnverifiableAttendanceHistory20260827313200 implements Migrat
 
     await queryRunner.query(`
       DO $unverifiable_attendance_guard$
-      DECLARE unexpected_label_count bigint;
+      DECLARE unverifiable_session_count bigint;
       BEGIN
-        SELECT COUNT(*) INTO unexpected_label_count
-        FROM attendance_effective_records record
-        JOIN unverifiable_attendance_sessions_20260827 target
-          ON target.id = record.session_id
-        WHERE record."RecordedBy" IS DISTINCT FROM 'classroom-check-in';
+        SELECT COUNT(*) INTO unverifiable_session_count
+        FROM unverifiable_attendance_sessions_20260827;
 
-        IF unexpected_label_count <> 0 THEN
+        IF unverifiable_session_count <> 0 THEN
           RAISE EXCEPTION
-            'Unverifiable attendance cleanup found % records with non-synthetic recorder labels',
-            unexpected_label_count;
+            'Attendance provenance guard found % session(s) without a verifiable recorder; history was preserved and migration stopped',
+            unverifiable_session_count;
         END IF;
       END
       $unverifiable_attendance_guard$;
     `);
-
-    // Derived profiles must not keep counts from history removed below. The
-    // normal risk-profile repair/recalculation recreates them from live facts.
-    await queryRunner.query(`
-      DELETE FROM student_risk_profiles profile
-      USING attendance_session_roster roster,
-            unverifiable_attendance_sessions_20260827 target
-      WHERE roster.session_id = target.id
-        AND profile.student_uuid = roster.student_uuid
-    `);
-    await queryRunner.query(`
-      DELETE FROM attendance_exceptions exception
-      USING unverifiable_attendance_sessions_20260827 target
-      WHERE exception.session_id = target.id
-    `);
-    await queryRunner.query(`
-      DELETE FROM attendance_session_roster roster
-      USING unverifiable_attendance_sessions_20260827 target
-      WHERE roster.session_id = target.id
-    `);
-    await queryRunner.query(`
-      DELETE FROM attendance_sessions session
-      USING unverifiable_attendance_sessions_20260827 target
-      WHERE session.id = target.id
-    `);
   }
 
-  public down(): Promise<void> {
-    return Promise.reject(
-      new Error(
-        'RemoveUnverifiableAttendanceHistory is intentionally irreversible. Restore the verified pre-migration backup.',
-      ),
-    );
+  public async down(): Promise<void> {
+    // Validation-only migration: there is no persisted change to reverse.
   }
 }
