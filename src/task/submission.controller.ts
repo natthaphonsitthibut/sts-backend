@@ -143,6 +143,7 @@ export class SubmissionController {
       ),
       follow_up_problem_category_code: body.follow_up_problem_category_code,
       absence_reason_code: body.absence_reason_code?.trim().toUpperCase() || null,
+      absence_reason_category_code: body.absence_reason_category_code?.trim().toUpperCase() || null,
       parental_status_code: this.parseOptionCode(
         body.parental_status_code,
         'สถานะของบิดา-มารดาไม่ถูกต้อง',

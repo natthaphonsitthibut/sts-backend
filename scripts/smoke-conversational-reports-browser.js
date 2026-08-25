@@ -402,8 +402,8 @@ async function main() {
     await waitFor(async () => (await visibleStepId(client)) === 'visit-outcome', 'VISIT did not advance');
     assert(
       await client.evaluate(
-        `document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('พบนักเรียน')
-         && !document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('ไม่พบนักเรียน')`,
+        `document.querySelector('[data-conversational-step] input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('พบนักเรียน')
+         && !document.querySelector('[data-conversational-step] input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('ไม่พบนักเรียน')`,
       ),
       'previous unsuccessful outcome leaked into the new round',
     );
@@ -498,13 +498,18 @@ async function main() {
       return Number(row.count) === 1;
     }, 'VISIT final submit did not write exactly once');
     const [visitSubmission] = await dataSource.query(
-      `SELECT task_execution_outcome_code, contact_person_name, absence_reason_code,
+      `SELECT task_execution_outcome_code, contact_person_name,
+              absence_reason_category_code, absence_reason_code,
               cause_detail, photo_paths
        FROM task_submissions WHERE task_link_id=$1`,
       [visit.link_id],
     );
     assert(visitSubmission.task_execution_outcome_code === 'SUCCEEDED', 'VISIT derived outcome is wrong');
     assert(visitSubmission.contact_person_name === 'แก้ไขแล้วในรอบใหม่', 'VISIT snapshot is wrong');
+    assert(
+      visitSubmission.absence_reason_category_code === absenceReason.category_code,
+      'VISIT absence category was not persisted independently',
+    );
     assert(
       visitSubmission.absence_reason_code === absenceReason.code,
       'VISIT absence category/reason selection was not persisted',

@@ -143,6 +143,9 @@ export class TaskSubmissionEntity {
   @Column({ name: 'absence_reason_code', type: 'varchar', length: 40, nullable: true })
   absenceReasonCode!: string | null;
 
+  @Column({ name: 'absence_reason_category_code', type: 'varchar', length: 40, nullable: true })
+  absenceReasonCategoryCode!: string | null;
+
   @Column({ name: 'parental_status_code', type: 'varchar', length: 40, nullable: true })
   parentalStatusCode!: string | null;
 

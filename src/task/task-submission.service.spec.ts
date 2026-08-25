@@ -40,7 +40,7 @@ describe('TaskSubmissionService', () => {
       | 'getResidenceEnvironments'
       | 'getTaskExecutionOutcome'
       | 'getNonFollowUpReason'
-      | 'getAbsenceReason'
+      | 'getAbsenceSelection'
       | 'getContactChannel'
       | 'getCareObservationCodes'
     >
@@ -109,7 +109,9 @@ describe('TaskSubmissionService', () => {
           : Promise.reject(new BadRequestException('กรุณาเลือกผลการดำเนินงานครั้งนี้')),
       ),
       getNonFollowUpReason: jest.fn((code: string | null) => Promise.resolve(code)),
-      getAbsenceReason: jest.fn((code: string | null) => Promise.resolve(code)),
+      getAbsenceSelection: jest.fn((reasonCode: string | null, categoryCode: string | null) =>
+        Promise.resolve({ reasonCode, categoryCode }),
+      ),
       getContactChannel: jest.fn((code: string | null) => Promise.resolve(code)),
       getCareObservationCodes: jest.fn((_kind, codes: string[]) => Promise.resolve(codes)),
     };
@@ -214,12 +216,18 @@ describe('TaskSubmissionService', () => {
 
     await service.saveTaskSubmission(
       'public-token',
-      validVisitData({ absence_reason_code: 'MINOR_ILLNESS' }),
+      validVisitData({
+        absence_reason_category_code: 'HEALTH',
+        absence_reason_code: 'MINOR_ILLNESS',
+      }),
     );
 
-    expect(trackingOptions.getAbsenceReason).toHaveBeenCalledWith('MINOR_ILLNESS');
+    expect(trackingOptions.getAbsenceSelection).toHaveBeenCalledWith('MINOR_ILLNESS', 'HEALTH');
     expect(taskRepository.insertTaskSubmission).toHaveBeenCalledWith(
-      expect.objectContaining({ absenceReasonCode: 'MINOR_ILLNESS' }),
+      expect.objectContaining({
+        absenceReasonCategoryCode: 'HEALTH',
+        absenceReasonCode: 'MINOR_ILLNESS',
+      }),
       undefined,
     );
 

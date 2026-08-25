@@ -236,6 +236,8 @@ export class TaskSubmissionService {
         this.toScalarString(data.follow_up_problem_category_code)?.toUpperCase() ?? null;
       const absenceReasonCode =
         this.toScalarString(data.absence_reason_code)?.toUpperCase() ?? null;
+      const absenceReasonCategoryCode =
+        this.toScalarString(data.absence_reason_category_code)?.toUpperCase() ?? null;
       const parentalStatusCode =
         this.toScalarString(data.parental_status_code)?.toUpperCase() ?? null;
       const guardianTypeCode = this.toScalarString(data.guardian_type_code)?.toUpperCase() ?? null;
@@ -253,7 +255,7 @@ export class TaskSubmissionService {
         disabilityTypeCodes,
         homeVisitException,
         followUpProblemCategory,
-        absenceReason,
+        absenceSelection,
         parentalStatus,
         guardianType,
         residenceEnvironments,
@@ -265,7 +267,7 @@ export class TaskSubmissionService {
         this.caseTrackingOptions.getCareObservationCodes('DISABILITY', disabilityInput),
         this.caseTrackingOptions.getHomeVisitException(homeVisitExceptionCode),
         this.caseTrackingOptions.getFollowUpProblemCategory(followUpProblemCategoryCode),
-        this.caseTrackingOptions.getAbsenceReason(absenceReasonCode),
+        this.caseTrackingOptions.getAbsenceSelection(absenceReasonCode, absenceReasonCategoryCode),
         this.caseTrackingOptions.getParentalStatus(parentalStatusCode),
         this.caseTrackingOptions.getGuardianType(guardianTypeCode),
         this.caseTrackingOptions.getResidenceEnvironments(
@@ -283,7 +285,7 @@ export class TaskSubmissionService {
       if ((disadvantageTypeCodes.length > 0 || disabilityTypeCodes.length > 0) && !studentUuid) {
         throw new BadRequestException('เคสนี้ไม่มีนักเรียนสำหรับบันทึกข้อมูลจากการติดตาม');
       }
-      if (isAssistance && absenceReason) {
+      if (isAssistance && (absenceSelection.reasonCode || absenceSelection.categoryCode)) {
         throw new BadRequestException('สาเหตุการขาดใช้กับงานติดตามเท่านั้น');
       }
       // A not-found visit keeps the dedicated re-assignment lane open: it is an
@@ -357,7 +359,8 @@ export class TaskSubmissionService {
             visitLng: this.normalizeNumber(data.visit_lng),
             visitedAt,
             followUpProblemCategoryCode: followUpProblemCategory?.code ?? null,
-            absenceReasonCode: absenceReason,
+            absenceReasonCode: absenceSelection.reasonCode,
+            absenceReasonCategoryCode: absenceSelection.categoryCode,
             parentalStatusCode: parentalStatus?.code ?? null,
             guardianTypeCode: guardianType?.code ?? null,
             // A detail without a guardian type has nothing to qualify, and the

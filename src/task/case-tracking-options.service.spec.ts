@@ -28,6 +28,7 @@ describe('CaseTrackingOptionsService', () => {
     findNonFollowUpReason: jest.fn(),
     listAbsenceReasons: jest.fn(),
     findAbsenceReason: jest.fn(),
+    findAbsenceReasonCategory: jest.fn(),
     listDisadvantageTypes: jest.fn(),
     findDisadvantageTypes: jest.fn(),
     listDisabilityTypes: jest.fn(),
@@ -38,6 +39,30 @@ describe('CaseTrackingOptionsService', () => {
   const service = new CaseTrackingOptionsService(repository as unknown as TaskRepository);
 
   beforeEach(() => jest.clearAllMocks());
+
+  it('keeps a selected absence category without inventing a detailed reason', async () => {
+    repository.findAbsenceReasonCategory.mockResolvedValue({
+      code: 'HEALTH',
+      label_th: 'สุขภาพ',
+    });
+
+    await expect(service.getAbsenceSelection(null, 'HEALTH')).resolves.toEqual({
+      reasonCode: null,
+      categoryCode: 'HEALTH',
+    });
+  });
+
+  it('rejects an absence reason outside the selected category', async () => {
+    repository.findAbsenceReason.mockResolvedValue({
+      code: 'FAMILY_DUTY',
+      category_code: 'FAMILY',
+    });
+    repository.findAbsenceReasonCategory.mockResolvedValue({ code: 'HEALTH' });
+
+    await expect(service.getAbsenceSelection('FAMILY_DUTY', 'HEALTH')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
 
   it('returns active catalog values as the shared UI contract', async () => {
     repository.listCaseReviewActions.mockResolvedValue([

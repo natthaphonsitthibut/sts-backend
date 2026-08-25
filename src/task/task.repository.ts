@@ -142,6 +142,7 @@ interface TaskSubmissionInput {
   visitedAt: string | null;
   followUpProblemCategoryCode: string | null;
   absenceReasonCode: string | null;
+  absenceReasonCategoryCode: string | null;
   parentalStatusCode: string | null;
   guardianTypeCode: string | null;
   guardianTypeDetail: string | null;
@@ -1566,7 +1567,10 @@ export class TaskRepository {
       LEFT JOIN absence_reasons absence_reason
         ON absence_reason.code = submission.absence_reason_code
       LEFT JOIN absence_reason_categories absence_category
-        ON absence_category.code = absence_reason.category_code
+        ON absence_category.code = COALESCE(
+          submission.absence_reason_category_code,
+          absence_reason.category_code
+        )
       LEFT JOIN parental_status_options parental_status
         ON parental_status.code = submission.parental_status_code
         AND parental_status.deleted_at IS NULL
@@ -1624,6 +1628,7 @@ export class TaskRepository {
         visit_lng,
         visited_at,
         follow_up_problem_category_code,
+        absence_reason_category_code,
         absence_reason_code,
         parental_status_code,
         guardian_type_code,
@@ -1655,7 +1660,7 @@ export class TaskRepository {
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
       )
       RETURNING id
     `,
@@ -1665,6 +1670,7 @@ export class TaskRepository {
         data.visitLng,
         data.visitedAt,
         data.followUpProblemCategoryCode,
+        data.absenceReasonCategoryCode,
         data.absenceReasonCode,
         data.parentalStatusCode,
         data.guardianTypeCode,
@@ -3115,7 +3121,10 @@ export class TaskRepository {
         LEFT JOIN absence_reasons absence_reason
           ON absence_reason.code = submission.absence_reason_code
         LEFT JOIN absence_reason_categories absence_category
-          ON absence_category.code = absence_reason.category_code
+          ON absence_category.code = COALESCE(
+            submission.absence_reason_category_code,
+            absence_reason.category_code
+          )
         LEFT JOIN parental_status_options parental_status
           ON parental_status.code = submission.parental_status_code
           AND parental_status.deleted_at IS NULL
@@ -3524,6 +3533,15 @@ export class TaskRepository {
     const result = await this.query<QueryResultRow>(
       `SELECT code, label_th, category_code FROM absence_reasons
        WHERE code = $1 AND is_active = TRUE AND code <> 'UNKNOWN' LIMIT 1`,
+      [code],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findAbsenceReasonCategory(code: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `SELECT code, label_th FROM absence_reason_categories
+       WHERE code = $1 AND is_active = TRUE LIMIT 1`,
       [code],
     );
     return result.rows[0] ?? null;

@@ -312,6 +312,30 @@ export class CaseTrackingOptionsService {
     return this.stringValue(row.code);
   }
 
+  async getAbsenceSelection(
+    reasonCode: string | null,
+    categoryCode: string | null,
+  ): Promise<{ reasonCode: string | null; categoryCode: string | null }> {
+    const [reason, category] = await Promise.all([
+      reasonCode ? this.taskRepository.findAbsenceReason(reasonCode) : null,
+      categoryCode ? this.taskRepository.findAbsenceReasonCategory(categoryCode) : null,
+    ]);
+    if (reasonCode && !reason) {
+      throw new BadRequestException('สาเหตุการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
+    }
+    if (categoryCode && !category) {
+      throw new BadRequestException('ประเภทการขาดไม่ถูกต้องหรือถูกปิดใช้งาน');
+    }
+    const reasonCategoryCode = reason ? this.stringValue(reason.category_code) : null;
+    if (categoryCode && reasonCategoryCode && categoryCode !== reasonCategoryCode) {
+      throw new BadRequestException('สาเหตุการขาดไม่อยู่ในประเภทที่เลือก');
+    }
+    return {
+      reasonCode: reason ? this.stringValue(reason.code) : null,
+      categoryCode: categoryCode ?? reasonCategoryCode,
+    };
+  }
+
   async getCareObservationCodes(
     kind: 'DISADVANTAGE' | 'DISABILITY',
     codes: string[],

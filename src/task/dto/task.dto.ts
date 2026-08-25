@@ -266,6 +266,11 @@ export class SaveTaskSubmissionDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  absence_reason_category_code?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
   parental_status_code?: string | null;
 
   @IsOptional()
