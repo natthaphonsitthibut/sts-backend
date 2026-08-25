@@ -153,8 +153,15 @@ async function evaluate(client, expression) {
 
 async function navigate(client, url) {
   await client.call('Page.navigate', { url });
+  const expected = new URL(url);
   await waitFor(
-    async () => (await evaluate(client, 'document.readyState')) === 'complete',
+    async () =>
+      await evaluate(
+        client,
+        `location.origin === ${JSON.stringify(expected.origin)}
+          && location.pathname === ${JSON.stringify(expected.pathname)}
+          && document.readyState === 'complete'`,
+      ),
     `Page did not finish loading: ${url}`,
   );
 }
@@ -306,7 +313,18 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   } catch (error) {
     const currentUrl = await evaluate(client, 'location.href');
     const currentBody = (await bodyText(client)).slice(0, 1_000);
-    throw new Error(`${errorMessage(error)}; url=${currentUrl}; body=${currentBody}`);
+    const summaryResponse = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(
+          `${BACKEND_URL}/api/home-dashboard/summary`,
+        )}, { credentials: 'include' });
+        return { status: response.status, body: (await response.text()).slice(0, 1_000) };
+      })()`,
+    ).catch((fetchError) => ({ status: 0, body: errorMessage(fetchError) }));
+    throw new Error(
+      `${errorMessage(error)}; url=${currentUrl}; body=${currentBody}; summary=${JSON.stringify(summaryResponse)}`,
+    );
   }
   const text = await bodyText(client);
   assert(!text.includes('ต้องดำเนินการวันนี้'), `${label} rendered the removed action queue`);
@@ -390,51 +408,152 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   }
 }
 
-async function assertMapWheelIsolation(client) {
+async function assertAdministrativeMap(client, dimension, expectedFeatureCount) {
+  await waitFor(
+    async () =>
+      Number(
+        await evaluate(
+          client,
+          `document.querySelectorAll('[data-administrative-map="${dimension}"] path[data-area-code]').length`,
+        ),
+      ) === expectedFeatureCount,
+    `${dimension} administrative map did not render ${expectedFeatureCount} boundaries`,
+  );
+  const invalidBoundaries = await evaluate(
+    client,
+    `Array.from(document.querySelectorAll('[data-administrative-map="${dimension}"] path[data-area-code]'))
+      .filter((path) => !/^\\d+$/.test(path.getAttribute('data-area-code') || '')
+        || !/^\\d+$/.test(path.getAttribute('data-area-count') || '')).length`,
+  );
+  assert(
+    invalidBoundaries === 0,
+    `${dimension} administrative map rendered boundaries without code/count metadata`,
+  );
+  if (dimension === 'PROVINCE') {
+    const zeroBoundaries = await evaluate(
+      client,
+      `document.querySelectorAll('[data-administrative-map="PROVINCE"] path[data-area-count="0"]').length`,
+    );
+    assert(zeroBoundaries > 0, 'National map did not render zero-risk boundaries');
+  }
+}
+
+async function selectMapArea(client, dimension) {
+  return await evaluate(
+    client,
+    `(() => {
+      const paths = Array.from(
+        document.querySelectorAll('[data-administrative-map="${dimension}"] path[data-area-code][role="button"]')
+      );
+      const selected = paths.find((path) => Number(path.getAttribute('data-area-count')) > 0) || paths[0];
+      const name = selected?.getAttribute('data-area-name') || null;
+      selected?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return name;
+    })()`,
+  );
+}
+
+async function selectMapAreaByKeyboard(client, dimension) {
+  return await evaluate(
+    client,
+    `(() => {
+      const paths = Array.from(
+        document.querySelectorAll('[data-administrative-map="${dimension}"] path[data-area-code][role="button"]')
+      );
+      const selected = paths.find((path) => Number(path.getAttribute('data-area-count')) > 0) || paths[0];
+      const name = selected?.getAttribute('data-area-name') || null;
+      selected?.focus();
+      selected?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+      return name;
+    })()`,
+  );
+}
+
+async function mapFeatureCount(client, dimension) {
+  await waitFor(
+    async () =>
+      Number(
+        await evaluate(
+          client,
+          `document.querySelectorAll('[data-administrative-map="${dimension}"] path[data-area-code]').length`,
+        ),
+      ) > 0,
+    `${dimension} administrative map did not render`,
+  );
+  return Number(
+    await evaluate(
+      client,
+      `document.querySelectorAll('[data-administrative-map="${dimension}"] path[data-area-code]').length`,
+    ),
+  );
+}
+
+async function assertNoSchoolPins(client) {
+  const markerCount = await evaluate(
+    client,
+    `document.querySelectorAll('[data-home-risk-map-surface] > svg [data-school-marker], [data-home-risk-map-surface] > svg circle').length`,
+  );
+  assert(markerCount === 0, 'Administrative map rendered school pins at school drill-down');
+}
+
+async function assertMapTooltipAndZoom(client) {
+  const target = await evaluate(
+    client,
+    `(async () => {
+      const surface = document.querySelector('[data-home-risk-map-surface]');
+      surface?.scrollIntoView({ block: 'center' });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const path = document.querySelector('[data-administrative-map="PROVINCE"] path[data-area-code]');
+      const rect = path?.getBoundingClientRect();
+      const surfaceRect = surface?.getBoundingClientRect();
+      if (!rect || !surfaceRect) return null;
+      path.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }));
+      return {
+        x: surfaceRect.left + surfaceRect.width / 2,
+        y: surfaceRect.top + surfaceRect.height / 2,
+      };
+    })()`,
+  );
+  assert(target, 'Province map did not expose a tooltip target');
   await waitFor(
     async () =>
       Boolean(
         await evaluate(
           client,
-          `Boolean(document.querySelector('[data-home-risk-map-surface]'))`,
+          `document.querySelector('[data-home-risk-map-surface] [role="tooltip"]')?.textContent?.includes('นักเรียนเสี่ยง')`,
         ),
       ),
-    'Home risk map interaction surface did not render',
+    'Map hover did not render the floating risk tooltip',
   );
+  const duplicateNativeTitles = await evaluate(
+    client,
+    `document.querySelectorAll('[data-home-risk-map-surface] path title').length`,
+  );
+  assert(duplicateNativeTitles === 0, 'Map retained duplicate native SVG tooltips');
+
   const before = await evaluate(
     client,
-    `(async () => {
+    `(() => {
       const surface = document.querySelector('[data-home-risk-map-surface]');
-      if (!surface) return null;
-      surface.scrollIntoView({ block: 'center' });
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      const scrollContainer = surface.closest('main');
-      const svg = surface.querySelector('svg');
-      const rect = surface.getBoundingClientRect();
+      const scrollContainer = surface?.closest('main');
       return {
-        x: Math.min(Math.max(rect.left + rect.width / 2, 1), innerWidth - 1),
-        y: Math.min(Math.max(rect.top + rect.height / 2, 1), innerHeight - 1),
         scrollTop: scrollContainer?.scrollTop ?? null,
-        transform: svg?.style.transform ?? null,
+        transform: surface?.querySelector(':scope > svg > g')?.style.transform ?? null,
       };
     })()`,
   );
-  assert(before && before.scrollTop !== null, 'Home risk map interaction surface was not available');
-
-  await client.call('Input.dispatchMouseEvent', {
-    type: 'mouseMoved',
-    x: before.x,
-    y: before.y,
-  });
   await client.call('Input.dispatchMouseEvent', {
     type: 'mouseWheel',
-    x: before.x,
-    y: before.y,
+    x: target.x,
+    y: target.y,
     deltaX: 0,
     deltaY: -240,
   });
-  await new Promise((resolve) => setTimeout(resolve, 200));
-
+  await new Promise((resolve) => setTimeout(resolve, 250));
   const after = await evaluate(
     client,
     `(() => {
@@ -442,19 +561,79 @@ async function assertMapWheelIsolation(client) {
       const scrollContainer = surface?.closest('main');
       return {
         scrollTop: scrollContainer?.scrollTop ?? null,
-        transform: surface?.querySelector('svg')?.style.transform ?? null,
+        transform: surface?.querySelector(':scope > svg > g')?.style.transform ?? null,
+        controls: ['ซูมออก', 'รีเซ็ตขนาดแผนที่', 'ซูมเข้า'].every((label) =>
+          Boolean(surface?.querySelector('button[aria-label="' + label + '"]'))
+        ),
       };
     })()`,
   );
-  assert(after?.scrollTop !== null, 'Home risk map disappeared after wheel interaction');
+  assert(after.controls, 'Map zoom controls were incomplete');
+  assert(after.transform !== before.transform, 'Mouse wheel did not zoom the map');
   assert(
     Math.abs(after.scrollTop - before.scrollTop) < 1,
-    `Map wheel leaked into page scroll: before=${before.scrollTop}, after=${after.scrollTop}`,
+    'Map wheel interaction leaked into page scrolling',
   );
-  assert(
-    after.transform !== before.transform,
-    `Map wheel did not zoom the map: before=${before.transform}, after=${after.transform}`,
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: target.x,
+    y: target.y,
+    button: 'left',
+    buttons: 1,
+    clickCount: 1,
+  });
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: target.x + 60,
+    y: target.y + 35,
+    button: 'left',
+    buttons: 1,
+  });
+  await client.call('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: target.x + 60,
+    y: target.y + 35,
+    button: 'left',
+    buttons: 0,
+    clickCount: 1,
+  });
+  const draggedTransform = await evaluate(
+    client,
+    `document.querySelector('[data-home-risk-map-surface] > svg > g')?.style.transform ?? null`,
   );
+  assert(draggedTransform !== after.transform, 'Dragging did not pan the zoomed map');
+  await evaluate(
+    client,
+    `document.querySelector('[data-home-risk-map-surface] button[aria-label="รีเซ็ตขนาดแผนที่"]')?.click()`,
+  );
+}
+
+async function assertReducedMotionMap(client) {
+  await client.call('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+  });
+  const transitionDuration = await evaluate(
+    client,
+    `getComputedStyle(document.querySelector('[data-home-risk-map-surface] > svg > g')).transitionDuration`,
+  );
+  assert(transitionDuration === '0s', `Reduced-motion map transition was ${transitionDuration}`);
+  await client.call('Emulation.setEmulatedMedia', { features: [] });
+}
+
+async function assertMapAssetErrorAndRecovery(client) {
+  await client.call('Network.setCacheDisabled', { cacheDisabled: true });
+  await client.call('Network.setBlockedURLs', {
+    urls: ['*maps/thailand-administrative/provinces.geojson*'],
+  });
+  await navigate(client, `${FRONTEND_URL}/?period=7_DAYS`);
+  await waitFor(
+    async () => (await bodyText(client)).includes('โหลดขอบเขตแผนที่ไม่สำเร็จ'),
+    'Blocked map asset did not render an explicit error state',
+  );
+  await client.call('Network.setBlockedURLs', { urls: [] });
+  await navigate(client, `${FRONTEND_URL}/?period=30_DAYS`);
+  await assertAdministrativeMap(client, 'PROVINCE', 77);
+  await client.call('Network.setCacheDisabled', { cacheDisabled: false });
 }
 
 async function main() {
@@ -593,17 +772,11 @@ async function main() {
       createSessionCookie(sessionCookieService, actorIds.get(admin.label)),
     );
     await assertOverview(client, expectedActiveCases, 'desktop', admin.expectations);
-    await assertMapWheelIsolation(client);
-    const selectedProvince = await evaluate(
-      client,
-      `(() => {
-        const button = document.querySelector('button[data-risk-area-item]');
-        const key = button?.getAttribute('data-risk-area-item') || null;
-        button?.click();
-        return key;
-      })()`,
-    );
-    assert(selectedProvince, 'National risk ranking did not expose a province drill-down item');
+    await assertAdministrativeMap(client, 'PROVINCE', 77);
+    await assertMapTooltipAndZoom(client);
+    await assertReducedMotionMap(client);
+    const selectedProvince = await selectMapAreaByKeyboard(client, 'PROVINCE');
+    assert(selectedProvince, 'National map did not expose a province drill-down area');
     await waitFor(
       async () =>
         evaluate(
@@ -613,31 +786,74 @@ async function main() {
         ),
       'Selecting a province did not drill the risk ranking down to districts',
     );
+    const districtBoundaryCount = await mapFeatureCount(client, 'DISTRICT');
+    assert(districtBoundaryCount > 0, 'Province map did not contain current district boundaries');
     const drilledSearch = await evaluate(client, 'location.search');
     assert(
       String(drilledSearch).includes(`province=${encodeURIComponent(selectedProvince)}`),
       'Province drill-down did not retain the selected scope in the URL',
     );
-    const backLabel = await evaluate(
-      client,
-      `document.querySelector('button[data-risk-area-back]')?.textContent?.trim() || null`,
-    );
-    assert(backLabel === 'กลับไปดูจังหวัด', `Unexpected risk ranking back label: ${backLabel}`);
-    await evaluate(client, `document.querySelector('button[data-risk-area-back]')?.click()`);
+
+    const selectedDistrict = await selectMapArea(client, 'DISTRICT');
+    assert(selectedDistrict, 'Province map did not expose a district drill-down area');
     await waitFor(
       async () =>
         evaluate(
           client,
           `document.querySelector('[data-risk-area-dimension]')
-            ?.getAttribute('data-risk-area-dimension') === 'PROVINCE'`,
+            ?.getAttribute('data-risk-area-dimension') === 'SUB_DISTRICT'`,
         ),
-      'Risk ranking back control did not return from districts to provinces',
+      'Selecting a district did not drill the risk ranking down to sub-districts',
     );
+    const subDistrictBoundaryCount = await mapFeatureCount(client, 'SUB_DISTRICT');
+    assert(
+      subDistrictBoundaryCount > 0,
+      'District map did not contain current sub-district boundaries',
+    );
+
+    const selectedSubDistrict = await selectMapArea(client, 'SUB_DISTRICT');
+    assert(selectedSubDistrict, 'District map did not expose a sub-district drill-down area');
+    await waitFor(
+      async () =>
+        evaluate(
+          client,
+          `document.querySelector('[data-risk-area-dimension]')
+            ?.getAttribute('data-risk-area-dimension') === 'SCHOOL'`,
+        ),
+      'Selecting a sub-district did not drill the ranking down to schools',
+    );
+    assert(
+      (await mapFeatureCount(client, 'SUB_DISTRICT')) === subDistrictBoundaryCount,
+      'School drill-down replaced the sub-district boundary map',
+    );
+    await assertNoSchoolPins(client);
+
+    const backLabel = await evaluate(
+      client,
+      `document.querySelector('button[data-administrative-map-back]')?.textContent?.trim() || null`,
+    );
+    assert(backLabel === 'กลับไปดูตำบล/แขวง', `Unexpected map back label: ${backLabel}`);
+    for (const expectedDimension of ['SUB_DISTRICT', 'DISTRICT', 'PROVINCE']) {
+      await evaluate(
+        client,
+        `document.querySelector('button[data-administrative-map-back]')?.click()`,
+      );
+      await waitFor(
+        async () =>
+          evaluate(
+            client,
+            `document.querySelector('[data-risk-area-dimension]')
+              ?.getAttribute('data-risk-area-dimension') === '${expectedDimension}'`,
+          ),
+        `Risk ranking back control did not return to ${expectedDimension}`,
+      );
+    }
     const restoredSearch = await evaluate(client, 'location.search');
     assert(
       !String(restoredSearch).includes('province='),
       'Risk ranking back control did not clear the selected province',
     );
+    await assertMapAssetErrorAndRecovery(client);
     const apiActiveCases = await evaluate(
       client,
       `(async () => {
@@ -723,7 +939,7 @@ async function main() {
     await capture(client, '/tmp/sts-home-overview-trends-mobile.png');
 
     console.log(
-      'home dashboard browser smoke passed (map wheel isolation, permission-driven navigation/grouping, risk drill-down/back, scoped denial, case permissions, desktop/mobile render)',
+      'home dashboard browser smoke passed (77-boundary map, province/district/sub-district drill-down, zero-area metadata, no school pins, permission navigation, scoped denial, desktop/mobile render)',
     );
   } finally {
     await closeChrome(chrome);

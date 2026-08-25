@@ -211,6 +211,20 @@ async function main() {
        JOIN schools school ON school.id = classroom.school_id AND school.school_status = 'ACTIVE'
        JOIN school_terms term ON term.id = classroom.school_term_id AND term.status = 'ACTIVE'
        WHERE classroom.classroom_status = 'ACTIVE' AND classroom.deleted_at IS NULL
+         AND EXISTS (
+           SELECT 1
+           FROM classroom_homeroom_teachers homeroom
+           JOIN school_teacher_memberships membership
+             ON membership.id = homeroom.teacher_membership_id
+            AND membership.membership_status = 'ACTIVE'
+            AND membership.deleted_at IS NULL
+           JOIN teachers teacher
+             ON teacher.id = membership.teacher_id
+            AND teacher.teacher_status = 'ACTIVE'
+            AND teacher.deleted_at IS NULL
+           WHERE homeroom.classroom_id = classroom.id
+             AND homeroom.school_id = classroom.school_id
+         )
        ORDER BY classroom.id LIMIT 1`,
     );
     assert(scope, 'No active classroom scope is available');
@@ -292,16 +306,87 @@ async function main() {
       },
       'Allowed classroom-links page did not render room rows and actions',
     );
-    assert(
-      await evaluate(client, `document.querySelectorAll('[data-slot="data-table"] tbody tr').length > 0`),
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `document.querySelectorAll('[data-slot="data-table"] tbody tr').length > 0`,
+        ),
       'Desktop room table did not render',
     );
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('[data-homeroom-teacher] [data-slot="avatar"]'))`,
+        ),
+      'Homeroom teacher avatar did not render beside the teacher name',
+    );
+    await evaluate(
+      client,
+      `document.querySelector('[data-homeroom-teacher] button')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'location.pathname')).startsWith('/teachers/') &&
+        String(await evaluate(client, 'document.body.innerText')).includes('ข้อมูลทั่วไป'),
+      'Homeroom teacher avatar did not open the scoped read-only teacher profile',
+    );
+    assert(
+      !String(await evaluate(client, 'document.body.innerText')).includes('แก้ไขข้อมูล'),
+      'Classroom-link-only user received a teacher edit action',
+    );
+    assert(
+      !(await evaluate(
+        client,
+        `Boolean(document.querySelector('button[aria-label="แสดงเลขบัตรประชาชน"]'))`,
+      )),
+      'Classroom-link-only user received a national-id reveal action',
+    );
+    await client.clickText('ย้อนกลับ');
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname')) === '/attendance/classroom-links',
+      'Teacher profile back action did not return to classroom links',
+    );
 
-    await clickButton(client, 'สร้างลิงก์');
+    await clickButton(client, 'สร้างลิงก์ยืนยัน LINE');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'กำหนดอายุลิงก์ยืนยัน LINE',
+        ),
+      'Shared LINE invitation action did not open its schedule dialog',
+    );
+    await evaluate(
+      client,
+      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]').click()`,
+    );
+
+    await evaluate(
+      client,
+      `(() => {
+        const buttons = [...document.querySelectorAll('[data-slot="data-table"] tbody button')];
+        const button = buttons.find(
+          (item) => item.textContent.includes('สร้างลิงก์') && !item.disabled,
+        ) ?? buttons.find(
+          (item) => item.textContent.includes('คัดลอก') && !item.disabled,
+        );
+        if (!button) throw new Error('Room create/copy-link button not found');
+        button.click();
+      })()`,
+    );
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกหรือแชร์ลิงก์ห้องเรียน'),
       'Create action did not expose the copy/share fallback',
     );
+    const classroomUrl = String(
+      await evaluate(
+        client,
+        `document.querySelector('[role="dialog"] input[aria-label="ลิงก์ที่จะแชร์"]')?.value ?? ''`,
+      ),
+    );
+    assert(classroomUrl.includes('/check-in#token='), 'Room share dialog omitted the public token URL');
     await evaluate(
       client,
       `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]').click()`,
@@ -309,6 +394,26 @@ async function main() {
     await waitFor(
       async () => !String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกหรือแชร์ลิงก์ห้องเรียน'),
       'Share dialog did not close',
+    );
+
+    await navigate(client, classroomUrl);
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          text.includes('ยืนยันตัวตนเพื่อเข้าใช้งาน') &&
+          text.includes('ยืนยันด้วย Google') &&
+          text.includes('ยืนยันด้วย AraID')
+        );
+      },
+      'Public classroom link did not restore the shared identity card with Google and AraID',
+    );
+    assert(
+      await evaluate(
+        client,
+        `location.hash === '' && document.body.innerText.includes('ระบบติดตามผู้เรียน')`,
+      ),
+      'Public identity page did not use the established guest shell or strip the token fragment',
     );
 
     await client.call('Emulation.setDeviceMetricsOverride', {
@@ -331,7 +436,7 @@ async function main() {
       'Mobile card did not expose the copy fallback',
     );
 
-    console.error('[smoke] classroom-links browser allowed/denied/create/share/mobile states passed');
+    console.error('[smoke] classroom-links browser allowed/denied/homeroom-avatar/create/share/mobile states passed');
   } finally {
     stopProcess(frontend);
     stopProcess(backend);

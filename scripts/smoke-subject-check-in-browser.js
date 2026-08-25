@@ -238,6 +238,14 @@ async function login(client, user, cookie) {
   );
 }
 
+async function fetchApi(client, pathname) {
+  return await evaluate(
+    client,
+    `fetch(${JSON.stringify(`${BACKEND_URL}${pathname}`)}, { credentials: 'include' })
+      .then(async (response) => ({ status: response.status, body: await response.json() }))`,
+  );
+}
+
 async function clickButton(client, label) {
   await waitFor(
     async () =>
@@ -502,6 +510,7 @@ async function main() {
              classroom.room_code,
              classroom.room_name,
              grade.label || '/' || classroom.room_code AS classroom_label,
+             school_subject.subject_id,
              subject.name_th AS scope_subject_name,
              membership.id::text AS teacher_membership_id,
              membership.teacher_id::text, available.check_in_date
@@ -558,7 +567,7 @@ async function main() {
             SELECT 1 FROM attendance_sessions existing
             WHERE existing.school_term_id = classroom.school_term_id
               AND existing.classroom_id = classroom.id
-              AND existing.subject_id = school_subject.subject_id
+              AND existing.classroom_subject_id = offering.id
               AND existing.attendance_date = calendar.calendar_date
               AND existing.deleted_at IS NULL
           )
@@ -589,7 +598,7 @@ async function main() {
     allowed = await upsertActor(
       dataSource,
       ALLOWED_USERNAME,
-      ['home', 'attendance', 'manage-subjects', 'manage-classroom-links'],
+      ['home', 'attendance', 'dashboard', 'manage-subjects', 'manage-classroom-links'],
       scope.school_id,
     );
     denied = await upsertActor(dataSource, DENIED_USERNAME, ['home'], scope.school_id);
@@ -685,7 +694,13 @@ async function main() {
       ...deniedUser,
       id: allowed.id,
       username: ALLOWED_USERNAME,
-      permissions: ['home', 'attendance', 'manage-subjects', 'manage-classroom-links'],
+      permissions: [
+        'home',
+        'attendance',
+        'dashboard',
+        'manage-subjects',
+        'manage-classroom-links',
+      ],
     };
     await login(client, allowedUser, allowedCookie);
     await navigate(client, `${FRONTEND_URL}/curriculum`);
@@ -792,13 +807,13 @@ async function main() {
     );
     await navigate(client, `${FRONTEND_URL}/timetable`);
     await waitFor(
-      async () => (await evaluate(client, 'location.pathname')) === '/curriculum',
-      'Legacy timetable route did not cut over to curriculum',
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ไม่พบหน้านี้'),
+      'Legacy timetable route did not render 404',
     );
     await navigate(client, `${FRONTEND_URL}/teacher-access`);
     await waitFor(
-      async () => (await evaluate(client, 'location.pathname')) === '/check-in',
-      'Legacy teacher-access route did not cut over to public check-in',
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ไม่พบหน้านี้'),
+      'Legacy teacher-access route did not render 404',
     );
 
     await navigate(client, `${FRONTEND_URL}/attendance/check-in`);
@@ -863,6 +878,10 @@ async function main() {
       })()`,
     );
     await waitForMarked(client, 2);
+    assert(
+      !(await evaluate(client, `document.body.innerText.includes('สาเหตุการขาด')`)),
+      'Check-in must not ask the teacher to infer an absence reason',
+    );
     await new Promise((resolve) => setTimeout(resolve, 350));
     assert(
       networkRequests.filter((item) => item.method === 'POST').length === 1,
@@ -1204,7 +1223,6 @@ async function main() {
     const sessionRows = await dataSource.query(
       `SELECT session.id::text, session.period, session.status,
               session.record_storage_mode,
-              (SELECT count(*)::int FROM attendance mark WHERE mark.session_id = session.id) AS legacy_count,
               (SELECT count(*)::int FROM attendance_exceptions exception WHERE exception.session_id = session.id) AS exception_count,
               (SELECT count(*)::int FROM attendance_session_roster roster WHERE roster.session_id = session.id) AS roster_count
        FROM attendance_sessions session
@@ -1226,10 +1244,76 @@ async function main() {
           (row) =>
             row.status === 'SUBMITTED' &&
             row.record_storage_mode === 'EXCEPTIONS' &&
-            row.legacy_count === 0 &&
             row.roster_count === rosterCount,
         ),
       'Browser flows did not persist two clean exception-only sessions',
+    );
+    const [aggregateRows] = await dataSource.query(
+      `SELECT
+         (SELECT count(*)::int
+          FROM attendance_subject_day subject_day
+          WHERE subject_day."AttendanceDate" = $3
+            AND subject_day.subject_id = ANY($4::bigint[])
+            AND subject_day.student_uuid IN (
+              SELECT roster.student_uuid
+              FROM attendance_session_roster roster
+              JOIN attendance_sessions session ON session.id = roster.session_id
+              WHERE session.classroom_id = $1
+                AND session.school_term_id = $2
+                AND session.attendance_date = $3
+                AND session.classroom_subject_id = ANY($5::bigint[])
+            )) AS subject_day_count,
+         (SELECT count(*)::int
+          FROM attendance_day day
+          WHERE day."AttendanceDate" = $3
+            AND day.student_uuid IN (
+              SELECT roster.student_uuid
+              FROM attendance_session_roster roster
+              JOIN attendance_sessions session ON session.id = roster.session_id
+              WHERE session.classroom_id = $1
+                AND session.school_term_id = $2
+                AND session.attendance_date = $3
+                AND session.classroom_subject_id = ANY($5::bigint[])
+            )) AS day_count,
+         to_regclass('public.attendance') IS NULL AS legacy_attendance_dropped`,
+      [
+        scope.classroom_id,
+        scope.school_term_id,
+        scope.check_in_date,
+        [scope.subject_id, fixtureSubjectId],
+        [scope.classroom_subject_id, fixtureOfferingId],
+      ],
+    );
+    assert(
+      aggregateRows?.subject_day_count === rosterCount * 2 &&
+        aggregateRows?.day_count === rosterCount &&
+        aggregateRows?.legacy_attendance_dropped === true,
+      'History/risk aggregate views did not expose the two exception-only sessions',
+    );
+    await client.call('Network.setCookie', {
+      name: allowedCookie.name,
+      value: allowedCookie.value,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    const historyResponse = await fetchApi(
+      client,
+      `/api/attendance/history?date=${encodeURIComponent(scope.check_in_date)}` +
+        `&schoolId=${encodeURIComponent(scope.school_id)}&sessionKind=SUBJECT`,
+    );
+    assert(
+      historyResponse.status === 200 && Array.isArray(historyResponse.body?.data),
+      'Attendance history API did not read the exception-only aggregate contract',
+    );
+    const riskResponse = await fetchApi(
+      client,
+      `/api/dashboard/risk-watchlist?schoolId=${encodeURIComponent(scope.school_id)}` +
+        '&page=1&limit=10',
+    );
+    assert(
+      riskResponse.status === 200 && Array.isArray(riskResponse.body?.data),
+      'Risk dashboard API did not read the post-cutover attendance aggregate contract',
     );
 
     await dataSource.query(
@@ -1247,7 +1331,7 @@ async function main() {
     );
 
     console.error(
-      '[smoke] subjects + internal/public exception check-in browser states passed',
+      '[smoke] subjects + internal/public exception check-in, history/risk aggregates, grouped absence reason, and no per-mark writes passed',
     );
   } finally {
     await closeChrome(chrome);
@@ -1316,7 +1400,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });

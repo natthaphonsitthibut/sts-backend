@@ -266,10 +266,9 @@ async function main() {
     );
     checked.push('clicking it replaces the login page with a full-screen QR');
 
-    // The panel polls while the phone is being used. This is where the flow used
-    // to die: these endpoints shared the OTP bucket (10 per minute) against a
-    // 2-second poll, so an honest login was rate-limited before anyone could
-    // approve it. Wait for more polls than that bucket ever allowed.
+    // The panel polls while the phone is being used. Wait through multiple
+    // polling windows to prove the dedicated AraID limiter does not interrupt
+    // an honest login before anyone can approve it.
     await waitFor(
       async () => (await evaluate(client, 'window.__stsAraIdPolls || 0')) >= 12,
       async () =>

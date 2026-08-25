@@ -25,6 +25,7 @@ const CHROME_PATH =
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9233);
 const MASTER_DATA_USERNAME = 'student_status_browser_master_data';
 const NO_PERMISSION_USERNAME = 'student_status_browser_no_permission';
+const SCOPED_MASTER_DATA_USERNAME = 'student_status_browser_scoped_master_data';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -302,8 +303,30 @@ async function loginInBrowser(client, user, sessionCookie) {
   );
 }
 
-async function cleanup(dataSource) {
+async function logoutInBrowser(client) {
+  await evaluate(
+    client,
+    `(async () => {
+      await fetch(${JSON.stringify(`${BROWSER_BACKEND_URL}/api/users/logout`)}, {
+        method: 'POST',
+        credentials: 'include'
+      }).catch(() => null);
+      localStorage.removeItem('sts_user');
+      localStorage.removeItem('admin_access');
+      sessionStorage.removeItem('sts_user');
+      sessionStorage.removeItem('admin_access');
+    })()`,
+  );
+  await navigate(client, `${FRONTEND_URL}/login`);
+  await waitFor(
+    async () => String(await evaluate(client, 'location.pathname')).startsWith('/login'),
+    'Logout did not return to login',
+  );
+}
+
+async function cleanup(dataSource, catalogCode) {
   await dataSource.query(`DELETE FROM student_status WHERE source_system = 'SMOKE_BROWSER'`);
+  await dataSource.query(`DELETE FROM non_follow_up_reason_options WHERE code = $1`, [catalogCode]);
 }
 
 async function disableActors(dataSource) {
@@ -316,11 +339,11 @@ async function disableActors(dataSource) {
           deactivation_note = COALESCE(deactivation_note, 'Retained automated student-status browser smoke fixture')
       WHERE username = ANY($1::text[])
     `,
-    [[MASTER_DATA_USERNAME, NO_PERMISSION_USERNAME]],
+    [[MASTER_DATA_USERNAME, NO_PERMISSION_USERNAME, SCOPED_MASTER_DATA_USERNAME]],
   );
 }
 
-async function upsertActor(dataSource, passwordHash, username, permissions) {
+async function upsertActor(dataSource, passwordHash, username, permissions, dataScope) {
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
     username,
   ]);
@@ -334,7 +357,7 @@ async function upsertActor(dataSource, passwordHash, username, permissions) {
             status = 'ACTIVE',
             permissions = $3::jsonb,
             role = 'ADMIN',
-            data_scope = '{"global":true}'::jsonb,
+            data_scope = $4::jsonb,
             must_change_password = FALSE,
             temporary_password_issued_at = NULL,
             temporary_password_expires_at = NULL,
@@ -348,7 +371,7 @@ async function upsertActor(dataSource, passwordHash, username, permissions) {
             phone = NULL
         WHERE id = $1
       `,
-      [existing.id, passwordHash, JSON.stringify(permissions)],
+      [existing.id, passwordHash, JSON.stringify(permissions), JSON.stringify(dataScope)],
     );
     return existing;
   }
@@ -361,12 +384,12 @@ async function upsertActor(dataSource, passwordHash, username, permissions) {
       )
       VALUES (
         $1, $2, 'Student Status', 'Browser Smoke', 'ACTIVE', $3::jsonb, 'ADMIN',
-        '{"global":true}'::jsonb, FALSE, 'Automated student-status browser smoke',
+        $4::jsonb, FALSE, 'Automated student-status browser smoke',
         'AUTOMATED_TEST', NULL, NULL
       )
       RETURNING id
     `,
-    [username, passwordHash, JSON.stringify(permissions)],
+    [username, passwordHash, JSON.stringify(permissions), JSON.stringify(dataScope)],
   );
   return row;
 }
@@ -384,17 +407,39 @@ async function main() {
   const code = 970000 + (Date.now() % 20_000);
   const label = `สถานะ browser smoke ${suffix}`;
   const updatedLabel = `สถานะ browser smoke updated ${suffix}`;
+  const catalogCode = `AUTOMATED_TEST_${Date.now().toString(36).toUpperCase()}`;
+  const catalogLabel = `สาเหตุทดสอบอัตโนมัติ ${suffix}`;
+  const updatedCatalogLabel = `สาเหตุทดสอบอัตโนมัติที่แก้ไข ${suffix}`;
   let chrome;
 
   try {
-    await cleanup(dataSource);
-    const masterDataActor = await upsertActor(dataSource, await passwordService.hash(password), MASTER_DATA_USERNAME, [
-      'home',
-      'master-data',
-    ]);
-    const noPermissionActor = await upsertActor(dataSource, await passwordService.hash(password), NO_PERMISSION_USERNAME, [
-      'home',
-    ]);
+    await cleanup(dataSource, catalogCode);
+    const passwordHash = await passwordService.hash(password);
+    const [school] = await dataSource.query(
+      `SELECT id FROM schools WHERE school_status = 'ACTIVE' ORDER BY id LIMIT 1`,
+    );
+    assert(school, 'Need one active school for scoped authorization proof');
+    const masterDataActor = await upsertActor(
+      dataSource,
+      passwordHash,
+      MASTER_DATA_USERNAME,
+      ['home', 'master-data'],
+      { global: true },
+    );
+    const noPermissionActor = await upsertActor(
+      dataSource,
+      passwordHash,
+      NO_PERMISSION_USERNAME,
+      ['home'],
+      { global: true },
+    );
+    const scopedMasterDataActor = await upsertActor(
+      dataSource,
+      passwordHash,
+      SCOPED_MASTER_DATA_USERNAME,
+      ['home', 'master-data'],
+      { school_ids: [Number(school.id)] },
+    );
     const masterDataUser = {
       id: masterDataActor.id,
       username: MASTER_DATA_USERNAME,
@@ -415,8 +460,22 @@ async function main() {
       data_scope: { global: true },
       must_change_password: false,
     };
+    const scopedMasterDataUser = {
+      id: scopedMasterDataActor.id,
+      username: SCOPED_MASTER_DATA_USERNAME,
+      FirstName: 'Student Status',
+      LastName: 'Browser Smoke',
+      roles: ['ADMIN'],
+      permissions: ['home', 'master-data'],
+      data_scope: { school_ids: [Number(school.id)] },
+      must_change_password: false,
+    };
     const masterDataSession = createSessionCookie(sessionCookieService, masterDataActor.id);
     const noPermissionSession = createSessionCookie(sessionCookieService, noPermissionActor.id);
+    const scopedMasterDataSession = createSessionCookie(
+      sessionCookieService,
+      scopedMasterDataActor.id,
+    );
 
     chrome = await openChrome();
     const { client } = chrome;
@@ -440,27 +499,35 @@ async function main() {
       'No-permission user was not blocked from student statuses',
     );
 
-    await evaluate(
-      client,
-      `(async () => {
-        await fetch(${JSON.stringify(`${BROWSER_BACKEND_URL}/api/users/logout`)}, {
-          method: 'POST',
-          credentials: 'include'
-        }).catch(() => null);
-        localStorage.removeItem('sts_user');
-        localStorage.removeItem('admin_access');
-        sessionStorage.removeItem('sts_user');
-        sessionStorage.removeItem('admin_access');
-      })()`,
-    );
-    await navigate(client, `${FRONTEND_URL}/login`);
+    await logoutInBrowser(client);
+
+    await loginInBrowser(client, scopedMasterDataUser, scopedMasterDataSession);
+    await navigate(client, `${FRONTEND_URL}/master-data`);
     await waitFor(
-      async () => String(await evaluate(client, 'location.pathname')).startsWith('/login'),
-      'Logout did not return to login',
+      async () =>
+        (await evaluate(client, 'location.pathname')) === '/forbidden' &&
+        String(await evaluate(client, 'document.body.innerText')).includes('ไม่มีสิทธิ์เข้าถึง'),
+      'School-scoped ADMIN was not blocked from master data',
+    );
+    const scopedApiStatus = await evaluate(
+      client,
+      `fetch(${JSON.stringify(
+        `${BROWSER_BACKEND_URL}/api/master-data/non-follow-up-reasons?page=1&limit=10`,
+      )}, { credentials: 'include' }).then((response) => response.status)`,
+    );
+    assert(scopedApiStatus === 403, `School-scoped master-data API returned ${scopedApiStatus}`);
+    await logoutInBrowser(client);
+
+    await client.call('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+    });
+    assert(
+      await evaluate(client, `matchMedia('(prefers-reduced-motion: reduce)').matches`),
+      'Reduced-motion emulation was not active',
     );
 
     await loginInBrowser(client, masterDataUser, masterDataSession);
-    await navigate(client, `${FRONTEND_URL}/master-data/student-statuses`);
+    await navigate(client, `${FRONTEND_URL}/settings/student-statuses`);
     await waitFor(
       async () =>
         (await evaluate(client, 'location.pathname')) === '/master-data/student-statuses' &&
@@ -482,15 +549,47 @@ async function main() {
       !String(await evaluate(client, 'document.body.innerText')).includes('ล้างตัวกรอง'),
       'Student statuses page still rendered a redundant clear-filters action',
     );
-    await click(
+    await evaluate(
       client,
-      `[...document.querySelectorAll('button')]
-        .find((button) => button.textContent.trim() === 'รายการอ้างอิง')`,
-      'Reference-data tab was not found',
+      `(() => {
+        const tab = [...document.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'รายการอ้างอิง');
+        if (!tab) throw new Error('Reference-data tab was not found');
+        tab.focus();
+      })()`,
     );
+    await client.call('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      text: '\r',
+      unmodifiedText: '\r',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+    });
+    await client.call('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+    });
     await waitFor(
       async () => (await evaluate(client, 'location.pathname')) === '/master-data',
-      'Reference-data tab did not navigate to master data',
+      'Reference-data tab did not support keyboard activation',
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('#master-data-catalog')) &&
+             Boolean(document.querySelector('input[placeholder^="ค้นหา"]')) &&
+             [...document.querySelectorAll('button')]
+               .some((button) => button.textContent.includes('เพิ่มรายการ'))`,
+          ),
+        ),
+      'Master-data toolbar did not render after keyboard navigation',
     );
     const masterDataToolbar = await evaluate(
       client,
@@ -520,6 +619,104 @@ async function main() {
       Math.abs(masterDataToolbar.addButtonWidth - statusCreateButtonWidth) <= 1,
       'Master-data create buttons did not have equal widths',
     );
+    assert(
+      await evaluate(
+        client,
+        `document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1`,
+      ),
+      'Master-data desktop page overflowed horizontally',
+    );
+
+    await selectValue(client, '#master-data-catalog', 'non-follow-up-reasons');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          'สาเหตุที่ติดตามไม่สำเร็จ',
+        ),
+      'Non-follow-up catalog did not load',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')]
+        .find((button) => button.textContent.includes('เพิ่มรายการ'))`,
+      'Create master-data button was not found',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('เพิ่มสาเหตุที่ติดตามไม่สำเร็จ'),
+      'Create master-data dialog did not render',
+    );
+    await fillInput(client, '#master-code', catalogCode);
+    await fillInput(client, '#master-label', catalogLabel);
+    await fillInput(client, '#master-sort', '32000');
+    await click(
+      client,
+      `document.querySelector('[role="dialog"] button[type="submit"]')`,
+      'Master-data save button was not found',
+    );
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes(catalogLabel),
+      'Created master-data row did not render',
+    );
+    await fillInput(client, 'input[placeholder^="ค้นหา"]', catalogCode);
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes(catalogLabel),
+      'Created master-data row was not searchable',
+    );
+    await click(
+      client,
+      `(() => {
+        const row = [...document.querySelectorAll('tr')]
+          .find((item) => item.textContent.includes(${JSON.stringify(catalogLabel)}));
+        return row ? [...row.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'แก้ไข') : null;
+      })()`,
+      'Master-data edit button was not found',
+    );
+    await fillInput(client, '#master-label', updatedCatalogLabel);
+    await click(
+      client,
+      `document.querySelector('[role="dialog"] button[type="submit"]')`,
+      'Master-data update button was not found',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(updatedCatalogLabel),
+      'Updated master-data row did not render',
+    );
+    await click(
+      client,
+      `(() => {
+        const row = [...document.querySelectorAll('tr')]
+          .find((item) => item.textContent.includes(${JSON.stringify(updatedCatalogLabel)}));
+        return row ? [...row.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'ปิด') : null;
+      })()`,
+      'Master-data disable button was not found',
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          `ปิดใช้งาน “${updatedCatalogLabel}”?`,
+        ),
+      'Master-data disable dialog did not render',
+    );
+    await click(
+      client,
+      `(() => {
+        const dialogs = [...document.querySelectorAll('section')];
+        const dialog = dialogs.find((item) => item.textContent.includes(${JSON.stringify(updatedCatalogLabel)}));
+        return dialog ? [...dialog.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'ปิดใช้งาน') : null;
+      })()`,
+      'Master-data disable confirmation was not found',
+    );
+    await waitFor(async () => {
+      const [row] = await dataSource.query(
+        `SELECT is_active FROM non_follow_up_reason_options WHERE code = $1`,
+        [catalogCode],
+      );
+      return row?.is_active === false;
+    }, 'Master-data disable did not persist');
     await click(
       client,
       `[...document.querySelectorAll('button')]
@@ -662,6 +859,28 @@ async function main() {
     );
     await capture(client, '/tmp/sts-student-statuses-mobile.png');
 
+    await navigate(client, `${FRONTEND_URL}/master-data`);
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#master-data-catalog'))`)),
+      'Mobile master-data catalog select did not render',
+    );
+    await selectValue(client, '#master-data-catalog', 'non-follow-up-reasons');
+    await fillInput(client, 'input[placeholder^="ค้นหา"]', catalogCode);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(updatedCatalogLabel),
+      'Mobile master-data card did not render the saved catalog row',
+    );
+    assert(
+      await evaluate(
+        client,
+        `document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1`,
+      ),
+      'Master-data mobile page overflowed horizontally',
+    );
+    await capture(client, '/tmp/sts-master-data-mobile.png');
+
     const [persisted] = await dataSource.query(
       `
         SELECT code, label_th, category, badge_variant, is_active_for_login,
@@ -680,14 +899,23 @@ async function main() {
     assert(persisted.is_enabled === false, 'Disable flag did not persist');
     assert(persisted.source_system === 'SMOKE_BROWSER', 'Source system did not persist');
     assert(Number(persisted.sort_order) === 32001, 'Sort order did not persist');
+    const [persistedCatalog] = await dataSource.query(
+      `SELECT label_th, sort_order, is_active
+       FROM non_follow_up_reason_options
+       WHERE code = $1`,
+      [catalogCode],
+    );
+    assert(persistedCatalog?.label_th === updatedCatalogLabel, 'Catalog label did not persist');
+    assert(Number(persistedCatalog?.sort_order) === 32000, 'Catalog sort order did not persist');
+    assert(persistedCatalog?.is_active === false, 'Catalog disable flag did not persist');
 
     console.log(
-      'student statuses browser smoke passed (permission gate, create/search/edit/disable, desktop/mobile)',
+      'student statuses browser smoke passed (global/scoped permission, legacy/keyboard/reduced-motion, catalog+status CRUD, desktop/mobile/no-overflow)',
     );
   } finally {
     await closeChrome(chrome);
     try {
-      await cleanup(dataSource);
+      await cleanup(dataSource, catalogCode);
     } finally {
       try {
         await disableActors(dataSource);

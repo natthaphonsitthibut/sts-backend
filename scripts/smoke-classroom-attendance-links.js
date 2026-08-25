@@ -299,7 +299,7 @@ async function main() {
          teacher_id, provider, provider_channel_id, provider_user_id,
          display_name, friend_state, friend_checked_at, verified_at, verified_via,
          created_by, updated_by
-       ) VALUES ($1, 'LINE', $2, $3, NULL, 'FRIEND', now(), now(), 'EMAIL_OTP', $4, $4)
+       ) VALUES ($1, 'LINE', $2, $3, NULL, 'FRIEND', now(), now(), 'ARAID', $4, $4)
        RETURNING id`,
       [scope.teacher_id, `smoke-channel-${suffix}`, `smoke-user-${suffix}`, allowedId],
     );

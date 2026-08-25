@@ -7,6 +7,7 @@ const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { PasswordService } = require('../dist/auth/password.service');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
+const { VALID_PERMISSION_IDS } = require('../dist/auth/permissions.constants');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run risk dashboard browser smoke with NODE_ENV=production');
@@ -265,25 +266,7 @@ async function assertLegacyRouteRedirects(client) {
 
 // Every page in the registry: this smoke walks all of them, so an id missing
 // here shows up as /forbidden instead of as the assertion it was meant to make.
-const ACTOR_PERMISSIONS = [
-  'attendance',
-  'attendance-dashboard',
-  'audit-log',
-  'classrooms',
-  'dashboard',
-  'export-data',
-  'home',
-  'import-data',
-  'manage-curriculum',
-  'manage-role-groups',
-  'manage-school-structure',
-  'manage-teacher-access',
-  'manage-teachers',
-  'manage-users-list',
-  'settings',
-  'students',
-  'timetable',
-];
+const ACTOR_PERMISSIONS = [...VALID_PERMISSION_IDS];
 
 async function upsertActor(dataSource, passwordHash) {
   const permissions = ACTOR_PERMISSIONS;
@@ -661,8 +644,8 @@ async function assertCanonicalRouteNavigation(client) {
     ['/manage-users', 'จัดการผู้ใช้งาน', '/manage-users'],
     ['/manage-users/new', 'เพิ่มผู้ใช้งาน', '/manage-users'],
     ['/curriculum', 'จัดการข้อมูลหลักสูตร', '/curriculum'],
-    ['/manage-teachers', 'จัดการข้อมูลคุณครู', '/manage-teachers'],
-    ['/manage-teachers/new', 'เพิ่มข้อมูลคุณครู', '/manage-teachers'],
+    ['/teachers', 'จัดการข้อมูลครู', '/teachers'],
+    ['/teachers/new', 'เพิ่มข้อมูลคุณครู', '/teachers'],
     ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
     ['/settings', 'ตั้งค่าระบบ', '/settings'],
     ['/settings/student-statuses', 'สถานะนักเรียน', '/settings'],

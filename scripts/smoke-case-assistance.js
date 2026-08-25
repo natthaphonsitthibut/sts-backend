@@ -51,9 +51,8 @@ async function main() {
        INNER JOIN student_current_enrollment_resolution resolution
           ON resolution.selected_student_uuid = enrollment.student_uuid
          AND resolution.resolution_state = 'ACTIVE'
-       INNER JOIN classroom_teacher_assignments assignment
+       INNER JOIN classroom_homeroom_teachers assignment
           ON assignment.classroom_id = enrollment.classroom_id
-         AND assignment.deleted_at IS NULL
        WHERE NOT EXISTS (
          SELECT 1 FROM cases existing
          WHERE existing.student_uuid = enrollment.student_uuid
