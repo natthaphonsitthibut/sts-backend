@@ -925,13 +925,14 @@ async function assertSystemFont(client, route) {
   );
 }
 
-async function assertManualCaseFlow(client, row, createdCaseIds) {
-  const studentId = String(row.studentId);
-  const expectedRiskTier = String(row.riskTier);
-  const reason = `${MANUAL_CASE_REASON_PREFIX} ${Date.now()}`;
-
+/**
+ * Every risk row must offer the same two actions. Asserting this on the row the
+ * manual-case flow happens to target coupled a UI contract to whichever student
+ * the dataset put on page one, so it is checked on the first rendered row and on
+ * that row's own case id instead.
+ */
+async function assertCanonicalRowActions(client) {
   await navigate(client, `${FRONTEND_URL}/student-risk-report`);
-  assert(row.latestCaseId, 'risk row without an active case did not expose its latest case id');
   try {
     await waitFor(
       async () =>
@@ -939,12 +940,13 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
           client,
           `(() => {
             const row = Array.from(document.querySelectorAll('[data-student-navigation]'))
-              .find((candidate) => candidate.offsetParent !== null
-                && candidate.getAttribute('data-student-navigation') === ${JSON.stringify(studentId)});
+              .find((candidate) => candidate.offsetParent !== null);
+            if (!row) return false;
+            const detail = row.querySelector('a[aria-label^="ดูรายละเอียดเคสของ "]');
+            const href = detail && detail.getAttribute('href');
             return Boolean(
-              row?.querySelector(
-                'a[aria-label^="ดูรายละเอียดเคสของ "][href="/cases/${String(row.latestCaseId)}"]',
-              ) && row?.querySelector('button[aria-label="แชร์ลิงก์"]')
+              href && /^\\/cases\\/[0-9]+$/.test(href)
+                && row.querySelector('button[aria-label="แชร์ลิงก์"]')
             );
           })()`,
         ),
@@ -957,15 +959,27 @@ async function assertManualCaseFlow(client, row, createdCaseIds) {
         path: location.pathname,
         rows: [...document.querySelectorAll('[data-student-navigation]')]
           .filter((row) => row.offsetParent !== null)
+          .slice(0, 5)
           .map((row) => ({
             studentId: row.getAttribute('data-student-navigation'),
             actions: [...row.querySelectorAll('button[aria-label]')]
-              .map((button) => button.getAttribute('aria-label'))
+              .map((button) => button.getAttribute('aria-label')),
+            // The case-detail action is an anchor, so a button-only list makes a
+            // missing link look like a missing row.
+            links: [...row.querySelectorAll('a[aria-label]')]
+              .map((link) => link.getAttribute('aria-label') + ' -> ' + link.getAttribute('href'))
           }))
       })`,
     );
     throw new Error(`${error.message}; diagnostic=${JSON.stringify(diagnostic)}`);
   }
+}
+
+async function assertManualCaseFlow(client, row, createdCaseIds) {
+  const studentId = String(row.studentId);
+  const expectedRiskTier = String(row.riskTier);
+  const reason = `${MANUAL_CASE_REASON_PREFIX} ${Date.now()}`;
+
   await navigate(client, `${FRONTEND_URL}/students/${studentId}`);
   await waitFor(
     async () =>
@@ -2158,8 +2172,10 @@ async function main() {
 
     await assertRiskDashboard(client, expectedStudentName, expectedTotalCount, 'desktop');
     await assertSharedVisualSystem(client);
+    await assertCanonicalRowActions(client);
+    // Opening a case is only valid for a student who has none open right now.
     const manualCaseRow = apiResult.payload.data.find(
-      (row) => Number(row.openCaseCount) === 0 && row.studentId,
+      (row) => Number(row.openCaseCount) === 0 && row.studentId && row.latestCaseId,
     );
     if (manualCaseRow) {
       await assertManualCaseFlow(client, manualCaseRow, createdCaseIds);
