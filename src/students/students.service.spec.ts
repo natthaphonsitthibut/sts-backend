@@ -4,8 +4,14 @@ import { StudentsRepository } from './students.repository';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import { FILE_STORAGE_ADAPTER } from '../files/storage/file-storage.types';
 import { piiConfig } from '../config/pii.config';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 describe('StudentsService', () => {
   let service: StudentsService;
@@ -29,9 +35,12 @@ describe('StudentsService', () => {
     listGuardiansByPersonUuid: jest.Mock;
     listManagementClassrooms: jest.Mock;
     createStudent: jest.Mock;
+    correctNationalId: jest.Mock;
+    withTransaction: jest.Mock;
   };
   let geocodeCache: { resolve: jest.Mock };
   let riskProfileService: { requestStudentRecalculation: jest.Mock };
+  let auditLog: { recordAtomic: jest.Mock };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -59,8 +68,18 @@ describe('StudentsService', () => {
             listGuardiansByPersonUuid: jest.fn().mockResolvedValue([]),
             listManagementClassrooms: jest.fn().mockResolvedValue([]),
             createStudent: jest.fn(),
+            correctNationalId: jest.fn().mockResolvedValue({ corrected: true, schoolId: 10010002 }),
+            withTransaction: jest.fn((work: (manager: { query: jest.Mock }) => unknown) =>
+              work({ query: jest.fn() }),
+            ),
             findPersonPhotoStorageKey: jest.fn().mockResolvedValue(null),
             updatePersonPhotoStorageKey: jest.fn(),
+          },
+        },
+        {
+          provide: AuditLogService,
+          useValue: {
+            recordAtomic: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
@@ -98,6 +117,7 @@ describe('StudentsService', () => {
     studentsRepository = module.get(StudentsRepository);
     geocodeCache = module.get(StudentGeocodeCacheService);
     riskProfileService = module.get(RiskProfileService);
+    auditLog = module.get(AuditLogService);
   });
 
   it('should be defined', () => {
@@ -624,5 +644,77 @@ describe('StudentsService', () => {
       undefined,
       5,
     );
+  });
+
+  it('corrects a national id atomically and audits no identifier values', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const actor = {
+      id: 5,
+      username: 'admin',
+      roles: ['ADMIN'],
+      permissions: ['manage-students'],
+    };
+    const scope = { school_ids: [10010002] };
+    studentsRepository.findStudentById.mockResolvedValue({
+      student_uuid: studentUuid,
+      PersonID_Onec: '9876543210123',
+    });
+    studentsRepository.listActiveRevealGroups.mockResolvedValue([]);
+    studentsRepository.findPersonUuidByStudentUuid.mockResolvedValue(
+      '10000000-0000-4000-8000-000000000001',
+    );
+
+    await expect(
+      service.correctNationalId(studentUuid, { newNationalId: '9876543210123' }, actor, scope, {
+        ip: '127.0.0.1',
+      }),
+    ).resolves.toEqual(expect.objectContaining({ student_uuid: studentUuid }));
+
+    const correctionCall = studentsRepository.correctNationalId.mock.calls[0] as unknown[];
+    expect(correctionCall.slice(0, 4)).toEqual([studentUuid, '9876543210123', 5, scope]);
+    expect(typeof (correctionCall[4] as { query?: unknown })?.query).toBe('function');
+    const auditCalls = auditLog.recordAtomic.mock.calls as unknown[][];
+    const event = auditCalls[0]?.[0] as {
+      action: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(event.action).toBe('STUDENT_NATIONAL_ID_CORRECTION');
+    expect(event.metadata).toMatchObject({
+      reasonCode: 'INCORRECT_NATIONAL_ID',
+      reasonLabel: 'เลขบัตรประชาชนเดิมไม่ถูกต้อง',
+      fieldGroup: 'NATIONAL_ID',
+      schoolId: 10010002,
+    });
+    expect(JSON.stringify(event.metadata)).not.toContain('9876543210123');
+  });
+
+  it('rejects a duplicate national id without writing an audit record', async () => {
+    studentsRepository.correctNationalId.mockResolvedValueOnce({ conflict: true });
+
+    await expect(
+      service.correctNationalId(
+        '00000000-0000-4000-8000-000000000001',
+        { newNationalId: '9876543210123' },
+        { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['manage-students'] },
+        { school_ids: [10010002] },
+        { ip: null },
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(auditLog.recordAtomic).not.toHaveBeenCalled();
+  });
+
+  it('rejects cross-scope canonical identity correction without an audit record', async () => {
+    studentsRepository.correctNationalId.mockResolvedValueOnce({ scopeConflict: true });
+
+    await expect(
+      service.correctNationalId(
+        '00000000-0000-4000-8000-000000000001',
+        { newNationalId: '9876543210123' },
+        { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['manage-students'] },
+        { school_ids: [10010002] },
+        { ip: null },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(auditLog.recordAtomic).not.toHaveBeenCalled();
   });
 });

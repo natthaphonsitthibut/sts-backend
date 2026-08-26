@@ -21,12 +21,14 @@ describe('StudentsController', () => {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler)).toEqual(['manage-students']);
     }
 
-    const updateHandler = handlerOf('update');
-    expect(Reflect.getMetadata(GUARDS_METADATA, updateHandler)).toEqual([
-      AuthGuard,
-      PermissionsGuard,
-    ]);
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, updateHandler)).toEqual(['manage-students']);
+    for (const methodName of ['update', 'correctNationalId']) {
+      const updateHandler = handlerOf(methodName);
+      expect(Reflect.getMetadata(GUARDS_METADATA, updateHandler)).toEqual([
+        AuthGuard,
+        PermissionsGuard,
+      ]);
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, updateHandler)).toEqual(['manage-students']);
+    }
   });
 
   it('separates directory reads, classroom profile reads, and management writes', () => {

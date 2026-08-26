@@ -163,7 +163,8 @@ describe('StudentsRepository roster queries', () => {
       'LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid',
     );
     expect(queries[0]).toContain("COALESCE(risk.risk_tier, 'NORMAL') as risk_tier");
-    expect(queries[0]).toContain('FROM classroom_homeroom_teachers assignment');
+    expect(queries[0]).toContain('FROM classroom_homeroom_teacher_assignments assignment');
+    expect(queries[0]).toContain('string_agg');
   });
 
   it('scopes the legacy case-by-name lookup through the linked enrollment', async () => {
@@ -317,5 +318,151 @@ describe('StudentsRepository management writes', () => {
     expect(sql).toContain('UPDATE student_guardian');
     expect(sql).toContain('INSERT INTO student_guardian');
     expect(sql).toContain('UPDATE student_term SET');
+  });
+
+  it('corrects the scoped enrollment and canonical national-id row together', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const manager = {
+      query: jest.fn((sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.includes('SELECT s.person_uuid')) {
+          return Promise.resolve([
+            {
+              person_uuid: '10000000-0000-4000-8000-000000000001',
+              national_id: '9876543210123',
+              school_id: 10010002,
+            },
+          ]);
+        }
+        if (sql.includes('AS in_scope')) {
+          return Promise.resolve([
+            {
+              student_uuid: '00000000-0000-4000-8000-000000000001',
+              national_id: '9876543210123',
+              in_scope: true,
+            },
+            {
+              student_uuid: '00000000-0000-4000-8000-000000000002',
+              national_id: '1234567890123',
+              in_scope: true,
+            },
+          ]);
+        }
+        if (sql.includes('UNION ALL')) return Promise.resolve([]);
+        if (sql.includes('SELECT id FROM updated_identifier')) {
+          return Promise.resolve([{ id: '55' }]);
+        }
+        return Promise.resolve([]);
+      }),
+    };
+    const repository = new StudentsRepository({} as never);
+
+    await expect(
+      repository.correctNationalId(
+        '00000000-0000-4000-8000-000000000001',
+        '9876543210123',
+        5,
+        { school_ids: [10010002] },
+        manager as never,
+      ),
+    ).resolves.toEqual({ corrected: true, schoolId: 10010002 });
+
+    const sql = calls.map((call) => call.sql).join('\n');
+    expect(sql).toContain('s."SchoolID_Onec" = ANY');
+    expect(sql).toContain('FOR UPDATE OF s');
+    expect(sql).toContain('pg_advisory_xact_lock');
+    expect(sql).toContain('UPDATE student_term');
+    expect(sql).toContain('WHERE person_uuid = $1');
+    expect(sql).toContain('UPDATE student_person_identifier');
+    expect(sql).toContain('source = $3');
+    expect(calls.some((call) => call.params.includes('MANUAL_CORRECTION'))).toBe(true);
+  });
+
+  it('fails closed when the canonical person has an enrollment outside actor scope', async () => {
+    const queries: string[] = [];
+    const manager = {
+      query: jest.fn((sql: string) => {
+        queries.push(sql);
+        if (sql.includes('SELECT s.person_uuid')) {
+          return Promise.resolve([
+            {
+              person_uuid: '10000000-0000-4000-8000-000000000001',
+              national_id: '1234567890123',
+              school_id: 10010002,
+            },
+          ]);
+        }
+        if (sql.includes('AS in_scope')) {
+          return Promise.resolve([
+            {
+              student_uuid: '00000000-0000-4000-8000-000000000001',
+              national_id: '1234567890123',
+              in_scope: true,
+            },
+            {
+              student_uuid: '00000000-0000-4000-8000-000000000002',
+              national_id: '1234567890123',
+              in_scope: false,
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      }),
+    };
+    const repository = new StudentsRepository({} as never);
+
+    await expect(
+      repository.correctNationalId(
+        '00000000-0000-4000-8000-000000000001',
+        '9876543210123',
+        5,
+        { school_ids: [10010002] },
+        manager as never,
+      ),
+    ).resolves.toEqual({ scopeConflict: true });
+    expect(queries.join('\n')).not.toContain('UPDATE student_term');
+    expect(queries.join('\n')).not.toContain('UPDATE student_person_identifier');
+  });
+
+  it('does not write when the replacement national id belongs to another person', async () => {
+    const queries: string[] = [];
+    const manager = {
+      query: jest.fn((sql: string) => {
+        queries.push(sql);
+        if (sql.includes('SELECT s.person_uuid')) {
+          return Promise.resolve([
+            {
+              person_uuid: '10000000-0000-4000-8000-000000000001',
+              national_id: '1234567890123',
+              school_id: 10010002,
+            },
+          ]);
+        }
+        if (sql.includes('AS in_scope')) {
+          return Promise.resolve([
+            {
+              student_uuid: '00000000-0000-4000-8000-000000000001',
+              national_id: '1234567890123',
+              in_scope: true,
+            },
+          ]);
+        }
+        if (sql.includes('UNION ALL')) return Promise.resolve([{ exists: 1 }]);
+        return Promise.resolve([]);
+      }),
+    };
+    const repository = new StudentsRepository({} as never);
+
+    await expect(
+      repository.correctNationalId(
+        '00000000-0000-4000-8000-000000000001',
+        '9876543210123',
+        5,
+        undefined,
+        manager as never,
+      ),
+    ).resolves.toEqual({ conflict: true });
+    expect(queries.join('\n')).not.toContain('UPDATE student_term');
+    expect(queries.join('\n')).not.toContain('UPDATE student_person_identifier');
   });
 });

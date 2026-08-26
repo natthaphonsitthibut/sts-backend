@@ -473,6 +473,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'แก้ไขข้อมูลนักเรียน',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
   },
+  STUDENT_NATIONAL_ID_CORRECTION: {
+    domain: 'students',
+    label: 'แก้ไขเลขบัตรประชาชนนักเรียน',
+    detailKeys: [
+      { key: 'reasonLabel', label: 'เหตุผล' },
+      { key: 'fieldLabel', label: 'ข้อมูลที่แก้ไข' },
+    ],
+  },
   STUDENT_DELETE: {
     domain: 'students',
     label: 'ลบข้อมูลนักเรียน',

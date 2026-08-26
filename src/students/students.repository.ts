@@ -26,6 +26,7 @@ import type {
   StudentGuardianInputDto,
   UpdateStudentDto,
 } from './dto/update-student.dto';
+import { STUDENT_NATIONAL_ID_CORRECTION_SOURCE } from './pii-fields.config';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -49,6 +50,10 @@ function pushParams(target: unknown[], values: unknown[]): void {
 @Injectable()
 export class StudentsRepository {
   constructor(private readonly dataSource: DataSource) {}
+
+  async withTransaction<T>(work: (manager: EntityManager) => Promise<T>): Promise<T> {
+    return await this.dataSource.transaction(work);
+  }
 
   private async query<T extends Record<string, unknown>>(
     sql: string,
@@ -349,8 +354,12 @@ export class StudentsRepository {
         ON ss.code = COALESCE(s.student_status_code, s."StudentStatusID_Onec")
       LEFT JOIN student_risk_profiles risk ON risk.student_uuid = s.student_uuid
       LEFT JOIN LATERAL (
-        SELECT TRIM(teacher.first_name || ' ' || teacher.last_name) AS homeroom_teacher_name
-        FROM classroom_homeroom_teachers assignment
+        SELECT string_agg(
+          TRIM(teacher.first_name || ' ' || teacher.last_name),
+          ', ' ORDER BY assignment.is_primary DESC,
+          TRIM(teacher.first_name || ' ' || teacher.last_name)
+        ) AS homeroom_teacher_name
+        FROM classroom_homeroom_teacher_assignments assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
          AND membership.school_id = assignment.school_id
@@ -361,7 +370,6 @@ export class StudentsRepository {
          AND teacher.deleted_at IS NULL
         WHERE assignment.classroom_id = s.classroom_id
           AND assignment.school_id = s."SchoolID_Onec"
-        LIMIT 1
       ) homeroom ON true
       LEFT JOIN LATERAL (
         SELECT c.student_lat, c.student_lng
@@ -912,6 +920,187 @@ export class StudentsRepository {
       await this.updateStudentTermWithManager(manager, studentUuid, data);
       return { updated: true };
     });
+  }
+
+  async correctNationalId(
+    studentUuid: string,
+    newNationalId: string,
+    actorUserId: number | null,
+    userScope: DataScope | undefined,
+    manager: EntityManager,
+  ): Promise<
+    | { corrected: true; schoolId: number }
+    | { unchanged: true }
+    | { notFound: true }
+    | { missingPerson: true }
+    | { conflict: true }
+    | { scopeConflict: true }
+  > {
+    const params: unknown[] = [studentUuid];
+    let scopeSql = '';
+    if (userScope) {
+      const scope = buildDataScopeQuery(userScope, STUDENT_SCOPE_ALIASES, 2);
+      scopeSql = scope.sql ? `AND (${scope.sql})` : '';
+      pushParams(params, scope.params);
+    }
+
+    const findScopedEnrollment = async (forUpdate: boolean) =>
+      (await manager.query(
+        `
+          SELECT s.person_uuid, s."PersonID_Onec" AS national_id,
+            s."SchoolID_Onec" AS school_id
+          FROM student_term s
+          LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+          WHERE s.student_uuid = $1
+            AND s.deleted_at IS NULL
+            ${scopeSql}
+          ${forUpdate ? 'FOR UPDATE OF s' : ''}
+        `,
+        params,
+      )) as unknown as Array<{
+        person_uuid: string | null;
+        national_id: string;
+        school_id: number;
+      }>;
+
+    const candidate = (await findScopedEnrollment(false))[0];
+    if (!candidate) return { notFound: true };
+    if (!candidate.person_uuid) return { missingPerson: true };
+
+    await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `student-person:${candidate.person_uuid}`,
+    ]);
+
+    const enrollment = (await findScopedEnrollment(true))[0];
+    if (!enrollment) return { notFound: true };
+    if (!enrollment.person_uuid) return { missingPerson: true };
+    if (enrollment.person_uuid !== candidate.person_uuid) return { scopeConflict: true };
+
+    const linkedScopeParams: unknown[] = [enrollment.person_uuid];
+    let linkedScopeSql = 'TRUE';
+    if (userScope) {
+      const linkedScope = buildDataScopeQuery(userScope, STUDENT_SCOPE_ALIASES, 2);
+      linkedScopeSql = linkedScope.sql || 'TRUE';
+      pushParams(linkedScopeParams, linkedScope.params);
+    }
+    const linkedEnrollments = (await manager.query(
+      `
+        SELECT s.student_uuid, s."PersonID_Onec" AS national_id,
+          (${linkedScopeSql}) AS in_scope
+        FROM student_term s
+        LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+        WHERE s.person_uuid = $1
+          AND s.deleted_at IS NULL
+        ORDER BY s.student_uuid
+        FOR UPDATE OF s
+      `,
+      linkedScopeParams,
+    )) as unknown as Array<{ student_uuid: string; national_id: string; in_scope: boolean }>;
+    if (linkedEnrollments.some((linked) => linked.in_scope !== true)) {
+      return { scopeConflict: true };
+    }
+    if (
+      linkedEnrollments.every(
+        (linked) => linked.national_id.replace(/[^0-9]/g, '') === newNationalId,
+      )
+    ) {
+      return { unchanged: true };
+    }
+
+    await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `student-national-id:${newNationalId}`,
+    ]);
+
+    const conflicts = (await manager.query(
+      `
+        SELECT 1
+        FROM student_term existing
+        WHERE existing."PersonID_Onec" = $1
+          AND existing.person_uuid IS DISTINCT FROM $2
+          AND existing.deleted_at IS NULL
+        UNION ALL
+        SELECT 1
+        FROM student_person_identifier identifier
+        WHERE identifier.identifier_type = 'NATIONAL_ID'
+          AND identifier.identifier_normalized = $1
+          AND identifier.person_uuid <> $2
+          AND identifier.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [newNationalId, enrollment.person_uuid],
+    )) as unknown as Array<{ '?column?': number }>;
+    if (conflicts.length > 0) return { conflict: true };
+
+    await manager.query(
+      `
+        UPDATE student_term
+        SET "PersonID_Onec" = $2,
+            updated_by = $3,
+            updated_at = NOW()
+        WHERE person_uuid = $1
+          AND deleted_at IS NULL
+      `,
+      [enrollment.person_uuid, newNationalId, actorUserId],
+    );
+
+    const identifiers = (await manager.query(
+      `
+        WITH selected_identifier AS (
+          SELECT id
+          FROM student_person_identifier
+          WHERE person_uuid = $1
+            AND identifier_type = 'NATIONAL_ID'
+            AND deleted_at IS NULL
+          ORDER BY (identifier_normalized = $2) DESC, is_primary DESC, id DESC
+          LIMIT 1
+          FOR UPDATE
+        ), updated_identifier AS (
+          UPDATE student_person_identifier identifier
+          SET identifier_value = $2,
+              identifier_normalized = $2,
+              is_primary = TRUE,
+              source = $3,
+              updated_by = $4,
+              updated_at = NOW()
+          FROM selected_identifier
+          WHERE identifier.id = selected_identifier.id
+          RETURNING identifier.id
+        )
+        SELECT id FROM updated_identifier
+      `,
+      [enrollment.person_uuid, newNationalId, STUDENT_NATIONAL_ID_CORRECTION_SOURCE, actorUserId],
+    )) as unknown as Array<{ id: string }>;
+
+    const primaryIdentifierId = identifiers[0]?.id;
+    if (primaryIdentifierId) {
+      await manager.query(
+        `
+          UPDATE student_person_identifier
+          SET is_primary = FALSE,
+              updated_by = $3,
+              updated_at = NOW()
+          WHERE person_uuid = $1
+            AND identifier_type = 'NATIONAL_ID'
+            AND id <> $2
+            AND is_primary = TRUE
+            AND deleted_at IS NULL
+        `,
+        [enrollment.person_uuid, primaryIdentifierId, actorUserId],
+      );
+    } else {
+      await manager.query(
+        `
+          INSERT INTO student_person_identifier (
+            person_uuid, identifier_type, identifier_value,
+            identifier_normalized, is_primary, source, created_by, updated_by
+          )
+          VALUES ($1, 'NATIONAL_ID', $2, $2, TRUE, $3, $4, $4)
+        `,
+        [enrollment.person_uuid, newNationalId, STUDENT_NATIONAL_ID_CORRECTION_SOURCE, actorUserId],
+      );
+    }
+
+    return { corrected: true, schoolId: enrollment.school_id };
   }
 
   /** Append one immutable PII-reveal record to the access log. */

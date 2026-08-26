@@ -38,6 +38,7 @@ import {
 } from './dto/students.dto';
 import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { CorrectStudentNationalIdDto } from './dto/correct-student-national-id.dto';
 import { MasterDataService } from '../master-data/master-data.service';
 
 function firstHeaderValue(value: string | string[] | undefined): string | null {
@@ -262,6 +263,20 @@ export class StudentsController {
       ip: req.ip ?? null,
       userAgent: firstHeaderValue(req.headers['user-agent']),
       requestId: firstHeaderValue(req.headers['x-request-id']),
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-students')
+  @Patch(':id/national-id')
+  correctNationalId(
+    @Param('id') id: string,
+    @Body() body: CorrectStudentNationalIdDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return this.studentsService.correctNationalId(id, body, actor, resolveActorDataScope(actor), {
+      ip: req.ip ?? null,
     });
   }
 
