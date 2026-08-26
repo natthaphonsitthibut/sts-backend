@@ -23,6 +23,41 @@ describe('role/scope migration parity', () => {
     expect(compareRoleScopeParity(buildRow())).toBeNull();
   });
 
+  it('measures against role defaults once the reset migration has run', () => {
+    const applied = new Set(['ResetUserPermissionsToRoleDefaults20260719140000']);
+    // Reset to defaults, then narrowed by a role group: nothing was gained.
+    expect(
+      compareRoleScopeParity(
+        buildRow({
+          current_permissions: ['home'],
+          current_role_defaults: ['home', 'dashboard', 'students'],
+        }),
+        { appliedMigrations: applied },
+      ),
+    ).toBeNull();
+
+    // Holding a page the role never grants is still a finding.
+    expect(
+      compareRoleScopeParity(
+        buildRow({
+          current_permissions: ['home', 'settings'],
+          current_role_defaults: ['home', 'dashboard'],
+        }),
+        { appliedMigrations: applied },
+      ),
+    ).toEqual({ userId: 77, issues: ['permissions beyond role defaults=settings'] });
+
+    // Without the reset migration the pre-migration snapshot is still the baseline.
+    expect(
+      compareRoleScopeParity(
+        buildRow({
+          current_permissions: ['home'],
+          current_role_defaults: ['home', 'dashboard', 'students'],
+        }),
+      ),
+    ).toEqual({ userId: 77, issues: ['permissions removed=students'] });
+  });
+
   it('accepts the migration own-only normalization for students', () => {
     expect(
       compareRoleScopeParity(
