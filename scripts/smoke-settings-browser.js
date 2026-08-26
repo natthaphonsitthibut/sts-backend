@@ -21,7 +21,7 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9235);
 const USERNAME = 'settings_browser_smoke';
-const SETTING_KEYS = ['CASE_RISK_LOW_ABSENCE_DAYS', 'ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME'];
+const SETTING_KEYS = ['CASE_RISK_HIGH_ABSENCE_DAYS', 'ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME'];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -262,7 +262,7 @@ async function waitForSettingsPage(client) {
       async () =>
         (await evaluate(client, 'location.pathname')) === '/settings' &&
         String(await evaluate(client, 'document.body.innerText')).includes(
-          'CASE_RISK_LOW_ABSENCE_DAYS',
+          'CASE_RISK_HIGH_ABSENCE_DAYS',
         ) &&
         String(await evaluate(client, 'document.body.innerText')).includes('ALERT_TRIGGER_TYPE') &&
         String(await evaluate(client, 'document.body.innerText')).includes('ALERT_SCHEDULE_TIME'),
@@ -287,10 +287,10 @@ async function assertSettingsTabs(client) {
     })))`,
   );
   const tabs = JSON.parse(labels);
+  // ข้อมูลพื้นฐาน and สถานะนักเรียน left this strip for /master-data, which is its
+  // own ADMIN + national-scope page, so this section owns a single tab.
   assert(
-    tabs.some((tab) => tab.text === 'ตั้งค่าระบบ' && tab.selected === 'true') &&
-      tabs.some((tab) => tab.text === 'ข้อมูลพื้นฐาน') &&
-      tabs.some((tab) => tab.text === 'สถานะนักเรียน'),
+    tabs.length === 1 && tabs[0].text === 'ตั้งค่าระบบ' && tabs[0].selected === 'true',
     `Settings tabs were not rendered correctly: ${labels}`,
   );
 }
@@ -381,8 +381,12 @@ async function saveSetting(client, key) {
     client,
     `(() => {
       const card = findSettingCard(${JSON.stringify(key)});
+      // innerText, not textContent: the base Button keeps its loading label in the
+      // DOM behind \`visibility: hidden\`, so textContent reads 'บันทึกกำลังบันทึก'
+      // and an exact match never hits. Exactness still matters — a Select trigger
+      // showing 'ทันทีหลังบันทึกเช็คชื่อ' must not answer as the save button.
       const button = [...card.querySelectorAll('button')]
-        .find((candidate) => candidate.textContent.trim() === 'บันทึก');
+        .find((candidate) => candidate.innerText.trim() === 'บันทึก');
       if (!button) throw new Error('Save button not found for ${key}');
       if (button.disabled) throw new Error('Save button is disabled for ${key}');
       button.click();
@@ -441,10 +445,12 @@ async function assertUiValue(client, key, value) {
 async function installBrowserHelpers(client) {
   await evaluate(
     client,
+    // See saveSetting: the save button is matched on innerText because the base
+    // Button renders its idle and loading labels side by side.
     `window.findSettingCard = (key) => {
       const candidates = [...document.querySelectorAll('div')]
         .filter((node) => node.innerText?.includes(key))
-        .filter((node) => [...node.querySelectorAll('button')].some((button) => button.textContent.trim() === 'บันทึก'));
+        .filter((node) => [...node.querySelectorAll('button')].some((button) => button.innerText.trim() === 'บันทึก'));
       candidates.sort((left, right) => left.innerText.length - right.innerText.length);
       const card = candidates[0];
       if (!card) throw new Error('Setting card not found: ' + key);
@@ -469,8 +475,8 @@ async function main() {
 
   try {
     originalSettings = await getSettings(dataSource);
-    nextValues.CASE_RISK_LOW_ABSENCE_DAYS =
-      originalSettings.CASE_RISK_LOW_ABSENCE_DAYS === '4' ? '3' : '4';
+    nextValues.CASE_RISK_HIGH_ABSENCE_DAYS =
+      originalSettings.CASE_RISK_HIGH_ABSENCE_DAYS === '4' ? '3' : '4';
     nextValues.ALERT_TRIGGER_TYPE =
       originalSettings.ALERT_TRIGGER_TYPE === 'IMMEDIATE' ? 'SCHEDULED' : 'IMMEDIATE';
     nextValues.ALERT_SCHEDULE_TIME =
@@ -503,17 +509,17 @@ async function main() {
     await installBrowserHelpers(client);
     await assertSettingsTabs(client);
 
-    await setIntegerSetting(client, 'CASE_RISK_LOW_ABSENCE_DAYS', nextValues.CASE_RISK_LOW_ABSENCE_DAYS);
-    await saveSetting(client, 'CASE_RISK_LOW_ABSENCE_DAYS');
-    await waitForDbValue(dataSource, 'CASE_RISK_LOW_ABSENCE_DAYS', nextValues.CASE_RISK_LOW_ABSENCE_DAYS);
+    await setIntegerSetting(client, 'CASE_RISK_HIGH_ABSENCE_DAYS', nextValues.CASE_RISK_HIGH_ABSENCE_DAYS);
+    await saveSetting(client, 'CASE_RISK_HIGH_ABSENCE_DAYS');
+    await waitForDbValue(dataSource, 'CASE_RISK_HIGH_ABSENCE_DAYS', nextValues.CASE_RISK_HIGH_ABSENCE_DAYS);
     await waitForAudit(
       dataSource,
       userId,
-      'CASE_RISK_LOW_ABSENCE_DAYS',
-      originalSettings.CASE_RISK_LOW_ABSENCE_DAYS,
-      nextValues.CASE_RISK_LOW_ABSENCE_DAYS,
+      'CASE_RISK_HIGH_ABSENCE_DAYS',
+      originalSettings.CASE_RISK_HIGH_ABSENCE_DAYS,
+      nextValues.CASE_RISK_HIGH_ABSENCE_DAYS,
     );
-    await assertUiValue(client, 'CASE_RISK_LOW_ABSENCE_DAYS', nextValues.CASE_RISK_LOW_ABSENCE_DAYS);
+    await assertUiValue(client, 'CASE_RISK_HIGH_ABSENCE_DAYS', nextValues.CASE_RISK_HIGH_ABSENCE_DAYS);
 
     await setEnumSetting(client, 'ALERT_TRIGGER_TYPE', nextValues.ALERT_TRIGGER_TYPE);
     await saveSetting(client, 'ALERT_TRIGGER_TYPE');
