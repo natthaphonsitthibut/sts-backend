@@ -826,7 +826,7 @@ async function main() {
     await waitFor(
       async () =>
         await client.evaluate(
-          `document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value === 'ทุกโรงเรียนในขอบเขตสิทธิ์'
+          `document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value === 'โรงเรียนทั้งหมด'
             && document.querySelector(${JSON.stringify(
               `[data-student-navigation="${enrollment.student_uuid}"]`,
             )})?.innerText.includes(${JSON.stringify(enrollment.school_name)})

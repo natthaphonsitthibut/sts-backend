@@ -21,6 +21,7 @@ const {
   ClassroomLinkSessionStore,
 } = require('../dist/classroom-attendance-links/classroom-link-session.store');
 const { RiskProfileService } = require('../dist/risk-profile/risk-profile.service');
+const { FILE_STORAGE_ADAPTER } = require('../dist/files/storage/file-storage.types');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run browser smoke in production');
@@ -414,6 +415,82 @@ async function visibleRowIds(client) {
   );
 }
 
+async function assertCheckInAvatars(client, expectedPhotoPath) {
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `(() => {
+          const images = [...document.querySelectorAll('[data-check-in-row] img[data-avatar-image]')];
+          return images.length > 0 && images.every((image) =>
+            image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+          );
+        })()`,
+      ),
+    `Check-in photos did not load successfully from ${expectedPhotoPath}`,
+  );
+  const result = await evaluate(
+    client,
+    `(() => {
+      const avatars = [...document.querySelectorAll('[data-check-in-row] [data-slot="avatar"]')];
+      return {
+        count: avatars.length,
+        fallbackLengths: avatars
+          .map((avatar) => avatar.querySelector('span')?.textContent.trim() ?? '')
+          .filter(Boolean)
+          .map((value) => Array.from(value).length),
+        imagePaths: avatars
+          .map((avatar) => avatar.querySelector('img[data-avatar-image]')?.src ?? '')
+          .filter(Boolean)
+          .map((value) => new URL(value).pathname),
+        imageVersions: avatars
+          .map((avatar) => avatar.querySelector('img[data-avatar-image]')?.src ?? '')
+          .filter(Boolean)
+          .map((value) => new URL(value).searchParams.get('v')),
+      };
+    })()`,
+  );
+  assert(result.count > 0, 'Check-in roster did not render shared avatars');
+  assert(
+    result.fallbackLengths.every((length) => length === 1),
+    `Check-in avatar fallback was not one letter: ${JSON.stringify(result.fallbackLengths)}`,
+  );
+  assert(
+    result.imagePaths.length > 0,
+    'Check-in roster did not render a student photo fixture',
+  );
+  assert(
+    result.imagePaths.every((pathname) => pathname === expectedPhotoPath),
+    `Check-in photo did not use the guarded img URL: ${JSON.stringify(result.imagePaths)}`,
+  );
+  assert(
+    result.imageVersions.every(Boolean),
+    `Check-in photo did not include the cache-version query: ${JSON.stringify(result.imageVersions)}`,
+  );
+}
+
+async function restoreStudentPhotoFixture(dataSource, storage, fixture) {
+  const queryRunner = dataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
+  try {
+    await queryRunner.query(`SET LOCAL session_replication_role = 'replica'`);
+    await queryRunner.query(
+      `UPDATE student_person
+       SET photo_storage_key = $2, updated_at = $3
+       WHERE person_uuid = $1`,
+      [fixture.personUuid, fixture.previousStorageKey, fixture.previousUpdatedAt],
+    );
+    await queryRunner.commitTransaction();
+  } catch (error) {
+    await queryRunner.rollbackTransaction();
+    throw error;
+  } finally {
+    await queryRunner.release();
+  }
+  await storage.delete(fixture.storageKey);
+}
+
 async function summaryCount(client, label) {
   return await evaluate(
     client,
@@ -492,12 +569,14 @@ async function main() {
   const cookieService = app.get(SessionCookieService);
   const encryption = app.get(TokenEncryptionService);
   const sessionStore = app.get(ClassroomLinkSessionStore);
+  const storage = app.get(FILE_STORAGE_ADAPTER);
   let frontend;
   let chrome;
   let scope;
   let linkId = null;
   let fixtureSubjectId = null;
   let fixtureOfferingId = null;
+  let fixturePhoto = null;
   let allowed;
   let denied;
 
@@ -594,6 +673,42 @@ async function main() {
       LIMIT 1
     `);
     assert(scope, 'No clean classroom and school day are available');
+
+    const [photoStudent] = await dataSource.query(
+      `SELECT person.person_uuid::text AS person_uuid,
+              person.photo_storage_key,
+              person.updated_at
+       FROM student_term enrollment
+       JOIN student_current_enrollment_resolution resolution
+         ON resolution.person_uuid = enrollment.person_uuid
+        AND resolution.selected_student_uuid = enrollment.student_uuid
+        AND resolution.resolution_state = 'ACTIVE'
+       JOIN student_person person ON person.person_uuid = enrollment.person_uuid
+       WHERE enrollment.classroom_id = $1
+         AND enrollment.deleted_at IS NULL
+       ORDER BY enrollment.student_uuid
+       LIMIT 1`,
+      [scope.classroom_id],
+    );
+    assert(photoStudent, 'No active student is available for the photo fixture');
+    const photoStorageKey = `student-photos/automated-subject-check-in-${suffix}.png`;
+    await storage.save(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlKzJcAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      photoStorageKey,
+    );
+    fixturePhoto = {
+      personUuid: photoStudent.person_uuid,
+      previousStorageKey: photoStudent.photo_storage_key,
+      previousUpdatedAt: photoStudent.updated_at,
+      storageKey: photoStorageKey,
+    };
+    await dataSource.query(
+      `UPDATE student_person SET photo_storage_key = $2 WHERE person_uuid = $1`,
+      [photoStudent.person_uuid, photoStorageKey],
+    );
 
     allowed = await upsertActor(
       dataSource,
@@ -708,7 +823,7 @@ async function main() {
       await waitFor(
         async () => {
           const text = String(await evaluate(client, 'document.body.innerText'));
-          return text.includes('จัดการหลักสูตร') && text.includes(scope.grade_label);
+          return text.includes('จัดการข้อมูลหลักสูตร') && text.includes(scope.grade_label);
         },
         'Curriculum grade selection did not render',
       );
@@ -719,6 +834,39 @@ async function main() {
       );
       throw new Error(`${error.message}: ${JSON.stringify({ visibleText, subjectResponses })}`);
     }
+    await navigate(
+      client,
+      `${FRONTEND_URL}/curriculum?schoolId=${scope.school_id}&search=${encodeURIComponent(scope.grade_label)}`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean([...document.querySelectorAll('a')].find((anchor) =>
+              new URL(anchor.href).pathname === ${JSON.stringify(`/curriculum/${scope.grade_level_id}`)}
+            ))`,
+          ),
+        ),
+      'Filtered curriculum page did not render the target grade link',
+    );
+    const curriculumSourceUrl = await evaluate(client, 'location.pathname + location.search');
+    await evaluate(
+      client,
+      `([...document.querySelectorAll('a')].find((anchor) =>
+        new URL(anchor.href).pathname === ${JSON.stringify(`/curriculum/${scope.grade_level_id}`)}
+      )).click()`,
+    );
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === `/curriculum/${scope.grade_level_id}`,
+      'Curriculum context link did not open the grade page',
+    );
+    await clickButton(client, 'ย้อนกลับ');
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname + location.search')) === curriculumSourceUrl,
+      'Curriculum back action did not restore the full filtered parent URL',
+    );
     await navigate(
       client,
       `${FRONTEND_URL}/curriculum/${scope.grade_level_id}?schoolId=${scope.school_id}`,
@@ -836,13 +984,46 @@ async function main() {
       'Internal check-in workspace did not open',
     );
     await setDatePicker(client, 'เลือกวันที่เช็กชื่อ', scope.check_in_date);
-    await selectComboboxOption(client, 'วิชา', scope.scope_subject_name);
     await waitFor(
       async () => (await visibleRowIds(client)).length >= 4,
       'Internal check-in roster did not render',
     );
     const initialRowIds = await visibleRowIds(client);
     const rosterCount = initialRowIds.length;
+    assert(
+      (await evaluate(client, `document.querySelector('input[aria-label="วิชา"]')?.value ?? ''`)) === '',
+      'Internal check-in defaulted a subject before the user selected one',
+    );
+    await assertCheckInAvatars(client, '/api/attendance/check-in/student-photo');
+    networkRequests.length = 0;
+    await markRemainingPresent(client);
+    await waitForMarked(client, rosterCount);
+    await clickButton(client, 'ส่งผลเช็กชื่อ');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('กรุณาเลือกวิชา'),
+      'Internal check-in did not require a subject on submit',
+    );
+    assert(
+      requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 0,
+      'Internal check-in started a session before a subject was selected',
+    );
+    await selectComboboxOption(client, 'วิชา', scope.scope_subject_name);
+    await waitForMarked(client, rosterCount);
+    assert(
+      requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 0,
+      'Selecting the first subject started a session before another attendance action',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('[data-default-mark][aria-pressed="true"]')]
+        .filter((button) => button.getClientRects().length > 0)
+        .forEach((button) => button.click())`,
+    );
+    await waitForMarked(client, 0);
+    assert(
+      requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 0,
+      'Clearing the preserved marks started an attendance session',
+    );
     networkRequests.length = 0;
     await evaluate(
       client,
@@ -1005,7 +1186,16 @@ async function main() {
       'Public link exposed a room browser',
     );
     await setDatePicker(client, 'เลือกวันที่เช็กชื่อ', scope.check_in_date);
+    assert(
+      (await evaluate(client, `document.querySelector('input[aria-label="วิชา"]')?.value ?? ''`)) === '',
+      'Public classroom link defaulted a subject before the teacher selected one',
+    );
     await selectComboboxOption(client, 'วิชา', subjectName);
+    await waitFor(
+      async () => (await visibleRowIds(client)).length === rosterCount,
+      'Public classroom-link roster did not render',
+    );
+    await assertCheckInAvatars(client, '/api/check-in/student-photo');
     await clickButton(client, 'การ์ด');
     await waitFor(
       async () => await evaluate(client, 'Boolean(document.querySelector("[data-active-card=true]"))'),
@@ -1387,6 +1577,9 @@ async function main() {
              AND NOT EXISTS (SELECT 1 FROM school_subjects WHERE subject_id = $1)`,
           [fixtureSubjectId],
         );
+      }
+      if (fixturePhoto) {
+        await restoreStudentPhotoFixture(dataSource, storage, fixturePhoto);
       }
       await dataSource.query(
         `UPDATE users SET status = 'DISABLED', permissions = '[]'::jsonb,
