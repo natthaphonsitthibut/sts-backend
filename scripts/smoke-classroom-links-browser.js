@@ -34,7 +34,9 @@ async function waitFor(check, message, timeoutMs = 25_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${lastError.message}` : message);
+  // Accept a thunk so a red run reports what the page actually showed.
+  const detail = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${detail}: ${lastError.message}` : detail);
 }
 
 class CdpClient {
@@ -343,7 +345,7 @@ async function main() {
       )),
       'Classroom-link-only user received a national-id reveal action',
     );
-    await client.clickText('ย้อนกลับ');
+    await clickButton(client, 'ย้อนกลับ');
     await waitFor(
       async () =>
         (await evaluate(client, 'location.pathname')) === '/attendance/classroom-links',
@@ -366,12 +368,13 @@ async function main() {
     await evaluate(
       client,
       `(() => {
+        // Row actions are icon-only, so the label lives on aria-label/title.
         const buttons = [...document.querySelectorAll('[data-slot="data-table"] tbody button')];
-        const button = buttons.find(
-          (item) => item.textContent.includes('สร้างลิงก์') && !item.disabled,
-        ) ?? buttons.find(
-          (item) => item.textContent.includes('คัดลอก') && !item.disabled,
-        );
+        const labelled = (needle) =>
+          buttons.find(
+            (item) => (item.getAttribute('aria-label') ?? '').includes(needle) && !item.disabled,
+          );
+        const button = labelled('สร้างลิงก์') ?? labelled('คัดลอกลิงก์');
         if (!button) throw new Error('Room create/copy-link button not found');
         button.click();
       })()`,
@@ -379,6 +382,20 @@ async function main() {
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกหรือแชร์ลิงก์ห้องเรียน'),
       'Create action did not expose the copy/share fallback',
+    );
+    // Each action reports its own outcome, so the generic save toast must not
+    // stack a second toast on top of it.
+    const toasts = await evaluate(
+      client,
+      `[...document.querySelectorAll('[data-sonner-toast]')].map((toast) => toast.innerText.trim())`,
+    );
+    assert(
+      Array.isArray(toasts) && toasts.length <= 1,
+      `Create action raised ${Array.isArray(toasts) ? toasts.length : '?'} toasts: ${JSON.stringify(toasts)}`,
+    );
+    assert(
+      !(toasts ?? []).some((toast) => String(toast).includes('บันทึกแล้ว')),
+      'Create action fell back to the generic save toast',
     );
     const classroomUrl = String(
       await evaluate(
@@ -406,7 +423,13 @@ async function main() {
           text.includes('ยืนยันด้วย AraID')
         );
       },
-      'Public classroom link did not restore the shared identity card with Google and AraID',
+      async () =>
+        `Public classroom link did not restore the shared identity card with Google and AraID: ${JSON.stringify(
+          {
+            url: await evaluate(client, 'location.href'),
+            text: String(await evaluate(client, 'document.body.innerText')).slice(0, 600),
+          },
+        )}`,
     );
     assert(
       await evaluate(
@@ -432,7 +455,12 @@ async function main() {
       'Classroom-links page overflows horizontally on mobile',
     );
     assert(
-      String(await evaluate(client, 'document.body.innerText')).includes('คัดลอก'),
+      await evaluate(
+        client,
+        `[...document.querySelectorAll('[data-slot="table-card-list"] button')]
+          .some((item) => (item.getAttribute('aria-label') ?? '').includes('คัดลอกลิงก์')
+            || (item.getAttribute('aria-label') ?? '').includes('สร้างลิงก์'))`,
+      ),
       'Mobile card did not expose the copy fallback',
     );
 

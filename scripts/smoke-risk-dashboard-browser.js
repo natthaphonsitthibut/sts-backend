@@ -23,6 +23,8 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9245);
 const NAVIGATION_ONLY = process.env.SMOKE_NAVIGATION_ONLY === 'true';
+const FILTER_BACK_ONLY = process.env.SMOKE_FILTER_BACK_ONLY === 'true';
+const TEACHER_TABLE_ONLY = process.env.SMOKE_TEACHER_TABLE_ONLY === 'true';
 const FOCUSED_UI = process.env.SMOKE_FOCUSED_UI === 'true';
 const USERNAME = 'risk_dashboard_browser_smoke';
 const MANUAL_CASE_REASON_PREFIX = 'Browser smoke manual case';
@@ -49,7 +51,10 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${errorMessage(lastError)}` : message);
+  // A message can be a thunk so a failing check can report what it actually saw
+  // without paying for that lookup on the happy path.
+  const detail = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${detail}: ${errorMessage(lastError)}` : detail);
 }
 
 /**
@@ -440,7 +445,203 @@ async function assertVisibleStudentProfileLink(client, label) {
   );
 }
 
+async function assertTeacherTableFillsShell(client) {
+  // Fixed-layout tables reserve exactly the widths declared per column, so a
+  // column set that totals less than 100% leaves the header bar and row rules
+  // short of the card edge. Guard the teacher table against that regression.
+  await navigate(client, `${FRONTEND_URL}/teachers`);
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `Boolean(document.querySelector('[data-slot="data-table"] table tbody tr'))`,
+      ),
+    'teacher table did not render',
+  );
+  const gap = await evaluate(
+    client,
+    `(() => {
+      const table = document.querySelector('[data-slot="data-table"] table');
+      const headings = table.querySelectorAll('thead tr th');
+      const lastHeading = headings[headings.length - 1];
+      return Math.round(
+        table.getBoundingClientRect().right - lastHeading.getBoundingClientRect().right,
+      );
+    })()`,
+  );
+  assert(
+    gap <= 1,
+    `teacher table header stopped ${gap}px short of the table edge`,
+  );
+}
+
+async function assertTeacherPhotoManagement(client) {
+  // A teacher record is managed from its profile like a student's: the photo
+  // saves on its own instead of forcing a trip through the edit form.
+  await navigate(client, `${FRONTEND_URL}/manage-teachers`);
+  const profileTrigger = `document.querySelector(
+    '[data-slot="data-table"] tbody button[aria-label^="เปิดข้อมูลคุณครู"]'
+  )`;
+  await waitFor(
+    async () => evaluate(client, `Boolean(${profileTrigger})`),
+    'manage teachers table did not render a teacher profile action',
+  );
+  const opened = await evaluate(
+    client,
+    `(() => {
+      const trigger = ${profileTrigger};
+      if (!trigger) return false;
+      trigger.click();
+      return true;
+    })()`,
+  );
+  assert(opened, 'manage teachers table did not expose a teacher profile action');
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `location.pathname.startsWith('/teachers/')
+          && document.body.innerText.includes('ข้อมูลทั่วไป')`,
+      ),
+    'teacher profile did not open from the management table',
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `[...document.querySelectorAll('button')].some((candidate) =>
+          ['เปลี่ยนรูป', 'เพิ่มรูป'].includes(candidate.textContent.trim()))`,
+      ),
+    'teacher profile did not offer photo management to an editor',
+  );
+  const readOnlyCopyGone = await evaluate(
+    client,
+    `!document.body.innerText.includes('ดูได้อย่างเดียว')`,
+  );
+  assert(readOnlyCopyGone, 'teacher profile still labels its photo read-only');
+}
+
+async function assertInvalidFilterUrlFallback(client) {
+  // A hand-edited or stale URL must be normalised in the browser instead of
+  // being forwarded to the API, which rejects out-of-contract pagination and
+  // filter values with 400 and would leave the report empty.
+  await navigate(
+    client,
+    `${FRONTEND_URL}/student-risk-report?page=-1&limit=999&academicYear=-3&semester=0&caseStatus=NOT_A_STATUS&sort=bogus%3Aasc`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `document.body.innerText.includes('รายงานสถานะนักเรียน')
+          && Array.from(document.querySelectorAll('[data-student-navigation]'))
+            .some((candidate) => candidate.offsetParent !== null)`,
+      ),
+    'invalid filter URL did not fall back to a rendered risk dashboard',
+  );
+  const leftovers = await evaluate(
+    client,
+    `(() => {
+      const params = new URLSearchParams(window.location.search);
+      return ['page', 'limit', 'caseStatus', 'sort']
+        .filter((key) => params.has(key))
+        .join(',');
+    })()`,
+  );
+  assert(
+    leftovers === '',
+    `invalid filter values stayed in the dashboard URL: ${leftovers}`,
+  );
+  const errorShown = await evaluate(
+    client,
+    `document.body.innerText.includes('ไม่สามารถโหลดข้อมูล')
+      || document.body.innerText.includes('เกิดข้อผิดพลาด')`,
+  );
+  assert(!errorShown, 'invalid filter URL produced an API error state');
+}
+
+async function assertFilterStateBackNavigation(client) {
+  await navigate(
+    client,
+    `${FRONTEND_URL}/student-risk-report?search=legacy-sensitive-placeholder&sort=updatedAt%3Adesc&limit=10`,
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `document.body.innerText.includes('รายงานสถานะนักเรียน')
+          && Array.from(document.querySelectorAll('[data-student-navigation]'))
+            .some((candidate) => candidate.offsetParent !== null)`,
+      ),
+    'filter-back dashboard rows did not render',
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `!new URLSearchParams(window.location.search).has('search')`,
+      ),
+    'legacy free-text dashboard search was not removed from the URL',
+  );
+  const sourceSearch = await evaluate(client, 'window.location.search');
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const surface = Array.from(document.querySelectorAll('[data-student-navigation]'))
+        .find((candidate) => candidate.offsetParent !== null);
+      const avatarLink = surface?.querySelector('a[href^="/students/"]');
+      if (!avatarLink) return false;
+      avatarLink.click();
+      return true;
+    })()`,
+  );
+  assert(clicked, 'filter-back dashboard did not expose a student avatar link');
+  await waitFor(
+    async () => evaluate(client, `window.location.pathname.startsWith('/students/')`),
+    'filter-back dashboard did not open student detail',
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `[...document.querySelectorAll('button')]
+          .some((candidate) => candidate.textContent.includes('ย้อนกลับ'))`,
+      ),
+    'filter-back student detail did not render its back button',
+  );
+  const backClicked = await evaluate(
+    client,
+    `(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((candidate) => candidate.textContent.includes('ย้อนกลับ'));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`,
+  );
+  assert(backClicked, 'filter-back student detail did not expose its back button');
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `window.location.pathname === '/student-risk-report/risk'
+          && window.location.search === ${JSON.stringify(sourceSearch)}`,
+      ),
+    'contextual Back did not restore the exact dashboard filter URL',
+  );
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `Array.from(document.querySelectorAll('[data-student-navigation]'))
+          .some((candidate) => candidate.offsetParent !== null)`,
+      ),
+    'filter-back dashboard rows did not restore after Back',
+  );
+}
+
 async function assertAvatarOnlyStudentNavigation(client, label) {
+  const sourceSearch = await evaluate(client, 'window.location.search');
   // Only the avatar link inside a row/card should navigate — clicking the
   // row/card surface itself must NOT trigger navigation anymore.
   const surfaceClickNavigated = await evaluate(
@@ -582,8 +783,13 @@ async function assertAvatarOnlyStudentNavigation(client, label) {
     })()`,
   );
   await waitFor(
-    async () => evaluate(client, `window.location.pathname === '/student-risk-report/risk'`),
-    `${label} contextual back did not return to the risk dashboard`,
+    async () =>
+      evaluate(
+        client,
+        `window.location.pathname === '/student-risk-report/risk' &&
+          window.location.search === ${JSON.stringify(sourceSearch)}`,
+      ),
+    `${label} contextual back did not restore the risk dashboard filters`,
   );
 
   await navigate(client, `${FRONTEND_URL}${studentPath}`);
@@ -624,16 +830,18 @@ async function assertCanonicalRouteNavigation(client) {
     ['/student-risk-report/watchlist', 'รายงานสถานะนักเรียน', '/student-risk-report'],
     ['/student-risk-report/teacher-comments', 'ความคิดเห็นจากคุณครู', '/student-risk-report'],
     ['/students', 'รายชื่อนักเรียน', '/students'],
-    ['/students/history', 'ประวัติรายชื่อนักเรียน', '/students'],
-    ['/students/export', 'ส่งออกข้อมูลนักเรียน', '/students'],
-    ['/attendance/roster', 'เช็กชื่อ', '/attendance'],
+    ['/manage-students/history', 'ประวัติรายชื่อนักเรียน', '/manage-students'],
+    ['/manage-students/export', 'ส่งออกข้อมูลนักเรียน', '/manage-students'],
+    // /attendance/roster and every /attendance/history route are legacy
+    // redirects onto the check-in tab, so the walk names the route they land on
+    // — asserting a redirect source can never match its own pathname.
     ['/attendance/check-in', 'เช็กชื่อ', '/attendance'],
-    // /attendance/history is a redirect to its first tab, so the walk names the
-    // tab it lands on — asserting the redirect source can never match.
-    ['/attendance/history/attendance', 'ประวัติการเช็กชื่อ', '/attendance'],
-    ['/attendance-links', 'จัดการลิงก์เช็กชื่อ', '/attendance-links'],
+    [
+      '/attendance/classroom-links',
+      'จัดการลิงก์ห้องเรียน',
+      '/attendance/classroom-links',
+    ],
     ['/attendance-operations', 'ความครบถ้วน', '/attendance-operations'],
-    ['/timetable/rooms', 'ตารางสอน', '/timetable'],
     ['/classrooms', 'ห้องเรียนทั้งหมด', '/classrooms'],
     ['/school-structure', 'จัดการภาคเรียนและห้องเรียน', '/school-structure'],
     ['/import-data', 'นำเข้าข้อมูล', '/import-data'],
@@ -644,11 +852,13 @@ async function assertCanonicalRouteNavigation(client) {
     ['/manage-users', 'จัดการผู้ใช้งาน', '/manage-users'],
     ['/manage-users/new', 'เพิ่มผู้ใช้งาน', '/manage-users'],
     ['/curriculum', 'จัดการข้อมูลหลักสูตร', '/curriculum'],
-    ['/teachers', 'จัดการข้อมูลครู', '/teachers'],
-    ['/teachers/new', 'เพิ่มข้อมูลคุณครู', '/teachers'],
+    ['/teachers', 'รายชื่อครู', '/teachers'],
+    ['/manage-teachers', 'จัดการข้อมูลครู', '/manage-teachers'],
+    ['/manage-teachers/new', 'เพิ่มข้อมูลคุณครู', '/manage-teachers'],
     ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
     ['/settings', 'ตั้งค่าระบบ', '/settings'],
-    ['/settings/student-statuses', 'สถานะนักเรียน', '/settings'],
+    // /master-data is ADMIN + global scope only, so this smoke's scoped actor
+    // lands on /forbidden there — the walk covers routes it can actually open.
     ['/profile', 'โปรไฟล์ของฉัน', null],
     ['/notifications', 'การแจ้งเตือน', null],
     ['/change-password', 'เปลี่ยนรหัสผ่าน', null],
@@ -674,7 +884,17 @@ async function assertCanonicalRouteNavigation(client) {
             };
           })()`,
         ),
-      `Canonical breadcrumb/menu owner was incorrect for ${route}`,
+      async () =>
+        `Canonical breadcrumb/menu owner was incorrect for ${route}: ${await evaluate(
+          client,
+          `(() => JSON.stringify({
+            pathname: location.pathname,
+            breadcrumb: document.querySelector('[data-breadcrumb-current]')?.textContent.trim() ?? null,
+            activeMenu: [...document.querySelectorAll('aside a[aria-current="page"]')]
+              .filter((link) => link.offsetParent !== null)
+              .map((link) => link.getAttribute('href')),
+          }))()`,
+        )}`,
     );
     await assertSystemFont(client, route);
   }
@@ -1879,6 +2099,22 @@ async function main() {
     }
 
     if (NAVIGATION_ONLY) {
+      if (TEACHER_TABLE_ONLY) {
+        await assertTeacherTableFillsShell(client);
+        await assertTeacherPhotoManagement(client);
+        console.log(
+          'teacher smoke passed (fixed-layout columns fill the table shell, profile manages its own photo)',
+        );
+        return;
+      }
+      if (FILTER_BACK_ONLY) {
+        await assertInvalidFilterUrlFallback(client);
+        await assertFilterStateBackNavigation(client);
+        console.log(
+          'risk dashboard filter-back smoke passed (invalid URL filters normalised without an API error, then detail round trip restored exact sort/page-size query and rows)',
+        );
+        return;
+      }
       await navigate(client, `${FRONTEND_URL}/student-risk-report`);
       await waitFor(
         async () =>
@@ -1893,6 +2129,8 @@ async function main() {
       await assertVisibleStudentProfileLink(client, 'desktop navigation');
       await assertAvatarOnlyStudentNavigation(client, 'desktop navigation');
       await assertCanonicalRouteNavigation(client);
+      await assertTeacherTableFillsShell(client);
+      await assertTeacherPhotoManagement(client);
 
       await client.call('Emulation.setDeviceMetricsOverride', {
         width: 390,
