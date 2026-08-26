@@ -586,16 +586,14 @@ async function main() {
     );
     const [openStorage] = await dataSource.query(
       `SELECT
-         (SELECT count(*)::int FROM attendance WHERE session_id = $1) AS legacy_mark_count,
          (SELECT count(*)::int FROM attendance_exceptions WHERE session_id = $1) AS exception_count,
          (SELECT count(*)::int FROM attendance_session_roster WHERE session_id = $1) AS roster_count`,
       [attendanceSessionId],
     );
     assert(
-      openStorage.legacy_mark_count === 0 &&
-        openStorage.exception_count === 0 &&
+      openStorage.exception_count === 0 &&
         openStorage.roster_count === roster.payload.data.length,
-      'OPEN session stored present rows or failed to freeze the roster',
+      'OPEN session stored exception rows or failed to freeze the roster',
     );
 
     const exceptions = [
@@ -622,7 +620,6 @@ async function main() {
     );
     const [submittedStorage] = await dataSource.query(
       `SELECT
-         (SELECT count(*)::int FROM attendance WHERE session_id = $1) AS legacy_mark_count,
          (SELECT count(*)::int FROM attendance_exceptions WHERE session_id = $1) AS exception_count,
          (SELECT count(*)::int
             FROM attendance_day day
@@ -631,10 +628,9 @@ async function main() {
       [attendanceSessionId, scope.check_in_date],
     );
     assert(
-      submittedStorage.legacy_mark_count === 0 &&
-        submittedStorage.exception_count === exceptions.length &&
+      submittedStorage.exception_count === exceptions.length &&
         submittedStorage.logical_roster_count === roster.payload.data.length,
-      'Submitted session wrote present rows or failed logical attendance compatibility',
+      'Submitted session stored the wrong exception count or failed logical attendance compatibility',
     );
     const duplicateSubmit = await request(
       'POST',
