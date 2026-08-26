@@ -855,9 +855,10 @@ async function assertCanonicalRouteNavigation(client) {
     ['/manage-teachers', 'จัดการข้อมูลครู', '/manage-teachers'],
     ['/manage-teachers/new', 'เพิ่มข้อมูลคุณครู', '/manage-teachers'],
     ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
-    ['/settings', 'ตั้งค่าระบบ', '/settings'],
-    // /master-data is ADMIN + global scope only, so this smoke's scoped actor
-    // lands on /forbidden there — the walk covers routes it can actually open.
+    // /master-data and /settings are ADMIN + global scope only, so this smoke's
+    // scoped actor lands on /forbidden there — the walk covers routes it can
+    // actually open. System settings are one shared set of values for every
+    // school, which is why a school-scoped admin has no business on that page.
     ['/profile', 'โปรไฟล์ของฉัน', null],
     ['/notifications', 'การแจ้งเตือน', null],
     ['/change-password', 'เปลี่ยนรหัสผ่าน', null],
@@ -896,6 +897,44 @@ async function assertCanonicalRouteNavigation(client) {
         )}`,
     );
     await assertSystemFont(client, route);
+  }
+
+  await assertGlobalOnlyRoutesAreForbidden(client);
+}
+
+/**
+ * The national-scope pages must refuse this actor at the route, not only at the
+ * API. A school-scoped admin that reaches the page shell sees a working screen
+ * whose every request answers 403, which reads as a broken page rather than as
+ * a page that is not theirs.
+ */
+async function assertGlobalOnlyRoutesAreForbidden(client) {
+  for (const route of ['/master-data', '/settings']) {
+    // Land somewhere this actor may open first: polling straight after the
+    // navigation would otherwise read the previous probe's /forbidden before the
+    // new document commits, and every route would pass without ever loading.
+    await navigate(client, `${FRONTEND_URL}/profile`);
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === '/profile',
+      'Could not reach a route the smoke actor may open before the refusal probe',
+    );
+
+    await navigate(client, `${FRONTEND_URL}${route}`);
+    await waitFor(
+      async () =>
+        (await evaluate(
+          client,
+          `location.pathname + '|' + (document.body.innerText.includes('ไม่มีสิทธิ์เข้าถึง') ? 'refused' : 'rendered')`,
+        )) === '/forbidden|refused',
+      async () =>
+        `${route} did not refuse a school-scoped admin: ${await evaluate(
+          client,
+          `JSON.stringify({
+            pathname: location.pathname,
+            heading: document.querySelector('h1, h2')?.textContent.trim() ?? null,
+          })`,
+        )}`,
+    );
   }
 }
 
