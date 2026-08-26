@@ -830,9 +830,15 @@ export class StudentsService {
         contact,
         normalizedGuardians,
         resolveAuditActorId(actor),
+        userScope,
       );
       if ('notFound' in result) {
         throw new NotFoundException(`Student with ID ${id} not found`);
+      }
+      if ('scopeConflict' in result) {
+        throw new ForbiddenException(
+          'ไม่สามารถแก้ไขข้อมูลนักเรียนนี้ภายใต้ขอบเขตสิทธิ์ปัจจุบันได้',
+        );
       }
       if ('missingPerson' in result) {
         throw new BadRequestException(

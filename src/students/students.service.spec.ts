@@ -402,6 +402,7 @@ describe('StudentsService', () => {
       undefined,
       undefined,
       5,
+      { school_ids: [10010002] },
     );
   });
 
@@ -643,6 +644,7 @@ describe('StudentsService', () => {
       { phone: '0812345678' },
       undefined,
       5,
+      undefined,
     );
   });
 

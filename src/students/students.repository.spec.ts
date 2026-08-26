@@ -282,18 +282,28 @@ describe('StudentsRepository management writes', () => {
     expect(studentTermInsert?.sql).not.toContain('$29');
   });
 
-  it('updates enrollment, contact and guardians through one transaction manager', async () => {
-    const queries: string[] = [];
+  function buildUpdateStudentManager(options: { scopedRows?: unknown[] } = {}) {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const manager = {
-      query: jest.fn((sql: string) => {
-        queries.push(sql);
-        if (sql.includes('SELECT person_uuid FROM student_term')) {
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (sql.includes('FROM student_term s')) {
+          return Promise.resolve(
+            options.scopedRows ?? [{ person_uuid: '10000000-0000-4000-8000-000000000001' }],
+          );
+        }
+        if (sql.includes('FROM student_term')) {
           return Promise.resolve([{ person_uuid: '10000000-0000-4000-8000-000000000001' }]);
         }
         if (sql.includes('FROM student_status')) return Promise.resolve([{ code: 20 }]);
         return Promise.resolve([]);
       }),
     };
+    return { queries, manager };
+  }
+
+  it('updates enrollment, contact and guardians through one transaction manager', async () => {
+    const { queries, manager } = buildUpdateStudentManager();
     const transaction = jest.fn((work: (value: typeof manager) => unknown) => work(manager));
     const repository = new StudentsRepository({ transaction } as never);
 
@@ -304,17 +314,63 @@ describe('StudentsRepository management writes', () => {
         { phone: '0812345678' },
         [{ relation: 'MOTHER', first_name: 'สมหญิง', last_name: 'ใจดี' }],
         5,
+        undefined,
       ),
     ).resolves.toEqual({ updated: true });
 
     expect(transaction).toHaveBeenCalledTimes(1);
-    const sql = queries.join('\n');
+    const sql = queries.map(({ sql: text }) => text).join('\n');
     expect(sql).toContain('FOR UPDATE');
     expect(sql).toContain("category <> 'UNMATCHED'");
     expect(sql).toContain('INSERT INTO student_person_contact');
     expect(sql).toContain('UPDATE student_guardian');
     expect(sql).toContain('INSERT INTO student_guardian');
     expect(sql).toContain('UPDATE student_term SET');
+  });
+
+  it('re-reads the locked enrollment through the actor scope before writing', async () => {
+    const { queries, manager } = buildUpdateStudentManager();
+    const transaction = jest.fn((work: (value: typeof manager) => unknown) => work(manager));
+    const repository = new StudentsRepository({ transaction } as never);
+
+    await expect(
+      repository.updateStudent(
+        '00000000-0000-4000-8000-000000000001',
+        { FirstName_Onec: 'สมศรี' },
+        undefined,
+        undefined,
+        5,
+        { school_ids: [10010003] },
+      ),
+    ).resolves.toEqual({ updated: true });
+
+    const lockIndex = queries.findIndex(({ sql }) => sql.includes('FOR UPDATE'));
+    const scopedIndex = queries.findIndex(({ sql }) => sql.includes('FROM student_term s'));
+    expect(lockIndex).toBeGreaterThanOrEqual(0);
+    // The scope check must observe the state the lock froze, not the state the
+    // caller saw before the transaction started.
+    expect(scopedIndex).toBeGreaterThan(lockIndex);
+    expect(queries[scopedIndex]?.sql).toContain('"SchoolID_Onec"');
+    expect(queries[scopedIndex]?.params).toContainEqual([10010003]);
+  });
+
+  it('refuses the write when the locked enrollment left the actor scope', async () => {
+    const { queries, manager } = buildUpdateStudentManager({ scopedRows: [] });
+    const transaction = jest.fn((work: (value: typeof manager) => unknown) => work(manager));
+    const repository = new StudentsRepository({ transaction } as never);
+
+    await expect(
+      repository.updateStudent(
+        '00000000-0000-4000-8000-000000000001',
+        { FirstName_Onec: 'สมศรี' },
+        undefined,
+        undefined,
+        5,
+        { school_ids: [10010003] },
+      ),
+    ).resolves.toEqual({ scopeConflict: true });
+
+    expect(queries.some(({ sql }) => sql.includes('UPDATE student_term SET'))).toBe(false);
   });
 
   it('corrects the scoped enrollment and canonical national-id row together', async () => {

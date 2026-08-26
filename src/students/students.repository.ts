@@ -880,16 +880,50 @@ export class StudentsRepository {
     contact: StudentContactDto | undefined,
     guardians: StudentGuardianInputDto[] | undefined,
     actorUserId: number | null,
+    userScope: DataScope | undefined,
   ): Promise<
-    { updated: true } | { notFound: true } | { missingPerson: true } | { invalidStatus: true }
+    | { updated: true }
+    | { notFound: true }
+    | { missingPerson: true }
+    | { invalidStatus: true }
+    | { scopeConflict: true }
   > {
     return await this.dataSource.transaction(async (manager) => {
-      const enrollments = (await manager.query(
-        `SELECT person_uuid FROM student_term WHERE student_uuid = $1 FOR UPDATE`,
+      // The caller already checked scope, but a concurrent enrollment move can
+      // invalidate that answer before this transaction takes its lock. Lock the
+      // row first, then re-read it through the scope so the check and the write
+      // observe the same committed state.
+      const lockedEnrollments = (await manager.query(
+        `
+          SELECT person_uuid
+          FROM student_term
+          WHERE student_uuid = $1 AND deleted_at IS NULL
+          FOR UPDATE
+        `,
         [studentUuid],
       )) as unknown as Array<{ person_uuid: string | null }>;
+      if (!lockedEnrollments[0]) return { notFound: true };
+
+      const scopeParams: unknown[] = [studentUuid];
+      let scopeSql = '';
+      if (userScope) {
+        const scope = buildDataScopeQuery(userScope, STUDENT_SCOPE_ALIASES, 2);
+        scopeSql = scope.sql ? `AND (${scope.sql})` : '';
+        pushParams(scopeParams, scope.params);
+      }
+      const enrollments = (await manager.query(
+        `
+          SELECT s.person_uuid
+          FROM student_term s
+          LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+          WHERE s.student_uuid = $1
+            AND s.deleted_at IS NULL
+            ${scopeSql}
+        `,
+        scopeParams,
+      )) as unknown as Array<{ person_uuid: string | null }>;
       const enrollment = enrollments[0];
-      if (!enrollment) return { notFound: true };
+      if (!enrollment) return { scopeConflict: true };
 
       if (data.student_status_code !== undefined) {
         const statuses = (await manager.query(
