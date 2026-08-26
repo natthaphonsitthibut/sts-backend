@@ -609,7 +609,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
 const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   imports: ['import-data'],
   users: ['manage-users-list'],
-  students: ['students'],
+  students: ['students', 'manage-students'],
   cases: ['dashboard'],
   tasks: ['dashboard'],
   attendance: ['attendance'],
