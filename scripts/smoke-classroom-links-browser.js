@@ -290,7 +290,7 @@ async function main() {
     await navigate(client, `${FRONTEND_URL}/attendance/classroom-links`);
     await waitFor(
       async () => (await evaluate(client, 'location.pathname')) === '/forbidden',
-      'A user without the page permission was not denied',
+      `A user without the page permission was not denied; landed on ${await evaluate(client, 'location.pathname')}`,
     );
 
     const allowedUser = {

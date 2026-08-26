@@ -648,8 +648,10 @@ async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) 
     [schoolId, String(ROOM_NUMBER), actorId],
   );
   await dataSource.query(
-    `DELETE FROM school_terms WHERE school_id=$1 AND academic_year=$2 AND created_by=$3`,
-    [schoolId, ACADEMIC_YEAR, actorId],
+    // ACADEMIC_YEAR + 1 is the year the natural-key edit assertion moves a term
+    // to; a run that dies mid-edit must not leave it behind for the next run.
+    `DELETE FROM school_terms WHERE school_id=$1 AND academic_year = ANY($2) AND created_by=$3`,
+    [schoolId, [ACADEMIC_YEAR, ACADEMIC_YEAR + 1], actorId],
   );
 }
 
@@ -910,6 +912,95 @@ async function main() {
       `Classroom creation failed: ${classroomResponse.status} ${JSON.stringify(classroomResponse.payload)}`,
     );
     const classroom = classroomResponse.payload.data;
+
+    // The edit dialog can change the natural key. An upsert keyed on
+    // (school, year, semester) would leave the opened row behind, so prove the
+    // same id survives a year change and no second row appears.
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure?termId=${term.id}`);
+    await waitFor(
+      async () =>
+        evaluate(
+          chrome.client,
+          `Boolean(document.querySelector('select[aria-label="เลือกภาคเรียน"] option[value="${term.id}"]'))`,
+        ),
+      'Term under edit did not appear in the selector',
+    );
+    await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', term.id);
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .find((button) => button.offsetParent !== null && button.textContent.trim() === 'แก้ภาคเรียน')
+        ?.click()`,
+    );
+    await waitFor(
+      async () => evaluate(chrome.client, `Boolean(document.querySelector('#term-academic-year'))`),
+      'Term edit dialog did not open',
+    );
+    await evaluate(
+      chrome.client,
+      `(() => {
+        const input = document.querySelector('#term-academic-year');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '${ACADEMIC_YEAR + 1}');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[role="dialog"] button[type="submit"]')?.click()`,
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT academic_year FROM school_terms WHERE id = $1`,
+          [Number(term.id)],
+        );
+        return Number(row?.academic_year) === ACADEMIC_YEAR + 1;
+      },
+      'Editing the academic year did not rewrite the opened term row',
+    );
+    const [termRowCount] = await dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM school_terms
+       WHERE school_id = $1 AND academic_year IN ($2, $3) AND semester = 1`,
+      [schoolA.id, ACADEMIC_YEAR, ACADEMIC_YEAR + 1],
+    );
+    assert(
+      Number(termRowCount?.count) === 1,
+      `Editing the academic year left an orphaned term row: ${JSON.stringify(termRowCount)}`,
+    );
+    const restoredTerm = await browserRequest(chrome.client, 'POST', '/api/attendance/terms', {
+      termId: Number(term.id),
+      schoolId: schoolA.id,
+      academicYear: ACADEMIC_YEAR,
+      semester: 1,
+      startsOn: '2026-06-01',
+      endsOn: '2027-03-31',
+      status: 'DRAFT',
+    });
+    assert(
+      restoredTerm.status === 201 && restoredTerm.payload.data.id === term.id,
+      `Restoring the term by id did not reuse the row: ${JSON.stringify(restoredTerm.payload)}`,
+    );
+
+    // A termId from an old link can name another school's term or a deleted one.
+    // The page must fall back to a real term instead of querying with it.
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure?termId=999999999`);
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `new URLSearchParams(location.search).get('termId')`,
+        )) === String(term.id),
+      'Stale termId in the URL was not normalized to a term of this school',
+    );
+    assert(
+      (await evaluate(
+        chrome.client,
+        `Array.from(document.querySelectorAll('button'))
+          .find((button) => button.textContent.trim() === 'เพิ่มห้องเรียน')?.disabled ?? null`,
+      )) === false,
+      'Add-classroom stayed disabled after the stale termId was normalized',
+    );
 
     await assertRememberedSearchKeepsRestoredPage(chrome.client);
     if (process.env.SMOKE_FILTER_STATE_ONLY === 'true') {

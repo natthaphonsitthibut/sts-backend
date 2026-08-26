@@ -23,8 +23,8 @@ const CHROME_PATH =
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9237);
 const ADMIN_USERNAME = 'entity_history_browser_admin';
 const ALL_PERMISSIONS = [
-  'home', 'dashboard', 'students', 'students', 'dashboard', 'dashboard',
-  'dashboard', 'student-self', 'dashboard', 'import-data', 'attendance-dashboard',
+  'home', 'dashboard', 'students', 'manage-students', 'dashboard', 'dashboard',
+  'dashboard', 'student-self', 'dashboard', 'import-data', 'attendance',
   'attendance', 'manage-users-list', 'manage-users-list',
   'manage-role-groups', 'login-links', 'settings',
   'audit-log',
@@ -322,6 +322,12 @@ async function main() {
 
   try {
     adminId = await upsertAdmin(dataSource, await passwordService.hash(password));
+    // The student pages are school-first: the history tab renders only once a
+    // school is chosen, so the smoke has to pick one the way a user would.
+    const [historySchool] = await dataSource.query(
+      `SELECT id FROM schools ORDER BY id LIMIT 1`,
+    );
+    assert(historySchool?.id, 'History smoke needs at least one school in scope');
     const [existingStudentHistoryFixture] = await dataSource.query(
       `SELECT id FROM audit_log
        WHERE actor_user_id = $1
@@ -366,7 +372,23 @@ async function main() {
        localStorage.setItem('admin_access', 'true');`,
     );
 
+    // The tab moved under the management page; the retired path must redirect
+    // rather than fall through to `students/:id` and ask for a student called
+    // "history".
     await navigate(client, `${FRONTEND_URL}/students/history`);
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === '/manage-students/history',
+      'Retired student history path did not redirect to the management route',
+    );
+    await waitFor(
+      async () =>
+        (await bodyText(client)).includes('เลือกโรงเรียนจากตัวกรองด้านบนเพื่อแสดงรายชื่อนักเรียน'),
+      'History tab did not ask for a school before rendering',
+    );
+    await navigate(
+      client,
+      `${FRONTEND_URL}/manage-students/history?schoolId=${historySchool.id}`,
+    );
     await waitForHistoryPanel(client, 'ประวัติข้อมูลนักเรียน');
     assertNoSecretLeak(await bodyText(client), 'Student history (unfiltered)');
     await capture(client, '/tmp/sts-entity-history-students-desktop.png');
@@ -382,7 +404,10 @@ async function main() {
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390, height: 844, deviceScaleFactor: 1, mobile: true,
     });
-    await navigate(client, `${FRONTEND_URL}/students/history`);
+    await navigate(
+      client,
+      `${FRONTEND_URL}/manage-students/history?schoolId=${historySchool.id}`,
+    );
     await waitForHistoryPanel(client, 'ประวัติข้อมูลนักเรียน');
     await capture(client, '/tmp/sts-entity-history-students-mobile.png');
 
