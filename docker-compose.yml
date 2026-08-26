@@ -58,7 +58,7 @@ services:
     entrypoint: ["/bin/sh", "-eu", "-c"]
     command:
       - >-
-        pg_dump --host=db --username=postgres --dbname=sts_task12_baseline
+        pg_dump --host=db --username=postgres --dbname=sts_dev_baseline
         --clean --if-exists --no-owner --no-privileges
         | gzip -9 > /output/sts_backup.sql.gz.next;
         gzip -t /output/sts_backup.sql.gz.next;
