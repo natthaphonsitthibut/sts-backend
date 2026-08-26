@@ -9,7 +9,7 @@ import {
 import { isClassInScope, resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
-import type { CalendarDayType, SchoolTermStatus } from './attendance-operations.types';
+import type { SchoolTermStatus } from './attendance-operations.types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_TERM_DAYS = 401;
@@ -25,7 +25,7 @@ export class AttendanceOperationsService {
   private async enqueueRiskProfileRefresh(reason: string): Promise<void> {
     await this.riskProfileService?.enqueueFull(reason).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to enqueue calendar risk profile recalculation: ${message}`);
+      this.logger.error(`Failed to enqueue term risk profile recalculation: ${message}`);
     });
   }
 
@@ -42,14 +42,13 @@ export class AttendanceOperationsService {
         startsOn: row.starts_on,
         endsOn: row.ends_on,
         status: row.status,
-        calendarDayCount: Number(row.calendar_day_count),
-        schoolDayCount: Number(row.school_day_count),
       })),
     };
   }
 
   async upsertTerm(
     input: {
+      termId?: number;
       schoolId: number;
       academicYear: number;
       semester: number;
@@ -59,28 +58,22 @@ export class AttendanceOperationsService {
     },
     actor?: AuthenticatedRequestUser,
   ) {
-    await this.assertCalendarAdmin(input.schoolId, actor);
-    const expectedDays = this.validateTermDates(input.startsOn, input.endsOn);
+    await this.assertTermAdmin(input.schoolId, actor);
+    this.validateTermDates(input.startsOn, input.endsOn);
     try {
       const row = await this.repository.withTransaction(async (executor) => {
-        const saved = await this.repository.upsertTerm(
-          { ...input, actorUserId: actor?.id ?? null },
-          executor,
-        );
-        if (input.status === 'ACTIVE') {
-          const coverage = await this.repository.getCalendarCoverage(
-            saved.id,
-            input.startsOn,
-            input.endsOn,
-            executor,
-          );
-          if (coverage.calendarDayCount !== expectedDays || coverage.schoolDayCount < 1) {
-            throw new BadRequestException(
-              'ต้องสร้างปฏิทินให้ครบทุกวันในช่วงภาคเรียนก่อนเปิดใช้งาน',
-            );
-          }
+        const payload = { ...input, actorUserId: actor?.id ?? null };
+        if (input.termId === undefined) {
+          return await this.repository.upsertTerm(payload, executor);
         }
-        return saved;
+        const locked = await this.repository.findTermByIdForUpdate(input.termId, executor);
+        if (!locked) throw new NotFoundException('ไม่พบภาคเรียน');
+        if (locked.school_id !== input.schoolId) {
+          throw new ForbiddenException('ภาคเรียนนี้ไม่ได้อยู่ในโรงเรียนที่เลือก');
+        }
+        const updated = await this.repository.updateTerm(input.termId, payload, executor);
+        if (!updated) throw new NotFoundException('ไม่พบภาคเรียน');
+        return updated;
       });
       await this.enqueueRiskProfileRefresh('school-term-change');
       return {
@@ -93,183 +86,43 @@ export class AttendanceOperationsService {
           startsOn: row.starts_on,
           endsOn: row.ends_on,
           status: row.status,
-          calendarDayCount: Number(row.calendar_day_count),
-          schoolDayCount: Number(row.school_day_count),
         },
       };
     } catch (error) {
       if (this.isUniqueViolation(error)) {
-        throw new ConflictException('โรงเรียนนี้มีภาคเรียนที่เปิดใช้งานอยู่แล้ว');
+        // Two different unique rules can reject the same write; naming the wrong
+        // one sends the user to fix a field that was never the problem.
+        throw new ConflictException(
+          this.violatedConstraint(error) === 'uq_school_terms_school_year_semester'
+            ? 'โรงเรียนนี้มีภาคเรียนของปีและภาคเรียนนี้อยู่แล้ว'
+            : 'โรงเรียนนี้มีภาคเรียนที่เปิดใช้งานอยู่แล้ว',
+        );
       }
       throw error;
     }
   }
 
-  async generateCalendar(termId: number, schoolDays: number[], actor?: AuthenticatedRequestUser) {
+  async deleteTerm(termId: number, actor?: AuthenticatedRequestUser) {
     const term = await this.getTerm(termId);
-    await this.assertCalendarAdmin(term.school_id, actor);
-    if (!term.starts_on || !term.ends_on) {
-      throw new BadRequestException('กรุณากำหนดวันเริ่มและวันสิ้นสุดภาคเรียนก่อน');
+    await this.assertTermAdmin(term.school_id, actor);
+    try {
+      const deletedId = await this.repository.withTransaction(async (executor) => {
+        const locked = await this.repository.findTermByIdForUpdate(termId, executor);
+        if (!locked) throw new NotFoundException('ไม่พบภาคเรียน');
+        if (locked.status !== 'DRAFT') {
+          throw new ConflictException('ลบได้เฉพาะภาคเรียนสถานะร่างที่ยังไม่ถูกใช้งาน');
+        }
+        const deleted = await this.repository.deleteTerm(termId, executor);
+        if (!deleted) throw new NotFoundException('ไม่พบภาคเรียน');
+        return deleted;
+      });
+      return { data: { id: deletedId } };
+    } catch (error) {
+      if (this.isForeignKeyViolation(error)) {
+        throw new ConflictException('ภาคเรียนนี้มีข้อมูลใช้งานแล้ว กรุณาปิดภาคเรียนแทนการลบ');
+      }
+      throw error;
     }
-    this.validateTermDates(term.starts_on, term.ends_on);
-    await this.repository.withTransaction(async (executor) => {
-      await this.repository.generateCalendar(termId, schoolDays, actor?.id ?? null, executor);
-    });
-    await this.enqueueRiskProfileRefresh('school-calendar-generate');
-    return await this.listCalendar(termId, actor);
-  }
-
-  async listCalendar(termId: number, actor?: AuthenticatedRequestUser) {
-    const term = await this.getTerm(termId);
-    await this.assertSchoolAccess(term.school_id, actor);
-    const rows = await this.repository.listCalendar(termId);
-    return {
-      data: rows.map((row) => ({
-        id: row.id,
-        termId: row.school_term_id,
-        date: row.calendar_date,
-        dayType: row.day_type,
-        reason: row.reason,
-        source: row.source,
-      })),
-    };
-  }
-
-  async updateCalendarDay(
-    calendarDayId: number,
-    dayType: CalendarDayType,
-    reason: string | undefined,
-    actor?: AuthenticatedRequestUser,
-  ) {
-    const day = await this.repository.findCalendarDayById(calendarDayId);
-    if (!day) throw new NotFoundException('ไม่พบวันในปฏิทิน');
-    const term = await this.getTerm(Number(day.school_term_id));
-    await this.assertCalendarAdmin(term.school_id, actor);
-    const updated = await this.repository.withTransaction(
-      async (executor) =>
-        await this.repository.updateCalendarDay(
-          calendarDayId,
-          dayType,
-          reason?.trim() || null,
-          actor?.id ?? null,
-          executor,
-        ),
-    );
-    if (!updated) throw new NotFoundException('ไม่พบวันในปฏิทิน');
-    await this.enqueueRiskProfileRefresh('school-calendar-day-change');
-    return {
-      data: {
-        id: updated.id,
-        termId: updated.school_term_id,
-        date: updated.calendar_date,
-        dayType: updated.day_type,
-        reason: updated.reason,
-        source: updated.source,
-      },
-    };
-  }
-
-  async getReconciliation(
-    termId: number,
-    date: string,
-    page: number,
-    limit: number,
-    actor?: AuthenticatedRequestUser,
-    gradeLevelId?: number,
-    room?: number,
-  ) {
-    const term = await this.getTerm(termId);
-    await this.assertSchoolAccess(term.school_id, actor);
-    if (term.starts_on && term.ends_on && (date < term.starts_on || date > term.ends_on)) {
-      throw new BadRequestException('วันที่อยู่นอกช่วงภาคเรียน');
-    }
-    if (term.status !== 'ACTIVE') {
-      throw new ConflictException('ต้องเปิดใช้งานภาคเรียนก่อนตรวจความครบถ้วน');
-    }
-    const calendarDay = await this.repository.findCalendarDay(term.id, date);
-    if (!calendarDay) {
-      throw new ConflictException('ปฏิทินภาคเรียนไม่ครบสำหรับวันที่เลือก');
-    }
-    if (calendarDay && calendarDay.day_type !== 'SCHOOL_DAY') {
-      return {
-        rows: [],
-        totalCount: 0,
-        page,
-        limit,
-        dayType: calendarDay.day_type,
-        summary: { completed: 0, missing: 0, incomplete: 0 },
-      };
-    }
-    const result = await this.repository.listReconciliation(
-      term,
-      date,
-      resolveActorDataScope(actor),
-      page,
-      limit,
-      gradeLevelId,
-      room,
-    );
-    return {
-      rows: result.rows.map((row) => ({
-        gradeLevelId: row.grade_level_id,
-        grade: row.grade_label,
-        room: row.room_id,
-        expectedRosterCount: row.expected_roster_count,
-        recordedCount: row.recorded_count,
-        sessionId: row.session_id,
-        sessionStatus: row.session_status,
-        revision: row.revision,
-        operationalStatus: row.operational_status,
-      })),
-      totalCount: result.totalCount,
-      page,
-      limit,
-      dayType: calendarDay?.day_type ?? null,
-      summary: result.summary,
-    };
-  }
-
-  async getReconciliationAnomalies(
-    termId: number,
-    page: number,
-    limit: number,
-    actor?: AuthenticatedRequestUser,
-    gradeLevelId?: number,
-    room?: number,
-  ) {
-    const term = await this.getTerm(termId);
-    await this.assertSchoolAccess(term.school_id, actor);
-    if (term.status !== 'ACTIVE') {
-      throw new ConflictException('ต้องเปิดใช้งานภาคเรียนก่อนตรวจรายการผิดปกติ');
-    }
-    const result = await this.repository.listSessionAnomalies(
-      term,
-      resolveActorDataScope(actor),
-      page,
-      limit,
-      gradeLevelId,
-      room,
-    );
-    return {
-      rows: result.rows.map((row) => ({
-        sessionId: row.session_id,
-        date: row.attendance_date,
-        gradeLevelId: row.grade_level_id,
-        grade: row.grade_label ?? `ชั้น ${row.grade_level_id}`,
-        room: row.room_id,
-        expectedRosterCount: row.expected_roster_count,
-        recordedCount: row.recorded_count,
-        sessionStatus: row.session_status,
-        revision: row.revision,
-        dayType: row.day_type,
-        calendarReason: row.calendar_reason,
-        anomalyType: row.anomaly_type,
-      })),
-      totalCount: result.totalCount,
-      page,
-      limit,
-      summary: result.summary,
-    };
   }
 
   private async getTerm(termId: number) {
@@ -311,14 +164,11 @@ export class AttendanceOperationsService {
     };
   }
 
-  private async assertCalendarAdmin(
-    schoolId: number,
-    actor?: AuthenticatedRequestUser,
-  ): Promise<void> {
+  private async assertTermAdmin(schoolId: number, actor?: AuthenticatedRequestUser): Promise<void> {
     await this.assertSchoolAccess(schoolId, actor);
     const scope = resolveActorDataScope(actor);
     if (scope?.grade_levels?.length || scope?.room_ids?.length) {
-      throw new ForbiddenException('การตั้งปฏิทินต้องใช้สิทธิ์ระดับโรงเรียนขึ้นไป');
+      throw new ForbiddenException('การจัดการภาคเรียนต้องใช้สิทธิ์ระดับโรงเรียนขึ้นไป');
     }
   }
 
@@ -355,12 +205,27 @@ export class AttendanceOperationsService {
     return days;
   }
 
+  private violatedConstraint(error: unknown): string | null {
+    if (typeof error !== 'object' || error === null || !('constraint' in error)) return null;
+    const constraint = (error as { constraint?: unknown }).constraint;
+    return typeof constraint === 'string' ? constraint : null;
+  }
+
   private isUniqueViolation(error: unknown): boolean {
     return (
       typeof error === 'object' &&
       error !== null &&
       'code' in error &&
       (error as { code?: unknown }).code === '23505'
+    );
+  }
+
+  private isForeignKeyViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === '23503'
     );
   }
 }

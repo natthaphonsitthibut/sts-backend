@@ -425,7 +425,7 @@ async function upsertSmokeUser(dataSource, passwordHash) {
             "LastName" = 'Smoke',
             "PersonID_Onec" = NULL,
             status = 'ACTIVE',
-            permissions = '["home","audit-log","manage-users-list","attendance-dashboard"]'::jsonb,
+            permissions = '["home","audit-log","manage-users-list","attendance"]'::jsonb,
             role = 'ADMIN',
             data_scope = '{"global":true}'::jsonb,
             must_change_password = FALSE,
@@ -469,7 +469,7 @@ async function upsertSmokeUser(dataSource, passwordHash) {
       )
       VALUES (
         $1, $2, 'ProfileBrowser', 'Smoke', 'ACTIVE',
-        '["home","audit-log","manage-users-list","attendance-dashboard"]'::jsonb, 'ADMIN',
+        '["home","audit-log","manage-users-list","attendance"]'::jsonb, 'ADMIN',
         '{"global":true}'::jsonb, FALSE, 'Automated profile browser smoke',
         'AUTOMATED_TEST', 'profile.browser.smoke@example.invalid', '0891234567'
       )
@@ -587,7 +587,7 @@ async function main() {
           FirstName: 'ProfileBrowser',
           LastName: 'Smoke',
           roles: ['ADMIN'],
-          permissions: ['home', 'audit-log', 'manage-users-list', 'attendance-dashboard'],
+          permissions: ['home', 'audit-log', 'manage-users-list', 'attendance'],
           data_scope: { global: true },
           must_change_password: false,
         }),

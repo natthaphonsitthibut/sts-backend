@@ -90,7 +90,7 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain("AND a.session_kind = 'SUBJECT'");
   });
 
-  it('builds the profile summary from current-term subject attendance only', async () => {
+  it('builds the profile summary from one canonical row per recorded day', async () => {
     const queries: string[] = [];
     const repository = createRepositoryWithQueryCapture(queries);
 
@@ -101,12 +101,11 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain('s."GPAX_Onec" AS cumulative_gpax');
     expect(queries[0]).toContain('term.starts_on::text AS starts_on');
     expect(queries[0]).toContain('term.ends_on::text AS ends_on');
-    expect(queries[0]).toContain("attendance.session_kind = 'SUBJECT'");
-    expect(queries[0]).not.toContain("attendance.session_kind = 'DAILY'");
+    expect(queries[0]).toContain('LEFT JOIN attendance_day attendance');
     expect(queries[0]).toContain('attendance."AcademicYear_Onec" = s."AcademicYear_Onec"');
   });
 
-  it('classifies calendar days from subject-period attendance without a daily fallback', async () => {
+  it('classifies recorded days from subject-period attendance without a calendar dependency', async () => {
     const queries: string[] = [];
     const repository = createRepositoryWithQueryCapture(queries);
 
@@ -116,8 +115,7 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain("attendance.session_kind = 'SUBJECT'");
     expect(queries[0]).not.toContain("attendance.session_kind = 'DAILY'");
     expect(queries[0]).toContain('GROUP BY attendance."AttendanceDate"');
-    expect(queries[0]).toContain('JOIN school_calendar_days calendar_day');
-    expect(queries[0]).toContain("calendar_day.day_type = 'SCHOOL_DAY'");
+    expect(queries[0]).not.toContain('school_calendar_days');
     expect(queries[0]).toContain('attendance."AttendanceStatus" <> 4');
     expect(queries[0]).toContain('WHERE measured_periods > 0');
     expect(queries[0]).toContain('attendance."AttendanceDate"::text AS date');
@@ -139,8 +137,7 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[0]).toContain("attendance.session_kind = 'SUBJECT'");
     expect(queries[0]).toContain('attendance."AttendanceDate" = $2::date');
     expect(queries[0]).toContain('JOIN attendance_record_statuses status');
-    expect(queries[0]).toContain('JOIN school_calendar_days calendar_day');
-    expect(queries[0]).toContain("calendar_day.day_type = 'SCHOOL_DAY'");
+    expect(queries[0]).not.toContain('school_calendar_days');
     expect(queries[0]).toContain('LEFT JOIN subjects subject');
     expect(queries[0]).toContain('LEFT JOIN teachers recorder');
     expect(queries[0]).toContain(

@@ -154,7 +154,7 @@ async function main() {
     [scope] = await dataSource.query(`
       SELECT classroom.id::int AS classroom_id, classroom.school_id,
              classroom.school_term_id::int,
-             calendar.calendar_date::text AS check_in_date,
+             available.check_in_date,
              offering.id::int AS classroom_subject_id,
              membership.id::int AS teacher_membership_id,
              membership.teacher_id::int, lower(btrim(teacher.email)) AS teacher_email,
@@ -173,11 +173,6 @@ async function main() {
         ON teacher.id = membership.teacher_id
        AND teacher.teacher_status = 'ACTIVE'
        AND teacher.deleted_at IS NULL
-      JOIN school_calendar_days calendar
-        ON calendar.school_term_id = classroom.school_term_id
-       AND calendar.day_type = 'SCHOOL_DAY'
-       AND calendar.calendar_date <= (now() AT TIME ZONE 'Asia/Bangkok')::date
-       AND calendar.deleted_at IS NULL
       JOIN classroom_subjects offering
         ON offering.classroom_id = classroom.id
        AND offering.school_id = classroom.school_id
@@ -193,6 +188,26 @@ async function main() {
        AND homeroom_subject.code = 'HOMEROOM101'
        AND homeroom_subject.is_active
        AND homeroom_subject.deleted_at IS NULL
+      JOIN LATERAL (
+        SELECT candidate.check_in_date::date AS check_in_date
+        FROM generate_series(
+          term.starts_on,
+          LEAST(term.ends_on, (now() AT TIME ZONE 'Asia/Bangkok')::date),
+          INTERVAL '1 day'
+        ) AS candidate(check_in_date)
+        WHERE term.starts_on <= (now() AT TIME ZONE 'Asia/Bangkok')::date
+          AND NOT EXISTS (
+            SELECT 1 FROM attendance_sessions existing
+            WHERE existing.school_term_id = classroom.school_term_id
+              AND existing.classroom_id = classroom.id
+              AND existing.classroom_subject_id = offering.id
+              AND existing.attendance_date = candidate.check_in_date::date
+              AND existing.record_storage_mode = 'EXCEPTIONS'
+              AND existing.deleted_at IS NULL
+          )
+        ORDER BY candidate.check_in_date DESC
+        LIMIT 1
+      ) available ON TRUE
       WHERE classroom.classroom_status = 'ACTIVE'
         AND classroom.deleted_at IS NULL
         AND teacher.email IS NOT NULL
@@ -208,22 +223,13 @@ async function main() {
             AND enrollment.deleted_at IS NULL
         ) >= 2
         AND NOT EXISTS (
-          SELECT 1 FROM attendance_sessions existing
-          WHERE existing.school_term_id = classroom.school_term_id
-            AND existing.classroom_id = classroom.id
-            AND existing.classroom_subject_id = offering.id
-            AND existing.attendance_date = calendar.calendar_date
-            AND existing.record_storage_mode = 'EXCEPTIONS'
-            AND existing.deleted_at IS NULL
-        )
-        AND NOT EXISTS (
           SELECT 1 FROM teacher_messaging_accounts account
           WHERE account.teacher_id = teacher.id
             AND account.provider = 'LINE'
             AND account.unlinked_at IS NULL
             AND account.deleted_at IS NULL
         )
-      ORDER BY calendar.calendar_date DESC, classroom.id, membership.id
+      ORDER BY available.check_in_date DESC, classroom.id, membership.id
       LIMIT 1
     `);
     assert(scope, 'No active classroom and same-school teacher membership are available');

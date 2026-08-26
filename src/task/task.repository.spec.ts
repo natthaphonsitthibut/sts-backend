@@ -344,9 +344,8 @@ describe('TaskRepository', () => {
               term_absent_days: 9,
               absence_reset_after_date: '2026-08-01',
               late_count: 1,
-              school_day_count: 20,
-              weighted_absence_days: '6.25',
-              weighted_attendance_percent: '68.8',
+              recorded_day_count: 20,
+              attendance_rate_percent: '68.8',
               risk_tier: 'HIGH',
               risk_score: '1.2500',
               open_case_count: 1,
@@ -409,7 +408,7 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('risk_tier = $4');
     expect(queries[1].sql).toContain('risk_tier = $4');
     expect(queries[2].sql).toContain(
-      'ORDER BY weighted_attendance_percent ASC NULLS LAST, risk_severity DESC, student_name ASC',
+      'ORDER BY attendance_rate_percent ASC NULLS LAST, risk_severity DESC, student_name ASC',
     );
     expect(queries[2].sql).toContain('LIMIT $5 OFFSET $6');
   });

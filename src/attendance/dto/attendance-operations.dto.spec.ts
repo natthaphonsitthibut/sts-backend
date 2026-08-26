@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
-import { AttendanceReconciliationQueryDto, UpsertSchoolTermDto } from './attendance-operations.dto';
+import { UpsertSchoolTermDto } from './attendance-operations.dto';
 
 const TERM_BASE = {
   schoolId: 1001,
@@ -10,8 +10,8 @@ const TERM_BASE = {
   status: 'ACTIVE',
 };
 
-describe('attendance operations DTOs', () => {
-  it('accepts real calendar dates for a school term', () => {
+describe('school term DTOs', () => {
+  it('accepts real dates for a school term', () => {
     expect(
       validateSync(
         plainToInstance(UpsertSchoolTermDto, {
@@ -21,6 +21,36 @@ describe('attendance operations DTOs', () => {
         }),
       ),
     ).toHaveLength(0);
+  });
+
+  it('carries an optional term id so an edit can rewrite its own row', () => {
+    const created = plainToInstance(UpsertSchoolTermDto, {
+      ...TERM_BASE,
+      startsOn: '2026-05-16',
+      endsOn: '2026-10-10',
+    });
+    expect(validateSync(created)).toHaveLength(0);
+    expect(created.termId).toBeUndefined();
+
+    const edited = plainToInstance(UpsertSchoolTermDto, {
+      ...TERM_BASE,
+      termId: '10',
+      startsOn: '2026-05-16',
+      endsOn: '2026-10-10',
+    });
+    expect(validateSync(edited)).toHaveLength(0);
+    expect(edited.termId).toBe(10);
+
+    expect(
+      validateSync(
+        plainToInstance(UpsertSchoolTermDto, {
+          ...TERM_BASE,
+          termId: 'not-a-term',
+          startsOn: '2026-05-16',
+          endsOn: '2026-10-10',
+        }),
+      ),
+    ).toHaveLength(1);
   });
 
   it.each(['2026-02-30', '2026-13-01', '2026-00-10', '2026-05-16T00:00:00Z'])(
@@ -46,13 +76,4 @@ describe('attendance operations DTOs', () => {
       ).toHaveLength(1);
     },
   );
-
-  it('accepts a real reconciliation date and rejects one that does not exist', () => {
-    const build = (date: string) =>
-      plainToInstance(AttendanceReconciliationQueryDto, { termId: 21, date });
-
-    expect(validateSync(build('2026-08-26'))).toHaveLength(0);
-    expect(validateSync(build('2026-02-30'))).toHaveLength(1);
-    expect(validateSync(build('26/08/2026'))).toHaveLength(1);
-  });
 });

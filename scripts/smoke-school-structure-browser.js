@@ -802,6 +802,20 @@ async function main() {
     );
     assert(scopedSchoolNames.includes(schoolA.name), 'Scoped school A was not visible');
     assert(!scopedSchoolNames.includes(schoolB.name), 'School B leaked into scoped browser page');
+    assert(
+      await evaluate(
+        chrome.client,
+        `!document.querySelector('a[href="/attendance-operations"]')`,
+      ),
+      'Retired attendance completeness navigation remained visible',
+    );
+    await navigate(chrome.client, `${FRONTEND_URL}/attendance-operations`);
+    await waitFor(
+      async () =>
+        String(await evaluate(chrome.client, 'document.body.innerText')).includes('ไม่พบหน้านี้'),
+      'Retired attendance completeness route did not render the standard 404',
+    );
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure`);
 
     const crossSchool = await browserRequest(
       chrome.client,
@@ -809,6 +823,63 @@ async function main() {
       `/api/school-structure/classrooms?schoolId=${schoolB.id}`,
     );
     assert(crossSchool.status === 404, 'Cross-school classroom probing did not fail closed');
+
+    const deletableTermResponse = await browserRequest(
+      chrome.client,
+      'POST',
+      '/api/attendance/terms',
+      {
+        schoolId: schoolA.id,
+        academicYear: ACADEMIC_YEAR,
+        semester: 2,
+        startsOn: '2027-04-01',
+        endsOn: '2027-05-31',
+        status: 'DRAFT',
+      },
+    );
+    assert(
+      deletableTermResponse.status === 201,
+      `Draft term creation for hard-delete failed: ${deletableTermResponse.status}`,
+    );
+    const deletableTerm = deletableTermResponse.payload.data;
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure`);
+    await waitFor(
+      async () =>
+        evaluate(
+          chrome.client,
+          `Boolean(document.querySelector('select[aria-label="เลือกภาคเรียน"] option[value="${deletableTerm.id}"]'))`,
+        ),
+      'New draft term did not appear in the term selector',
+    );
+    await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', deletableTerm.id);
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .find((button) => button.offsetParent !== null && button.textContent.trim() === 'ลบภาคเรียน')
+        ?.click()`,
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(chrome.client, 'document.body.innerText')).includes(
+          'ลบภาคเรียนนี้?',
+        ),
+      'Draft term delete confirmation did not open',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('[role="dialog"] button'))
+        .find((button) => button.textContent.trim() === 'ลบภาคเรียน')?.click()`,
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT COUNT(*)::int AS count FROM school_terms WHERE id = $1`,
+          [Number(deletableTerm.id)],
+        );
+        return Number(row?.count) === 0;
+      },
+      'Unused draft term was not hard-deleted',
+    );
 
     const termResponse = await browserRequest(chrome.client, 'POST', '/api/attendance/terms', {
       schoolId: schoolA.id,
@@ -1207,14 +1278,6 @@ async function main() {
     // Subject attendance now lives in submitted sessions plus a frozen roster;
     // a student with no exception row reads back as present through
     // `attendance_effective_records`. The legacy per-mark table is gone.
-    await dataSource.query(
-      `INSERT INTO school_calendar_days (
-         school_term_id, calendar_date, day_type, source, created_by, updated_by
-       ) VALUES ($1, $2::date, 'SCHOOL_DAY', 'MANUAL', $3, $3)
-       ON CONFLICT (school_term_id, calendar_date) DO UPDATE
-         SET day_type = 'SCHOOL_DAY', deleted_at = NULL, deleted_by = NULL`,
-      [Number(term.id), RECORDED_ATTENDANCE_DATE, actor.id],
-    );
     const subjectOfferings = await dataSource.query(
       `INSERT INTO classroom_subjects (
          school_id, classroom_id, school_subject_id, created_by, updated_by

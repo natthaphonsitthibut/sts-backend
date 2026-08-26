@@ -957,7 +957,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
                sc.name AS school_name, gl.label AS grade, s."RoomID_Onec"::text AS room,
                profile.risk_tier, profile.consecutive_absent_days, profile.term_absent_days,
                profile.absent_days_since_case_reset AS absent_days_since_case_reset, profile.absence_reset_after_date,
-               profile.late_count, profile.weighted_attendance_percent, profile.open_case_count,
+               profile.late_count, profile.attendance_rate_percent, profile.open_case_count,
                profile.profile_calculated_at
         FROM student_term s
         JOIN student_current_enrollment_resolution current_enrollment
@@ -987,7 +987,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'absent_days_since_case_reset',
         'absence_reset_after_date',
         'late_count',
-        'weighted_attendance_percent',
+        'attendance_rate_percent',
         'open_case_count',
         'profile_calculated_at',
       ],

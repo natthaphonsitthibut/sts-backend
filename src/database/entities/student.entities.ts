@@ -230,26 +230,17 @@ export class StudentRiskProfileEntity {
   @Column({ name: 'late_count', type: 'integer', default: 0 })
   lateCount!: number;
 
-  @Column({ name: 'school_day_count', type: 'integer', default: 0 })
-  schoolDayCount!: number;
+  @Column({ name: 'recorded_day_count', type: 'integer', default: 0 })
+  recordedDayCount!: number;
 
   @Column({
-    name: 'weighted_absence_days',
-    type: 'numeric',
-    precision: 8,
-    scale: 2,
-    default: 0,
-  })
-  weightedAbsenceDays!: string;
-
-  @Column({
-    name: 'weighted_attendance_percent',
+    name: 'attendance_rate_percent',
     type: 'numeric',
     precision: 5,
     scale: 2,
     nullable: true,
   })
-  weightedAttendancePercent!: string | null;
+  attendanceRatePercent!: string | null;
 
   @Column({ name: 'risk_tier', type: 'varchar', length: 16 })
   riskTier!: string;

@@ -2611,9 +2611,8 @@ export class TaskRepository {
           profile.absence_reset_after_date,
           COALESCE(profile.late_count, 0)::int AS late_count,
           COALESCE(profile.subject_late_count, 0)::int AS subject_late_count,
-          COALESCE(profile.school_day_count, 0)::int AS school_day_count,
-          COALESCE(profile.weighted_absence_days, 0)::numeric AS weighted_absence_days,
-          profile.weighted_attendance_percent,
+          COALESCE(profile.recorded_day_count, 0)::int AS recorded_day_count,
+          profile.attendance_rate_percent,
           COALESCE(profile.risk_tier, 'NORMAL') AS risk_tier,
           COALESCE(profile.risk_severity, 0)::int AS risk_severity,
           COALESCE(profile.risk_score, 0)::numeric AS risk_score,
@@ -2797,7 +2796,7 @@ export class TaskRepository {
             : filters.sortBy === 'room'
               ? `room ${sortDirection}, grade ASC, student_name ASC`
               : filters.sortBy === 'attendance'
-                ? `weighted_attendance_percent ${sortDirection} NULLS LAST, risk_severity DESC, student_name ASC`
+                ? `attendance_rate_percent ${sortDirection} NULLS LAST, risk_severity DESC, student_name ASC`
                 : filters.sortBy === 'openCases'
                   ? `open_case_count ${sortDirection}, risk_severity DESC, risk_score DESC, student_name ASC`
                   : filters.sortBy === 'updatedAt'
@@ -2824,9 +2823,8 @@ export class TaskRepository {
           absence_reset_after_date,
           late_count,
           subject_late_count,
-          school_day_count,
-          ROUND(weighted_absence_days, 2) AS weighted_absence_days,
-          weighted_attendance_percent,
+          recorded_day_count,
+          attendance_rate_percent,
           risk_tier,
           ROUND(risk_score, 4) AS risk_score,
           open_case_count,

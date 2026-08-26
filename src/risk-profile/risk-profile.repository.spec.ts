@@ -57,6 +57,13 @@ describe('RiskProfileRepository', () => {
     );
     expect(queries[0].sql).toContain('term_absent_days');
     expect(queries[0].sql).toContain('absence_reset_after_date');
+    expect(queries[0].sql).toContain('absent_days_since_case_reset >= $1');
+    expect(queries[0].sql).toContain('(day."AttendanceStatus" <> 4) AS is_measured_day');
+    expect(queries[0].sql).toContain('(day."AttendanceStatus" IN (1, 3)) AS is_attended_day');
+    expect(queries[0].sql.replace(/\s+/g, ' ')).toContain(
+      'term_attendance.attended_day_count, 0)::numeric * 100 / term_attendance.recorded_day_count::numeric',
+    );
+    expect(queries[0].sql).not.toContain('school_calendar_days');
   });
 
   it('recalculates all active enrollments without a student filter', async () => {
@@ -85,9 +92,8 @@ describe('RiskProfileRepository', () => {
       'absence_reset_after_date',
       'late_count',
       'subject_late_count',
-      'school_day_count',
-      'weighted_absence_days',
-      'weighted_attendance_percent',
+      'recorded_day_count',
+      'attendance_rate_percent',
       'risk_tier',
       'risk_severity',
       'risk_score',

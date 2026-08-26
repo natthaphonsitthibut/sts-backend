@@ -841,7 +841,6 @@ async function assertCanonicalRouteNavigation(client) {
       'จัดการลิงก์ห้องเรียน',
       '/attendance/classroom-links',
     ],
-    ['/attendance-operations', 'ความครบถ้วน', '/attendance-operations'],
     ['/classrooms', 'ห้องเรียนทั้งหมด', '/classrooms'],
     ['/school-structure', 'จัดการภาคเรียนและห้องเรียน', '/school-structure'],
     ['/import-data', 'นำเข้าข้อมูล', '/import-data'],

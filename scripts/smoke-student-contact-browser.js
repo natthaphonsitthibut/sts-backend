@@ -212,31 +212,6 @@ async function selectComboboxOption(client, ariaLabel, optionLabel) {
   );
 }
 
-async function selectComboboxOptionByPlaceholder(client, placeholder, optionLabel) {
-  const selector = `input[placeholder=${JSON.stringify(placeholder)}]`;
-  await waitFor(
-    async () => Boolean(await evaluate(client, `Boolean(document.querySelector(${JSON.stringify(selector)}))`)),
-    `Combobox with placeholder "${placeholder}" did not render`,
-  );
-  await evaluate(client, `document.querySelector(${JSON.stringify(selector)}).click()`);
-  await waitFor(
-    async () =>
-      Boolean(
-        await evaluate(
-          client,
-          `Boolean([...document.querySelectorAll('li button')]
-            .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)}))`,
-        ),
-      ),
-    `Combobox option "${optionLabel}" did not open`,
-  );
-  await evaluate(
-    client,
-    `[...document.querySelectorAll('li button')]
-      .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)}).click()`,
-  );
-}
-
 async function click(client, expression, message) {
   await evaluate(
     client,
@@ -497,7 +472,7 @@ async function main() {
 
     await navigate(
       client,
-      `${FRONTEND_URL}/manage-students?studentStatus=INVALID_STATUS`,
+      `${FRONTEND_URL}/manage-students?schoolId=${classroom.school_id}&studentStatus=INVALID_STATUS`,
     );
     await waitFor(
       async () =>
@@ -511,7 +486,7 @@ async function main() {
     );
     await navigate(
       client,
-      `${FRONTEND_URL}/manage-students/history?auditAction=INVALID_ACTION&auditFrom=2026-99-99&auditTo=2026-02-30`,
+      `${FRONTEND_URL}/manage-students/history?schoolId=${classroom.school_id}&auditAction=INVALID_ACTION&auditFrom=2026-99-99&auditTo=2026-02-30`,
     );
     await waitFor(
       async () =>
@@ -527,7 +502,7 @@ async function main() {
     );
     await navigate(
       client,
-      `${FRONTEND_URL}/manage-students/history?auditFrom=2026-08-02&auditTo=2026-08-01`,
+      `${FRONTEND_URL}/manage-students/history?schoolId=${classroom.school_id}&auditFrom=2026-08-02&auditTo=2026-08-01`,
     );
     await waitFor(
       async () =>
@@ -546,34 +521,20 @@ async function main() {
       async () => Boolean(await evaluate(client, `Boolean(document.querySelector(${JSON.stringify(auditSearchSelector)}))`)),
       'Audit-log search did not render',
     );
-    await fillInput(client, auditSearchSelector, 'global-sensitive-filter');
-    await selectComboboxOption(client, 'ค้นหาโรงเรียน', classroom.school_name);
-    await waitFor(
-      async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === '',
-      'Audit search crossed from global scope into the first school scope',
-    );
     await fillInput(client, auditSearchSelector, 'first-school-filter');
-    await selectComboboxOption(client, 'ค้นหาโรงเรียน', 'ทุกโรงเรียน');
-    await selectComboboxOptionByPlaceholder(client, 'ค้นหาจังหวัด', 'ทุกจังหวัด');
-    await waitFor(
-      async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === 'global-sensitive-filter',
-      'Audit search did not restore the remembered global-scope value',
-    );
-    await selectComboboxOption(client, 'ค้นหาโรงเรียน', outsideClassroom.school_name);
+    await selectComboboxOption(client, 'กรองตามโรงเรียน', outsideClassroom.school_name);
     await waitFor(
       async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === '',
       'Audit search crossed into a second school scope',
     );
-    await selectComboboxOption(client, 'ค้นหาโรงเรียน', 'ทุกโรงเรียน');
-    await selectComboboxOptionByPlaceholder(client, 'ค้นหาจังหวัด', 'ทุกจังหวัด');
-    await selectComboboxOption(client, 'ค้นหาโรงเรียน', classroom.school_name);
+    await selectComboboxOption(client, 'กรองตามโรงเรียน', classroom.school_name);
     await waitFor(
       async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === 'first-school-filter',
       'Audit search did not restore the first school scope value',
     );
 
     // --- Management list → avatar detail → edit → back keeps its origin. ---
-    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await navigate(client, `${FRONTEND_URL}/manage-students?schoolId=${classroom.school_id}`);
     await waitFor(
       async () =>
         Boolean(
@@ -584,6 +545,27 @@ async function main() {
         ),
       'Managed student search did not render',
     );
+    const studentFilterPattern = await evaluate(
+      client,
+      `(() => {
+        const status = document.querySelector('select[aria-label="กรองตามสถานะการเรียน"]');
+        const school = document.querySelector('input[aria-label="กรองตามโรงเรียน"]');
+        const searchRow = status?.closest('div.flex.flex-col.gap-3');
+        const sections = searchRow?.parentElement;
+        return {
+          hasProvince: Boolean(document.querySelector('input[placeholder="ค้นหาจังหวัด"]')),
+          hasDistrict: Boolean(document.querySelector('input[placeholder="ค้นหาอำเภอ/เขต"]')),
+          separated: Boolean(
+            sections && status && school
+              && sections.children[0]?.contains(status)
+              && sections.children[1]?.contains(school)
+          ),
+        };
+      })()`,
+    );
+    assert(!studentFilterPattern.hasProvince, 'Managed student list still renders province filter');
+    assert(!studentFilterPattern.hasDistrict, 'Managed student list still renders district filter');
+    assert(studentFilterPattern.separated, 'Student status filter is not separated from school scope');
     await fillInput(client, 'input[placeholder="ค้นหาชื่อนักเรียน..."]', 'อินทรกำแหง');
     await waitFor(
       async () =>
@@ -692,7 +674,7 @@ async function main() {
       })()`,
     );
     assert(duplicateResult?.status === 409, `Duplicate student returned ${duplicateResult?.status}`);
-    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await navigate(client, `${FRONTEND_URL}/manage-students?schoolId=${classroom.school_id}`);
     await waitFor(
       async () =>
         Boolean(
@@ -1041,6 +1023,18 @@ async function main() {
       })()`,
     );
     assert(limitedLogin?.status === 201, `Limited-scope login failed with ${limitedLogin?.status}`);
+    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('tbody tr'))
+              && !document.querySelector('input[aria-label="กรองตามโรงเรียน"]')`,
+          ),
+        ),
+      'Single-school actor did not receive the implied school roster',
+    );
     const crossScopeReplacementNationalId = randomThaiNationalId();
     const deniedCorrection = await evaluate(
       client,
@@ -1112,6 +1106,9 @@ async function main() {
           'national-id correction updates every linked term enrollment with PII-safe actor/time/reason audit',
           'cross-scope canonical identity correction returns 403 without a partial write',
           'invalid student-status and audit URL filters fall back without API errors',
+          'student list requires one scoped school and removes geographic filters',
+          'single-school actor receives an implied school without a school picker',
+          'student status filter is separated from the school/classroom scope row',
           'audit search stays isolated and restores independently across school scopes',
           'guardian rows default FATHER → MOTHER → GUARDIAN',
           'GUARDIAN row shows relation-note field',

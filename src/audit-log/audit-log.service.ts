@@ -611,8 +611,8 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   users: ['manage-users-list'],
   students: ['students'],
   cases: ['dashboard'],
-  tasks: ['dashboard', 'attendance-dashboard'],
-  attendance: ['attendance', 'attendance-dashboard'],
+  tasks: ['dashboard'],
+  attendance: ['attendance'],
   timetable: ['manage-subjects'],
   subjects: ['manage-subjects'],
 };

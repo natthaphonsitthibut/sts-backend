@@ -1270,9 +1270,8 @@ export class StudentsRepository {
          AND term.academic_year = s."AcademicYear_Onec"
          AND term.semester = s."Semester_Onec"
          AND term.deleted_at IS NULL
-        LEFT JOIN attendance_effective_records attendance
+        LEFT JOIN attendance_day attendance
           ON attendance.student_uuid = s.student_uuid
-         AND attendance.session_kind = 'SUBJECT'
          AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
          AND attendance."Semester_Onec" = s."Semester_Onec"
         WHERE s.student_uuid = $1
@@ -1334,13 +1333,6 @@ export class StudentsRepository {
            AND attendance.session_kind = 'SUBJECT'
            AND attendance."AcademicYear_Onec" = s."AcademicYear_Onec"
            AND attendance."Semester_Onec" = s."Semester_Onec"
-          JOIN attendance_sessions attendance_session
-            ON attendance_session.id = attendance.session_id
-          JOIN school_calendar_days calendar_day
-            ON calendar_day.school_term_id = attendance_session.school_term_id
-           AND calendar_day.calendar_date = attendance_session.attendance_date
-           AND calendar_day.day_type = 'SCHOOL_DAY'
-           AND calendar_day.deleted_at IS NULL
           WHERE s.student_uuid = $1
           GROUP BY attendance."AttendanceDate"
         )
@@ -1420,11 +1412,6 @@ export class StudentsRepository {
           ON status.code = attendance."AttendanceStatus"
         JOIN attendance_sessions attendance_session
           ON attendance_session.id = attendance.session_id
-        JOIN school_calendar_days calendar_day
-          ON calendar_day.school_term_id = attendance_session.school_term_id
-         AND calendar_day.calendar_date = attendance_session.attendance_date
-         AND calendar_day.day_type = 'SCHOOL_DAY'
-         AND calendar_day.deleted_at IS NULL
         LEFT JOIN subjects subject
           ON subject.id = attendance.subject_id
         LEFT JOIN teachers recorder ON recorder.id = attendance.recorded_by_teacher_id

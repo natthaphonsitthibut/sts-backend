@@ -53,7 +53,7 @@ describe('HomeDashboardRepository', () => {
         id: 1,
         username: 'admin',
         roles: ['ADMIN'],
-        permissions: ['home', 'attendance-dashboard'],
+        permissions: ['home', 'dashboard'],
         data_scope: { school_ids: [10010002] },
       },
       { period: '7_DAYS' },
@@ -129,7 +129,7 @@ describe('HomeDashboardRepository', () => {
     expect(queries[0].sql).not.toContain('ts.follow_up_problem_category_code IS NOT NULL');
   });
 
-  it('counts incomplete attendance sessions instead of roster join rows', async () => {
+  it('does not expose retired attendance completeness attention items', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
 
     await repository.getAttentionItems(
@@ -137,14 +137,15 @@ describe('HomeDashboardRepository', () => {
         id: 1,
         username: 'admin',
         roles: ['ADMIN'],
-        permissions: ['home', 'attendance-dashboard'],
+        permissions: ['home', 'dashboard'],
         data_scope: { global: true },
       },
       { period: '30_DAYS' },
       '2026-07-14',
     );
 
-    expect(queries[0].sql).toContain('COUNT(DISTINCT sess.id)');
+    expect(queries[0].sql).not.toContain('ATTENDANCE_INCOMPLETE');
+    expect(queries[0].sql).not.toContain('/attendance-operations');
   });
 
   it('ranks high-risk areas deterministically for the requested dimension', async () => {

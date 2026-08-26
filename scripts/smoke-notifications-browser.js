@@ -174,7 +174,7 @@ async function upsertFixture(dataSource, passwordHash) {
     'home',
     'dashboard',
     'import-data',
-    'attendance-dashboard',
+    'dashboard',
   ];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {

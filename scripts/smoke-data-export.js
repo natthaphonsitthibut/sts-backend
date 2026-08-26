@@ -226,7 +226,7 @@ async function createDataFixture(dataSource, actorId) {
         school_term_id, school_id, grade_level_id, legacy_room_number,
         room_code, room_name, classroom_status, created_by, updated_by
       )
-      VALUES ($1, $2, $3, $4, 'SMOKE-91', 'ห้องทดสอบส่งออก', 'ACTIVE', $5, $5)
+      VALUES ($1, $2, $3, $4, '91', 'ห้องทดสอบส่งออก', 'ACTIVE', $5, $5)
       RETURNING id
     `,
     [term.id, FIXTURE_SCHOOL_ID, Number(grade.id), FIXTURE_ROOM_ID, actorId],
@@ -336,11 +336,8 @@ async function main() {
       'export-data',
       'students',
       'dashboard',
-      'attendance-dashboard',
-      'dashboard',
       'import-data',
       'manage-school-structure',
-      'students',
     ]);
     const deniedId = await upsertActor(dataSource, 'data_export_smoke_denied', ['students']);
 

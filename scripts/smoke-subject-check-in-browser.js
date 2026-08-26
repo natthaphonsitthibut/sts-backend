@@ -636,21 +636,22 @@ async function main() {
        AND teacher.teacher_status = 'ACTIVE'
        AND teacher.deleted_at IS NULL
       JOIN LATERAL (
-        SELECT calendar.calendar_date::text AS check_in_date
-        FROM school_calendar_days calendar
-        WHERE calendar.school_term_id = classroom.school_term_id
-          AND calendar.day_type = 'SCHOOL_DAY'
-          AND calendar.calendar_date <= (now() AT TIME ZONE 'Asia/Bangkok')::date
-          AND calendar.deleted_at IS NULL
+        SELECT candidate.check_in_date::date::text AS check_in_date
+        FROM generate_series(
+          term.starts_on,
+          LEAST(term.ends_on, (now() AT TIME ZONE 'Asia/Bangkok')::date),
+          INTERVAL '1 day'
+        ) AS candidate(check_in_date)
+        WHERE term.starts_on <= (now() AT TIME ZONE 'Asia/Bangkok')::date
           AND NOT EXISTS (
             SELECT 1 FROM attendance_sessions existing
             WHERE existing.school_term_id = classroom.school_term_id
               AND existing.classroom_id = classroom.id
               AND existing.classroom_subject_id = offering.id
-              AND existing.attendance_date = calendar.calendar_date
+              AND existing.attendance_date = candidate.check_in_date::date
               AND existing.deleted_at IS NULL
           )
-        ORDER BY calendar.calendar_date DESC
+        ORDER BY candidate.check_in_date DESC
         LIMIT 1
       ) available ON TRUE
       WHERE classroom.classroom_status = 'ACTIVE'
@@ -970,14 +971,24 @@ async function main() {
       'Internal check-in page did not render the classroom selector',
     );
     await setAriaSelect(client, 'ชั้น', scope.grade_level_id);
-    await waitFor(
-      async () =>
-        await evaluate(
-          client,
-          `Boolean(document.querySelector('select[aria-label="ห้อง"] option[value="${scope.classroom_id}"]'))`,
-        ),
-      'Room select did not load options for the selected grade',
-    );
+    try {
+      await waitFor(
+        async () =>
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('select[aria-label="ห้อง"] option[value="${scope.classroom_id}"]'))`,
+          ),
+        'Room select did not load options for the selected grade',
+      );
+    } catch (error) {
+      const attendanceResponses = networkResponses.filter((response) =>
+        response.url.includes('/api/attendance/'),
+      );
+      const visibleText = String(await evaluate(client, 'document.body.innerText')).slice(-1000);
+      throw new Error(
+        `${error.message}: ${JSON.stringify({ scope, attendanceResponses, visibleText })}`,
+      );
+    }
     await setAriaSelect(client, 'ห้อง', scope.classroom_id);
     await waitFor(
       async () => await evaluate(client, 'Boolean(document.querySelector(\'button[aria-label="เลือกวันที่เช็กชื่อ"]\'))'),

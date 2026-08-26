@@ -104,7 +104,6 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'manage-students',
       'classrooms',
       'attendance',
-      'attendance-dashboard',
       'manage-classroom-links',
       'manage-school-structure',
       'manage-subjects',

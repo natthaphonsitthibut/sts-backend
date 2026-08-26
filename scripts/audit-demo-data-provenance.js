@@ -113,9 +113,6 @@ async function main() {
                 ' ', assigned_to_name, assigned_to_first_name, assigned_to_last_name,
                 assigned_to_email, subject, assignment_note, cancel_reason
               ) ~* '(^|[^a-z])(demo|smoke|test|sample|fake)([^a-z]|$)')
-         + (SELECT COUNT(*)::int FROM school_calendar_days
-            WHERE coalesce(reason, '')
-              ~* '(demo|smoke|test|sample|fake|ข้อมูลสาธิต|ข้อมูลทดสอบ)')
         ) AS forbidden_business_surface_rows,
         (SELECT COUNT(*)::int
          FROM users

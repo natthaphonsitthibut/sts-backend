@@ -9,11 +9,7 @@ export type HomeDashboardSection =
   | 'casePipeline'
   | 'caseMovement'
   | 'recentWork';
-export type HomeDashboardAttentionKind =
-  | 'ATTENDANCE_INCOMPLETE'
-  | 'RISK_HIGH'
-  | 'CASE_OVERDUE'
-  | 'CASE_PENDING_REVIEW';
+export type HomeDashboardAttentionKind = 'RISK_HIGH' | 'CASE_OVERDUE' | 'CASE_PENDING_REVIEW';
 
 export interface HomeDashboardFilters {
   period?: HomeDashboardPeriod;

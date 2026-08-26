@@ -69,7 +69,7 @@ describe('AuditLogService', () => {
   it('filters task history by task type metadata', async () => {
     const taskActor: AuthenticatedRequestUser = {
       ...actor,
-      permissions: ['attendance-dashboard'],
+      permissions: ['dashboard'],
     };
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
@@ -102,7 +102,7 @@ describe('AuditLogService', () => {
   it('accepts a cross-domain link action when taskType is present', async () => {
     const taskActor: AuthenticatedRequestUser = {
       ...actor,
-      permissions: ['attendance-dashboard'],
+      permissions: ['dashboard'],
       data_scope: { global: true },
     };
     const queryRunner = {
