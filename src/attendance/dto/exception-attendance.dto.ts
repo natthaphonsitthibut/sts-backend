@@ -77,4 +77,8 @@ export class SubmitExceptionAttendanceDto {
 export class CheckInStudentPhotoQueryDto {
   @IsUUID()
   studentId!: string;
+
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  v?: string;
 }

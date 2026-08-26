@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsDateString,
   IsIn,
   IsInt,
   IsOptional,
@@ -45,10 +46,12 @@ export class UpsertSchoolTermDto {
 
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   startsOn!: string;
 
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   endsOn!: string;
 
   @IsString()
@@ -94,6 +97,7 @@ export class AttendanceReconciliationQueryDto extends PaginatedSearchQueryDto {
 
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   date!: string;
 
   @IsOptional()
