@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import { AttendanceOperationsService } from './attendance-operations.service';
 import type { QueryExecutor } from './attendance.types';
@@ -22,6 +23,10 @@ const draftTerm = {
   status: 'DRAFT' as const,
 };
 
+function auditLogMock() {
+  return { recordAtomic: jest.fn().mockResolvedValue(undefined) };
+}
+
 function transactionMock() {
   return jest.fn(
     async (callback: (executor: QueryExecutor) => Promise<unknown>): Promise<unknown> =>
@@ -34,6 +39,7 @@ describe('AttendanceOperationsService', () => {
     const repository = { isSchoolInScope: jest.fn().mockResolvedValue(false) };
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
     );
 
     await expect(
@@ -52,6 +58,7 @@ describe('AttendanceOperationsService', () => {
     };
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
     );
 
     await expect(
@@ -81,6 +88,7 @@ describe('AttendanceOperationsService', () => {
     };
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
     );
 
     await expect(
@@ -111,6 +119,7 @@ describe('AttendanceOperationsService', () => {
     };
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
     );
 
     await expect(
@@ -144,6 +153,7 @@ describe('AttendanceOperationsService', () => {
     };
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
     );
 
     await expect(
@@ -166,6 +176,7 @@ describe('AttendanceOperationsService', () => {
     const repository = { isSchoolInScope: jest.fn().mockResolvedValue(true) };
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
     );
 
     await expect(
@@ -183,7 +194,7 @@ describe('AttendanceOperationsService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('hard deletes an unused draft term', async () => {
+  it('hard deletes an unused draft term and records who removed it', async () => {
     const repository = {
       findTermById: jest.fn().mockResolvedValue(draftTerm),
       isSchoolInScope: jest.fn().mockResolvedValue(true),
@@ -191,12 +202,30 @@ describe('AttendanceOperationsService', () => {
       findTermByIdForUpdate: jest.fn().mockResolvedValue(draftTerm),
       deleteTerm: jest.fn().mockResolvedValue('10'),
     };
+    const auditLog = auditLogMock();
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLog as unknown as AuditLogService,
     );
 
     await expect(service.deleteTerm(10, actor)).resolves.toEqual({ data: { id: '10' } });
     expect(repository.deleteTerm).toHaveBeenCalledWith(10, expect.any(Object));
+    // The delete is irreversible, so the audit entry is the only trace left.
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'MASTER_DATA_EDIT',
+        targetType: 'school_terms',
+        targetId: '10',
+        actorUserId: actor.id,
+        metadata: {
+          op: 'delete',
+          schoolId: draftTerm.school_id,
+          academicYear: draftTerm.academic_year,
+          semester: draftTerm.semester,
+        },
+      }),
+      expect.any(Object),
+    );
   });
 
   it('rejects deletion once a term is active', async () => {
@@ -208,12 +237,15 @@ describe('AttendanceOperationsService', () => {
       findTermByIdForUpdate: jest.fn().mockResolvedValue(activeTerm),
       deleteTerm: jest.fn(),
     };
+    const auditLog = auditLogMock();
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLog as unknown as AuditLogService,
     );
 
     await expect(service.deleteTerm(10, actor)).rejects.toBeInstanceOf(ConflictException);
     expect(repository.deleteTerm).not.toHaveBeenCalled();
+    expect(auditLog.recordAtomic).not.toHaveBeenCalled();
   });
 
   it('maps a used draft term foreign-key violation to a conflict', async () => {
@@ -226,6 +258,7 @@ describe('AttendanceOperationsService', () => {
     };
     const service = new AttendanceOperationsService(
       repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
     );
 
     await expect(service.deleteTerm(10, actor)).rejects.toBeInstanceOf(ConflictException);

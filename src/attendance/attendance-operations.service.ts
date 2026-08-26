@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { isClassInScope, resolveActorDataScope, type AuthenticatedRequestUser } from '../auth';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import type { SchoolTermStatus } from './attendance-operations.types';
@@ -19,6 +20,7 @@ export class AttendanceOperationsService {
 
   constructor(
     private readonly repository: AttendanceOperationsRepository,
+    private readonly auditLog: AuditLogService,
     private readonly riskProfileService?: RiskProfileService,
   ) {}
 
@@ -114,6 +116,25 @@ export class AttendanceOperationsService {
         }
         const deleted = await this.repository.deleteTerm(termId, executor);
         if (!deleted) throw new NotFoundException('ไม่พบภาคเรียน');
+        // The row is gone for good, so this entry is the only surviving record
+        // that the term existed and who removed it.
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: actor?.id ?? null,
+            actorLabel: actor?.username ?? null,
+            action: 'MASTER_DATA_EDIT',
+            targetType: 'school_terms',
+            targetId: deleted,
+            metadata: {
+              op: 'delete',
+              schoolId: locked.school_id,
+              academicYear: locked.academic_year,
+              semester: locked.semester,
+            },
+            ip: null,
+          },
+          executor,
+        );
         return deleted;
       });
       return { data: { id: deletedId } };
