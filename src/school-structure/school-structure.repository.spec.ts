@@ -465,4 +465,105 @@ describe('SchoolStructureRepository scope', () => {
       true,
     );
   });
+
+  it('keeps the existing selected teacher primary and stores only one additional teacher', async () => {
+    const runner = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([{ teacher_membership_id: '31' }])
+        .mockResolvedValue([]),
+    };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await repository.replaceHomeroomTeachers(
+      {
+        schoolId: 1001,
+        classroomId: 42,
+        teacherMembershipIds: [32, 31],
+        actorId: 7,
+      },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining('INSERT INTO classroom_homeroom_teachers'),
+      [1001, 42, 31, 7],
+      true,
+    );
+    expect(runner.query).toHaveBeenNthCalledWith(
+      4,
+      expect.stringContaining('INSERT INTO classroom_additional_homeroom_teachers'),
+      [1001, 42, 32, 7],
+      true,
+    );
+  });
+
+  it('locks homeroom classrooms and memberships in deterministic id order', async () => {
+    const runner = { query: jest.fn().mockResolvedValue([]) };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await repository.lockHomeroomClassroomsForMembership(31, runner as never);
+    await repository.findMembershipsByIds([32, 31], runner as never);
+
+    expect(runner.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(
+        /classroom_homeroom_teachers[\s\S]*classroom_additional_homeroom_teachers[\s\S]*ORDER BY classroom\.id[\s\S]*FOR UPDATE OF classroom/,
+      ),
+      [31],
+      true,
+    );
+    expect(runner.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/ORDER BY membership\.id[\s\S]*FOR UPDATE OF membership/),
+      [[32, 31]],
+      true,
+    );
+  });
+
+  it('marks the legacy create-assignment response as the primary assignment', async () => {
+    const assignment = {
+      id: '42',
+      school_id: 1001,
+      classroom_id: '42',
+      teacher_membership_id: '31',
+      teacher_id: '41',
+      teacher_name: 'ครูหนึ่ง',
+      subject_id: null,
+      subject_code: null,
+      subject_name: null,
+      assignment_kind: 'HOMEROOM',
+      assignment_status: 'ACTIVE',
+      effective_on: null,
+      effective_until: null,
+      is_primary: true,
+    };
+    const runner = {
+      query: jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([assignment]),
+    };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await expect(
+      repository.createAssignment(
+        {
+          schoolId: 1001,
+          classroomId: 42,
+          teacherMembershipId: 31,
+          subjectId: null,
+          assignmentKind: 'HOMEROOM',
+          effectiveOn: null,
+          effectiveUntil: null,
+          actorId: 7,
+        },
+        runner as never,
+      ),
+    ).resolves.toMatchObject({ is_primary: true });
+    expect(runner.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('TRUE AS is_primary'),
+      [42],
+      true,
+    );
+  });
 });

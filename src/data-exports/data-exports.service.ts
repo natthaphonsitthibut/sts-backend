@@ -1178,7 +1178,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       }
       conditions.push(`EXISTS (
         SELECT 1
-        FROM classroom_homeroom_teachers scoped_assignment
+        FROM classroom_homeroom_teacher_assignments scoped_assignment
         JOIN school_classrooms scoped_classroom
           ON scoped_classroom.id = scoped_assignment.classroom_id
         WHERE ${assignmentScope.join(' AND ')}
@@ -1345,11 +1345,15 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
                grade.label AS grade,
                classroom.room_code,
                classroom.room_name,
-               COALESCE(
-                 NULLIF(TRIM(teacher.first_name || ' ' || teacher.last_name), ''),
-                 'ไม่ระบุชื่อ'
-                   ) AS teacher_name
-        FROM classroom_homeroom_teachers assignment
+               string_agg(
+                 COALESCE(
+                   NULLIF(TRIM(teacher.first_name || ' ' || teacher.last_name), ''),
+                   'ไม่ระบุชื่อ'
+                 ),
+                 ', ' ORDER BY assignment.is_primary DESC,
+                 TRIM(teacher.first_name || ' ' || teacher.last_name)
+               ) AS teacher_name
+        FROM classroom_homeroom_teacher_assignments assignment
         JOIN school_classrooms classroom ON classroom.id = assignment.classroom_id
         JOIN schools school ON school.id = assignment.school_id
         JOIN school_terms term ON term.id = classroom.school_term_id
@@ -1358,6 +1362,8 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
           ON membership.id = assignment.teacher_membership_id
         JOIN teachers teacher ON teacher.id = membership.teacher_id
         WHERE ${conditions.filter(Boolean).join(' AND ')}
+        GROUP BY assignment.classroom_id, school.name, term.academic_year,
+                 term.semester, grade.label, classroom.room_code, classroom.room_name
         ORDER BY assignment.classroom_id
         LIMIT $${params.length}
       `,

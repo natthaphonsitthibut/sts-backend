@@ -36,6 +36,7 @@ function createHarness() {
     listActivePiiRevealGroups: jest.fn().mockResolvedValue([]),
     insertPiiAccessEvent: jest.fn().mockResolvedValue(undefined),
     updateTeacher: jest.fn(),
+    lockHomeroomClassroomsForTeacher: jest.fn().mockResolvedValue(undefined),
     deactivateTeacher: jest.fn(),
   };
   const auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
@@ -250,6 +251,13 @@ describe('TeachersService deactivate', () => {
     expect(repository.deactivateTeacher).toHaveBeenCalledWith(
       { teacherId: '7', membershipId: '5', actorId: 1 },
       expect.anything(),
+    );
+    expect(repository.lockHomeroomClassroomsForTeacher).toHaveBeenCalledWith(
+      '7',
+      expect.anything(),
+    );
+    expect(repository.lockHomeroomClassroomsForTeacher.mock.invocationCallOrder[0]).toBeLessThan(
+      repository.findTeacherById.mock.invocationCallOrder[0],
     );
   });
 });

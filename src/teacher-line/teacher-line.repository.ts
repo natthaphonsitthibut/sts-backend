@@ -254,7 +254,7 @@ export class TeacherLineRepository {
           AND EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
-            JOIN classroom_homeroom_teachers homeroom
+            JOIN classroom_homeroom_teacher_assignments homeroom
               ON homeroom.teacher_membership_id = membership.id
              AND homeroom.school_id = membership.school_id
             JOIN school_classrooms classroom
@@ -296,7 +296,7 @@ export class TeacherLineRepository {
           AND EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
-            JOIN classroom_homeroom_teachers homeroom
+            JOIN classroom_homeroom_teacher_assignments homeroom
               ON homeroom.teacher_membership_id = membership.id
              AND homeroom.school_id = membership.school_id
             JOIN school_classrooms classroom
@@ -617,7 +617,7 @@ export class TeacherLineRepository {
         JOIN school_teacher_memberships membership
           ON membership.teacher_id = teacher.id
          AND membership.school_id = $2::bigint
-        JOIN classroom_homeroom_teachers homeroom
+        JOIN classroom_homeroom_teacher_assignments homeroom
           ON homeroom.teacher_membership_id = membership.id
          AND homeroom.school_id = membership.school_id
         JOIN school_classrooms classroom

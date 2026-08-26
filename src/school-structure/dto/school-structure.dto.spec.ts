@@ -3,12 +3,15 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
   AuthorizeClassroomExportDto,
+  CreateClassroomTeacherAssignmentDto,
+  CreateSchoolTeacherMembershipDto,
   CreateSchoolClassroomDto,
   CreateClassroomStudentCommentDto,
   ListClassroomAttendanceHistoryDto,
   SetClassroomFavoriteDto,
   UpdateClassroomPresentationDto,
   UpdateSchoolClassroomDto,
+  UpdateSchoolTeacherMembershipDto,
 } from './school-structure.dto';
 
 describe('school structure DTOs', () => {
@@ -141,6 +144,16 @@ describe('school structure DTOs', () => {
       ),
     ).not.toHaveLength(0);
     expect(
+      validateSync(
+        plainToInstance(ListClassroomAttendanceHistoryDto, {
+          view: 'DAILY',
+          date: '2026-99-99',
+          dateFrom: '2026-02-30',
+          dateTo: '2026-07-14',
+        }),
+      ),
+    ).not.toHaveLength(0);
+    expect(
       validateSync(plainToInstance(ListClassroomAttendanceHistoryDto, { view: 'UNKNOWN' })),
     ).not.toHaveLength(0);
     expect(
@@ -166,5 +179,32 @@ describe('school structure DTOs', () => {
     expect(validateSync(build('2026-08-01', '2026-08-31'))).toHaveLength(0);
     expect(validateSync(build('2026-08-01T00:00:00Z', '2026-08-31T23:59:59Z'))).not.toHaveLength(0);
     expect(validateSync(build('2026-02-30', '2026-08-31'))).not.toHaveLength(0);
+  });
+
+  it('accepts only calendar dates on teacher membership and assignment ranges', () => {
+    const membership = (startedOn: string) =>
+      plainToInstance(CreateSchoolTeacherMembershipDto, {
+        schoolId: 1001,
+        teacherId: 42,
+        startedOn,
+      });
+    const endedMembership = (endedOn: string) =>
+      plainToInstance(UpdateSchoolTeacherMembershipDto, { membershipStatus: 'INACTIVE', endedOn });
+    const assignment = (effectiveOn: string, effectiveUntil: string) =>
+      plainToInstance(CreateClassroomTeacherAssignmentDto, {
+        classroomId: 31,
+        teacherMembershipId: 7,
+        assignmentKind: 'HOMEROOM',
+        effectiveOn,
+        effectiveUntil,
+      });
+
+    expect(validateSync(membership('2024-02-29'))).toHaveLength(0);
+    expect(validateSync(membership('2026-02-30'))).toHaveLength(1);
+    expect(validateSync(endedMembership('2026-08-26'))).toHaveLength(0);
+    expect(validateSync(endedMembership('2026-13-01'))).toHaveLength(1);
+    expect(validateSync(assignment('2026-05-16', '2026-10-10'))).toHaveLength(0);
+    expect(validateSync(assignment('2026-02-30', '2026-10-10'))).toHaveLength(1);
+    expect(validateSync(assignment('2026-05-16', '2026-11-31'))).toHaveLength(1);
   });
 });

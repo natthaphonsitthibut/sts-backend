@@ -39,6 +39,7 @@ import {
   ListSchoolTeacherCandidatesDto,
   ListSchoolTeachersDto,
   SetClassroomFavoriteDto,
+  SetClassroomHomeroomTeachersDto,
   UpdateClassroomPresentationDto,
   UpdateSchoolClassroomDto,
   UpdateSchoolTeacherMembershipDto,
@@ -223,6 +224,15 @@ export class SchoolStructureController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.listAssignments(query.classroomId, actor);
+  }
+
+  @Put('classrooms/:classroomId/homeroom-teachers')
+  setHomeroomTeachers(
+    @Param('classroomId', ParseIntPipe) classroomId: number,
+    @Body() body: SetClassroomHomeroomTeachersDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.setHomeroomTeachers(classroomId, body, actor);
   }
 
   @Post('assignments')

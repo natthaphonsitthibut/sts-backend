@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayUnique,
   IsArray,
   IsIn,
   IsBoolean,
@@ -247,6 +248,7 @@ export class CreateSchoolTeacherMembershipDto {
   @IsOptional()
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   startedOn?: string;
 }
 
@@ -257,6 +259,7 @@ export class UpdateSchoolTeacherMembershipDto {
   @ValidateIf((value: UpdateSchoolTeacherMembershipDto) => value.membershipStatus === 'INACTIVE')
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   endedOn?: string;
 }
 
@@ -283,11 +286,13 @@ export class CreateClassroomTeacherAssignmentDto {
   @IsOptional()
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   effectiveOn?: string;
 
   @IsOptional()
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   effectiveUntil?: string;
 }
 
@@ -296,6 +301,16 @@ export class ListClassroomAssignmentsDto {
   @IsInt()
   @Min(1)
   classroomId!: number;
+}
+
+export class SetClassroomHomeroomTeachersDto {
+  @IsArray()
+  @ArrayMaxSize(2)
+  @ArrayUnique()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  teacherMembershipIds!: number[];
 }
 
 export class CreateClassroomStudentCommentDto {
@@ -398,16 +413,19 @@ export class ListClassroomAttendanceHistoryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   date?: string;
 
   @IsOptional()
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   dateFrom?: string;
 
   @IsOptional()
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   dateTo?: string;
 
   @IsOptional()

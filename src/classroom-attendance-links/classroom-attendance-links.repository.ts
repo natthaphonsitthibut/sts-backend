@@ -175,8 +175,22 @@ export class ClassroomAttendanceLinksRepository {
       conditions.push(`(
         classroom.room_name ILIKE $${params.length} ESCAPE '\\'
         OR grade.label ILIKE $${params.length} ESCAPE '\\'
-        OR TRIM(COALESCE(teacher.first_name, '') || ' ' || COALESCE(teacher.last_name, ''))
-             ILIKE $${params.length} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1
+          FROM classroom_homeroom_teacher_assignments search_assignment
+          JOIN school_teacher_memberships search_membership
+            ON search_membership.id = search_assignment.teacher_membership_id
+           AND search_membership.school_id = search_assignment.school_id
+           AND search_membership.membership_status = 'ACTIVE'
+           AND search_membership.deleted_at IS NULL
+          JOIN teachers search_teacher
+            ON search_teacher.id = search_membership.teacher_id
+           AND search_teacher.teacher_status = 'ACTIVE'
+           AND search_teacher.deleted_at IS NULL
+          WHERE search_assignment.classroom_id = classroom.id
+            AND TRIM(search_teacher.first_name || ' ' || search_teacher.last_name)
+                ILIKE $${params.length} ESCAPE '\\'
+        )
       )`);
     }
     params.push(input.limit, (input.page - 1) * input.limit);
@@ -198,6 +212,30 @@ export class ClassroomAttendanceLinksRepository {
         ON teacher.id = membership.teacher_id
        AND teacher.teacher_status = 'ACTIVE'
        AND teacher.deleted_at IS NULL
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'teacherId', all_teacher.id::text,
+              'teacherName', TRIM(all_teacher.first_name || ' ' || all_teacher.last_name),
+              'hasPhoto', all_teacher.photo_storage_key IS NOT NULL,
+              'isPrimary', all_assignment.is_primary
+            ) ORDER BY all_assignment.is_primary DESC,
+            TRIM(all_teacher.first_name || ' ' || all_teacher.last_name)
+          ), '[]'::jsonb
+        ) AS homeroom_teachers
+        FROM classroom_homeroom_teacher_assignments all_assignment
+        JOIN school_teacher_memberships all_membership
+          ON all_membership.id = all_assignment.teacher_membership_id
+         AND all_membership.membership_status = 'ACTIVE'
+         AND all_membership.deleted_at IS NULL
+        JOIN teachers all_teacher
+          ON all_teacher.id = all_membership.teacher_id
+         AND all_teacher.teacher_status = 'ACTIVE'
+         AND all_teacher.deleted_at IS NULL
+        WHERE all_assignment.classroom_id = classroom.id
+          AND all_assignment.school_id = classroom.school_id
+      ) all_homeroom ON TRUE
       LEFT JOIN LATERAL (
         SELECT account.provider_user_id, account.friend_state
         FROM teacher_messaging_accounts account
@@ -235,6 +273,7 @@ export class ClassroomAttendanceLinksRepository {
               teacher.id::text AS homeroom_teacher_id,
               TRIM(teacher.first_name || ' ' || teacher.last_name) AS homeroom_teacher_name,
               (teacher.photo_storage_key IS NOT NULL) AS homeroom_teacher_has_photo,
+              all_homeroom.homeroom_teachers,
               line_account.provider_user_id AS line_provider_user_id,
               line_account.friend_state AS line_friend_state,
               link.line_delivery_teacher_membership_id::text,

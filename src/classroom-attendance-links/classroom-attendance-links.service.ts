@@ -118,6 +118,18 @@ export class ClassroomAttendanceLinksService {
   }
 
   private presentation(row: ClassroomLinkListRow) {
+    const homeroomTeachers =
+      row.homeroom_teachers ??
+      (row.homeroom_teacher_id && row.homeroom_teacher_name
+        ? [
+            {
+              teacherId: row.homeroom_teacher_id,
+              teacherName: row.homeroom_teacher_name,
+              hasPhoto: row.homeroom_teacher_has_photo,
+              isPrimary: true,
+            },
+          ]
+        : []);
     return {
       id: row.id,
       schoolId: row.school_id,
@@ -135,6 +147,12 @@ export class ClassroomAttendanceLinksService {
       homeroomTeacherPhotoUrl: row.homeroom_teacher_has_photo
         ? `/api/teacher-profiles/${row.homeroom_teacher_id}/photo`
         : null,
+      homeroomTeachers: homeroomTeachers.map((teacher) => ({
+        teacherId: teacher.teacherId,
+        teacherName: teacher.teacherName,
+        photoUrl: teacher.hasPhoto ? `/api/teacher-profiles/${teacher.teacherId}/photo` : null,
+        isPrimary: teacher.isPrimary,
+      })),
       lineDelivery: row.id ? this.lineDeliveryPresentation(row as ClassroomLinkRow) : null,
       status: this.status(row),
       issuedAt: row.issued_at ? new Date(row.issued_at).toISOString() : null,

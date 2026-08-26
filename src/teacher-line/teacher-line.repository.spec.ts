@@ -34,7 +34,7 @@ describe('TeacherLineRepository', () => {
       await findTeacher(repository);
 
       const [sql, params] = runner.query.mock.calls[0] as [string, unknown[]];
-      expect(sql).toContain('JOIN classroom_homeroom_teachers homeroom');
+      expect(sql).toContain('JOIN classroom_homeroom_teacher_assignments homeroom');
       expect(sql).toContain('homeroom.teacher_membership_id = membership.id');
       expect(sql).toContain('homeroom.school_id = membership.school_id');
       expect(sql).toContain("classroom.classroom_status = 'ACTIVE'");
@@ -50,7 +50,7 @@ describe('TeacherLineRepository', () => {
     await repository.hasActiveHomeroomTeacherMembership('7', 10, runner as never);
 
     const [sql, params] = runner.query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain('JOIN classroom_homeroom_teachers homeroom');
+    expect(sql).toContain('JOIN classroom_homeroom_teacher_assignments homeroom');
     expect(sql).toContain("classroom.classroom_status = 'ACTIVE'");
     expect(sql).toContain("term.status = 'ACTIVE'");
     expect(sql).toContain('membership.school_id = $2::bigint');

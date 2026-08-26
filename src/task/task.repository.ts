@@ -702,7 +702,7 @@ export class TaskRepository {
           teacher_person.email,
           EXISTS (
             SELECT 1
-            FROM classroom_homeroom_teachers assignment
+            FROM classroom_homeroom_teacher_assignments assignment
             WHERE assignment.classroom_id = current_student.classroom_id
               AND assignment.teacher_membership_id = membership.id
           ) AS is_homeroom

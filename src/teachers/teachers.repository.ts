@@ -200,7 +200,7 @@ export class TeachersRepository {
           AND teacher.deleted_at IS NULL
           AND EXISTS (
             SELECT 1
-            FROM classroom_homeroom_teachers homeroom
+            FROM classroom_homeroom_teacher_assignments homeroom
             JOIN school_classrooms classroom
               ON classroom.id = homeroom.classroom_id
              AND classroom.school_id = homeroom.school_id
@@ -438,6 +438,34 @@ export class TeachersRepository {
     return result.rows[0];
   }
 
+  async lockHomeroomClassroomsForTeacher(
+    teacherId: string,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        SELECT classroom.id
+        FROM school_classrooms classroom
+        WHERE classroom.id IN (
+          SELECT primary_assignment.classroom_id
+          FROM classroom_homeroom_teachers primary_assignment
+          JOIN school_teacher_memberships membership
+            ON membership.id = primary_assignment.teacher_membership_id
+          WHERE membership.teacher_id = $1
+          UNION
+          SELECT additional_assignment.classroom_id
+          FROM classroom_additional_homeroom_teachers additional_assignment
+          JOIN school_teacher_memberships membership
+            ON membership.id = additional_assignment.teacher_membership_id
+          WHERE membership.teacher_id = $1
+        )
+        ORDER BY classroom.id
+        FOR UPDATE OF classroom
+      `,
+      [teacherId],
+    );
+  }
+
   /** Ends the membership and removes its current homeroom relation. */
   async deactivateTeacher(
     input: { teacherId: string; membershipId: string; actorId: number | null },
@@ -453,6 +481,10 @@ export class TeachersRepository {
         WHERE id = $1
       `,
       [input.membershipId, input.actorId],
+    );
+    await executor.query(
+      `DELETE FROM classroom_additional_homeroom_teachers WHERE teacher_membership_id = $1`,
+      [input.membershipId],
     );
     await executor.query(
       `DELETE FROM classroom_homeroom_teachers WHERE teacher_membership_id = $1`,
