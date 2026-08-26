@@ -11,33 +11,34 @@ END
 $guard$;
 
 -- Runtime-only records and artifacts are not part of the development baseline.
-TRUNCATE TABLE notifications;
-TRUNCATE TABLE data_export_job_event;
-TRUNCATE TABLE data_export_job;
-TRUNCATE TABLE pii_export_request_students;
-TRUNCATE TABLE pii_export_events;
-TRUNCATE TABLE pii_export_requests;
-TRUNCATE TABLE pii_access_events;
-TRUNCATE TABLE student_import_quarantine_rows;
-TRUNCATE TABLE student_import_batches;
-TRUNCATE TABLE attendance_import_files;
-TRUNCATE TABLE teacher_line_invitations;
-TRUNCATE TABLE teacher_line_group_invitations;
-TRUNCATE TABLE teacher_messaging_accounts;
-TRUNCATE TABLE araid_profiles;
-TRUNCATE TABLE araid_identity_records;
-TRUNCATE TABLE audit_log;
+-- One statement, because PostgreSQL refuses to truncate a table that any other
+-- table references by foreign key unless both are truncated together - even when
+-- the referencing table is already empty. Every referencing table is listed here.
+TRUNCATE TABLE
+  notifications,
+  data_export_job_event,
+  data_export_job,
+  pii_export_request_students,
+  pii_export_events,
+  pii_export_requests,
+  pii_access_events,
+  student_import_quarantine_rows,
+  student_import_batches,
+  attendance_import_files,
+  teacher_line_invitations,
+  teacher_line_group_invitations,
+  teacher_messaging_accounts,
+  araid_profiles,
+  araid_identity_records,
+  audit_log;
 
 -- Keep task/submission history while making every bearer credential unusable.
+-- The OTP columns were dropped with the task-link OTP flow; identity is proven
+-- through Google/AraID now, so only the bearer token and contacts need revoking.
 UPDATE task_links
 SET token_hash = encode(digest('sts-dev-baseline-task-link:' || id::text, 'sha256'), 'hex'),
     magic_link = NULL,
     token_encrypted = NULL,
-    otp_code = NULL,
-    otp_expires_at = NULL,
-    otp_verified = 0,
-    otp_attempts = 0,
-    otp_locked_until = NULL,
     assigned_to_phone = NULL,
     assigned_to_email = NULL,
     status = 'EXPIRED',
