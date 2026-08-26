@@ -56,6 +56,16 @@ describe('hasPermission', () => {
     expect(director?.default_permissions).not.toContain('master-data');
   });
 
+  it('keeps ตั้งค่าระบบ out of every baseline but ADMIN', () => {
+    // One shared set of values for the whole country, so the page belongs to the
+    // national admin only (owner, 2026-08-27) — see the controller guards.
+    const holders = SYSTEM_ROLE_DEFINITIONS.filter((role) =>
+      role.default_permissions.includes('settings'),
+    ).map((role) => role.name);
+
+    expect(holders).toEqual(['ADMIN']);
+  });
+
   it('keeps student self-service internal and retires the STUDENT role', () => {
     expect(PERMISSION_CATALOG.map((permission) => permission.id)).not.toContain('student-self');
     expect(SYSTEM_ROLE_DEFINITIONS.map((role) => role.name)).not.toContain('STUDENT');

@@ -186,7 +186,7 @@ export class SchoolStructureRepository {
         )
         OR EXISTS (
           SELECT 1
-          FROM classroom_homeroom_teachers search_assignment
+          FROM classroom_homeroom_teacher_assignments search_assignment
           JOIN school_teacher_memberships search_membership
             ON search_membership.id = search_assignment.teacher_membership_id
            AND search_membership.membership_status = 'ACTIVE'
@@ -225,7 +225,7 @@ export class SchoolStructureRepository {
           (
             SELECT COUNT(DISTINCT membership.teacher_id)::int
             FROM filtered_classrooms classroom
-            JOIN classroom_homeroom_teachers assignment
+            JOIN classroom_homeroom_teacher_assignments assignment
               ON assignment.classroom_id = classroom.id
              AND assignment.school_id = classroom.school_id
             JOIN school_teacher_memberships membership
@@ -274,6 +274,7 @@ export class SchoolStructureRepository {
           (favorite.user_id IS NOT NULL) AS is_favorite,
           favorite.created_at AS favorited_at,
           homeroom.homeroom_teacher_name,
+          homeroom.homeroom_teachers,
           COUNT(enrollment.student_uuid)::int AS student_count
         FROM school_classrooms classroom
         JOIN school_terms term ON term.id = classroom.school_term_id
@@ -284,9 +285,22 @@ export class SchoolStructureRepository {
         LEFT JOIN student_term enrollment
           ON enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
         LEFT JOIN LATERAL (
-          SELECT TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
-                 AS homeroom_teacher_name
-          FROM classroom_homeroom_teachers assignment
+          SELECT
+            string_agg(
+              TRIM(teacher_person.first_name || ' ' || teacher_person.last_name),
+              ', ' ORDER BY assignment.is_primary DESC,
+              TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
+            ) AS homeroom_teacher_name,
+            jsonb_agg(
+              jsonb_build_object(
+                'teacherMembershipId', membership.id::text,
+                'teacherId', teacher_person.id::text,
+                'teacherName', TRIM(teacher_person.first_name || ' ' || teacher_person.last_name),
+                'isPrimary', assignment.is_primary
+              ) ORDER BY assignment.is_primary DESC,
+              TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
+            ) AS homeroom_teachers
+          FROM classroom_homeroom_teacher_assignments assignment
           JOIN school_teacher_memberships membership
             ON membership.id = assignment.teacher_membership_id
            AND membership.school_id = assignment.school_id
@@ -296,12 +310,11 @@ export class SchoolStructureRepository {
           AND teacher_person.deleted_at IS NULL
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
-          LIMIT 1
         ) homeroom ON TRUE
         WHERE ${conditions.join(' AND ')}
         GROUP BY classroom.id, term.academic_year, term.semester, grade.label,
                  favorite.user_id, favorite.created_at,
-                 homeroom.homeroom_teacher_name
+                 homeroom.homeroom_teacher_name, homeroom.homeroom_teachers
         ORDER BY (favorite.user_id IS NOT NULL) DESC, favorite.created_at DESC NULLS LAST,
                  ${orderBy} ${direction}, classroom.room_code ${direction}, classroom.id ${direction}
         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
@@ -378,8 +391,12 @@ export class SchoolStructureRepository {
         (favorite.user_id IS NOT NULL) AS is_favorite,
         favorite.created_at AS favorited_at,
         (
-          SELECT TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
-          FROM classroom_homeroom_teachers assignment
+          SELECT string_agg(
+            TRIM(teacher_person.first_name || ' ' || teacher_person.last_name),
+            ', ' ORDER BY assignment.is_primary DESC,
+            TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
+          )
+          FROM classroom_homeroom_teacher_assignments assignment
           JOIN school_teacher_memberships membership
             ON membership.id = assignment.teacher_membership_id
            AND membership.school_id = assignment.school_id
@@ -389,8 +406,28 @@ export class SchoolStructureRepository {
           AND teacher_person.deleted_at IS NULL
           WHERE assignment.classroom_id = classroom.id
             AND assignment.school_id = classroom.school_id
-          LIMIT 1
         ) AS homeroom_teacher_name,
+        (
+          SELECT jsonb_agg(
+            jsonb_build_object(
+              'teacherMembershipId', membership.id::text,
+              'teacherId', teacher_person.id::text,
+              'teacherName', TRIM(teacher_person.first_name || ' ' || teacher_person.last_name),
+              'isPrimary', assignment.is_primary
+            ) ORDER BY assignment.is_primary DESC,
+            TRIM(teacher_person.first_name || ' ' || teacher_person.last_name)
+          )
+          FROM classroom_homeroom_teacher_assignments assignment
+          JOIN school_teacher_memberships membership
+            ON membership.id = assignment.teacher_membership_id
+           AND membership.school_id = assignment.school_id
+           AND membership.membership_status = 'ACTIVE'
+           AND membership.deleted_at IS NULL
+          JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+            AND teacher_person.deleted_at IS NULL
+          WHERE assignment.classroom_id = classroom.id
+            AND assignment.school_id = classroom.school_id
+        ) AS homeroom_teachers,
         (SELECT COUNT(*)::int FROM student_term enrollment
           WHERE enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
         ) AS student_count
@@ -546,7 +583,7 @@ export class SchoolStructureRepository {
             WHERE enrollment.classroom_id = $1 AND enrollment.deleted_at IS NULL
           ) AS student_count,
           (
-            SELECT COUNT(*)::int FROM classroom_homeroom_teachers homeroom
+            SELECT COUNT(*)::int FROM classroom_homeroom_teacher_assignments homeroom
             WHERE homeroom.classroom_id = $1
           ) AS assignment_count
       `;
@@ -714,7 +751,7 @@ export class SchoolStructureRepository {
         ON teacher_person.id = membership.teacher_id
        AND teacher_person.teacher_status = 'ACTIVE'
        AND teacher_person.deleted_at IS NULL
-      JOIN classroom_homeroom_teachers assignment
+      JOIN classroom_homeroom_teacher_assignments assignment
         ON assignment.teacher_membership_id = membership.id
        AND assignment.school_id = membership.school_id
       JOIN school_classrooms classroom
@@ -870,6 +907,59 @@ export class SchoolStructureRepository {
     return result.rows[0] ?? null;
   }
 
+  async lockHomeroomClassroomsForMembership(
+    membershipId: number,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        SELECT classroom.id
+        FROM school_classrooms classroom
+        WHERE classroom.id IN (
+          SELECT primary_assignment.classroom_id
+          FROM classroom_homeroom_teachers primary_assignment
+          WHERE primary_assignment.teacher_membership_id = $1
+          UNION
+          SELECT additional_assignment.classroom_id
+          FROM classroom_additional_homeroom_teachers additional_assignment
+          WHERE additional_assignment.teacher_membership_id = $1
+        )
+        ORDER BY classroom.id
+        FOR UPDATE OF classroom
+      `,
+      [membershipId],
+    );
+  }
+
+  async findMembershipsByIds(
+    membershipIds: number[],
+    queryRunner: QueryRunner,
+  ): Promise<SchoolTeacherMembershipRow[]> {
+    if (membershipIds.length === 0) return [];
+    const result = await createSqlQueryExecutor(queryRunner).query<SchoolTeacherMembershipRow>(
+      `
+        SELECT membership.id::text,
+               membership.school_id,
+               membership.teacher_id::text AS teacher_id,
+               TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) AS display_name,
+               membership.membership_status,
+               membership.started_on::text,
+               membership.ended_on::text
+        FROM school_teacher_memberships membership
+        JOIN teachers teacher_person
+          ON teacher_person.id = membership.teacher_id
+         AND teacher_person.teacher_status = 'ACTIVE'
+         AND teacher_person.deleted_at IS NULL
+        WHERE membership.id = ANY($1::bigint[])
+          AND membership.deleted_at IS NULL
+        ORDER BY membership.id
+        FOR UPDATE OF membership
+      `,
+      [membershipIds],
+    );
+    return result.rows;
+  }
+
   async isTeacherEligible(
     teacherId: number,
     schoolId: number,
@@ -929,10 +1019,12 @@ export class SchoolStructureRepository {
     if (status === 'INACTIVE') {
       await queryRunner.query(
         `
+          DELETE FROM classroom_additional_homeroom_teachers
+          WHERE teacher_membership_id = $1;
           DELETE FROM classroom_homeroom_teachers
           WHERE teacher_membership_id = $1
         `,
-        [membershipId, actorId],
+        [membershipId],
       );
     }
     await queryRunner.query(
@@ -948,10 +1040,11 @@ export class SchoolStructureRepository {
     return (await this.findMembershipById(membershipId, queryRunner))!;
   }
 
-  async listAssignments(classroomId: number): Promise<ClassroomTeacherAssignmentRow[]> {
-    const result = await queryDataSource<ClassroomTeacherAssignmentRow>(
-      this.dataSource,
-      `
+  async listAssignments(
+    classroomId: number,
+    queryRunner?: QueryRunner,
+  ): Promise<ClassroomTeacherAssignmentRow[]> {
+    const sql = `
         SELECT
           assignment.classroom_id::text AS id,
           assignment.school_id,
@@ -965,18 +1058,85 @@ export class SchoolStructureRepository {
           'HOMEROOM'::text AS assignment_kind,
           'ACTIVE'::text AS assignment_status,
           NULL::text AS effective_on,
-          NULL::text AS effective_until
-        FROM classroom_homeroom_teachers assignment
+          NULL::text AS effective_until,
+          assignment.is_primary
+        FROM classroom_homeroom_teacher_assignments assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id
+         AND membership.school_id = assignment.school_id
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
         JOIN teachers teacher_person ON teacher_person.id = membership.teacher_id
+          AND teacher_person.teacher_status = 'ACTIVE'
           AND teacher_person.deleted_at IS NULL
         WHERE assignment.classroom_id = $1
-        ORDER BY teacher_name
-      `,
-      [classroomId],
-    );
+        ORDER BY assignment.is_primary DESC, teacher_name
+      `;
+    const result = queryRunner
+      ? await createSqlQueryExecutor(queryRunner).query<ClassroomTeacherAssignmentRow>(sql, [
+          classroomId,
+        ])
+      : await queryDataSource<ClassroomTeacherAssignmentRow>(this.dataSource, sql, [classroomId]);
     return result.rows;
+  }
+
+  async replaceHomeroomTeachers(
+    input: {
+      schoolId: number;
+      classroomId: number;
+      teacherMembershipIds: number[];
+      actorId: number | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    const executor = createSqlQueryExecutor(queryRunner);
+    const current = await executor.query<{ teacher_membership_id: string }>(
+      `SELECT teacher_membership_id::text
+       FROM classroom_homeroom_teachers
+       WHERE classroom_id = $1
+       FOR UPDATE`,
+      [input.classroomId],
+    );
+    const currentPrimaryId = current.rows[0]?.teacher_membership_id;
+    const selectedIds = input.teacherMembershipIds.map(String);
+    const primaryId =
+      currentPrimaryId && selectedIds.includes(currentPrimaryId)
+        ? Number(currentPrimaryId)
+        : input.teacherMembershipIds[0];
+    const additionalId = input.teacherMembershipIds.find((id) => id !== primaryId);
+
+    await executor.query(
+      `DELETE FROM classroom_additional_homeroom_teachers WHERE classroom_id = $1`,
+      [input.classroomId],
+    );
+    if (primaryId === undefined) {
+      await executor.query(`DELETE FROM classroom_homeroom_teachers WHERE classroom_id = $1`, [
+        input.classroomId,
+      ]);
+      return;
+    }
+    await executor.query(
+      `
+        INSERT INTO classroom_homeroom_teachers (
+          school_id, classroom_id, teacher_membership_id, created_by, updated_by
+        ) VALUES ($1, $2, $3, $4, $4)
+        ON CONFLICT (classroom_id) DO UPDATE
+        SET school_id = EXCLUDED.school_id,
+            teacher_membership_id = EXCLUDED.teacher_membership_id,
+            updated_by = EXCLUDED.updated_by
+      `,
+      [input.schoolId, input.classroomId, primaryId, input.actorId],
+    );
+    if (additionalId !== undefined) {
+      await executor.query(
+        `
+          INSERT INTO classroom_additional_homeroom_teachers (
+            school_id, classroom_id, teacher_membership_id, created_by, updated_by
+          ) VALUES ($1, $2, $3, $4, $4)
+        `,
+        [input.schoolId, input.classroomId, additionalId, input.actorId],
+      );
+    }
   }
 
   async createAssignment(
@@ -1022,7 +1182,8 @@ export class SchoolStructureRepository {
           'HOMEROOM'::text AS assignment_kind,
           'ACTIVE'::text AS assignment_status,
           NULL::text AS effective_on,
-          NULL::text AS effective_until
+          NULL::text AS effective_until,
+          TRUE AS is_primary
         FROM classroom_homeroom_teachers assignment
         JOIN school_teacher_memberships membership
           ON membership.id = assignment.teacher_membership_id

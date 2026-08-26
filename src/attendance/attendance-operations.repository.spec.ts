@@ -65,27 +65,13 @@ describe('AttendanceOperationsRepository roster policy', () => {
     expectCurrentEnrollmentPolicy(queries[0].sql);
   });
 
-  it('counts reconciliation rosters through current enrollment policy', async () => {
+  it('lists terms without depending on calendar rows', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
 
-    await repository.listReconciliation(
-      {
-        id: '00000000-0000-4000-8000-000000000101',
-        school_id: 10010002,
-        academic_year: 2026,
-        semester: 1,
-        starts_on: '2026-05-01',
-        ends_on: '2027-03-31',
-        status: 'ACTIVE',
-      },
-      '2026-07-04',
-      undefined,
-      1,
-      20,
-    );
+    await repository.listTerms(10010002);
 
-    expect(queries).toHaveLength(2);
-    expectCurrentEnrollmentPolicy(queries[0].sql);
-    expectCurrentEnrollmentPolicy(queries[1].sql);
+    expect(queries).toHaveLength(1);
+    expect(queries[0].sql).toContain('FROM school_terms st');
+    expect(queries[0].sql).not.toContain('school_calendar_days');
   });
 });

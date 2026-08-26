@@ -157,14 +157,12 @@ export class ExceptionAttendanceRepository {
   async lockStartContext(
     classroomId: number,
     classroomSubjectId: number,
-    attendanceDate: string,
     runner: QueryRunner,
   ): Promise<
     | (CheckInClassroomRow & {
         classroom_subject_id: string;
         subject_id: number;
         subject_code: string;
-        calendar_day_type: string | null;
       })
     | null
   > {
@@ -189,8 +187,7 @@ export class ExceptionAttendanceRepository {
           classroom.classroom_status,
           offering.id::text AS classroom_subject_id,
           school_subject.subject_id,
-          subject.code AS subject_code,
-          calendar.day_type AS calendar_day_type
+          subject.code AS subject_code
         FROM school_classrooms classroom
         JOIN schools school ON school.id = classroom.school_id
         JOIN school_terms term
@@ -212,22 +209,17 @@ export class ExceptionAttendanceRepository {
           ON subject.id = school_subject.subject_id
          AND subject.is_active
          AND subject.deleted_at IS NULL
-        LEFT JOIN school_calendar_days calendar
-          ON calendar.school_term_id = term.id
-         AND calendar.calendar_date = $3
-         AND calendar.deleted_at IS NULL
         WHERE classroom.id = $1
           AND classroom.deleted_at IS NULL
           AND term.deleted_at IS NULL
         FOR UPDATE OF classroom, term, offering, school_subject
       `,
-      [classroomId, classroomSubjectId, attendanceDate],
+      [classroomId, classroomSubjectId],
     )) as Array<
       CheckInClassroomRow & {
         classroom_subject_id: string;
         subject_id: number;
         subject_code: string;
-        calendar_day_type: string | null;
       }
     >;
     return rows[0] ?? null;

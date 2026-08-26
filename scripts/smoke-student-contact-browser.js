@@ -179,6 +179,39 @@ async function fillInput(client, selector, value) {
   );
 }
 
+async function selectComboboxOption(client, ariaLabel, optionLabel) {
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('input[aria-label=${JSON.stringify(ariaLabel)}]'))`,
+        ),
+      ),
+    `Combobox "${ariaLabel}" did not render`,
+  );
+  await evaluate(
+    client,
+    `document.querySelector('input[aria-label=${JSON.stringify(ariaLabel)}]').click()`,
+  );
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `Boolean([...document.querySelectorAll('li button')]
+            .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)}))`,
+        ),
+      ),
+    `Combobox option "${optionLabel}" did not open`,
+  );
+  await evaluate(
+    client,
+    `[...document.querySelectorAll('li button')]
+      .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)}).click()`,
+  );
+}
+
 async function click(client, expression, message) {
   await evaluate(
     client,
@@ -268,6 +301,8 @@ async function main() {
   const passwordService = app.get(PasswordService);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const adminPassword = `ContactBrowser-${suffix}-Password`;
+  const originalNationalId = randomThaiNationalId();
+  const correctedNationalId = randomThaiNationalId();
   let chrome;
   let personUuid = null;
   let studentUuid = null;
@@ -276,20 +311,22 @@ async function main() {
 
   try {
     const staleStudents = await dataSource.query(
-      `SELECT student_uuid, person_uuid FROM student_term
+      `SELECT DISTINCT person_uuid FROM student_term
        WHERE "FirstName_Onec" = 'พิมพ์ชนก' AND "LastName_Onec" = 'อินทรกำแหง'`,
     );
     for (const stale of staleStudents) {
-      await dataSource.query(`DELETE FROM student_term WHERE student_uuid = $1`, [stale.student_uuid]);
+      await dataSource.query(`DELETE FROM student_term WHERE person_uuid = $1`, [stale.person_uuid]);
       await dataSource.query(`DELETE FROM student_person WHERE person_uuid = $1`, [stale.person_uuid]);
     }
 
     const [classroom] = await dataSource.query(
       `
-        SELECT c.id, c.school_id, c.grade_level_id, c.legacy_room_number,
+        SELECT c.id, c.school_id, school.name AS school_name,
+               c.grade_level_id, c.legacy_room_number,
                t.academic_year, t.semester
         FROM school_classrooms c
         JOIN school_terms t ON t.id = c.school_term_id
+        JOIN schools school ON school.id = c.school_id
         WHERE c.classroom_status = 'ACTIVE' AND c.deleted_at IS NULL AND t.deleted_at IS NULL
         ORDER BY t.academic_year DESC, t.semester DESC, c.id
         LIMIT 1
@@ -298,9 +335,12 @@ async function main() {
     assert(classroom, 'Smoke DB has no ACTIVE classroom — seed the smoke database first');
     const [outsideClassroom] = await dataSource.query(
       `
-        SELECT c.id, c.school_id
+        SELECT c.id, c.school_id, school.name AS school_name,
+               c.grade_level_id, c.legacy_room_number,
+               t.academic_year, t.semester
         FROM school_classrooms c
         JOIN school_terms t ON t.id = c.school_term_id
+        JOIN schools school ON school.id = c.school_id
         WHERE c.classroom_status = 'ACTIVE' AND c.deleted_at IS NULL AND t.deleted_at IS NULL
           AND c.school_id <> $1
         ORDER BY t.academic_year DESC, t.semester DESC, c.id
@@ -318,6 +358,15 @@ async function main() {
       `,
     );
     assert(loginStatus, 'Smoke DB has no login-capable student_status row');
+    const [inactiveStatus] = await dataSource.query(
+      `
+        SELECT code FROM student_status
+        WHERE category <> 'STUDYING' AND is_enabled IS TRUE
+          AND deleted_at IS NULL
+        ORDER BY code LIMIT 1
+      `,
+    );
+    assert(inactiveStatus, 'Smoke DB has no inactive student_status row');
 
     [{ person_uuid: personUuid }] = await dataSource.query(
       `INSERT INTO student_person (identity_status) VALUES ('ACTIVE') RETURNING person_uuid`,
@@ -333,7 +382,7 @@ async function main() {
         RETURNING student_uuid
       `,
       [
-        randomThaiNationalId(),
+        originalNationalId,
         personUuid,
         classroom.academic_year,
         classroom.semester,
@@ -343,13 +392,33 @@ async function main() {
         loginStatus.code,
       ],
     );
+    await dataSource.query(
+      `
+        INSERT INTO student_term (
+          "PersonID_Onec", person_uuid, "AcademicYear_Onec", "Semester_Onec",
+          "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
+          student_status_code, "FirstName_Onec", "LastName_Onec"
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'พิมพ์ชนก', 'อินทรกำแหง')
+      `,
+      [
+        originalNationalId,
+        personUuid,
+        outsideClassroom.academic_year,
+        outsideClassroom.semester,
+        outsideClassroom.school_id,
+        outsideClassroom.grade_level_id,
+        outsideClassroom.legacy_room_number,
+        inactiveStatus.code,
+      ],
+    );
 
     await upsertSmokeUser(dataSource, {
       username: ADMIN_USERNAME,
       passwordHash: await passwordService.hash(adminPassword),
       firstName: 'Contact',
       lastName: 'Browser Admin',
-      permissions: ['students', 'manage-students', 'dashboard'],
+      permissions: ['students', 'manage-students', 'dashboard', 'audit-log'],
       role: 'ADMIN',
       dataScope: { global: true },
     });
@@ -401,8 +470,71 @@ async function main() {
     );
     assert(browserLogin?.status === 201, `Browser login failed with status ${browserLogin?.status}`);
 
+    await navigate(
+      client,
+      `${FRONTEND_URL}/manage-students?schoolId=${classroom.school_id}&studentStatus=INVALID_STATUS`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `location.pathname === '/manage-students'
+            && !new URLSearchParams(location.search).has('studentStatus')
+            && !document.body.innerText.includes('ไม่สามารถโหลดรายชื่อนักเรียนได้')`,
+        ),
+      'Invalid student-status URL filter did not fall back cleanly',
+    );
+    await navigate(
+      client,
+      `${FRONTEND_URL}/manage-students/history?schoolId=${classroom.school_id}&auditAction=INVALID_ACTION&auditFrom=2026-99-99&auditTo=2026-02-30`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `location.pathname === '/manage-students/history'
+            && !new URLSearchParams(location.search).has('auditAction')
+            && !new URLSearchParams(location.search).has('auditFrom')
+            && !new URLSearchParams(location.search).has('auditTo')
+            && !document.body.innerText.includes('โหลดประวัติไม่สำเร็จ')`,
+        ),
+      'Invalid audit URL filters did not fall back cleanly',
+    );
+    await navigate(
+      client,
+      `${FRONTEND_URL}/manage-students/history?schoolId=${classroom.school_id}&auditFrom=2026-08-02&auditTo=2026-08-01`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `location.pathname === '/manage-students/history'
+            && !new URLSearchParams(location.search).has('auditFrom')
+            && !new URLSearchParams(location.search).has('auditTo')
+            && !document.body.innerText.includes('โหลดประวัติไม่สำเร็จ')`,
+        ),
+      'Reversed audit URL date range did not fall back cleanly',
+    );
+
+    const auditSearchSelector = 'input[placeholder="ค้นหาผู้ทำรายการ"]';
+    await waitFor(
+      async () => Boolean(await evaluate(client, `Boolean(document.querySelector(${JSON.stringify(auditSearchSelector)}))`)),
+      'Audit-log search did not render',
+    );
+    await fillInput(client, auditSearchSelector, 'first-school-filter');
+    await selectComboboxOption(client, 'กรองตามโรงเรียน', outsideClassroom.school_name);
+    await waitFor(
+      async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === '',
+      'Audit search crossed into a second school scope',
+    );
+    await selectComboboxOption(client, 'กรองตามโรงเรียน', classroom.school_name);
+    await waitFor(
+      async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === 'first-school-filter',
+      'Audit search did not restore the first school scope value',
+    );
+
     // --- Management list → avatar detail → edit → back keeps its origin. ---
-    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await navigate(client, `${FRONTEND_URL}/manage-students?schoolId=${classroom.school_id}`);
     await waitFor(
       async () =>
         Boolean(
@@ -413,6 +545,27 @@ async function main() {
         ),
       'Managed student search did not render',
     );
+    const studentFilterPattern = await evaluate(
+      client,
+      `(() => {
+        const status = document.querySelector('select[aria-label="กรองตามสถานะการเรียน"]');
+        const school = document.querySelector('input[aria-label="กรองตามโรงเรียน"]');
+        const searchRow = status?.closest('div.flex.flex-col.gap-3');
+        const sections = searchRow?.parentElement;
+        return {
+          hasProvince: Boolean(document.querySelector('input[placeholder="ค้นหาจังหวัด"]')),
+          hasDistrict: Boolean(document.querySelector('input[placeholder="ค้นหาอำเภอ/เขต"]')),
+          separated: Boolean(
+            sections && status && school
+              && sections.children[0]?.contains(status)
+              && sections.children[1]?.contains(school)
+          ),
+        };
+      })()`,
+    );
+    assert(!studentFilterPattern.hasProvince, 'Managed student list still renders province filter');
+    assert(!studentFilterPattern.hasDistrict, 'Managed student list still renders district filter');
+    assert(studentFilterPattern.separated, 'Student status filter is not separated from school scope');
     await fillInput(client, 'input[placeholder="ค้นหาชื่อนักเรียน..."]', 'อินทรกำแหง');
     await waitFor(
       async () =>
@@ -434,13 +587,18 @@ async function main() {
       async () => String(await evaluate(client, 'location.pathname')) === '/manage-students/new',
       'Add-student button did not open the create page',
     );
-    const createFields = await evaluate(
-      client,
-      `Boolean(document.querySelector('#student-national-id'))
-       && document.body.innerText.includes('โรงเรียน ปีการศึกษา ชั้น และห้อง')
-       && document.body.innerText.includes('สถานะนักเรียน')`,
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `document.body.innerText.includes('เลขบัตรประชาชน')
+              && document.body.innerText.includes('โรงเรียน ปีการศึกษา ชั้น และห้อง')
+              && document.body.innerText.includes('สถานะนักเรียน')`,
+          ),
+        ),
+      'Student create page is missing identity or education fields',
     );
-    assert(createFields === true, 'Student create page is missing identity or education fields');
     const createdNationalId = randomThaiNationalId();
     const createResult = await evaluate(
       client,
@@ -516,7 +674,7 @@ async function main() {
       })()`,
     );
     assert(duplicateResult?.status === 409, `Duplicate student returned ${duplicateResult?.status}`);
-    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await navigate(client, `${FRONTEND_URL}/manage-students?schoolId=${classroom.school_id}`);
     await waitFor(
       async () =>
         Boolean(
@@ -574,6 +732,123 @@ async function main() {
        && document.body.innerText.includes('ข้อมูลการเรียน')`,
     );
     assert(expandedEditFields === true, 'Student edit page is missing identity/education fields');
+    const identityCorrectionPresentation = await evaluate(
+      client,
+      `(() => {
+        const correctionButton = [...document.querySelectorAll('button')]
+          .find((button) => button.textContent.trim() === 'แก้ไขเลขบัตร');
+        const revealButton = correctionButton?.previousElementSibling;
+        const firstName = document.querySelector('#FirstName_Onec')?.getBoundingClientRect();
+        const lastName = document.querySelector('#LastName_Onec')?.getBoundingClientRect();
+        const middleName = document.querySelector('#MiddleName_Onec')?.getBoundingClientRect();
+        return {
+          correctionVisible: Boolean(correctionButton && correctionButton.offsetParent !== null),
+          correctionAfterReveal:
+            revealButton?.tagName === 'BUTTON'
+            && revealButton.getAttribute('aria-label')?.includes('เลขบัตรประชาชน'),
+          pairedNames: Boolean(
+            firstName && lastName && middleName
+            && Math.abs(firstName.top - lastName.top) < 1
+            && middleName.top > firstName.bottom,
+          ),
+        };
+      })()`,
+    );
+    assert(
+      identityCorrectionPresentation.correctionVisible
+        && identityCorrectionPresentation.correctionAfterReveal,
+      'National-id correction button is missing or is not immediately after reveal',
+    );
+    assert(
+      identityCorrectionPresentation.pairedNames,
+      'First and last name are not paired above the middle-name field',
+    );
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'แก้ไขเลขบัตร')`,
+      'National-id correction button was not found',
+    );
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#new-national-id'))`)),
+      'National-id correction dialog did not render',
+    );
+    const correctionDialogIsBlank = await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('#new-national-id');
+        const dialog = input?.closest('[role="dialog"]');
+        return input?.value === ''
+          && !String(dialog?.innerText ?? '').includes(${JSON.stringify(originalNationalId)});
+      })()`,
+    );
+    assert(correctionDialogIsBlank === true, 'Correction dialog exposed or prefilled the old id');
+    await fillInput(client, '#new-national-id', correctedNationalId);
+    await click(
+      client,
+      `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ยืนยันการแก้ไข'))`,
+      'National-id correction confirm button was not found',
+    );
+    await waitFor(
+      async () =>
+        Boolean(await evaluate(client, `!document.querySelector('#new-national-id')`)),
+      'National-id correction dialog did not close after submit',
+    );
+    const [correctedIdentity] = await dataSource.query(
+      `
+        SELECT enrollment."PersonID_Onec" AS national_id,
+          identifier.identifier_normalized,
+          audit.actor_label, audit.created_at, audit.metadata
+        FROM student_term enrollment
+        JOIN student_person_identifier identifier
+          ON identifier.person_uuid = enrollment.person_uuid
+         AND identifier.identifier_type = 'NATIONAL_ID'
+         AND identifier.is_primary IS TRUE
+         AND identifier.deleted_at IS NULL
+        JOIN LATERAL (
+          SELECT actor_label, created_at, metadata
+          FROM audit_log
+          WHERE action = 'STUDENT_NATIONAL_ID_CORRECTION'
+            AND target_id = enrollment.student_uuid::text
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) audit ON TRUE
+        WHERE enrollment.student_uuid = $1
+      `,
+      [studentUuid],
+    );
+    assert(
+      correctedIdentity?.national_id === correctedNationalId
+        && correctedIdentity?.identifier_normalized === correctedNationalId,
+      'National-id correction did not update enrollment and canonical identity atomically',
+    );
+    const [linkedEnrollmentCorrection] = await dataSource.query(
+      `
+        SELECT COUNT(*)::integer AS enrollment_count,
+          COUNT(*) FILTER (WHERE "PersonID_Onec" = $2)::integer AS corrected_count
+        FROM student_term
+        WHERE person_uuid = $1
+          AND deleted_at IS NULL
+      `,
+      [personUuid, correctedNationalId],
+    );
+    assert(
+      linkedEnrollmentCorrection?.enrollment_count === 2
+        && linkedEnrollmentCorrection?.corrected_count === 2,
+      'National-id correction left a linked term enrollment with a stale identifier',
+    );
+    assert(
+      correctedIdentity.actor_label === ADMIN_USERNAME
+        && correctedIdentity.created_at
+        && correctedIdentity.metadata?.reasonCode === 'INCORRECT_NATIONAL_ID',
+      'National-id correction audit is missing actor, time, or standard reason',
+    );
+    const correctionAuditText = JSON.stringify(correctedIdentity.metadata);
+    assert(
+      !correctionAuditText.includes(originalNationalId)
+        && !correctionAuditText.includes(correctedNationalId),
+      'National-id correction audit leaked the old or new identifier',
+    );
     await click(
       client,
       `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ย้อนกลับ')`,
@@ -748,6 +1023,48 @@ async function main() {
       })()`,
     );
     assert(limitedLogin?.status === 201, `Limited-scope login failed with ${limitedLogin?.status}`);
+    await navigate(client, `${FRONTEND_URL}/manage-students`);
+    await waitFor(
+      async () =>
+        Boolean(
+          await evaluate(
+            client,
+            `Boolean(document.querySelector('tbody tr'))
+              && !document.querySelector('input[aria-label="กรองตามโรงเรียน"]')`,
+          ),
+        ),
+      'Single-school actor did not receive the implied school roster',
+    );
+    const crossScopeReplacementNationalId = randomThaiNationalId();
+    const deniedCorrection = await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(`${BACKEND_URL}/api/students/${studentUuid}/national-id`)}, {
+          method: 'PATCH', credentials: 'include', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ newNationalId: ${JSON.stringify(crossScopeReplacementNationalId)} }),
+        });
+        return { status: response.status };
+      })()`,
+    );
+    assert(
+      deniedCorrection?.status === 403,
+      `Cross-scope canonical identity correction returned ${deniedCorrection?.status}`,
+    );
+    const [identityAfterDeniedCorrection] = await dataSource.query(
+      `
+        SELECT COUNT(*)::integer AS enrollment_count,
+          COUNT(*) FILTER (WHERE "PersonID_Onec" = $2)::integer AS unchanged_count
+        FROM student_term
+        WHERE person_uuid = $1
+          AND deleted_at IS NULL
+      `,
+      [personUuid, correctedNationalId],
+    );
+    assert(
+      identityAfterDeniedCorrection?.enrollment_count === 2
+        && identityAfterDeniedCorrection?.unchanged_count === 2,
+      'Cross-scope correction mutated part of the canonical identity',
+    );
     const deniedNationalId = randomThaiNationalId();
     const deniedCreate = await evaluate(
       client,
@@ -784,6 +1101,15 @@ async function main() {
           'out-of-scope classroom creation returns 404 without persistence',
           'avatar → detail → edit → back keeps the จัดการนักเรียน origin',
           'edit page exposes identity and education fields',
+          'first + last name stay paired above middle name',
+          'national-id correction dialog never exposes the old id',
+          'national-id correction updates every linked term enrollment with PII-safe actor/time/reason audit',
+          'cross-scope canonical identity correction returns 403 without a partial write',
+          'invalid student-status and audit URL filters fall back without API errors',
+          'student list requires one scoped school and removes geographic filters',
+          'single-school actor receives an implied school without a school picker',
+          'student status filter is separated from the school/classroom scope row',
+          'audit search stays isolated and restores independently across school scopes',
           'guardian rows default FATHER → MOTHER → GUARDIAN',
           'GUARDIAN row shows relation-note field',
           'first guardian defaults to primary',

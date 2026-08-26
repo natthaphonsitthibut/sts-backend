@@ -56,6 +56,15 @@ export const PII_REASON_LABELS: Record<PiiReasonCode, string> = {
 /** Reason codes that require a free-text note (enforced in DTO + service). */
 export const PII_REASON_REQUIRES_NOTE: PiiReasonCode[] = ['OTHER'];
 
+/** Canonical reason stored for the dedicated student national-id correction flow. */
+export const STUDENT_NATIONAL_ID_CORRECTION_REASON = {
+  code: 'INCORRECT_NATIONAL_ID',
+  label: 'เลขบัตรประชาชนเดิมไม่ถูกต้อง',
+} as const;
+
+/** Provenance written to the canonical identity row after a staff correction. */
+export const STUDENT_NATIONAL_ID_CORRECTION_SOURCE = 'MANUAL_CORRECTION' as const;
+
 /** SELF_ACCESS is resolved by the server and is never selectable by staff. */
 export function listStaffPiiRevealReasons() {
   return PII_REASON_CODES.filter((code) => code !== 'SELF_ACCESS').map((code) => ({

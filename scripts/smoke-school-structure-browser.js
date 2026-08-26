@@ -24,8 +24,12 @@ const TEACHER_USERNAME = 'school_structure_browser_teacher';
 const TEACHER_FIRST_NAME = 'ครูทดสอบ';
 const TEACHER_LAST_NAME = 'ครูประจำชั้นสโมค';
 const TEACHER_DISPLAY_NAME = `${TEACHER_FIRST_NAME} ${TEACHER_LAST_NAME}`;
+const TEACHER_CITIZEN_ID = '9900000000019';
 const ACADEMIC_YEAR = 2999;
 const ROOM_NUMBER = 991;
+const RECORDED_ATTENDANCE_DATE = '2026-07-14';
+const RECORDED_ATTENDANCE_AT = '2026-07-14T15:00:00+07:00';
+const RECORDED_SUBJECT_PERIODS = 6;
 const DIAGNOSTIC_PATH = process.env.SMOKE_DIAGNOSTIC_PATH || '';
 const SCREENSHOT_PATH = process.env.SMOKE_SCREENSHOT_PATH || '';
 
@@ -48,7 +52,10 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${lastError.message}` : message);
+  // Accept a thunk so a red run can report the values actually on the page
+  // instead of a static sentence.
+  const detail = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${detail}: ${lastError.message}` : detail);
 }
 
 class CdpClient {
@@ -106,6 +113,100 @@ async function navigate(client, url) {
   await waitFor(
     async () => (await evaluate(client, 'document.readyState')) === 'complete',
     `Page did not load: ${url}`,
+  );
+}
+
+async function clickAppLink(client, pathname) {
+  const clicked = await evaluate(
+    client,
+    `(() => {
+      const link = [...document.querySelectorAll('a')].find(
+        (anchor) => new URL(anchor.href).pathname === ${JSON.stringify(pathname)}
+      );
+      link?.click();
+      return Boolean(link);
+    })()`,
+  );
+  if (!clicked) {
+    const availablePaths = await evaluate(
+      client,
+      `[...new Set([...document.querySelectorAll('a[href]')].map((anchor) => new URL(anchor.href).pathname))]`,
+    );
+    throw new Error(
+      `App link was not available: ${pathname}; available=${JSON.stringify(availablePaths)}`,
+    );
+  }
+  await waitFor(
+    async () => (await evaluate(client, 'location.pathname')) === pathname,
+    `SPA navigation did not settle: ${pathname}`,
+  );
+}
+
+async function assertRememberedSearchKeepsRestoredPage(client) {
+  await navigate(client, `${FRONTEND_URL}/classrooms`);
+  await waitFor(
+    async () => await evaluate(client, `Boolean(document.querySelector('input[placeholder="ค้นหา"]'))`),
+    'Classrooms search did not render for filter restoration smoke',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const input = document.querySelector('input[placeholder="ค้นหา"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, 'remembered-classroom-filter');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
+  );
+  await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 400))`);
+  await evaluate(client, `history.replaceState(history.state, '', '/classrooms?page=2')`);
+  await clickAppLink(client, '/');
+  await evaluate(client, 'history.back()');
+  await waitFor(
+    async () => (await evaluate(client, 'location.pathname')) === '/classrooms',
+    'Browser back did not restore the classrooms page',
+  );
+  await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 650))`);
+  assert(
+    (await evaluate(client, `new URLSearchParams(location.search).get('page')`)) === '2',
+    'Remembered classrooms search reset the restored page query',
+  );
+  assert(
+    (await evaluate(client, `document.querySelector('input[placeholder="ค้นหา"]')?.value`)) ===
+      'remembered-classroom-filter',
+    'Classrooms search was not restored during the page-state smoke',
+  );
+
+  await navigate(client, `${FRONTEND_URL}/school-structure`);
+  await waitFor(
+    async () => await evaluate(client, `Boolean(document.querySelector('input[placeholder="ค้นหาห้อง"]'))`),
+    'School-structure search did not render for filter restoration smoke',
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const input = document.querySelector('input[placeholder="ค้นหาห้อง"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, 'remembered-structure-filter');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
+  );
+  await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 400))`);
+  await evaluate(client, `history.replaceState(history.state, '', '/school-structure?page=2')`);
+  await clickAppLink(client, '/');
+  await evaluate(client, 'history.back()');
+  await waitFor(
+    async () => (await evaluate(client, 'location.pathname')) === '/school-structure',
+    'Browser back did not restore the school-structure page',
+  );
+  await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 650))`);
+  assert(
+    (await evaluate(client, `new URLSearchParams(location.search).get('page')`)) === '2',
+    'Remembered school-structure search reset the restored page query',
+  );
+  assert(
+    (await evaluate(client, `document.querySelector('input[placeholder="ค้นหาห้อง"]')?.value`)) ===
+      'remembered-structure-filter',
+    'School-structure search was not restored during the page-state smoke',
   );
 }
 
@@ -337,6 +438,52 @@ async function chooseSelectOption(client, ariaLabel, optionLabel) {
   assert(chosen, `Could not choose select option: ${optionLabel}`);
 }
 
+/**
+ * The design-system Select puts `id` on its visible trigger button and keeps the
+ * real <select> sr-only, so an id lookup returns a button. Read the label for the
+ * wanted value off the hidden select, then pick that option the way a user does.
+ */
+async function chooseSelectOptionByValue(client, id, value) {
+  const idLiteral = JSON.stringify(id);
+  const valueLiteral = JSON.stringify(value);
+  const label = await evaluate(
+    client,
+    `(() => {
+      const trigger = document.getElementById(${idLiteral});
+      if (!trigger || trigger.disabled) return null;
+      const native = trigger.closest('div')?.querySelector('select');
+      const option = Array.from(native?.options ?? []).find(
+        (item) => item.value === ${valueLiteral},
+      );
+      if (!option) return null;
+      trigger.click();
+      return option.textContent.trim();
+    })()`,
+  );
+  assert(label, `Could not open select ${id} for value ${value}`);
+  const labelLiteral = JSON.stringify(label);
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `Array.from(document.querySelectorAll('[role="option"]'))
+          .some((node) => node.textContent.trim() === ${labelLiteral})`,
+      ),
+    `Select ${id} did not list an option for ${value}`,
+  );
+  const chosen = await evaluate(
+    client,
+    `(() => {
+      const option = Array.from(document.querySelectorAll('[role="option"]'))
+        .find((node) => node.textContent.trim() === ${labelLiteral});
+      if (!option) return false;
+      option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      return true;
+    })()`,
+  );
+  assert(chosen, `Could not choose ${value} in select ${id}`);
+}
+
 async function changeNativeSelect(client, ariaLabel, value) {
   const changed = await evaluate(
     client,
@@ -353,6 +500,48 @@ async function changeNativeSelect(client, ariaLabel, value) {
     })()`,
   );
   assert(changed, `Could not select ${value} from ${ariaLabel}`);
+}
+
+// The import context cascade renders grade and classroom as native selects,
+// so pick by the option text a user reads and let the helper resolve its value.
+async function chooseNativeSelectOption(client, ariaLabel, optionLabel) {
+  const selector = JSON.stringify(`[aria-label="${ariaLabel}"]`);
+  const label = JSON.stringify(optionLabel);
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `(() => {
+          const select = document.querySelector(${selector});
+          if (!select || select.disabled) return false;
+          return Array.from(select.options).some(
+            (option) => option.textContent.trim() === ${label},
+          );
+        })()`,
+      ),
+    async () =>
+      `Native select option was not available: ${optionLabel} (${await evaluate(
+        client,
+        `(() => {
+          const select = document.querySelector(${selector});
+          if (!select) return 'select missing';
+          if (select.disabled) return 'select disabled';
+          return Array.from(select.options).map((option) => option.textContent.trim()).join(' | ');
+        })()`,
+      )})`,
+  );
+  const value = await evaluate(
+    client,
+    `(() => {
+      const select = document.querySelector(${selector});
+      const option = Array.from(select.options).find(
+        (candidate) => candidate.textContent.trim() === ${label},
+      );
+      return option ? option.value : null;
+    })()`,
+  );
+  assert(value !== null, `Native select option disappeared: ${optionLabel}`);
+  await changeNativeSelect(client, ariaLabel, value);
 }
 
 async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) {
@@ -372,7 +561,15 @@ async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) 
     : [];
   if (identifier) {
     await dataSource.query(
-      `DELETE FROM attendance
+      `DELETE FROM attendance_exceptions
+       WHERE student_uuid IN (
+         SELECT student_uuid FROM student_term
+         WHERE person_uuid=$1 AND "SchoolID_Onec"=$2
+       )`,
+      [identifier.person_uuid, schoolId],
+    );
+    await dataSource.query(
+      `DELETE FROM attendance_session_roster
        WHERE student_uuid IN (
          SELECT student_uuid FROM student_term
          WHERE person_uuid=$1 AND "SchoolID_Onec"=$2
@@ -411,6 +608,10 @@ async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) 
     await dataSource.query(`DELETE FROM student_import_batches WHERE id=ANY($1::uuid[])`, [ids]);
   }
   await dataSource.query(
+    `DELETE FROM classroom_additional_homeroom_teachers WHERE school_id=$1 AND created_by=$2`,
+    [schoolId, actorId],
+  );
+  await dataSource.query(
     `DELETE FROM classroom_homeroom_teachers WHERE school_id=$1 AND created_by=$2`,
     [schoolId, actorId],
   );
@@ -418,13 +619,39 @@ async function cleanup(dataSource, actorId, schoolId, studentIdentifier = null) 
     `DELETE FROM school_teacher_memberships WHERE school_id=$1 AND created_by=$2`,
     [schoolId, actorId],
   );
+  await dataSource.query(`DELETE FROM teachers WHERE citizen_id=$1`, [TEACHER_CITIZEN_ID]);
+  await dataSource.query(
+    `DELETE FROM attendance_session_roster roster
+     USING attendance_sessions session, school_classrooms classroom
+     WHERE roster.session_id = session.id
+       AND session.classroom_id = classroom.id
+       AND classroom.school_id=$1 AND classroom.room_code=$2 AND classroom.created_by=$3`,
+    [schoolId, String(ROOM_NUMBER), actorId],
+  );
+  await dataSource.query(
+    `DELETE FROM attendance_sessions session
+     USING school_classrooms classroom
+     WHERE session.classroom_id = classroom.id
+       AND classroom.school_id=$1 AND classroom.room_code=$2 AND classroom.created_by=$3`,
+    [schoolId, String(ROOM_NUMBER), actorId],
+  );
+  await dataSource.query(
+    `DELETE FROM classroom_subjects
+     WHERE classroom_id IN (
+       SELECT id FROM school_classrooms
+       WHERE school_id=$1 AND room_code=$2 AND created_by=$3
+     )`,
+    [schoolId, String(ROOM_NUMBER), actorId],
+  );
   await dataSource.query(
     `DELETE FROM school_classrooms WHERE school_id=$1 AND room_code=$2 AND created_by=$3`,
     [schoolId, String(ROOM_NUMBER), actorId],
   );
   await dataSource.query(
-    `DELETE FROM school_terms WHERE school_id=$1 AND academic_year=$2 AND created_by=$3`,
-    [schoolId, ACADEMIC_YEAR, actorId],
+    // ACADEMIC_YEAR + 1 is the year the natural-key edit assertion moves a term
+    // to; a run that dies mid-edit must not leave it behind for the next run.
+    `DELETE FROM school_terms WHERE school_id=$1 AND academic_year = ANY($2) AND created_by=$3`,
+    [schoolId, [ACADEMIC_YEAR, ACADEMIC_YEAR + 1], actorId],
   );
 }
 
@@ -473,7 +700,15 @@ async function main() {
       firstName: 'School Structure',
       lastName: 'Browser Smoke',
       role: 'DIRECTOR',
-      permissions: ['home', 'students', 'manage-school-structure', 'import-data', 'export-data'],
+      permissions: [
+        'home',
+        'students',
+        'classrooms',
+        'manage-school-structure',
+        'manage-classroom-links',
+        'import-data',
+        'export-data',
+      ],
       dataScope: { school_ids: [schoolA.id] },
     });
     await upsertUser(dataSource, hash, {
@@ -489,7 +724,9 @@ async function main() {
       firstName: 'Multi School',
       lastName: 'Browser Smoke',
       role: 'DIRECTOR',
-      permissions: ['home', 'manage-school-structure'],
+      // `/classrooms` is its own permission now that it split from
+      // `/school-structure`; without it this actor never reaches the filter.
+      permissions: ['home', 'manage-school-structure', 'classrooms'],
       dataScope: { school_ids: [schoolA.id, schoolB.id] },
     });
     await cleanup(dataSource, actor.id, schoolA.id);
@@ -567,6 +804,20 @@ async function main() {
     );
     assert(scopedSchoolNames.includes(schoolA.name), 'Scoped school A was not visible');
     assert(!scopedSchoolNames.includes(schoolB.name), 'School B leaked into scoped browser page');
+    assert(
+      await evaluate(
+        chrome.client,
+        `!document.querySelector('a[href="/attendance-operations"]')`,
+      ),
+      'Retired attendance completeness navigation remained visible',
+    );
+    await navigate(chrome.client, `${FRONTEND_URL}/attendance-operations`);
+    await waitFor(
+      async () =>
+        String(await evaluate(chrome.client, 'document.body.innerText')).includes('ไม่พบหน้านี้'),
+      'Retired attendance completeness route did not render the standard 404',
+    );
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure`);
 
     const crossSchool = await browserRequest(
       chrome.client,
@@ -574,6 +825,63 @@ async function main() {
       `/api/school-structure/classrooms?schoolId=${schoolB.id}`,
     );
     assert(crossSchool.status === 404, 'Cross-school classroom probing did not fail closed');
+
+    const deletableTermResponse = await browserRequest(
+      chrome.client,
+      'POST',
+      '/api/attendance/terms',
+      {
+        schoolId: schoolA.id,
+        academicYear: ACADEMIC_YEAR,
+        semester: 2,
+        startsOn: '2027-04-01',
+        endsOn: '2027-05-31',
+        status: 'DRAFT',
+      },
+    );
+    assert(
+      deletableTermResponse.status === 201,
+      `Draft term creation for hard-delete failed: ${deletableTermResponse.status}`,
+    );
+    const deletableTerm = deletableTermResponse.payload.data;
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure`);
+    await waitFor(
+      async () =>
+        evaluate(
+          chrome.client,
+          `Boolean(document.querySelector('select[aria-label="เลือกภาคเรียน"] option[value="${deletableTerm.id}"]'))`,
+        ),
+      'New draft term did not appear in the term selector',
+    );
+    await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', deletableTerm.id);
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .find((button) => button.offsetParent !== null && button.textContent.trim() === 'ลบภาคเรียน')
+        ?.click()`,
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(chrome.client, 'document.body.innerText')).includes(
+          'ลบภาคเรียนนี้?',
+        ),
+      'Draft term delete confirmation did not open',
+    );
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('[role="dialog"] button'))
+        .find((button) => button.textContent.trim() === 'ลบภาคเรียน')?.click()`,
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT COUNT(*)::int AS count FROM school_terms WHERE id = $1`,
+          [Number(deletableTerm.id)],
+        );
+        return Number(row?.count) === 0;
+      },
+      'Unused draft term was not hard-deleted',
+    );
 
     const termResponse = await browserRequest(chrome.client, 'POST', '/api/attendance/terms', {
       schoolId: schoolA.id,
@@ -605,7 +913,309 @@ async function main() {
     );
     const classroom = classroomResponse.payload.data;
 
-    const teacherCsv = `username,startedOn\n${TEACHER_USERNAME},2026-07-01\n`;
+    // The edit dialog can change the natural key. An upsert keyed on
+    // (school, year, semester) would leave the opened row behind, so prove the
+    // same id survives a year change and no second row appears.
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure?termId=${term.id}`);
+    await waitFor(
+      async () =>
+        evaluate(
+          chrome.client,
+          `Boolean(document.querySelector('select[aria-label="เลือกภาคเรียน"] option[value="${term.id}"]'))`,
+        ),
+      'Term under edit did not appear in the selector',
+    );
+    await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', term.id);
+    await evaluate(
+      chrome.client,
+      `Array.from(document.querySelectorAll('button'))
+        .find((button) => button.offsetParent !== null && button.textContent.trim() === 'แก้ภาคเรียน')
+        ?.click()`,
+    );
+    await waitFor(
+      async () => evaluate(chrome.client, `Boolean(document.querySelector('#term-academic-year'))`),
+      'Term edit dialog did not open',
+    );
+    await evaluate(
+      chrome.client,
+      `(() => {
+        const input = document.querySelector('#term-academic-year');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '${ACADEMIC_YEAR + 1}');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    );
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[role="dialog"] button[type="submit"]')?.click()`,
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT academic_year FROM school_terms WHERE id = $1`,
+          [Number(term.id)],
+        );
+        return Number(row?.academic_year) === ACADEMIC_YEAR + 1;
+      },
+      'Editing the academic year did not rewrite the opened term row',
+    );
+    const [termRowCount] = await dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM school_terms
+       WHERE school_id = $1 AND academic_year IN ($2, $3) AND semester = 1`,
+      [schoolA.id, ACADEMIC_YEAR, ACADEMIC_YEAR + 1],
+    );
+    assert(
+      Number(termRowCount?.count) === 1,
+      `Editing the academic year left an orphaned term row: ${JSON.stringify(termRowCount)}`,
+    );
+    const restoredTerm = await browserRequest(chrome.client, 'POST', '/api/attendance/terms', {
+      termId: Number(term.id),
+      schoolId: schoolA.id,
+      academicYear: ACADEMIC_YEAR,
+      semester: 1,
+      startsOn: '2026-06-01',
+      endsOn: '2027-03-31',
+      status: 'DRAFT',
+    });
+    assert(
+      restoredTerm.status === 201 && restoredTerm.payload.data.id === term.id,
+      `Restoring the term by id did not reuse the row: ${JSON.stringify(restoredTerm.payload)}`,
+    );
+
+    // A termId from an old link can name another school's term or a deleted one.
+    // The page must fall back to a real term instead of querying with it.
+    await navigate(chrome.client, `${FRONTEND_URL}/school-structure?termId=999999999`);
+    await waitFor(
+      async () =>
+        (await evaluate(
+          chrome.client,
+          `new URLSearchParams(location.search).get('termId')`,
+        )) === String(term.id),
+      'Stale termId in the URL was not normalized to a term of this school',
+    );
+    assert(
+      (await evaluate(
+        chrome.client,
+        `Array.from(document.querySelectorAll('button'))
+          .find((button) => button.textContent.trim() === 'เพิ่มห้องเรียน')?.disabled ?? null`,
+      )) === false,
+      'Add-classroom stayed disabled after the stale termId was normalized',
+    );
+
+    await assertRememberedSearchKeepsRestoredPage(chrome.client);
+    if (process.env.SMOKE_FILTER_STATE_ONLY === 'true') {
+      const invalidHistoryResponse = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/classrooms/${classroom.id}/attendance-history?view=DAILY&date=2026-99-99`,
+      );
+      assert(
+        invalidHistoryResponse.status === 400,
+        'Attendance-history API accepted a non-calendar date',
+      );
+      await navigate(
+        chrome.client,
+        `${FRONTEND_URL}/classrooms/${classroom.id}/history?historySubjectId=oops&historyDay=2026-99-99&historyDate=2026-02-30&historyFrom=2026-08-31&historyTo=2026-08-01`,
+      );
+      await waitFor(
+        async () => {
+          const search = String(await evaluate(chrome.client, 'location.search'));
+          return [
+            'historySubjectId',
+            'historyDay',
+            'historyDate',
+            'historyFrom',
+            'historyTo',
+          ].every((key) => !new URLSearchParams(search).has(key));
+        },
+        'Invalid attendance-history URL state was not normalized before querying',
+      );
+      console.log('school structure filter-state browser smoke passed');
+      return;
+    }
+    if (process.env.SMOKE_HOMEROOM_ONLY === 'true') {
+      const optionsResponse = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/teachers/options?schoolId=${schoolA.id}`,
+      );
+      const teacherOptions = optionsResponse.payload.data ?? [];
+      assert(teacherOptions.length >= 2, 'Homeroom smoke requires two active teacher memberships');
+      const [primaryTeacher, additionalTeacher] = teacherOptions;
+      const initialAssignment = await browserRequest(
+        chrome.client,
+        'PUT',
+        `/api/school-structure/classrooms/${classroom.id}/homeroom-teachers`,
+        { teacherMembershipIds: [Number(primaryTeacher.id)] },
+      );
+      assert(initialAssignment.status === 200, 'Could not seed the primary homeroom teacher');
+      const seededRoomResponse = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/classrooms/${classroom.id}`,
+      );
+      const seededRoom = seededRoomResponse.payload.data;
+      assert(
+        seededRoom?.homeroomTeachers?.[0]?.teacherMembershipId === String(primaryTeacher.id),
+        `Classroom API did not expose the seeded homeroom teacher: ${JSON.stringify(seededRoom)}`,
+      );
+
+      await navigate(chrome.client, `${FRONTEND_URL}/school-structure?termId=${term.id}`);
+      await waitFor(
+        async () => {
+          const text = await evaluate(chrome.client, 'document.body.innerText');
+          return text.includes('ห้อง Browser Smoke') && text.includes(primaryTeacher.displayName);
+        },
+        'Focused homeroom room did not render',
+      );
+      const openDialog = async () => {
+        await evaluate(
+          chrome.client,
+          `(() => {
+            const row = Array.from(document.querySelectorAll('tr'))
+              .find((node) => node.textContent.includes('ห้อง Browser Smoke'));
+            row && Array.from(row.querySelectorAll('button'))
+              .find((node) => node.textContent.trim() === 'จัดการครู')?.click();
+          })()`,
+        );
+        await waitFor(
+          async () => Boolean(await evaluate(
+            chrome.client,
+            `Boolean(document.querySelector('#homeroom-teacher-0'))`,
+          )),
+          'Manage homeroom dialog did not open',
+        );
+      };
+      const submitDialog = async () => {
+        const submitted = await evaluate(
+          chrome.client,
+          `(() => {
+            const button = document.querySelector('[role="dialog"] button[type="submit"]');
+            if (!button || button.disabled || !button.textContent.includes('บันทึก')) return false;
+            button.click();
+            return true;
+          })()`,
+        );
+        assert(submitted, 'Homeroom dialog submit button was unavailable');
+        await waitFor(
+          async () => !(await evaluate(
+            chrome.client,
+            `Boolean(document.querySelector('#homeroom-teacher-0'))`,
+          )),
+          'Homeroom dialog did not close after saving',
+        );
+      };
+
+      await openDialog();
+      const prefilledPrimary = await evaluate(
+        chrome.client,
+        `document.querySelector('[aria-label="ครูประจำชั้นคนที่ 1"]')?.value || ''`,
+      );
+      assert(
+        prefilledPrimary === primaryTeacher.displayName,
+        'Existing homeroom teacher was not prefilled',
+      );
+      await evaluate(
+        chrome.client,
+        `document.querySelector('[aria-label="เพิ่มครูประจำชั้นคนที่ 2"]')?.click()`,
+      );
+      await chooseCombobox(
+        chrome.client,
+        'ครูประจำชั้นคนที่ 2',
+        additionalTeacher.displayName,
+      );
+      await submitDialog();
+      let saved = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/assignments?classroomId=${classroom.id}`,
+      );
+      assert(
+        saved.payload.data?.length === 2,
+        `Saving two homeroom teachers did not persist two rows: ${JSON.stringify(saved)}`,
+      );
+
+      await navigate(
+        chrome.client,
+        `${FRONTEND_URL}/attendance/classroom-links?termId=${term.id}`,
+      );
+      await waitFor(
+        async () => {
+          const cell = await evaluate(
+            chrome.client,
+            `(() => {
+              const row = Array.from(document.querySelectorAll('tr'))
+                .find((node) => node.textContent.includes('ห้อง Browser Smoke'));
+              const teacher = row?.querySelector('[data-homeroom-teacher]');
+              return teacher ? {
+                text: teacher.textContent,
+                profileButtons: teacher.querySelectorAll('[aria-label^="เปิดข้อมูลคุณครู"]').length
+              } : null;
+            })()`,
+          );
+          return cell?.text.includes(primaryTeacher.displayName)
+            && cell.text.includes(additionalTeacher.displayName)
+            && cell.text.includes(',')
+            && cell.profileButtons === 2;
+        },
+        'Classroom-link table did not render two avatar/name groups separated by a comma',
+      );
+      await navigate(chrome.client, `${FRONTEND_URL}/school-structure?termId=${term.id}`);
+      await waitFor(
+        async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
+        'School structure page did not restore after classroom-link verification',
+      );
+
+      await openDialog();
+      assert(
+        await evaluate(chrome.client, `document.querySelectorAll('[id^="homeroom-teacher-"]').length === 2`),
+        'Two saved homeroom teachers were not restored in the dialog',
+      );
+      await evaluate(
+        chrome.client,
+        `document.querySelector('[aria-label="ลบครูประจำชั้นคนที่ 2"]')?.click();
+         document.querySelector('[aria-label="เพิ่มครูประจำชั้นคนที่ 2"]')?.click()`,
+      );
+      await submitDialog();
+      saved = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/assignments?classroomId=${classroom.id}`,
+      );
+      assert(saved.payload.data?.length === 1, 'Blank second row was persisted unexpectedly');
+
+      await openDialog();
+      assert(
+        await evaluate(chrome.client, `document.querySelectorAll('[id^="homeroom-teacher-"]').length === 1`),
+        'Blank second row remained after reopening the dialog',
+      );
+      await evaluate(
+        chrome.client,
+        `document.querySelector('[aria-label="ลบครูประจำชั้นคนที่ 1"]')?.click()`,
+      );
+      await submitDialog();
+      saved = await browserRequest(
+        chrome.client,
+        'GET',
+        `/api/school-structure/assignments?classroomId=${classroom.id}`,
+      );
+      assert(saved.payload.data?.length === 0, 'Clearing all homeroom teachers did not persist');
+      console.log('school structure homeroom 0-2 browser smoke passed');
+      return;
+    }
+
+    // Teachers are their own records keyed by citizen id; the import matches an
+    // existing person and grants a school membership, it never creates a login.
+    await dataSource.query(
+      `INSERT INTO teachers (first_name, last_name, citizen_id, teacher_status, created_by, updated_by)
+       VALUES ($1, $2, $3, 'ACTIVE', $4, $4)
+       ON CONFLICT (citizen_id) WHERE citizen_id IS NOT NULL AND deleted_at IS NULL
+       DO UPDATE SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name,
+                     teacher_status = 'ACTIVE', deleted_at = NULL, deleted_by = NULL,
+                     updated_by = EXCLUDED.updated_by`,
+      [TEACHER_FIRST_NAME, TEACHER_LAST_NAME, TEACHER_CITIZEN_ID, actor.id],
+    );
+    const teacherCsv = `citizenId,startedOn\n${TEACHER_CITIZEN_ID},2026-07-01\n`;
     const teacherPreview = await browserCsvRequest(
       chrome.client,
       '/api/imports/teachers/preview',
@@ -651,10 +1261,10 @@ async function main() {
     const teacherOptions = await browserRequest(
       chrome.client,
       'GET',
-      `/api/school-structure/teachers/options?schoolId=${schoolA.id}&searchTerm=${encodeURIComponent(TEACHER_USERNAME)}`,
+      `/api/school-structure/teachers/options?schoolId=${schoolA.id}&searchTerm=${encodeURIComponent(TEACHER_FIRST_NAME)}`,
     );
     const membership = teacherOptions.payload.data?.find(
-      (item) => item.username === TEACHER_USERNAME,
+      (item) => item.displayName === TEACHER_DISPLAY_NAME,
     );
     assert(membership, 'Imported teacher membership was not listed');
     assert(
@@ -756,40 +1366,58 @@ async function main() {
       .filter(Boolean)
       .join(' ');
     assert(importedStudentName, 'Roster API returned the imported student without a display name');
-    await dataSource.query(
-      `INSERT INTO attendance (
-         student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
-         "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
-         session_kind, "AttendanceStatus", "RecordedAt", "RecordedBy"
-       ) VALUES ($1, $2, $3, $4, $5, 1, '2026-07-14', 1, 'DAILY', 1,
-         '2026-07-14T08:12:08+07:00', $6)`,
-      [
-        importedStudent.studentUuid,
-        schoolA.id,
-        grade.id,
-        ROOM_NUMBER,
-        ACADEMIC_YEAR,
-        DIRECTOR_USERNAME,
-      ],
-    );
-    await dataSource.query(
-      `INSERT INTO attendance (
-         student_uuid, "SchoolID_Onec", "GradeLevelID_Onec", "RoomID_Onec",
-         "AcademicYear_Onec", "Semester_Onec", "AttendanceDate", "Period",
-         session_kind, "AttendanceStatus", "RecordedAt", "RecordedBy"
+    // Subject attendance now lives in submitted sessions plus a frozen roster;
+    // a student with no exception row reads back as present through
+    // `attendance_effective_records`. The legacy per-mark table is gone.
+    const subjectOfferings = await dataSource.query(
+      `INSERT INTO classroom_subjects (
+         school_id, classroom_id, school_subject_id, created_by, updated_by
        )
-       SELECT $1, $2, $3, $4, $5, 1, '2026-07-14', period,
-         'SUBJECT', 1, '2026-07-14T15:00:00+07:00', $6
-       FROM generate_series(1, 6) AS period`,
-      [
-        importedStudent.studentUuid,
-        schoolA.id,
-        grade.id,
-        ROOM_NUMBER,
-        ACADEMIC_YEAR,
-        DIRECTOR_USERNAME,
-      ],
+       SELECT $1, $2, offered.id, $3, $3
+       FROM (
+         SELECT id FROM school_subjects
+         WHERE school_id = $1 AND deleted_at IS NULL
+         ORDER BY id
+         LIMIT $4
+       ) offered
+       RETURNING id`,
+      [schoolA.id, Number(classroom.id), actor.id, RECORDED_SUBJECT_PERIODS],
     );
+    assert(
+      subjectOfferings.length === RECORDED_SUBJECT_PERIODS,
+      `School A does not offer ${RECORDED_SUBJECT_PERIODS} subjects to build the attendance fixture`,
+    );
+    for (const offering of subjectOfferings) {
+      const [session] = await dataSource.query(
+        `INSERT INTO attendance_sessions (
+           school_term_id, school_id, grade_level_id, room_id, attendance_date,
+           period, session_kind, status, expected_roster_count, recorded_count,
+           exception_count, record_storage_mode, checking_started_at, submitted_at,
+           submitted_by, created_by, updated_by, classroom_id, classroom_subject_id
+         ) VALUES ($1, $2, $3, $4, $5::date,
+           NULL, 'SUBJECT', 'SUBMITTED', 1, 1,
+           0, 'EXCEPTIONS', $6::timestamptz, $6::timestamptz,
+           $7, $7, $7, $8, $9)
+         RETURNING id`,
+        [
+          Number(term.id),
+          schoolA.id,
+          grade.id,
+          ROOM_NUMBER,
+          RECORDED_ATTENDANCE_DATE,
+          RECORDED_ATTENDANCE_AT,
+          actor.id,
+          Number(classroom.id),
+          Number(offering.id),
+        ],
+      );
+      await dataSource.query(
+        `INSERT INTO attendance_session_roster (
+           session_id, school_id, student_uuid, created_by, updated_by
+         ) VALUES ($1, $2, $3, $4, $4)`,
+        [session.id, schoolA.id, importedStudent.studentUuid, actor.id],
+      );
+    }
     const profileSummaryResponse = await browserRequest(
       chrome.client,
       'GET',
@@ -874,15 +1502,15 @@ async function main() {
     );
     await chooseCombobox(chrome.client, 'ค้นหาโรงเรียน', schoolA.name);
     await chooseCombobox(chrome.client, 'เลือกภาคเรียน', `ปี ${ACADEMIC_YEAR} / ภาค 1`);
-    await chooseCombobox(chrome.client, 'เลือกชั้น', classroom.gradeLabel);
-    await chooseCombobox(chrome.client, 'เลือกห้องเรียน', `ห้อง ${ROOM_NUMBER}`);
+    await chooseNativeSelectOption(chrome.client, 'เลือกชั้น', classroom.gradeLabel);
+    await chooseNativeSelectOption(chrome.client, 'เลือกห้องเรียน', `ห้อง ${ROOM_NUMBER}`);
     const directImportContext = await evaluate(
       chrome.client,
       `({
         school: document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value,
         term: document.querySelector('[aria-label="เลือกภาคเรียน"]')?.value,
-        grade: document.querySelector('[aria-label="เลือกชั้น"]')?.value,
-        classroom: document.querySelector('[aria-label="เลือกห้องเรียน"]')?.value
+        grade: document.querySelector('[aria-label="เลือกชั้น"]')?.selectedOptions[0]?.textContent.trim(),
+        classroom: document.querySelector('[aria-label="เลือกห้องเรียน"]')?.selectedOptions[0]?.textContent.trim()
       })`,
     );
     assert(
@@ -974,7 +1602,7 @@ async function main() {
       'Created classroom was not visible in the browser',
     );
     await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', term.id);
-    await chooseCombobox(chrome.client, 'กรองตามระดับชั้น', grade.label, grade.label);
+    await chooseNativeSelectOption(chrome.client, 'กรองตามระดับชั้น', grade.label);
     await waitFor(
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
       'Classroom table did not reflect the term and grade filters',
@@ -1013,7 +1641,7 @@ async function main() {
       chrome.client,
       `(() => {
         const button = Array.from(document.querySelectorAll('button'))
-          .find((node) => ['กำหนดครู', 'เปลี่ยนครู'].includes(node.textContent.trim()));
+          .find((node) => node.textContent.trim() === 'จัดการครู');
         return button ? button.textContent.trim() : null;
       })()`,
     );
@@ -1025,34 +1653,57 @@ async function main() {
       chrome.client,
       `(() => {
         const button = Array.from(document.querySelectorAll('button'))
-          .find((node) => ['กำหนดครู', 'เปลี่ยนครู'].includes(node.textContent.trim()));
+          .find((node) => node.textContent.trim() === 'จัดการครู');
         button?.click();
         return true;
       })()`,
     );
     await waitFor(
       async () =>
-        (await evaluate(chrome.client, 'document.body.innerText')).includes('ครูประจำชั้น')
-        && Boolean(await evaluate(chrome.client, `Boolean(document.querySelector('#homeroom-teacher'))`)),
+        (await evaluate(chrome.client, 'document.body.innerText')).includes('จัดการครูประจำชั้น')
+        && Boolean(await evaluate(chrome.client, `Boolean(document.querySelector('#homeroom-teacher-0'))`)),
       'Homeroom dialog did not open from the room row',
     );
     // The fixture already assigned TEACHER_DISPLAY_NAME through the API, so the
-    // UI save is proven by switching to a *different* teacher and seeing the row
-    // follow — that also exercises the "เปลี่ยนครู" replacement path.
+    // UI save is proven by adding a second, different teacher and seeing both
+    // names in the room row.
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="เพิ่มครูประจำชั้นคนที่ 2"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          chrome.client,
+          `Boolean(document.querySelector('[aria-label="ครูประจำชั้นคนที่ 2"]'))`,
+        ),
+      'Second homeroom teacher row did not render',
+    );
+    // The homeroom picker is a Combobox, so its options exist only while the
+    // panel is open — read them from the open panel, not from <select> options.
+    await evaluate(
+      chrome.client,
+      `document.querySelector('[aria-label="ครูประจำชั้นคนที่ 2"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          chrome.client,
+          `document.querySelectorAll('[role="dialog"] ul button').length > 0`,
+        ),
+      'Homeroom teacher combobox listed no option',
+    );
     const replacementTeacher = await evaluate(
       chrome.client,
       `(() => {
-        const select = Array.from(document.querySelectorAll('[aria-label="ครูประจำชั้น"]'))
-          .find((node) => node.tagName === 'SELECT');
-        if (!select) return null;
-        const option = Array.from(select.options).find(
-          (item) => item.value && item.textContent.trim() !== ${JSON.stringify(TEACHER_DISPLAY_NAME)},
-        );
-        return option ? { value: option.value, label: option.textContent.trim() } : null;
+        const label = Array.from(document.querySelectorAll('[role="dialog"] ul button'))
+          .map((node) => node.textContent.trim())
+          .find((text) => text && text !== ${JSON.stringify(TEACHER_DISPLAY_NAME)});
+        return label ? { label } : null;
       })()`,
     );
     assert(replacementTeacher, 'Homeroom dialog offered no alternative teacher to assign');
-    await chooseSelectOption(chrome.client, 'ครูประจำชั้น', replacementTeacher.label);
+    await chooseCombobox(chrome.client, 'ครูประจำชั้นคนที่ 2', replacementTeacher.label);
     const submitted = await evaluate(
       chrome.client,
       `(() => {
@@ -1068,7 +1719,7 @@ async function main() {
         async () =>
           !(await evaluate(
             chrome.client,
-            `Boolean(document.querySelector('[aria-label="ครูประจำชั้น"]'))`,
+            `Boolean(document.querySelector('[aria-label="ครูประจำชั้นคนที่ 1"]'))`,
           ))
           && (await evaluate(chrome.client, 'document.body.innerText')).includes(
             replacementTeacher.label,
@@ -1079,7 +1730,7 @@ async function main() {
       const state = await evaluate(
         chrome.client,
         `({
-          dialogOpen: Boolean(document.querySelector('[aria-label="ครูประจำชั้น"]')),
+          dialogOpen: Boolean(document.querySelector('[aria-label="ครูประจำชั้นคนที่ 1"]')),
           text: document.body.innerText.slice(0, 1200)
         })`,
       );
@@ -1125,7 +1776,7 @@ async function main() {
     const classroomsPageProbe = await browserRequest(
       chrome.client,
       'GET',
-      `/api/school-structure/classrooms?schoolId=${schoolA.id}&termId=${activePageTerm.id}&search=${encodeURIComponent(TEACHER_USERNAME)}&page=1&limit=20&sortBy=grade&sortDirection=asc`,
+      `/api/school-structure/classrooms?schoolId=${schoolA.id}&termId=${activePageTerm.id}&search=${encodeURIComponent(TEACHER_DISPLAY_NAME)}&page=1&limit=20&sortBy=grade&sortDirection=asc`,
     );
     assert(
       classroomsPageProbe.status === 200 &&
@@ -1175,7 +1826,7 @@ async function main() {
       `(() => {
         const input = document.querySelector('input[placeholder="ค้นหา"]');
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        setter.call(input, ${JSON.stringify(TEACHER_USERNAME)});
+        setter.call(input, ${JSON.stringify(TEACHER_DISPLAY_NAME)});
         input.dispatchEvent(new Event('input', { bubbles: true }));
       })()`,
     );
@@ -1196,15 +1847,22 @@ async function main() {
         )) === 'true',
       'Favorite action did not update and keep the classroom first',
     );
-    const favoriteList = await browserRequest(
-      chrome.client,
-      'GET',
-      `/api/school-structure/classrooms?schoolId=${schoolA.id}&termId=${activePageTerm.id}&search=${encodeURIComponent(TEACHER_USERNAME)}&page=1&limit=20&sortBy=grade&sortDirection=asc`,
-    );
-    assert(
-      favoriteList.payload.data?.[0]?.id === pageClassroom.id &&
-        favoriteList.payload.data?.[0]?.isFavorite === true,
-      'Favorite-first API order was not applied',
+    // The star flips optimistically, so poll the API until the write is durable
+    // instead of racing the mutation with a single read.
+    const favoriteUrl = `/api/school-structure/classrooms?schoolId=${schoolA.id}&termId=${activePageTerm.id}&search=${encodeURIComponent(TEACHER_DISPLAY_NAME)}&page=1&limit=20&sortBy=grade&sortDirection=asc`;
+    let favoriteList;
+    await waitFor(
+      async () => {
+        favoriteList = await browserRequest(chrome.client, 'GET', favoriteUrl);
+        return (
+          favoriteList.payload.data?.[0]?.id === pageClassroom.id &&
+          favoriteList.payload.data?.[0]?.isFavorite === true
+        );
+      },
+      () =>
+        `Favorite-first API order was not applied: expected=${pageClassroom.id}; got=${JSON.stringify(
+          favoriteList?.payload?.data?.map((item) => ({ id: item.id, isFavorite: item.isFavorite })),
+        )}`,
     );
 
     await evaluate(
@@ -1280,15 +1938,23 @@ async function main() {
       throw new Error(`${error.message}; observed=${JSON.stringify(uploadState)}`);
     }
 
-    await evaluate(
+    // The card itself is only a container; the whole-card link is the overlay
+    // anchor, so click that the way a user's pointer lands on it.
+    const cardOpened = await evaluate(
       chrome.client,
-      `document.querySelector('[data-classroom-card="${pageClassroom.id}"]')?.click()`,
+      `Boolean(document.querySelector('[data-classroom-card="${pageClassroom.id}"] a')?.click() === undefined
+        && document.querySelector('[data-classroom-card="${pageClassroom.id}"] a'))`,
     );
+    assert(cardOpened, 'Classroom card did not expose its whole-card link');
     await waitFor(
       async () =>
         (await evaluate(chrome.client, 'location.pathname')).startsWith('/classrooms/') &&
         (await evaluate(chrome.client, 'document.body.innerText')).includes('รายชื่อนักเรียน'),
-      'Classroom card did not open the classroom detail page',
+      async () =>
+        `Classroom card did not open the classroom detail page (pathname=${await evaluate(
+          chrome.client,
+          'location.pathname',
+        )})`,
     );
     await navigate(chrome.client, `${FRONTEND_URL}/classrooms/${classroom.id}?smoke=${Date.now()}`);
     await waitFor(
@@ -1316,12 +1982,19 @@ async function main() {
           'เข้าทุกคาบ',
           'เข้าบางคาบ',
           'ไม่เข้าเรียน',
-          'บันทึกเมื่อ',
           'ผู้เช็กชื่อ',
         ];
         const missingLabels = requiredLabels.filter((label) => !body.includes(label));
         if (missingLabels.length > 0) {
           throw new Error(`missing ${missingLabels.join(', ')}; page=${body.slice(0, 500)}`);
+        }
+        // The record line now carries the time inline instead of a "บันทึกเมื่อ"
+        // label, so prove the provenance is real by rejecting its fallbacks.
+        const provenanceFallbacks = ['ไม่พบเวลาบันทึก', 'ไม่พบข้อมูลผู้เช็กชื่อ'].filter((text) =>
+          body.includes(text),
+        );
+        if (provenanceFallbacks.length > 0) {
+          throw new Error(`attendance provenance fell back to ${provenanceFallbacks.join(', ')}`);
         }
         return !body.includes('บัญชีนักเรียน') &&
           !body.includes('ทบทวนสัญญาณความเสี่ยง');
@@ -1370,7 +2043,7 @@ async function main() {
         `Array.from(document.querySelectorAll('[data-student-attendance-calendar] button[aria-label]'))
           .some((button) => button.textContent.trim() === '14' &&
             button.classList.contains('bg-success-100') &&
-            button.classList.contains('text-success-700'))`,
+            button.classList.contains('text-success'))`,
       ),
       'Recorded subject-attendance day did not show its category color after selection changed',
     );
@@ -1496,17 +2169,7 @@ async function main() {
       ),
       'Problem category/description fields or required-state validation were missing',
     );
-    await evaluate(
-      chrome.client,
-      `(() => {
-        const select = document.querySelector('#classroom-student-problem-category');
-        if (!select) return false;
-        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-        setter.call(select, 'ACADEMIC');
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      })()`,
-    );
+    await chooseSelectOptionByValue(chrome.client, 'classroom-student-problem-category', 'ACADEMIC');
     await evaluate(
       chrome.client,
       `document.querySelector('#classroom-student-problem-description')?.focus()`,
@@ -1783,7 +2446,17 @@ async function main() {
         const card = document.querySelector('main [class*="rounded-login-card"]');
         const rect = (element) => element ? element.getBoundingClientRect() : null;
         const style = (element) => element ? getComputedStyle(element) : null;
+        // Compare against the live --text-base token: the Sarabun switch rescaled
+        // the whole type ramp, so a hardcoded pixel size only re-rots.
+        const probe = document.createElement('span');
+        probe.className = 'text-base';
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        document.body.appendChild(probe);
+        const baseFontSize = getComputedStyle(probe).fontSize;
+        probe.remove();
         return {
+          baseFontSize,
           hasGuestHeader: Boolean(document.querySelector('header')),
           heroColor: page ? getComputedStyle(page, '::before').backgroundColor : null,
           overflowY: Math.max(root.scrollHeight, document.body.scrollHeight) > window.innerHeight + 1,
@@ -1803,9 +2476,11 @@ async function main() {
     assert(loginGeometry.heroColor === 'rgb(231, 237, 248)', `Login hero color drifted: ${JSON.stringify(loginGeometry)}`);
     assert(!loginGeometry.overflowY, `Login page overflowed a 1440x900 viewport: ${JSON.stringify(loginGeometry)}`);
     assert(
-      loginGeometry.username.height === 48 && loginGeometry.username.fontSize === '16px'
+      loginGeometry.username.height === 48
+        && loginGeometry.username.fontSize === loginGeometry.baseFontSize
         && loginGeometry.passwordToggle.size === 40 && loginGeometry.passwordToggle.iconSize === 20
-        && loginGeometry.submit.height === 48 && loginGeometry.submit.fontSize === '16px',
+        && loginGeometry.submit.height === 48
+        && loginGeometry.submit.fontSize === loginGeometry.baseFontSize,
       `Login control scale drifted: ${JSON.stringify(loginGeometry)}`,
     );
     console.log('school structure browser smoke passed');

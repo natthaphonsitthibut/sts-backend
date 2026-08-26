@@ -1,11 +1,11 @@
 {
-  "capturedAt": "2026-08-24T17:40:00+07:00",
+  "capturedAt": "2026-08-26T23:43:54+07:00",
   "source": "Supabase production aggregate metadata (read-only) + local target migrations",
   "postgresMajor": 15,
   "artifact": {
     "path": "data/backups/sts_backup.sql.gz",
-    "compressedBytes": 3512868,
-    "sha256": "5b1c8d36dc0be1df64060c044c0d6fe58d90a17ea9d952dd85f1f805cc23f098"
+    "compressedBytes": 6704767,
+    "sha256": "16ca5c9990ddf70299461967ba3eeb6ff88faedb9ef9371a76751a69f959e98f"
   },
   "productionSource": {
     "migrations": 221,
@@ -19,15 +19,33 @@
     "legacyAttendanceSessions": 13232
   },
   "canonicalTarget": {
-    "migrations": 237,
+    "migrations": 258,
     "schools": 10,
     "schoolTerms": 10,
     "schoolClassrooms": 441,
     "teachers": 451,
     "activeTeacherMemberships": 451,
     "studentTerm": 6000,
+    "attendanceSessions": 11472,
+    "attendanceSessionsWithoutVerifiableRecorder": 0,
+    "attendanceExceptions": 30053,
+    "attendanceSessionRoster": 155528,
     "legacyRelations": 0,
     "activeRuntimeCredentials": 0,
-    "backupTableRows": 0
+    "backupTableRows": 0,
+    "syntheticIdentity": {
+      "nationalIdColumns": [
+        "student_term.PersonID_Onec",
+        "student_person_identifier.identifier_value",
+        "student_person_identifier.identifier_normalized",
+        "users.PersonID_Onec",
+        "teachers.citizen_id",
+        "external_users.PersonID_Onec"
+      ],
+      "rewrittenFromSurrogateKey": true,
+      "valuesWithValidThaiCheckDigit": 0,
+      "homeCoordinateRows": 0,
+      "geocodeCacheRows": 0
+    }
   }
 }

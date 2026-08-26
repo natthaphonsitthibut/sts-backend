@@ -178,7 +178,9 @@ export class RiskProfileRepository {
             day.student_uuid,
             day."AttendanceDate" AS attendance_date,
             day.late_periods AS late_records,
-            (day."AttendanceStatus" = 2) AS is_absent_day
+            (day."AttendanceStatus" = 2) AS is_absent_day,
+            (day."AttendanceStatus" <> 4) AS is_measured_day,
+            (day."AttendanceStatus" IN (1, 3)) AS is_attended_day
           FROM attendance_day day
           JOIN selected_students s ON s.student_uuid = day.student_uuid
           WHERE day."AcademicYear_Onec" = s.academic_year
@@ -230,7 +232,9 @@ export class RiskProfileRepository {
         term_attendance_summary AS (
           SELECT
             student_uuid,
-            COUNT(*) FILTER (WHERE is_absent_day)::int AS term_absent_days
+            COUNT(*) FILTER (WHERE is_absent_day)::int AS term_absent_days,
+            COUNT(*) FILTER (WHERE is_measured_day)::int AS recorded_day_count,
+            COUNT(*) FILTER (WHERE is_attended_day)::int AS attended_day_count
           FROM classified_term_days
           GROUP BY student_uuid
         ),
@@ -265,23 +269,6 @@ export class RiskProfileRepository {
             MAX(signal.created_at) AS latest_signal_at
           FROM selected_students s
           JOIN teacher_signal_events signal ON signal.person_uuid = s.person_uuid
-          GROUP BY s.student_uuid
-        ),
-        calendar_counts AS (
-          SELECT
-            s.student_uuid,
-            COUNT(cd.id)::int AS school_day_count
-          FROM selected_students s
-          JOIN school_terms st
-            ON st.school_id = s.school_id
-           AND st.academic_year = s.academic_year
-           AND st.semester = s.semester
-           AND st.deleted_at IS NULL
-          JOIN school_calendar_days cd
-            ON cd.school_term_id = st.id
-           AND cd.day_type = 'SCHOOL_DAY'
-           AND cd.deleted_at IS NULL
-           AND cd.calendar_date <= CURRENT_DATE
           GROUP BY s.student_uuid
         ),
         case_summary AS (
@@ -320,27 +307,17 @@ export class RiskProfileRepository {
             baseline.reset_after_date AS absence_reset_after_date,
             COALESCE(attendance.late_count, 0)::int AS late_count,
             COALESCE(subject_late.subject_late_count, 0)::int AS subject_late_count,
-            COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::int
-              AS school_day_count,
+            COALESCE(term_attendance.recorded_day_count, 0)::int AS recorded_day_count,
             COALESCE(teacher_signal.teacher_signal_count, 0)::int AS teacher_signal_count,
-            -- Absence is counted in whole days now, so the weighted columns are
-            -- the plain day count and the plain attendance rate they imply.
-            COALESCE(attendance.absent_days_since_case_reset, 0)::numeric AS weighted_absence_days,
             CASE
-              WHEN COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0) > 0
+              WHEN COALESCE(term_attendance.recorded_day_count, 0) > 0
                 THEN ROUND(
-                  GREATEST(
-                    0,
-                    (
-                      COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
-                      - COALESCE(attendance.absent_days_since_case_reset, 0)::numeric
-                    ) * 100
-                    / COALESCE(NULLIF(calendar.school_day_count, 0), attendance.recorded_day_count, 0)::numeric
-                  ),
+                  COALESCE(term_attendance.attended_day_count, 0)::numeric * 100
+                    / term_attendance.recorded_day_count::numeric,
                   1
                 )
               ELSE NULL
-            END AS weighted_attendance_percent,
+            END AS attendance_rate_percent,
             COALESCE(cases.open_case_count, 0)::int AS open_case_count,
             cases.latest_open_case_id,
             cases.latest_open_task_id,
@@ -359,7 +336,6 @@ export class RiskProfileRepository {
           LEFT JOIN subject_late_summary subject_late ON subject_late.student_uuid = s.student_uuid
           LEFT JOIN teacher_signal_summary teacher_signal
             ON teacher_signal.student_uuid = s.student_uuid
-          LEFT JOIN calendar_counts calendar ON calendar.student_uuid = s.student_uuid
           LEFT JOIN case_summary cases ON cases.student_uuid = s.student_uuid
         ),
         -- Three tiers only: ขาดสะสมถึงเกณฑ์ = เสี่ยง, มีความคิดเห็นจากครู =
@@ -400,9 +376,8 @@ export class RiskProfileRepository {
             absence_reset_after_date,
             late_count,
             subject_late_count,
-            school_day_count,
-            weighted_absence_days,
-            weighted_attendance_percent,
+            recorded_day_count,
+            attendance_rate_percent,
             risk_tier,
             risk_severity,
             risk_score,
@@ -426,9 +401,8 @@ export class RiskProfileRepository {
             absence_reset_after_date,
             late_count,
             subject_late_count,
-            school_day_count,
-            ROUND(weighted_absence_days, 2),
-            weighted_attendance_percent,
+            recorded_day_count,
+            attendance_rate_percent,
             risk_tier,
             risk_severity,
             ROUND(risk_score, 4),
@@ -451,9 +425,8 @@ export class RiskProfileRepository {
             absence_reset_after_date = EXCLUDED.absence_reset_after_date,
             late_count = EXCLUDED.late_count,
             subject_late_count = EXCLUDED.subject_late_count,
-            school_day_count = EXCLUDED.school_day_count,
-            weighted_absence_days = EXCLUDED.weighted_absence_days,
-            weighted_attendance_percent = EXCLUDED.weighted_attendance_percent,
+            recorded_day_count = EXCLUDED.recorded_day_count,
+            attendance_rate_percent = EXCLUDED.attendance_rate_percent,
             risk_tier = EXCLUDED.risk_tier,
             risk_severity = EXCLUDED.risk_severity,
             risk_score = EXCLUDED.risk_score,
@@ -483,11 +456,10 @@ export class RiskProfileRepository {
             OR student_risk_profiles.late_count IS DISTINCT FROM EXCLUDED.late_count
             OR student_risk_profiles.subject_late_count
                  IS DISTINCT FROM EXCLUDED.subject_late_count
-            OR student_risk_profiles.school_day_count IS DISTINCT FROM EXCLUDED.school_day_count
-            OR student_risk_profiles.weighted_absence_days
-                 IS DISTINCT FROM EXCLUDED.weighted_absence_days
-            OR student_risk_profiles.weighted_attendance_percent
-                 IS DISTINCT FROM EXCLUDED.weighted_attendance_percent
+            OR student_risk_profiles.recorded_day_count
+                 IS DISTINCT FROM EXCLUDED.recorded_day_count
+            OR student_risk_profiles.attendance_rate_percent
+                 IS DISTINCT FROM EXCLUDED.attendance_rate_percent
             OR student_risk_profiles.risk_tier IS DISTINCT FROM EXCLUDED.risk_tier
             OR student_risk_profiles.risk_severity IS DISTINCT FROM EXCLUDED.risk_severity
             OR student_risk_profiles.risk_score IS DISTINCT FROM EXCLUDED.risk_score

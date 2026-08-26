@@ -69,7 +69,7 @@ describe('AuditLogService', () => {
   it('filters task history by task type metadata', async () => {
     const taskActor: AuthenticatedRequestUser = {
       ...actor,
-      permissions: ['attendance-dashboard'],
+      permissions: ['dashboard'],
     };
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
@@ -102,7 +102,7 @@ describe('AuditLogService', () => {
   it('accepts a cross-domain link action when taskType is present', async () => {
     const taskActor: AuthenticatedRequestUser = {
       ...actor,
-      permissions: ['attendance-dashboard'],
+      permissions: ['dashboard'],
       data_scope: { global: true },
     };
     const queryRunner = {
@@ -283,6 +283,55 @@ describe('AuditLogService', () => {
         },
         {
           domain: 'cases',
+          page: 1,
+          limit: 20,
+        },
+      ),
+    ).rejects.toThrow('ไม่มีสิทธิ์ดูประวัติส่วนนี้');
+  });
+
+  it('accepts the student-management page permission on the students domain', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const service = new AuditLogService({
+      createQueryRunner: jest.fn(() => queryRunner),
+    } as never);
+
+    // The management page was split out of `students`, so a role narrowed to
+    // manage-students + audit-log must still open its own history tab.
+    await service.list(
+      {
+        ...actor,
+        permissions: ['manage-students', 'audit-log'],
+      },
+      {
+        domain: 'students',
+        page: 1,
+        limit: 20,
+      },
+    );
+
+    expect(queries.length).toBeGreaterThan(0);
+  });
+
+  it('still rejects the students domain without either student permission', async () => {
+    const service = new AuditLogService({ createQueryRunner: jest.fn() } as never);
+
+    await expect(
+      service.list(
+        {
+          ...actor,
+          permissions: ['audit-log'],
+        },
+        {
+          domain: 'students',
           page: 1,
           limit: 20,
         },

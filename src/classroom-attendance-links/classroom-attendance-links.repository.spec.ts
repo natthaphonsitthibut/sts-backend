@@ -136,4 +136,22 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).toContain("teacher.teacher_status = 'ACTIVE'");
     expect(sql).toContain('homeroom.teacher_membership_id = $2');
   });
+
+  it('loads all active homeroom teachers for classroom-link presentation', async () => {
+    const { repository, runner } = setup();
+
+    await repository.list({
+      schoolId: 10,
+      schoolTermId: 20,
+      page: 1,
+      limit: 20,
+      scope: { school_ids: [10] },
+    });
+
+    const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
+    const sql = calls[0][0];
+    expect(sql).toContain('FROM classroom_homeroom_teacher_assignments all_assignment');
+    expect(sql).toContain("'isPrimary', all_assignment.is_primary");
+    expect(sql).toContain('all_homeroom.homeroom_teachers');
+  });
 });

@@ -194,23 +194,38 @@ async function rowCount(client) {
   );
 }
 
-async function selectReasonFilter(client, code) {
+async function selectReasonFilter(client, label) {
+  // The reason filter is a Combobox (styled input + option list), not a native
+  // <select>, so the smoke picks the option the way a user does.
   await evaluate(
     client,
     `(() => {
-      const trigger = document.querySelector('[aria-label="กรองตามสาเหตุ"]');
-      if (!trigger) throw new Error('Reason filter not found');
-      const select = trigger.parentElement?.querySelector('select');
-      if (!select) throw new Error('Hidden native reason select not found');
-      const values = [...select.querySelectorAll('option')].map((option) => option.value);
-      if (!values.includes(${JSON.stringify(code)})) {
-        throw new Error('Reason option missing (' + ${JSON.stringify(code)} + '); have: ' + values.join(','));
-      }
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-      setter.call(select, ${JSON.stringify(code)});
-      select.dispatchEvent(new Event('input', { bubbles: true }));
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      const input = document.querySelector('input[aria-label="กรองตามสาเหตุ"]');
+      if (!input) throw new Error('Reason filter not found');
+      input.focus();
+      input.click();
     })()`,
+  );
+  const optionQuery = `(() => {
+    const input = document.querySelector('input[aria-label="กรองตามสาเหตุ"]');
+    const list = input?.parentElement?.querySelector('ul');
+    if (!list) return null;
+    return [...list.querySelectorAll('button')]
+      .find((option) => option.textContent.trim() === ${JSON.stringify(label)}) || null;
+  })()`;
+  await waitFor(
+    async () => await evaluate(client, `Boolean(${optionQuery})`),
+    `Reason option "${label}" was not offered by the filter`,
+  );
+  await evaluate(client, `${optionQuery}.click()`);
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `document.querySelector('input[aria-label="กรองตามสาเหตุ"]').value.trim()
+          === ${JSON.stringify(label)}`,
+      ),
+    `Reason filter did not settle on "${label}"`,
   );
 }
 
@@ -372,8 +387,32 @@ async function main() {
     const unfilteredRows = await rowCount(client);
     await capture(client, '/tmp/sts-import-quarantine-list-desktop.png');
 
+    // --- A stale or hand-edited URL must not push out-of-contract filters to the API ---
+    await navigate(
+      client,
+      `${FRONTEND_URL}/import-data/quarantine?quarantineReason=NOT_A_REASON&quarantinePage=0&quarantineLimit=999`,
+    );
+    await waitForQuarantineList(client);
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `(() => {
+            const params = new URLSearchParams(window.location.search);
+            return !params.has('quarantineReason')
+              && !params.has('quarantinePage')
+              && !params.has('quarantineLimit');
+          })()`,
+        ),
+      'Invalid quarantine URL filters were not removed from the URL',
+    );
+    assert(
+      !(await bodyText(client)).includes('เกิดข้อผิดพลาด'),
+      'Invalid quarantine URL filters produced an API error state',
+    );
+
     // --- Reason filter narrows the list ---
-    await selectReasonFilter(client, FILTER_REASON.code);
+    await selectReasonFilter(client, FILTER_REASON.label);
     await waitFor(async () => {
       const rows = await rowCount(client);
       return rows > 0 && rows < unfilteredRows;
@@ -381,7 +420,7 @@ async function main() {
     assert((await bodyText(client)).includes(FILTER_REASON.label), 'Filtered list lost the target reason');
 
     // Reset the filter so the full list (with editable rows) returns.
-    await selectReasonFilter(client, '');
+    await selectReasonFilter(client, 'ทุกสาเหตุ');
     await waitFor(async () => (await rowCount(client)) >= SEEDED_REASONS.length, 'Clearing the reason filter did not restore the list');
 
     // --- Inline edit drawer opens on an editable row and stays PII-safe ---

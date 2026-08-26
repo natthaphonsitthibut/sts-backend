@@ -79,7 +79,6 @@ describe('ExceptionAttendanceService', () => {
         classroom_subject_id: '84',
         subject_id: 1,
         subject_code: 'HOMEROOM101',
-        calendar_day_type: 'SCHOOL_DAY',
       }),
       insertTargetSession: jest.fn().mockResolvedValue(true),
       findTargetSessionForUpdate: jest

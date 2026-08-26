@@ -53,10 +53,6 @@ export class StatusCatalogRepository {
         SELECT 'SCHOOL_TERM', code::text, NULL, NULL, label_th, badge_variant, NULL, sort_order
         FROM school_term_statuses WHERE is_active = TRUE AND deleted_at IS NULL
         UNION ALL
-        SELECT 'SCHOOL_CALENDAR_DAY', code::text, NULL, NULL, label_th, badge_variant, NULL,
-               sort_order
-        FROM school_calendar_day_types WHERE is_active = TRUE AND deleted_at IS NULL
-        UNION ALL
         SELECT 'ATTENDANCE_SESSION', code::text, NULL, NULL, label_th, badge_variant, NULL,
                sort_order
         FROM attendance_session_statuses WHERE is_active = TRUE AND deleted_at IS NULL

@@ -22,6 +22,7 @@ import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { piiConfig } from '../config/pii.config';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import { processImageUpload } from '../common/file-upload/visit-photo.util';
@@ -41,11 +42,13 @@ import {
   maskPiiValue,
   maskNationalIdValue,
   normalizeNationalIdValue,
+  STUDENT_NATIONAL_ID_CORRECTION_REASON,
 } from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import type { StudentEnrollmentState, StudentListFilters } from './students.types';
 import type { AuthenticatedRequestUser } from '../auth';
+import type { CorrectStudentNationalIdDto } from './dto/correct-student-national-id.dto';
 
 /** Metadata captured from the HTTP request for the PII access log. */
 export interface PiiRevealRequestMeta {
@@ -183,6 +186,7 @@ export class StudentsService {
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
     private readonly riskProfileService: RiskProfileService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   private async recalculateStudentRisk(studentUuid: string, reason: string): Promise<void> {
@@ -826,9 +830,15 @@ export class StudentsService {
         contact,
         normalizedGuardians,
         resolveAuditActorId(actor),
+        userScope,
       );
       if ('notFound' in result) {
         throw new NotFoundException(`Student with ID ${id} not found`);
+      }
+      if ('scopeConflict' in result) {
+        throw new ForbiddenException(
+          'ไม่สามารถแก้ไขข้อมูลนักเรียนนี้ภายใต้ขอบเขตสิทธิ์ปัจจุบันได้',
+        );
       }
       if ('missingPerson' in result) {
         throw new BadRequestException(
@@ -844,6 +854,85 @@ export class StudentsService {
       ) {
         await this.recalculateStudentRisk(id, 'student-status-update');
       }
+    }
+
+    return await this.findOne(id, actor, userScope);
+  }
+
+  async correctNationalId(
+    id: string,
+    dto: CorrectStudentNationalIdDto,
+    actor: AuthenticatedRequestUser | undefined,
+    userScope: DataScope | undefined,
+    requestMeta: { ip: string | null },
+  ) {
+    if (isRestrictedExecutive(actor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
+    }
+    const actorUserId = resolveAuditActorId(actor);
+    try {
+      await this.studentsRepository.withTransaction(async (manager) => {
+        const result = await this.studentsRepository.correctNationalId(
+          id,
+          dto.newNationalId,
+          actorUserId,
+          userScope,
+          manager,
+        );
+        if ('notFound' in result) {
+          throw new NotFoundException(`Student with ID ${id} not found`);
+        }
+        if ('missingPerson' in result) {
+          throw new BadRequestException(
+            'นักเรียนคนนี้ยังไม่ได้เชื่อมข้อมูลตัวตน จึงแก้ไขเลขบัตรประชาชนไม่ได้',
+          );
+        }
+        if ('unchanged' in result) {
+          throw new BadRequestException('เลขบัตรประชาชนใหม่ต้องไม่ตรงกับเลขเดิม');
+        }
+        if ('conflict' in result) {
+          throw new ConflictException('เลขบัตรประชาชนนี้มีข้อมูลนักเรียนอยู่ในระบบแล้ว');
+        }
+        if ('scopeConflict' in result) {
+          throw new ForbiddenException('ไม่สามารถแก้ไขข้อมูลตัวตนนี้ภายใต้ขอบเขตสิทธิ์ปัจจุบันได้');
+        }
+
+        await this.auditLog.recordAtomic(
+          {
+            action: 'STUDENT_NATIONAL_ID_CORRECTION',
+            actorUserId,
+            actorLabel: actor?.username,
+            targetType: 'student',
+            targetId: id,
+            metadata: {
+              reasonCode: STUDENT_NATIONAL_ID_CORRECTION_REASON.code,
+              reasonLabel: STUDENT_NATIONAL_ID_CORRECTION_REASON.label,
+              fieldGroup: 'NATIONAL_ID',
+              fieldLabel: 'เลขบัตรประชาชน',
+              schoolId: result.schoolId,
+            },
+            ip: requestMeta.ip,
+          },
+          manager,
+        );
+      });
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ConflictException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? String((error as { code: unknown }).code)
+          : null;
+      if (code === '23505') {
+        throw new ConflictException('เลขบัตรประชาชนนี้มีข้อมูลนักเรียนอยู่ในระบบแล้ว');
+      }
+      throw error;
     }
 
     return await this.findOne(id, actor, userScope);

@@ -85,9 +85,12 @@ describe('SchoolStructureService', () => {
       listTeacherOptions: jest.fn().mockResolvedValue([]),
       isTeacherEligible: jest.fn().mockResolvedValue(true),
       createTeacherMembership: jest.fn(),
+      lockHomeroomClassroomsForMembership: jest.fn().mockResolvedValue(undefined),
       findMembershipById: jest.fn(),
+      findMembershipsByIds: jest.fn().mockResolvedValue([]),
       updateTeacherMembership: jest.fn(),
       listAssignments: jest.fn().mockResolvedValue([]),
+      replaceHomeroomTeachers: jest.fn().mockResolvedValue(undefined),
       createAssignment: jest.fn(),
       listRoster: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
       createStudentComment: jest.fn().mockResolvedValue({
@@ -562,6 +565,23 @@ describe('SchoolStructureService', () => {
     expect(repository.listStudentAttendanceDays).not.toHaveBeenCalled();
   });
 
+  it('rejects a reversed attendance range before the daily history query', async () => {
+    const { service, repository } = setup();
+
+    await expect(
+      service.listClassroomAttendanceHistory(
+        11,
+        {
+          view: 'DAILY',
+          dateFrom: '2026-07-31',
+          dateTo: '2026-07-01',
+        },
+        SCHOOL_ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.listClassroomDailyAttendance).not.toHaveBeenCalled();
+  });
+
   it('rejects a roster query without a school or classroom context', async () => {
     const { service } = setup();
     await expect(service.listRoster({}, SCHOOL_ACTOR)).rejects.toBeInstanceOf(BadRequestException);
@@ -774,6 +794,141 @@ describe('SchoolStructureService', () => {
         },
         SCHOOL_ACTOR,
       ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('locks assigned classrooms before deactivating a teacher membership', async () => {
+    const { service, repository } = setup();
+    const membership = {
+      id: '31',
+      school_id: 1001,
+      teacher_id: '41',
+      display_name: 'ครูหนึ่ง',
+      membership_status: 'ACTIVE',
+      started_on: '2026-05-01',
+      ended_on: null,
+    };
+    repository.findMembershipById.mockResolvedValue(membership);
+    repository.updateTeacherMembership.mockResolvedValue({
+      ...membership,
+      membership_status: 'INACTIVE',
+      ended_on: '2026-08-26',
+    });
+
+    await service.updateTeacherMembership(
+      31,
+      { membershipStatus: 'INACTIVE', endedOn: '2026-08-26' },
+      SCHOOL_ACTOR,
+    );
+
+    expect(repository.lockHomeroomClassroomsForMembership).toHaveBeenCalledWith(
+      31,
+      expect.anything(),
+    );
+    expect(repository.lockHomeroomClassroomsForMembership.mock.invocationCallOrder[0]).toBeLessThan(
+      repository.findMembershipById.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('replaces homeroom teachers atomically with up to two active same-school memberships', async () => {
+    const { service, repository, auditLog } = setup();
+    repository.findMembershipsByIds.mockResolvedValue([
+      {
+        id: '31',
+        school_id: 1001,
+        teacher_id: '41',
+        display_name: 'ครูหนึ่ง',
+        membership_status: 'ACTIVE',
+        started_on: '2026-05-01',
+        ended_on: null,
+      },
+      {
+        id: '32',
+        school_id: 1001,
+        teacher_id: '42',
+        display_name: 'ครูสอง',
+        membership_status: 'ACTIVE',
+        started_on: '2026-05-01',
+        ended_on: null,
+      },
+    ]);
+    repository.listAssignments.mockResolvedValue([
+      {
+        id: '11',
+        school_id: 1001,
+        classroom_id: '11',
+        teacher_membership_id: '31',
+        teacher_id: '41',
+        teacher_name: 'ครูหนึ่ง',
+        subject_id: null,
+        subject_code: null,
+        subject_name: null,
+        assignment_kind: 'HOMEROOM',
+        assignment_status: 'ACTIVE',
+        effective_on: null,
+        effective_until: null,
+        is_primary: true,
+      },
+      {
+        id: '11',
+        school_id: 1001,
+        classroom_id: '11',
+        teacher_membership_id: '32',
+        teacher_id: '42',
+        teacher_name: 'ครูสอง',
+        subject_id: null,
+        subject_code: null,
+        subject_name: null,
+        assignment_kind: 'HOMEROOM',
+        assignment_status: 'ACTIVE',
+        effective_on: null,
+        effective_until: null,
+        is_primary: false,
+      },
+    ]);
+
+    await expect(
+      service.setHomeroomTeachers(11, { teacherMembershipIds: [31, 32] }, SCHOOL_ACTOR),
+    ).resolves.toMatchObject({
+      data: [
+        { teacherMembershipId: '31', isPrimary: true },
+        { teacherMembershipId: '32', isPrimary: false },
+      ],
+    });
+    expect(repository.replaceHomeroomTeachers).toHaveBeenCalledWith(
+      { schoolId: 1001, classroomId: 11, teacherMembershipIds: [31, 32], actorId: 7 },
+      expect.anything(),
+    );
+    const auditCall = auditLog.recordAtomic.mock.calls[0] as unknown as [
+      { metadata: { teacherCount: number } },
+      unknown,
+    ];
+    expect(auditCall[0].metadata.teacherCount).toBe(2);
+  });
+
+  it('allows clearing all homeroom teachers and rejects out-of-school memberships', async () => {
+    const { service, repository } = setup();
+    await expect(
+      service.setHomeroomTeachers(11, { teacherMembershipIds: [] }, SCHOOL_ACTOR),
+    ).resolves.toEqual({ data: [] });
+    expect(repository.replaceHomeroomTeachers).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherMembershipIds: [] }),
+      expect.anything(),
+    );
+
+    repository.findMembershipsByIds.mockResolvedValueOnce([
+      {
+        id: '31',
+        school_id: 9999,
+        teacher_id: '41',
+        display_name: 'ครูนอกขอบเขต',
+        membership_status: 'ACTIVE',
+        started_on: '2026-05-01',
+        ended_on: null,
+      },
+    ]);
+    await expect(
+      service.setHomeroomTeachers(11, { teacherMembershipIds: [31] }, SCHOOL_ACTOR),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -5,6 +5,7 @@ import {
   Get,
   Logger,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -38,6 +39,7 @@ import {
 } from './dto/students.dto';
 import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { CorrectStudentNationalIdDto } from './dto/correct-student-national-id.dto';
 import { MasterDataService } from '../master-data/master-data.service';
 
 function firstHeaderValue(value: string | string[] | undefined): string | null {
@@ -143,14 +145,17 @@ export class StudentsController {
 
   @Get(':id/cases')
   @RequireAnyPermission('students', 'manage-students', 'classrooms')
-  findCasesByStudentId(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
+  findCasesByStudentId(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
     return this.studentsService.findCasesByStudentId(id, actor, resolveActorDataScope(actor));
   }
 
   @Get('attendance/:id')
   @RequireAnyPermission('students', 'manage-students', 'classrooms')
   findAttendanceByStudentId(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return this.studentsService.findAttendanceByStudentId(id, actor, resolveActorDataScope(actor));
@@ -159,7 +164,7 @@ export class StudentsController {
   @Get(':id/profile-summary')
   @RequireAnyPermission('students', 'manage-students', 'classrooms')
   getStudentProfileSummary(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return this.studentsService.getStudentProfileSummary(id, actor, resolveActorDataScope(actor));
@@ -168,7 +173,7 @@ export class StudentsController {
   @Get(':id/attendance-subjects')
   @RequireAnyPermission('students', 'manage-students', 'classrooms')
   getStudentSubjectAttendance(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Query() query: GetStudentSubjectAttendanceQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
@@ -182,7 +187,7 @@ export class StudentsController {
 
   @Get(':id')
   @RequireAnyPermission('students', 'manage-students', 'classrooms')
-  findOne(@Param('id') id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
+  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findOne(id, actor, resolveActorDataScope(actor));
   }
 
@@ -206,7 +211,7 @@ export class StudentsController {
     'manage-school-structure',
   )
   async getStudentPhoto(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ): Promise<void> {
@@ -229,7 +234,7 @@ export class StudentsController {
   @Patch(':id/photo')
   @UseInterceptors(FileInterceptor('photo', multerConfig))
   async updateStudentPhoto(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() data: UpdateStudentPhotoDto,
     @Req() req: Request,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -253,7 +258,7 @@ export class StudentsController {
   @RequirePermission('manage-students')
   @Post(':id/pii-reveal')
   revealPii(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: PiiRevealDto,
     @Req() req: Request,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -267,9 +272,23 @@ export class StudentsController {
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-students')
+  @Patch(':id/national-id')
+  correctNationalId(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: CorrectStudentNationalIdDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return this.studentsService.correctNationalId(id, body, actor, resolveActorDataScope(actor), {
+      ip: req.ip ?? null,
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-students')
   @Patch(':id')
   async update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateStudentDto: UpdateStudentDto,
     @Req() req: Request,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -288,7 +307,7 @@ export class StudentsController {
   @RequirePermission('manage-students')
   @Delete(':id')
   async remove(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Req() req: Request,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {

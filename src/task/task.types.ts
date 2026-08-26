@@ -97,9 +97,8 @@ export interface RiskDashboardRow extends QueryResultRow {
   absence_reset_after_date: string | Date | null;
   late_count: number | string;
   subject_late_count: number | string;
-  school_day_count: number | string;
-  weighted_absence_days: number | string;
-  weighted_attendance_percent: number | string | null;
+  recorded_day_count: number | string;
+  attendance_rate_percent: number | string | null;
   risk_tier: RiskDashboardTier;
   risk_score: number | string;
   open_case_count: number | string;

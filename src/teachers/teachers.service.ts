@@ -566,6 +566,7 @@ export class TeachersService {
   async deactivate(teacherId: string, dto: DeactivateTeacherDto, actor: AuthenticatedRequestUser) {
     const actorId = resolveAuditActorId(actor);
     await this.repository.withTransaction(async (queryRunner) => {
+      await this.repository.lockHomeroomClassroomsForTeacher(teacherId, queryRunner);
       const existing = await this.repository.findTeacherById(teacherId, queryRunner);
       if (!existing) throw new NotFoundException('ไม่พบข้อมูลครู');
       await this.assertSchoolAccess(existing.school_id, actor);

@@ -39,6 +39,7 @@ import type {
   ListSchoolClassroomsDto,
   ListSchoolTeacherCandidatesDto,
   ListSchoolTeachersDto,
+  SetClassroomHomeroomTeachersDto,
   UpdateSchoolClassroomDto,
   UpdateClassroomPresentationDto,
   UpdateSchoolTeacherMembershipDto,
@@ -188,6 +189,7 @@ export class SchoolStructureService {
       coverImageScale: Number(row.cover_image_scale),
       isFavorite: row.is_favorite,
       homeroomTeacherName: row.homeroom_teacher_name ?? null,
+      homeroomTeachers: row.homeroom_teachers ?? [],
       studentCount: Number(row.student_count),
     };
   }
@@ -219,6 +221,7 @@ export class SchoolStructureService {
       assignmentStatus: row.assignment_status,
       effectiveOn: row.effective_on,
       effectiveUntil: row.effective_until,
+      isPrimary: row.is_primary ?? false,
     };
   }
 
@@ -703,6 +706,7 @@ export class SchoolStructureService {
   ) {
     const actorId = resolveAuditActorId(actor);
     const row = await this.repository.withTransaction(async (queryRunner) => {
+      await this.repository.lockHomeroomClassroomsForMembership(membershipId, queryRunner);
       const existing = await this.repository.findMembershipById(membershipId, queryRunner);
       if (!existing) throw new NotFoundException('ไม่พบครูในโรงเรียน');
       await this.assertSchoolAccess(existing.school_id, actor);
@@ -740,6 +744,76 @@ export class SchoolStructureService {
     await this.assertSchoolAccess(classroom.school_id, actor);
     const rows = await this.repository.listAssignments(classroomId);
     return { data: rows.map((row) => this.toAssignment(row)) };
+  }
+
+  async setHomeroomTeachers(
+    classroomId: number,
+    dto: SetClassroomHomeroomTeachersDto,
+    actor: AuthenticatedRequestUser,
+  ) {
+    const actorId = resolveAuditActorId(actor);
+    try {
+      const rows = await this.repository.withTransaction(async (queryRunner) => {
+        const classroom = await this.repository.findClassroomById(classroomId, queryRunner);
+        if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+        await this.assertSchoolAccess(classroom.school_id, actor);
+
+        const memberships = await this.repository.findMembershipsByIds(
+          dto.teacherMembershipIds,
+          queryRunner,
+        );
+        if (memberships.length !== dto.teacherMembershipIds.length) {
+          throw new BadRequestException('ครูไม่ได้อยู่ในรายชื่อครูที่ใช้งานของโรงเรียน');
+        }
+        if (
+          memberships.some(
+            (membership) =>
+              membership.membership_status !== 'ACTIVE' ||
+              membership.school_id !== classroom.school_id,
+          )
+        ) {
+          throw new BadRequestException('ครูและห้องเรียนต้องอยู่โรงเรียนเดียวกันและใช้งานอยู่');
+        }
+
+        await this.repository.replaceHomeroomTeachers(
+          {
+            schoolId: classroom.school_id,
+            classroomId,
+            teacherMembershipIds: dto.teacherMembershipIds,
+            actorId,
+          },
+          queryRunner,
+        );
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: actorId,
+            actorLabel: actor.username,
+            action: 'MASTER_DATA_EDIT',
+            targetType: 'classroom_homeroom_teachers',
+            targetId: String(classroomId),
+            metadata: {
+              op: 'replace',
+              schoolId: classroom.school_id,
+              classroomId,
+              teacherCount: dto.teacherMembershipIds.length,
+              changedFields: ['teacherMembershipIds'],
+            },
+            ip: null,
+          },
+          queryRunner,
+        );
+        return this.repository.listAssignments(classroomId, queryRunner);
+      });
+      return { data: rows.map((row) => this.toAssignment(row)) };
+    } catch (error) {
+      if (databaseErrorCode(error) === '23505') {
+        throw new ConflictException('ครูประจำชั้นซ้ำกัน');
+      }
+      if (databaseErrorCode(error) === '23503') {
+        throw new BadRequestException('ห้องหรือครูไม่ถูกต้อง');
+      }
+      throw error;
+    }
   }
 
   async createAssignment(
@@ -948,10 +1022,10 @@ export class SchoolStructureService {
 
     const page = resolvePage(query.page);
     const limit = resolveLimit(query.limit);
+    if (query.dateFrom && query.dateTo && query.dateFrom > query.dateTo) {
+      throw new BadRequestException('วันเริ่มต้นต้องไม่อยู่หลังวันสิ้นสุด');
+    }
     if (query.studentUuid) {
-      if (query.dateFrom && query.dateTo && query.dateFrom > query.dateTo) {
-        throw new BadRequestException('วันเริ่มต้นต้องไม่อยู่หลังวันสิ้นสุด');
-      }
       const sortBy =
         query.sortBy === 'time' ||
         query.sortBy === 'recordedBy' ||

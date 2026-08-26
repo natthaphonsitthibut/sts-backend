@@ -158,6 +158,10 @@ describe('ClassroomAttendanceLinksService', () => {
           school_status: 'ACTIVE',
           homeroom_teacher_id: '7',
           homeroom_teacher_has_photo: true,
+          homeroom_teachers: [
+            { teacherId: '7', teacherName: 'ครูประจำชั้น', hasPhoto: true, isPrimary: true },
+            { teacherId: '8', teacherName: 'ครูร่วม', hasPhoto: false, isPrimary: false },
+          ],
           latest_session_id: null,
           latest_session_date: null,
           latest_session_status: null,
@@ -176,6 +180,15 @@ describe('ClassroomAttendanceLinksService', () => {
       homeroomTeacherName: 'ครูประจำชั้น',
       homeroomTeacherId: '7',
       homeroomTeacherPhotoUrl: '/api/teacher-profiles/7/photo',
+      homeroomTeachers: [
+        {
+          teacherId: '7',
+          teacherName: 'ครูประจำชั้น',
+          photoUrl: '/api/teacher-profiles/7/photo',
+          isPrimary: true,
+        },
+        { teacherId: '8', teacherName: 'ครูร่วม', photoUrl: null, isPrimary: false },
+      ],
     });
     expect(JSON.stringify(result)).not.toContain('photo_storage_key');
   });

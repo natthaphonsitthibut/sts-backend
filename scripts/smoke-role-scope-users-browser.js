@@ -634,7 +634,7 @@ async function main() {
        SET "PersonID_Onec" = '',
            permissions = $2::jsonb
        WHERE id = $1`,
-      [teacherId, JSON.stringify(['home', 'dashboard', 'attendance-operations'])],
+      [teacherId, JSON.stringify(['home', 'dashboard', 'attendance-dashboard'])],
     );
     await navigate(client, `${FRONTEND_URL}/manage-users/${teacherId}/edit/permissions`);
     await waitForEditForm(client, 'คุณครู');
@@ -677,7 +677,7 @@ async function main() {
     await waitForReviewDialog(client, true);
     const cleanupReview = await reviewDialogText(client);
     assert(
-      cleanupReview.includes('dashboard') && cleanupReview.includes('attendance-operations'),
+      cleanupReview.includes('dashboard') && cleanupReview.includes('attendance-dashboard'),
       'Review dialog did not disclose retired permissions that will be removed',
     );
     await clickDialogButton(client, 'ยืนยันบันทึก');
@@ -690,7 +690,7 @@ async function main() {
         return (
           saved?.PersonID_Onec === '1000000000002' &&
           !saved?.permissions?.includes('dashboard') &&
-          !saved?.permissions?.includes('attendance-operations')
+          !saved?.permissions?.includes('attendance-dashboard')
         );
       },
       'Corrected permission save was not persisted',
@@ -705,7 +705,7 @@ async function main() {
     );
     assert(
       !cleanedTeacher?.permissions?.includes('dashboard') &&
-        !cleanedTeacher?.permissions?.includes('attendance-operations'),
+        !cleanedTeacher?.permissions?.includes('attendance-dashboard'),
       `Retired permissions were not removed: ${JSON.stringify(cleanedTeacher?.permissions)}`,
     );
 

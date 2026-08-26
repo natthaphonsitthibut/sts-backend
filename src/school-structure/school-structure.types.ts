@@ -32,6 +32,12 @@ export interface SchoolClassroomRow extends Record<string, unknown> {
   is_favorite: boolean;
   favorited_at: Date | string | null;
   homeroom_teacher_name?: string | null;
+  homeroom_teachers?: Array<{
+    teacherMembershipId: string;
+    teacherId: string;
+    teacherName: string;
+    isPrimary: boolean;
+  }>;
   student_count: number | string;
 }
 
@@ -80,6 +86,7 @@ export interface ClassroomTeacherAssignmentRow extends Record<string, unknown> {
   assignment_status: StructureStatus;
   effective_on: string | null;
   effective_until: string | null;
+  is_primary?: boolean;
 }
 
 export interface ClassroomRosterRow extends Record<string, unknown> {

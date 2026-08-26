@@ -211,7 +211,7 @@ export const DATA_EXPORT_CATALOG: DataExportCatalogItem[] = [
       'dateFrom',
       'dateTo',
     ),
-    requiredPermissions: ['export-data', 'attendance-dashboard'],
+    requiredPermissions: ['export-data'],
     purposePolicy: 'OPTIONAL',
     deliveryMode: 'ASYNC_JOB',
     status: 'AVAILABLE',

@@ -127,6 +127,7 @@ describe('DataExportsService', () => {
       'student_roster_basic',
       'student_pii',
       'student_risk',
+      'attendance_summary',
       'case_summary',
       'case_operational',
     ]);
@@ -180,7 +181,7 @@ describe('DataExportsService', () => {
     expect(statusCatalogService.getCatalog).toHaveBeenCalledWith('CASE_WORKFLOW');
   });
 
-  it('does not expose datasets when the actor lacks the domain permission', async () => {
+  it('keeps aggregate attendance export available through export permission alone', async () => {
     const result = await service.getCatalog({
       id: 1,
       username: 'exporter',
@@ -189,8 +190,8 @@ describe('DataExportsService', () => {
       data_scope: { school_ids: [10010002] },
     });
 
-    expect(result.data).toEqual([]);
-    expect(attendanceService.getSchools).not.toHaveBeenCalled();
+    expect(result.data.map((item) => item.code)).toEqual(['attendance_summary']);
+    expect(attendanceService.getSchools).toHaveBeenCalled();
     expect(statusCatalogService.getCatalog).not.toHaveBeenCalled();
   });
 
@@ -268,7 +269,7 @@ describe('DataExportsService', () => {
       id: 1,
       username: 'exporter',
       roles: ['ADMIN'],
-      permissions: ['export-data', 'students', 'import-data', 'dashboard', 'attendance-dashboard'],
+      permissions: ['export-data', 'students', 'import-data', 'dashboard'],
       data_scope: { global: true },
     });
 
@@ -321,14 +322,14 @@ describe('DataExportsService', () => {
     expect(repository.createJob).not.toHaveBeenCalled();
   });
 
-  it('rejects calendar dates that do not exist', async () => {
+  it('rejects filter dates that do not exist', async () => {
     await expect(
       service.createJob(
         {
           id: 1,
           username: 'exporter',
           roles: ['ADMIN'],
-          permissions: ['export-data', 'attendance-dashboard'],
+          permissions: ['export-data'],
           data_scope: { global: true },
         },
         {

@@ -1,11 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
   ParseUUIDPipe,
-  Patch,
   Post,
   Query,
   Res,
@@ -28,17 +28,8 @@ import {
   GetSchoolsQueryDto,
   GetStudentsQueryDto,
 } from './dto/attendance.dto';
-import { resolveLimit, resolvePage } from '../common/pagination/pagination.util';
 import { AttendanceOperationsService } from './attendance-operations.service';
-import {
-  AttendanceReconciliationQueryDto,
-  AttendanceReconciliationAnomaliesQueryDto,
-  GenerateSchoolCalendarDto,
-  ListSchoolCalendarQueryDto,
-  ListSchoolTermsQueryDto,
-  UpdateSchoolCalendarDayDto,
-  UpsertSchoolTermDto,
-} from './dto/attendance-operations.dto';
+import { ListSchoolTermsQueryDto, UpsertSchoolTermDto } from './dto/attendance-operations.dto';
 import {
   InternalCheckInOptionsQueryDto,
   InternalCheckInRosterQueryDto,
@@ -144,7 +135,6 @@ export class AttendanceController {
   @UseGuards(PermissionsGuard)
   @RequireAnyPermission(
     'attendance',
-    'attendance-dashboard',
     'students',
     'manage-school-structure',
     'manage-classroom-links',
@@ -158,7 +148,6 @@ export class AttendanceController {
   @UseGuards(PermissionsGuard)
   @RequireAnyPermission(
     'attendance',
-    'attendance-dashboard',
     'students',
     'manage-school-structure',
     'import-data',
@@ -211,7 +200,7 @@ export class AttendanceController {
 
   @Get('rooms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'attendance-dashboard', 'students', 'export-data')
+  @RequireAnyPermission('attendance', 'students', 'export-data')
   async getRooms(
     @Query() query: GetRoomsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -226,7 +215,6 @@ export class AttendanceController {
   @Get('terms')
   @UseGuards(PermissionsGuard)
   @RequireAnyPermission(
-    'attendance-dashboard',
     'attendance',
     'manage-school-structure',
     'manage-classroom-links',
@@ -242,7 +230,7 @@ export class AttendanceController {
 
   @Post('terms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard', 'manage-school-structure')
+  @RequirePermission('manage-school-structure')
   async upsertTerm(
     @Body() body: UpsertSchoolTermDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -250,75 +238,13 @@ export class AttendanceController {
     return await this.attendanceOperationsService.upsertTerm(body, actor);
   }
 
-  @Post('terms/:termId/calendar/generate')
+  @Delete('terms/:termId')
   @UseGuards(PermissionsGuard)
-  @RequirePermission('attendance-dashboard')
-  async generateCalendar(
+  @RequirePermission('manage-school-structure')
+  async deleteTerm(
     @Param('termId', ParseIntPipe) termId: number,
-    @Body() body: GenerateSchoolCalendarDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return await this.attendanceOperationsService.generateCalendar(termId, body.schoolDays, actor);
-  }
-
-  @Get('calendar')
-  @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance-dashboard')
-  async listCalendar(
-    @Query() query: ListSchoolCalendarQueryDto,
-    @CurrentUser() actor?: AuthenticatedRequestUser,
-  ) {
-    return await this.attendanceOperationsService.listCalendar(query.termId, actor);
-  }
-
-  @Patch('calendar-days/:calendarDayId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission('attendance-dashboard')
-  async updateCalendarDay(
-    @Param('calendarDayId', ParseIntPipe) calendarDayId: number,
-    @Body() body: UpdateSchoolCalendarDayDto,
-    @CurrentUser() actor?: AuthenticatedRequestUser,
-  ) {
-    return await this.attendanceOperationsService.updateCalendarDay(
-      calendarDayId,
-      body.dayType,
-      body.reason,
-      actor,
-    );
-  }
-
-  @Get('reconciliation')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission('attendance-dashboard')
-  async getReconciliation(
-    @Query() query: AttendanceReconciliationQueryDto,
-    @CurrentUser() actor?: AuthenticatedRequestUser,
-  ) {
-    return await this.attendanceOperationsService.getReconciliation(
-      query.termId,
-      query.date,
-      resolvePage(query.page),
-      resolveLimit(query.limit),
-      actor,
-      query.gradeLevelId,
-      query.room,
-    );
-  }
-
-  @Get('reconciliation/anomalies')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission('attendance-dashboard')
-  async getReconciliationAnomalies(
-    @Query() query: AttendanceReconciliationAnomaliesQueryDto,
-    @CurrentUser() actor?: AuthenticatedRequestUser,
-  ) {
-    return await this.attendanceOperationsService.getReconciliationAnomalies(
-      query.termId,
-      resolvePage(query.page),
-      resolveLimit(query.limit),
-      actor,
-      query.gradeLevelId,
-      query.room,
-    );
+    return await this.attendanceOperationsService.deleteTerm(termId, actor);
   }
 }

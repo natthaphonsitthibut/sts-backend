@@ -1,23 +1,17 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize,
-  ArrayMinSize,
-  ArrayUnique,
-  IsArray,
+  IsDateString,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
   Matches,
   Max,
-  MaxLength,
   Min,
 } from 'class-validator';
-import { PaginatedSearchQueryDto } from '../../common/pagination/pagination.dto';
 
 export const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TERM_STATUS_VALUES = ['DRAFT', 'ACTIVE', 'CLOSED'] as const;
-const CALENDAR_DAY_TYPE_VALUES = ['SCHOOL_DAY', 'HOLIDAY', 'CANCELLED'] as const;
 
 export class ListSchoolTermsQueryDto {
   @Type(() => Number)
@@ -27,6 +21,13 @@ export class ListSchoolTermsQueryDto {
 }
 
 export class UpsertSchoolTermDto {
+  /** Present when editing: the row to rewrite, even if the natural key changes. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  termId?: number;
+
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -45,85 +46,15 @@ export class UpsertSchoolTermDto {
 
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   startsOn!: string;
 
   @IsString()
   @Matches(ISO_DATE_PATTERN)
+  @IsDateString({ strict: true })
   endsOn!: string;
 
   @IsString()
   @IsIn(TERM_STATUS_VALUES)
   status!: (typeof TERM_STATUS_VALUES)[number];
-}
-
-export class GenerateSchoolCalendarDto {
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(7)
-  @ArrayUnique()
-  @Type(() => Number)
-  @IsInt({ each: true })
-  @Min(1, { each: true })
-  @Max(7, { each: true })
-  schoolDays!: number[];
-}
-
-export class ListSchoolCalendarQueryDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  termId!: number;
-}
-
-export class UpdateSchoolCalendarDayDto {
-  @IsString()
-  @IsIn(CALENDAR_DAY_TYPE_VALUES)
-  dayType!: (typeof CALENDAR_DAY_TYPE_VALUES)[number];
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  reason?: string;
-}
-
-export class AttendanceReconciliationQueryDto extends PaginatedSearchQueryDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  termId!: number;
-
-  @IsString()
-  @Matches(ISO_DATE_PATTERN)
-  date!: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  gradeLevelId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  room?: number;
-}
-
-export class AttendanceReconciliationAnomaliesQueryDto extends PaginatedSearchQueryDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  termId!: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  gradeLevelId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  room?: number;
 }

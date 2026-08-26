@@ -25,7 +25,7 @@ interface ScopeQuery {
 
 interface AttentionRow extends Record<string, unknown> {
   id: string;
-  kind: 'ATTENDANCE_INCOMPLETE' | 'RISK_HIGH' | 'CASE_OVERDUE' | 'CASE_PENDING_REVIEW';
+  kind: 'RISK_HIGH' | 'CASE_OVERDUE' | 'CASE_PENDING_REVIEW';
   label: string;
   reason: string;
   count: number | string;
@@ -619,28 +619,7 @@ export class HomeDashboardRepository {
     const caseWhere = caseScope.sql ? `AND ${caseScope.sql}` : '';
     const result = await this.query<AttentionRow>(
       `
-        WITH incomplete_attendance AS (
-          SELECT
-            COUNT(DISTINCT sess.id)::int AS count,
-            MIN(sess.attendance_date)::text AS oldest
-          FROM attendance_sessions sess
-          JOIN schools sc ON sc.id = sess.school_id
-          LEFT JOIN grade_levels gl ON gl.id = sess.grade_level_id
-          LEFT JOIN student_term s
-            ON s."SchoolID_Onec" = sess.school_id
-           AND s."GradeLevelID_Onec" = sess.grade_level_id
-           AND s."RoomID_Onec" = sess.room_id
-          ${CURRENT_ENROLLMENT_JOIN}
-          WHERE sess.deleted_at IS NULL
-            -- Any round of today that is still short of its roster: attendance
-            -- is taken per period now, so counting only the homeroom round hid
-            -- every unfinished subject period.
-            AND sess.attendance_date = $1::date
-            AND sess.expected_roster_count > 0
-            AND sess.recorded_count < sess.expected_roster_count
-            ${studentWhere}
-        ),
-        high_risk AS (
+        WITH high_risk AS (
           SELECT COUNT(DISTINCT s.student_uuid)::int AS count
           FROM student_term s
           ${CURRENT_ENROLLMENT_JOIN}
@@ -673,18 +652,6 @@ export class HomeDashboardRepository {
         )
         SELECT * FROM (
           SELECT
-            'attendance-incomplete' AS id,
-            'ATTENDANCE_INCOMPLETE' AS kind,
-            'เช็กชื่อวันนี้ยังไม่ครบ' AS label,
-            'มีห้องเรียนที่เริ่มบันทึกแล้วแต่จำนวนไม่ครบ roster' AS reason,
-            count,
-            oldest AS age_label,
-            '/attendance-operations' AS target_path,
-            jsonb_build_object('date', $1::text) AS target_query,
-            10 AS priority
-          FROM incomplete_attendance
-          UNION ALL
-          SELECT
             'risk-high',
             'RISK_HIGH',
             'นักเรียนที่ต้องเฝ้าระวังสูง',
@@ -693,7 +660,7 @@ export class HomeDashboardRepository {
             NULL,
             '/student-risk-report',
             jsonb_build_object('riskTier', 'HIGH'),
-            20
+            10
           FROM high_risk
           UNION ALL
           SELECT
@@ -705,7 +672,7 @@ export class HomeDashboardRepository {
             oldest,
             '/cases',
             jsonb_build_object('status', 'IN_PROGRESS'),
-            30
+            20
           FROM overdue_cases
           UNION ALL
           SELECT
@@ -717,7 +684,7 @@ export class HomeDashboardRepository {
             oldest,
             '/cases',
             jsonb_build_object('status', 'PENDING_REVIEW'),
-            40
+            30
           FROM pending_review
         ) items
         WHERE count > 0

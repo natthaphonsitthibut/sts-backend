@@ -1512,23 +1512,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('CLOSED', 'ปิดภาคเรียน', 'secondary', 30)
   ON CONFLICT (code) DO NOTHING;
 
-  CREATE TABLE IF NOT EXISTS school_calendar_day_types (
-    code VARCHAR(16) PRIMARY KEY,
-    label_th VARCHAR(100) NOT NULL,
-    badge_variant VARCHAR(16) NOT NULL,
-    sort_order SMALLINT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    ${AUDIT_COLUMNS_SQL},
-    CONSTRAINT chk_school_calendar_day_types_label CHECK (length(trim(label_th)) > 0),
-    CONSTRAINT chk_school_calendar_day_types_badge CHECK (badge_variant IN ('default','secondary','destructive','success','warning'))
-  );
-  ${auditUpdatedAtTriggerSql('school_calendar_day_types')}
-  INSERT INTO school_calendar_day_types (code, label_th, badge_variant, sort_order) VALUES
-    ('SCHOOL_DAY', 'วันเรียน', 'success', 10),
-    ('HOLIDAY', 'วันหยุด', 'secondary', 20),
-    ('CANCELLED', 'ยกเลิกการเรียน', 'warning', 30)
-  ON CONFLICT (code) DO NOTHING;
-
   CREATE TABLE IF NOT EXISTS attendance_session_statuses (
     code VARCHAR(16) PRIMARY KEY,
     label_th VARCHAR(100) NOT NULL,
@@ -1594,26 +1577,18 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     ('TASK_LINK_STATE', 'COMPLETED', 'เสร็จสิ้น', 'success', NULL, 40),
     ('LOGIN_LINK_USAGE', 'USED', 'เข้าใช้แล้ว', 'success', NULL, 10),
     ('LOGIN_LINK_USAGE', 'UNUSED', 'ยังไม่เข้าใช้', 'secondary', NULL, 20),
-    ('ATTENDANCE_RECONCILIATION', 'COMPLETED', 'ครบ', 'success', NULL, 10),
-    ('ATTENDANCE_RECONCILIATION', 'MISSING', 'ยังไม่เช็ก', 'destructive', NULL, 20),
-    ('ATTENDANCE_RECONCILIATION', 'INCOMPLETE', 'ไม่ครบ', 'warning', NULL, 30),
     ('RECORD_ACTIVITY', 'ACTIVE', 'เปิดใช้งาน', 'success', NULL, 10),
     ('RECORD_ACTIVITY', 'INACTIVE', 'ปิดใช้งาน', 'secondary', NULL, 20),
     ('STUDENT_STATUS_FLAG', 'LOGIN_ALLOWED', 'นโยบาย: เข้าสู่ระบบได้', 'success', NULL, 10),
     ('STUDENT_STATUS_FLAG', 'TERMINAL', 'สิ้นสุด', 'secondary', NULL, 20),
     ('STUDENT_STATUS_FLAG', 'FOLLOWUP_REQUIRED', 'ควรพิจารณาติดตาม', 'warning', NULL, 30),
     ('STUDENT_STATUS_FLAG', 'DISABLED', 'ปิดใช้งาน', 'destructive', NULL, 40),
-    ('ROLE_ORIGIN', 'SYSTEM', 'ระบบ', 'secondary', NULL, 10),
-    ('ATTENDANCE_ANOMALY', 'HOLIDAY_ATTENDANCE', 'เช็กชื่อในวันหยุด', 'warning', NULL, 10),
-    ('ATTENDANCE_ANOMALY', 'CANCELLED_ATTENDANCE', 'เช็กชื่อในวันที่ยกเลิกเรียน', 'warning', NULL, 20),
-    ('ATTENDANCE_ANOMALY', 'OUT_OF_TERM', 'เช็กชื่อนอกช่วงภาคเรียน', 'destructive', NULL, 30),
-    ('ATTENDANCE_ANOMALY', 'MISSING_CALENDAR_DAY', 'ไม่มีวันในปฏิทิน', 'secondary', NULL, 40)
+    ('ROLE_ORIGIN', 'SYSTEM', 'ระบบ', 'secondary', NULL, 10)
   ON CONFLICT (domain_code, code) DO NOTHING;
 
   ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_status;
   ALTER TABLE tasks DROP CONSTRAINT IF EXISTS chk_tasks_status;
   ALTER TABLE school_terms DROP CONSTRAINT IF EXISTS chk_school_terms_status;
-  ALTER TABLE school_calendar_days DROP CONSTRAINT IF EXISTS chk_school_calendar_days_type;
   ALTER TABLE attendance_sessions DROP CONSTRAINT IF EXISTS chk_attendance_sessions_status;
   ALTER TABLE student_import_batches DROP CONSTRAINT IF EXISTS chk_student_import_batches_status;
 
@@ -1638,10 +1613,6 @@ export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_school_terms_status') THEN
       ALTER TABLE school_terms ADD CONSTRAINT fk_school_terms_status FOREIGN KEY (status)
         REFERENCES school_term_statuses(code) ON DELETE RESTRICT ON UPDATE CASCADE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_school_calendar_days_type') THEN
-      ALTER TABLE school_calendar_days ADD CONSTRAINT fk_school_calendar_days_type FOREIGN KEY (day_type)
-        REFERENCES school_calendar_day_types(code) ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_sessions_status') THEN
       ALTER TABLE attendance_sessions ADD CONSTRAINT fk_attendance_sessions_status FOREIGN KEY (status)
@@ -2330,9 +2301,6 @@ export const DATABASE_BASELINE_SQL = `
     ON cases (student_uuid, created_at DESC, id DESC)
     WHERE deleted_at IS NULL
       AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND');
-  CREATE INDEX IF NOT EXISTS idx_school_calendar_days_risk_profile
-    ON school_calendar_days (school_term_id, day_type, deleted_at, calendar_date);
-
   ALTER TABLE task_links ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE;
   ALTER TABLE task_links ALTER COLUMN admin_lock_at TYPE TIMESTAMP WITH TIME ZONE USING admin_lock_at AT TIME ZONE 'UTC';
   ALTER TABLE task_links ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at AT TIME ZONE 'UTC';
@@ -2421,9 +2389,8 @@ export const DATABASE_BASELINE_SQL = `
     absence_reset_after_date DATE NULL,
     late_count INTEGER NOT NULL DEFAULT 0,
     subject_late_count INTEGER NOT NULL DEFAULT 0,
-    school_day_count INTEGER NOT NULL DEFAULT 0,
-    weighted_absence_days NUMERIC(8,2) NOT NULL DEFAULT 0,
-    weighted_attendance_percent NUMERIC(5,2) NULL,
+    recorded_day_count INTEGER NOT NULL DEFAULT 0,
+    attendance_rate_percent NUMERIC(5,2) NULL,
     risk_tier VARCHAR(16) NOT NULL
       CONSTRAINT chk_student_risk_profiles_tier
       CHECK (risk_tier IN ('HIGH', 'WATCH', 'NORMAL')),

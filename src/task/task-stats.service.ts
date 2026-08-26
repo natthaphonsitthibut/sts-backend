@@ -278,12 +278,9 @@ export class TaskStatsService {
           absenceResetAfterDate: row.absence_reset_after_date ?? null,
           lateCount: Number(row.late_count ?? 0),
           subjectLateCount: Number(row.subject_late_count ?? 0),
-          schoolDayCount: Number(row.school_day_count ?? 0),
-          weightedAbsenceDays: Number(row.weighted_absence_days ?? 0),
-          weightedAttendancePercent:
-            row.weighted_attendance_percent === null
-              ? null
-              : Number(row.weighted_attendance_percent),
+          recordedDayCount: Number(row.recorded_day_count ?? 0),
+          attendanceRatePercent:
+            row.attendance_rate_percent === null ? null : Number(row.attendance_rate_percent),
           riskTier: row.risk_tier,
           riskScore: Number(row.risk_score ?? 0),
           openCaseCount: Number(row.open_case_count ?? 0),

@@ -58,11 +58,6 @@ export const APP_PAGES: AppPageDefinition[] = [
     group: APP_PAGE_GROUPS.data,
     scopePolicy: 'global-only',
   },
-  {
-    id: 'attendance-dashboard',
-    title: 'ความครบถ้วน',
-    group: APP_PAGE_GROUPS.data,
-  },
   { id: 'attendance', title: 'เช็กชื่อ', group: APP_PAGE_GROUPS.attendance },
   {
     id: 'manage-classroom-links',
@@ -79,7 +74,7 @@ export const APP_PAGES: AppPageDefinition[] = [
     title: 'จัดการกลุ่มเมนู',
     group: APP_PAGE_GROUPS.users,
   },
-  { id: 'settings', title: 'ตั้งค่าระบบ', group: null },
+  { id: 'settings', title: 'ตั้งค่าระบบ', group: null, scopePolicy: 'global-only' },
 ];
 
 /**

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
 import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
 
 /**
@@ -20,6 +20,7 @@ export const AUDIT_ACTIONS = [
   'USER_TEMP_PASSWORD_REISSUE',
   'STUDENT_CREATE',
   'STUDENT_UPDATE',
+  'STUDENT_NATIONAL_ID_CORRECTION',
   'STUDENT_DELETE',
   'ROLE_GROUP_CREATE',
   'ROLE_GROUP_UPDATE',
@@ -119,10 +120,12 @@ export class GetAuditLogQueryDto extends PaginationQueryDto {
 
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsDateString({ strict: true })
   dateFrom?: string;
 
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsDateString({ strict: true })
   dateTo?: string;
 
   @IsOptional()

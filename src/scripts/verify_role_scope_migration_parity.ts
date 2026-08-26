@@ -7,6 +7,12 @@ const LEGACY_ADMIN_ROLES = new Set([
   'ADMIN_SCHOOL',
 ]);
 const AUDIT_LOG_PERMISSION_MIGRATION = 'GrantAuditLogPermission20260630140000';
+// This migration deliberately rewrote every user's permissions to their role
+// defaults, so from that point the pre-migration snapshot is no longer the
+// baseline — the role is. What still matters is that nobody ended up holding a
+// permission their role does not grant; narrowing below the defaults is what
+// role groups are for.
+const ROLE_DEFAULTS_RESET_MIGRATION = 'ResetUserPermissionsToRoleDefaults20260719140000';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -128,23 +134,32 @@ export function compareRoleScopeParity(
     issues.push(`role expected=${expectedCurrentRole ?? 'NULL'} current=${row.current_role}`);
   }
 
-  const beforePermissions = effectivePermissions(row.old_permissions, row.old_role_defaults);
-  const expectedPermissions = new Set(beforePermissions);
-  if (
-    options.appliedMigrations?.has(AUDIT_LOG_PERMISSION_MIGRATION) &&
-    (expectedCurrentRole === 'ADMIN' || expectedCurrentRole === 'DIRECTOR')
-  ) {
-    expectedPermissions.add('audit-log');
-  }
   const afterPermissions = effectivePermissions(row.current_permissions, row.current_role_defaults);
-  const expectedPermissionList = Array.from(expectedPermissions).sort();
-  const addedPermissions = difference(afterPermissions, expectedPermissionList);
-  const removedPermissions = difference(expectedPermissionList, afterPermissions);
-  if (addedPermissions.length > 0) {
-    issues.push(`permissions added=${addedPermissions.join(',')}`);
-  }
-  if (removedPermissions.length > 0) {
-    issues.push(`permissions removed=${removedPermissions.join(',')}`);
+  const roleDefaultsWereReset = options.appliedMigrations?.has(ROLE_DEFAULTS_RESET_MIGRATION);
+  if (roleDefaultsWereReset) {
+    const roleDefaults = normalizeStringList(row.current_role_defaults);
+    const beyondRole = difference(afterPermissions, roleDefaults);
+    if (beyondRole.length > 0) {
+      issues.push(`permissions beyond role defaults=${beyondRole.join(',')}`);
+    }
+  } else {
+    const beforePermissions = effectivePermissions(row.old_permissions, row.old_role_defaults);
+    const expectedPermissions = new Set(beforePermissions);
+    if (
+      options.appliedMigrations?.has(AUDIT_LOG_PERMISSION_MIGRATION) &&
+      (expectedCurrentRole === 'ADMIN' || expectedCurrentRole === 'DIRECTOR')
+    ) {
+      expectedPermissions.add('audit-log');
+    }
+    const expectedPermissionList = Array.from(expectedPermissions).sort();
+    const addedPermissions = difference(afterPermissions, expectedPermissionList);
+    const removedPermissions = difference(expectedPermissionList, afterPermissions);
+    if (addedPermissions.length > 0) {
+      issues.push(`permissions added=${addedPermissions.join(',')}`);
+    }
+    if (removedPermissions.length > 0) {
+      issues.push(`permissions removed=${removedPermissions.join(',')}`);
+    }
   }
 
   const expectedCurrentScope = expectedScope(row.old_role, row.old_data_scope);

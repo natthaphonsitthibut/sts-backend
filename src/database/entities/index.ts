@@ -23,11 +23,7 @@ import {
   StudentRiskProfileEntity,
   StudentTermEntity,
 } from './student.entities';
-import {
-  AttendanceSessionEntity,
-  SchoolCalendarDayEntity,
-  SchoolTermEntity,
-} from './attendance-operations.entities';
+import { AttendanceSessionEntity, SchoolTermEntity } from './attendance-operations.entities';
 import {
   CaseEntity,
   CaseRiskSignalEntity,
@@ -57,7 +53,6 @@ export const DATABASE_ENTITIES = [
   StudentGuardianEntity,
   StudentPersonContactEntity,
   SchoolTermEntity,
-  SchoolCalendarDayEntity,
   AttendanceSessionEntity,
   RoleEntity,
   UserEntity,
@@ -92,7 +87,6 @@ export {
   ScheduleEntity,
   SchoolEntity,
   SchoolAffiliationEntity,
-  SchoolCalendarDayEntity,
   SchoolTermEntity,
   StudentExitEventEntity,
   StudentGuardianEntity,

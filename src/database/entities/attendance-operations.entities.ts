@@ -24,27 +24,6 @@ export class SchoolTermEntity {
   status!: string;
 }
 
-@Entity({ name: 'school_calendar_days' })
-export class SchoolCalendarDayEntity {
-  @PrimaryGeneratedColumn('increment', { name: 'id', type: 'bigint' })
-  id!: string;
-
-  @Column({ name: 'school_term_id', type: 'bigint' })
-  schoolTermId!: string;
-
-  @Column({ name: 'calendar_date', type: 'date' })
-  calendarDate!: string;
-
-  @Column({ name: 'day_type', type: 'varchar', length: 16 })
-  dayType!: string;
-
-  @Column({ name: 'reason', type: 'varchar', length: 255, nullable: true })
-  reason!: string | null;
-
-  @Column({ name: 'source', type: 'varchar', length: 16, default: 'MANUAL' })
-  source!: string;
-}
-
 @Entity({ name: 'attendance_sessions' })
 export class AttendanceSessionEntity {
   @PrimaryGeneratedColumn('uuid', { name: 'id' })

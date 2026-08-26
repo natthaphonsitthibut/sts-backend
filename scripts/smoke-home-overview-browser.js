@@ -365,30 +365,12 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   }
   const attendanceNavigation = await evaluate(
     client,
-    `({
-      attendance: Boolean(document.querySelector('a[href="/attendance"]')),
-      operations: Boolean(document.querySelector('a[href="/attendance-operations"]')),
-      operationsGroup: (() => {
-        const link = document.querySelector('a[href="/attendance-operations"]');
-        return link?.parentElement?.parentElement?.parentElement?.parentElement
-          ?.querySelector(':scope > button')?.textContent?.trim() || null;
-      })()
-    })`,
+    `Boolean(document.querySelector('a[href="/attendance"]'))`,
   );
   assert(
-    attendanceNavigation.attendance === expectations.attendanceNavigation,
+    attendanceNavigation === expectations.attendanceNavigation,
     `${label} attendance navigation did not match the stored permission`,
   );
-  assert(
-    attendanceNavigation.operations === expectations.operationsNavigation,
-    `${label} attendance completeness navigation did not match the stored permission`,
-  );
-  if (expectations.operationsNavigation) {
-    assert(
-      attendanceNavigation.operationsGroup?.includes('จัดการข้อมูล'),
-      `${label} attendance completeness navigation was not grouped under data management`,
-    );
-  }
   if (expectations.cases) {
     const activeCaseCardText = await evaluate(client, `(() => document.body.innerText)()`);
     assert(
@@ -657,7 +639,7 @@ async function main() {
         username: `${USERNAME_PREFIX}_admin`,
         firstName: 'Home Admin',
         role: 'ADMIN',
-        permissions: ['home', 'dashboard', 'attendance-dashboard', 'students', 'export-data'],
+        permissions: ['home', 'dashboard', 'students', 'export-data'],
         dataScope: { global: true },
         expectations: {
           attendance: true,
@@ -665,7 +647,6 @@ async function main() {
           cases: true,
           exports: true,
           attendanceNavigation: false,
-          operationsNavigation: true,
         },
       },
       {
@@ -673,15 +654,14 @@ async function main() {
         username: `${USERNAME_PREFIX}_attendance`,
         firstName: 'Home Attendance',
         role: 'DIRECTOR',
-        permissions: ['home', 'attendance-dashboard'],
+        permissions: ['home', 'attendance'],
         dataScope: { global: true },
         expectations: {
           attendance: true,
           risk: false,
           cases: false,
           exports: false,
-          attendanceNavigation: false,
-          operationsNavigation: true,
+          attendanceNavigation: true,
         },
       },
       {
@@ -697,7 +677,6 @@ async function main() {
           cases: true,
           exports: false,
           attendanceNavigation: false,
-          operationsNavigation: false,
         },
       },
       {
@@ -713,7 +692,6 @@ async function main() {
           cases: false,
           exports: false,
           attendanceNavigation: false,
-          operationsNavigation: false,
         },
       },
     ];
@@ -734,7 +712,6 @@ async function main() {
         cases: false,
         exports: false,
         attendanceNavigation: false,
-        operationsNavigation: false,
         riskDimension: 'SCHOOL',
       },
     });

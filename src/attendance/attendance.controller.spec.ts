@@ -19,138 +19,77 @@ function contextWithPermissions(
     getHandler: () => handler(method),
     getClass: () => AttendanceController,
     switchToHttp: () => ({
-      getRequest: () => ({
-        user: { id: 1, username: 'user', roles: [], permissions },
-      }),
+      getRequest: () => ({ user: { id: 1, username: 'user', roles: [], permissions } }),
     }),
   } as ExecutionContext;
 }
 
 describe('AttendanceController access', () => {
-  const guardedReadMethods: Array<keyof AttendanceController> = [
-    'getGradeLevels',
-    'getSchools',
-    'getStudents',
-    'getHistory',
-    'getRooms',
-  ];
-
-  it('keeps every attendance read route behind auth and permissions guards', () => {
+  it('keeps every attendance route authenticated', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, AttendanceController)).toEqual([AuthGuard]);
 
-    for (const method of guardedReadMethods) {
+    for (const name of Object.getOwnPropertyNames(AttendanceController.prototype)) {
+      if (name === 'constructor') continue;
+      const method = name as keyof AttendanceController;
+      expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler(method))).toBeUndefined();
       expect(Reflect.getMetadata(GUARDS_METADATA, handler(method))).toEqual([PermissionsGuard]);
     }
   });
 
-  it('keeps no unauthenticated route on the attendance controller', () => {
-    for (const name of Object.getOwnPropertyNames(AttendanceController.prototype)) {
-      if (name === 'constructor') continue;
-      expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler(name as keyof AttendanceController))).toBe(
-        undefined,
-      );
-    }
-  });
-
-  it('allows attendance lookup/task reads to the required actors only', () => {
+  it('allows shared lookup routes only to their current consumers', () => {
     const guard = new PermissionsGuard(new Reflector());
-    const attendanceLookupMethods: Array<keyof AttendanceController> = ['getRooms'];
 
-    for (const method of attendanceLookupMethods) {
-      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
-        'attendance',
-        'attendance-dashboard',
-        'students',
-        'export-data',
-      ]);
-      expect(guard.canActivate(contextWithPermissions(method, ['attendance']))).toBe(true);
-      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
-        true,
-      );
-      expect(() => guard.canActivate(contextWithPermissions(method, ['home']))).toThrow(
-        ForbiddenException,
-      );
-    }
-
-    for (const method of ['getSchools'] as const) {
-      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
-        'attendance',
-        'attendance-dashboard',
-        'students',
-        'manage-school-structure',
-        'import-data',
-        'export-data',
-      ]);
-      expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
-      expect(guard.canActivate(contextWithPermissions(method, ['import-data']))).toBe(true);
-      expect(guard.canActivate(contextWithPermissions(method, ['export-data']))).toBe(true);
-      expect(() => guard.canActivate(contextWithPermissions(method, ['home']))).toThrow(
-        ForbiddenException,
-      );
-    }
-
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getSchools'))).toEqual([
+      'attendance',
+      'students',
+      'manage-school-structure',
+      'import-data',
+      'export-data',
+    ]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getGradeLevels'))).toEqual([
       'attendance',
-      'attendance-dashboard',
       'students',
       'manage-school-structure',
       'manage-classroom-links',
       'export-data',
     ]);
-    expect(
-      guard.canActivate(contextWithPermissions('getGradeLevels', ['manage-school-structure'])),
-    ).toBe(true);
-    expect(guard.canActivate(contextWithPermissions('getGradeLevels', ['export-data']))).toBe(true);
-
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getRooms'))).toEqual([
       'attendance',
-      'attendance-dashboard',
       'students',
       'export-data',
     ]);
-    expect(guard.canActivate(contextWithPermissions('getGradeLevels', ['students']))).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('getSchools', ['import-data']))).toBe(true);
     expect(guard.canActivate(contextWithPermissions('getRooms', ['students']))).toBe(true);
-    expect(guard.canActivate(contextWithPermissions('getRooms', ['export-data']))).toBe(true);
+    expect(() => guard.canActivate(contextWithPermissions('getRooms', ['home']))).toThrow(
+      ForbiddenException,
+    );
   });
 
-  it('allows roster and history reads to attendance actors only', () => {
+  it('keeps roster, history, and check-in routes on attendance permission', () => {
     const guard = new PermissionsGuard(new Reflector());
-    const attendanceOnlyMethods: Array<keyof AttendanceController> = ['getStudents', 'getHistory'];
-
-    for (const method of attendanceOnlyMethods) {
-      expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual(['attendance']);
-      expect(guard.canActivate(contextWithPermissions(method, ['attendance']))).toBe(true);
-      expect(() =>
-        guard.canActivate(contextWithPermissions(method, ['attendance-dashboard'])),
-      ).toThrow(ForbiddenException);
-    }
-  });
-
-  it('separates attendance calendar read and write permissions', () => {
-    const guard = new PermissionsGuard(new Reflector());
-    const calendarReadMethods: Array<keyof AttendanceController> = ['listCalendar'];
-    const calendarWriteMethods: Array<keyof AttendanceController> = [
-      'generateCalendar',
-      'updateCalendarDay',
+    const methods: Array<keyof AttendanceController> = [
+      'getStudents',
+      'getHistory',
+      'checkInOptions',
+      'checkInRoster',
+      'checkInStudentPhoto',
+      'startCheckInSession',
+      'submitCheckInSession',
     ];
 
-    for (const method of calendarReadMethods) {
-      expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler(method))).toEqual([
-        'attendance-dashboard',
-      ]);
-      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
-        true,
-      );
-      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
-        true,
-      );
-      expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
+    for (const method of methods) {
+      expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual(['attendance']);
+      expect(guard.canActivate(contextWithPermissions(method, ['attendance']))).toBe(true);
+      expect(() => guard.canActivate(contextWithPermissions(method, ['dashboard']))).toThrow(
         ForbiddenException,
       );
     }
+  });
+
+  it('separates term reads from school-level term writes and deletion', () => {
+    const guard = new PermissionsGuard(new Reflector());
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTerms'))).toEqual([
-      'attendance-dashboard',
       'attendance',
       'manage-school-structure',
       'manage-classroom-links',
@@ -158,28 +97,15 @@ describe('AttendanceController access', () => {
       'import-data',
     ]);
     expect(guard.canActivate(contextWithPermissions('listTerms', ['attendance']))).toBe(true);
-    expect(guard.canActivate(contextWithPermissions('listTerms', ['manage-subjects']))).toBe(true);
-    expect(
-      guard.canActivate(contextWithPermissions('listTerms', ['manage-school-structure'])),
-    ).toBe(true);
-    expect(guard.canActivate(contextWithPermissions('listTerms', ['import-data']))).toBe(true);
 
-    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('upsertTerm'))).toEqual([
-      'attendance-dashboard',
-      'manage-school-structure',
-    ]);
-    expect(
-      guard.canActivate(contextWithPermissions('upsertTerm', ['manage-school-structure'])),
-    ).toBe(true);
-
-    for (const method of calendarWriteMethods) {
+    for (const method of ['upsertTerm', 'deleteTerm'] as const) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([
-        'attendance-dashboard',
+        'manage-school-structure',
       ]);
-      expect(guard.canActivate(contextWithPermissions(method, ['attendance-dashboard']))).toBe(
+      expect(guard.canActivate(contextWithPermissions(method, ['manage-school-structure']))).toBe(
         true,
       );
-      expect(() => guard.canActivate(contextWithPermissions(method, ['settings']))).toThrow(
+      expect(() => guard.canActivate(contextWithPermissions(method, ['attendance']))).toThrow(
         ForbiddenException,
       );
     }

@@ -1,11 +1,22 @@
 import { Body, Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
-import { AuthGuard, CurrentUser, PermissionsGuard, RequirePermission } from '../auth';
+import {
+  AuthGuard,
+  CurrentUser,
+  GlobalScopeGuard,
+  PermissionsGuard,
+  RequireGlobalScope,
+  RequirePermission,
+  RequireRoles,
+  RolesGuard,
+} from '../auth';
 import type { AuthenticatedRequestUser } from '../auth/auth.types';
 import { UpdateSettingDto } from './dto/settings.dto';
 import { SettingsService } from './settings.service';
 
-@UseGuards(AuthGuard, PermissionsGuard)
+@UseGuards(AuthGuard, PermissionsGuard, RolesGuard, GlobalScopeGuard)
 @RequirePermission('settings')
+@RequireRoles('ADMIN')
+@RequireGlobalScope()
 @Controller('api/settings')
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}

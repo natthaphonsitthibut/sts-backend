@@ -481,7 +481,7 @@ describe('TaskAccessService admin link audit', () => {
     id: 53,
     username: 'admin53',
     roles: ['ADMIN'],
-    permissions: ['attendance-dashboard'],
+    permissions: ['dashboard'],
     data_scope: { school_ids: [10010002] },
   };
   let service: TaskAccessService;

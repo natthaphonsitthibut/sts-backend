@@ -1,22 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { buildDataScopeQuery, type DataScope } from '../common/utils/authorization';
+import type { DataScope } from '../common/utils/authorization';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type { QueryExecutor } from './attendance.types';
 import type {
   AttendanceClassMetadataRow,
-  AttendanceReconciliationRow,
-  AttendanceSessionAnomalyRow,
   AttendanceSessionRow,
-  CalendarDayRow,
-  CalendarDayType,
   SchoolTermInput,
   SchoolTermRow,
 } from './attendance-operations.types';
-
-function pushParams(target: unknown[], source: unknown[]): void {
-  source.forEach((value) => target.push(value));
-}
 
 const CURRENT_ENROLLMENT_JOIN = `
         JOIN student_current_enrollment_resolution current_enrollment
@@ -40,48 +32,6 @@ export class AttendanceOperationsRepository {
           await queryDataSource<T>(this.dataSource, sql, params),
       }
     );
-  }
-
-  /**
-   * Atomically claim past-date attendance sessions that were started but never
-   * finished (recorded fewer students than the roster), flagging each once so a
-   * completeness reminder is sent a single time. Returns the claimed sessions.
-   */
-  async claimIncompleteSessions(cutoffDate: Date): Promise<
-    Array<{
-      id: string;
-      school_id: number;
-      grade_level_id: number | null;
-      room_id: number | null;
-      attendance_date: string;
-      expected_roster_count: number;
-      recorded_count: number;
-    }>
-  > {
-    const result = await queryDataSource<Record<string, unknown>>(
-      this.dataSource,
-      `
-        UPDATE attendance_sessions
-        SET anomaly_notified_at = now(), updated_at = now()
-        WHERE deleted_at IS NULL
-          AND anomaly_notified_at IS NULL
-          AND attendance_date < $1::date
-          AND expected_roster_count > 0
-          AND recorded_count < expected_roster_count
-        RETURNING id, school_id, grade_level_id, room_id, attendance_date::text AS attendance_date,
-                  expected_roster_count, recorded_count
-      `,
-      [cutoffDate.toISOString().slice(0, 10)],
-    );
-    return result.rows.map((row) => ({
-      id: typeof row.id === 'string' ? row.id : '',
-      school_id: Number(row.school_id),
-      grade_level_id: row.grade_level_id == null ? null : Number(row.grade_level_id),
-      room_id: row.room_id == null ? null : Number(row.room_id),
-      attendance_date: typeof row.attendance_date === 'string' ? row.attendance_date : '',
-      expected_roster_count: Number(row.expected_roster_count),
-      recorded_count: Number(row.recorded_count),
-    }));
   }
 
   async isSchoolInScope(schoolId: number, scope?: DataScope): Promise<boolean> {
@@ -152,15 +102,10 @@ export class AttendanceOperationsRepository {
           st.semester,
           st.starts_on::text,
           st.ends_on::text,
-          st.status,
-          COUNT(cd.id)::int AS calendar_day_count,
-          COUNT(cd.id) FILTER (WHERE cd.day_type = 'SCHOOL_DAY')::int AS school_day_count
+          st.status
         FROM school_terms st
         JOIN schools sc ON sc.id = st.school_id
-        LEFT JOIN school_calendar_days cd
-          ON cd.school_term_id = st.id AND cd.deleted_at IS NULL
         WHERE st.school_id = $1 AND st.deleted_at IS NULL
-        GROUP BY st.id, sc.name
         ORDER BY st.academic_year DESC, st.semester DESC
       `,
       [schoolId],
@@ -179,15 +124,97 @@ export class AttendanceOperationsRepository {
           st.semester,
           st.starts_on::text,
           st.ends_on::text,
-          st.status,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.deleted_at IS NULL) AS calendar_day_count,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.day_type = 'SCHOOL_DAY'
-              AND cd.deleted_at IS NULL) AS school_day_count
+          st.status
         FROM school_terms st
         JOIN schools sc ON sc.id = st.school_id
         WHERE st.id = $1 AND st.deleted_at IS NULL
+      `,
+      [termId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findTermByIdForUpdate(
+    termId: number,
+    executor: QueryExecutor,
+  ): Promise<SchoolTermRow | null> {
+    const result = await executor.query<SchoolTermRow>(
+      `
+        SELECT
+          st.id::text,
+          st.school_id,
+          sc.name AS school_name,
+          st.academic_year,
+          st.semester,
+          st.starts_on::text,
+          st.ends_on::text,
+          st.status
+        FROM school_terms st
+        JOIN schools sc ON sc.id = st.school_id
+        WHERE st.id = $1 AND st.deleted_at IS NULL
+        FOR UPDATE OF st
+      `,
+      [termId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async deleteTerm(termId: number, executor: QueryExecutor): Promise<string | null> {
+    const result = await executor.query<{ id: string }>(
+      `DELETE FROM school_terms WHERE id = $1 RETURNING id::text`,
+      [termId],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
+  /**
+   * Editing must follow the row, not its natural key: the dialog can change the
+   * academic year or semester, and an upsert on (school, year, semester) would
+   * write a second row and orphan the one the user opened.
+   */
+  async updateTerm(
+    termId: number,
+    input: SchoolTermInput,
+    executor: QueryExecutor,
+  ): Promise<SchoolTermRow | null> {
+    const updated = await executor.query<{ id: string }>(
+      `
+        UPDATE school_terms
+        SET academic_year = $2,
+            semester = $3,
+            starts_on = $4,
+            ends_on = $5,
+            status = $6,
+            updated_by = $7
+        WHERE id = $1 AND school_id = $8 AND deleted_at IS NULL
+        RETURNING id::text
+      `,
+      [
+        termId,
+        input.academicYear,
+        input.semester,
+        input.startsOn,
+        input.endsOn,
+        input.status,
+        input.actorUserId,
+        input.schoolId,
+      ],
+    );
+    if (!updated.rows[0]) return null;
+    const result = await executor.query<SchoolTermRow>(
+      `
+        SELECT
+          st.id::text,
+          st.school_id,
+          sc.name AS school_name,
+          st.academic_year,
+          st.semester,
+          st.starts_on::text,
+          st.ends_on::text,
+          st.status
+        FROM school_terms st
+        JOIN schools sc ON sc.id = st.school_id
+        WHERE st.id = $1
       `,
       [termId],
     );
@@ -230,12 +257,7 @@ export class AttendanceOperationsRepository {
           st.semester,
           st.starts_on::text,
           st.ends_on::text,
-          st.status,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.deleted_at IS NULL) AS calendar_day_count,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.day_type = 'SCHOOL_DAY'
-              AND cd.deleted_at IS NULL) AS school_day_count
+          st.status
         FROM school_terms st
         JOIN schools sc ON sc.id = st.school_id
         WHERE st.school_id = $1 AND st.academic_year = $2 AND st.semester = $3
@@ -243,140 +265,6 @@ export class AttendanceOperationsRepository {
       [input.schoolId, input.academicYear, input.semester],
     );
     return result.rows[0];
-  }
-
-  async getCalendarCoverage(
-    termId: string,
-    startsOn: string,
-    endsOn: string,
-    executor: QueryExecutor,
-  ): Promise<{ calendarDayCount: number; schoolDayCount: number }> {
-    const result = await executor.query<{
-      calendar_day_count: number | string;
-      school_day_count: number | string;
-    }>(
-      `
-        SELECT
-          COUNT(*)::int AS calendar_day_count,
-          COUNT(*) FILTER (WHERE day_type = 'SCHOOL_DAY')::int AS school_day_count
-        FROM school_calendar_days
-        WHERE school_term_id = $1
-          AND calendar_date BETWEEN $2 AND $3
-          AND deleted_at IS NULL
-      `,
-      [termId, startsOn, endsOn],
-    );
-    return {
-      calendarDayCount: Number(result.rows[0]?.calendar_day_count ?? 0),
-      schoolDayCount: Number(result.rows[0]?.school_day_count ?? 0),
-    };
-  }
-
-  async generateCalendar(
-    termId: number,
-    schoolDays: number[],
-    actorUserId: number | null,
-    executor: QueryExecutor,
-  ): Promise<void> {
-    await executor.query(
-      `
-        UPDATE school_calendar_days cd
-        SET deleted_at = now(), deleted_by = $2, updated_by = $2
-        FROM school_terms st
-        WHERE st.id = $1
-          AND cd.school_term_id = st.id
-          AND cd.source = 'GENERATED'
-          AND cd.deleted_at IS NULL
-          AND (cd.calendar_date < st.starts_on OR cd.calendar_date > st.ends_on)
-      `,
-      [termId, actorUserId],
-    );
-    await executor.query(
-      `
-        INSERT INTO school_calendar_days (
-          school_term_id, calendar_date, day_type, reason, source, created_by, updated_by
-        )
-        SELECT
-          st.id,
-          day::date,
-          CASE WHEN EXTRACT(ISODOW FROM day)::int = ANY($2::int[])
-            THEN 'SCHOOL_DAY' ELSE 'HOLIDAY' END,
-          NULL,
-          'GENERATED',
-          $3,
-          $3
-        FROM school_terms st
-        CROSS JOIN LATERAL generate_series(st.starts_on, st.ends_on, INTERVAL '1 day') day
-        WHERE st.id = $1 AND st.starts_on IS NOT NULL AND st.ends_on IS NOT NULL
-        ON CONFLICT (school_term_id, calendar_date) DO UPDATE SET
-          day_type = CASE
-            WHEN school_calendar_days.source IN ('MANUAL', 'IMPORT', 'BACKFILL')
-              THEN school_calendar_days.day_type
-            ELSE EXCLUDED.day_type
-          END,
-          source = CASE
-            WHEN school_calendar_days.source IN ('MANUAL', 'IMPORT', 'BACKFILL')
-              THEN school_calendar_days.source
-            ELSE EXCLUDED.source
-          END,
-          updated_by = EXCLUDED.updated_by,
-          deleted_at = NULL,
-          deleted_by = NULL
-      `,
-      [termId, schoolDays, actorUserId],
-    );
-  }
-
-  async listCalendar(termId: number): Promise<CalendarDayRow[]> {
-    const result = await queryDataSource<CalendarDayRow>(
-      this.dataSource,
-      `
-        SELECT id::text, school_term_id::text, calendar_date::text, day_type, reason, source
-        FROM school_calendar_days
-        WHERE school_term_id = $1 AND deleted_at IS NULL
-        ORDER BY calendar_date
-      `,
-      [termId],
-    );
-    return result.rows;
-  }
-
-  async updateCalendarDay(
-    calendarDayId: number,
-    dayType: CalendarDayType,
-    reason: string | null,
-    actorUserId: number | null,
-    executor: QueryExecutor,
-  ): Promise<CalendarDayRow | null> {
-    const result = await executor.query<CalendarDayRow>(
-      `
-        UPDATE school_calendar_days
-        SET day_type = $2,
-            reason = $3,
-            source = 'MANUAL',
-            updated_by = $4,
-            deleted_at = NULL,
-            deleted_by = NULL
-        WHERE id = $1
-        RETURNING id::text, school_term_id::text, calendar_date::text,
-          day_type, reason, source
-      `,
-      [calendarDayId, dayType, reason, actorUserId],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async findCalendarDayById(calendarDayId: number): Promise<CalendarDayRow | null> {
-    const result = await queryDataSource<CalendarDayRow>(
-      this.dataSource,
-      `
-        SELECT id::text, school_term_id::text, calendar_date::text, day_type, reason, source
-        FROM school_calendar_days
-        WHERE id = $1 AND deleted_at IS NULL
-      `,
-      [calendarDayId],
-    );
-    return result.rows[0] ?? null;
   }
 
   async findClassMetadata(
@@ -458,12 +346,7 @@ export class AttendanceOperationsRepository {
           st.semester,
           st.starts_on::text,
           st.ends_on::text,
-          st.status,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.deleted_at IS NULL) AS calendar_day_count,
-          (SELECT COUNT(*)::int FROM school_calendar_days cd
-            WHERE cd.school_term_id = st.id AND cd.day_type = 'SCHOOL_DAY'
-              AND cd.deleted_at IS NULL) AS school_day_count
+          st.status
         FROM school_terms st
         JOIN schools sc ON sc.id = st.school_id
         WHERE st.school_id = $1 AND st.academic_year = $2 AND st.semester = $3
@@ -494,30 +377,12 @@ export class AttendanceOperationsRepository {
           st.semester,
           st.starts_on::text,
           st.ends_on::text,
-          st.status,
-          0 AS calendar_day_count,
-          0 AS school_day_count
+          st.status
         FROM school_terms st
         JOIN schools sc ON sc.id = st.school_id
         WHERE st.school_id = $1 AND st.academic_year = $2 AND st.semester = $3
       `,
       [metadata.school_id, metadata.academic_year, metadata.semester],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async findCalendarDay(
-    termId: string,
-    date: string,
-    executor?: QueryExecutor,
-  ): Promise<CalendarDayRow | null> {
-    const result = await this.getExecutor(executor).query<CalendarDayRow>(
-      `
-        SELECT id::text, school_term_id::text, calendar_date::text, day_type, reason, source
-        FROM school_calendar_days
-        WHERE school_term_id = $1 AND calendar_date = $2 AND deleted_at IS NULL
-      `,
-      [termId, date],
     );
     return result.rows[0] ?? null;
   }
@@ -696,298 +561,5 @@ export class AttendanceOperationsRepository {
       [sessionId],
     );
     return result.rows[0] ?? null;
-  }
-
-  async listReconciliation(
-    term: SchoolTermRow,
-    date: string,
-    scope: DataScope | undefined,
-    page: number,
-    limit: number,
-    gradeLevelId?: number,
-    room?: number,
-  ): Promise<{
-    rows: AttendanceReconciliationRow[];
-    totalCount: number;
-    summary: { completed: number; missing: number; incomplete: number };
-  }> {
-    const params: unknown[] = [term.school_id, term.academic_year, term.semester];
-    const conditions = [
-      `s."SchoolID_Onec" = $1`,
-      `s."AcademicYear_Onec" = $2`,
-      `s."Semester_Onec" = $3`,
-      's.deleted_at IS NULL',
-    ];
-    if (scope) {
-      const scoped = buildDataScopeQuery(
-        scope,
-        {
-          school_id: `s."SchoolID_Onec"`,
-          grade: `s."GradeLevelID_Onec"`,
-          room: `s."RoomID_Onec"::text`,
-          province: 'sc.province',
-          district: 'sc.district',
-          sub_district: 'sc.sub_district',
-        },
-        params.length + 1,
-      );
-      if (scoped.sql) {
-        conditions.push(`(${scoped.sql})`);
-        pushParams(params, scoped.params);
-      }
-    }
-    if (gradeLevelId) {
-      params.push(gradeLevelId);
-      conditions.push(`s."GradeLevelID_Onec" = $${params.length}`);
-    }
-    if (room) {
-      params.push(room);
-      conditions.push(`s."RoomID_Onec"::int = $${params.length}`);
-    }
-    const rosterSql = `
-      SELECT s.classroom_id,
-        s."GradeLevelID_Onec" AS grade_level_id,
-        gl.label AS grade_label,
-        s."RoomID_Onec" AS room_id,
-        COUNT(*)::int AS expected_roster_count
-      FROM student_term s
-      ${CURRENT_ENROLLMENT_JOIN}
-      JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
-      JOIN schools sc ON sc.id = s."SchoolID_Onec"
-      WHERE ${conditions.join(' AND ')}
-      GROUP BY s.classroom_id, s."GradeLevelID_Onec", gl.label, s."RoomID_Onec"
-    `;
-    const termPlaceholder = params.length + 1;
-    const datePlaceholder = params.length + 2;
-    const summaryResult = await queryDataSource<{
-      count: string;
-      completed: number | string;
-      missing: number | string;
-      incomplete: number | string;
-    }>(
-      this.dataSource,
-      `
-        WITH roster AS (${rosterSql}), states AS (
-          SELECT CASE
-            WHEN sess.id IS NULL THEN 'MISSING'
-            WHEN sess.is_complete THEN 'COMPLETED'
-            ELSE 'INCOMPLETE'
-          END AS operational_status
-          FROM roster
-          LEFT JOIN LATERAL (
-            SELECT MIN(session.id::text) AS id,
-              BOOL_OR(
-                session.status = 'SUBMITTED'
-                AND session.recorded_count = roster.expected_roster_count
-              ) AS is_complete
-            FROM attendance_sessions session
-            WHERE session.school_term_id = $${termPlaceholder}
-              AND session.classroom_id = roster.classroom_id
-              AND session.attendance_date = $${datePlaceholder}
-              AND session.record_storage_mode = 'EXCEPTIONS'
-              AND session.deleted_at IS NULL
-            HAVING COUNT(*) > 0
-          ) sess ON TRUE
-        )
-        SELECT
-          COUNT(*)::text AS count,
-          COUNT(*) FILTER (WHERE operational_status = 'COMPLETED')::int AS completed,
-          COUNT(*) FILTER (WHERE operational_status = 'MISSING')::int AS missing,
-          COUNT(*) FILTER (WHERE operational_status = 'INCOMPLETE')::int AS incomplete
-        FROM states
-      `,
-      [...params, term.id, date],
-    );
-    const offset = (page - 1) * limit;
-    const limitPlaceholder = params.length + 3;
-    const offsetPlaceholder = params.length + 4;
-    const result = await queryDataSource<AttendanceReconciliationRow>(
-      this.dataSource,
-      `
-        WITH roster AS (${rosterSql})
-        SELECT
-          roster.grade_level_id,
-          roster.grade_label,
-          roster.room_id,
-          roster.expected_roster_count,
-          COALESCE(sess.recorded_count, 0)::int AS recorded_count,
-          sess.id AS session_id,
-          sess.status AS session_status,
-          sess.revision,
-          CASE
-            WHEN sess.id IS NULL THEN 'MISSING'
-            WHEN sess.is_complete THEN 'COMPLETED'
-            ELSE 'INCOMPLETE'
-          END AS operational_status
-        FROM roster
-        LEFT JOIN LATERAL (
-          SELECT MAX(session.id::text) AS id,
-            MAX(session.recorded_count)::int AS recorded_count,
-            CASE
-              WHEN BOOL_OR(session.status = 'SUBMITTED') THEN 'SUBMITTED'
-              WHEN BOOL_OR(session.status = 'REOPENED') THEN 'REOPENED'
-              WHEN BOOL_OR(session.status = 'OPEN') THEN 'OPEN'
-              ELSE NULL
-            END AS status,
-            MAX(session.revision)::int AS revision,
-            BOOL_OR(
-              session.status = 'SUBMITTED'
-              AND session.recorded_count = roster.expected_roster_count
-            ) AS is_complete
-          FROM attendance_sessions session
-          WHERE session.school_term_id = $${termPlaceholder}
-            AND session.classroom_id = roster.classroom_id
-            AND session.attendance_date = $${datePlaceholder}
-            AND session.record_storage_mode = 'EXCEPTIONS'
-            AND session.deleted_at IS NULL
-          HAVING COUNT(*) > 0
-        ) sess ON TRUE
-        ORDER BY roster.grade_level_id, roster.room_id
-        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
-      `,
-      [...params, term.id, date, limit, offset],
-    );
-    return {
-      rows: result.rows,
-      totalCount: Number.parseInt(summaryResult.rows[0]?.count ?? '0', 10),
-      summary: {
-        completed: Number(summaryResult.rows[0]?.completed ?? 0),
-        missing: Number(summaryResult.rows[0]?.missing ?? 0),
-        incomplete: Number(summaryResult.rows[0]?.incomplete ?? 0),
-      },
-    };
-  }
-
-  async listSessionAnomalies(
-    term: SchoolTermRow,
-    scope: DataScope | undefined,
-    page: number,
-    limit: number,
-    gradeLevelId?: number,
-    room?: number,
-  ): Promise<{
-    rows: AttendanceSessionAnomalyRow[];
-    totalCount: number;
-    summary: {
-      holidayAttendance: number;
-      cancelledAttendance: number;
-      outOfTerm: number;
-      missingCalendarDay: number;
-    };
-  }> {
-    const params: unknown[] = [term.id, term.school_id];
-    const conditions = [
-      'sess.school_term_id = $1',
-      'sess.school_id = $2',
-      "sess.session_kind = 'SUBJECT'",
-      'sess.deleted_at IS NULL',
-    ];
-    if (scope) {
-      const scoped = buildDataScopeQuery(
-        scope,
-        {
-          school_id: 'sess.school_id',
-          grade: 'sess.grade_level_id',
-          room: 'sess.room_id::text',
-          province: 'sc.province',
-          district: 'sc.district',
-          sub_district: 'sc.sub_district',
-        },
-        params.length + 1,
-      );
-      if (scoped.sql) {
-        conditions.push(`(${scoped.sql})`);
-        pushParams(params, scoped.params);
-      }
-    }
-    if (gradeLevelId) {
-      params.push(gradeLevelId);
-      conditions.push(`sess.grade_level_id = $${params.length}`);
-    }
-    if (room) {
-      params.push(room);
-      conditions.push(`sess.room_id = $${params.length}`);
-    }
-    const baseSql = `
-      SELECT
-        sess.id AS session_id,
-        sess.attendance_date::text,
-        sess.grade_level_id,
-        gl.label AS grade_label,
-        sess.room_id,
-        sess.expected_roster_count,
-        sess.recorded_count,
-        sess.status AS session_status,
-        sess.revision,
-        day.day_type,
-        day.reason AS calendar_reason,
-        CASE
-          WHEN st.starts_on IS NOT NULL AND st.ends_on IS NOT NULL
-            AND (sess.attendance_date < st.starts_on OR sess.attendance_date > st.ends_on)
-            THEN 'OUT_OF_TERM'
-          WHEN day.id IS NULL THEN 'MISSING_CALENDAR_DAY'
-          WHEN day.day_type = 'HOLIDAY' THEN 'HOLIDAY_ATTENDANCE'
-          WHEN day.day_type = 'CANCELLED' THEN 'CANCELLED_ATTENDANCE'
-        END AS anomaly_type
-      FROM attendance_sessions sess
-      JOIN school_terms st ON st.id = sess.school_term_id AND st.deleted_at IS NULL
-      JOIN schools sc ON sc.id = sess.school_id
-      LEFT JOIN grade_levels gl ON gl.id = sess.grade_level_id
-      LEFT JOIN school_calendar_days day
-        ON day.school_term_id = sess.school_term_id
-       AND day.calendar_date = sess.attendance_date
-       AND day.deleted_at IS NULL
-      WHERE ${conditions.join(' AND ')}
-        AND (
-          (st.starts_on IS NOT NULL AND st.ends_on IS NOT NULL
-            AND (sess.attendance_date < st.starts_on OR sess.attendance_date > st.ends_on))
-          OR day.id IS NULL
-          OR day.day_type IN ('HOLIDAY', 'CANCELLED')
-        )
-    `;
-    const summaryResult = await queryDataSource<{
-      count: string;
-      holiday_attendance: number | string;
-      cancelled_attendance: number | string;
-      out_of_term: number | string;
-      missing_calendar_day: number | string;
-    }>(
-      this.dataSource,
-      `
-        WITH anomalies AS (${baseSql})
-        SELECT
-          COUNT(*)::text AS count,
-          COUNT(*) FILTER (WHERE anomaly_type = 'HOLIDAY_ATTENDANCE')::int AS holiday_attendance,
-          COUNT(*) FILTER (WHERE anomaly_type = 'CANCELLED_ATTENDANCE')::int AS cancelled_attendance,
-          COUNT(*) FILTER (WHERE anomaly_type = 'OUT_OF_TERM')::int AS out_of_term,
-          COUNT(*) FILTER (WHERE anomaly_type = 'MISSING_CALENDAR_DAY')::int AS missing_calendar_day
-        FROM anomalies
-      `,
-      params,
-    );
-    const offset = (page - 1) * limit;
-    const limitPlaceholder = params.length + 1;
-    const offsetPlaceholder = params.length + 2;
-    const result = await queryDataSource<AttendanceSessionAnomalyRow>(
-      this.dataSource,
-      `
-        WITH anomalies AS (${baseSql})
-        SELECT *
-        FROM anomalies
-        ORDER BY attendance_date DESC, grade_level_id, room_id
-        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
-      `,
-      [...params, limit, offset],
-    );
-    return {
-      rows: result.rows,
-      totalCount: Number.parseInt(summaryResult.rows[0]?.count ?? '0', 10),
-      summary: {
-        holidayAttendance: Number(summaryResult.rows[0]?.holiday_attendance ?? 0),
-        cancelledAttendance: Number(summaryResult.rows[0]?.cancelled_attendance ?? 0),
-        outOfTerm: Number(summaryResult.rows[0]?.out_of_term ?? 0),
-        missingCalendarDay: Number(summaryResult.rows[0]?.missing_calendar_day ?? 0),
-      },
-    };
   }
 }

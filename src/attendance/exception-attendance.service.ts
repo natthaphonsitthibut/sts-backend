@@ -204,7 +204,6 @@ export class ExceptionAttendanceService {
       const context = await this.repository.lockStartContext(
         actor.classroomId,
         dto.classroomSubjectId,
-        dto.date,
         runner,
       );
       if (!context) throw new NotFoundException('ไม่พบรายวิชาของห้องเรียน');
@@ -217,9 +216,6 @@ export class ExceptionAttendanceService {
         dto.date > context.ends_on
       ) {
         throw new BadRequestException('วันที่เช็กชื่ออยู่นอกช่วงภาคเรียน');
-      }
-      if (context.calendar_day_type !== 'SCHOOL_DAY') {
-        throw new BadRequestException('วันที่เลือกไม่ใช่วันเรียนตามปฏิทินโรงเรียน');
       }
       const created = await this.repository.insertTargetSession(
         { context, attendanceDate: dto.date, actor },

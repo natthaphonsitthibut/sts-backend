@@ -19,7 +19,7 @@ describe('TeachersRepository', () => {
       room_ids: [2],
     });
 
-    expect(queries[0].sql).toContain('FROM classroom_homeroom_teachers homeroom');
+    expect(queries[0].sql).toContain('FROM classroom_homeroom_teacher_assignments homeroom');
     expect(queries[0].sql).toContain("teacher.teacher_status = 'ACTIVE'");
     expect(queries[0].sql).toContain("classroom.classroom_status = 'ACTIVE'");
     expect(queries[0].params).toEqual(['7', [10], [1], [2]]);
@@ -71,5 +71,20 @@ describe('TeachersRepository', () => {
     expect(unlinkSql).toContain("active_membership.membership_status = 'ACTIVE'");
     expect(unlinkSql).toContain('NOT EXISTS');
     expect(runner.query).toHaveBeenLastCalledWith(expect.any(String), ['7', 1], true);
+  });
+
+  it('locks every homeroom classroom in id order before teacher deactivation', async () => {
+    const runner = { query: jest.fn().mockResolvedValue([]) };
+    const repository = new TeachersRepository({} as never);
+
+    await repository.lockHomeroomClassroomsForTeacher('7', runner as never);
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /classroom_homeroom_teachers[\s\S]*classroom_additional_homeroom_teachers[\s\S]*ORDER BY classroom\.id[\s\S]*FOR UPDATE OF classroom/,
+      ),
+      ['7'],
+      true,
+    );
   });
 });
