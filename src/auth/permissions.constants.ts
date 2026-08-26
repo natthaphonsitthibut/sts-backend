@@ -112,7 +112,9 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
       'manage-users-list',
       'teachers',
       'manage-teachers',
-      'settings',
+      // ตั้งค่าระบบ is deliberately absent: system settings are one shared set of
+      // values for every school, so the page is ADMIN-with-national-scope only
+      // (owner, 2026-08-27). A director could never open it.
       'audit-log',
     ],
     scope_mode: 'flexible',
