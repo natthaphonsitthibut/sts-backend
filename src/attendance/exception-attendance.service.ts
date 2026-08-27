@@ -178,6 +178,23 @@ export class ExceptionAttendanceService {
     };
   }
 
+  /**
+   * A classroom link reaches exactly the students on its own roster. Callers
+   * that read student records through a link run this first, so the classroom
+   * bound to the session — never an id sent by the caller — decides the answer.
+   */
+  async assertStudentInClassroom(
+    actor: ExceptionAttendanceActor,
+    studentUuid: string,
+  ): Promise<void> {
+    const classroom = await this.repository.findClassroom(actor.classroomId);
+    if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+    this.assertActorMatches(actor, classroom);
+    if (!(await this.repository.isStudentInClassroom(actor.classroomId, studentUuid))) {
+      throw new NotFoundException('ไม่พบนักเรียนในห้องเรียนนี้');
+    }
+  }
+
   async resolveStudentPhoto(
     actor: ExceptionAttendanceActor,
     studentUuid: string,

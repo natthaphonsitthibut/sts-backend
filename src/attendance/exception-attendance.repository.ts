@@ -130,6 +130,27 @@ export class ExceptionAttendanceRepository {
     return result.rows;
   }
 
+  async isStudentInClassroom(classroomId: number, studentUuid: string): Promise<boolean> {
+    const result = await queryDataSource<{ present: boolean }>(
+      this.dataSource,
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM student_term enrollment
+          JOIN student_current_enrollment_resolution current_enrollment
+            ON current_enrollment.person_uuid = enrollment.person_uuid
+           AND current_enrollment.selected_student_uuid = enrollment.student_uuid
+           AND current_enrollment.resolution_state = 'ACTIVE'
+          WHERE enrollment.classroom_id = $1
+            AND enrollment.student_uuid = $2
+            AND enrollment.deleted_at IS NULL
+        ) AS present
+      `,
+      [classroomId, studentUuid],
+    );
+    return result.rows[0]?.present === true;
+  }
+
   async findStudentPhotoStorageKey(
     classroomId: number,
     studentUuid: string,

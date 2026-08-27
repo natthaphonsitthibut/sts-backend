@@ -1,6 +1,7 @@
 import { ForbiddenException, GoneException, UnauthorizedException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { hashToken } from '../common/utils/helpers';
+import { CLASSROOM_LINK_ARAID_SCOPE } from './classroom-attendance-links.constants';
 import { ClassroomAttendanceLinksService } from './classroom-attendance-links.service';
 import type { ClassroomLinkRow, ExternalTeacherRow } from './classroom-attendance-links.types';
 
@@ -573,6 +574,26 @@ describe('ClassroomAttendanceLinksService', () => {
     expect(repository.findActiveMembership).not.toHaveBeenCalled();
   });
 
+  // The phone opens this URL after scanning; it reads the challenge and the
+  // scope out of the hash, so a renamed key silently breaks every scan.
+  it('points the scanned QR at a verification url the phone can read', async () => {
+    const { service, repository, araIdChallenges } = setup();
+    repository.findUsableByTokenHash.mockResolvedValue(LINK);
+    araIdChallenges.create.mockResolvedValue({
+      token: 'challenge-token',
+      referenceCode: 'REF123',
+      entryExpiresAt: Date.now() + 60_000,
+    });
+
+    const result = await service.createAraIdChallenge(RAW_TOKEN, 'https://app.example');
+
+    const hash = new URL(result.data.verificationUrl).hash.slice(1);
+    const params = new URLSearchParams(hash);
+    expect(new URL(result.data.verificationUrl).pathname).toBe('/araid/authorize');
+    expect(params.get('challenge')).toBe('challenge-token');
+    expect(params.get('scope')).toBe(CLASSROOM_LINK_ARAID_SCOPE);
+  });
+
   it('accepts AraID only for the active teacher whose citizen id is in the link school', async () => {
     const { service, repository, araId, araIdChallenges } = setup();
     araIdChallenges.readAuthorization.mockResolvedValue({
@@ -623,7 +644,7 @@ describe('ClassroomAttendanceLinksService', () => {
       expect.anything(),
     );
     expect(result.data).toHaveLength(1);
-    expect(result.data[0].accessUrl).toMatch(/^https:\/\/sts\.example\/check-in#token=/);
+    expect(result.data[0].accessUrl).toMatch(/^https:\/\/sts\.example\/classroom#token=/);
   });
 
   it('commits newly created links before sending them over LINE', async () => {

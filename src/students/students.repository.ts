@@ -1143,6 +1143,7 @@ export class StudentsRepository {
       `
         INSERT INTO pii_access_events (
           actor_user_id,
+          actor_teacher_membership_id,
           actor_roles,
           actor_kind,
           subject_student_ref,
@@ -1157,10 +1158,11 @@ export class StudentsRepository {
           ip,
           user_agent
         )
-        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       `,
       [
         event.actorUserId,
+        event.actorTeacherMembershipId ?? null,
         JSON.stringify(event.actorRoles ?? []),
         event.actorKind,
         event.subjectStudentRef,

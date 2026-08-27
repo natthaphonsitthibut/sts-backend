@@ -4,6 +4,30 @@ import { Readable } from 'stream';
 import { storageConfig } from '../../config/storage.config';
 import type { FileServeResult, FileStorageAdapter } from './file-storage.types';
 
+// Supabase stores whatever Content-Type an upload declares and replays it on
+// every read, so uploading everything as application/octet-stream made browsers
+// download photos and PDFs instead of displaying them. Derive it from the
+// extension the upload pipeline already validated against the file's magic bytes.
+const UPLOAD_CONTENT_TYPES: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.csv': 'text/csv',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.zip': 'application/zip',
+  '.json': 'application/json',
+};
+
+function uploadContentType(filename: string): string {
+  const extension = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+  return UPLOAD_CONTENT_TYPES[extension] ?? 'application/octet-stream';
+}
+
 interface SignedUrlResponse {
   signedURL?: string;
   signedUrl?: string;
@@ -28,7 +52,10 @@ export class SupabaseStorageAdapter implements FileStorageAdapter {
   async save(buffer: Buffer, filename: string): Promise<void> {
     const response = await fetch(this.objectUrl(filename), {
       method: 'POST',
-      headers: this.authHeaders({ 'Content-Type': 'application/octet-stream', 'x-upsert': 'true' }),
+      headers: this.authHeaders({
+        'Content-Type': uploadContentType(filename),
+        'x-upsert': 'true',
+      }),
       // Node's fetch (undici) accepts a Buffer at runtime; the DOM BodyInit
       // typing just doesn't include it, hence the cast.
       body: buffer as unknown as BodyInit,
@@ -42,7 +69,10 @@ export class SupabaseStorageAdapter implements FileStorageAdapter {
   async saveStream(source: Readable, filename: string): Promise<void> {
     const request: RequestInit & { duplex: 'half' } = {
       method: 'POST',
-      headers: this.authHeaders({ 'Content-Type': 'application/octet-stream', 'x-upsert': 'true' }),
+      headers: this.authHeaders({
+        'Content-Type': uploadContentType(filename),
+        'x-upsert': 'true',
+      }),
       body: source as unknown as BodyInit,
       duplex: 'half',
     };

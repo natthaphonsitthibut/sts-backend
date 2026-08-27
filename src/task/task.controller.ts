@@ -7,6 +7,7 @@ import {
   Body,
   Headers,
   Param,
+  ParseUUIDPipe,
   Query,
   Req,
   Res,
@@ -66,7 +67,10 @@ export class TaskController {
 
   @UseGuards(AuthGuard)
   @Get('visit-assignees/:studentId')
-  async getVisitAssignees(@Param('studentId') studentId: string, @Req() req: RequestWithActor) {
+  async getVisitAssignees(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Req() req: RequestWithActor,
+  ) {
     return { data: await this.taskService.getVisitAssignees(req.user, studentId) };
   }
 
@@ -87,7 +91,9 @@ export class TaskController {
   @Get(':taskId/chain')
   @UseGuards(AuthGuard)
   async getTaskChain(
-    @Param('taskId') taskId: string,
+    // A task id is a uuid. Without the pipe a mistyped or stale id reaches the
+    // query and Postgres rejects the cast, turning a bad request into a 500.
+    @Param('taskId', ParseUUIDPipe) taskId: string,
     @CurrentUser() actor: RequestWithActor['user'],
   ) {
     const result = await this.taskService.getTaskChain(actor, taskId);
@@ -224,7 +230,7 @@ export class TaskController {
   @Post('delete/:taskId')
   @Delete(':taskId')
   @UseGuards(AuthGuard)
-  async deleteTask(@Param('taskId') taskId: string, @Req() req: RequestWithActor) {
+  async deleteTask(@Param('taskId', ParseUUIDPipe) taskId: string, @Req() req: RequestWithActor) {
     return await this.taskService.deleteTask(taskId, req.user, req.ip ?? null);
   }
 }

@@ -55,6 +55,16 @@ export interface PiiRevealRequestMeta {
   ip: string | null;
   userAgent: string | null;
   requestId: string | null;
+  /**
+   * Present when the reader came through a classroom link rather than an
+   * account. The link has no user row, so the teacher is identified by their
+   * school membership and the link they used, and every reveal is logged (the
+   * per-actor reveal window keys on a user id, which does not exist here).
+   */
+  linkActor?: {
+    teacherMembershipId: number;
+    purposeLinkId: string;
+  } | null;
 }
 
 function cleanPrefixedAddressText(
@@ -555,6 +565,8 @@ export class StudentsService {
 
       // If this actor already revealed this group within the window, re-reveal is
       // a no-op log-wise (return the value, no new reason, no duplicate audit row).
+      // A link teacher has no user id to key that window on, so every reveal of
+      // theirs is written.
       const activeGroups =
         typeof actor?.id === 'number'
           ? await this.studentsRepository.listActiveRevealGroups(
@@ -603,7 +615,8 @@ export class StudentsService {
       if (!withinWindow) {
         await this.studentsRepository.insertPiiAccessEvent({
           actorUserId: resolveAuditActorId(actor),
-          actorRoles: actor?.roles ?? [],
+          actorTeacherMembershipId: meta.linkActor?.teacherMembershipId ?? null,
+          actorRoles: meta.linkActor ? ['CLASSROOM_LINK_TEACHER'] : (actor?.roles ?? []),
           actorKind: 'STAFF',
           subjectStudentRef: subjectRef,
           subjectType: 'STUDENT',
@@ -612,7 +625,7 @@ export class StudentsService {
           fieldGroup: group,
           reasonCode,
           reasonNote: note,
-          purposeLinkId: null,
+          purposeLinkId: meta.linkActor?.purposeLinkId ?? null,
           requestId: meta.requestId,
           ip: meta.ip,
           userAgent: meta.userAgent,
