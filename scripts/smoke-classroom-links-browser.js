@@ -403,7 +403,10 @@ async function main() {
         `document.querySelector('[role="dialog"] input[aria-label="ลิงก์ที่จะแชร์"]')?.value ?? ''`,
       ),
     );
-    assert(classroomUrl.includes('/check-in#token='), 'Room share dialog omitted the public token URL');
+    assert(
+      classroomUrl.includes('/classroom#token='),
+      `Room share dialog omitted the public token URL: ${classroomUrl}`,
+    );
     await evaluate(
       client,
       `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]').click()`,
@@ -413,7 +416,11 @@ async function main() {
       'Share dialog did not close',
     );
 
-    await navigate(client, classroomUrl);
+    // The link carries the backend's configured frontend origin; the smoke runs
+    // its own dev server, so open the same path there.
+    const classroomLinkUrl = new URL(classroomUrl);
+    const smokeClassroomUrl = `${FRONTEND_URL}${classroomLinkUrl.pathname}${classroomLinkUrl.hash}`;
+    await navigate(client, smokeClassroomUrl);
     await waitFor(
       async () => {
         const text = String(await evaluate(client, 'document.body.innerText'));

@@ -37,7 +37,12 @@ import {
   ListClassroomAttendanceLinksDto,
   ResendClassroomAttendanceLinkLineDto,
 } from './dto/classroom-attendance-links.dto';
-import { CLASSROOM_LINK_TOKEN_HEADER } from './classroom-attendance-links.constants';
+import {
+  CLASSROOM_LINK_API_PATH,
+  CLASSROOM_LINK_LEGACY_API_PATH,
+  CLASSROOM_LINK_PATH,
+  CLASSROOM_LINK_TOKEN_HEADER,
+} from './classroom-attendance-links.constants';
 import { ClassroomAttendanceLinksService } from './classroom-attendance-links.service';
 import { ClassroomLinkCookieService } from './classroom-link-cookie.service';
 import { ExceptionAttendanceService } from '../attendance/exception-attendance.service';
@@ -179,7 +184,7 @@ export class ClassroomAttendanceLinksAdminController {
 }
 
 @Public()
-@Controller('api/check-in')
+@Controller([CLASSROOM_LINK_API_PATH, CLASSROOM_LINK_LEGACY_API_PATH])
 export class ClassroomCheckInAuthController {
   constructor(
     private readonly service: ClassroomAttendanceLinksService,
@@ -313,7 +318,10 @@ export class ClassroomCheckInAuthController {
     this.noStore(response);
     const session = await this.service.googleCallback(query.code, query.state);
     this.cookies.set(response, session);
-    const redirect = new URL('/check-in', this.app.frontendBaseUrl || 'http://localhost:5173');
+    const redirect = new URL(
+      CLASSROOM_LINK_PATH,
+      this.app.frontendBaseUrl || 'http://localhost:5173',
+    );
     redirect.searchParams.set('auth', 'google');
     response.redirect(302, redirect.toString());
   }

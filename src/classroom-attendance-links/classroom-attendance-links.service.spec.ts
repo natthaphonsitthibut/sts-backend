@@ -644,7 +644,7 @@ describe('ClassroomAttendanceLinksService', () => {
       expect.anything(),
     );
     expect(result.data).toHaveLength(1);
-    expect(result.data[0].accessUrl).toMatch(/^https:\/\/sts\.example\/check-in#token=/);
+    expect(result.data[0].accessUrl).toMatch(/^https:\/\/sts\.example\/classroom#token=/);
   });
 
   it('commits newly created links before sending them over LINE', async () => {

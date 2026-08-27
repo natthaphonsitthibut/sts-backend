@@ -2,7 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import type { Response } from 'express';
 import { authConfig } from '../config/auth.config';
-import { CLASSROOM_LINK_SESSION_COOKIE } from './classroom-attendance-links.constants';
+import {
+  CLASSROOM_LINK_COOKIE_PATH,
+  CLASSROOM_LINK_SESSION_COOKIE,
+} from './classroom-attendance-links.constants';
 
 @Injectable()
 export class ClassroomLinkCookieService {
@@ -14,7 +17,7 @@ export class ClassroomLinkCookieService {
       sameSite: this.config.cookieSameSite,
       secure: this.config.cookieSecure,
       maxAge: this.config.magicSessionTtlSeconds * 1000,
-      path: '/api/check-in',
+      path: CLASSROOM_LINK_COOKIE_PATH,
     });
   }
 
