@@ -174,6 +174,10 @@ export class ExceptionAttendanceService {
         lastName: row.last_name,
         hasPhoto: row.has_photo,
         photoVersion: row.photo_updated_at ? new Date(row.photo_updated_at).toISOString() : null,
+        // The roster tab shows the same two columns the staff roster does; both
+        // surfaces read this one list, so they cannot drift apart again.
+        riskTier: row.risk_tier ?? 'NORMAL',
+        teacherComment: row.teacher_comment ?? null,
       })),
     };
   }
