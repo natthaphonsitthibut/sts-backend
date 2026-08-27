@@ -158,6 +158,12 @@ export type StudentsQueryResult<T extends Record<string, unknown>> = SqlQueryRes
 /** One row to append to the immutable `pii_access_events` log. */
 export interface PiiAccessEventInput {
   actorUserId: number | null;
+  /**
+   * Set when the reader came through a classroom link instead of an account:
+   * the link session knows the teacher by their school membership, and that is
+   * the only identity the access log can record for them.
+   */
+  actorTeacherMembershipId?: number | null;
   actorRoles: string[];
   actorKind: 'STAFF' | 'GUEST';
   subjectStudentRef: string;
