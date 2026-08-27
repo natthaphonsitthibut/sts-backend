@@ -46,10 +46,14 @@ describe('StudentsController', () => {
       'getStudentProfileSummary',
       'getStudentSubjectAttendance',
     ]) {
+      // เช็กชื่อ carries a roster tab that opens these same reads, so the
+      // permission for that page opens them too — pages, not endpoints, are
+      // what a permission grants here.
       expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handlerOf(methodName))).toEqual([
         'students',
         'manage-students',
         'classrooms',
+        'attendance',
       ]);
     }
 

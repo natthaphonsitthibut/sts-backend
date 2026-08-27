@@ -19,6 +19,19 @@ import type {
 import { TeacherCommentsRepository } from './teacher-comments.repository';
 import type { ClassroomCommentListRow, StudentClassroomCommentRow } from './teacher-comments.types';
 
+/**
+ * The pages a teacher comment is read from. Holding any of them is what opens
+ * the read — เช็กชื่อ shows the comment on its roster tab, so its permission
+ * belongs here exactly as much as the student pages do. The controllers guard
+ * with this same list, so the two can never disagree.
+ */
+export const CLASSROOM_COMMENT_READER_PERMISSIONS = [
+  'students',
+  'classrooms',
+  'manage-school-structure',
+  'attendance',
+] as const;
+
 /** Comments a teacher wrote about a student — the only concern record the app keeps. */
 @Injectable()
 export class TeacherCommentsService {
@@ -38,7 +51,11 @@ export class TeacherCommentsService {
 
   private readerScope(actor: AuthenticatedRequestUser): DataScope {
     this.denyExecutiveRaw(actor);
-    if (!hasPermission(actor.roles, actor.permissions, 'students')) {
+    if (
+      !CLASSROOM_COMMENT_READER_PERMISSIONS.some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      )
+    ) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูความคิดเห็นของคุณครู');
     }
     const scope = resolveActorDataScope(actor) ?? {};
@@ -104,6 +121,39 @@ export class TeacherCommentsService {
       data,
       meta: { totalCount: Number(rows[0]?.total_count ?? 0) },
     };
+  }
+
+  /**
+   * The same comments, read by a teacher working from a classroom link. The
+   * caller has already proved the link session owns this student's classroom,
+   * which is the boundary; there is no account to resolve a scope from, so the
+   * link's school stands in for it and the view is logged against the teacher.
+   */
+  async listStudentCommentsForLink(
+    studentTermId: string,
+    reader: { schoolId: number; teacherId: string; displayName: string },
+  ) {
+    const rows = await this.repository.listStudentClassroomComments(
+      { school_ids: [reader.schoolId] },
+      studentTermId,
+      3,
+    );
+    const data = rows.map((row) => this.toStudentComment(row));
+    await this.auditLog.record({
+      actorUserId: null,
+      actorLabel: reader.displayName,
+      action: 'STUDENT_OBSERVATION_VIEW',
+      targetType: 'classroom_student_comments',
+      targetId: studentTermId,
+      metadata: {
+        resultCount: data.length,
+        totalCount: Number(rows[0]?.total_count ?? 0),
+        operation: 'STUDENT_CLASSROOM_COMMENTS_VIEW',
+        authoredByTeacherId: reader.teacherId,
+      },
+      ip: null,
+    });
+    return { data, meta: { totalCount: Number(rows[0]?.total_count ?? 0) } };
   }
 
   /** หน้าความคิดเห็นจากคุณครู — every teacher comment inside the actor scope. */

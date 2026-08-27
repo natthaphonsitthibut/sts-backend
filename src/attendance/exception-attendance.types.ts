@@ -43,6 +43,8 @@ export interface CheckInRosterRow extends Record<string, unknown> {
   last_name: string;
   has_photo: boolean;
   photo_updated_at: Date | string | null;
+  risk_tier: string | null;
+  teacher_comment: string | null;
 }
 
 export interface ExceptionAttendanceSessionRow extends Record<string, unknown> {

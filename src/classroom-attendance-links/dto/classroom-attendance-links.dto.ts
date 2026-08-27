@@ -8,6 +8,7 @@ import {
   IsIn,
   IsISO8601,
   IsOptional,
+  IsNotEmpty,
   IsString,
   IsUUID,
   Max,
@@ -112,4 +113,16 @@ export class GoogleCallbackDto {
   @IsString()
   @MaxLength(512)
   state!: string;
+}
+
+/**
+ * Opening a case from the link. The student is the route parameter — the link
+ * session decides which students exist at all — so only the reason travels in
+ * the body. Same rules as `OpenCaseDto`, which the staff dialog posts.
+ */
+export class OpenClassroomLinkCaseDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  reason!: string;
 }

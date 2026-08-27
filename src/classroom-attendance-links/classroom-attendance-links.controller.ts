@@ -270,6 +270,26 @@ export class ClassroomCheckInAuthController {
     response.sendFile(result.filePath);
   }
 
+  /**
+   * The signed-in link teacher's own photo, served the way every other photo in
+   * the app is: through the API so the session check runs before the bytes, and
+   * never cached, because the adapter hands back a short-lived signed URL.
+   */
+  @Get('my-photo')
+  @ThrottleTeacherAccess()
+  async myPhoto(@Req() request: Request, @Res() response: Response): Promise<void> {
+    this.noStore(response);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    const result = await this.service.resolveTeacherPhoto(
+      this.cookies.read(request.headers.cookie),
+    );
+    if (result.kind === 'redirect') {
+      response.redirect(302, result.url);
+      return;
+    }
+    response.sendFile(result.filePath);
+  }
+
   @Post('sessions/start')
   @ThrottleTeacherAccess()
   async startSession(

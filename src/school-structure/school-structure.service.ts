@@ -76,6 +76,15 @@ function roomNumberFromCode(roomCode: string): number {
   return roomNumber;
 }
 
+/**
+ * The two kinds of author a classroom comment can have: an account, or a
+ * teacher reached through a classroom link (no account, identified by their
+ * `teachers` row).
+ */
+type ClassroomCommentAuthor =
+  | { kind: 'USER'; userId: number; label: string }
+  | { kind: 'LINK_TEACHER'; teacherId: string; label: string };
+
 @Injectable()
 export class SchoolStructureService {
   private readonly logger = new Logger(SchoolStructureService.name);
@@ -938,6 +947,21 @@ export class SchoolStructureService {
     };
   }
 
+  /**
+   * Who a classroom comment is answerable to. A signed-in account is one; a
+   * teacher who came through a classroom link is the other — they have no user
+   * row, so the comment records their `teachers` id instead, which is what the
+   * table's author CHECK already allows for.
+   */
+  private commentAuthorColumns(author: ClassroomCommentAuthor): {
+    userId: number | null;
+    teacherId: string | null;
+  } {
+    return author.kind === 'USER'
+      ? { userId: author.userId, teacherId: null }
+      : { userId: null, teacherId: author.teacherId };
+  }
+
   async createStudentComment(
     classroomId: number,
     studentUuid: string,
@@ -952,6 +976,42 @@ export class SchoolStructureService {
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
     await this.assertClassroomCommentAccess(classroom, actor);
 
+    return await this.writeStudentComment(classroom, classroomId, studentUuid, dto, {
+      kind: 'USER',
+      userId: actorId,
+      label: actor.username,
+    });
+  }
+
+  /**
+   * The same comment, written by a teacher working from a classroom link. The
+   * caller has already proved the link session owns this classroom and this
+   * student, which is the boundary here — there is no account to check
+   * permissions against.
+   */
+  async createStudentCommentFromLink(
+    classroomId: number,
+    studentUuid: string,
+    dto: CreateClassroomStudentCommentDto,
+    author: { teacherId: string; displayName: string },
+  ) {
+    const classroom = await this.repository.findClassroomById(classroomId);
+    if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+
+    return await this.writeStudentComment(classroom, classroomId, studentUuid, dto, {
+      kind: 'LINK_TEACHER',
+      teacherId: author.teacherId,
+      label: author.displayName,
+    });
+  }
+
+  private async writeStudentComment(
+    classroom: { school_id: number },
+    classroomId: number,
+    studentUuid: string,
+    dto: CreateClassroomStudentCommentDto,
+    author: ClassroomCommentAuthor,
+  ) {
     const created = await this.repository.withTransaction(async (queryRunner) => {
       const comment = await this.repository.createStudentComment(
         classroomId,
@@ -959,15 +1019,15 @@ export class SchoolStructureService {
         dto.problemCategory,
         dto.concernLevelCode,
         dto.problemDescription,
-        actorId,
+        this.commentAuthorColumns(author),
         queryRunner,
       );
       if (!comment) throw new NotFoundException('ไม่พบนักเรียนในห้องเรียนนี้');
 
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actorId,
-          actorLabel: actor.username,
+          actorUserId: author.kind === 'USER' ? author.userId : null,
+          actorLabel: author.label,
           action: 'MASTER_DATA_EDIT',
           targetType: 'classroom_student_comments',
           targetId: comment.id,
@@ -979,6 +1039,7 @@ export class SchoolStructureService {
             problemCategory: dto.problemCategory,
             concernLevelCode: dto.concernLevelCode,
             descriptionLength: dto.problemDescription.length,
+            ...(author.kind === 'LINK_TEACHER' ? { authoredByTeacherId: author.teacherId } : {}),
           },
           ip: null,
         },

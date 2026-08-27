@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
+import { rosterProfileJoinsSql } from '../common/utils/student-roster.sql';
 import type {
   CheckInClassroomRow,
   CheckInRosterRow,
@@ -110,13 +111,15 @@ export class ExceptionAttendanceRepository {
           enrollment."FirstName_Onec" AS first_name,
           enrollment."LastName_Onec" AS last_name,
           (person.photo_storage_key IS NOT NULL) AS has_photo,
-          person.updated_at AS photo_updated_at
+          person.updated_at AS photo_updated_at,
+          risk.risk_tier,
+          latest_comment.problem_description AS teacher_comment
         FROM student_term enrollment
         JOIN student_current_enrollment_resolution current_enrollment
           ON current_enrollment.person_uuid = enrollment.person_uuid
          AND current_enrollment.selected_student_uuid = enrollment.student_uuid
          AND current_enrollment.resolution_state = 'ACTIVE'
-        LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
+        ${rosterProfileJoinsSql('enrollment')}
         WHERE enrollment.classroom_id = $1
           AND enrollment.deleted_at IS NULL
         ORDER BY

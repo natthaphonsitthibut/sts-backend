@@ -373,7 +373,7 @@ describe('SchoolStructureService', () => {
       'ACADEMIC',
       'WATCH',
       'ควรติดตามการส่งงาน',
-      SCHOOL_ACTOR.id,
+      { userId: SCHOOL_ACTOR.id, teacherId: null },
       expect.anything(),
     );
     expect(auditLog.recordAtomic).toHaveBeenCalledWith(

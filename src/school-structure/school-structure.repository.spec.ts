@@ -379,7 +379,7 @@ describe('SchoolStructureRepository scope', () => {
         'ACADEMIC',
         'WATCH',
         'ติดตาม',
-        7,
+        { userId: 7, teacherId: null },
         runner as never,
       ),
     ).resolves.toMatchObject({
@@ -393,7 +393,45 @@ describe('SchoolStructureRepository scope', () => {
       expect.stringMatching(
         /INSERT INTO classroom_student_comments[\s\S]*problem_category[\s\S]*concern_level_code[\s\S]*problem_description[\s\S]*SELECT \$1, enrollment\.person_uuid[\s\S]*enrollment\.classroom_id = \$1[\s\S]*enrollment\.deleted_at IS NULL/,
       ),
-      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'WATCH', 'ติดตาม', 7],
+      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'WATCH', 'ติดตาม', 7, null],
+      true,
+    );
+  });
+
+  // A teacher who came through a classroom link has no account, so the comment
+  // has to name them by their `teachers` row instead — the column the table's
+  // author CHECK accepts in place of a user id.
+  it('records a link teacher as the author when there is no account', async () => {
+    const runner = {
+      query: jest.fn().mockResolvedValue({
+        records: [
+          {
+            id: '92',
+            problem_category_code: 'ACADEMIC',
+            problem_category_label: 'ปัญหาด้านการเรียน',
+            problem_category_guidance: null,
+            problem_description: 'ติดตาม',
+            created_at: new Date(),
+          },
+        ],
+        affected: 1,
+      }),
+    };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await repository.createStudentComment(
+      42,
+      '00000000-0000-4000-8000-000000000001',
+      'ACADEMIC',
+      'WATCH',
+      'ติดตาม',
+      { userId: null, teacherId: '8' },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringContaining('authored_by_teacher_id'),
+      [42, '00000000-0000-4000-8000-000000000001', 'ACADEMIC', 'WATCH', 'ติดตาม', null, '8'],
       true,
     );
   });

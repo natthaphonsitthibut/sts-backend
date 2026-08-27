@@ -1188,8 +1188,17 @@ async function main() {
       sameSite: 'Lax',
     });
     await navigate(client, `${FRONTEND_URL}/check-in`);
+    // Who is signed in reads from the header popover now, not a banner over the
+    // work, and the old path redirects to /classroom on the way in.
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ยืนยันแล้ว:'),
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          String(await evaluate(client, 'window.location.pathname')) === '/classroom' &&
+          text.includes('รายชื่อ') &&
+          text.includes('เช็กชื่อ')
+        );
+      },
       'Verified public classroom session did not open the linked room',
     );
     assert(
@@ -1206,7 +1215,7 @@ async function main() {
       async () => (await visibleRowIds(client)).length === rosterCount,
       'Public classroom-link roster did not render',
     );
-    await assertCheckInAvatars(client, '/api/check-in/student-photo');
+    await assertCheckInAvatars(client, '/api/classroom/student-photo');
     await clickButton(client, 'การ์ด');
     await waitFor(
       async () => await evaluate(client, 'Boolean(document.querySelector("[data-active-card=true]"))'),
@@ -1320,7 +1329,7 @@ async function main() {
     await waitForMarked(client, 1);
     await waitFor(
       async () =>
-        requestCount(networkRequests, 'POST', '/api/check-in/sessions/start') === 1,
+        requestCount(networkRequests, 'POST', '/api/classroom/sessions/start') === 1,
       'Public swipe did not start exactly one session',
     );
     try {

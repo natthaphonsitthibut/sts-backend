@@ -8,7 +8,10 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
-import { TeacherCommentsService } from './teacher-comments.service';
+import {
+  CLASSROOM_COMMENT_READER_PERMISSIONS,
+  TeacherCommentsService,
+} from './teacher-comments.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
 @RequirePermission('students')
@@ -25,7 +28,7 @@ export class TeacherCommentReportsController {
 // Teacher comments on a student are written from รายชื่อนักเรียน, ห้องเรียนทั้งหมด
 // and เช็กชื่อ, so each of those pages can reach them.
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequireAnyPermission('students', 'classrooms', 'manage-school-structure', 'attendance')
+@RequireAnyPermission(...CLASSROOM_COMMENT_READER_PERMISSIONS)
 @Controller('api/students/:studentTermId/classroom-comments')
 export class StudentClassroomCommentsController {
   constructor(private readonly service: TeacherCommentsService) {}
