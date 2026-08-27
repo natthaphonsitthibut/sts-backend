@@ -143,8 +143,11 @@ export class StudentsController {
     return this.studentsService.findCasesByName(name, actor, resolveActorDataScope(actor));
   }
 
+  // Permissions are page-bound: the roster tab on เช็กชื่อ opens these same
+  // profile reads, so whoever can open that page can open the profile behind a
+  // student on it. The data scope still decides which students they see.
   @Get(':id/cases')
-  @RequireAnyPermission('students', 'manage-students', 'classrooms')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms', 'attendance')
   findCasesByStudentId(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -153,7 +156,7 @@ export class StudentsController {
   }
 
   @Get('attendance/:id')
-  @RequireAnyPermission('students', 'manage-students', 'classrooms')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms', 'attendance')
   findAttendanceByStudentId(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -162,7 +165,7 @@ export class StudentsController {
   }
 
   @Get(':id/profile-summary')
-  @RequireAnyPermission('students', 'manage-students', 'classrooms')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms', 'attendance')
   getStudentProfileSummary(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -171,7 +174,7 @@ export class StudentsController {
   }
 
   @Get(':id/attendance-subjects')
-  @RequireAnyPermission('students', 'manage-students', 'classrooms')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms', 'attendance')
   getStudentSubjectAttendance(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: GetStudentSubjectAttendanceQueryDto,
@@ -186,7 +189,7 @@ export class StudentsController {
   }
 
   @Get(':id')
-  @RequireAnyPermission('students', 'manage-students', 'classrooms')
+  @RequireAnyPermission('students', 'manage-students', 'classrooms', 'attendance')
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return this.studentsService.findOne(id, actor, resolveActorDataScope(actor));
   }
