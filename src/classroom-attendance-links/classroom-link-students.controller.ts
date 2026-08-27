@@ -4,6 +4,10 @@ import { Public } from '../auth';
 import type { DataScope } from '../auth';
 import { ExceptionAttendanceService } from '../attendance/exception-attendance.service';
 import { ThrottleTeacherAccess } from '../config/throttle.decorators';
+import { CreateClassroomStudentCommentDto } from '../school-structure/dto/school-structure.dto';
+import { SchoolStructureService } from '../school-structure/school-structure.service';
+import { CaseService } from '../task/case.service';
+import { TeacherCommentsService } from '../teacher-comments/teacher-comments.service';
 import { PiiRevealDto } from '../students/dto/pii-reveal.dto';
 import { listStaffPiiRevealReasons } from '../students/pii-fields.config';
 import { GetStudentSubjectAttendanceQueryDto } from '../students/dto/students.dto';
@@ -12,6 +16,7 @@ import {
   CLASSROOM_LINK_API_PATH,
   CLASSROOM_LINK_LEGACY_API_PATH,
 } from './classroom-attendance-links.constants';
+import { OpenClassroomLinkCaseDto } from './dto/classroom-attendance-links.dto';
 import { ClassroomAttendanceLinksService } from './classroom-attendance-links.service';
 import { ClassroomLinkCookieService } from './classroom-link-cookie.service';
 
@@ -42,6 +47,9 @@ export class ClassroomLinkStudentsController {
     private readonly cookies: ClassroomLinkCookieService,
     private readonly exceptionAttendance: ExceptionAttendanceService,
     private readonly students: StudentsService,
+    private readonly schoolStructure: SchoolStructureService,
+    private readonly teacherComments: TeacherCommentsService,
+    private readonly caseService: CaseService,
   ) {}
 
   /**
@@ -55,6 +63,28 @@ export class ClassroomLinkStudentsController {
     response.setHeader('Cache-Control', 'private, no-store');
     await this.service.authorizeCheckInSession(this.cookies.read(request.headers.cookie));
     return { data: listStaffPiiRevealReasons() };
+  }
+
+  /**
+   * The pickers the comment form needs. They are plain catalogs with no personal
+   * data in them, served from the same service the staff dialog reads so the two
+   * forms can never offer different options.
+   */
+  @Get('students/comment-options')
+  @ThrottleTeacherAccess()
+  async commentOptions(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    response.setHeader('Cache-Control', 'private, no-store');
+    await this.service.authorizeCheckInSession(this.cookies.read(request.headers.cookie));
+    const [problemCategories, concernLevels] = await Promise.all([
+      this.schoolStructure.listStudentProblemCategories(),
+      this.schoolStructure.listStudentCommentConcernLevels(),
+    ]);
+    return {
+      data: {
+        problemCategories: problemCategories.data,
+        concernLevels: concernLevels.data,
+      },
+    };
   }
 
   @Get('students/:studentId')
@@ -139,6 +169,72 @@ export class ClassroomLinkStudentsController {
         purposeLinkId: String(authorized.linkId),
       },
     });
+  }
+
+  @Get('students/:studentId/comments')
+  @ThrottleTeacherAccess()
+  async comments(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const { authorized } = await this.authorizeSession(request, studentId, response);
+    return await this.teacherComments.listStudentCommentsForLink(studentId, {
+      schoolId: authorized.schoolId,
+      teacherId: authorized.teacherId,
+      displayName: authorized.teacherDisplayName,
+    });
+  }
+
+  /**
+   * A teacher's note about a student, written from the link.
+   *
+   * The same note the staff dialog writes, through the same service — only the
+   * author differs: a link teacher has no account, so the comment records the
+   * `teachers` row the link signed them in as, which is what the table's author
+   * CHECK already allows for.
+   */
+  @Post('students/:studentId/comments')
+  @ThrottleTeacherAccess()
+  async createComment(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Body() body: CreateClassroomStudentCommentDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const { authorized } = await this.authorizeSession(request, studentId, response);
+    return await this.schoolStructure.createStudentCommentFromLink(
+      authorized.classroomId,
+      studentId,
+      body,
+      { teacherId: authorized.teacherId, displayName: authorized.teacherDisplayName },
+    );
+  }
+
+  /**
+   * Opens a follow-up case on a student from the link.
+   *
+   * The staff profile offers this and the link's profile is the same page, so
+   * it offers it too. The case records the teacher the link signed in as, since
+   * `created_by` has no account to point at here.
+   */
+  @Post('students/:studentId/cases')
+  @ThrottleTeacherAccess()
+  async openCase(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Body() body: OpenClassroomLinkCaseDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const { authorized } = await this.authorizeSession(request, studentId, response);
+    return await this.caseService.openCaseFromLink(
+      { student_id: studentId, reason: body.reason },
+      {
+        schoolId: authorized.schoolId,
+        teacherId: authorized.teacherId,
+        displayName: authorized.teacherDisplayName,
+      },
+    );
   }
 
   /**

@@ -6,7 +6,10 @@ import { AuthModule } from '../auth/auth.module';
 import { TokenEncryptionModule } from '../common/crypto/token-encryption.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { GoogleLoginModule } from '../google-login/google-login.module';
+import { SchoolStructureModule } from '../school-structure/school-structure.module';
 import { StudentsModule } from '../students/students.module';
+import { TaskModule } from '../task/task.module';
+import { TeacherCommentsModule } from '../teacher-comments/teacher-comments.module';
 import { TeacherLineModule } from '../teacher-line/teacher-line.module';
 import {
   ClassroomAttendanceLinksAdminController,
@@ -26,7 +29,10 @@ import { ClassroomLinkSessionStore } from './classroom-link-session.store';
     AttendanceModule,
     MessagingModule,
     GoogleLoginModule,
+    SchoolStructureModule,
     StudentsModule,
+    TaskModule,
+    TeacherCommentsModule,
     TeacherLineModule,
     TokenEncryptionModule,
   ],
