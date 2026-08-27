@@ -3,7 +3,7 @@
 // A teacher who opens a classroom link works the room, and the avatar on the
 // roster is the way into a student's profile. This drives that path in a real
 // browser: sign in through the link, click an avatar, and prove the profile the
-// dialog renders is the student's own — served by the link's namespace, still
+// page renders is the student's own — served by the link's namespace, still
 // masked, and bounded by the classroom the link belongs to.
 //
 // Run against the standard smoke stack:
@@ -139,7 +139,7 @@ async function main() {
       sameSite: 'Lax',
     });
 
-    await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/classroom` });
+    await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/classroom?tab=roster` });
     await waitFor(
       async () =>
         Boolean(
@@ -160,23 +160,25 @@ async function main() {
       ),
     );
     await chrome.evaluate(
-      `document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]').click()`,
+      `document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]')?.click() ?? 'no-avatar-button'`,
     );
 
     const dialogText = async () =>
-      String(
-        await chrome.evaluate(
-          `document.querySelector('section[role="dialog"][aria-label="ข้อมูลนักเรียน"]')?.innerText ?? ''`,
-        ),
-      );
+      String(await chrome.evaluate(`document.body.innerText`));
     await waitFor(
-      async () => (await dialogText()).includes(studentName),
-      async () => `the avatar did not open the student's profile: ${(await dialogText()).slice(0, 400)}`,
+      async () =>
+        String(await chrome.evaluate('window.location.pathname')).startsWith(
+          '/classroom/students/',
+        ) && (await dialogText()).includes(studentName),
+      async () =>
+        `the avatar did not open the student's profile page: ${String(
+          await chrome.evaluate('window.location.pathname'),
+        )} ${(await dialogText()).slice(0, 300)}`,
     );
     await waitFor(
       async () => {
         const text = await dialogText();
-        return text.includes('ประวัติเคสของนักเรียน') && text.includes('การมาเรียน');
+        return text.includes('ข้อมูลประกอบการดูแล') && text.includes('การมาเรียน');
       },
       async () =>
         `the profile opened from the link is missing its panels: ${(await dialogText()).slice(0, 400)}`,
@@ -274,7 +276,7 @@ async function main() {
     const revealedDigits = async () =>
       await chrome.evaluate(
         `(() => {
-          const dialog = document.querySelector('section[role="dialog"][aria-label="ข้อมูลนักเรียน"]');
+          const dialog = document.querySelector('main') ?? document.body;
           if (!dialog) return 0;
           // The revealed value renders in the identity line; it may be grouped
           // with dashes, so compare digit counts rather than a raw 13-run.
@@ -310,8 +312,169 @@ async function main() {
       `the reveal was not logged against the link teacher: ${JSON.stringify(event)}`,
     );
 
+    const clickBack = async () => {
+      await waitFor(
+        async () =>
+          Boolean(
+            await chrome.evaluate(
+              `Boolean([...document.querySelectorAll('a,button')].find((node) => (node.innerText || '').trim() === 'ย้อนกลับ'))`,
+            ),
+          ),
+        async () => 'the profile page never rendered a back button',
+      );
+      await chrome.evaluate(
+        `[...document.querySelectorAll('a,button')].find((node) => (node.innerText || '').trim() === 'ย้อนกลับ').click()`,
+      );
+    };
+
+    // Back lands on the tab the teacher left, because that is the URL the
+    // navigation recorded.
+    await clickBack();
+    await waitFor(
+      async () =>
+        String(await chrome.evaluate('window.location.pathname')) === '/classroom' &&
+        String(await chrome.evaluate('window.location.search')) === '?tab=roster',
+      async () =>
+        `back from the profile did not return to the roster tab: ${String(
+          await chrome.evaluate('window.location.pathname + window.location.search'),
+        )}`,
+    );
+
+    // Opening a case runs against a different student: the API smoke already
+    // opened one for the first on the roster, and a student with an active case
+    // is offered "ดูเคส" instead.
+    await chrome.evaluate(
+      `[...document.querySelectorAll('button[aria-label^="เปิดข้อมูลนักเรียน"]')].at(-1).click()`,
+    );
+    await waitFor(
+      async () =>
+        String(await chrome.evaluate('window.location.pathname')).startsWith(
+          '/classroom/students/',
+        ),
+      async () => 'the last roster avatar did not open a profile page',
+    );
+    // Opening a case is offered on the link's profile exactly as it is on the
+    // staff one, and it keeps the teacher on the page it was opened from.
+    await waitFor(
+      async () =>
+        Boolean(
+          await chrome.evaluate(
+            `Boolean([...document.querySelectorAll('button')].find((node) => (node.innerText || '').trim() === 'เปิดเคส'))`,
+          ),
+        ),
+      async () =>
+        `the link profile never offered เปิดเคส; buttons: ${String(
+          await chrome.evaluate(
+            `[...document.querySelectorAll('button')].map((node) => (node.innerText || '').trim()).filter(Boolean).join(' | ')`,
+          ),
+        ).slice(0, 300)}`,
+    );
+    await chrome.evaluate(
+      `[...document.querySelectorAll('button')].find((node) => (node.innerText || '').trim() === 'เปิดเคส').click()`,
+    );
+    await waitFor(
+      async () =>
+        String(await chrome.evaluate('document.body.innerText')).includes(
+          'เปิดเคสติดตามนักเรียน',
+        ),
+      async () => 'the open-case dialog did not appear on the link profile',
+    );
+    await chrome.evaluate(
+      `(() => {
+        const field = document.querySelector('section[role="dialog"] textarea');
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype,
+          'value',
+        ).set;
+        setter.call(field, 'ขาดเรียนติดต่อกันหลายวัน (smoke)');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await chrome.evaluate(
+      `[...document.querySelectorAll('section[role="dialog"] button')].find((node) => (node.innerText || '').trim() === 'เปิดเคส').click()`,
+    );
+    await waitFor(
+      async () => {
+        const [row] = await dataSource.query(
+          `SELECT created_by, created_by_teacher_id::text AS created_by_teacher_id
+           FROM cases
+           WHERE reason_flagged = $1
+           ORDER BY id DESC LIMIT 1`,
+          ['ขาดเรียนติดต่อกันหลายวัน (smoke)'],
+        );
+        return Boolean(row) && row.created_by === null && row.created_by_teacher_id;
+      },
+      async () => 'opening a case from the link did not record the link teacher',
+    );
+    // The case detail page belongs to the app, so the link stays where it was.
+    assert(
+      String(await chrome.evaluate('window.location.pathname')).startsWith(
+        '/classroom/students/',
+      ),
+      'opening a case from the link navigated away from the link surface',
+    );
+
+    await clickBack();
+    await waitFor(
+      async () =>
+        String(await chrome.evaluate('window.location.pathname')) === '/classroom',
+      async () => 'back from the case profile did not return to the link page',
+    );
+
+    // Marking attendance, opening a profile and coming back must not lose what
+    // was already marked — the draft belongs to the tab, not to the component.
+    await chrome.evaluate(
+      `[...document.querySelectorAll('[role="tab"]')].find((node) => (node.innerText || '').trim() === 'เช็กชื่อ')?.click() ?? 'no-attendance-tab'`,
+    );
+    await waitFor(
+      async () =>
+        Number(
+          await chrome.evaluate(
+            `document.querySelectorAll('button[aria-pressed]').length`,
+          ),
+        ) > 0,
+      async () => 'the เช็กชื่อ tab did not render its status buttons',
+    );
+    await chrome.evaluate(
+      `document.querySelector('button[aria-pressed]')?.click() ?? 'no-status-button'`,
+    );
+    await waitFor(
+      async () =>
+        Number(
+          await chrome.evaluate(
+            `document.querySelectorAll('button[aria-pressed="true"]').length`,
+          ),
+        ) > 0,
+      async () => 'marking a student did not take effect',
+    );
+    await chrome.evaluate(
+      `document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]')?.click() ?? 'no-avatar-button'`,
+    );
+    await waitFor(
+      async () =>
+        String(await chrome.evaluate('window.location.pathname')).startsWith(
+          '/classroom/students/',
+        ),
+      async () => 'the avatar on the เช็กชื่อ tab did not open the profile page',
+    );
+    await clickBack();
+    await waitFor(
+      async () =>
+        String(await chrome.evaluate('window.location.pathname')) === '/classroom' &&
+        Number(
+          await chrome.evaluate(
+            `document.querySelectorAll('button[aria-pressed="true"]').length`,
+          ),
+        ) > 0,
+      async () =>
+        `returning from the profile lost the attendance already marked: ${String(
+          await chrome.evaluate('window.location.pathname + window.location.search'),
+        )}`,
+    );
+
     console.log(
-      'classroom student profile browser smoke passed (link sign-in, roster avatar opens the profile, panels render, identity stays masked until asked for, reveal logged against the link teacher)',
+      'classroom student profile browser smoke passed (link sign-in, roster tab, avatar opens the profile page, panels render, identity stays masked until asked for, reveal logged against the link teacher, back returns to the tab it came from with marked attendance intact)',
     );
   } finally {
     if (chrome) chrome.close();

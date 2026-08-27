@@ -642,20 +642,124 @@ async function main() {
       `Reveal through the link was not logged against the teacher: ${JSON.stringify(revealEvent)}`,
     );
 
+    // The roster tab writes a teacher comment through the link. The comment is
+    // the staff one — same catalogs, same table — with the link's teacher as its
+    // author, since a link holds no account.
+    const commentOptions = await request(
+      'GET',
+      '/api/classroom/students/comment-options',
+      200,
+      { headers: { cookie: checkInCookie } },
+    );
+    assert(
+      commentOptions.payload?.data?.problemCategories?.length > 0 &&
+        commentOptions.payload?.data?.concernLevels?.length > 0,
+      'Classroom link comment options were empty',
+    );
+    const commentCategory = commentOptions.payload.data.problemCategories[0].code;
+    await request('POST', `/api/classroom/students/${rosterStudentId}/comments`, 201, {
+      headers: { cookie: checkInCookie },
+      body: {
+        problemCategory: commentCategory,
+        concernLevelCode: 'NOTE',
+        problemDescription: 'สังเกตจากลิงก์ห้องเรียน',
+      },
+    });
+    const [writtenComment] = await dataSource.query(
+      `SELECT comment.authored_by_user_id, comment.authored_by_teacher_id::text AS authored_by_teacher_id
+       FROM classroom_student_comments comment
+       JOIN student_term enrollment ON enrollment.person_uuid = comment.person_uuid
+       WHERE enrollment.student_uuid = $1
+       ORDER BY comment.id DESC
+       LIMIT 1`,
+      [rosterStudentId],
+    );
+    assert(
+      writtenComment &&
+        writtenComment.authored_by_user_id === null &&
+        String(writtenComment.authored_by_teacher_id) === String(scope.teacher_id),
+      `Link comment was not filed under the link teacher: ${JSON.stringify(writtenComment)}`,
+    );
+    const listedComments = await request(
+      'GET',
+      `/api/classroom/students/${rosterStudentId}/comments`,
+      200,
+      { headers: { cookie: checkInCookie } },
+    );
+    assert(
+      listedComments.payload?.data?.some(
+        (row) => row.problemDescription === 'สังเกตจากลิงก์ห้องเรียน',
+      ),
+      'Link comment did not come back on the link comment list',
+    );
+    await request('GET', `/api/classroom/students/${rosterStudentId}/comments`, 401);
+
+    // The header photo is served like every other photo: through the API, and
+    // only to the teacher the session signed in as.
+    await request('GET', '/api/classroom/my-photo', 401);
+
+    // Opening a case works from the link too, and the case names the teacher who
+    // opened it — the reason the owner allowed it at all.
+    const openedCase = await request(
+      'POST',
+      `/api/classroom/students/${rosterStudentId}/cases`,
+      201,
+      {
+        headers: { cookie: checkInCookie },
+        body: { reason: 'ขาดเรียนติดต่อกันหลายวัน' },
+      },
+    );
+    assert(
+      openedCase.payload?.data?.id,
+      `Opening a case through the link returned no case: ${JSON.stringify(openedCase.payload).slice(0, 200)}`,
+    );
+    const [caseRow] = await dataSource.query(
+      `SELECT created_by, created_by_teacher_id::text AS created_by_teacher_id, school_id
+       FROM cases WHERE id = $1`,
+      [openedCase.payload.data.id],
+    );
+    assert(
+      caseRow &&
+        caseRow.created_by === null &&
+        String(caseRow.created_by_teacher_id) === String(scope.teacher_id),
+      `Case opened from the link was not filed under the link teacher: ${JSON.stringify(caseRow)}`,
+    );
+    await request('POST', `/api/classroom/students/${rosterStudentId}/cases`, 401, {
+      body: { reason: 'ไม่มี session' },
+    });
+
     // A student from another classroom is invisible even with a valid session,
     // and no session at all cannot read a profile at all.
+    // Same school, different classroom — otherwise the school in the read scope
+    // could be what rejects them and the roster check would never be exercised.
     const [outsider] = await dataSource.query(
       `SELECT enrollment.student_uuid::text AS id
        FROM student_term enrollment
        WHERE enrollment.classroom_id <> $1
+         AND enrollment."SchoolID_Onec" = $2
          AND enrollment.deleted_at IS NULL
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
-      [scope.classroom_id],
+      [scope.classroom_id, scope.school_id],
     );
-    assert(outsider, 'need a student outside the link classroom to prove the boundary');
+    assert(
+      outsider,
+      'need a student in the same school but another classroom to prove the boundary',
+    );
     await request('GET', `/api/classroom/students/${outsider.id}`, 404, {
       headers: { cookie: checkInCookie },
+    });
+    await request('POST', `/api/classroom/students/${outsider.id}/cases`, 404, {
+      headers: { cookie: checkInCookie },
+      body: { reason: 'ห้ามเปิดข้ามห้อง' },
+    });
+    await request('POST', `/api/classroom/students/${outsider.id}/comments`, 404, {
+      headers: { cookie: checkInCookie },
+      body: {
+        problemCategory: commentCategory,
+        concernLevelCode: 'NOTE',
+        problemDescription: 'ห้ามคอมเมนต์ข้ามห้อง',
+      },
     });
     await request('GET', `/api/classroom/students/${rosterStudentId}`, 401);
 
