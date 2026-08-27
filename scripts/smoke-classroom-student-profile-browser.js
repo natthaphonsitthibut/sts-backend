@@ -340,18 +340,35 @@ async function main() {
         )}`,
     );
 
-    // Opening a case runs against a different student: the API smoke already
-    // opened one for the first on the roster, and a student with an active case
-    // is offered "ดูเคส" instead.
-    await chrome.evaluate(
-      `[...document.querySelectorAll('button[aria-label^="เปิดข้อมูลนักเรียน"]')].at(-1).click()`,
+    // Opening a case needs a student who has none open: one that already has an
+    // active case is offered "ดูเคส" instead, and earlier runs leave cases
+    // behind in this database.
+    const [caseCandidate] = await dataSource.query(
+      `SELECT enrollment.student_uuid::text AS id
+       FROM student_term enrollment
+       LEFT JOIN cases active_case
+         ON active_case.student_uuid = enrollment.student_uuid
+        AND active_case.deleted_at IS NULL
+        AND active_case.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+       WHERE enrollment.classroom_id = $1
+         AND enrollment.deleted_at IS NULL
+         AND active_case.id IS NULL
+       ORDER BY enrollment.student_uuid
+       LIMIT 1`,
+      [scope.classroom_id],
     );
+    assert(
+      caseCandidate,
+      'need a student in the link classroom without an active case to open one',
+    );
+    await chrome.call('Page.navigate', {
+      url: `${FRONTEND_URL}/classroom/students/${caseCandidate.id}`,
+    });
     await waitFor(
       async () =>
-        String(await chrome.evaluate('window.location.pathname')).startsWith(
-          '/classroom/students/',
-        ),
-      async () => 'the last roster avatar did not open a profile page',
+        String(await chrome.evaluate('window.location.pathname')) ===
+        `/classroom/students/${caseCandidate.id}`,
+      async () => 'the student profile page did not open on its own url',
     );
     // Opening a case is offered on the link's profile exactly as it is on the
     // staff one, and it keeps the teacher on the page it was opened from.
@@ -369,6 +386,34 @@ async function main() {
           ),
         ).slice(0, 300)}`,
     );
+    // The toolbar pairs a lone action with the back button: same width, the way
+    // the staff profile does it. (With a second action next to it the group is
+    // what the back button matches, and the action keeps its own size.)
+    const toolbarWidths = await chrome.evaluate(
+      `(() => {
+        const pick = (label) =>
+          [...document.querySelectorAll('a,button')].find(
+            (node) => (node.innerText || '').trim() === label,
+          );
+        const back = pick('ย้อนกลับ');
+        const openCase = pick('เปิดเคส');
+        if (!back || !openCase) return 'missing';
+        return JSON.stringify({
+          back: Math.round(back.getBoundingClientRect().width),
+          openCase: Math.round(openCase.getBoundingClientRect().width),
+        });
+      })()`,
+    );
+    assert(
+      toolbarWidths !== 'missing',
+      'the link profile toolbar did not render both ย้อนกลับ and เปิดเคส',
+    );
+    const widths = JSON.parse(String(toolbarWidths));
+    assert(
+      Math.abs(widths.back - widths.openCase) <= 1,
+      `a lone action and the back button are different sizes: ${toolbarWidths}`,
+    );
+
     await chrome.evaluate(
       `[...document.querySelectorAll('button')].find((node) => (node.innerText || '').trim() === 'เปิดเคส').click()`,
     );
