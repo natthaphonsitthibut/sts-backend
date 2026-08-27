@@ -6,6 +6,7 @@ import { AuthModule } from '../auth/auth.module';
 import { TokenEncryptionModule } from '../common/crypto/token-encryption.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { GoogleLoginModule } from '../google-login/google-login.module';
+import { StudentsModule } from '../students/students.module';
 import { TeacherLineModule } from '../teacher-line/teacher-line.module';
 import {
   ClassroomAttendanceLinksAdminController,
@@ -14,6 +15,7 @@ import {
 import { ClassroomAttendanceLinksRepository } from './classroom-attendance-links.repository';
 import { ClassroomAttendanceLinksService } from './classroom-attendance-links.service';
 import { ClassroomLinkCookieService } from './classroom-link-cookie.service';
+import { ClassroomLinkStudentsController } from './classroom-link-students.controller';
 import { ClassroomLinkSessionStore } from './classroom-link-session.store';
 
 @Module({
@@ -24,10 +26,15 @@ import { ClassroomLinkSessionStore } from './classroom-link-session.store';
     AttendanceModule,
     MessagingModule,
     GoogleLoginModule,
+    StudentsModule,
     TeacherLineModule,
     TokenEncryptionModule,
   ],
-  controllers: [ClassroomAttendanceLinksAdminController, ClassroomCheckInAuthController],
+  controllers: [
+    ClassroomAttendanceLinksAdminController,
+    ClassroomCheckInAuthController,
+    ClassroomLinkStudentsController,
+  ],
   providers: [
     ClassroomAttendanceLinksRepository,
     ClassroomAttendanceLinksService,
