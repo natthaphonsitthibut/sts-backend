@@ -613,7 +613,10 @@ export class ClassroomAttendanceLinksService {
       tokenHash: link.token_hash,
     });
     const verificationUrl = new URL('/araid/authorize', baseUrl);
-    verificationUrl.hash = `challenge=${encodeURIComponent(challenge.token)}&flow=classroom-check-in`;
+    // The phone-side page reads `scope`, the same key the task-link and
+    // admin-login challenges use. A different key left it with no scope at all,
+    // so every scanned QR landed on "ลิงก์ยืนยันไม่ครบถ้วน".
+    verificationUrl.hash = `challenge=${encodeURIComponent(challenge.token)}&scope=${CLASSROOM_LINK_ARAID_SCOPE}`;
     return {
       success: true,
       data: {
