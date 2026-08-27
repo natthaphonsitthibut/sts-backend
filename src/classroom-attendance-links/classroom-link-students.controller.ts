@@ -173,10 +173,13 @@ export class ClassroomLinkStudentsController {
     );
     return {
       authorized,
-      scope: {
-        school_ids: [authorized.schoolId],
-        room_ids: [authorized.classroomId],
-      } satisfies DataScope,
+      // The classroom bound is the roster check above — it names the exact
+      // classroom. The scope carries the school and stops there on purpose:
+      // `room_ids` filters on the legacy room number (`RoomID_Onec`), not on a
+      // classroom id, so narrowing with one here matched nothing outside a
+      // fixture where the two happened to be equal and turned every profile
+      // read into a 404.
+      scope: { school_ids: [authorized.schoolId] } satisfies DataScope,
     };
   }
 }
