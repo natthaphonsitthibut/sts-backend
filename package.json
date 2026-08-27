@@ -75,6 +75,7 @@
     "smoke:student-statuses-browser": "DB_NAME=sts_smoke node scripts/smoke-student-statuses-browser.js",
     "smoke:teacher-comment-levels-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9273 node scripts/smoke-teacher-comment-levels-browser.js",
     "smoke:classroom-attendance-links": "DB_NAME=sts_task3_smoke node scripts/smoke-classroom-attendance-links.js",
+    "smoke:classroom-student-profile-browser": "DB_NAME=sts_task3_smoke GOOGLE_LOGIN_MODE=development SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9265 node scripts/smoke-classroom-student-profile-browser.js",
     "smoke:classroom-links-browser": "DB_NAME=sts_task3_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9262 node scripts/smoke-classroom-links-browser.js",
     "smoke:subject-check-in-browser": "DB_NAME=sts_task3_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9263 node scripts/smoke-subject-check-in-browser.js",
     "smoke:presentation-data-browser": "DB_NAME=sts_task5_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9264 node scripts/smoke-presentation-data-browser.js",

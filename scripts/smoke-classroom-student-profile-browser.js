@@ -1,0 +1,339 @@
+// Classroom-link student profile browser smoke.
+//
+// A teacher who opens a classroom link works the room, and the avatar on the
+// roster is the way into a student's profile. This drives that path in a real
+// browser: sign in through the link, click an avatar, and prove the profile the
+// dialog renders is the student's own — served by the link's namespace, still
+// masked, and bounded by the classroom the link belongs to.
+//
+// Run against the standard smoke stack:
+//   backend  PORT=3001 DB_NAME=sts_task3_smoke GOOGLE_LOGIN_MODE=development \
+//            CORS_ORIGINS=http://127.0.0.1:5174 pnpm start
+//   frontend VITE_API_BASE_URL=http://127.0.0.1:3001 pnpm dev --host 127.0.0.1 --port 5174
+//   pnpm smoke:classroom-student-profile-browser
+const { NestFactory } = require('@nestjs/core');
+const { DataSource } = require('typeorm');
+const { AppModule } = require('../dist/app.module');
+const { ClassroomAttendanceLinksService } = require('../dist/classroom-attendance-links/classroom-attendance-links.service');
+const { assert, openChrome, waitFor } = require('./smoke-case-assistance-browser');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('Refusing to run classroom student profile smoke with NODE_ENV=production');
+}
+if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
+  throw new Error('Refusing to run: DB_NAME must end with _smoke');
+}
+
+const BACKEND_URL = process.env.SMOKE_BACKEND_URL || 'http://127.0.0.1:3001';
+const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5174';
+const USERNAME = 'classroom_student_profile_smoke';
+
+function errorMessage(error) {
+  if (error instanceof AggregateError) {
+    return error.errors.map((cause) => cause?.message || String(cause)).join(' | ');
+  }
+  return error?.message || String(error);
+}
+
+async function main() {
+  const app = await NestFactory.createApplicationContext(AppModule, {
+    logger: false,
+    abortOnError: false,
+  });
+  const dataSource = app.get(DataSource);
+  const links = app.get(ClassroomAttendanceLinksService);
+
+  let chrome;
+  let actorId;
+  let createdLinkId;
+
+  try {
+    // A classroom that can actually be worked: active room, active term, and a
+    // homeroom teacher with an email to sign in as.
+    const [scope] = await dataSource.query(
+      `SELECT classroom.id::int AS classroom_id, classroom.school_id::int AS school_id,
+              classroom.school_term_id::int AS school_term_id,
+              lower(btrim(teacher.email)) AS teacher_email
+       FROM school_classrooms classroom
+       JOIN schools school ON school.id = classroom.school_id AND school.school_status = 'ACTIVE'
+       JOIN school_terms term ON term.id = classroom.school_term_id AND term.status = 'ACTIVE'
+       JOIN classroom_homeroom_teachers homeroom
+         ON homeroom.classroom_id = classroom.id AND homeroom.school_id = classroom.school_id
+       JOIN school_teacher_memberships membership
+         ON membership.id = homeroom.teacher_membership_id
+        AND membership.membership_status = 'ACTIVE'
+        AND membership.deleted_at IS NULL
+       JOIN teachers teacher
+         ON teacher.id = membership.teacher_id
+        AND teacher.teacher_status = 'ACTIVE'
+        AND teacher.deleted_at IS NULL
+       WHERE classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+         AND teacher.email IS NOT NULL
+         AND EXISTS (
+           SELECT 1 FROM student_term enrollment
+           WHERE enrollment.classroom_id = classroom.id AND enrollment.deleted_at IS NULL
+         )
+       ORDER BY classroom.id
+       LIMIT 1`,
+    );
+    assert(scope, 'need an active classroom with a homeroom teacher, an email and students');
+
+    const [actor] = await dataSource.query(
+      `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
+         role, data_scope, must_change_password, data_origin_code)
+       VALUES ($1, 'x', 'Classroom', 'Profile Smoke', 'ACTIVE',
+         '["home","manage-classroom-links"]'::jsonb, 'ADMIN', $2::jsonb, FALSE, 'AUTOMATED_TEST')
+       ON CONFLICT (username) DO UPDATE SET status='ACTIVE',
+         permissions='["home","manage-classroom-links"]'::jsonb, data_scope=$2::jsonb,
+         data_origin_code='AUTOMATED_TEST', deactivated_at=NULL, deactivation_reason_code=NULL
+       RETURNING id`,
+      [USERNAME, JSON.stringify({ school_ids: [scope.school_id] })],
+    );
+    actorId = Number(actor.id);
+
+    const created = await links.bulkCreate(
+      {
+        schoolId: scope.school_id,
+        schoolTermId: scope.school_term_id,
+        classroomIds: [scope.classroom_id],
+      },
+      {
+        id: actorId,
+        username: USERNAME,
+        roles: ['ADMIN'],
+        permissions: ['home', 'manage-classroom-links'],
+        data_scope: { school_ids: [scope.school_id] },
+      },
+      FRONTEND_URL,
+    );
+    const accessUrl = created.data?.[0]?.accessUrl;
+    assert(accessUrl, `bulk create did not return an access url: ${JSON.stringify(created).slice(0, 300)}`);
+    createdLinkId = created.data[0].id;
+    const token = accessUrl.split('#token=')[1];
+    assert(token, `access url carried no token: ${accessUrl}`);
+
+    // Sign in the way a teacher does, then hand the browser the session it got.
+    const signIn = await fetch(`${BACKEND_URL}/api/classroom/auth/google/development`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-classroom-link-token': token },
+      body: JSON.stringify({ email: scope.teacher_email }),
+    });
+    assert(signIn.status === 201, `link sign-in returned ${signIn.status}`);
+    const sessionCookie = (signIn.headers.getSetCookie?.() || [])
+      .map((value) => value.split(';')[0])
+      .find((value) => value.startsWith('classroom_check_in_session='));
+    assert(sessionCookie, 'link sign-in did not set a session cookie');
+    const separator = sessionCookie.indexOf('=');
+
+    chrome = await openChrome();
+    await chrome.call('Page.enable');
+    await chrome.call('Runtime.enable');
+    await chrome.call('Network.enable');
+    await chrome.call('Network.setCookie', {
+      name: sessionCookie.slice(0, separator),
+      value: sessionCookie.slice(separator + 1),
+      url: `${BACKEND_URL}/api/classroom`,
+      path: '/api/classroom',
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+
+    await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/classroom` });
+    await waitFor(
+      async () =>
+        Boolean(
+          await chrome.evaluate(
+            `Boolean(document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]'))`,
+          ),
+        ),
+      async () =>
+        `signed-in classroom link did not render clickable roster avatars: ${String(
+          await chrome.evaluate('document.body.innerText'),
+        ).slice(0, 400)}`,
+    );
+
+    const studentName = String(
+      await chrome.evaluate(
+        `document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]')
+           .getAttribute('aria-label').replace('เปิดข้อมูลนักเรียน ', '')`,
+      ),
+    );
+    await chrome.evaluate(
+      `document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]').click()`,
+    );
+
+    const dialogText = async () =>
+      String(
+        await chrome.evaluate(
+          `document.querySelector('section[role="dialog"][aria-label="ข้อมูลนักเรียน"]')?.innerText ?? ''`,
+        ),
+      );
+    await waitFor(
+      async () => (await dialogText()).includes(studentName),
+      async () => `the avatar did not open the student's profile: ${(await dialogText()).slice(0, 400)}`,
+    );
+    await waitFor(
+      async () => {
+        const text = await dialogText();
+        return text.includes('ประวัติเคสของนักเรียน') && text.includes('การมาเรียน');
+      },
+      async () =>
+        `the profile opened from the link is missing its panels: ${(await dialogText()).slice(0, 400)}`,
+    );
+    // Masked by default — a link shows what the staff screen shows before a
+    // reveal is requested, not the raw identity number.
+    assert(
+      !/\b\d{13}\b/.test(await dialogText()),
+      'the profile opened from the link showed an unmasked national id',
+    );
+
+
+    // Asking to see it works the same way it does for staff: a reason, then the
+    // value — and the access log names the teacher who asked.
+    await chrome.evaluate(
+      `document.querySelector('button[aria-label="แสดงเลขบัตร"]').click()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await chrome.evaluate(
+            `Boolean([...document.querySelectorAll('h2')].find((node) => node.textContent.trim() === 'แสดงข้อมูลส่วนบุคคล'))`,
+          ),
+        ),
+      'the reveal request dialog did not open',
+    );
+    // The reason picker is the shared Combobox: a readonly input that opens a
+    // list of plain buttons on focus. Its options come from the API, and it
+    // stays disabled until they arrive.
+    await waitFor(
+      async () =>
+        Boolean(
+          await chrome.evaluate(
+            `Boolean(document.querySelector('#pii-reveal-reason:not([disabled])'))`,
+          ),
+        ),
+      'the reveal reason picker never became usable',
+    );
+    await chrome.evaluate(
+      `(() => {
+        const trigger = document.querySelector('#pii-reveal-reason');
+        trigger.focus();
+        trigger.click();
+        return true;
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        Boolean(
+          await chrome.evaluate(
+            `Boolean(document.querySelector('#pii-reveal-reason')?.parentElement?.querySelector('ul li button'))`,
+          ),
+        ),
+      async () =>
+        `the reveal reason list did not open: ${String(
+          await chrome.evaluate(
+            `document.querySelector('#pii-reveal-reason')?.closest('section')?.innerHTML?.slice(0, 600) ?? 'no dialog'`,
+          ),
+        )}`,
+    );
+    const reasonLabel = String(
+      await chrome.evaluate(
+        `(() => {
+          const button = document.querySelector('#pii-reveal-reason').parentElement.querySelector('ul li button');
+          const label = button.textContent.trim();
+          button.click();
+          return label;
+        })()`,
+      ),
+    );
+    // Prove the pick landed before submitting: an empty reason fails validation
+    // silently as far as the network is concerned.
+    await waitFor(
+      async () =>
+        String(
+          await chrome.evaluate(`document.querySelector('#pii-reveal-reason').value`),
+        ).trim() === reasonLabel,
+      async () =>
+        `the reveal reason did not stick (wanted "${reasonLabel}", field shows "${await chrome.evaluate(
+          `document.querySelector('#pii-reveal-reason').value`,
+        )}")`,
+    );
+    // Submit by role, not by label: the base Button renders its idle and
+    // loading labels side by side, so matching text picks the wrong control.
+    await chrome.evaluate(
+      `(() => {
+        const submit = document.querySelector('#pii-reveal-reason')
+          .closest('form')
+          .querySelector('button[type="submit"]');
+        if (!submit) throw new Error('reveal submit button not found');
+        submit.click();
+        return true;
+      })()`,
+    );
+    const revealedDigits = async () =>
+      await chrome.evaluate(
+        `(() => {
+          const dialog = document.querySelector('section[role="dialog"][aria-label="ข้อมูลนักเรียน"]');
+          if (!dialog) return 0;
+          // The revealed value renders in the identity line; it may be grouped
+          // with dashes, so compare digit counts rather than a raw 13-run.
+          return [...dialog.querySelectorAll('span')]
+            .map((node) => (node.textContent || '').replace(/\\D/g, ''))
+            .reduce((longest, digits) => Math.max(longest, digits.length), 0);
+        })()`,
+      );
+    await waitFor(
+      async () => (await revealedDigits()) >= 13,
+      async () =>
+        `the national id was not revealed through the link (longest digit run ${await revealedDigits()}); reveal dialog: ${String(
+          await chrome.evaluate(
+            `[...document.querySelectorAll('section[role="dialog"]')]
+               .map((node) => node.innerText)
+               .find((text) => text.includes('แสดงข้อมูลส่วนบุคคล')) ?? 'reveal dialog closed'`,
+          ),
+        ).slice(0, 400)}`,
+    );
+
+    const [event] = await dataSource.query(
+      `SELECT actor_user_id, actor_teacher_membership_id, purpose_link_id, field_group
+       FROM pii_access_events
+       WHERE created_at > now() - interval '2 minutes'
+       ORDER BY id DESC LIMIT 1`,
+    );
+    assert(
+      event &&
+        event.actor_user_id === null &&
+        event.actor_teacher_membership_id !== null &&
+        event.field_group === 'NATIONAL_ID' &&
+        event.purpose_link_id,
+      `the reveal was not logged against the link teacher: ${JSON.stringify(event)}`,
+    );
+
+    console.log(
+      'classroom student profile browser smoke passed (link sign-in, roster avatar opens the profile, panels render, identity stays masked until asked for, reveal logged against the link teacher)',
+    );
+  } finally {
+    if (chrome) chrome.close();
+    if (createdLinkId) {
+      await dataSource.query(
+        `UPDATE classroom_attendance_links SET link_status='INACTIVE' WHERE id=$1`,
+        [createdLinkId],
+      );
+    }
+    if (actorId) {
+      await dataSource.query(
+        `UPDATE users SET status='DISABLED', deactivated_at=now(),
+           deactivation_reason_code='OTHER', deactivation_note='Browser smoke fixture'
+         WHERE id=$1 AND username=$2`,
+        [actorId, USERNAME],
+      );
+    }
+    await app.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(errorMessage(error));
+  process.exitCode = 1;
+});

@@ -30,6 +30,16 @@ if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
   throw new Error('Refusing to run: DB_NAME must end with _smoke');
 }
 
+// `::date` comes back from pg as a Date object; the API takes YYYY-MM-DD, and
+// toISOString() would shift the day backwards in Asia/Bangkok.
+function asDateKey(value) {
+  if (typeof value === 'string') return value.slice(0, 10);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -427,13 +437,24 @@ async function main() {
     );
     messagingEnabled = true;
 
-    const anonymous = await request('GET', '/api/check-in/context', 200, {
+    const anonymous = await request('GET', '/api/classroom/context', 200, {
       headers: { [CLASSROOM_LINK_TOKEN_HEADER]: firstToken },
     });
     assert(anonymous.payload.data.authentication.status === 'REQUIRED', 'Anonymous context was not auth-required');
 
+    // Links handed out before the rename hit /api/check-in, and the Google
+    // redirect URI registered in the console still points there until it is
+    // updated, so the old namespace has to keep answering.
+    const legacyNamespace = await request('GET', '/api/check-in/context', 200, {
+      headers: { [CLASSROOM_LINK_TOKEN_HEADER]: firstToken },
+    });
+    assert(
+      legacyNamespace.payload.data.authentication.status === 'REQUIRED',
+      'Legacy /api/check-in namespace stopped answering',
+    );
+
     capturedGoogle = null;
-    const googleStart = await request('GET', '/api/check-in/auth/google/start', 200, {
+    const googleStart = await request('GET', '/api/classroom/auth/google/start', 200, {
       headers: { [CLASSROOM_LINK_TOKEN_HEADER]: firstToken },
     });
     assert(capturedGoogle?.state, 'Google start did not create server-side state');
@@ -444,11 +465,11 @@ async function main() {
     );
     const googleCallback = await request(
       'GET',
-      `/api/check-in/auth/google/callback?code=verified&state=${encodeURIComponent(capturedGoogle.state)}`,
+      `/api/classroom/auth/google/callback?code=verified&state=${encodeURIComponent(capturedGoogle.state)}`,
       302,
     );
     const googleCookie = responseCookie(googleCallback.response, CLASSROOM_LINK_SESSION_COOKIE);
-    const googleContext = await request('GET', '/api/check-in/context', 200, {
+    const googleContext = await request('GET', '/api/classroom/context', 200, {
       headers: { cookie: googleCookie },
     });
     assert(
@@ -457,16 +478,26 @@ async function main() {
     );
     await request(
       'GET',
-      `/api/check-in/auth/google/callback?code=replay&state=${encodeURIComponent(capturedGoogle.state)}`,
+      `/api/classroom/auth/google/callback?code=replay&state=${encodeURIComponent(capturedGoogle.state)}`,
       410,
     );
 
-    const araIdChallenge = await request('POST', '/api/check-in/auth/araid/challenge', 201, {
+    const araIdChallenge = await request('POST', '/api/classroom/auth/araid/challenge', 201, {
       headers: { [CLASSROOM_LINK_TOKEN_HEADER]: firstToken },
       body: {},
     });
     const challengeToken = araIdChallenge.payload.data.challengeToken;
-    const araIdBegin = await request('POST', '/api/check-in/auth/araid/challenge/begin', 201, {
+    // The QR sends a phone to this URL; the authorize page reads the challenge
+    // and the scope out of the hash, so both keys are part of the contract.
+    const verificationHash = new URLSearchParams(
+      new URL(araIdChallenge.payload.data.verificationUrl).hash.slice(1),
+    );
+    assert(
+      verificationHash.get('challenge') === challengeToken &&
+        verificationHash.get('scope') === 'classroom-check-in',
+      `AraID verification url did not carry challenge+scope: ${araIdChallenge.payload.data.verificationUrl}`,
+    );
+    const araIdBegin = await request('POST', '/api/classroom/auth/araid/challenge/begin', 201, {
       headers: { 'x-araid-challenge': challengeToken },
       body: {},
     });
@@ -484,11 +515,11 @@ async function main() {
       'classroom-link-araid-profile',
     );
     assert(identityCookie, 'AraID identity cookie was not created');
-    await request('POST', '/api/check-in/auth/araid/challenge/approve', 201, {
+    await request('POST', '/api/classroom/auth/araid/challenge/approve', 201, {
       headers: { cookie: `${identityCookie}; ${authorizationCookie}` },
       body: {},
     });
-    const araIdPoll = await request('POST', '/api/check-in/auth/araid/challenge/status', 201, {
+    const araIdPoll = await request('POST', '/api/classroom/auth/araid/challenge/status', 201, {
       headers: { 'x-araid-challenge': challengeToken },
       body: {},
     });
@@ -496,7 +527,7 @@ async function main() {
       araIdPoll.response,
       CLASSROOM_LINK_SESSION_COOKIE,
     );
-    const araIdContext = await request('GET', '/api/check-in/context', 200, {
+    const araIdContext = await request('GET', '/api/classroom/context', 200, {
       headers: { cookie: araIdClassroomCookie },
     });
     assert(
@@ -516,7 +547,7 @@ async function main() {
       schoolId: scope.school_id,
       provider: 'GOOGLE',
     });
-    const authenticated = await request('GET', '/api/check-in/context', 200, {
+    const authenticated = await request('GET', '/api/classroom/context', 200, {
       headers: { cookie: `${CLASSROOM_LINK_SESSION_COOKIE}=${encodeURIComponent(sameSchoolSession)}` },
     });
     assert(authenticated.payload.data.authentication.status === 'AUTHENTICATED', 'Same-school teacher session was denied');
@@ -524,7 +555,7 @@ async function main() {
     const checkInCookie = `${CLASSROOM_LINK_SESSION_COOKIE}=${encodeURIComponent(sameSchoolSession)}`;
     const options = await request(
       'GET',
-      `/api/check-in/subjects?date=${encodeURIComponent(scope.check_in_date)}`,
+      `/api/classroom/subjects?date=${encodeURIComponent(asDateKey(scope.check_in_date))}`,
       200,
       { headers: { cookie: checkInCookie } },
     );
@@ -539,7 +570,7 @@ async function main() {
         ),
       'Public options escaped the link classroom or omitted HOMEROOM',
     );
-    const roster = await request('GET', '/api/check-in/roster', 200, {
+    const roster = await request('GET', '/api/classroom/roster', 200, {
       headers: { cookie: checkInCookie },
     });
     assert(roster.payload.data.length >= 2, 'Check-in roster fixture needs at least two students');
@@ -549,26 +580,105 @@ async function main() {
       ),
       'Check-in roster leaked a national identity field',
     );
-    await request('POST', '/api/check-in/sessions/start', 400, {
+    // The avatar on the roster opens the student's profile, so the link serves
+    // the same profile reads the staff screens use — bounded by its classroom.
+    const rosterStudentId = roster.payload.data[0].id;
+    const profile = await request('GET', `/api/classroom/students/${rosterStudentId}`, 200, {
+      headers: { cookie: checkInCookie },
+    });
+    assert(
+      profile.payload?.data?.student_uuid === rosterStudentId ||
+        profile.payload?.student_uuid === rosterStudentId ||
+        profile.payload?.data?.id === rosterStudentId ||
+        profile.payload?.id === rosterStudentId,
+      `Classroom link profile returned the wrong student: ${JSON.stringify(profile.payload).slice(0, 300)}`,
+    );
+    const profileBody = JSON.stringify(profile.payload);
+    assert(
+      !/\b\d{13}\b/.test(profileBody),
+      'Classroom link profile returned an unmasked national id',
+    );
+    await request('GET', `/api/classroom/students/${rosterStudentId}/profile-summary`, 200, {
+      headers: { cookie: checkInCookie },
+    });
+    await request('GET', `/api/classroom/students/${rosterStudentId}/cases`, 200, {
+      headers: { cookie: checkInCookie },
+    });
+    await request('GET', `/api/classroom/students/${rosterStudentId}/attendance`, 200, {
+      headers: { cookie: checkInCookie },
+    });
+    // Asking to see a masked field is allowed through a link, and the access log
+    // has to name the teacher who asked — a link teacher has no user row, so the
+    // row carries their school membership and the link instead.
+    const revealed = await request(
+      'POST',
+      `/api/classroom/students/${rosterStudentId}/pii-reveal`,
+      201,
+      {
+        headers: { cookie: checkInCookie },
+        body: { field_group: 'NATIONAL_ID', reason_code: 'CONTACT_PARENT' },
+      },
+    );
+    assert(
+      typeof revealed.payload?.values?.PersonID_Onec === 'string' ||
+        revealed.payload?.values?.PersonID_Onec === null,
+      `Reveal through the classroom link returned no value: ${JSON.stringify(revealed.payload).slice(0, 200)}`,
+    );
+    const [revealEvent] = await dataSource.query(
+      `SELECT actor_user_id, actor_teacher_membership_id, actor_kind, purpose_link_id,
+              field_group, reason_code
+       FROM pii_access_events
+       WHERE subject_type = 'STUDENT'
+         AND created_at > now() - interval '2 minutes'
+       ORDER BY id DESC
+       LIMIT 1`,
+    );
+    assert(
+      revealEvent &&
+        revealEvent.actor_user_id === null &&
+        Number(revealEvent.actor_teacher_membership_id) === Number(scope.teacher_membership_id) &&
+        revealEvent.field_group === 'NATIONAL_ID' &&
+        revealEvent.purpose_link_id,
+      `Reveal through the link was not logged against the teacher: ${JSON.stringify(revealEvent)}`,
+    );
+
+    // A student from another classroom is invisible even with a valid session,
+    // and no session at all cannot read a profile at all.
+    const [outsider] = await dataSource.query(
+      `SELECT enrollment.student_uuid::text AS id
+       FROM student_term enrollment
+       WHERE enrollment.classroom_id <> $1
+         AND enrollment.deleted_at IS NULL
+       ORDER BY enrollment.student_uuid
+       LIMIT 1`,
+      [scope.classroom_id],
+    );
+    assert(outsider, 'need a student outside the link classroom to prove the boundary');
+    await request('GET', `/api/classroom/students/${outsider.id}`, 404, {
+      headers: { cookie: checkInCookie },
+    });
+    await request('GET', `/api/classroom/students/${rosterStudentId}`, 401);
+
+    await request('POST', '/api/classroom/sessions/start', 400, {
       headers: { cookie: checkInCookie },
       body: {
-        date: scope.check_in_date,
+        date: asDateKey(scope.check_in_date),
         classroomSubjectId: scope.classroom_subject_id,
         classroomId: -1,
       },
     });
     await request(
       'GET',
-      `/api/attendance/check-in/options?classroomId=${scope.classroom_id}&date=${encodeURIComponent(scope.check_in_date)}`,
+      `/api/attendance/check-in/options?classroomId=${scope.classroom_id}&date=${encodeURIComponent(asDateKey(scope.check_in_date))}`,
       403,
       { headers: { cookie: cookieFor(allowedId) } },
     );
 
     const startBody = {
-      date: scope.check_in_date,
+      date: asDateKey(scope.check_in_date),
       classroomSubjectId: scope.classroom_subject_id,
     };
-    const started = await request('POST', '/api/check-in/sessions/start', 201, {
+    const started = await request('POST', '/api/classroom/sessions/start', 201, {
       headers: { cookie: checkInCookie },
       body: startBody,
     });
@@ -580,7 +690,7 @@ async function main() {
         started.payload.data.expectedRosterCount === roster.payload.data.length,
       'First interaction did not create one OPEN exception-only roster snapshot',
     );
-    const repeatedStart = await request('POST', '/api/check-in/sessions/start', 201, {
+    const repeatedStart = await request('POST', '/api/classroom/sessions/start', 201, {
       headers: { cookie: checkInCookie },
       body: startBody,
     });
@@ -608,7 +718,7 @@ async function main() {
     ];
     const submitted = await request(
       'POST',
-      `/api/check-in/sessions/${attendanceSessionId}/submit`,
+      `/api/classroom/sessions/${attendanceSessionId}/submit`,
       201,
       { headers: { cookie: checkInCookie }, body: { exceptions } },
     );
@@ -640,14 +750,14 @@ async function main() {
     );
     const duplicateSubmit = await request(
       'POST',
-      `/api/check-in/sessions/${attendanceSessionId}/submit`,
+      `/api/classroom/sessions/${attendanceSessionId}/submit`,
       201,
       { headers: { cookie: checkInCookie }, body: { exceptions } },
     );
     assert(duplicateSubmit.payload.data.idempotent === true, 'Identical duplicate submit was not idempotent');
     await request(
       'POST',
-      `/api/check-in/sessions/${attendanceSessionId}/submit`,
+      `/api/classroom/sessions/${attendanceSessionId}/submit`,
       409,
       { headers: { cookie: checkInCookie }, body: { exceptions: exceptions.slice(0, 1) } },
     );
@@ -660,14 +770,14 @@ async function main() {
       schoolId: scope.school_id,
       provider: 'GOOGLE',
     });
-    await request('GET', '/api/check-in/context', 403, {
+    await request('GET', '/api/classroom/context', 403, {
       headers: { cookie: `${CLASSROOM_LINK_SESSION_COOKIE}=${encodeURIComponent(wrongSchoolSession)}` },
     });
 
     await dataSource.query(`UPDATE teachers SET teacher_status = 'INACTIVE' WHERE id = $1`, [
       scope.teacher_id,
     ]);
-    await request('GET', '/api/check-in/context', 403, {
+    await request('GET', '/api/classroom/context', 403, {
       headers: {
         [CLASSROOM_LINK_TOKEN_HEADER]: firstToken,
         cookie: `${CLASSROOM_LINK_SESSION_COOKIE}=${encodeURIComponent(sameSchoolSession)}`,
@@ -686,10 +796,10 @@ async function main() {
     const rotatedUrl = new URL(rotated.payload.data.accessUrl);
     const rotatedToken = new URLSearchParams(rotatedUrl.hash.slice(1)).get('token');
     assert(rotatedToken && rotatedToken !== firstToken, 'Rotate did not replace the token');
-    await request('GET', '/api/check-in/context', 410, {
+    await request('GET', '/api/classroom/context', 410, {
       headers: { [CLASSROOM_LINK_TOKEN_HEADER]: firstToken },
     });
-    const rotatedAnonymous = await request('GET', '/api/check-in/context', 200, {
+    const rotatedAnonymous = await request('GET', '/api/classroom/context', 200, {
       headers: {
         [CLASSROOM_LINK_TOKEN_HEADER]: rotatedToken,
         cookie: `${CLASSROOM_LINK_SESSION_COOKIE}=${encodeURIComponent(sameSchoolSession)}`,
@@ -699,7 +809,7 @@ async function main() {
       rotatedAnonymous.payload.data.authentication.status === 'REQUIRED',
       'A stale session was reused for a newly rotated raw token',
     );
-    await request('GET', '/api/check-in/context', 200, {
+    await request('GET', '/api/classroom/context', 200, {
       headers: { [CLASSROOM_LINK_TOKEN_HEADER]: rotatedToken },
     });
 
@@ -709,7 +819,7 @@ async function main() {
       201,
       { headers: { cookie: cookieFor(allowedId) }, body: {} },
     );
-    await request('GET', '/api/check-in/context', 410, {
+    await request('GET', '/api/classroom/context', 410, {
       headers: { [CLASSROOM_LINK_TOKEN_HEADER]: rotatedToken },
     });
 
