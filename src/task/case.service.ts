@@ -18,7 +18,20 @@ import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
-import { TaskRepository } from './task.repository';
+import { TaskRepository, type CaseScopeContext } from './task.repository';
+
+/**
+ * Who is opening a case: an account, or a teacher reached through a classroom
+ * link (no account, identified by their `teachers` row). Both write the same
+ * case; only the identity recorded on it and the scope it is checked against
+ * differ.
+ */
+type CaseOpener = {
+  scope: CaseScopeContext;
+  auditActorId: number | null;
+  label: string | null;
+  canReadStudentIdentity: boolean;
+} & ({ kind: 'USER'; teacherId?: never } | { kind: 'LINK_TEACHER'; teacherId: string });
 
 @Injectable()
 export class CaseService {
@@ -249,6 +262,38 @@ export class CaseService {
       throw new ForbiddenException('ไม่มีสิทธิ์เปิดเคสนักเรียน');
     }
 
+    return await this.createCaseForStudent(body, {
+      kind: 'USER',
+      scope: { id: currentActor.id, data_scope: currentActor.data_scope },
+      auditActorId: resolveAuditActorId(currentActor),
+      label: this.actorLabel(currentActor),
+      canReadStudentIdentity: this.taskPolicyService.hasPermission(currentActor, 'students'),
+    });
+  }
+
+  /**
+   * The same case, opened by a teacher working from a classroom link.
+   *
+   * The caller has already proved the link session owns this student's
+   * classroom — that is the boundary here, since there is no account to check a
+   * permission against. The case records the teacher it was opened by, because
+   * a link is never anonymous: they signed in with Google or AraID first.
+   */
+  async openCaseFromLink(
+    body: OpenCaseDto,
+    author: { schoolId: number; teacherId: string; displayName: string },
+  ) {
+    return await this.createCaseForStudent(body, {
+      kind: 'LINK_TEACHER',
+      scope: { data_scope: { school_ids: [author.schoolId] } },
+      auditActorId: null,
+      label: author.displayName,
+      teacherId: author.teacherId,
+      canReadStudentIdentity: false,
+    });
+  }
+
+  private async createCaseForStudent(body: OpenCaseDto, opener: CaseOpener) {
     const studentUuid = this.normalizeText(body.student_id);
     const reason = clean(this.normalizeText(body.reason));
     if (!studentUuid || !reason) {
@@ -258,7 +303,7 @@ export class CaseService {
     const result = await this.taskRepository.withTransaction(async (executor) => {
       const student = await this.taskRepository.findStudentForCaseCreation(
         studentUuid,
-        currentActor,
+        opener.scope,
         executor,
       );
       if (!student) {
@@ -267,7 +312,7 @@ export class CaseService {
 
       const existingCase = await this.taskRepository.findActiveCaseByStudentUuid(
         studentUuid,
-        currentActor,
+        opener.scope,
         executor,
       );
       const existingCaseId = this.normalizeNumber(existingCase?.id);
@@ -300,30 +345,31 @@ export class CaseService {
           reasonFlagged: reason,
           studentUuid,
           schoolId,
-          createdBy: resolveAuditActorId(currentActor),
+          createdBy: opener.auditActorId,
+          createdByTeacherId: opener.kind === 'LINK_TEACHER' ? opener.teacherId : null,
         },
         executor,
       );
       return { caseId, created: true, student };
     });
 
-    const detail = await this.taskRepository.findCaseDetailById(result.caseId, currentActor);
+    const detail = await this.taskRepository.findCaseDetailById(result.caseId, opener.scope);
     if (!detail) {
       throw new NotFoundException('Case not found');
     }
 
     if (result.created) {
-      const mapped = this.mapCaseDetail(
-        detail,
-        this.taskPolicyService.hasPermission(currentActor, 'students'),
-      );
+      const mapped = this.mapCaseDetail(detail, opener.canReadStudentIdentity);
       await this.auditLog.record({
-        actorUserId: resolveAuditActorId(currentActor),
-        actorLabel: this.actorLabel(currentActor),
+        actorUserId: opener.auditActorId,
+        actorLabel: opener.label,
         action: 'CASE_CREATE',
         targetType: 'case',
         targetId: String(result.caseId),
-        metadata: { schoolId: mapped.school_id },
+        metadata: {
+          schoolId: mapped.school_id,
+          ...(opener.kind === 'LINK_TEACHER' ? { openedByTeacherId: opener.teacherId } : {}),
+        },
         ip: null,
       });
       await this.notificationsService.notifyCaseStatusChanged({
@@ -331,7 +377,7 @@ export class CaseService {
         studentName: mapped.student_name || null,
         schoolId: mapped.school_id,
         nextStatus: 'OPEN',
-        actorUserId: resolveAuditActorId(currentActor),
+        actorUserId: opener.auditActorId,
       });
       await this.riskProfileService
         ?.requestStudentRecalculation([studentUuid], 'case-open')
@@ -344,10 +390,7 @@ export class CaseService {
     return {
       success: true,
       created: result.created,
-      data: this.mapCaseDetail(
-        detail,
-        this.taskPolicyService.hasPermission(currentActor, 'students'),
-      ),
+      data: this.mapCaseDetail(detail, opener.canReadStudentIdentity),
     };
   }
 

@@ -74,6 +74,17 @@ interface RiskDashboardSummaryRow extends QueryResultRow, RiskDashboardSummary {
   case_student_not_found_count?: number | string;
 }
 
+/**
+ * What a case-scope check actually reads: the data scope, plus the account id
+ * only when that scope is `own_only`. Stated as its own type so a caller with a
+ * scope but no account — a classroom link — can be checked the same way without
+ * inventing a user to stand in for it. Every `ActorContext` satisfies it.
+ */
+export interface CaseScopeContext {
+  id?: number;
+  data_scope?: DataScope;
+}
+
 interface CreateCaseInput {
   studentName: string;
   studentFirstName: string | null;
@@ -91,6 +102,12 @@ interface CreateCaseInput {
   studentUuid: string | null;
   schoolId: number | null;
   createdBy: number | null;
+  /**
+   * Set instead of `createdBy` when the case was opened from a classroom link:
+   * that teacher has no account, so the `teachers` row is the only identity the
+   * case can record.
+   */
+  createdByTeacherId?: string | null;
 }
 
 interface CreateTaskInput {
@@ -270,7 +287,7 @@ export class TaskRepository {
   }
 
   private buildCaseScopeQuery(
-    actor: ActorContext | undefined,
+    actor: CaseScopeContext | undefined,
     startIndex = 1,
     caseAlias = 'c',
   ): ScopeQuery {
@@ -744,7 +761,10 @@ export class TaskRepository {
     return result.rows[0]?.allowed === true;
   }
 
-  async findCaseDetailById(caseId: number, actor?: ActorContext): Promise<QueryResultRow | null> {
+  async findCaseDetailById(
+    caseId: number,
+    actor?: CaseScopeContext,
+  ): Promise<QueryResultRow | null> {
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<QueryResultRow>(
@@ -820,7 +840,7 @@ export class TaskRepository {
 
   async findStudentForCaseCreation(
     studentUuid: string,
-    actor: ActorContext,
+    actor: CaseScopeContext,
     executor: QueryExecutor,
   ): Promise<QueryResultRow | null> {
     const params: unknown[] = [studentUuid];
@@ -859,7 +879,7 @@ export class TaskRepository {
 
   async findActiveCaseByStudentUuid(
     studentUuid: string,
-    actor: ActorContext,
+    actor: CaseScopeContext,
     executor: QueryExecutor,
   ): Promise<QueryResultRow | null> {
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
@@ -899,9 +919,10 @@ export class TaskRepository {
         student_uuid,
         school_id,
         created_by,
+        created_by_teacher_id,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $16)
       RETURNING id
     `,
       [
@@ -921,6 +942,7 @@ export class TaskRepository {
         data.studentUuid,
         data.schoolId,
         data.createdBy,
+        data.createdByTeacherId ?? null,
       ],
     );
 

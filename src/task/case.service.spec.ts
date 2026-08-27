@@ -177,9 +177,11 @@ describe('CaseService', () => {
 
     expect(result.created).toBe(true);
     expect(result.data).toEqual(expect.objectContaining({ id: 10, status: 'OPEN' }));
+    // The lookup is handed the scope it must apply, not the whole account —
+    // the same shape a classroom link can supply without an account at all.
     expect(taskRepository.findStudentForCaseCreation).toHaveBeenCalledWith(
       studentId,
-      actor,
+      { id: actor.id, data_scope: actor.data_scope },
       undefined,
     );
     expect(taskRepository.createCase).toHaveBeenCalledWith(
@@ -195,6 +197,39 @@ describe('CaseService', () => {
       expect.objectContaining({ action: 'CASE_CREATE', targetId: '10' }),
     );
     expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalled();
+  });
+
+  // A teacher reached through a classroom link has no account, so the case
+  // records their `teachers` row and is checked against the link's school.
+  it('opens a case for a link teacher without an account', async () => {
+    const studentId = '11111111-1111-4111-8111-111111111111';
+
+    const result = await service.openCaseFromLink(
+      { student_id: studentId, reason: 'ขาดเรียนติดต่อกัน' },
+      { schoolId: 10010002, teacherId: '77', displayName: 'ครู ทดสอบ' },
+    );
+
+    expect(result.created).toBe(true);
+    expect(taskRepository.findStudentForCaseCreation).toHaveBeenCalledWith(
+      studentId,
+      { data_scope: { school_ids: [10010002] } },
+      undefined,
+    );
+    expect(taskRepository.createCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        studentUuid: studentId,
+        createdBy: null,
+        createdByTeacherId: '77',
+      }),
+      undefined,
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASE_CREATE',
+        actorUserId: null,
+        actorLabel: 'ครู ทดสอบ',
+      }),
+    );
   });
 
   it('returns the existing active case instead of creating a duplicate', async () => {
