@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PATH_METADATA } from '@nestjs/common/constants';
+import { ANY_PERMISSIONS_KEY } from '../auth/permissions.decorator';
 import { Readable, Writable } from 'stream';
 import { FilesController } from './files.controller';
 import type { FileStorageAdapter } from './storage/file-storage.types';
@@ -44,6 +45,15 @@ describe('FilesController', () => {
   it('exposes the protected upload route behind the canonical API prefix', () => {
     expect(Reflect.getMetadata(PATH_METADATA, FilesController)).toEqual(
       expect.arrayContaining(['api/uploads', 'uploads']),
+    );
+  });
+
+  // Permissions are page-bound: whoever can open the page an attachment is
+  // shown on must be able to open the attachment. The visit report lives on
+  // `dashboard` pages, so a stricter set here would render broken thumbnails.
+  it('accepts the permission of every page that renders an attachment', () => {
+    expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, FilesController)).toEqual(
+      expect.arrayContaining(['dashboard', 'students']),
     );
   });
 

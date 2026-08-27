@@ -15,7 +15,7 @@ import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
-  RequirePermission,
+  RequireAnyPermission,
   type AuthenticatedRequestUser,
 } from '../auth';
 import { TaskRepository } from '../task/task.repository';
@@ -42,11 +42,19 @@ const INLINE_VIEWABLE_TYPES = new Set([
 
 // Visit-report uploads are sensitive minor PII (home-visit photos). They used to
 // be served as public static files (anyone with the URL, no login). This guarded
-// controller replaces that: a request must be authenticated and hold the same
-// 'students' permission that gates case/student data. Per-school scoping rides
-// with the case->school mapping follow-up (cases currently carry no school_id).
+// controller replaces that: a request must be authenticated and hold a
+// permission for a page these files are shown on.
+//
+// Permissions in this system are page-bound: holding a page means being able to
+// do everything on it. Attachments are rendered inside the visit report on the
+// task detail, case detail and case review pages — all gated by `dashboard` —
+// so requiring `students` alone made the file stricter than the page that shows
+// it, and an account with `dashboard` only saw broken thumbnails it could not
+// open. The boundary that actually protects the data is the per-case scope
+// check in `assertVisitAttachmentAccess`, which runs for every request either
+// way.
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('students')
+@RequireAnyPermission('dashboard', 'students')
 // Keep the legacy direct prefix for old clients, while `/api/uploads` is the
 // canonical route used by the Vercel API rewrite and every protected-media URL
 // returned to the current frontend.
