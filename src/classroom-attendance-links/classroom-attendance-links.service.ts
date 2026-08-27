@@ -22,6 +22,9 @@ import {
 import { AraIdChallengeStore } from '../araid/araid-challenge.store';
 import { AraIdService } from '../araid/araid.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
+import { FILE_STORAGE_ADAPTER } from '../files/storage/file-storage.types';
+import type { FileServeResult, FileStorageAdapter } from '../files/storage/file-storage.types';
 import type { AuditAction } from '../audit-log/dto/audit-log.dto';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
@@ -68,7 +71,25 @@ export class ClassroomAttendanceLinksService {
     private readonly teacherLine: TeacherLineService,
     @Inject(googleLoginConfig.KEY)
     private readonly googleConfig: ConfigType<typeof googleLoginConfig>,
+    @Inject(FILE_STORAGE_ADAPTER) private readonly storage: FileStorageAdapter,
   ) {}
+
+  /**
+   * The photo of the teacher this link session signed in as, so the header shows
+   * the same face the staff header does instead of falling back to initials.
+   * The teacher comes from the session — nothing the caller sends picks it.
+   */
+  async resolveTeacherPhoto(sessionToken?: string): Promise<FileServeResult> {
+    const authorized = await this.authorizeCheckInSession(sessionToken);
+    const storageKey = await this.repository.findTeacherPhotoStorageKey(
+      authorized.teacherId,
+      authorized.schoolId,
+    );
+    if (!storageKey) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+    const result = await this.storage.resolve(storageKey);
+    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
+    return result;
+  }
 
   private actorScope(actor: AuthenticatedRequestUser): DataScope {
     const scope = normalizeDataScope(actor.data_scope) ?? {};
@@ -535,6 +556,12 @@ export class ClassroomAttendanceLinksService {
               status: 'AUTHENTICATED' as const,
               provider: session!.provider,
               displayName: teacher.teacher_display_name,
+              // Same shape every other photo in the app uses: a guarded route
+              // plus a version stamp, so the storage key never leaves the API
+              // and a replaced photo busts the cache on its own.
+              photoUrl: teacher.teacher_has_photo
+                ? `/api/classroom/my-photo?v=${encodeMediaVersion(teacher.teacher_photo_updated_at)}`
+                : null,
             }
           : { status: 'REQUIRED' as const, providers: ['GOOGLE', 'ARAID'] as const },
       },

@@ -14,6 +14,29 @@ import type {
 export class ClassroomAttendanceLinksRepository {
   constructor(private readonly dataSource: DataSource) {}
 
+  /**
+   * The signed-in link teacher's own photo. Scoped by the school the link
+   * belongs to so a session can only ever ask for the teacher it signed in as.
+   */
+  async findTeacherPhotoStorageKey(teacherId: string, schoolId: number): Promise<string | null> {
+    const result = await queryDataSource<{ photo_storage_key: string | null }>(
+      this.dataSource,
+      `
+        SELECT teacher.photo_storage_key
+        FROM teachers teacher
+        JOIN school_teacher_memberships membership
+          ON membership.teacher_id = teacher.id
+         AND membership.school_id = $2
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+        WHERE teacher.id = $1
+        LIMIT 1
+      `,
+      [teacherId, schoolId],
+    );
+    return result.rows[0]?.photo_storage_key ?? null;
+  }
+
   async withTransaction<T>(work: (runner: QueryRunner) => Promise<T>): Promise<T> {
     const runner = this.dataSource.createQueryRunner();
     await runner.connect();
@@ -642,6 +665,8 @@ export class ClassroomAttendanceLinksRepository {
               TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
               lower(btrim(teacher.email)) AS normalized_email, teacher.citizen_id,
               teacher.teacher_status, membership.membership_status,
+              (teacher.photo_storage_key IS NOT NULL) AS teacher_has_photo,
+              teacher.updated_at AS teacher_photo_updated_at,
               teacher.deleted_at AS teacher_deleted_at,
               membership.deleted_at AS membership_deleted_at
        FROM school_teacher_memberships membership
@@ -664,6 +689,8 @@ export class ClassroomAttendanceLinksRepository {
               TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_display_name,
               lower(btrim(teacher.email)) AS normalized_email, teacher.citizen_id,
               teacher.teacher_status, membership.membership_status,
+              (teacher.photo_storage_key IS NOT NULL) AS teacher_has_photo,
+              teacher.updated_at AS teacher_photo_updated_at,
               teacher.deleted_at AS teacher_deleted_at,
               membership.deleted_at AS membership_deleted_at
        FROM teachers teacher

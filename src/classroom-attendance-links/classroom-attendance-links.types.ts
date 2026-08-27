@@ -102,6 +102,8 @@ export interface ExternalTeacherRow extends Record<string, unknown> {
   citizen_id: string | null;
   teacher_status: string;
   membership_status: string;
+  teacher_has_photo: boolean;
+  teacher_photo_updated_at: Date | string | null;
   teacher_deleted_at: Date | string | null;
   membership_deleted_at: Date | string | null;
 }
