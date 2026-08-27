@@ -1301,7 +1301,12 @@ export class SchoolStructureRepository {
     problemCategory: string,
     concernLevel: string,
     problemDescription: string,
-    authoredByUserId: number,
+    /**
+     * Exactly one of the two is set — a signed-in account or the teacher a
+     * classroom link signed in as. The table's own CHECK says the same, so a
+     * caller cannot quietly write a comment nobody is answerable for.
+     */
+    author: { userId: number | null; teacherId: string | null },
     queryRunner: QueryRunner,
   ): Promise<{
     id: string;
@@ -1331,9 +1336,10 @@ export class SchoolStructureRepository {
             problem_category_code,
             concern_level_code,
             problem_description,
-            authored_by_user_id
+            authored_by_user_id,
+            authored_by_teacher_id
           )
-          SELECT $1, enrollment.person_uuid, $3, $4, $5, $6
+          SELECT $1, enrollment.person_uuid, $3, $4, $5, $6, $7
           FROM student_term enrollment
           WHERE enrollment.student_uuid = $2
             AND enrollment.classroom_id = $1
@@ -1363,7 +1369,8 @@ export class SchoolStructureRepository {
         problemCategory,
         concernLevel,
         problemDescription,
-        authoredByUserId,
+        author.userId,
+        author.teacherId,
       ],
     );
     return result.rows[0] ?? null;
