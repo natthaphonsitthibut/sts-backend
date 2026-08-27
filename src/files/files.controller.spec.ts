@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PATH_METADATA } from '@nestjs/common/constants';
+import { Readable, Writable } from 'stream';
 import { FilesController } from './files.controller';
 import type { FileStorageAdapter } from './storage/file-storage.types';
 
@@ -14,12 +15,31 @@ describe('FilesController', () => {
   const taskRepository = () => ({
     canAccessVisitAttachment: jest.fn().mockResolvedValue(true),
   });
-  const response = () =>
-    ({
-      redirect: jest.fn(),
+  // A real Writable so `stream.pipe(res)` behaves as it does in Express, with
+  // the header/sendFile surface the controller uses bolted on.
+  const response = () => {
+    const headers = new Map<string, string>();
+    const sink = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    return Object.assign(sink, {
+      headers,
       sendFile: jest.fn(),
-      setHeader: jest.fn(),
-    }) as never;
+      setHeader: jest.fn((name: string, value: string) => headers.set(name, value)),
+    });
+  };
+  type TestResponse = ReturnType<typeof response>;
+  const objectStorage = (): FileStorageAdapter => {
+    const stream = Readable.from(['photo-bytes']);
+    return {
+      kind: 'private-object',
+      open: jest.fn().mockResolvedValue(stream),
+      resolve: jest.fn(),
+    } as unknown as FileStorageAdapter;
+  };
+  const send = (res: TestResponse): never => res as unknown as never;
 
   it('exposes the protected upload route behind the canonical API prefix', () => {
     expect(Reflect.getMetadata(PATH_METADATA, FilesController)).toEqual(
@@ -27,46 +47,119 @@ describe('FilesController', () => {
     );
   });
 
-  it('serves visit attachments through a fresh signed redirect', async () => {
-    const storage = {
-      resolve: jest
-        .fn()
-        .mockResolvedValue({ kind: 'redirect', url: 'https://storage.example/signed' }),
-    } as unknown as FileStorageAdapter;
+  it('streams a photo inline so the browser shows it instead of downloading it', async () => {
+    const storage = objectStorage();
     const repository = taskRepository();
     const controller = new FilesController(storage, repository as never);
     const res = response();
 
-    await controller.getVisitAttachment('e1f2.jpg', actor, res);
+    await controller.getVisitAttachment('e1f2.jpg', undefined, actor, send(res));
 
     expect(repository.canAccessVisitAttachment).toHaveBeenCalledWith(
       '/uploads/visit-attachments/e1f2.jpg',
       actor,
     );
-    expect(storage.resolve).toHaveBeenCalledWith('visit-attachments/e1f2.jpg');
-    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store');
-    expect(res.redirect).toHaveBeenCalledWith(302, 'https://storage.example/signed');
+    expect(storage.open).toHaveBeenCalledWith('visit-attachments/e1f2.jpg');
+    expect(res.headers.get('Content-Type')).toBe('image/jpeg');
+    expect(res.headers.get('Content-Disposition')).toBe('inline; filename="e1f2.jpg"');
+    // Owner decision: minor PII must not reach the disk cache of a shared
+    // staffroom machine. Serving inline does not depend on caching.
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+  });
+
+  it('serves a pdf inline as well', async () => {
+    const controller = new FilesController(objectStorage(), taskRepository() as never);
+    const res = response();
+
+    await controller.getVisitAttachment('report.pdf', undefined, actor, send(res));
+
+    expect(res.headers.get('Content-Type')).toBe('application/pdf');
+    expect(res.headers.get('Content-Disposition')).toBe('inline; filename="report.pdf"');
+  });
+
+  it('downloads only when the caller asks for it', async () => {
+    const controller = new FilesController(objectStorage(), taskRepository() as never);
+    const res = response();
+
+    await controller.getVisitAttachment('e1f2.jpg', '1', actor, send(res));
+
+    expect(res.headers.get('Content-Disposition')).toBe('attachment; filename="e1f2.jpg"');
+  });
+
+  it('keeps documents no browser can render as attachments', async () => {
+    const controller = new FilesController(objectStorage(), taskRepository() as never);
+    const res = response();
+
+    await controller.getVisitAttachment('note.docx', undefined, actor, send(res));
+
+    expect(res.headers.get('Content-Disposition')).toBe('attachment; filename="note.docx"');
+  });
+
+  it('serves local-disk files from the filesystem', async () => {
+    const storage = {
+      kind: 'local',
+      open: jest.fn(),
+      resolve: jest.fn().mockResolvedValue({ kind: 'local', filePath: '/uploads/e1f2.jpg' }),
+    } as unknown as FileStorageAdapter;
+    const controller = new FilesController(storage, taskRepository() as never);
+    const res = response();
+
+    await controller.getVisitAttachment('e1f2.jpg', undefined, actor, send(res));
+
+    expect(storage.open).not.toHaveBeenCalled();
+    expect(res.sendFile).toHaveBeenCalledWith('/uploads/e1f2.jpg');
+    expect(res.headers.get('Content-Disposition')).toBe('inline; filename="e1f2.jpg"');
+  });
+
+  it('stops reading the object when the reader closes the tab', async () => {
+    const stream = Readable.from(['photo-bytes']);
+    const storage = {
+      kind: 'private-object',
+      open: jest.fn().mockResolvedValue(stream),
+      resolve: jest.fn(),
+    } as unknown as FileStorageAdapter;
+    const controller = new FilesController(storage, taskRepository() as never);
+    const res = response();
+
+    await controller.getVisitAttachment('e1f2.jpg', undefined, actor, send(res));
+    expect(stream.destroyed).toBe(false);
+    res.emit('close');
+
+    expect(stream.destroyed).toBe(true);
+  });
+
+  it('returns not found when the object is missing', async () => {
+    const storage = {
+      kind: 'private-object',
+      open: jest.fn().mockResolvedValue(null),
+      resolve: jest.fn(),
+    } as unknown as FileStorageAdapter;
+    const controller = new FilesController(storage, taskRepository() as never);
+
+    await expect(
+      controller.getVisitAttachment('gone.jpg', undefined, actor, send(response())),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('rejects a traversal attempt before touching storage', async () => {
-    const storage = { resolve: jest.fn() } as unknown as FileStorageAdapter;
+    const storage = objectStorage();
     const controller = new FilesController(storage, taskRepository() as never);
 
-    await expect(controller.getVisitAttachment('../secret.jpg', actor, response())).rejects.toThrow(
-      BadRequestException,
-    );
-    expect(storage.resolve).not.toHaveBeenCalled();
+    await expect(
+      controller.getVisitAttachment('../secret.jpg', undefined, actor, send(response())),
+    ).rejects.toThrow(BadRequestException);
+    expect(storage.open).not.toHaveBeenCalled();
   });
 
   it('hides visit attachments outside the authenticated school scope', async () => {
-    const storage = { resolve: jest.fn() } as unknown as FileStorageAdapter;
+    const storage = objectStorage();
     const repository = taskRepository();
     repository.canAccessVisitAttachment.mockResolvedValue(false);
     const controller = new FilesController(storage, repository as never);
 
-    await expect(controller.getVisitAttachment('hidden.jpg', actor, response())).rejects.toThrow(
-      NotFoundException,
-    );
-    expect(storage.resolve).not.toHaveBeenCalled();
+    await expect(
+      controller.getVisitAttachment('hidden.jpg', undefined, actor, send(response())),
+    ).rejects.toThrow(NotFoundException);
+    expect(storage.open).not.toHaveBeenCalled();
   });
 });
