@@ -13,6 +13,7 @@ import { AttendanceOperationsService } from './attendance-operations.service';
 import { PublicLocationsController } from './public-locations.controller';
 import { ExceptionAttendanceRepository } from './exception-attendance.repository';
 import { ExceptionAttendanceService } from './exception-attendance.service';
+import { AttendanceImportService } from './attendance-import.service';
 
 @Module({
   imports: [AuthModule, RiskProfileModule, TokenEncryptionModule, FileStorageModule],
@@ -26,6 +27,7 @@ import { ExceptionAttendanceService } from './exception-attendance.service';
     AttendanceService,
     ExceptionAttendanceRepository,
     ExceptionAttendanceService,
+    AttendanceImportService,
   ],
   exports: [AttendanceService, ExceptionAttendanceService],
 })
