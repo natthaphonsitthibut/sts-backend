@@ -147,6 +147,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ยืนยัน AraID ของลิงก์ครูสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
+  CLASSROOM_ATTENDANCE_LINK_OPEN: {
+    domain: 'tasks',
+    label: 'เปิดลิงก์เช็กชื่อและยืนยันตัวตนสำเร็จ',
+    detailKeys: [
+      { key: 'teacherName', label: 'ครู' },
+      { key: 'authMethod', label: 'วิธียืนยันตัวตน' },
+    ],
+  },
   TASK_LINK_ARAID_VERIFY: {
     domain: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
@@ -495,9 +503,19 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'schoolId', label: 'โรงเรียน' },
     ],
   },
+  CLASSROOM_ATTENDANCE_ASSIGNMENT_CREATE: {
+    domain: 'attendance',
+    label: 'มอบหมายเช็กชื่อ',
+    detailKeys: [
+      { key: 'schoolId', label: 'โรงเรียน' },
+      { key: 'classroomId', label: 'ห้องเรียน' },
+      { key: 'opensAt', label: 'เริ่ม' },
+      { key: 'expiresAt', label: 'สิ้นสุด' },
+    ],
+  },
   CLASSROOM_ATTENDANCE_LINK_BULK_CREATE: {
     domain: 'attendance',
-    label: 'สร้างลิงก์ห้องเรียน',
+    label: 'สร้างลิงก์ครู',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
       { key: 'count', label: 'จำนวนลิงก์' },

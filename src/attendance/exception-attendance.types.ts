@@ -7,6 +7,19 @@ export interface ExceptionAttendanceActor {
   actorUserId: number | null;
   teacherMembershipId: string | null;
   actorLabel: string;
+  /**
+   * The link this register was taken through, when it was. It is what lets the
+   * school that issued a link see what came of it; a register taken in the app
+   * has none.
+   */
+  classroomAttendanceLinkId?: string | null;
+  /**
+   * The lessons this actor may act on in the room. A room's timetable belongs to
+   * the room; what a link grants is one teacher's share of it, so the list is
+   * narrowed at the door. Undefined in the app, where the account's permissions
+   * already answer the question.
+   */
+  allowedClassroomSubjectIds?: number[];
 }
 
 export interface CheckInClassroomRow extends Record<string, unknown> {

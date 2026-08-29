@@ -20,13 +20,25 @@ export class CheckInOptionsQueryDto {
   @IsString()
   @Matches(ISO_DATE_PATTERN)
   date!: string;
-}
 
-export class InternalCheckInOptionsQueryDto extends CheckInOptionsQueryDto {
+  /**
+   * Which room the teacher is working in. Optional because a link that reaches
+   * exactly one room needs no choosing; whatever is named is still checked
+   * against the subjects that teacher was assigned.
+   */
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  classroomId!: number;
+  classroomId?: number;
+}
+
+export class InternalCheckInOptionsQueryDto extends CheckInOptionsQueryDto {
+  /** Required in the app: there is no link to imply which room this is. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  declare classroomId: number;
 }
 
 export class InternalCheckInRosterQueryDto {
@@ -45,13 +57,21 @@ export class StartExceptionAttendanceDto {
   @IsInt()
   @Min(1)
   classroomSubjectId!: number;
-}
 
-export class StartInternalExceptionAttendanceDto extends StartExceptionAttendanceDto {
+  /** The room, for a link that reaches more than one. */
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  classroomId!: number;
+  classroomId?: number;
+}
+
+export class StartInternalExceptionAttendanceDto extends StartExceptionAttendanceDto {
+  /** Required in the app: there is no link to imply which room this is. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  declare classroomId: number;
 }
 
 export class AttendanceExceptionDto {

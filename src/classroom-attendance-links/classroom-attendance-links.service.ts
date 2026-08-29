@@ -34,8 +34,10 @@ import { googleLoginConfig } from '../config/google-login.config';
 import { TeacherLineService } from '../teacher-line/teacher-line.service';
 import type {
   BulkCreateClassroomAttendanceLinksDto,
+  CreateAttendanceAssignmentDto,
   ClassroomLineGroupInvitationDto,
   ListClassroomAttendanceLinksDto,
+  ListIssuedClassroomLinksDto,
   ResendClassroomAttendanceLinkLineDto,
 } from './dto/classroom-attendance-links.dto';
 import {
@@ -128,29 +130,13 @@ export class ClassroomAttendanceLinksService {
   private status(row: ClassroomLinkListRow): 'ACTIVE' | 'INACTIVE' | 'NOT_CREATED' {
     if (!row.id) return 'NOT_CREATED';
     if (row.link_status === 'INACTIVE') return 'INACTIVE';
-    if (
-      row.school_status !== 'ACTIVE' ||
-      row.term_status !== 'ACTIVE' ||
-      row.classroom_status !== 'ACTIVE'
-    ) {
+    if (row.school_status !== 'ACTIVE' || row.term_status !== 'ACTIVE') {
       return 'INACTIVE';
     }
     return 'ACTIVE';
   }
 
   private presentation(row: ClassroomLinkListRow) {
-    const homeroomTeachers =
-      row.homeroom_teachers ??
-      (row.homeroom_teacher_id && row.homeroom_teacher_name
-        ? [
-            {
-              teacherId: row.homeroom_teacher_id,
-              teacherName: row.homeroom_teacher_name,
-              hasPhoto: row.homeroom_teacher_has_photo,
-              isPrimary: true,
-            },
-          ]
-        : []);
     return {
       id: row.id,
       schoolId: row.school_id,
@@ -158,23 +144,20 @@ export class ClassroomAttendanceLinksService {
       schoolTermId: Number(row.school_term_id),
       academicYear: row.academic_year,
       semester: row.semester,
-      classroomId: Number(row.classroom_id),
-      gradeLevelId: row.grade_level_id,
-      gradeLabel: row.grade_label,
-      roomNumber: row.legacy_room_number,
-      roomName: row.room_name,
-      homeroomTeacherId: row.homeroom_teacher_id,
-      homeroomTeacherName: row.homeroom_teacher_name,
-      homeroomTeacherPhotoUrl: row.homeroom_teacher_has_photo
-        ? `/api/teacher-profiles/${row.homeroom_teacher_id}/photo`
+      teacherMembershipId: Number(row.teacher_membership_id),
+      teacherId: row.teacher_id,
+      teacherName: row.teacher_name,
+      teacherPhotoUrl: row.teacher_has_photo
+        ? `/api/teacher-profiles/${row.teacher_id}/photo`
         : null,
-      homeroomTeachers: homeroomTeachers.map((teacher) => ({
-        teacherId: teacher.teacherId,
-        teacherName: teacher.teacherName,
-        photoUrl: teacher.hasPhoto ? `/api/teacher-profiles/${teacher.teacherId}/photo` : null,
-        isPrimary: teacher.isPrimary,
-      })),
-      lineDelivery: row.id ? this.lineDeliveryPresentation(row as ClassroomLinkRow) : null,
+      // The rooms the link reaches, so the row can say what it grants without
+      // the reader opening it.
+      classroomCount: row.classroom_count,
+      classrooms: row.classrooms ?? [],
+      // Only the delivery columns are read, and the listing carries them all.
+      lineDelivery: row.id
+        ? this.lineDeliveryPresentation(row as unknown as ClassroomLinkRow)
+        : null,
       status: this.status(row),
       issuedAt: row.issued_at ? new Date(row.issued_at).toISOString() : null,
       rotatedAt: row.rotated_at ? new Date(row.rotated_at).toISOString() : null,
@@ -193,7 +176,7 @@ export class ClassroomAttendanceLinksService {
   }
 
   private lineDeliveryPresentation(row: ClassroomLinkRow) {
-    const currentMembershipId = row.homeroom_teacher_membership_id;
+    const currentMembershipId = row.teacher_membership_id;
     const recipientChanged =
       row.line_delivery_teacher_membership_id !== null &&
       row.line_delivery_teacher_membership_id !== currentMembershipId;
@@ -202,7 +185,7 @@ export class ClassroomAttendanceLinksService {
       status,
       failureCode: recipientChanged ? null : row.line_delivery_failure_code,
       recipientTeacherMembershipId: currentMembershipId,
-      recipientTeacherName: row.homeroom_teacher_name,
+      recipientTeacherName: row.teacher_name,
       accountState: row.line_provider_user_id
         ? (row.line_friend_state ?? 'UNKNOWN')
         : ('NOT_VERIFIED' as const),
@@ -232,7 +215,6 @@ export class ClassroomAttendanceLinksService {
       search: query.search,
       gradeLevelId: query.gradeLevelId,
       linkStatus: query.linkStatus,
-      homeroomStatus: query.homeroomStatus,
       page: query.page,
       limit: query.limit,
       scope: this.actorScope(actor),
@@ -245,6 +227,82 @@ export class ClassroomAttendanceLinksService {
         limit: query.limit,
         total: result.total,
         totalPages: Math.ceil(result.total / query.limit),
+      },
+    };
+  }
+
+  /**
+   * The register of links this school has issued this term — both kinds.
+   */
+  async listIssued(query: ListIssuedClassroomLinksDto, actor: AuthenticatedRequestUser) {
+    const result = await this.repository.listIssuedLinks({
+      schoolId: query.schoolId,
+      schoolTermId: query.schoolTermId,
+      kind: query.kind,
+      search: query.search,
+      page: query.page,
+      limit: query.limit,
+      scope: this.actorScope(actor),
+    });
+    return {
+      success: true,
+      data: result.rows.map((row) => ({
+        id: row.link_id as string,
+        kind: row.link_kind as 'TEACHER' | 'ASSIGNMENT',
+        linkStatus: row.link_status as string,
+        issuedAt: row.issued_at as Date,
+        lastUsedAt: (row.last_used_at as Date | null) ?? null,
+        opensAt: (row.opens_at as Date | null) ?? null,
+        expiresAt: (row.expires_at as Date | null) ?? null,
+        teacherName: (row.teacher_name as string) || null,
+        classroomLabel: (row.classroom_label as string | null) ?? null,
+        subjectName: (row.subject_name as string | null) ?? null,
+        openCount: Number(row.open_count ?? 0),
+        sessionCount: Number(row.session_count ?? 0),
+      })),
+      meta: {
+        page: query.page,
+        limit: query.limit,
+        total: result.total,
+        totalPages: Math.ceil(result.total / query.limit),
+      },
+    };
+  }
+
+  /**
+   * What became of one link: who opened it, and every register taken through it.
+   *
+   * The two halves answer different questions and neither implies the other — a
+   * teacher can open a link and record nothing, and a link handed round can be
+   * opened by several people before one of them takes the register.
+   */
+  async usage(linkId: string, actor: AuthenticatedRequestUser) {
+    await this.scopedLink(linkId, actor);
+    const [opens, sessions] = await Promise.all([
+      this.repository.listLinkOpens(linkId),
+      this.repository.listLinkAttendanceSessions(linkId),
+    ]);
+    return {
+      success: true,
+      data: {
+        opens: opens.map((row) => ({
+          openedAt: row.opened_at as Date,
+          teacherName: (row.teacher_name as string | null) ?? 'ไม่ทราบชื่อ',
+          authMethod: (row.auth_method as string | null) ?? null,
+        })),
+        sessions: sessions.map((row) => ({
+          id: row.session_id as string,
+          attendanceDate: row.attendance_date as string,
+          startedAt: row.started_at as Date,
+          submittedAt: (row.submitted_at as Date | null) ?? null,
+          status: row.status as string,
+          classroomLabel: row.classroom_label as string,
+          subjectName: row.subject_name as string,
+          startedByName: (row.started_by_name as string) || null,
+          submittedByName: (row.submitted_by_name as string) || null,
+          expectedRosterCount: Number(row.expected_roster_count ?? 0),
+          exceptionCount: Number(row.exception_count ?? 0),
+        })),
       },
     };
   }
@@ -342,42 +400,206 @@ export class ClassroomAttendanceLinksService {
     return { success: true, data: { revoked: true } };
   }
 
+  /**
+   * Hands one classroom's check-in to whoever can take it, for a set number of
+   * days.
+   *
+   * No recipient is recorded on purpose: the point is that the usual teacher
+   * cannot do it and the link goes to whoever can. Access is still earned —
+   * opening it runs the same identity check every link runs, which admits only
+   * an active teacher of this school.
+   */
+  async createAssignment(
+    dto: CreateAttendanceAssignmentDto,
+    actor: AuthenticatedRequestUser,
+    baseUrl: string,
+  ) {
+    const opensAt = dto.opensAt ?? null;
+    if (opensAt && new Date(opensAt) >= new Date(dto.expiresAt)) {
+      throw new BadRequestException('วันเริ่มต้นต้องมาก่อนวันสิ้นสุด');
+    }
+    if (new Date(dto.expiresAt) <= new Date()) {
+      throw new BadRequestException('วันสิ้นสุดต้องเป็นเวลาในอนาคต');
+    }
+    const actorId = this.actorId(actor);
+    const rawToken = generateToken();
+    const row = await this.repository.withTransaction(async (runner) => {
+      const classroom = await this.repository.findAssignableClassroom(
+        {
+          classroomId: dto.classroomId,
+          schoolId: dto.schoolId,
+          schoolTermId: dto.schoolTermId,
+          scope: this.actorScope(actor),
+        },
+        runner,
+      );
+      if (!classroom) {
+        throw new NotFoundException('ไม่พบห้องเรียนนี้ หรืออยู่นอกขอบเขตของคุณ');
+      }
+      const offering = await this.repository.findAssignableSubject(
+        {
+          classroomSubjectId: dto.classroomSubjectId,
+          schoolId: dto.schoolId,
+          schoolTermId: dto.schoolTermId,
+        },
+        runner,
+      );
+      if (!offering || offering.classroom_id !== classroom.classroom_id) {
+        throw new NotFoundException('ไม่พบรายวิชานี้ในห้องเรียนที่เลือก');
+      }
+      const created = await this.repository.insertAssignmentLink(
+        {
+          schoolId: dto.schoolId,
+          schoolTermId: dto.schoolTermId,
+          classroomId: Number(classroom.classroom_id),
+          classroomSubjectId: Number(offering.classroom_subject_id),
+          opensAt,
+          expiresAt: dto.expiresAt,
+          note: dto.note?.trim() || null,
+          tokenHash: hashToken(rawToken),
+          tokenEncrypted: this.encryption.encrypt(rawToken),
+          actorId,
+        },
+        runner,
+      );
+      await this.audit.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'CLASSROOM_ATTENDANCE_ASSIGNMENT_CREATE',
+          targetType: 'classroom_attendance_links',
+          targetId: created.id,
+          metadata: {
+            schoolId: dto.schoolId,
+            classroomId: Number(classroom.classroom_id),
+            opensAt,
+            expiresAt: dto.expiresAt,
+          },
+          ip: null,
+        },
+        runner,
+      );
+      return created;
+    });
+    return {
+      success: true,
+      data: { ...this.presentation(row as never), accessUrl: this.accessUrl(baseUrl, rawToken) },
+    };
+  }
+
+  /**
+   * The same assignment, issued by the teacher holding a link rather than by an
+   * administrator.
+   *
+   * A teacher owns their own link, so handing one of their rooms to a colleague
+   * is theirs to do — routing it through an admin would mean nobody can cover a
+   * sick day after hours. The room is proved against the subjects they teach
+   * before anything is written, so a link cannot assign a room it never reached.
+   */
+  async createAssignmentFromLink(
+    authorized: AuthorizedClassroomCheckIn,
+    input: { classroomSubjectId: number; opensAt?: string; expiresAt: string },
+    baseUrl: string,
+  ) {
+    const opensAt = input.opensAt ?? null;
+    if (opensAt && new Date(opensAt) >= new Date(input.expiresAt)) {
+      throw new BadRequestException('วันเริ่มต้นต้องมาก่อนวันสิ้นสุด');
+    }
+    if (new Date(input.expiresAt) <= new Date()) {
+      throw new BadRequestException('วันสิ้นสุดต้องเป็นเวลาในอนาคต');
+    }
+    const rawToken = generateToken();
+    const row = await this.repository.withTransaction(async (runner) => {
+      const offering = await this.repository.findAssignableSubject(
+        {
+          classroomSubjectId: input.classroomSubjectId,
+          schoolId: authorized.schoolId,
+          schoolTermId: authorized.schoolTermId,
+          teacherMembershipId: Number(authorized.teacherMembershipId),
+        },
+        runner,
+      );
+      if (!offering) {
+        throw new ForbiddenException('รายวิชานี้ไม่ได้อยู่ในวิชาที่คุณสอน');
+      }
+      const created = await this.repository.insertAssignmentLink(
+        {
+          schoolId: authorized.schoolId,
+          schoolTermId: authorized.schoolTermId,
+          classroomId: Number(offering.classroom_id),
+          classroomSubjectId: Number(offering.classroom_subject_id),
+          opensAt,
+          expiresAt: input.expiresAt,
+          note: null,
+          tokenHash: hashToken(rawToken),
+          tokenEncrypted: this.encryption.encrypt(rawToken),
+          // No account behind a link, so the audit trail carries the teacher.
+          actorId: null,
+        },
+        runner,
+      );
+      await this.audit.recordAtomic(
+        {
+          actorUserId: null,
+          actorLabel: authorized.teacherDisplayName,
+          action: 'CLASSROOM_ATTENDANCE_ASSIGNMENT_CREATE',
+          targetType: 'classroom_attendance_links',
+          targetId: created.id,
+          metadata: {
+            schoolId: authorized.schoolId,
+            classroomSubjectId: input.classroomSubjectId,
+            issuedByTeacherMembershipId: authorized.teacherMembershipId,
+            opensAt,
+            expiresAt: input.expiresAt,
+          },
+          ip: null,
+        },
+        runner,
+      );
+      return created;
+    });
+    return {
+      success: true,
+      data: { ...this.presentation(row as never), accessUrl: this.accessUrl(baseUrl, rawToken) },
+    };
+  }
+
   async bulkCreate(
     dto: BulkCreateClassroomAttendanceLinksDto,
     actor: AuthenticatedRequestUser,
     baseUrl: string,
   ) {
-    const classroomIds = dto.allClassrooms === true ? undefined : dto.classroomIds;
-    if (dto.allClassrooms === true && dto.classroomIds?.length) {
-      throw new BadRequestException('ห้ามส่งรายการห้องพร้อมกับการเลือกทุกห้อง');
+    const teacherMembershipIds = dto.allTeachers === true ? undefined : dto.teacherMembershipIds;
+    if (dto.allTeachers === true && dto.teacherMembershipIds?.length) {
+      throw new BadRequestException('ห้ามส่งรายชื่อครูพร้อมกับการเลือกครูทุกคน');
     }
-    if (!dto.allClassrooms && (!classroomIds || classroomIds.length === 0)) {
-      throw new BadRequestException('กรุณาเลือกห้องเรียนหรือเลือกสร้างทุกห้อง');
+    if (!dto.allTeachers && (!teacherMembershipIds || teacherMembershipIds.length === 0)) {
+      throw new BadRequestException('กรุณาเลือกครูหรือเลือกสร้างให้ครูทุกคน');
     }
     const actorId = this.actorId(actor);
     const created = await this.repository.withTransaction(async (runner) => {
-      const classrooms = await this.repository.lockEligibleClassrooms(
+      const teachers = await this.repository.lockEligibleTeachers(
         {
           schoolId: dto.schoolId,
           schoolTermId: dto.schoolTermId,
-          classroomIds,
+          teacherMembershipIds,
           scope: this.actorScope(actor),
         },
         runner,
       );
-      if (classroomIds && classrooms.length !== classroomIds.length) {
-        throw new NotFoundException('มีห้องเรียนที่ไม่พบ ไม่เปิดใช้งาน หรืออยู่นอกขอบเขต');
+      if (teacherMembershipIds && teachers.length !== teacherMembershipIds.length) {
+        throw new NotFoundException('มีครูที่ไม่พบ ไม่ได้สอนในภาคเรียนนี้ หรืออยู่นอกขอบเขต');
       }
-      if (classrooms.length > 500) {
-        throw new BadRequestException('สร้างลิงก์ได้ครั้งละไม่เกิน 500 ห้อง กรุณาเลือกห้องเป็นชุด');
+      if (teachers.length > 500) {
+        throw new BadRequestException('สร้างลิงก์ได้ครั้งละไม่เกิน 500 คน กรุณาเลือกเป็นชุด');
       }
-      if (classrooms.length === 0) throw new NotFoundException('ไม่พบห้องเรียนที่สร้างลิงก์ได้');
-      const candidates = classrooms.map((classroom) => {
+      if (teachers.length === 0) throw new NotFoundException('ไม่พบครูที่สร้างลิงก์ได้');
+      const candidates = teachers.map((teacher) => {
         const rawToken = generateToken();
         return {
           schoolId: dto.schoolId,
           schoolTermId: dto.schoolTermId,
-          classroomId: Number(classroom.classroom_id),
+          teacherMembershipId: Number(teacher.teacher_membership_id),
           rawToken,
           tokenHash: hashToken(rawToken),
           tokenEncrypted: this.encryption.encrypt(rawToken),
@@ -385,11 +607,11 @@ export class ClassroomAttendanceLinksService {
         };
       });
       const storedRows = await this.repository.upsertLinks(candidates, runner);
-      if (storedRows.length !== classrooms.length) {
-        throw new ConflictException('สร้างลิงก์ห้องเรียนไม่สำเร็จ');
+      if (storedRows.length !== teachers.length) {
+        throw new ConflictException('สร้างลิงก์ครูไม่สำเร็จ');
       }
-      const candidateByClassroom = new Map(
-        candidates.map((candidate) => [candidate.classroomId, candidate]),
+      const candidateByTeacher = new Map(
+        candidates.map((candidate) => [candidate.teacherMembershipId, candidate]),
       );
       const rows: Array<{
         id: string;
@@ -397,8 +619,8 @@ export class ClassroomAttendanceLinksService {
         created: boolean;
         row: ClassroomLinkRow;
       }> = storedRows.map((stored) => {
-        const candidate = candidateByClassroom.get(Number(stored.classroom_id));
-        if (!candidate) throw new ConflictException('สร้างลิงก์ห้องเรียนไม่สำเร็จ');
+        const candidate = candidateByTeacher.get(Number(stored.teacher_membership_id));
+        if (!candidate) throw new ConflictException('สร้างลิงก์ครูไม่สำเร็จ');
         const storedToken = this.decryptToken(stored.token_encrypted);
         return {
           id: stored.id,
@@ -417,7 +639,7 @@ export class ClassroomAttendanceLinksService {
           metadata: {
             schoolId: dto.schoolId,
             count: rows.length,
-            allClassrooms: dto.allClassrooms === true,
+            allTeachers: dto.allTeachers === true,
           },
           ip: null,
         },
@@ -545,12 +767,65 @@ export class ClassroomAttendanceLinksService {
           academicYear: link.academic_year,
           semester: link.semester,
         },
-        classroom: {
-          id: Number(link.classroom_id),
-          gradeLabel: link.grade_label,
-          roomNumber: link.legacy_room_number,
-          roomName: link.room_name,
-        },
+        // The link opens onto every room the teacher's subjects reach, so the
+        // context lists them instead of naming one.
+        // Presented like the app's classroom cards so the link's landing page
+        // is the same page, not a second design of it.
+        classrooms: (link.assigned_classroom_subject_id
+          ? [
+              await this.repository.findAssignmentClassroom(
+                Number(link.assigned_classroom_subject_id),
+              ),
+            ].filter((row): row is Record<string, unknown> => row !== null)
+          : await this.repository.listTeacherClassrooms({
+              teacherMembershipId: Number(link.teacher_membership_id),
+              schoolTermId: Number(link.school_term_id),
+            })
+        ).map((row) => ({
+          id: String(row.classroom_id),
+          classroomSubjectId: Number(row.classroom_subject_id),
+          subjectCode: (row.subject_code as string | null) ?? null,
+          schoolId: Number(row.school_id),
+          schoolTermId: String(row.school_term_id),
+          academicYear: Number(row.academic_year),
+          semester: Number(row.semester),
+          gradeLevelId: Number(row.grade_level_id),
+          gradeLabel: row.grade_label,
+          legacyRoomNumber: row.legacy_room_number == null ? null : Number(row.legacy_room_number),
+          roomCode: row.room_code,
+          roomName: row.room_name ?? null,
+          classroomStatus: row.classroom_status,
+          cardCoverColor: row.card_cover_color,
+          // The cover is the room's, not the viewer's — the same record
+          // ห้องเรียนทั้งหมด shows, served through the link's own guarded route.
+          coverImageUrl: row.cover_image_storage_key
+            ? `/api/classroom/classroom-cover?classroomId=${String(row.classroom_id)}&v=${encodeMediaVersion(
+                row.cover_updated_at as Date | null,
+              )}`
+            : null,
+          coverImagePositionX: Number(row.cover_image_position_x ?? 50),
+          coverImagePositionY: Number(row.cover_image_position_y ?? 50),
+          coverImageScale: Number(row.cover_image_scale ?? 1),
+          // Favourites hang on a user account; a link has none.
+          isFavorite: false,
+          homeroomTeacherName: null,
+          homeroomTeachers: [],
+          /** What this teacher teaches here — the card's subtitle. */
+          subjectNames: row.subject_names ?? null,
+          studentCount: Number(row.student_count ?? 0),
+          label: row.label,
+        })),
+        // What this link is, said plainly: an assignment covers one lesson for a
+        // window and the surface hides everything that outlives it — the room
+        // switcher, the subject picker, the term of history behind it.
+        assignment: link.assigned_classroom_subject_id
+          ? {
+              classroomId: Number(link.assigned_classroom_id),
+              classroomSubjectId: Number(link.assigned_classroom_subject_id),
+              opensAt: link.opens_at ?? null,
+              expiresAt: link.expires_at ?? null,
+            }
+          : null,
         authentication: teacher
           ? {
               status: 'AUTHENTICATED' as const,
@@ -568,6 +843,78 @@ export class ClassroomAttendanceLinksService {
     };
   }
 
+  /**
+   * The classrooms a link's teacher may act in, and the guard that says so.
+   *
+   * A teacher link is not bound to one room, so every request that names a
+   * classroom has to be checked against what that teacher actually teaches this
+   * term — the id in the request is otherwise the caller's free choice.
+   */
+  async listAuthorizedClassrooms(authorized: AuthorizedClassroomCheckIn) {
+    if (authorized.assignedClassroomId !== null) {
+      return [
+        {
+          classroom_id: String(authorized.assignedClassroomId),
+          label: authorized.assignedClassroomLabel ?? '',
+          grade_level_id: 0,
+        },
+      ];
+    }
+    return await this.repository.listTeacherClassrooms({
+      teacherMembershipId: Number(authorized.teacherMembershipId),
+      schoolTermId: authorized.schoolTermId,
+    });
+  }
+
+  /**
+   * The lessons a link may act on in one room: the assigned one for an
+   * assignment, otherwise every offering this teacher holds there.
+   */
+  async listAuthorizedSubjectIds(
+    authorized: AuthorizedClassroomCheckIn,
+    classroomId: number,
+  ): Promise<number[]> {
+    if (authorized.assignedClassroomSubjectId !== null) {
+      return [authorized.assignedClassroomSubjectId];
+    }
+    return await this.repository.listTeacherOfferingIds({
+      teacherMembershipId: Number(authorized.teacherMembershipId),
+      classroomId,
+    });
+  }
+
+  async assertAuthorizedClassroom(
+    authorized: AuthorizedClassroomCheckIn,
+    classroomId: number,
+  ): Promise<number> {
+    const classrooms = await this.listAuthorizedClassrooms(authorized);
+    if (authorized.assignedClassroomId !== null) {
+      // An assignment grants exactly one room and nothing else, whatever the
+      // person opening it happens to teach.
+      if (authorized.assignedClassroomId !== classroomId) {
+        throw new ForbiddenException('ลิงก์นี้มอบหมายให้เช็กชื่อเฉพาะห้องที่กำหนด');
+      }
+      return classroomId;
+    }
+    const allowed = classrooms.some((room) => Number(room.classroom_id) === classroomId);
+    if (!allowed) throw new ForbiddenException('ห้องเรียนนี้ไม่ได้อยู่ในวิชาที่คุณสอน');
+    return classroomId;
+  }
+
+  /** The classroom a link's teacher may act on for this student. */
+  async resolveStudentClassroom(
+    authorized: AuthorizedClassroomCheckIn,
+    studentUuid: string,
+  ): Promise<number> {
+    const classroomId = await this.repository.findAuthorizedClassroomForStudent({
+      studentUuid,
+      teacherMembershipId: Number(authorized.teacherMembershipId),
+      schoolTermId: authorized.schoolTermId,
+    });
+    if (!classroomId) throw new ForbiddenException('นักเรียนคนนี้ไม่ได้อยู่ในห้องที่คุณสอน');
+    return classroomId;
+  }
+
   async authorizeCheckInSession(sessionToken?: string): Promise<AuthorizedClassroomCheckIn> {
     const session = await this.sessions.read(sessionToken);
     if (!session) throw new UnauthorizedException('กรุณายืนยันตัวตนครูก่อนเช็กชื่อ');
@@ -578,9 +925,12 @@ export class ClassroomAttendanceLinksService {
       linkId: link.id,
       schoolId: link.school_id,
       schoolTermId: Number(link.school_term_id),
-      classroomId: Number(link.classroom_id),
-      gradeLevelId: link.grade_level_id,
-      roomNumber: Number(link.legacy_room_number),
+      assignedClassroomId: link.assigned_classroom_id ? Number(link.assigned_classroom_id) : null,
+      assignedClassroomSubjectId: link.assigned_classroom_subject_id
+        ? Number(link.assigned_classroom_subject_id)
+        : null,
+      assignedClassroomLabel: link.assigned_classroom_label,
+      assignedSubjectName: link.assigned_subject_name,
       teacherId: teacher.teacher_id,
       teacherMembershipId: teacher.teacher_membership_id,
       teacherDisplayName: teacher.teacher_display_name,
@@ -772,7 +1122,7 @@ export class ClassroomAttendanceLinksService {
         | 'ACCOUNT_NOT_VERIFIED'
         | 'ACCOUNT_NOT_REACHABLE'
       > | null = null;
-      if (!item.row.homeroom_teacher_membership_id) {
+      if (!item.row.teacher_membership_id) {
         failureCode = 'HOMEROOM_UNAVAILABLE';
       } else if (!this.messaging.isEnabled()) {
         failureCode = 'MESSAGING_DISABLED';
@@ -785,7 +1135,7 @@ export class ClassroomAttendanceLinksService {
       if (failureCode) {
         const updated = await this.repository.recordLineDeliveryNotReady(
           item.row.id,
-          item.row.homeroom_teacher_membership_id,
+          item.row.teacher_membership_id,
           failureCode,
           actorId,
         );
@@ -801,7 +1151,7 @@ export class ClassroomAttendanceLinksService {
           input: item,
           row: await this.repository.claimLineDelivery(
             item.row.id,
-            item.row.homeroom_teacher_membership_id!,
+            item.row.teacher_membership_id!,
             deliveryRequestId,
             actorId,
           ),
@@ -838,7 +1188,8 @@ export class ClassroomAttendanceLinksService {
       text: [
         'ลิงก์เช็กชื่อห้องเรียน',
         ...items.map(
-          (item) => `• ${item.row.grade_label}/${item.row.legacy_room_number}: ${item.accessUrl}`,
+          (item) =>
+            `• ${String(item.row.grade_label)}/${String(item.row.legacy_room_number)}: ${item.accessUrl}`,
         ),
         'ครูที่เปิดใช้งานในโรงเรียนสามารถยืนยันตัวตนและใช้ลิงก์นี้ได้',
       ].join('\n'),
@@ -886,8 +1237,8 @@ export class ClassroomAttendanceLinksService {
           targetId: item.row.id,
           metadata: {
             schoolId: item.row.school_id,
-            classroomId: Number(item.row.classroom_id),
-            teacherMembershipId: item.row.line_delivery_teacher_membership_id,
+            teacherMembershipId: Number(item.row.teacher_membership_id),
+            recipientMembershipId: item.row.line_delivery_teacher_membership_id,
             delivered: item.delivered,
             deliveryRequestId,
           },
@@ -979,6 +1330,22 @@ export class ClassroomAttendanceLinksService {
       provider,
     });
     await this.repository.touchLinkUsed(link.id);
+    // Who opened this link, and when. `last_used_at` keeps only the most recent
+    // moment; a school that hands a link round needs the list, not the last one.
+    await this.audit.record({
+      actorUserId: null,
+      actorLabel: teacher.teacher_display_name,
+      action: 'CLASSROOM_ATTENDANCE_LINK_OPEN',
+      targetType: 'classroom_attendance_links',
+      targetId: link.id,
+      metadata: {
+        schoolId: link.school_id,
+        teacherName: teacher.teacher_display_name,
+        teacherMembershipId: teacher.teacher_membership_id,
+        authMethod: provider,
+      },
+      ip: null,
+    });
     return token;
   }
 
@@ -1019,7 +1386,10 @@ export class ClassroomAttendanceLinksService {
         action,
         targetType: 'classroom_attendance_links',
         targetId: row.id,
-        metadata: { schoolId: row.school_id, classroomId: Number(row.classroom_id) },
+        metadata: {
+          schoolId: row.school_id,
+          teacherMembershipId: Number(row.teacher_membership_id),
+        },
         ip: null,
       },
       runner,

@@ -6,20 +6,24 @@ export interface ClassroomLinkRow extends Record<string, unknown> {
   academic_year: number;
   semester: number;
   term_status: string;
-  classroom_id: string;
-  grade_level_id: number;
-  grade_label: string;
-  legacy_room_number: string;
-  room_name: string;
-  classroom_status: string;
+  /** Null on an assignment: it belongs to a classroom, not to a teacher. */
+  teacher_membership_id: string | null;
+  teacher_name: string | null;
+  assigned_classroom_id: string | null;
+  assigned_classroom_subject_id: string | null;
+  assigned_classroom_label: string | null;
+  assigned_subject_name: string | null;
+  opens_at: Date | string | null;
+  expires_at: Date | string | null;
+  assignment_note: string | null;
+  /** Rooms this teacher's subjects reach in the term — what the link opens. */
+  classroom_count: number;
   token_hash: string;
   token_encrypted: string;
   link_status: 'ACTIVE' | 'INACTIVE';
   issued_at: Date | string;
   rotated_at: Date | string | null;
   last_used_at: Date | string | null;
-  homeroom_teacher_membership_id: string | null;
-  homeroom_teacher_name: string | null;
   line_provider_user_id: string | null;
   line_friend_state: 'FRIEND' | 'NOT_FRIEND' | 'BLOCKED' | 'UNKNOWN' | null;
   line_delivery_teacher_membership_id: string | null;
@@ -41,28 +45,24 @@ export interface ClassroomLinkListRow extends Record<string, unknown> {
   academic_year: number;
   semester: number;
   term_status: string;
-  classroom_id: string;
-  grade_level_id: number;
-  grade_label: string;
-  legacy_room_number: string;
-  room_name: string;
-  classroom_status: string;
+  teacher_membership_id: string | null;
+  teacher_id: string | null;
+  teacher_name: string | null;
+  teacher_has_photo: boolean;
+  assigned_classroom_id: string | null;
+  assigned_classroom_label: string | null;
+  opens_at: Date | string | null;
+  expires_at: Date | string | null;
+  assignment_note: string | null;
+  /** Rooms the teacher's subjects reach — what their link opens onto. */
+  classroom_count: number;
+  classrooms: Array<{ classroomId: string; label: string }>;
   token_hash: string | null;
   token_encrypted: string | null;
   link_status: 'ACTIVE' | 'INACTIVE' | null;
   issued_at: Date | string | null;
   rotated_at: Date | string | null;
   last_used_at: Date | string | null;
-  homeroom_teacher_membership_id: string | null;
-  homeroom_teacher_id: string | null;
-  homeroom_teacher_name: string | null;
-  homeroom_teacher_has_photo: boolean;
-  homeroom_teachers: Array<{
-    teacherId: string;
-    teacherName: string;
-    hasPhoto: boolean;
-    isPrimary: boolean;
-  }>;
   line_provider_user_id: string | null;
   line_friend_state: 'FRIEND' | 'NOT_FRIEND' | 'BLOCKED' | 'UNKNOWN' | null;
   line_delivery_teacher_membership_id: string | null;
@@ -122,9 +122,11 @@ export interface AuthorizedClassroomCheckIn {
   linkId: string;
   schoolId: number;
   schoolTermId: number;
-  classroomId: number;
-  gradeLevelId: number;
-  roomNumber: number;
+  /** Set when the link is an assignment: the one lesson it covers. */
+  assignedClassroomId: number | null;
+  assignedClassroomSubjectId: number | null;
+  assignedClassroomLabel: string | null;
+  assignedSubjectName: string | null;
   teacherId: string;
   teacherMembershipId: string;
   teacherDisplayName: string;

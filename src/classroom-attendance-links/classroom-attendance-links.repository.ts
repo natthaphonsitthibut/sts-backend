@@ -57,13 +57,19 @@ export class ClassroomAttendanceLinksRepository {
     return `
       SELECT link.id::text, link.school_id, school.name AS school_name,
              link.school_term_id::text, term.academic_year, term.semester,
-             term.status AS term_status, link.classroom_id::text,
-             classroom.grade_level_id, grade.label AS grade_label,
-             classroom.legacy_room_number::text, classroom.room_name,
-             classroom.classroom_status, link.token_hash, link.token_encrypted,
+             term.status AS term_status,
+             link.token_hash, link.token_encrypted,
              link.link_status, link.issued_at, link.rotated_at, link.last_used_at,
-             membership.id::text AS homeroom_teacher_membership_id,
-             TRIM(teacher.first_name || ' ' || teacher.last_name) AS homeroom_teacher_name,
+             link.teacher_membership_id::text,
+             TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_name,
+             link.assigned_classroom_id::text,
+             link.assigned_classroom_subject_id::text,
+             link.opens_at, link.expires_at, link.assignment_note,
+             assigned_grade.label || '/' || assigned_classroom.room_code AS assigned_classroom_label,
+             assigned_subject.name_th AS assigned_subject_name,
+             -- How many rooms the link opens onto, from the subjects this
+             -- teacher was assigned. Counted here so a row never costs a query.
+             COALESCE(taught.classroom_count, 0)::int AS classroom_count,
              line_account.provider_user_id AS line_provider_user_id,
              line_account.friend_state AS line_friend_state,
              link.line_delivery_teacher_membership_id::text,
@@ -74,18 +80,33 @@ export class ClassroomAttendanceLinksRepository {
       JOIN schools school ON school.id = link.school_id
       JOIN school_terms term
         ON term.id = link.school_term_id AND term.school_id = link.school_id
-      JOIN school_classrooms classroom
-        ON classroom.id = link.classroom_id
-       AND classroom.school_term_id = link.school_term_id
-       AND classroom.school_id = link.school_id
-      JOIN grade_levels grade ON grade.id = classroom.grade_level_id
-      LEFT JOIN classroom_homeroom_teachers homeroom
-        ON homeroom.classroom_id = classroom.id AND homeroom.school_id = classroom.school_id
       LEFT JOIN school_teacher_memberships membership
-        ON membership.id = homeroom.teacher_membership_id
-       AND membership.school_id = homeroom.school_id
-       AND membership.membership_status = 'ACTIVE'
-       AND membership.deleted_at IS NULL
+        ON membership.id = link.teacher_membership_id
+       AND membership.school_id = link.school_id
+      LEFT JOIN school_classrooms assigned_classroom
+        ON assigned_classroom.id = link.assigned_classroom_id
+       AND assigned_classroom.school_id = link.school_id
+      LEFT JOIN grade_levels assigned_grade
+        ON assigned_grade.id = assigned_classroom.grade_level_id
+      LEFT JOIN classroom_subjects assigned_offering
+        ON assigned_offering.id = link.assigned_classroom_subject_id
+      LEFT JOIN school_subjects assigned_school_subject
+        ON assigned_school_subject.id = assigned_offering.school_subject_id
+      LEFT JOIN subjects assigned_subject
+        ON assigned_subject.id = assigned_school_subject.subject_id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT assignment.classroom_id) AS classroom_count
+        FROM classroom_subject_teachers assignment
+        JOIN school_classrooms classroom
+          ON classroom.id = assignment.classroom_id
+         AND classroom.school_id = assignment.school_id
+        WHERE assignment.teacher_membership_id = link.teacher_membership_id
+          AND classroom.school_term_id = link.school_term_id
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+      ) taught ON TRUE
       LEFT JOIN teachers teacher
         ON teacher.id = membership.teacher_id
        AND teacher.teacher_status = 'ACTIVE'
@@ -130,23 +151,45 @@ export class ClassroomAttendanceLinksRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * One row per teacher who teaches in this term, with their link if it exists.
+   *
+   * The listing is teacher-first because the link is: a room no longer has one
+   * of its own. Teachers with no subject assignment are left out rather than
+   * shown link-less — they have nothing to check, so a link for them would open
+   * onto an empty page.
+   */
   async list(input: {
     schoolId: number;
     schoolTermId: number;
     search?: string;
     gradeLevelId?: number;
     linkStatus?: 'ACTIVE' | 'INACTIVE' | 'NOT_CREATED';
-    homeroomStatus?: 'ASSIGNED' | 'UNASSIGNED';
     page: number;
     limit: number;
     scope: DataScope;
   }): Promise<{ rows: ClassroomLinkListRow[]; total: number }> {
     const params: unknown[] = [input.schoolId, input.schoolTermId];
     const conditions = [
-      'classroom.school_id = $1',
-      'classroom.school_term_id = $2',
-      'classroom.deleted_at IS NULL',
+      'membership.school_id = $1',
+      "membership.membership_status = 'ACTIVE'",
+      'membership.deleted_at IS NULL',
+      'term.id = $2',
       'term.deleted_at IS NULL',
+      // Teaching something in this term is what makes a teacher listable.
+      `EXISTS (
+        SELECT 1
+        FROM classroom_subject_teachers assignment
+        JOIN school_classrooms classroom
+          ON classroom.id = assignment.classroom_id
+         AND classroom.school_id = assignment.school_id
+        WHERE assignment.teacher_membership_id = membership.id
+          AND classroom.school_term_id = term.id
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+      )`,
     ];
     const scope = buildDataScopeQuery(
       input.scope,
@@ -155,8 +198,6 @@ export class ClassroomAttendanceLinksRepository {
         province: 'school.province',
         district: 'school.district',
         sub_district: 'school.sub_district',
-        grade: 'classroom.grade_level_id',
-        room: 'classroom.legacy_room_number',
       },
       params.length + 1,
     );
@@ -164,7 +205,19 @@ export class ClassroomAttendanceLinksRepository {
     params.push(...scope.params);
     if (input.gradeLevelId) {
       params.push(input.gradeLevelId);
-      conditions.push(`classroom.grade_level_id = $${params.length}`);
+      // A grade filter narrows to teachers who teach that grade, not to rows.
+      conditions.push(`EXISTS (
+        SELECT 1
+        FROM classroom_subject_teachers grade_assignment
+        JOIN school_classrooms grade_classroom
+          ON grade_classroom.id = grade_assignment.classroom_id
+         AND grade_classroom.school_id = grade_assignment.school_id
+        WHERE grade_assignment.teacher_membership_id = membership.id
+          AND grade_classroom.school_term_id = term.id
+          AND grade_classroom.grade_level_id = $${params.length}
+          AND grade_assignment.assignment_status = 'ACTIVE'
+          AND grade_assignment.deleted_at IS NULL
+      )`);
     }
     if (input.linkStatus) {
       if (input.linkStatus === 'NOT_CREATED') {
@@ -174,7 +227,6 @@ export class ClassroomAttendanceLinksRepository {
           link.link_status = 'ACTIVE'
           AND school.school_status = 'ACTIVE'
           AND term.status = 'ACTIVE'
-          AND classroom.classroom_status = 'ACTIVE'
         )`);
       } else {
         conditions.push(`(
@@ -183,82 +235,49 @@ export class ClassroomAttendanceLinksRepository {
             link.link_status = 'ACTIVE'
             AND school.school_status = 'ACTIVE'
             AND term.status = 'ACTIVE'
-            AND classroom.classroom_status = 'ACTIVE'
           )
         )`);
       }
     }
-    if (input.homeroomStatus) {
-      conditions.push(
-        input.homeroomStatus === 'ASSIGNED' ? 'membership.id IS NOT NULL' : 'membership.id IS NULL',
-      );
-    }
     if (input.search) {
       params.push(`%${input.search.replace(/[\\%_]/g, (value) => `\\${value}`)}%`);
-      conditions.push(`(
-        classroom.room_name ILIKE $${params.length} ESCAPE '\\'
-        OR grade.label ILIKE $${params.length} ESCAPE '\\'
-        OR EXISTS (
-          SELECT 1
-          FROM classroom_homeroom_teacher_assignments search_assignment
-          JOIN school_teacher_memberships search_membership
-            ON search_membership.id = search_assignment.teacher_membership_id
-           AND search_membership.school_id = search_assignment.school_id
-           AND search_membership.membership_status = 'ACTIVE'
-           AND search_membership.deleted_at IS NULL
-          JOIN teachers search_teacher
-            ON search_teacher.id = search_membership.teacher_id
-           AND search_teacher.teacher_status = 'ACTIVE'
-           AND search_teacher.deleted_at IS NULL
-          WHERE search_assignment.classroom_id = classroom.id
-            AND TRIM(search_teacher.first_name || ' ' || search_teacher.last_name)
-                ILIKE $${params.length} ESCAPE '\\'
-        )
-      )`);
+      conditions.push(
+        `TRIM(teacher.first_name || ' ' || teacher.last_name) ILIKE $${params.length} ESCAPE '\\'`,
+      );
     }
     params.push(input.limit, (input.page - 1) * input.limit);
     const listFrom = `
-      FROM school_classrooms classroom
-      JOIN schools school ON school.id = classroom.school_id
-      JOIN school_terms term
-        ON term.id = classroom.school_term_id AND term.school_id = classroom.school_id
-      JOIN grade_levels grade ON grade.id = classroom.grade_level_id
-      LEFT JOIN classroom_attendance_links link ON link.classroom_id = classroom.id
-      LEFT JOIN classroom_homeroom_teachers homeroom
-        ON homeroom.classroom_id = classroom.id AND homeroom.school_id = classroom.school_id
-      LEFT JOIN school_teacher_memberships membership
-        ON membership.id = homeroom.teacher_membership_id
-       AND membership.school_id = homeroom.school_id
-       AND membership.membership_status = 'ACTIVE'
-       AND membership.deleted_at IS NULL
-      LEFT JOIN teachers teacher
+      FROM school_teacher_memberships membership
+      JOIN schools school ON school.id = membership.school_id
+      JOIN school_terms term ON term.school_id = membership.school_id
+      JOIN teachers teacher
         ON teacher.id = membership.teacher_id
        AND teacher.teacher_status = 'ACTIVE'
        AND teacher.deleted_at IS NULL
+      LEFT JOIN classroom_attendance_links link
+        ON link.teacher_membership_id = membership.id
+       AND link.school_term_id = term.id
       LEFT JOIN LATERAL (
-        SELECT COALESCE(
-          jsonb_agg(
-            jsonb_build_object(
-              'teacherId', all_teacher.id::text,
-              'teacherName', TRIM(all_teacher.first_name || ' ' || all_teacher.last_name),
-              'hasPhoto', all_teacher.photo_storage_key IS NOT NULL,
-              'isPrimary', all_assignment.is_primary
-            ) ORDER BY all_assignment.is_primary DESC,
-            TRIM(all_teacher.first_name || ' ' || all_teacher.last_name)
-          ), '[]'::jsonb
-        ) AS homeroom_teachers
-        FROM classroom_homeroom_teacher_assignments all_assignment
-        JOIN school_teacher_memberships all_membership
-          ON all_membership.id = all_assignment.teacher_membership_id
-         AND all_membership.membership_status = 'ACTIVE'
-         AND all_membership.deleted_at IS NULL
-        JOIN teachers all_teacher
-          ON all_teacher.id = all_membership.teacher_id
-         AND all_teacher.teacher_status = 'ACTIVE'
-         AND all_teacher.deleted_at IS NULL
-        WHERE all_assignment.classroom_id = classroom.id
-          AND all_assignment.school_id = classroom.school_id
-      ) all_homeroom ON TRUE
+        SELECT
+          COUNT(DISTINCT assignment.classroom_id)::int AS classroom_count,
+          COALESCE(
+            jsonb_agg(DISTINCT jsonb_build_object(
+              'classroomId', classroom.id::text,
+              'label', grade.label || '/' || classroom.room_code
+            )), '[]'::jsonb
+          ) AS classrooms
+        FROM classroom_subject_teachers assignment
+        JOIN school_classrooms classroom
+          ON classroom.id = assignment.classroom_id
+         AND classroom.school_id = assignment.school_id
+        JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        WHERE assignment.teacher_membership_id = membership.id
+          AND classroom.school_term_id = term.id
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+      ) taught ON TRUE
       LEFT JOIN LATERAL (
         SELECT account.provider_user_id, account.friend_state
         FROM teacher_messaging_accounts account
@@ -269,34 +288,20 @@ export class ClassroomAttendanceLinksRepository {
         ORDER BY account.verified_at DESC, account.id DESC
         LIMIT 1
       ) line_account ON TRUE`;
-    const latestSessionJoin = `
-      LEFT JOIN LATERAL (
-        SELECT session.id::text, session.attendance_date::text,
-               session.status, session.submitted_at
-        FROM attendance_sessions session
-        WHERE session.classroom_id = classroom.id
-          AND session.school_term_id = classroom.school_term_id
-          AND session.deleted_at IS NULL
-        ORDER BY session.attendance_date DESC,
-                 session.checking_started_at DESC NULLS LAST,
-                 session.id DESC
-        LIMIT 1
-      ) latest_session ON TRUE`;
     const result = await queryDataSource<ClassroomLinkListRow>(
       this.dataSource,
-      `SELECT link.id::text, classroom.school_id, school.name AS school_name,
+      `SELECT link.id::text, membership.school_id, school.name AS school_name,
               school.school_status,
-              classroom.school_term_id::text, term.academic_year, term.semester,
-              term.status AS term_status, classroom.id::text AS classroom_id,
-              classroom.grade_level_id, grade.label AS grade_label,
-              classroom.legacy_room_number::text, classroom.room_name,
-              classroom.classroom_status, link.token_hash, link.token_encrypted,
+              term.id::text AS school_term_id, term.academic_year, term.semester,
+              term.status AS term_status,
+              membership.id::text AS teacher_membership_id,
+              teacher.id::text AS teacher_id,
+              TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_name,
+              (teacher.photo_storage_key IS NOT NULL) AS teacher_has_photo,
+              COALESCE(taught.classroom_count, 0) AS classroom_count,
+              COALESCE(taught.classrooms, '[]'::jsonb) AS classrooms,
+              link.token_hash, link.token_encrypted,
               link.link_status, link.issued_at, link.rotated_at, link.last_used_at,
-              membership.id::text AS homeroom_teacher_membership_id,
-              teacher.id::text AS homeroom_teacher_id,
-              TRIM(teacher.first_name || ' ' || teacher.last_name) AS homeroom_teacher_name,
-              (teacher.photo_storage_key IS NOT NULL) AS homeroom_teacher_has_photo,
-              all_homeroom.homeroom_teachers,
               line_account.provider_user_id AS line_provider_user_id,
               line_account.friend_state AS line_friend_state,
               link.line_delivery_teacher_membership_id::text,
@@ -304,14 +309,10 @@ export class ClassroomAttendanceLinksRepository {
               link.line_delivery_failure_code,
               COALESCE(link.line_delivery_attempt_count, 0) AS line_delivery_attempt_count,
               link.line_delivery_request_id::text,
-              link.line_delivery_last_attempted_at, link.line_delivered_at,
-              latest_session.id AS latest_session_id,
-              latest_session.attendance_date AS latest_session_date,
-              latest_session.status AS latest_session_status,
-              latest_session.submitted_at AS latest_session_submitted_at
-       ${listFrom} ${latestSessionJoin}
+              link.line_delivery_last_attempted_at, link.line_delivered_at
+       ${listFrom}
        WHERE ${conditions.join(' AND ')}
-       ORDER BY classroom.grade_level_id, classroom.legacy_room_number, classroom.id
+       ORDER BY teacher.first_name, teacher.last_name, membership.id
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -322,31 +323,44 @@ export class ClassroomAttendanceLinksRepository {
        WHERE ${conditions.join(' AND ')}`,
       params.slice(0, -2),
     );
-    return { rows: result.rows, total: Number(count.rows[0]?.count ?? 0) };
+    return {
+      rows: result.rows,
+      total: Number.parseInt(String(count.rows[0]?.count ?? '0'), 10),
+    };
   }
 
-  async lockEligibleClassrooms(
+  /**
+   * Teachers a link may be issued to, locked for the write.
+   *
+   * A teacher qualifies by teaching something: at least one live subject
+   * assignment in a classroom of this term. That is the same fact the link's
+   * "ห้องเรียนของฉัน" reads, so a link can never be issued to someone who would
+   * open it onto an empty list.
+   */
+  async lockEligibleTeachers(
     input: {
       schoolId: number;
       schoolTermId: number;
-      classroomIds?: number[];
+      teacherMembershipIds?: number[];
       scope: DataScope;
     },
     runner: QueryRunner,
-  ): Promise<Array<{ classroom_id: string }>> {
+  ): Promise<Array<{ teacher_membership_id: string }>> {
     const params: unknown[] = [input.schoolId, input.schoolTermId];
     const conditions = [
-      'classroom.school_id = $1',
-      'classroom.school_term_id = $2',
       "school.school_status = 'ACTIVE'",
       "term.status = 'ACTIVE'",
       "classroom.classroom_status = 'ACTIVE'",
+      "membership.membership_status = 'ACTIVE'",
+      "assignment.assignment_status = 'ACTIVE'",
       'term.deleted_at IS NULL',
       'classroom.deleted_at IS NULL',
+      'membership.deleted_at IS NULL',
+      'assignment.deleted_at IS NULL',
     ];
-    if (input.classroomIds) {
-      params.push(input.classroomIds);
-      conditions.push(`classroom.id = ANY($${params.length}::bigint[])`);
+    if (input.teacherMembershipIds) {
+      params.push(input.teacherMembershipIds);
+      conditions.push(`membership.id = ANY($${params.length}::bigint[])`);
     }
     const scope = buildDataScopeQuery(
       input.scope,
@@ -360,18 +374,45 @@ export class ClassroomAttendanceLinksRepository {
       },
       params.length + 1,
     );
-    conditions.push(scope.sql || 'TRUE');
     params.push(...scope.params);
-    const result = await createSqlQueryExecutor(runner).query<{ classroom_id: string }>(
-      `SELECT classroom.id::text AS classroom_id
-       FROM school_classrooms classroom
-       JOIN schools school ON school.id = classroom.school_id
+    // The scope names classroom columns (grade, room), which only exist inside
+    // the EXISTS — leaving it outside made Postgres reject the whole statement.
+    const insideExists = [
+      ...conditions.filter(
+        (condition) => condition.startsWith('classroom.') || condition.startsWith('assignment.'),
+      ),
+      scope.sql || 'TRUE',
+    ];
+    const outsideExists = conditions.filter(
+      (condition) => !condition.startsWith('classroom.') && !condition.startsWith('assignment.'),
+    );
+    const result = await createSqlQueryExecutor(runner).query<{
+      teacher_membership_id: string;
+    }>(
+      // Selected from the memberships themselves with EXISTS rather than
+      // DISTINCT over a join: Postgres refuses FOR UPDATE alongside DISTINCT,
+      // and the lock is the point — two admins issuing links at once must not
+      // both pass the "already has one?" check.
+      `SELECT membership.id::text AS teacher_membership_id
+       FROM school_teacher_memberships membership
+       JOIN schools school ON school.id = membership.school_id
        JOIN school_terms term
-         ON term.id = classroom.school_term_id AND term.school_id = classroom.school_id
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY classroom.id
+         ON term.school_id = membership.school_id AND term.id = $2
+       WHERE membership.school_id = $1
+         AND EXISTS (
+           SELECT 1
+           FROM classroom_subject_teachers assignment
+           JOIN school_classrooms classroom
+             ON classroom.id = assignment.classroom_id
+            AND classroom.school_id = assignment.school_id
+           WHERE assignment.teacher_membership_id = membership.id
+             AND classroom.school_term_id = term.id
+             AND ${insideExists.join(' AND ')}
+         )
+         AND ${outsideExists.join(' AND ')}
+       ORDER BY membership.id
        LIMIT 501
-       FOR UPDATE OF classroom`,
+       FOR UPDATE OF membership`,
       params,
     );
     return result.rows;
@@ -381,7 +422,7 @@ export class ClassroomAttendanceLinksRepository {
     inputs: Array<{
       schoolId: number;
       schoolTermId: number;
-      classroomId: number;
+      teacherMembershipId: number;
       tokenHash: string;
       tokenEncrypted: string;
       actorId: number;
@@ -391,21 +432,27 @@ export class ClassroomAttendanceLinksRepository {
     if (inputs.length === 0) return [];
     await createSqlQueryExecutor(runner).query(
       `INSERT INTO classroom_attendance_links (
-         school_id, school_term_id, classroom_id, token_hash, token_encrypted,
+         school_id, school_term_id, teacher_membership_id, token_hash, token_encrypted,
          link_status, issued_at, rotated_at, created_by, updated_by
        )
-       SELECT input.school_id, input.school_term_id, input.classroom_id,
+       SELECT input.school_id, input.school_term_id, input.teacher_membership_id,
               input.token_hash, input.token_encrypted,
               'ACTIVE', now(), NULL, input.actor_id, input.actor_id
        FROM jsonb_to_recordset($1::jsonb) AS input(
          school_id integer,
          school_term_id bigint,
-         classroom_id bigint,
+         teacher_membership_id bigint,
          token_hash text,
          token_encrypted text,
          actor_id bigint
        )
-       ON CONFLICT (classroom_id) DO UPDATE
+       -- Re-issuing a teacher's link for the term rotates the token in place
+       -- rather than adding a second live link beside it.
+       -- The predicate has to match the partial index exactly, including the
+       -- NOT NULL that keeps assignments out of it.
+       ON CONFLICT (school_term_id, teacher_membership_id)
+       WHERE link_status = 'ACTIVE' AND teacher_membership_id IS NOT NULL
+       DO UPDATE
        SET token_hash = EXCLUDED.token_hash,
            token_encrypted = EXCLUDED.token_encrypted,
            link_status = 'ACTIVE',
@@ -417,14 +464,13 @@ export class ClassroomAttendanceLinksRepository {
            line_delivery_request_id = NULL,
            line_delivery_last_attempted_at = NULL,
            line_delivered_at = NULL,
-           updated_by = EXCLUDED.updated_by
-       WHERE classroom_attendance_links.link_status = 'INACTIVE'`,
+           updated_by = EXCLUDED.updated_by`,
       [
         JSON.stringify(
           inputs.map((input) => ({
             school_id: input.schoolId,
             school_term_id: input.schoolTermId,
-            classroom_id: input.classroomId,
+            teacher_membership_id: input.teacherMembershipId,
             token_hash: input.tokenHash,
             token_encrypted: input.tokenEncrypted,
             actor_id: input.actorId,
@@ -433,10 +479,497 @@ export class ClassroomAttendanceLinksRepository {
       ],
     );
     const rows = await createSqlQueryExecutor(runner).query<ClassroomLinkRow>(
-      `${this.linkSelect()} WHERE link.classroom_id = ANY($1::bigint[]) ORDER BY link.classroom_id`,
-      [inputs.map((input) => input.classroomId)],
+      `${this.linkSelect()} WHERE link.teacher_membership_id = ANY($1::bigint[])
+         AND link.school_term_id = $2
+       ORDER BY link.teacher_membership_id`,
+      [inputs.map((input) => input.teacherMembershipId), inputs[0]?.schoolTermId],
     );
     return rows.rows;
+  }
+
+  /**
+   * The classroom a student sits in, but only when the teacher teaches it.
+   *
+   * The link used to name one classroom, so "is this student mine" was a
+   * roster check against it. A teacher link names none, so the classroom is
+   * derived from the student and then proven to be one this teacher reaches —
+   * a student in the same school but another teacher's room resolves to
+   * nothing.
+   */
+  async findAuthorizedClassroomForStudent(input: {
+    studentUuid: string;
+    teacherMembershipId: number;
+    schoolTermId: number;
+  }): Promise<number | null> {
+    const result = await queryDataSource<{ classroom_id: string }>(
+      this.dataSource,
+      `SELECT DISTINCT classroom.id::text AS classroom_id
+       FROM student_term student
+       JOIN school_classrooms classroom
+         ON classroom.id = student.classroom_id
+       JOIN classroom_subject_teachers assignment
+         ON assignment.classroom_id = classroom.id
+        AND assignment.school_id = classroom.school_id
+       WHERE student.student_uuid = $1
+         AND assignment.teacher_membership_id = $2
+         AND classroom.school_term_id = $3
+         AND assignment.assignment_status = 'ACTIVE'
+         AND assignment.deleted_at IS NULL
+         AND classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+       LIMIT 1`,
+      [input.studentUuid, input.teacherMembershipId, input.schoolTermId],
+    );
+    const row = result.rows[0];
+    return row ? Number(row.classroom_id) : null;
+  }
+
+  /** Classrooms a teacher reaches this term through their subject assignments. */
+  /**
+   * Classrooms a teacher reaches this term through their subject assignments.
+   *
+   * Returned in the shape the app's ห้องเรียนทั้งหมด cards already use, so the
+   * link's "ห้องเรียนของฉัน" is that page rather than a lookalike. The
+   * personalisation columns come back at their defaults: a link has no account
+   * to have favourited a room or uploaded a cover.
+   */
+  /**
+   * The one room an assignment covers, in the same card shape a teacher link
+   * uses — so the link surface renders one page, not two.
+   *
+   * The subtitle here is the assigned subject alone: whoever picked this up was
+   * asked to cover one lesson, and listing the room's other subjects would read
+   * as an invitation to take those too.
+   */
+  async findAssignmentClassroom(
+    classroomSubjectId: number,
+  ): Promise<Record<string, unknown> | null> {
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `SELECT
+         classroom.id::text AS classroom_id,
+         offering.id::text AS classroom_subject_id,
+         classroom.school_id,
+         classroom.school_term_id::text AS school_term_id,
+         term.academic_year, term.semester,
+         classroom.grade_level_id,
+         grade.label AS grade_label,
+         classroom.legacy_room_number,
+         classroom.room_code,
+         classroom.room_name,
+         classroom.classroom_status,
+         classroom.card_cover_color,
+         classroom.cover_image_storage_key,
+         classroom.cover_image_position_x,
+         classroom.cover_image_position_y,
+         classroom.cover_image_scale,
+         classroom.updated_at AS cover_updated_at,
+         grade.label || '/' || classroom.room_code AS label,
+         COALESCE(roster.student_count, 0)::int AS student_count,
+         subject.name_th AS subject_names,
+         subject.code AS subject_code
+       FROM classroom_subjects offering
+       JOIN school_classrooms classroom
+         ON classroom.id = offering.classroom_id
+        AND classroom.school_id = offering.school_id
+       JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+       JOIN school_terms term
+         ON term.id = classroom.school_term_id AND term.school_id = classroom.school_id
+       JOIN school_subjects school_subject ON school_subject.id = offering.school_subject_id
+       JOIN subjects subject ON subject.id = school_subject.subject_id
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS student_count
+         FROM student_term student
+         WHERE student.classroom_id = classroom.id
+       ) roster ON TRUE
+       WHERE offering.id = $1
+         AND classroom.deleted_at IS NULL`,
+      [classroomSubjectId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Everyone who has opened one link, newest first.
+   *
+   * Read from the audit log rather than a table of its own: opening a link is an
+   * access event, and the audit log is already where this system records those —
+   * append-only, and never rewritten when the link is rotated or closed.
+   */
+  async listLinkOpens(linkId: string): Promise<Array<Record<string, unknown>>> {
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `SELECT
+         log.created_at AS opened_at,
+         log.actor_label AS teacher_name,
+         log.metadata ->> 'authMethod' AS auth_method
+       FROM audit_log log
+       WHERE log.action = 'CLASSROOM_ATTENDANCE_LINK_OPEN'
+         AND log.target_type = 'classroom_attendance_links'
+         AND log.target_id = $1
+       ORDER BY log.created_at DESC
+       LIMIT 200`,
+      [linkId],
+    );
+    return result.rows;
+  }
+
+  /** Every register taken through one link, newest first. */
+  async listLinkAttendanceSessions(linkId: string): Promise<Array<Record<string, unknown>>> {
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `SELECT
+         session.id::text AS session_id,
+         session.attendance_date,
+         session.checking_started_at AS started_at,
+         session.submitted_at,
+         session.status,
+         session.expected_roster_count,
+         session.exception_count,
+         grade.label || '/' || classroom.room_code AS classroom_label,
+         subject.name_th AS subject_name,
+         TRIM(BOTH ' ' FROM COALESCE(started.first_name, '') || ' ' ||
+              COALESCE(started.last_name, '')) AS started_by_name,
+         TRIM(BOTH ' ' FROM COALESCE(submitted.first_name, '') || ' ' ||
+              COALESCE(submitted.last_name, '')) AS submitted_by_name
+       FROM attendance_sessions session
+       JOIN school_classrooms classroom ON classroom.id = session.classroom_id
+       JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+       JOIN classroom_subjects offering ON offering.id = session.classroom_subject_id
+       JOIN school_subjects school_subject ON school_subject.id = offering.school_subject_id
+       JOIN subjects subject ON subject.id = school_subject.subject_id
+       LEFT JOIN school_teacher_memberships started_membership
+         ON started_membership.id = session.started_by_teacher_membership_id
+       LEFT JOIN teachers started ON started.id = started_membership.teacher_id
+       LEFT JOIN school_teacher_memberships submitted_membership
+         ON submitted_membership.id = session.submitted_by_teacher_membership_id
+       LEFT JOIN teachers submitted ON submitted.id = submitted_membership.teacher_id
+       WHERE session.classroom_attendance_link_id = $1
+         AND session.deleted_at IS NULL
+       ORDER BY session.checking_started_at DESC
+       LIMIT 200`,
+      [linkId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * The links themselves, both kinds, newest first.
+   *
+   * `list()` above starts from teachers and answers "who has a link" — the right
+   * question for handing links out, and the wrong one for reviewing what was
+   * issued: an assignment belongs to nobody, so it never appears there. This
+   * starts from the links, so it can show both.
+   */
+  async listIssuedLinks(input: {
+    schoolId: number;
+    schoolTermId: number;
+    kind?: 'TEACHER' | 'ASSIGNMENT';
+    search?: string;
+    page: number;
+    limit: number;
+    scope: DataScope;
+  }): Promise<{ rows: Array<Record<string, unknown>>; total: number }> {
+    const params: unknown[] = [input.schoolId, input.schoolTermId];
+    const conditions = ['link.school_id = $1', 'link.school_term_id = $2'];
+    const scope = buildDataScopeQuery(
+      input.scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+      },
+      params.length + 1,
+    );
+    conditions.push(scope.sql || 'TRUE');
+    params.push(...scope.params);
+    if (input.kind === 'TEACHER') conditions.push('link.teacher_membership_id IS NOT NULL');
+    if (input.kind === 'ASSIGNMENT')
+      conditions.push('link.assigned_classroom_subject_id IS NOT NULL');
+    if (input.search) {
+      params.push(`%${input.search.replace(/[\\%_]/g, (match) => `\\${match}`)}%`);
+      conditions.push(`(
+        TRIM(COALESCE(teacher.first_name, '') || ' ' || COALESCE(teacher.last_name, ''))
+          ILIKE $${params.length} ESCAPE '\\'
+        OR COALESCE(subject.name_th, '') ILIKE $${params.length} ESCAPE '\\'
+        OR COALESCE(grade.label || '/' || classroom.room_code, '') ILIKE $${params.length} ESCAPE '\\'
+      )`);
+    }
+    const from = `
+      FROM classroom_attendance_links link
+      JOIN schools school ON school.id = link.school_id
+      LEFT JOIN school_teacher_memberships membership ON membership.id = link.teacher_membership_id
+      LEFT JOIN teachers teacher ON teacher.id = membership.teacher_id
+      LEFT JOIN school_classrooms classroom ON classroom.id = link.assigned_classroom_id
+      LEFT JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+      LEFT JOIN classroom_subjects offering ON offering.id = link.assigned_classroom_subject_id
+      LEFT JOIN school_subjects school_subject ON school_subject.id = offering.school_subject_id
+      LEFT JOIN subjects subject ON subject.id = school_subject.subject_id
+      WHERE ${conditions.join(' AND ')}`;
+    params.push(input.limit, (input.page - 1) * input.limit);
+    const [rows, total] = await Promise.all([
+      queryDataSource<Record<string, unknown>>(
+        this.dataSource,
+        `SELECT
+           link.id::text AS link_id,
+           link.link_status,
+           link.issued_at,
+           link.last_used_at,
+           link.opens_at,
+           link.expires_at,
+           CASE WHEN link.assigned_classroom_subject_id IS NOT NULL
+                THEN 'ASSIGNMENT' ELSE 'TEACHER' END AS link_kind,
+           TRIM(BOTH ' ' FROM COALESCE(teacher.first_name, '') || ' ' ||
+                COALESCE(teacher.last_name, '')) AS teacher_name,
+           grade.label || '/' || classroom.room_code AS classroom_label,
+           subject.name_th AS subject_name,
+           (SELECT COUNT(*)::int FROM audit_log log
+             WHERE log.action = 'CLASSROOM_ATTENDANCE_LINK_OPEN'
+               AND log.target_type = 'classroom_attendance_links'
+               AND log.target_id = link.id::text) AS open_count,
+           (SELECT COUNT(*)::int FROM attendance_sessions session
+             WHERE session.classroom_attendance_link_id = link.id
+               AND session.deleted_at IS NULL) AS session_count
+         ${from}
+         ORDER BY link.issued_at DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+      ),
+      queryDataSource<{ count: string }>(
+        this.dataSource,
+        `SELECT COUNT(*)::text AS count ${from}`,
+        params.slice(0, params.length - 2),
+      ),
+    ]);
+    return { rows: rows.rows, total: Number(total.rows[0]?.count ?? 0) };
+  }
+
+  /**
+   * One card per lesson this teacher teaches, not per room.
+   *
+   * A teacher can hold two subjects in the same room, so a card per room would
+   * still have to ask which one on the way in — and the link already knows: the
+   * card was the answer. The room repeats across cards on purpose.
+   *
+   * `subject_code` rides along because two offerings in one room can carry the
+   * same subject name (two maths sets, say); the code is what tells them apart,
+   * and the page shows it only when the name alone is ambiguous.
+   */
+  async listTeacherClassrooms(input: {
+    teacherMembershipId: number;
+    schoolTermId: number;
+  }): Promise<Array<Record<string, unknown>>> {
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `SELECT
+         classroom.id::text AS classroom_id,
+         offering.id::text AS classroom_subject_id,
+         classroom.school_id,
+         classroom.school_term_id::text AS school_term_id,
+         term.academic_year, term.semester,
+         classroom.grade_level_id,
+         grade.label AS grade_label,
+         classroom.legacy_room_number,
+         classroom.room_code,
+         classroom.room_name,
+         classroom.classroom_status,
+         classroom.card_cover_color,
+         classroom.cover_image_storage_key,
+         classroom.cover_image_position_x,
+         classroom.cover_image_position_y,
+         classroom.cover_image_scale,
+         classroom.updated_at AS cover_updated_at,
+         grade.label || '/' || classroom.room_code AS label,
+         COALESCE(roster.student_count, 0)::int AS student_count,
+         subject.name_th AS subject_names,
+         subject.code AS subject_code
+       FROM classroom_subject_teachers assignment
+       JOIN classroom_subjects offering
+         ON offering.id = assignment.classroom_subject_id
+       JOIN school_classrooms classroom
+         ON classroom.id = assignment.classroom_id
+        AND classroom.school_id = assignment.school_id
+       JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+       JOIN school_terms term
+         ON term.id = classroom.school_term_id AND term.school_id = classroom.school_id
+       JOIN school_subjects school_subject ON school_subject.id = offering.school_subject_id
+       JOIN subjects subject ON subject.id = school_subject.subject_id
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS student_count
+         FROM student_term student
+         WHERE student.classroom_id = classroom.id
+       ) roster ON TRUE
+       WHERE assignment.teacher_membership_id = $1
+         AND classroom.school_term_id = $2
+         AND assignment.assignment_status = 'ACTIVE'
+         AND assignment.deleted_at IS NULL
+         AND classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+       ORDER BY label, subject.name_th`,
+      [input.teacherMembershipId, input.schoolTermId],
+    );
+    return result.rows;
+  }
+
+  /** The classroom an assignment covers, checked against the actor's scope. */
+  async findAssignableClassroom(
+    input: { classroomId: number; schoolId: number; schoolTermId: number; scope: DataScope },
+    runner: QueryRunner,
+  ): Promise<{ classroom_id: string } | null> {
+    const params: unknown[] = [input.classroomId, input.schoolId, input.schoolTermId];
+    const scope = buildDataScopeQuery(
+      input.scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+        grade: 'classroom.grade_level_id',
+        room: 'classroom.legacy_room_number',
+      },
+      params.length + 1,
+    );
+    params.push(...scope.params);
+    const result = await createSqlQueryExecutor(runner).query<{ classroom_id: string }>(
+      `SELECT classroom.id::text AS classroom_id
+       FROM school_classrooms classroom
+       JOIN schools school ON school.id = classroom.school_id
+       JOIN school_terms term
+         ON term.id = classroom.school_term_id AND term.school_id = classroom.school_id
+       WHERE classroom.id = $1
+         AND classroom.school_id = $2
+         AND classroom.school_term_id = $3
+         AND classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+         AND school.school_status = 'ACTIVE'
+         AND term.status = 'ACTIVE'
+         AND term.deleted_at IS NULL
+         AND ${scope.sql || 'TRUE'}
+       LIMIT 1
+       FOR UPDATE OF classroom`,
+      params,
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * The offering being handed on, proved to belong to the school and, when a
+   * teacher issues it from their own link, to be one they actually teach.
+   */
+  /**
+   * The lessons this teacher may take a register for in one room.
+   *
+   * A room's timetable belongs to the room; what a link grants is this teacher's
+   * share of it. Without this the subject picker on a link offered every subject
+   * the room has, including colleagues' — and nothing downstream said no.
+   */
+  async listTeacherOfferingIds(input: {
+    teacherMembershipId: number;
+    classroomId: number;
+  }): Promise<number[]> {
+    const result = await queryDataSource<{ classroom_subject_id: string }>(
+      this.dataSource,
+      `SELECT assignment.classroom_subject_id::text AS classroom_subject_id
+       FROM classroom_subject_teachers assignment
+       WHERE assignment.teacher_membership_id = $1
+         AND assignment.classroom_id = $2
+         AND assignment.assignment_status = 'ACTIVE'
+         AND assignment.deleted_at IS NULL`,
+      [input.teacherMembershipId, input.classroomId],
+    );
+    return result.rows.map((row) => Number(row.classroom_subject_id));
+  }
+
+  async findAssignableSubject(
+    input: {
+      classroomSubjectId: number;
+      schoolId: number;
+      schoolTermId: number;
+      teacherMembershipId?: number;
+    },
+    runner: QueryRunner,
+  ): Promise<{ classroom_subject_id: string; classroom_id: string } | null> {
+    const params: unknown[] = [input.classroomSubjectId, input.schoolId, input.schoolTermId];
+    let taughtBy = '';
+    if (input.teacherMembershipId) {
+      params.push(input.teacherMembershipId);
+      taughtBy = `AND EXISTS (
+        SELECT 1 FROM classroom_subject_teachers assignment
+        WHERE assignment.classroom_subject_id = offering.id
+          AND assignment.teacher_membership_id = $${params.length}
+          AND assignment.assignment_status = 'ACTIVE'
+          AND assignment.deleted_at IS NULL
+      )`;
+    }
+    const result = await createSqlQueryExecutor(runner).query<{
+      classroom_subject_id: string;
+      classroom_id: string;
+    }>(
+      `SELECT offering.id::text AS classroom_subject_id,
+              offering.classroom_id::text
+       FROM classroom_subjects offering
+       JOIN school_classrooms classroom
+         ON classroom.id = offering.classroom_id AND classroom.school_id = offering.school_id
+       WHERE offering.id = $1
+         AND offering.school_id = $2
+         AND classroom.school_term_id = $3
+         AND offering.offering_status = 'ACTIVE'
+         AND offering.deleted_at IS NULL
+         AND classroom.classroom_status = 'ACTIVE'
+         AND classroom.deleted_at IS NULL
+         ${taughtBy}
+       LIMIT 1`,
+      params,
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Issues an assignment link — a classroom, a window, and nobody's name. */
+  async insertAssignmentLink(
+    input: {
+      schoolId: number;
+      schoolTermId: number;
+      classroomId: number;
+      classroomSubjectId: number;
+      opensAt: string | null;
+      expiresAt: string;
+      note: string | null;
+      tokenHash: string;
+      tokenEncrypted: string;
+      /** Null when a link issued it: there is no account behind a link. */
+      actorId: number | null;
+    },
+    runner: QueryRunner,
+  ): Promise<ClassroomLinkRow> {
+    const inserted = await createSqlQueryExecutor(runner).query<{ id: string }>(
+      `INSERT INTO classroom_attendance_links (
+         school_id, school_term_id, assigned_classroom_id, assigned_classroom_subject_id,
+         opens_at, expires_at, assignment_note,
+         token_hash, token_encrypted, link_status, issued_at, created_by, updated_by
+       ) VALUES ($1, $2, $3, $10, $4, $5, $6, $7, $8, 'ACTIVE', now(), $9, $9)
+       RETURNING id::text`,
+      [
+        input.schoolId,
+        input.schoolTermId,
+        input.classroomId,
+        input.opensAt,
+        input.expiresAt,
+        input.note,
+        input.tokenHash,
+        input.tokenEncrypted,
+        input.actorId,
+        input.classroomSubjectId,
+      ],
+    );
+    const id = inserted.rows[0]?.id;
+    const rows = await createSqlQueryExecutor(runner).query<ClassroomLinkRow>(
+      `${this.linkSelect()} WHERE link.id = $1`,
+      [id],
+    );
+    const row = rows.rows[0];
+    if (!row) throw new Error('assignment link disappeared after insert');
+    return row;
   }
 
   async findById(id: string, runner?: QueryRunner, lock = false): Promise<ClassroomLinkRow | null> {
@@ -461,7 +994,10 @@ export class ClassroomAttendanceLinksRepository {
          AND link.link_status = 'ACTIVE'
          AND school.school_status = 'ACTIVE'
          AND term.status = 'ACTIVE' AND term.deleted_at IS NULL
-         AND classroom.classroom_status = 'ACTIVE' AND classroom.deleted_at IS NULL
+         -- An assignment is only a key between its dates; a standing link has
+         -- no window and is usable for the whole term.
+         AND (link.opens_at IS NULL OR link.opens_at <= now())
+         AND (link.expires_at IS NULL OR link.expires_at > now())
        LIMIT 1`,
       [tokenHash],
     );
@@ -476,7 +1012,10 @@ export class ClassroomAttendanceLinksRepository {
          AND link.link_status = 'ACTIVE'
          AND school.school_status = 'ACTIVE'
          AND term.status = 'ACTIVE' AND term.deleted_at IS NULL
-         AND classroom.classroom_status = 'ACTIVE' AND classroom.deleted_at IS NULL
+         -- An assignment is only a key between its dates; a standing link has
+         -- no window and is usable for the whole term.
+         AND (link.opens_at IS NULL OR link.opens_at <= now())
+         AND (link.expires_at IS NULL OR link.expires_at > now())
        LIMIT 1`,
       [id],
     );
@@ -501,7 +1040,6 @@ export class ClassroomAttendanceLinksRepository {
       `SELECT 1
        FROM classroom_attendance_links link
        JOIN schools school ON school.id = link.school_id
-       JOIN school_classrooms classroom ON classroom.id = link.classroom_id
        WHERE link.id = $1 AND ${scopeQuery.sql || 'TRUE'}
        LIMIT 1`,
       [id, ...scopeQuery.params],

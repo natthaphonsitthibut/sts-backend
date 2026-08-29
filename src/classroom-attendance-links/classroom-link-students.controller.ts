@@ -202,13 +202,11 @@ export class ClassroomLinkStudentsController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const { authorized } = await this.authorizeSession(request, studentId, response);
-    return await this.schoolStructure.createStudentCommentFromLink(
-      authorized.classroomId,
-      studentId,
-      body,
-      { teacherId: authorized.teacherId, displayName: authorized.teacherDisplayName },
-    );
+    const { authorized, classroomId } = await this.authorizeSession(request, studentId, response);
+    return await this.schoolStructure.createStudentCommentFromLink(classroomId, studentId, body, {
+      teacherId: authorized.teacherId,
+      displayName: authorized.teacherDisplayName,
+    });
   }
 
   /**
@@ -256,11 +254,12 @@ export class ClassroomLinkStudentsController {
     const authorized = await this.service.authorizeCheckInSession(
       this.cookies.read(request.headers.cookie),
     );
+    const classroomId = await this.service.resolveStudentClassroom(authorized, studentId);
     await this.exceptionAttendance.assertStudentInClassroom(
       {
         source: 'CLASSROOM_LINK',
         schoolId: authorized.schoolId,
-        classroomId: authorized.classroomId,
+        classroomId,
         actorUserId: null,
         teacherMembershipId: authorized.teacherMembershipId,
         actorLabel: authorized.teacherDisplayName,
@@ -269,6 +268,7 @@ export class ClassroomLinkStudentsController {
     );
     return {
       authorized,
+      classroomId,
       // The classroom bound is the roster check above — it names the exact
       // classroom. The scope carries the school and stops there on purpose:
       // `room_ids` filters on the legacy room number (`RoomID_Onec`), not on a

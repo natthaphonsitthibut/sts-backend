@@ -26,8 +26,8 @@ const LINK: ClassroomLinkRow = {
   issued_at: '2026-08-23T00:00:00.000Z',
   rotated_at: null,
   last_used_at: null,
-  homeroom_teacher_membership_id: '12',
-  homeroom_teacher_name: 'ครูประจำชั้น',
+  teacher_membership_id: '12',
+  teacher_name: 'ครูประจำชั้น',
   line_provider_user_id: 'U123',
   line_friend_state: 'FRIEND',
   line_delivery_teacher_membership_id: null,
@@ -67,7 +67,7 @@ describe('ClassroomAttendanceLinksService', () => {
       withTransaction: jest.fn((callback: (runner: object) => unknown) =>
         Promise.resolve(callback({})),
       ),
-      lockEligibleClassrooms: jest.fn(),
+      lockEligibleTeachers: jest.fn(),
       upsertLink: jest.fn(),
       upsertLinks: jest.fn(),
       findById: jest.fn(),
@@ -150,15 +150,15 @@ describe('ClassroomAttendanceLinksService', () => {
     };
   }
 
-  it('returns an app-served homeroom photo URL without exposing the storage key', async () => {
+  it('returns an app-served teacher photo URL without exposing the storage key', async () => {
     const { service, repository } = setup();
     repository.list.mockResolvedValue({
       rows: [
         {
           ...LINK,
           school_status: 'ACTIVE',
-          homeroom_teacher_id: '7',
-          homeroom_teacher_has_photo: true,
+          teacher_id: '7',
+          teacher_has_photo: true,
           homeroom_teachers: [
             { teacherId: '7', teacherName: 'ครูประจำชั้น', hasPhoto: true, isPrimary: true },
             { teacherId: '8', teacherName: 'ครูร่วม', hasPhoto: false, isPrimary: false },
@@ -178,18 +178,9 @@ describe('ClassroomAttendanceLinksService', () => {
     );
 
     expect(result.data[0]).toMatchObject({
-      homeroomTeacherName: 'ครูประจำชั้น',
-      homeroomTeacherId: '7',
-      homeroomTeacherPhotoUrl: '/api/teacher-profiles/7/photo',
-      homeroomTeachers: [
-        {
-          teacherId: '7',
-          teacherName: 'ครูประจำชั้น',
-          photoUrl: '/api/teacher-profiles/7/photo',
-          isPrimary: true,
-        },
-        { teacherId: '8', teacherName: 'ครูร่วม', photoUrl: null, isPrimary: false },
-      ],
+      teacherName: 'ครูประจำชั้น',
+      teacherId: '7',
+      teacherPhotoUrl: '/api/teacher-profiles/7/photo',
     });
     expect(JSON.stringify(result)).not.toContain('photo_storage_key');
   });
@@ -623,9 +614,9 @@ describe('ClassroomAttendanceLinksService', () => {
     );
   });
 
-  it('creates selected links only from server-scoped active classroom rows', async () => {
+  it('creates selected links only from server-scoped teachers who teach this term', async () => {
     const { service, repository } = setup();
-    repository.lockEligibleClassrooms.mockResolvedValue([{ classroom_id: '30' }]);
+    repository.lockEligibleTeachers.mockResolvedValue([{ teacher_membership_id: '12' }]);
     repository.upsertLinks.mockImplementation(
       (inputs: Array<{ tokenHash: string; tokenEncrypted: string }>) =>
         Promise.resolve([
@@ -634,13 +625,13 @@ describe('ClassroomAttendanceLinksService', () => {
     );
 
     const result = await service.bulkCreate(
-      { schoolId: 10, schoolTermId: 20, classroomIds: [30] },
+      { schoolId: 10, schoolTermId: 20, teacherMembershipIds: [12] },
       ACTOR,
       'https://sts.example',
     );
 
-    expect(repository.lockEligibleClassrooms).toHaveBeenCalledWith(
-      expect.objectContaining({ classroomIds: [30], scope: { school_ids: [10] } }),
+    expect(repository.lockEligibleTeachers).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherMembershipIds: [12], scope: { school_ids: [10] } }),
       expect.anything(),
     );
     expect(result.data).toHaveLength(1);
@@ -655,7 +646,7 @@ describe('ClassroomAttendanceLinksService', () => {
       events.push('commit');
       return result;
     });
-    repository.lockEligibleClassrooms.mockResolvedValue([{ classroom_id: '30' }]);
+    repository.lockEligibleTeachers.mockResolvedValue([{ teacher_membership_id: '12' }]);
     let createdTokenHash = LINK.token_hash;
     let createdTokenEncrypted = LINK.token_encrypted;
     repository.upsertLinks.mockImplementation(
@@ -683,7 +674,7 @@ describe('ClassroomAttendanceLinksService', () => {
     });
 
     await service.bulkCreate(
-      { schoolId: 10, schoolTermId: 20, classroomIds: [30] },
+      { schoolId: 10, schoolTermId: 20, teacherMembershipIds: [12] },
       ACTOR,
       'https://sts.example',
     );

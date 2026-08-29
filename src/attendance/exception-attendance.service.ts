@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   ConflictException,
   Inject,
   Injectable,
@@ -132,7 +133,10 @@ export class ExceptionAttendanceService {
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
     this.assertActorMatches(actor, classroom);
     this.assertOperationalClassroom(classroom);
-    const subjects = await this.repository.listSubjects(actor.classroomId);
+    const allowed = actor.allowedClassroomSubjectIds;
+    const subjects = (await this.repository.listSubjects(actor.classroomId)).filter(
+      (item) => !allowed || allowed.includes(Number(item.classroom_subject_id)),
+    );
     return {
       success: true,
       data: {
@@ -229,6 +233,12 @@ export class ExceptionAttendanceService {
       );
       if (!context) throw new NotFoundException('ไม่พบรายวิชาของห้องเรียน');
       this.assertActorMatches(actor, context);
+      if (
+        actor.allowedClassroomSubjectIds &&
+        !actor.allowedClassroomSubjectIds.includes(dto.classroomSubjectId)
+      ) {
+        throw new ForbiddenException('รายวิชานี้ไม่ได้อยู่ในวิชาที่คุณสอน');
+      }
       this.assertOperationalClassroom(context);
       if (
         !context.starts_on ||

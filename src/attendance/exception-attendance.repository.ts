@@ -265,14 +265,16 @@ export class ExceptionAttendanceRepository {
           attendance_date, period, session_kind, classroom_subject_id,
           status, expected_roster_count, recorded_count,
           exception_count, record_storage_mode, checking_started_at,
-          started_by_teacher_membership_id, created_by, updated_by
+          started_by_teacher_membership_id, created_by, updated_by,
+          classroom_attendance_link_id
         )
         VALUES (
           $1, $2, $3, $4, $5,
           $6, NULL, 'SUBJECT', $7,
           'OPEN', 0, 0,
           0, 'EXCEPTIONS', now(),
-          $8, $9, $9
+          $8, $9, $9,
+          $10
         )
         ON CONFLICT (
           school_term_id, classroom_id, classroom_subject_id, attendance_date
@@ -289,6 +291,7 @@ export class ExceptionAttendanceRepository {
         context.classroom_subject_id,
         input.actor.teacherMembershipId,
         input.actor.actorUserId,
+        input.actor.classroomAttendanceLinkId ?? null,
       ],
     )) as Array<{ id: string }>;
     return rows.length === 1;

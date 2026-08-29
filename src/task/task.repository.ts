@@ -3472,6 +3472,9 @@ export class TaskRepository {
       `
       SELECT
         link.id AS link_id,
+        -- The assignee, so identity verification can require it rather than
+        -- accepting any teacher of the school.
+        link.assigned_teacher_id,
         task.target_school_id
       FROM task_links link
       JOIN tasks task ON task.id = link.task_id AND task.deleted_at IS NULL
