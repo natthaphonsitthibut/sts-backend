@@ -16,6 +16,7 @@ export interface TeacherRow extends Record<string, unknown> {
   teacher_status: TeacherStatus;
   membership_id: string;
   school_id: number;
+  school_name: string | null;
   membership_status: TeacherStatus;
   started_on: string;
   ended_on: string | null;

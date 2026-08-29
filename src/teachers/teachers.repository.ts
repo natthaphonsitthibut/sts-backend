@@ -19,6 +19,7 @@ const TEACHER_SELECT_SQL = `
   teacher.teacher_status,
   membership.id::text AS membership_id,
   membership.school_id,
+  school.name AS school_name,
   membership.membership_status,
   membership.started_on::text,
   membership.ended_on::text,
@@ -107,6 +108,7 @@ export class TeachersRepository {
     const fromSql = `
       FROM school_teacher_memberships membership
       JOIN teachers teacher ON teacher.id = membership.teacher_id
+      LEFT JOIN schools school ON school.id = membership.school_id
       WHERE ${conditions.join(' AND ')}
     `;
 
@@ -149,6 +151,7 @@ export class TeachersRepository {
       JOIN school_teacher_memberships membership
         ON membership.teacher_id = teacher.id
        AND membership.deleted_at IS NULL
+      LEFT JOIN schools school ON school.id = membership.school_id
       WHERE teacher.id = $1 AND teacher.deleted_at IS NULL
       ORDER BY
         CASE WHEN membership.membership_status = 'ACTIVE' THEN 0 ELSE 1 END,
