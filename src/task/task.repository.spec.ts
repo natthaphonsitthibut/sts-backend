@@ -445,10 +445,16 @@ describe('TaskRepository', () => {
       { highAbsentDays: 3 },
     );
 
-    // NOTE remains history-only; a CONCERN wins over a newer WATCH for the same student.
+    // A CONCERN wins over a newer WATCH for the same student. Which levels put
+    // a student on the list is no longer baked into the lateral — every level is
+    // read so all three can be counted, and the default WATCH/CONCERN pair is
+    // applied afterwards as a parameter.
     expect(queries[0].sql).toContain('latest_comment.problem_category_label');
     expect(queries[0].sql).toContain('latest_comment.problem_description');
-    expect(queries[0].sql).toContain("comment.concern_level_code IN ('WATCH', 'CONCERN')");
+    expect(queries[0].sql).not.toContain("comment.concern_level_code IN ('WATCH', 'CONCERN')");
+    // No level filter unless one is asked for: the three level counts have to
+    // add up to the rows on screen.
+    expect(queries[1].sql).not.toContain('concern_level_code =');
     expect(queries[0].sql).toContain(
       'ORDER BY concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
     );
@@ -540,6 +546,7 @@ describe('TaskRepository', () => {
         PENDING_REVIEW: 0,
         STUDENT_NOT_FOUND: 0,
       },
+      concernLevelSummary: { NOTE: 0, WATCH: 0, CONCERN: 0 },
     });
     expect(queryRunner.query).not.toHaveBeenCalled();
   });

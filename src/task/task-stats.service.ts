@@ -237,19 +237,25 @@ export class TaskStatsService {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);
       const thresholds = await this.getRiskDashboardThresholds();
-      const { rows, totalCount, summary, caseStatusSummary, missingProfileCount } =
-        await this.taskRepository.listRiskDashboardStudents(
-          currentActor,
-          {
-            ...filters,
-            riskTier: this.normalizeRiskTier(filters.riskTier),
-            page,
-            limit,
-            sortBy: filters.sortBy ?? 'risk',
-            sortDirection: filters.sortDirection ?? 'desc',
-          },
-          thresholds,
-        );
+      const {
+        rows,
+        totalCount,
+        summary,
+        caseStatusSummary,
+        concernLevelSummary,
+        missingProfileCount,
+      } = await this.taskRepository.listRiskDashboardStudents(
+        currentActor,
+        {
+          ...filters,
+          riskTier: this.normalizeRiskTier(filters.riskTier),
+          page,
+          limit,
+          sortBy: filters.sortBy ?? 'risk',
+          sortDirection: filters.sortDirection ?? 'desc',
+        },
+        thresholds,
+      );
       // 20260821090000-CollapsePermissionsToPages folded the retired
       // `manage-student-observations` id into the `students` page, so the old
       // id no longer exists on any actor and gated the column off for everyone.
@@ -298,12 +304,14 @@ export class TaskStatsService {
             : null,
           concernLevelCode: canViewTeacherComments ? (row.concern_level_code ?? null) : null,
           concernLevelLabel: canViewTeacherComments ? (row.concern_level_label ?? null) : null,
+          commentCount: canViewTeacherComments ? Number(row.comment_count ?? 0) : 0,
           teacherComment: canViewTeacherComments ? (row.teacher_comment ?? null) : null,
         })),
         meta: {
           ...buildPaginationMeta(page, limit, totalCount),
           summary,
           caseStatusSummary,
+          concernLevelSummary,
           thresholds,
         },
       };

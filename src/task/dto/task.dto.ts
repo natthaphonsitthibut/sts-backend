@@ -494,6 +494,8 @@ export const RISK_DASHBOARD_CASE_STATUSES = [
   'RESOLVED',
 ] as const;
 export const RISK_DASHBOARD_STUDENT_GROUPS = ['RISK', 'WATCHLIST'] as const;
+/** Mirrors the classroom_student_comment_concern_levels catalog. */
+export const RISK_DASHBOARD_CONCERN_LEVELS = ['NOTE', 'WATCH', 'CONCERN'] as const;
 
 export class GetRiskDashboardQueryDto extends PaginationQueryDto {
   @IsOptional()
@@ -540,6 +542,10 @@ export class GetRiskDashboardQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(RISK_DASHBOARD_CASE_STATUSES)
   caseStatus?: (typeof RISK_DASHBOARD_CASE_STATUSES)[number];
+
+  @IsOptional()
+  @IsIn(RISK_DASHBOARD_CONCERN_LEVELS)
+  concernLevel?: (typeof RISK_DASHBOARD_CONCERN_LEVELS)[number];
 
   @IsOptional()
   @IsString()
