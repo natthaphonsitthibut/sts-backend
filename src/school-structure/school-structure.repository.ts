@@ -652,7 +652,8 @@ export class SchoolStructureRepository {
       coverImagePositionY: number;
       coverImageScale: number;
     },
-    actorId: number,
+    /** Null when the change came through a link, which holds no user account. */
+    actorId: number | null,
     queryRunner: QueryRunner,
   ): Promise<void> {
     await createSqlQueryExecutor(queryRunner).query(
