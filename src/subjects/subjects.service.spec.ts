@@ -84,8 +84,17 @@ describe('SubjectsService', () => {
       listGradeSubjectClassrooms: jest.fn().mockResolvedValue([
         {
           school_subject_id: '10',
+          classroom_subject_id: '77',
           classroom_id: '42',
           classroom_label: 'อ.1/1',
+          teachers: [
+            {
+              membershipId: '5',
+              teacherId: '9',
+              name: 'ครูสมชาย ใจดี',
+              photoUpdatedAt: '2026-08-30T00:00:00.000Z',
+            },
+          ],
         },
       ]),
       assertGradeClassrooms: jest.fn().mockResolvedValue(true),
@@ -186,7 +195,21 @@ describe('SubjectsService', () => {
       expect.objectContaining({ schoolSubjectId: 10, classroomIds: [42] }),
       expect.anything(),
     ]);
-    expect(result.data.classrooms).toEqual([{ id: 42, label: 'อ.1/1' }]);
+    expect(result.data.classrooms).toEqual([
+      {
+        id: 42,
+        classroomSubjectId: 77,
+        label: 'อ.1/1',
+        teachers: [
+          {
+            membershipId: 5,
+            teacherId: '9',
+            name: 'ครูสมชาย ใจดี',
+            photoUrl: '/api/teacher-profiles/9/photo?v=2026-08-30T00%3A00%3A00.000Z',
+          },
+        ],
+      },
+    ]);
   });
 
   it('rejects a room outside the selected school, term, or grade', async () => {

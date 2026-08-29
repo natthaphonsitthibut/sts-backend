@@ -26,6 +26,7 @@ import type {
   ListSchoolSubjectsQueryDto,
   ListSubjectGradesQueryDto,
   ReplaceClassroomSubjectsDto,
+  SaveClassroomSubjectTeachersDto,
   SaveGradeSchoolSubjectDto,
   UpdateSchoolSubjectDto,
 } from './dto/subjects.dto';
@@ -108,7 +109,20 @@ export class SubjectsService {
       status: row.subject_status,
       classrooms: classrooms.map((classroom) => ({
         id: Number(classroom.classroom_id),
+        classroomSubjectId: Number(classroom.classroom_subject_id),
         label: classroom.classroom_label,
+        teachers: (classroom.teachers ?? []).map((teacher) => ({
+          membershipId: Number(teacher.membershipId),
+          teacherId: teacher.teacherId,
+          name: teacher.name,
+          // Served through the app like every other photo, so the guard runs
+          // before the bytes and private storage stays private.
+          photoUrl: teacher.photoUpdatedAt
+            ? `/api/teacher-profiles/${teacher.teacherId}/photo?v=${encodeURIComponent(
+                new Date(teacher.photoUpdatedAt).toISOString(),
+              )}`
+            : null,
+        })),
       })),
     };
   }
@@ -205,6 +219,45 @@ export class SubjectsService {
       gradeLevelId: query.gradeLevelId,
     });
     return { success: true, data: this.toGradeSchoolSubjectResponse(row, classrooms) };
+  }
+
+  async saveClassroomSubjectTeachers(
+    actor: AuthenticatedRequestUser,
+    payload: SaveClassroomSubjectTeachersDto,
+  ) {
+    await this.assertSchoolAccess(actor, payload.schoolId);
+    // Both id lists are re-read against this school before the write: an actor
+    // who may edit their own school could otherwise post another school's
+    // offering id, or staff their classroom with a teacher who works elsewhere.
+    const offerings = await this.repository.findClassroomSubjectsForTeacherUpdate({
+      classroomSubjectIds: payload.classroomSubjectIds,
+      schoolId: payload.schoolId,
+    });
+    if (offerings.length !== payload.classroomSubjectIds.length) {
+      throw new NotFoundException('ไม่พบรายวิชาของห้องเรียนที่เลือกในโรงเรียนนี้');
+    }
+    const teacherMembershipIds = await this.repository.filterSchoolTeacherMemberships({
+      membershipIds: payload.teacherMembershipIds,
+      schoolId: payload.schoolId,
+    });
+    if (teacherMembershipIds.length !== payload.teacherMembershipIds.length) {
+      throw new BadRequestException('มีครูที่ไม่ได้สังกัดโรงเรียนนี้');
+    }
+    await this.repository.withTransaction(async (queryRunner) => {
+      await this.repository.replaceClassroomSubjectTeachers(
+        {
+          classroomSubjects: offerings.map((offering) => ({
+            id: Number(offering.id),
+            classroomId: Number(offering.classroom_id),
+          })),
+          schoolId: payload.schoolId,
+          teacherMembershipIds,
+          actorId: resolveAuditActorId(actor),
+        },
+        queryRunner,
+      );
+    });
+    return { success: true, data: { updated: offerings.length } };
   }
 
   async saveGradeSchoolSubject(

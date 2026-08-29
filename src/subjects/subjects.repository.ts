@@ -443,13 +443,41 @@ export class SubjectsRepository {
       `
         SELECT
           classroom_subject.school_subject_id::text,
+          classroom_subject.id::text AS classroom_subject_id,
           classroom.id::text AS classroom_id,
-          grade.label || '/' || classroom.room_code AS classroom_label
+          grade.label || '/' || classroom.room_code AS classroom_label,
+          -- Teachers ride along with the offering they belong to: the screen
+          -- lists classrooms per subject, and a second round trip per classroom
+          -- would be one query per row on a grade with a dozen rooms.
+          COALESCE(teachers.assignments, '[]'::json) AS teachers
         FROM classroom_subjects classroom_subject
         JOIN school_classrooms classroom
           ON classroom.id = classroom_subject.classroom_id
          AND classroom.school_id = classroom_subject.school_id
         JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+        LEFT JOIN LATERAL (
+          SELECT json_agg(
+            json_build_object(
+              'membershipId', assignment.teacher_membership_id::text,
+              'teacherId', teacher.id::text,
+              'name', TRIM(teacher.first_name || ' ' || teacher.last_name),
+              -- The version stamp comes along so a replaced photo busts the
+              -- cache on its own, the same shape every other photo url uses.
+              'photoUpdatedAt', CASE
+                WHEN teacher.photo_storage_key IS NOT NULL THEN teacher.updated_at
+                ELSE NULL
+              END
+            )
+            ORDER BY teacher.first_name, teacher.last_name, assignment.id
+          ) AS assignments
+          FROM classroom_subject_teachers assignment
+          JOIN school_teacher_memberships membership
+            ON membership.id = assignment.teacher_membership_id
+          JOIN teachers teacher ON teacher.id = membership.teacher_id
+          WHERE assignment.classroom_subject_id = classroom_subject.id
+            AND assignment.assignment_status = 'ACTIVE'
+            AND assignment.deleted_at IS NULL
+        ) teachers ON TRUE
         WHERE classroom_subject.school_subject_id = ANY($1::bigint[])
           AND classroom_subject.school_id = $2
           AND classroom.school_term_id = $3
@@ -596,6 +624,109 @@ export class SubjectsRepository {
           AND classroom_subject.deleted_at IS NULL
       `,
       [input.schoolSubjectId, input.schoolId, input.termId, input.gradeLevelId, input.actorId],
+    );
+  }
+
+  /**
+   * Offerings a teacher change may touch, checked against the actor's school
+   * before anything is written — an id from the request body is otherwise a
+   * free choice of any classroom in the country.
+   */
+  async findClassroomSubjectsForTeacherUpdate(input: {
+    classroomSubjectIds: number[];
+    schoolId: number;
+  }): Promise<Array<{ id: string; classroom_id: string; school_subject_id: string }>> {
+    if (input.classroomSubjectIds.length === 0) return [];
+    const result = await queryDataSource<{
+      id: string;
+      classroom_id: string;
+      school_subject_id: string;
+    }>(
+      this.dataSource,
+      `
+        SELECT id::text, classroom_id::text, school_subject_id::text
+        FROM classroom_subjects
+        WHERE id = ANY($1::bigint[])
+          AND school_id = $2
+          AND offering_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [input.classroomSubjectIds, input.schoolId],
+    );
+    return result.rows;
+  }
+
+  /** Memberships that are actually this school's, for the same reason. */
+  async filterSchoolTeacherMemberships(input: {
+    membershipIds: number[];
+    schoolId: number;
+  }): Promise<number[]> {
+    if (input.membershipIds.length === 0) return [];
+    const result = await queryDataSource<{ id: string }>(
+      this.dataSource,
+      `
+        SELECT id::text
+        FROM school_teacher_memberships
+        WHERE id = ANY($1::bigint[])
+          AND school_id = $2
+          AND membership_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [input.membershipIds, input.schoolId],
+    );
+    return result.rows.map((row) => Number(row.id));
+  }
+
+  /**
+   * Makes the given teachers the whole set for these offerings.
+   *
+   * Deactivate-then-reactivate rather than delete-then-insert so an assignment
+   * that comes back keeps its audit row and its id; the partial unique index is
+   * on live rows only, so a soft-deleted one would never collide anyway.
+   */
+  async replaceClassroomSubjectTeachers(
+    input: {
+      classroomSubjects: Array<{ id: number; classroomId: number }>;
+      schoolId: number;
+      teacherMembershipIds: number[];
+      actorId: number | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    const offeringIds = input.classroomSubjects.map((offering) => offering.id);
+    if (offeringIds.length === 0) return;
+    await queryRunner.query(
+      `
+        UPDATE classroom_subject_teachers
+        SET assignment_status = 'INACTIVE', updated_by = $3
+        WHERE classroom_subject_id = ANY($1::bigint[])
+          AND NOT (teacher_membership_id = ANY($2::bigint[]))
+          AND assignment_status = 'ACTIVE'
+          AND deleted_at IS NULL
+      `,
+      [offeringIds, input.teacherMembershipIds, input.actorId],
+    );
+    if (input.teacherMembershipIds.length === 0) return;
+    await queryRunner.query(
+      `
+        INSERT INTO classroom_subject_teachers (
+          school_id, classroom_id, classroom_subject_id, teacher_membership_id,
+          assignment_status, created_by, updated_by
+        )
+        SELECT $2::integer, offering.classroom_id, offering.id, membership_id,
+               'ACTIVE', $4::integer, $4::integer
+        FROM unnest($1::bigint[], $5::bigint[]) AS offering(id, classroom_id)
+        CROSS JOIN unnest($3::bigint[]) AS membership_id
+        ON CONFLICT (classroom_subject_id, teacher_membership_id) WHERE deleted_at IS NULL
+        DO UPDATE SET assignment_status = 'ACTIVE', updated_by = EXCLUDED.updated_by
+      `,
+      [
+        offeringIds,
+        input.schoolId,
+        input.teacherMembershipIds,
+        input.actorId,
+        input.classroomSubjects.map((offering) => offering.classroomId),
+      ],
     );
   }
 

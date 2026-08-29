@@ -185,7 +185,9 @@ export class SchoolStructureController {
 
   @Get('teachers/options')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure')
+  // The curriculum screen staffs an offering from this same list, so the page
+  // that renders the picker is what grants it, not the structure page alone.
+  @RequireAnyPermission('manage-school-structure', 'manage-subjects')
   listTeacherOptions(
     @Query() query: ListSchoolTeacherCandidatesDto,
     @CurrentUser() actor: AuthenticatedRequestUser,

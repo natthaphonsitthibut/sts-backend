@@ -137,3 +137,32 @@ export class SaveGradeSchoolSubjectDto extends AddSchoolSubjectDto {
   @Min(1, { each: true })
   classroomIds!: number[];
 }
+
+export class SaveClassroomSubjectTeachersDto {
+  @Transform(({ value }: { value: unknown }) => positiveInteger(value))
+  @IsInt()
+  @Min(1)
+  schoolId!: number;
+
+  /**
+   * The offerings this set applies to. One id changes a single classroom;
+   * the curriculum screen sends every classroom of the subject when the user
+   * asks to staff the whole grade at once, so the two paths are the same call
+   * and cannot drift apart.
+   */
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ArrayUnique()
+  @ArrayMinSize(1, { message: 'กรุณาเลือกห้องเรียนอย่างน้อย 1 ห้อง' })
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  classroomSubjectIds!: number[];
+
+  /** An empty list clears the teachers rather than being rejected. */
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  teacherMembershipIds!: number[];
+}
