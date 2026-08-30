@@ -45,8 +45,6 @@ describe('CaseService', () => {
       | 'listCaseRiskSignals'
       | 'listCaseReferrals'
       | 'listActiveReferralAgencies'
-      | 'claimCaseSlaWarnings'
-      | 'claimCaseSlaBreaches'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
@@ -97,8 +95,6 @@ describe('CaseService', () => {
       listCaseRiskSignals: jest.fn().mockResolvedValue([]),
       listCaseReferrals: jest.fn().mockResolvedValue([]),
       listActiveReferralAgencies: jest.fn().mockResolvedValue([]),
-      claimCaseSlaWarnings: jest.fn().mockResolvedValue([]),
-      claimCaseSlaBreaches: jest.fn().mockResolvedValue([]),
     };
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),

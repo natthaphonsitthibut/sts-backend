@@ -414,6 +414,10 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'consecutiveDays', label: 'จำนวนวันขาดติดต่อกัน' },
     ],
   },
+  // The case SLA reminder is retired: nothing writes these two actions any
+  // more. Their definitions stay because `ACTION_DEFINITIONS[row.action]` has no
+  // fallback, so removing them would break the audit log page for every school
+  // that has a historical SLA row.
   CASE_SLA_WARNING: {
     domain: 'cases',
     label: 'แจ้งเตือน SLA เคส',

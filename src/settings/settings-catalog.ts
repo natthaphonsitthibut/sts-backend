@@ -22,7 +22,6 @@ export interface SystemSettingCatalogEntry {
  * values are validated against the entry before they reach the database.
  */
 const GROUP_CASE_RISK = 'เกณฑ์เปิดเคสและระดับความเสี่ยง';
-const GROUP_CASE_SLA = 'กำหนดเวลาดำเนินการเคส (SLA)';
 const GROUP_ABSENCE_MONITOR = 'รอบการตรวจขาดเรียนอัตโนมัติ';
 const GROUP_RISK_RECALC = 'รอบคำนวณระดับความเสี่ยงประจำวัน';
 
@@ -36,16 +35,6 @@ export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
     group: GROUP_CASE_RISK,
     description:
       'จำนวนวันขาดเรียนหลังปิดเคสล่าสุด (ไม่ต้องติดต่อกัน) ที่ทำให้นักเรียนเป็นความเสี่ยงและเปิดเคสอัตโนมัติ — นับเป็นวันขาดเมื่อไม่เข้าเรียนทุกคาบที่บันทึกในวันนั้น',
-  },
-  {
-    key: 'CASE_SLA_HIGH_DAYS',
-    valueType: 'integer',
-    defaultValue: '3',
-    min: 1,
-    max: 365,
-    group: GROUP_CASE_SLA,
-    description:
-      'เคสที่เปิดอัตโนมัติต้องมีการดำเนินการครั้งแรกภายในกี่วันปฏิทินนับจากวันเปิดเคส (ระบบแจ้งเตือนเมื่อใช้เวลาไปแล้ว 80%)',
   },
   {
     key: 'ALERT_TRIGGER_TYPE',

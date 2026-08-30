@@ -277,10 +277,9 @@ export class AutomationRepository {
           student_address,
           reason_flagged,
           risk_tier,
-          sla_due_at,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN')
         RETURNING id
       `,
       [
@@ -291,7 +290,6 @@ export class AutomationRepository {
         data.studentAddress,
         data.reason,
         data.riskTier,
-        data.slaDueAt.toISOString(),
       ],
     );
 

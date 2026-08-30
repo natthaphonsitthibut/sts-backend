@@ -551,66 +551,6 @@ describe('TaskRepository', () => {
     expect(queryRunner.query).not.toHaveBeenCalled();
   });
 
-  it('claims case SLA warnings at the 80 percent window only once', async () => {
-    const queries: Array<{ sql: string; params?: unknown[] }> = [];
-    const queryRunner = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      release: jest.fn().mockResolvedValue(undefined),
-      query: jest.fn((sql: string, params?: unknown[]) => {
-        queries.push({ sql, params });
-        return { records: [], affected: 0 };
-      }),
-    };
-    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(
-      dataSource as never,
-      undefined as never,
-      undefined as never,
-    );
-    const now = new Date('2026-07-09T00:00:00.000Z');
-
-    await repository.claimCaseSlaWarnings(now);
-
-    expect(queries[0].params).toEqual([now.toISOString()]);
-    expect(queries[0].sql).toContain('SET sla_warning_notified_at = now()');
-    expect(queries[0].sql).toContain('c.sla_warning_notified_at IS NULL');
-    expect(queries[0].sql).toContain('INSERT INTO audit_log');
-    expect(queries[0].sql).toContain('CASE_SLA_WARNING');
-    expect(queries[0].sql).toContain(
-      '$1::timestamptz >= c.created_at + ((c.sla_due_at - c.created_at) * 0.8)',
-    );
-    expect(queries[0].sql).toContain('$1::timestamptz < c.sla_due_at');
-  });
-
-  it('claims breached case SLA rows without requiring a prior warning', async () => {
-    const queries: Array<{ sql: string; params?: unknown[] }> = [];
-    const queryRunner = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      release: jest.fn().mockResolvedValue(undefined),
-      query: jest.fn((sql: string, params?: unknown[]) => {
-        queries.push({ sql, params });
-        return { records: [], affected: 0 };
-      }),
-    };
-    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(
-      dataSource as never,
-      undefined as never,
-      undefined as never,
-    );
-    const now = new Date('2026-07-11T00:00:00.000Z');
-
-    await repository.claimCaseSlaBreaches(now);
-
-    expect(queries[0].params).toEqual([now.toISOString()]);
-    expect(queries[0].sql).toContain('SET sla_breached_notified_at = now()');
-    expect(queries[0].sql).toContain('c.sla_breached_notified_at IS NULL');
-    expect(queries[0].sql).toContain('INSERT INTO audit_log');
-    expect(queries[0].sql).toContain('CASE_SLA_BREACHED');
-    expect(queries[0].sql).toContain('c.sla_due_at < $1::timestamptz');
-    expect(queries[0].sql).not.toContain('sla_warning_notified_at IS NOT NULL');
-  });
-
   it('transitions a case from an active tracking status only', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const executor = {
