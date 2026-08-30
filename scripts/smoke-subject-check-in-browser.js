@@ -336,6 +336,18 @@ async function setAriaSelect(client, label, value) {
   );
 }
 
+/** The three check-in tools live behind one เครื่องมือ button now. */
+async function openCheckInTool(client, label) {
+  await clickButton(client, 'เครื่องมือ');
+  const match = `[...document.querySelectorAll('[role="menuitem"]')]
+    .filter((item) => item.innerText.trim() === ${JSON.stringify(label)} && !item.disabled)`;
+  await waitFor(
+    async () => await evaluate(client, `${match}.length > 0`),
+    `Tool did not become ready: ${label}`,
+  );
+  await evaluate(client, `${match}[0].click()`);
+}
+
 /** Grade and room sit inside the scope dialog, behind its trigger. */
 async function openScopePicker(client) {
   await waitFor(
@@ -623,6 +635,8 @@ async function main() {
   let fixtureOfferingId = null;
   let fixturePhoto = null;
   let fixtureTeacherPhoto = null;
+  let internalAssignmentLinkId = null;
+  let linkAssignmentLinkId = null;
   let allowed;
   let denied;
 
@@ -1287,6 +1301,68 @@ async function main() {
       requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 0,
       'Selecting the first subject started a session before another attendance action',
     );
+
+    // Handing this lesson on, then managing the link from the tab beside the
+    // register — the whole loop the tab exists for, on the staff door.
+    await openCheckInTool(client, 'มอบหมาย');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์มอบหมาย'),
+      'Assignment dialog did not open from the tools menu',
+    );
+    await clickButton(client, 'สร้างลิงก์มอบหมาย');
+    await waitFor(async () => {
+      const [row] = await dataSource.query(
+        `SELECT id::text FROM classroom_attendance_links
+         WHERE assigned_classroom_subject_id = $1
+           AND link_status = 'ACTIVE'
+           AND created_by = $2`,
+        [scope.classroom_subject_id, allowed.id],
+      );
+      internalAssignmentLinkId = row?.id ?? null;
+      return Boolean(row);
+    }, 'Assignment link was not created from the check-in page');
+    await clickButton(client, 'จัดการลิงก์');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          scope.scope_subject_name,
+        ) &&
+        String(await evaluate(client, 'document.body.innerText')).includes('วันหมดอายุ'),
+      'Link management tab did not list the assignment with its window',
+    );
+    // The staff door reads its own account's links, so an assignment issued
+    // from a teacher's link must not appear here — and the other way round.
+    assert(
+      await evaluate(
+        client,
+        `[...document.querySelectorAll('button[aria-label]')].some((item) =>
+          (item.getAttribute('aria-label') ?? '').startsWith('ดูการใช้งานลิงก์'))`,
+      ),
+      'Link management tab did not offer the usage detail action',
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button[aria-label]')]
+        .find((item) => (item.getAttribute('aria-label') ?? '')
+          .startsWith('ดูการใช้งานลิงก์')).click()`,
+    );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return text.includes('การใช้งานลิงก์') && text.includes('ผู้เข้าใช้ลิงก์');
+      },
+      'Usage dialog did not open from the link management tab',
+    );
+    await evaluate(
+      client,
+      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]')?.click()`,
+    );
+    await clickButton(client, 'เช็กชื่อ');
+    await waitFor(
+      async () => (await visibleRowIds(client)).length === rosterCount,
+      'Leaving the link tab did not return to the register',
+    );
     await evaluate(
       client,
       `[...document.querySelectorAll('[data-default-mark][aria-pressed="true"]')]
@@ -1503,6 +1579,102 @@ async function main() {
       'Public classroom-link roster did not render',
     );
     await assertCheckInAvatars(client, '/api/classroom/student-photo');
+
+    // The same loop through the teacher's own door. This is what the issuer
+    // column is for: a teacher standing in a link has no account, so "mine"
+    // can only be answered by the membership recorded on the row.
+    await openCheckInTool(client, 'มอบหมาย');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์มอบหมาย'),
+      'Assignment dialog did not open from the link tools menu',
+    );
+    await clickButton(client, 'สร้างลิงก์มอบหมาย');
+    await waitFor(async () => {
+      const [row] = await dataSource.query(
+        `SELECT id::text, issued_by_teacher_membership_id::text AS issuer, created_by
+         FROM classroom_attendance_links
+         WHERE assigned_classroom_subject_id = $1
+           AND link_status = 'ACTIVE'
+           AND issued_by_teacher_membership_id IS NOT NULL`,
+        [fixtureOfferingId],
+      );
+      if (!row) return false;
+      linkAssignmentLinkId = row.id;
+      assert(
+        row.issuer === String(scope.teacher_membership_id) && row.created_by === null,
+        'Link-issued assignment did not record the teacher membership as its issuer',
+      );
+      return true;
+    }, 'Assignment link was not created from inside the teacher link');
+
+    await clickButton(client, 'จัดการลิงก์');
+    // Asserted on the row itself, not on a column heading: this half of the
+    // smoke runs at a phone width, where the cards stand in for the table.
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return text.includes(subjectName) && text.includes('ใช้งานอยู่');
+      },
+      'Link management tab did not list the assignment inside the teacher link',
+    );
+
+    // Ownership, not scope: the staff account issued one for another lesson in
+    // this same school, and a teacher must not see it here.
+    await clickButton(client, 'ทุกวิชาของฉัน');
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `[...document.querySelectorAll('button[aria-label]')]
+            .filter((item) => (item.getAttribute('aria-label') ?? '')
+              .startsWith('ดูการใช้งานลิงก์') && item.getClientRects().length > 0)
+            .length > 0`,
+        ),
+      'Widening the filter showed no links at all',
+    );
+    const [issuedByThisTeacher] = await dataSource.query(
+      `SELECT COUNT(*)::int AS count
+       FROM classroom_attendance_links
+       WHERE issued_by_teacher_membership_id = $1
+         AND school_term_id = $2`,
+      [scope.teacher_membership_id, scope.school_term_id],
+    );
+    const shownRows = await evaluate(
+      client,
+      `[...document.querySelectorAll('button[aria-label]')]
+        .filter((item) => (item.getAttribute('aria-label') ?? '')
+          .startsWith('ดูการใช้งานลิงก์') && item.getClientRects().length > 0)
+        .length`,
+    );
+    // Exactly the teacher's own, not one more: the staff account issued an
+    // assignment in this same school a moment ago, and scope alone would have
+    // let it through.
+    assert(
+      shownRows === issuedByThisTeacher.count && shownRows > 0,
+      `Teacher link showed ${shownRows} assignments but issued ${issuedByThisTeacher.count}`,
+    );
+
+    // Closing it from here, as the person who issued it.
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button[aria-label]')]
+        .find((item) => (item.getAttribute('aria-label') ?? '').startsWith('ปิดลิงก์')).click()`,
+    );
+    await clickButton(client, 'ปิดลิงก์');
+    await waitFor(async () => {
+      const [row] = await dataSource.query(
+        `SELECT link_status FROM classroom_attendance_links WHERE id = $1`,
+        [linkAssignmentLinkId],
+      );
+      return row?.link_status === 'INACTIVE';
+    }, 'Closing the assignment from the teacher link did not deactivate it');
+
+    await clickButton(client, 'เช็กชื่อ');
+    await waitFor(
+      async () => (await visibleRowIds(client)).length === rosterCount,
+      'Leaving the link tab did not return to the register',
+    );
     await clickButton(client, 'การ์ด');
     await waitFor(
       async () => await evaluate(client, 'Boolean(document.querySelector("[data-active-card=true]"))'),
@@ -1865,6 +2037,19 @@ async function main() {
       if (linkId) {
         await dataSource.query(`DELETE FROM classroom_attendance_links WHERE id = $1`, [
           linkId,
+        ]);
+      }
+      for (const assignmentId of [internalAssignmentLinkId, linkAssignmentLinkId].filter(
+        Boolean,
+      )) {
+        await dataSource.query(
+          `UPDATE attendance_sessions SET classroom_attendance_link_id = NULL
+           WHERE classroom_attendance_link_id = $1`,
+          [assignmentId],
+        );
+        // audit_log is append-only; its rows outlive the link on purpose.
+        await dataSource.query(`DELETE FROM classroom_attendance_links WHERE id = $1`, [
+          assignmentId,
         ]);
       }
       if (fixtureSubjectId) {
