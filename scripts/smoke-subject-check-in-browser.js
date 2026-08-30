@@ -336,6 +336,51 @@ async function setAriaSelect(client, label, value) {
   );
 }
 
+/** Grade and room sit inside the scope dialog, behind its trigger. */
+async function openScopePicker(client) {
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `[...document.querySelectorAll('button')].some((item) =>
+          item.innerText.includes('ขอบเขต') && item.getClientRects().length > 0)`,
+      ),
+    'Scope picker trigger did not render',
+  );
+  await evaluate(
+    client,
+    `[...document.querySelectorAll('button')]
+      .find((item) => item.innerText.includes('ขอบเขต') &&
+        item.getClientRects().length > 0).click()`,
+  );
+  await waitFor(
+    async () =>
+      await evaluate(client, `Boolean(document.querySelector('select[aria-label="ชั้น"]'))`),
+    'Scope picker did not open onto the grade select',
+  );
+}
+
+/** Curriculum subject cards are collapsed until their header is clicked. */
+async function expandSubjectCard(client, subjectName) {
+  const find = `[...document.querySelectorAll('button[aria-expanded]')]
+    .find((item) => item.innerText.includes(${JSON.stringify(subjectName)}))`;
+  await waitFor(
+    async () => await evaluate(client, `Boolean(${find})`),
+    `Subject card did not render: ${subjectName}`,
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const card = ${find};
+      if (card.getAttribute('aria-expanded') !== 'true') card.click();
+    })()`,
+  );
+  await waitFor(
+    async () => await evaluate(client, `${find}.getAttribute('aria-expanded') === 'true'`),
+    `Subject card did not expand: ${subjectName}`,
+  );
+}
+
 async function selectComboboxOption(client, ariaLabel, text) {
   await evaluate(
     client,
@@ -577,6 +622,7 @@ async function main() {
   let fixtureSubjectId = null;
   let fixtureOfferingId = null;
   let fixturePhoto = null;
+  let fixtureTeacherPhoto = null;
   let allowed;
   let denied;
 
@@ -656,9 +702,13 @@ async function main() {
       ) available ON TRUE
       WHERE classroom.classroom_status = 'ACTIVE'
         AND classroom.deleted_at IS NULL
+        -- A standing link is one per teacher per term, so that is what has to
+        -- be free for the fixture insert below, not the room.
         AND NOT EXISTS (
           SELECT 1 FROM classroom_attendance_links link
-          WHERE link.classroom_id = classroom.id
+          WHERE link.teacher_membership_id = membership.id
+            AND link.school_term_id = classroom.school_term_id
+            AND link.link_status = 'ACTIVE'
         )
         AND (
           SELECT count(*)
@@ -723,15 +773,16 @@ async function main() {
 
     const rawToken = generateToken();
     const [link] = await dataSource.query(
+      // A standing link belongs to a teacher now, not to one room.
       `INSERT INTO classroom_attendance_links (
-         school_id, school_term_id, classroom_id, token_hash, token_encrypted,
+         school_id, school_term_id, teacher_membership_id, token_hash, token_encrypted,
          link_status, issued_at, created_by, updated_by
        ) VALUES ($1, $2, $3, $4, $5, 'ACTIVE', now(), $6, $6)
        RETURNING id::text`,
       [
         scope.school_id,
         scope.school_term_id,
-        scope.classroom_id,
+        scope.teacher_membership_id,
         hashToken(rawToken),
         encryption.encrypt(rawToken),
         allowed.id,
@@ -945,6 +996,205 @@ async function main() {
       );
     }
 
+    // Staffing an offering, from the picker down to the row it prints.
+    //
+    // The actor holds `manage-subjects` and not `manage-school-structure`, so
+    // an options endpoint gated on the structure page alone leaves the picker
+    // empty here — which is what the teacher list looked like on this screen.
+    // The teacher holding the link is one of the two, so the lesson created
+    // here is also the lesson their link opens onto further down.
+    const teacherChoices = await dataSource.query(
+      `SELECT membership.id::text AS membership_id,
+              teacher.id::text AS teacher_id,
+              teacher.photo_storage_key,
+              teacher.updated_at,
+              TRIM(teacher.first_name || ' ' || teacher.last_name) AS display_name
+       FROM school_teacher_memberships membership
+       JOIN teachers teacher ON teacher.id = membership.teacher_id
+        AND teacher.teacher_status = 'ACTIVE'
+        AND teacher.deleted_at IS NULL
+       WHERE membership.school_id = $1
+         AND membership.membership_status = 'ACTIVE'
+         AND membership.deleted_at IS NULL
+         AND (membership.id = $2::bigint OR NOT EXISTS (
+           SELECT 1 FROM school_teacher_memberships holder
+           JOIN teachers holder_person ON holder_person.id = holder.teacher_id
+           WHERE holder.id = $2::bigint
+             AND TRIM(holder_person.first_name || ' ' || holder_person.last_name)
+                 = TRIM(teacher.first_name || ' ' || teacher.last_name)
+         ))
+       ORDER BY (membership.id = $2::bigint) DESC, membership.id
+       LIMIT 2`,
+      [scope.school_id, scope.teacher_membership_id],
+    );
+    assert(
+      teacherChoices.length === 2 &&
+        teacherChoices[0].display_name !== teacherChoices[1].display_name,
+      'Fixture school needs two distinguishable active teachers to staff a subject',
+    );
+
+    // One of the two carries a photo, so the row proves the whole chain — the
+    // aggregate carrying the id, the url the service builds, and the guard on
+    // the route that serves it — and not just that a fallback initial renders.
+    const teacherPhotoStorageKey = `teacher-photos/automated-subject-check-in-${suffix}.png`;
+    await storage.save(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlKzJcAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      teacherPhotoStorageKey,
+    );
+    fixtureTeacherPhoto = {
+      teacherId: teacherChoices[0].teacher_id,
+      previousStorageKey: teacherChoices[0].photo_storage_key,
+      previousUpdatedAt: teacherChoices[0].updated_at,
+      storageKey: teacherPhotoStorageKey,
+    };
+    await dataSource.query(`UPDATE teachers SET photo_storage_key = $2 WHERE id = $1`, [
+      fixtureTeacherPhoto.teacherId,
+      teacherPhotoStorageKey,
+    ]);
+
+    await expandSubjectCard(client, subjectName);
+    await clickButton(client, 'กำหนดครู');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('กำหนดครูผู้สอน'),
+      'Teacher dialog did not open',
+    );
+    assert(
+      !String(await evaluate(client, 'document.body.innerText')).includes(
+        'ใช้กับทุกห้องในระดับชั้นนี้',
+      ),
+      'Teacher dialog still offers to overwrite the other rooms of the grade',
+    );
+    // The chevron end of the field, not the text sliver between the chips:
+    // that padding used to swallow the click and the control read as
+    // unpressable.
+    await evaluate(
+      client,
+      `(() => {
+        const input = document.querySelector('input[aria-label="ครูผู้สอน"]');
+        const field = input.parentElement;
+        const rect = field.getBoundingClientRect();
+        field.dispatchEvent(new MouseEvent('click', {
+          bubbles: true,
+          clientX: rect.right - 6,
+          clientY: rect.top + rect.height / 2,
+        }));
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `document.querySelector('input[aria-label="ครูผู้สอน"]')
+            ?.getAttribute('aria-expanded') === 'true'`,
+        ),
+      'Clicking the end of the teacher field did not open its list',
+    );
+    for (const choice of teacherChoices) {
+      await selectComboboxOption(client, 'ครูผู้สอน', choice.display_name);
+    }
+    await clickButton(client, 'บันทึก');
+    await waitFor(async () => {
+      const [row] = await dataSource.query(
+        `SELECT COUNT(*)::int AS staffed
+         FROM classroom_subject_teachers
+         WHERE classroom_subject_id = $1
+           AND assignment_status = 'ACTIVE'
+           AND deleted_at IS NULL`,
+        [fixtureOfferingId],
+      );
+      return row?.staffed === 2;
+    }, 'Both teachers were not saved onto the offering');
+    await waitFor(async () => {
+      const cell = String(await evaluate(client, 'document.body.innerText'));
+      return (
+        cell.includes(teacherChoices[0].display_name) &&
+        cell.includes(teacherChoices[1].display_name) &&
+        !cell.includes('ยังไม่กำหนดครู')
+      );
+    }, 'The offering row did not list both teachers');
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `(() => {
+            const images = [...document.querySelectorAll('img')].filter((image) =>
+              new URL(image.src, location.origin).pathname ===
+                '/api/teacher-profiles/${fixtureTeacherPhoto.teacherId}/photo');
+            return images.length > 0 && images.every((image) =>
+              image.complete && image.naturalWidth > 0);
+          })()`,
+        ),
+      'The offering row did not show the teacher photo',
+    );
+    assert(
+      await evaluate(
+        client,
+        `[...document.querySelectorAll('[data-slot="avatar"]')].length >= 2`,
+      ),
+      'The offering row did not render an avatar per teacher',
+    );
+
+    // The face opens the teacher's record, the same affordance the teacher
+    // directory and the link page use.
+    const teacherAvatarLabel = `เปิดข้อมูลคุณครู ${teacherChoices[0].display_name}`;
+    await evaluate(
+      client,
+      `(() => {
+        const button = [...document.querySelectorAll('button[aria-label]')]
+          .find((item) => item.getAttribute('aria-label') === ${JSON.stringify(teacherAvatarLabel)});
+        if (!button) throw new Error('Teacher avatar button not found');
+        button.click();
+      })()`,
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'location.pathname')).startsWith('/teachers/') &&
+        String(await evaluate(client, 'document.body.innerText')).includes('ข้อมูลทั่วไป'),
+      'Curriculum teacher avatar did not open the teacher profile',
+    );
+    await navigate(
+      client,
+      `${FRONTEND_URL}/curriculum/${scope.grade_level_id}?schoolId=${scope.school_id}`,
+    );
+    await expandSubjectCard(client, subjectName);
+
+    // Opening the same subject for edit. The read behind this screen resolves
+    // one subject by id, and a page size it cannot accept is what turned it
+    // into "ไม่พบรายวิชา".
+    await clickButton(client, 'แก้ไขข้อมูล');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('แก้ไขข้อมูลรายวิชา'),
+      'Curriculum edit form did not open',
+    );
+    await waitFor(
+      async () =>
+        String(
+          await evaluate(
+            client,
+            `(() => {
+              const label = [...document.querySelectorAll('label')]
+                .find((item) => item.textContent.trim().startsWith('รหัสวิชา'));
+              return (label?.control || label?.querySelector('input'))?.value ?? '';
+            })()`,
+          ),
+        ) === subjectCode,
+      'Curriculum edit form did not load the subject it was opened on',
+    );
+    assert(
+      !String(await evaluate(client, 'document.body.innerText')).includes('ไม่พบรายวิชา'),
+      'Curriculum edit form reported the subject as missing',
+    );
+    await clickButton(client, 'ย้อนกลับ');
+    await waitFor(
+      async () => (await evaluate(client, 'location.pathname')) === `/curriculum/${scope.grade_level_id}`,
+      'Curriculum edit form did not return to the grade page',
+    );
+
     assert(
       await evaluate(
         client,
@@ -970,6 +1220,8 @@ async function main() {
       async () => String(await evaluate(client, 'document.body.innerText')).includes('เลือกห้องเรียนเพื่อเริ่มเช็กชื่อ'),
       'Internal check-in page did not render the classroom selector',
     );
+    // Grade and room live behind the scope picker now, not on the page itself.
+    await openScopePicker(client);
     await setAriaSelect(client, 'ชั้น', scope.grade_level_id);
     try {
       await waitFor(
@@ -990,6 +1242,7 @@ async function main() {
       );
     }
     await setAriaSelect(client, 'ห้อง', scope.classroom_id);
+    await clickButton(client, 'เสร็จสิ้น');
     await waitFor(
       async () => await evaluate(client, 'Boolean(document.querySelector(\'button[aria-label="เลือกวันที่เช็กชื่อ"]\'))'),
       'Internal check-in workspace did not open',
@@ -1009,10 +1262,20 @@ async function main() {
     networkRequests.length = 0;
     await markRemainingPresent(client);
     await waitForMarked(client, rosterCount);
-    await clickButton(client, 'ส่งผลเช็กชื่อ');
+    // The subject is required at the submit bar itself: the button stays
+    // disabled and the bar says why, rather than letting the refusal come back
+    // from the server into an alert at the top of the page.
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('กรุณาเลือกวิชา'),
       'Internal check-in did not require a subject on submit',
+    );
+    assert(
+      await evaluate(
+        client,
+        `[...document.querySelectorAll('button')].some((item) =>
+          item.innerText.trim() === 'ส่งผลเช็กชื่อ' && item.disabled)`,
+      ),
+      'Internal check-in offered submit before a subject was selected',
     );
     assert(
       requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 0,
@@ -1190,27 +1453,51 @@ async function main() {
     await navigate(client, `${FRONTEND_URL}/check-in`);
     // Who is signed in reads from the header popover now, not a banner over the
     // work, and the old path redirects to /classroom on the way in.
+    // The link opens onto the teacher's lessons, one card per lesson, and the
+    // register is reached by picking one — the subject is the card, so there is
+    // no subject to choose once inside.
     await waitFor(
-      async () => {
-        const text = String(await evaluate(client, 'document.body.innerText'));
-        return (
-          String(await evaluate(client, 'window.location.pathname')) === '/classroom' &&
-          text.includes('รายชื่อ') &&
-          text.includes('เช็กชื่อ')
-        );
-      },
-      'Verified public classroom session did not open the linked room',
+      async () =>
+        String(await evaluate(client, 'window.location.pathname')) === '/classroom' &&
+        String(await evaluate(client, 'document.body.textContent')).includes(subjectName),
+      'Verified public classroom session did not list the linked lesson',
     );
     assert(
       !(await evaluate(client, `document.body.innerText.includes('เลือกห้องเรียน')`)),
       'Public link exposed a room browser',
     );
+    const lessonPath = `/classroom/check-in/${scope.classroom_id}/${fixtureOfferingId}`;
+    await evaluate(
+      client,
+      `(() => {
+        const card = [...document.querySelectorAll('a')]
+          .find((item) => item.getAttribute('href') === ${JSON.stringify(lessonPath)});
+        if (!card) {
+          throw new Error('Lesson card not found: ' + JSON.stringify(
+            [...document.querySelectorAll('a')].map((item) => item.getAttribute('href')),
+          ));
+        }
+        card.click();
+      })()`,
+    );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          String(await evaluate(client, 'window.location.pathname')).startsWith(
+            '/classroom/check-in/',
+          ) &&
+          text.includes('รายชื่อ') &&
+          text.includes('เช็กชื่อ')
+        );
+      },
+      'Verified public classroom session did not open the linked lesson',
+    );
     await setDatePicker(client, 'เลือกวันที่เช็กชื่อ', scope.check_in_date);
     assert(
-      (await evaluate(client, `document.querySelector('input[aria-label="วิชา"]')?.value ?? ''`)) === '',
-      'Public classroom link defaulted a subject before the teacher selected one',
+      !(await evaluate(client, `Boolean(document.querySelector('input[aria-label="วิชา"]'))`)),
+      'Public classroom link still asked for a subject inside one lesson',
     );
-    await selectComboboxOption(client, 'วิชา', subjectName);
     await waitFor(
       async () => (await visibleRowIds(client)).length === rosterCount,
       'Public classroom-link roster did not render',
@@ -1600,6 +1887,17 @@ async function main() {
       }
       if (fixturePhoto) {
         await restoreStudentPhotoFixture(dataSource, storage, fixturePhoto);
+      }
+      if (fixtureTeacherPhoto) {
+        await dataSource.query(
+          `UPDATE teachers SET photo_storage_key = $2, updated_at = $3 WHERE id = $1`,
+          [
+            fixtureTeacherPhoto.teacherId,
+            fixtureTeacherPhoto.previousStorageKey,
+            fixtureTeacherPhoto.previousUpdatedAt,
+          ],
+        );
+        await storage.delete(fixtureTeacherPhoto.storageKey);
       }
       await dataSource.query(
         `UPDATE users SET status = 'DISABLED', permissions = '[]'::jsonb,
