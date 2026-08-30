@@ -1515,6 +1515,22 @@ async function main() {
       },
       'Usage page did not open from the link management tab',
     );
+    // The breadcrumb row has to lead somewhere. On the staff side the trail
+    // inherited from the app supplies it; the link side had none until this
+    // page named its own parent, and the row rendered empty.
+    assert(
+      await evaluate(
+        client,
+        `(() => {
+          const nav = document.querySelector('nav[aria-label="เส้นทางนำทาง"]');
+          if (!nav) return false;
+          return [...nav.querySelectorAll('a')].some((item) =>
+            item.getAttribute('href')?.startsWith('/attendance'));
+        })()`,
+      ),
+      'Usage page rendered without a breadcrumb leading back into attendance',
+    );
+
     // Back lands on the tab it came from, room and filter intact — the page
     // records the URL it was opened from rather than a fixed destination.
     await clickButton(client, 'ย้อนกลับ');
@@ -1690,6 +1706,37 @@ async function main() {
     assert(
       shownRows === issuedByThisTeacher.count && shownRows > 0,
       `Teacher link showed ${shownRows} assignments but issued ${issuedByThisTeacher.count}`,
+    );
+
+    // The same row on the link side, where the rooms page is the only parent.
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button[aria-label]')]
+        .find((item) => (item.getAttribute('aria-label') ?? '')
+          .startsWith('ดูการใช้งานลิงก์')).click()`,
+    );
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'location.pathname')).startsWith('/classroom/links/'),
+      'Usage page did not open from the teacher link',
+    );
+    assert(
+      await evaluate(
+        client,
+        `(() => {
+          const nav = document.querySelector('nav[aria-label="เส้นทางนำทาง"]');
+          if (!nav) return false;
+          return [...nav.querySelectorAll('a')].some((item) =>
+            item.getAttribute('href') === '/classroom');
+        })()`,
+      ),
+      'Usage page on the link had no breadcrumb back to the rooms page',
+    );
+    await clickButton(client, 'ย้อนกลับ');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes('ทุกวิชาของฉัน'),
+      'Back from the link usage page did not return to the tab',
     );
 
     // Closing it from here, as the person who issued it.
