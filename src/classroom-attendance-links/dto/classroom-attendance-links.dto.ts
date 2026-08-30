@@ -256,6 +256,25 @@ export class UpdateLinkClassroomPresentationDto extends UpdateClassroomPresentat
   classroomId!: number;
 }
 
+/**
+ * The assignments the caller issued, for the tab inside check-in.
+ *
+ * `classroomSubjectId` is the lesson the caller came in from — the tab opens on
+ * it and drops it to show every lesson they issued for this term.
+ */
+export class ListMyAssignmentLinksDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolTermId!: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomSubjectId?: number;
+}
+
 /** Filters for the register of links a school has issued this term. */
 export class ListIssuedClassroomLinksDto {
   @Type(() => Number)

@@ -64,6 +64,8 @@ export class ClassroomAttendanceLinksRepository {
              TRIM(teacher.first_name || ' ' || teacher.last_name) AS teacher_name,
              link.assigned_classroom_id::text,
              link.assigned_classroom_subject_id::text,
+             link.issued_by_teacher_membership_id::text,
+             link.created_by,
              link.opens_at, link.expires_at, link.assignment_note,
              assigned_grade.label || '/' || assigned_classroom.room_code AS assigned_classroom_label,
              assigned_subject.name_th AS assigned_subject_name,
@@ -746,6 +748,78 @@ export class ClassroomAttendanceLinksRepository {
   }
 
   /**
+   * The assignments one person issued, newest first.
+   *
+   * "One person" is the point: this backs the screen where a teacher manages
+   * what *they* handed on, not an audit of the school. Whoever issued it holds
+   * an account (the admin screen) or a membership (their own link), so the
+   * caller says which, and neither can read the other's.
+   *
+   * `classroomSubjectId` narrows it to the lesson the caller came in from; left
+   * off, the answer is every lesson they issued for this term, which is what
+   * the "ทุกวิชาของฉัน" filter asks for.
+   */
+  async listIssuedAssignments(input: {
+    schoolTermId: number;
+    issuedByUserId?: number;
+    issuedByTeacherMembershipId?: number;
+    classroomSubjectId?: number;
+  }): Promise<Array<Record<string, unknown>>> {
+    const params: unknown[] = [input.schoolTermId];
+    const conditions = [
+      'link.school_term_id = $1',
+      'link.assigned_classroom_subject_id IS NOT NULL',
+    ];
+    if (input.issuedByUserId !== undefined) {
+      params.push(input.issuedByUserId);
+      conditions.push(`link.created_by = $${params.length}`);
+    } else if (input.issuedByTeacherMembershipId !== undefined) {
+      params.push(input.issuedByTeacherMembershipId);
+      conditions.push(`link.issued_by_teacher_membership_id = $${params.length}`);
+    } else {
+      // No owner is not "everyone" — it is a caller that forgot to say who it
+      // is, and answering it would hand one teacher another's links.
+      throw new Error('listIssuedAssignments needs an issuer');
+    }
+    if (input.classroomSubjectId !== undefined) {
+      params.push(input.classroomSubjectId);
+      conditions.push(`link.assigned_classroom_subject_id = $${params.length}`);
+    }
+    const result = await queryDataSource<Record<string, unknown>>(
+      this.dataSource,
+      `SELECT
+         link.id::text AS link_id,
+         link.link_status,
+         link.issued_at,
+         link.opens_at,
+         link.expires_at,
+         link.last_used_at,
+         classroom.id::text AS classroom_id,
+         grade.label || '/' || classroom.room_code AS classroom_label,
+         offering.id::text AS classroom_subject_id,
+         subject.name_th AS subject_name,
+         subject.code AS subject_code,
+         (SELECT COUNT(*)::int FROM audit_log log
+           WHERE log.action = 'CLASSROOM_ATTENDANCE_LINK_OPEN'
+             AND log.target_type = 'classroom_attendance_links'
+             AND log.target_id = link.id::text) AS open_count,
+         (SELECT COUNT(*)::int FROM attendance_sessions session
+           WHERE session.classroom_attendance_link_id = link.id
+             AND session.deleted_at IS NULL) AS session_count
+       FROM classroom_attendance_links link
+       JOIN school_classrooms classroom ON classroom.id = link.assigned_classroom_id
+       JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+       JOIN classroom_subjects offering ON offering.id = link.assigned_classroom_subject_id
+       JOIN school_subjects school_subject ON school_subject.id = offering.school_subject_id
+       JOIN subjects subject ON subject.id = school_subject.subject_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY link.issued_at DESC`,
+      params,
+    );
+    return result.rows;
+  }
+
+  /**
    * One card per lesson this teacher teaches, not per room.
    *
    * A teacher can hold two subjects in the same room, so a card per room would
@@ -939,6 +1013,11 @@ export class ClassroomAttendanceLinksRepository {
       tokenEncrypted: string;
       /** Null when a link issued it: there is no account behind a link. */
       actorId: number | null;
+      /**
+       * Set when a teacher issued this from inside their own link, where there
+       * is no account for `actorId` to hold. Exactly one of the two is set.
+       */
+      issuedByTeacherMembershipId?: number | null;
     },
     runner: QueryRunner,
   ): Promise<ClassroomLinkRow> {
@@ -946,8 +1025,9 @@ export class ClassroomAttendanceLinksRepository {
       `INSERT INTO classroom_attendance_links (
          school_id, school_term_id, assigned_classroom_id, assigned_classroom_subject_id,
          opens_at, expires_at, assignment_note,
-         token_hash, token_encrypted, link_status, issued_at, created_by, updated_by
-       ) VALUES ($1, $2, $3, $10, $4, $5, $6, $7, $8, 'ACTIVE', now(), $9, $9)
+         token_hash, token_encrypted, link_status, issued_at, created_by, updated_by,
+         issued_by_teacher_membership_id
+       ) VALUES ($1, $2, $3, $10, $4, $5, $6, $7, $8, 'ACTIVE', now(), $9, $9, $11)
        RETURNING id::text`,
       [
         input.schoolId,
@@ -960,6 +1040,7 @@ export class ClassroomAttendanceLinksRepository {
         input.tokenEncrypted,
         input.actorId,
         input.classroomSubjectId,
+        input.issuedByTeacherMembershipId ?? null,
       ],
     );
     const id = inserted.rows[0]?.id;
@@ -1051,7 +1132,8 @@ export class ClassroomAttendanceLinksRepository {
     id: string,
     tokenHash: string,
     tokenEncrypted: string,
-    actorId: number,
+    /** Null when a link session did it: there is no account behind one. */
+    actorId: number | null,
     runner: QueryRunner,
   ): Promise<void> {
     await createSqlQueryExecutor(runner).query(
@@ -1071,7 +1153,8 @@ export class ClassroomAttendanceLinksRepository {
     );
   }
 
-  async deactivate(id: string, actorId: number, runner: QueryRunner): Promise<void> {
+  /** `actorId` is null when a link session closed it: no account behind one. */
+  async deactivate(id: string, actorId: number | null, runner: QueryRunner): Promise<void> {
     await createSqlQueryExecutor(runner).query(
       `UPDATE classroom_attendance_links
        SET link_status = 'INACTIVE', updated_by = $2

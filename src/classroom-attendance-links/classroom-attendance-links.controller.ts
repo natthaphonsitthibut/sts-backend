@@ -28,6 +28,7 @@ import {
   CurrentUser,
   PermissionsGuard,
   Public,
+  RequireAnyPermission,
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
@@ -40,6 +41,7 @@ import {
   BulkCreateClassroomAttendanceLinksDto,
   ClassroomLinkRosterQueryDto,
   ClassroomLinkStudentPhotoQueryDto,
+  ListMyAssignmentLinksDto,
   SubmitClassroomLinkAttendanceDto,
   CreateLinkAttendanceAssignmentDto,
   CreateAttendanceAssignmentDto,
@@ -83,7 +85,12 @@ export class ClassroomAttendanceLinksAdminController {
     return this.service.list(query, actor);
   }
 
+  // The มอบหมาย button lives on the check-in page, so the check-in permission
+  // is what has to reach this — otherwise the button is offered to someone the
+  // endpoint will refuse. Scope is unchanged: the room still has to be theirs.
   @Post('assignments')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
   async createAssignment(
     @Body() body: CreateAttendanceAssignmentDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -157,6 +164,75 @@ export class ClassroomAttendanceLinksAdminController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.revokeLineGroupInvitation(invitationId, schoolId, actor);
+  }
+
+  /**
+   * The assignments this account issued, for the tab inside check-in.
+   *
+   * Reachable with the check-in page's own permission, not only the
+   * link-management one: the มอบหมาย button lives on that page, and a screen
+   * that lets someone create a link and then refuses to show it back is the
+   * kind of half-permission the owner ruled out. Ownership still gates every
+   * row — this is "what I handed on", never the school's register.
+   */
+  @Get('assignments/mine')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  listMyAssignments(
+    @Query() query: ListMyAssignmentLinksDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listMyAssignments({ kind: 'USER', actor }, query);
+  }
+
+  @Get('assignments/mine/:id/usage')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  myAssignmentUsage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.myAssignmentUsage({ kind: 'USER', actor }, id);
+  }
+
+  @Get('assignments/mine/:id/link')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  myAssignmentLink(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.myAssignmentAccessUrl(
+      { kind: 'USER', actor },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/rotate')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  rotateMyAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.rotateMyAssignment(
+      { kind: 'USER', actor },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/deactivate')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  deactivateMyAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.deactivateMyAssignment({ kind: 'USER', actor }, id);
   }
 
   /** Every link this school has issued this term, teacher links and assignments alike. */
@@ -381,6 +457,93 @@ export class ClassroomCheckInAuthController {
       body,
       resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
     );
+  }
+
+  /**
+   * The assignments this teacher issued from their own link.
+   *
+   * Same rows the admin screen sees through its own door, gated on the
+   * membership on the session rather than on an account. Someone covering an
+   * assignment gets nothing here: their session issued nothing, so the list is
+   * empty by the same rule that hides the มอบหมาย button from them — no extra
+   * branch to keep in step.
+   */
+  @Get('assignments/mine')
+  @ThrottleTeacherAccess()
+  async listMyLinkAssignments(
+    @Query() query: ListMyAssignmentLinksDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.listMyAssignments({ kind: 'LINK', authorized }, query);
+  }
+
+  @Get('assignments/mine/:id/usage')
+  @ThrottleTeacherAccess()
+  async myLinkAssignmentUsage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.myAssignmentUsage({ kind: 'LINK', authorized }, id);
+  }
+
+  @Get('assignments/mine/:id/link')
+  @ThrottleTeacherAccess()
+  async myLinkAssignmentAccessUrl(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.myAssignmentAccessUrl(
+      { kind: 'LINK', authorized },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/rotate')
+  @ThrottleTeacherAccess()
+  async rotateMyLinkAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.rotateMyAssignment(
+      { kind: 'LINK', authorized },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/deactivate')
+  @ThrottleTeacherAccess()
+  async deactivateMyLinkAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.deactivateMyAssignment({ kind: 'LINK', authorized }, id);
   }
 
   /**

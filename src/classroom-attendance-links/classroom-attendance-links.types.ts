@@ -1,3 +1,5 @@
+import type { AuthenticatedRequestUser } from '../auth';
+
 export interface ClassroomLinkRow extends Record<string, unknown> {
   id: string;
   school_id: number;
@@ -11,6 +13,9 @@ export interface ClassroomLinkRow extends Record<string, unknown> {
   teacher_name: string | null;
   assigned_classroom_id: string | null;
   assigned_classroom_subject_id: string | null;
+  /** Set when a teacher issued this assignment from inside their own link. */
+  issued_by_teacher_membership_id: string | null;
+  created_by: number | null;
   assigned_classroom_label: string | null;
   assigned_subject_name: string | null;
   opens_at: Date | string | null;
@@ -117,6 +122,17 @@ export interface ClassroomLinkSession {
   provider: 'GOOGLE' | 'THAID';
   issuedAt: number;
 }
+
+/**
+ * Who is asking about the assignments they issued.
+ *
+ * The admin screen asks as an account and a teacher inside their own link asks
+ * as a membership; both are recorded on the link when it is created, so the
+ * two doors read the same rows through the same code.
+ */
+export type AssignmentIssuer =
+  | { kind: 'USER'; actor: AuthenticatedRequestUser }
+  | { kind: 'LINK'; authorized: AuthorizedClassroomCheckIn };
 
 export interface AuthorizedClassroomCheckIn {
   linkId: string;

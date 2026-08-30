@@ -46,6 +46,7 @@ import {
 } from './classroom-attendance-links.constants';
 import { ClassroomAttendanceLinksRepository } from './classroom-attendance-links.repository';
 import type {
+  AssignmentIssuer,
   ClassroomLinkLineDeliveryFailureCode,
   ClassroomLinkListRow,
   ClassroomLinkRow,
@@ -307,6 +308,182 @@ export class ClassroomAttendanceLinksService {
     };
   }
 
+  /**
+   * Managing the assignments you handed on, from wherever you handed them on.
+   *
+   * The two doors into check-in issue the same kind of link and must be able to
+   * manage the same way, but "yours" means different things behind each: the
+   * admin screen posts as an account, a teacher inside their own link posts as
+   * a membership. Both are carried on the row, so ownership is a column
+   * comparison rather than a trawl through the audit trail.
+   *
+   * Ownership, not scope, is the gate here. A head of department may be in
+   * scope for every link in the school; this screen is still only the ones they
+   * issued, because it sits inside a lesson and answers "what did I hand on".
+   * The school-wide register lives on the link-management page.
+   */
+  async listMyAssignments(
+    issuer: AssignmentIssuer,
+    query: { schoolTermId: number; classroomSubjectId?: number },
+  ) {
+    const rows = await this.repository.listIssuedAssignments({
+      schoolTermId: query.schoolTermId,
+      classroomSubjectId: query.classroomSubjectId,
+      ...(issuer.kind === 'USER'
+        ? { issuedByUserId: this.actorId(issuer.actor) }
+        : { issuedByTeacherMembershipId: Number(issuer.authorized.teacherMembershipId) }),
+    });
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        id: row.link_id as string,
+        linkStatus: row.link_status as string,
+        issuedAt: row.issued_at as Date,
+        opensAt: (row.opens_at as Date | null) ?? null,
+        expiresAt: (row.expires_at as Date | null) ?? null,
+        lastUsedAt: (row.last_used_at as Date | null) ?? null,
+        classroomId: Number(row.classroom_id),
+        classroomLabel: row.classroom_label as string,
+        classroomSubjectId: Number(row.classroom_subject_id),
+        subjectName: row.subject_name as string,
+        subjectCode: row.subject_code as string,
+        openCount: Number(row.open_count ?? 0),
+        sessionCount: Number(row.session_count ?? 0),
+      })),
+    };
+  }
+
+  /** What became of one of your assignments: who opened it, and every register. */
+  async myAssignmentUsage(issuer: AssignmentIssuer, linkId: string) {
+    await this.requireOwnedAssignment(issuer, linkId);
+    const [opens, sessions] = await Promise.all([
+      this.repository.listLinkOpens(linkId),
+      this.repository.listLinkAttendanceSessions(linkId),
+    ]);
+    return {
+      success: true,
+      data: {
+        opens: opens.map((row) => ({
+          openedAt: row.opened_at as Date,
+          teacherName: (row.teacher_name as string | null) ?? 'ไม่ทราบชื่อ',
+          authMethod: (row.auth_method as string | null) ?? null,
+        })),
+        sessions: sessions.map((row) => ({
+          id: row.session_id as string,
+          attendanceDate: row.attendance_date as string,
+          startedAt: row.started_at as Date,
+          submittedAt: (row.submitted_at as Date | null) ?? null,
+          status: row.status as string,
+          classroomLabel: row.classroom_label as string,
+          subjectName: row.subject_name as string,
+          startedByName: (row.started_by_name as string) || null,
+          submittedByName: (row.submitted_by_name as string) || null,
+          expectedRosterCount: Number(row.expected_roster_count ?? 0),
+          exceptionCount: Number(row.exception_count ?? 0),
+        })),
+      },
+    };
+  }
+
+  /** The link itself again, for the person who issued it to share once more. */
+  async myAssignmentAccessUrl(issuer: AssignmentIssuer, linkId: string, baseUrl: string) {
+    const row = await this.requireOwnedAssignment(issuer, linkId);
+    return {
+      success: true,
+      data: {
+        id: row.id,
+        accessUrl: this.accessUrl(baseUrl, this.decryptToken(row.token_encrypted)),
+      },
+    };
+  }
+
+  /** A new token on the same assignment: the old link stops working at once. */
+  async rotateMyAssignment(issuer: AssignmentIssuer, linkId: string, baseUrl: string) {
+    const rawToken = generateToken();
+    await this.repository.withTransaction(async (runner) => {
+      const row = await this.requireOwnedAssignment(issuer, linkId, runner);
+      await this.repository.updateToken(
+        linkId,
+        hashToken(rawToken),
+        this.encryption.encrypt(rawToken),
+        this.issuerActorId(issuer),
+        runner,
+      );
+      await this.auditAssignmentAction('CLASSROOM_ATTENDANCE_LINK_ROTATE', row, issuer, runner);
+    });
+    return { success: true, data: { id: linkId, accessUrl: this.accessUrl(baseUrl, rawToken) } };
+  }
+
+  /** Closing one you issued. Anyone still holding it is refused from now on. */
+  async deactivateMyAssignment(issuer: AssignmentIssuer, linkId: string) {
+    await this.repository.withTransaction(async (runner) => {
+      const row = await this.requireOwnedAssignment(issuer, linkId, runner);
+      await this.repository.deactivate(linkId, this.issuerActorId(issuer), runner);
+      await this.auditAssignmentAction('CLASSROOM_ATTENDANCE_LINK_DEACTIVATE', row, issuer, runner);
+    });
+    return { success: true, data: { id: linkId, status: 'INACTIVE' as const } };
+  }
+
+  /**
+   * The one gate every action above runs through.
+   *
+   * A link that is not an assignment, not yours, or not in your school is the
+   * same answer — not found. Telling the three apart would say whether a link
+   * id exists at all, which is not something either surface needs to know.
+   */
+  private async requireOwnedAssignment(
+    issuer: AssignmentIssuer,
+    linkId: string,
+    runner?: QueryRunner,
+  ): Promise<ClassroomLinkRow> {
+    const row = await this.repository.findById(linkId, runner, Boolean(runner));
+    const owned =
+      row !== null &&
+      row.assigned_classroom_subject_id !== null &&
+      (issuer.kind === 'USER'
+        ? Number(row.created_by) === this.actorId(issuer.actor) &&
+          (await this.repository.isLinkInScope(linkId, this.actorScope(issuer.actor)))
+        : Number(row.issued_by_teacher_membership_id) ===
+            Number(issuer.authorized.teacherMembershipId) &&
+          row.school_id === issuer.authorized.schoolId);
+    if (!owned || !row) throw new NotFoundException('ไม่พบลิงก์มอบหมายที่คุณสร้างไว้');
+    return row;
+  }
+
+  /** Null for a link session: there is no account behind one. */
+  private issuerActorId(issuer: AssignmentIssuer): number | null {
+    return issuer.kind === 'USER' ? this.actorId(issuer.actor) : null;
+  }
+
+  private async auditAssignmentAction(
+    action: Extract<
+      AuditAction,
+      'CLASSROOM_ATTENDANCE_LINK_ROTATE' | 'CLASSROOM_ATTENDANCE_LINK_DEACTIVATE'
+    >,
+    row: ClassroomLinkRow,
+    issuer: AssignmentIssuer,
+    runner: QueryRunner,
+  ): Promise<void> {
+    await this.audit.recordAtomic(
+      {
+        actorUserId: this.issuerActorId(issuer),
+        actorLabel:
+          issuer.kind === 'USER' ? issuer.actor.username : issuer.authorized.teacherDisplayName,
+        action,
+        targetType: 'classroom_attendance_links',
+        targetId: row.id,
+        metadata: {
+          schoolId: row.school_id,
+          classroomSubjectId: Number(row.assigned_classroom_subject_id),
+          issuedByTeacherMembershipId:
+            issuer.kind === 'LINK' ? Number(issuer.authorized.teacherMembershipId) : null,
+        },
+        ip: null,
+      },
+      runner,
+    );
+  }
+
   async issueLineGroupInvitation(
     input: ClassroomLineGroupInvitationDto,
     actor: AuthenticatedRequestUser,
@@ -533,8 +710,10 @@ export class ClassroomAttendanceLinksService {
           note: null,
           tokenHash: hashToken(rawToken),
           tokenEncrypted: this.encryption.encrypt(rawToken),
-          // No account behind a link, so the audit trail carries the teacher.
+          // No account behind a link, so the teacher's membership is what says
+          // who issued this — both on the row and in the audit trail.
           actorId: null,
+          issuedByTeacherMembershipId: Number(authorized.teacherMembershipId),
         },
         runner,
       );
