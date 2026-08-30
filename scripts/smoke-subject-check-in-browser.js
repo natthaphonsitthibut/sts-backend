@@ -782,6 +782,26 @@ async function main() {
       scope.school_id,
     );
     denied = await upsertActor(dataSource, DENIED_USERNAME, ['home'], scope.school_id);
+
+    // Assignment links this smoke issued on an earlier run, if one died before
+    // its cleanup. They would otherwise be counted as "issued by me" further
+    // down and make the ownership assertion meaningless.
+    const staleAssignments = await dataSource.query(
+      `SELECT id::text FROM classroom_attendance_links
+       WHERE assigned_classroom_subject_id IS NOT NULL
+         AND (created_by = $1 OR issued_by_teacher_membership_id = $2)`,
+      [allowed.id, scope.teacher_membership_id],
+    );
+    for (const stale of staleAssignments) {
+      await dataSource.query(
+        `UPDATE attendance_sessions SET classroom_attendance_link_id = NULL
+         WHERE classroom_attendance_link_id = $1`,
+        [stale.id],
+      );
+      await dataSource.query(`DELETE FROM classroom_attendance_links WHERE id = $1`, [
+        stale.id,
+      ]);
+    }
     const allowedCookie = createSessionCookie(cookieService, allowed.id);
     const deniedCookie = createSessionCookie(cookieService, denied.id);
 
@@ -1302,8 +1322,8 @@ async function main() {
       'Selecting the first subject started a session before another attendance action',
     );
 
-    // Handing this lesson on, then managing the link from the tab beside the
-    // register — the whole loop the tab exists for, on the staff door.
+    // Handing this lesson on. Creating has to happen while the register is
+    // still open — a submitted lesson refuses the tools, by the owner's rule.
     await openCheckInTool(client, 'มอบหมาย');
     await waitFor(
       async () =>
@@ -1316,53 +1336,16 @@ async function main() {
         `SELECT id::text FROM classroom_attendance_links
          WHERE assigned_classroom_subject_id = $1
            AND link_status = 'ACTIVE'
-           AND created_by = $2`,
+           AND created_by = $2
+         ORDER BY issued_at DESC
+         LIMIT 1`,
         [scope.classroom_subject_id, allowed.id],
       );
       internalAssignmentLinkId = row?.id ?? null;
       return Boolean(row);
     }, 'Assignment link was not created from the check-in page');
-    await clickButton(client, 'จัดการลิงก์');
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes(
-          scope.scope_subject_name,
-        ) &&
-        String(await evaluate(client, 'document.body.innerText')).includes('วันหมดอายุ'),
-      'Link management tab did not list the assignment with its window',
-    );
-    // The staff door reads its own account's links, so an assignment issued
-    // from a teacher's link must not appear here — and the other way round.
-    assert(
-      await evaluate(
-        client,
-        `[...document.querySelectorAll('button[aria-label]')].some((item) =>
-          (item.getAttribute('aria-label') ?? '').startsWith('ดูการใช้งานลิงก์'))`,
-      ),
-      'Link management tab did not offer the usage detail action',
-    );
-    await evaluate(
-      client,
-      `[...document.querySelectorAll('button[aria-label]')]
-        .find((item) => (item.getAttribute('aria-label') ?? '')
-          .startsWith('ดูการใช้งานลิงก์')).click()`,
-    );
-    await waitFor(
-      async () => {
-        const text = String(await evaluate(client, 'document.body.innerText'));
-        return text.includes('การใช้งานลิงก์') && text.includes('ผู้เข้าใช้ลิงก์');
-      },
-      'Usage dialog did not open from the link management tab',
-    );
-    await evaluate(
-      client,
-      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]')?.click()`,
-    );
-    await clickButton(client, 'เช็กชื่อ');
-    await waitFor(
-      async () => (await visibleRowIds(client)).length === rosterCount,
-      'Leaving the link tab did not return to the register',
-    );
+
+
     await evaluate(
       client,
       `[...document.querySelectorAll('[data-default-mark][aria-pressed="true"]')]
@@ -1490,6 +1473,58 @@ async function main() {
       'Internal check-in did not use exactly start plus submit writes',
     );
 
+    // Managing it from the tab beside the register. Done after the submit so
+    // navigating away cannot disturb the marking invariants asserted above.
+    await clickButton(client, 'จัดการลิงก์');
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          scope.scope_subject_name,
+        ) &&
+        String(await evaluate(client, 'document.body.innerText')).includes('วันหมดอายุ'),
+      'Link management tab did not list the assignment with its window',
+    );
+    assert(
+      await evaluate(
+        client,
+        `[...document.querySelectorAll('button[aria-label]')].some((item) =>
+          (item.getAttribute('aria-label') ?? '').startsWith('ดูการใช้งานลิงก์'))`,
+      ),
+      'Link management tab did not offer the usage detail action',
+    );
+    // A page of its own, not a dialog: one link can collect a fortnight of
+    // openings and a register per lesson, which is more than a box should hold.
+    const linkTabUrl = String(
+      await evaluate(client, 'location.pathname + location.search'),
+    );
+    await evaluate(
+      client,
+      `[...document.querySelectorAll('button[aria-label]')]
+        .find((item) => (item.getAttribute('aria-label') ?? '')
+          .startsWith('ดูการใช้งานลิงก์')).click()`,
+    );
+    await waitFor(
+      async () => {
+        const text = String(await evaluate(client, 'document.body.innerText'));
+        return (
+          String(await evaluate(client, 'location.pathname')) ===
+            `/attendance/check-in/links/${internalAssignmentLinkId}` &&
+          text.includes('การใช้งานลิงก์มอบหมาย') &&
+          text.includes('ผู้เข้าใช้ลิงก์')
+        );
+      },
+      'Usage page did not open from the link management tab',
+    );
+    // Back lands on the tab it came from, room and filter intact — the page
+    // records the URL it was opened from rather than a fixed destination.
+    await clickButton(client, 'ย้อนกลับ');
+    await waitFor(
+      async () =>
+        (await evaluate(client, 'location.pathname + location.search')) === linkTabUrl,
+      'Back from the usage page did not return to the tab it opened from',
+    );
+
+
     await client.call('Network.deleteCookies', {
       name: allowedCookie.name,
       url: BACKEND_URL,
@@ -1596,7 +1631,9 @@ async function main() {
          FROM classroom_attendance_links
          WHERE assigned_classroom_subject_id = $1
            AND link_status = 'ACTIVE'
-           AND issued_by_teacher_membership_id IS NOT NULL`,
+           AND issued_by_teacher_membership_id IS NOT NULL
+         ORDER BY issued_at DESC
+         LIMIT 1`,
         [fixtureOfferingId],
       );
       if (!row) return false;
