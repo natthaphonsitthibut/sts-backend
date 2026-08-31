@@ -772,10 +772,21 @@ async function assertFollowUpInsightValues(client, fixtures) {
     data.unreachableReasons.some((entry) => entry.key === 'UNREACHABLE'),
     'Unsuccessful follow-up reasons did not include the seeded ติดต่อไม่ได้ case',
   );
-  const returned = data.problemByOutcome
-    .flatMap((row) => row.outcomes)
-    .find((outcome) => outcome.key === 'RETURNED_TO_SCHOOL');
-  assert(returned, 'Problem/outcome matrix did not include the seeded closed case');
+  const outcomes = data.problemByOutcome.flatMap((row) => row.outcomes);
+  assert(
+    outcomes.find((outcome) => outcome.key === 'RETURNED_TO_SCHOOL'),
+    'Problem/outcome matrix did not include the seeded closed case',
+  );
+  // Referring closes a case without a resolution outcome, so it used to vanish
+  // from this chart even though the agency it went to was on record.
+  assert(
+    outcomes.find((outcome) => outcome.key === 'REFERRED_AGENCY'),
+    'Problem/outcome matrix dropped the case that was closed by referral',
+  );
+  assert(
+    data.referralFunnel.byAgency.length >= 1,
+    `Referral funnel did not break down by agency: ${JSON.stringify(data.referralFunnel)}`,
+  );
   assert(
     data.referralFunnel.referred >= 1 && data.referralFunnel.accepted >= 1,
     `Referral funnel reported ${JSON.stringify(data.referralFunnel)}`,
@@ -914,7 +925,11 @@ async function seedFollowUpFixtures(dataSource) {
         school.school_id,
         options.caseStatus,
         'AUTOMATED_TEST fixture',
-        options.caseStatus === 'RESOLVED' ? 'CLOSED' : null,
+        options.caseStatus !== 'RESOLVED'
+          ? null
+          : options.referredAgency
+            ? 'REFERRED_AGENCY'
+            : 'CLOSED',
       ],
     );
     caseIds.push(createdCase.id);
@@ -955,16 +970,21 @@ async function seedFollowUpFixtures(dataSource) {
     if (options.caseStatus === 'RESOLVED') {
       const [review] = await dataSource.query(
         `INSERT INTO case_reviews (case_id, review_action, resolution_outcome, reviewed_by, reviewed_at)
-         VALUES ($1, 'CLOSE', $2, 'AUTOMATED_TEST', now())
+         VALUES ($1, $2, $3, 'AUTOMATED_TEST', now())
          RETURNING id`,
-        [createdCase.id, options.resolutionOutcome],
+        [
+          createdCase.id,
+          options.referredAgency ? 'REFER_AGENCY' : 'CLOSE',
+          options.referredAgency ? null : options.resolutionOutcome,
+        ],
       );
       reviewIds.push(review.id);
 
       const [agency] = await dataSource.query(
         `SELECT id FROM referral_agencies WHERE is_active = TRUE ORDER BY id LIMIT 1`,
       );
-      if (agency) {
+      // Only the referred case gets a referral row; a plain close does not.
+      if (agency && options.referredAgency) {
         const [referral] = await dataSource.query(
           `INSERT INTO case_referrals (case_review_id, case_id, referral_agency_id, status_code)
            VALUES ($1, $2, $3, 'ACCEPTED')
@@ -1003,6 +1023,18 @@ async function seedFollowUpFixtures(dataSource) {
     absenceReason: 'PART_TIME_WORK',
     absenceReasonCategory: 'ECONOMIC',
     resolutionOutcome: 'RETURNED_TO_SCHOOL',
+  });
+  // Referring closes the case without a resolution outcome, so this is the case
+  // that proves referred cases still reach the outcome chart.
+  await createFollowUp(students[3], 4, {
+    caseStatus: 'RESOLVED',
+    taskType: 'VISIT',
+    executionOutcome: 'SUCCEEDED',
+    nonFollowUpReason: null,
+    problemCategory: 'HEALTH',
+    absenceReason: 'MINOR_ILLNESS',
+    absenceReasonCategory: 'PERSONAL_FAMILY',
+    referredAgency: true,
   });
 
   const [classroom] = await dataSource.query(

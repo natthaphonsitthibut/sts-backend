@@ -229,6 +229,8 @@ export interface HomeDashboardReferralFunnel {
   referred: number;
   accepted: number;
   pending: number;
+  /** ส่งไปหน่วยงานไหนบ้าง — ข้อมูลที่บันทึกอยู่แล้วตอนกดส่งต่อ */
+  byAgency: HomeDashboardLabelCount[];
 }
 
 /**

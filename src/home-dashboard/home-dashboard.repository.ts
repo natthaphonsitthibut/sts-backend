@@ -1229,7 +1229,19 @@ export class HomeDashboardRepository {
   ): Promise<HomeDashboardProblemOutcomeRow[]> {
     const problemScope = this.buildCaseScopeQuery(actor, filters);
     const outcomeScope = this.buildCaseScopeQuery(actor, filters, problemScope.params.length + 1);
+    const referralScope = this.buildCaseScopeQuery(
+      actor,
+      filters,
+      problemScope.params.length + outcomeScope.params.length + 1,
+    );
     const outcomeWhere = ['c.deleted_at IS NULL', outcomeScope.sql].filter(Boolean).join(' AND ');
+    const referralWhere = [
+      'c.deleted_at IS NULL',
+      `c.completion_outcome_code = 'REFERRED_AGENCY'`,
+      referralScope.sql,
+    ]
+      .filter(Boolean)
+      .join(' AND ');
     const result = await this.query<{
       categoryKey: string;
       categoryLabel: string;
@@ -1247,32 +1259,48 @@ export class HomeDashboardRepository {
           ])}
           ORDER BY c.id, ts.submitted_at DESC NULLS LAST, ts.id DESC
         ),
-        case_outcome AS (
-          SELECT DISTINCT ON (c.id)
-            c.id AS case_id,
-            review.resolution_outcome AS code
+        outcome_sources AS (
+          SELECT c.id AS case_id, review.resolution_outcome AS code, 1 AS priority,
+                 review.reviewed_at AS decided_at
           FROM cases c
           LEFT JOIN schools sc ON sc.id = c.school_id
           JOIN case_reviews review
             ON review.case_id = c.id
            AND review.resolution_outcome IS NOT NULL
           WHERE ${outcomeWhere}
-          ORDER BY c.id, review.reviewed_at DESC NULLS LAST
+          UNION ALL
+          -- Referring a case closes it without asking for a resolution outcome,
+          -- so without this branch every referred case would be missing from the
+          -- chart even though the agency it went to is on record.
+          SELECT c.id, 'REFERRED_AGENCY', 2, c.updated_at
+          FROM cases c
+          LEFT JOIN schools sc ON sc.id = c.school_id
+          WHERE ${referralWhere}
+        ),
+        case_outcome AS (
+          SELECT DISTINCT ON (case_id) case_id, code
+          FROM outcome_sources
+          ORDER BY case_id, priority ASC, decided_at DESC NULLS LAST
         )
         SELECT
           problem.code AS "categoryKey",
           COALESCE(NULLIF(BTRIM(category.label_th), ''), problem.code) AS "categoryLabel",
           outcome.code AS "outcomeKey",
-          COALESCE(NULLIF(BTRIM(resolution.label_th), ''), outcome.code) AS "outcomeLabel",
+          COALESCE(
+            NULLIF(BTRIM(resolution.label_th), ''),
+            NULLIF(BTRIM(completion.label_th), ''),
+            outcome.code
+          ) AS "outcomeLabel",
           COUNT(*)::int AS count
         FROM case_problem problem
         JOIN case_outcome outcome ON outcome.case_id = problem.case_id
         LEFT JOIN follow_up_problem_categories category ON category.code = problem.code
         LEFT JOIN case_resolution_outcomes resolution ON resolution.code = outcome.code
-        GROUP BY problem.code, category.label_th, outcome.code, resolution.label_th
+        LEFT JOIN case_completion_outcomes completion ON completion.code = outcome.code
+        GROUP BY problem.code, category.label_th, outcome.code, resolution.label_th, completion.label_th
         ORDER BY count DESC
       `,
-      [...problemScope.params, ...outcomeScope.params],
+      [...problemScope.params, ...outcomeScope.params, ...referralScope.params],
     );
 
     const rows = new Map<string, HomeDashboardProblemOutcomeRow>();
@@ -1394,10 +1422,39 @@ export class HomeDashboardRepository {
       `,
       scope.params,
     );
+    const agencyScope = this.buildCaseScopeQuery(actor, filters);
+    const agencyWhere = ['c.deleted_at IS NULL', agencyScope.sql].filter(Boolean).join(' AND ');
+    const byAgency = await this.query<{ key: string; label: string; count: number | string }>(
+      `
+        SELECT
+          agency.id::text AS key,
+          agency.agency_name AS label,
+          COUNT(*)::int AS count
+        FROM case_referrals referral
+        JOIN cases c ON c.id = referral.case_id
+        LEFT JOIN schools sc ON sc.id = c.school_id
+        JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+        WHERE ${agencyWhere}
+        GROUP BY agency.id, agency.agency_name
+        ORDER BY count DESC, agency.agency_name ASC
+        LIMIT 6
+      `,
+      agencyScope.params,
+    );
+
     const row = result.rows[0] || {};
     const referred = toNumber(row.referred);
     const accepted = toNumber(row.accepted);
-    return { referred, accepted, pending: Math.max(referred - accepted, 0) };
+    return {
+      referred,
+      accepted,
+      pending: Math.max(referred - accepted, 0),
+      byAgency: byAgency.rows.map((entry) => ({
+        key: String(entry.key),
+        label: String(entry.label),
+        count: toNumber(entry.count),
+      })),
+    };
   }
 
   /** ระดับความเสี่ยงแยกรายชั้น — มุมมองแทนแผนที่เมื่อขอบเขตเหลือโรงเรียนเดียว */

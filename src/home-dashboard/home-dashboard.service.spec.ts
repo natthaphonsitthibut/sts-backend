@@ -69,7 +69,9 @@ function createRepositoryMock(): jest.Mocked<
     getProblemAreaMatrix: jest.fn().mockResolvedValue([]),
     getNonFollowUpReasons: jest.fn().mockResolvedValue([]),
     getOtherProblemDetails: jest.fn().mockResolvedValue(['ครอบครัวย้ายตามงานตามฤดูกาล']),
-    getReferralFunnel: jest.fn().mockResolvedValue({ referred: 0, accepted: 0, pending: 0 }),
+    getReferralFunnel: jest
+      .fn()
+      .mockResolvedValue({ referred: 0, accepted: 0, pending: 0, byAgency: [] }),
     getMonthlySuccessRates: jest.fn().mockResolvedValue([]),
     getCasePipeline: jest.fn().mockResolvedValue({
       OPEN: 1,
