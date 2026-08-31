@@ -68,7 +68,7 @@ function createRepositoryMock(): jest.Mocked<
     getProblemOutcomeMatrix: jest.fn().mockResolvedValue([]),
     getProblemAreaMatrix: jest.fn().mockResolvedValue([]),
     getNonFollowUpReasons: jest.fn().mockResolvedValue([]),
-    getOtherProblemDetails: jest.fn().mockResolvedValue([]),
+    getOtherProblemDetails: jest.fn().mockResolvedValue(['ครอบครัวย้ายตามงานตามฤดูกาล']),
     getReferralFunnel: jest.fn().mockResolvedValue({ referred: 0, accepted: 0, pending: 0 }),
     getMonthlySuccessRates: jest.fn().mockResolvedValue([]),
     getCasePipeline: jest.fn().mockResolvedValue({
@@ -298,6 +298,23 @@ describe('HomeDashboardService', () => {
       pendingStudents: 3,
       recordedStudents: 4,
     });
+  });
+
+  it('keeps follow-up free text inside the school that recorded it', async () => {
+    const repository = createRepositoryMock();
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+    // A globally scoped account reading the whole country.
+    const nationalActor = { ...baseActor, data_scope: { global: true } };
+
+    const national = await service.getFollowUpInsights(nationalActor, {});
+    const school = await service.getFollowUpInsights(nationalActor, { schoolId: 10010002 });
+    // An account that can never see past one school stands inside it already.
+    const lockedToOneSchool = await service.getFollowUpInsights(baseActor, {});
+
+    expect(national.data.otherProblemDetails).toEqual([]);
+    expect(school.data.otherProblemDetails).toEqual(['ครอบครัวย้ายตามงานตามฤดูกาล']);
+    expect(lockedToOneSchool.data.otherProblemDetails).toEqual(['ครอบครัวย้ายตามงานตามฤดูกาล']);
+    expect(repository.getOtherProblemDetails).toHaveBeenCalledTimes(2);
   });
 
   it('drops the area cross-tab once the scope is a single school', async () => {

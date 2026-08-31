@@ -785,8 +785,23 @@ async function assertFollowUpInsightValues(client, fixtures) {
     'Problem/area cross-tab was missing at national scope',
   );
   assert(
-    Array.isArray(data.otherProblemDetails),
-    'Follow-up insights did not expose the free-text behind the "อื่น ๆ" bucket',
+    Array.isArray(data.otherProblemDetails) && data.otherProblemDetails.length === 0,
+    'Nationwide scope leaked the free text recorded about a family',
+  );
+  const schoolScoped = JSON.parse(
+    await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(
+          `${BACKEND_URL}/api/home-dashboard/follow-up-insights?schoolId=`,
+        )} + ${fixtures.schoolId}, { credentials: 'include' });
+        return JSON.stringify(await response.json());
+      })()`,
+    ),
+  );
+  assert(
+    Array.isArray(schoolScoped?.data?.otherProblemDetails),
+    'School scope did not expose the free text behind the "อื่น ๆ" bucket',
   );
   const bodyCopy = await bodyText(client);
   for (const label of ['ปัญหาด้านการเงิน', 'สาเหตุทางเศรษฐกิจ']) {

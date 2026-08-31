@@ -366,7 +366,12 @@ export class HomeDashboardService {
         : Promise.resolve(null),
       this.repository.getNonFollowUpReasons(actor, filters),
       this.repository.getReferralFunnel(actor, filters),
-      this.repository.getOtherProblemDetails(actor, filters),
+      // Free text about a child's family situation only helps the people who
+      // can act on that child. A province- or nationwide reader is making
+      // policy from counts, so they get the count and not the story.
+      this.isSchoolLevelScope(actor, filters)
+        ? this.repository.getOtherProblemDetails(actor, filters)
+        : Promise.resolve([]),
     ]);
 
     const problemCategories = this.mergeProblemCategories(
@@ -429,6 +434,18 @@ export class HomeDashboardService {
     followUpCategories.forEach((entry) => upsert(entry, 'followUp'));
     observationCategories.forEach((entry) => upsert(entry, 'observation'));
     return Array.from(merged.values()).sort((left, right) => right.total - left.total);
+  }
+
+  /**
+   * Whether the reader is standing inside one school — either because they
+   * filtered down to it, or because their account never sees more than that.
+   */
+  private isSchoolLevelScope(
+    actor: HomeDashboardActor,
+    filters: NormalizedHomeDashboardFilters,
+  ): boolean {
+    if (filters.schoolId !== undefined) return true;
+    return actor.data_scope?.school_ids?.length === 1;
   }
 
   /**
