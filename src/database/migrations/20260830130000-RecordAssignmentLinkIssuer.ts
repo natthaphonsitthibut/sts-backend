@@ -59,7 +59,11 @@ export class RecordAssignmentLinkIssuer20260830130000 implements MigrationInterf
       SET issued_by_teacher_membership_id = membership.id
       FROM audit_log entry
       JOIN school_teacher_memberships membership
-        ON membership.id = (entry.metadata ->> 'issuedByTeacherMembershipId')::bigint
+        ON membership.id = CASE
+          WHEN entry.metadata ->> 'issuedByTeacherMembershipId' ~ '^[0-9]+$'
+            THEN (entry.metadata ->> 'issuedByTeacherMembershipId')::bigint
+          ELSE NULL
+        END
       WHERE entry.target_type = 'classroom_attendance_links'
         AND entry.action = 'CLASSROOM_ATTENDANCE_ASSIGNMENT_CREATE'
         AND entry.target_id = link.id::text

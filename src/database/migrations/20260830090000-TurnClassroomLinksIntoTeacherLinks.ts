@@ -50,7 +50,17 @@ export class TurnClassroomLinksIntoTeacherLinks20260830090000 implements Migrati
         DROP CONSTRAINT fk_classroom_attendance_links_teacher,
         DROP COLUMN teacher_membership_id,
         ADD COLUMN classroom_id BIGINT NOT NULL,
-        ADD CONSTRAINT uq_classroom_attendance_links_classroom UNIQUE (classroom_id)
+        ADD CONSTRAINT uq_classroom_attendance_links_classroom UNIQUE (classroom_id),
+        ADD CONSTRAINT fk_classroom_attendance_links_classroom
+          FOREIGN KEY (classroom_id, school_term_id, school_id)
+          REFERENCES school_classrooms(id, school_term_id, school_id)
+          ON DELETE RESTRICT ON UPDATE CASCADE
+    `);
+    await queryRunner.query(`
+      CREATE INDEX idx_classroom_attendance_links_scope
+        ON classroom_attendance_links (
+          school_id, school_term_id, link_status, classroom_id
+        )
     `);
   }
 }
