@@ -5,7 +5,6 @@ import { RedisClientService } from '../redis/redis-client.service';
 /** Short-lived proof that the holder verified a specific teacher identity. */
 export interface TeacherLineBindingSession {
   teacherId: string;
-  invitationId?: string;
   schoolId?: number;
   verificationMethod?: 'GOOGLE' | 'ARAID';
 }

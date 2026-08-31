@@ -21,7 +21,7 @@ import {
   TeacherLineAraIdChallengeTokenDto,
   TeacherLineCallbackDto,
   TeacherLineDevelopmentGoogleDto,
-  TeacherLineInvitationTokenDto,
+  TeacherLineGroupInvitationTokenDto,
 } from './dto/teacher-line.dto';
 import { TeacherLineService } from './teacher-line.service';
 
@@ -49,7 +49,7 @@ export class TeacherLineController {
 
   @Post('araid/verify')
   @ThrottleTeacherAccess()
-  async verifyAraId(@Body() body: TeacherLineInvitationTokenDto, @Req() request: Request) {
+  async verifyAraId(@Body() body: TeacherLineGroupInvitationTokenDto, @Req() request: Request) {
     const profileId = this.araIdSessionCookie.readProfileId(request.headers.cookie);
     if (!profileId) throw new UnauthorizedException('กรุณาเข้าสู่ระบบ AraID');
     return {
@@ -60,7 +60,7 @@ export class TeacherLineController {
 
   @Post('araid/challenge')
   @ThrottleTeacherAccess()
-  async createAraIdChallenge(@Body() body: TeacherLineInvitationTokenDto) {
+  async createAraIdChallenge(@Body() body: TeacherLineGroupInvitationTokenDto) {
     return {
       success: true,
       data: await this.service.createAraIdChallenge(body.token),
@@ -122,27 +122,16 @@ export class TeacherLineController {
 
   @Post('group-invitation/resolve')
   @ThrottleTeacherAccess()
-  async resolveGroupInvitation(@Body() body: TeacherLineInvitationTokenDto) {
+  async resolveGroupInvitation(@Body() body: TeacherLineGroupInvitationTokenDto) {
     return { success: true, data: await this.service.resolveGroupInvitation(body.token) };
   }
 
   @Post('google/start')
   @ThrottleTeacherAccess()
-  async startGroupGoogle(@Body() body: TeacherLineInvitationTokenDto) {
+  async startGroupGoogle(@Body() body: TeacherLineGroupInvitationTokenDto) {
     return {
       success: true,
       data: { authorizationUrl: await this.service.startGroupGoogleAuthorization(body.token) },
-    };
-  }
-
-  @Post('invitation/google/start')
-  @ThrottleTeacherAccess()
-  async startInvitationGoogle(@Body() body: TeacherLineInvitationTokenDto) {
-    return {
-      success: true,
-      data: {
-        authorizationUrl: await this.service.startInvitationGoogleAuthorization(body.token),
-      },
     };
   }
 
@@ -153,20 +142,6 @@ export class TeacherLineController {
       success: true,
       data: {
         authorizationUrl: await this.service.developmentGroupGoogleAuthorization(
-          body.token,
-          body.email,
-        ),
-      },
-    };
-  }
-
-  @Post('invitation/google/development')
-  @ThrottleTeacherAccess()
-  async developmentInvitationGoogle(@Body() body: TeacherLineDevelopmentGoogleDto) {
-    return {
-      success: true,
-      data: {
-        authorizationUrl: await this.service.developmentInvitationGoogleAuthorization(
           body.token,
           body.email,
         ),
@@ -190,12 +165,6 @@ export class TeacherLineController {
     } catch {
       response.redirect(this.service.buildResultUrl('FAILED', null));
     }
-  }
-
-  @Post('invitation/resolve')
-  @ThrottleTeacherAccess()
-  async resolveInvitation(@Body() body: TeacherLineInvitationTokenDto) {
-    return { success: true, data: await this.service.resolveInvitation(body.token) };
   }
 
   /** The proof token stays in the POST body, never browser history or access logs. */

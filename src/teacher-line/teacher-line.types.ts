@@ -25,27 +25,6 @@ export interface TeacherMessagingAccountRow extends Record<string, unknown> {
   verified_at: string;
 }
 
-export interface TeacherLineInvitationRow extends Record<string, unknown> {
-  id: string;
-  teacher_membership_id: string;
-  teacher_id: string;
-  school_id: number;
-  first_name: string;
-  last_name: string;
-  email: string;
-  token_hash: string;
-  issued_by: number;
-  issued_at: string | Date;
-  expires_at: string | Date;
-  consumed_at: string | Date | null;
-  revoked_at: string | Date | null;
-  revoked_by: number | null;
-  revocation_reason: string | null;
-  teacher_status: 'ACTIVE' | 'INACTIVE';
-  membership_status: 'ACTIVE' | 'INACTIVE';
-  membership_deleted_at: string | Date | null;
-}
-
 export interface TeacherLineGroupInvitationRow extends Record<string, unknown> {
   id: string;
   school_id: number;

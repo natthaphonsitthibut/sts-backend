@@ -12,26 +12,6 @@ const TEACHER = {
 
 const IDENTITY = { providerUserId: 'U0000000000000000000000000000001', displayName: 'Somchai' };
 const GROUP_TOKEN = 'b'.repeat(64);
-const INVITATION = {
-  id: '11111111-1111-4111-8111-111111111111',
-  teacher_membership_id: '12',
-  teacher_id: TEACHER.teacher_id,
-  school_id: 10,
-  first_name: TEACHER.first_name,
-  last_name: TEACHER.last_name,
-  email: TEACHER.email,
-  token_hash: 'a'.repeat(64),
-  issued_by: 1,
-  issued_at: new Date(Date.now() - 60_000).toISOString(),
-  expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-  consumed_at: null,
-  revoked_at: null,
-  revoked_by: null,
-  revocation_reason: null,
-  teacher_status: 'ACTIVE',
-  membership_status: 'ACTIVE',
-  membership_deleted_at: null,
-};
 
 const GROUP_INVITATION = {
   id: '22222222-2222-4222-8222-222222222222',
@@ -59,19 +39,10 @@ function createHarness() {
     hasActiveAccountForTeacher: jest.fn().mockResolvedValue(false),
     findActiveAccountByProviderUser: jest.fn().mockResolvedValue(null),
     hasActiveTeacherMembership: jest.fn().mockResolvedValue(true),
-    hasActiveHomeroomTeacherMembership: jest.fn().mockResolvedValue(true),
     unlinkAccount: jest.fn().mockResolvedValue(undefined),
     unlinkActiveAccountForTeacher: jest.fn().mockResolvedValue(true),
     insertAccount: jest.fn().mockResolvedValue('1'),
     updateFriendState: jest.fn().mockResolvedValue(undefined),
-    createInvitation: jest.fn().mockResolvedValue({
-      id: INVITATION.id,
-      expires_at: INVITATION.expires_at,
-    }),
-    findInvitationByTokenHash: jest.fn().mockResolvedValue(INVITATION),
-    findInvitationById: jest.fn().mockResolvedValue(INVITATION),
-    revokeActiveInvitation: jest.fn().mockResolvedValue(true),
-    consumeInvitation: jest.fn().mockResolvedValue(true),
     createGroupInvitation: jest.fn().mockResolvedValue(GROUP_INVITATION),
     findActiveGroupInvitationByTokenHash: jest.fn().mockResolvedValue(GROUP_INVITATION),
     findActiveGroupInvitationForSchool: jest.fn().mockResolvedValue(GROUP_INVITATION),
@@ -147,7 +118,7 @@ function createHarness() {
     araIdService as never,
     araIdChallengeStore as never,
     messaging,
-    { messagingChannelId: '2000000002', invitationTtlHours: 24 } as never,
+    { messagingChannelId: '2000000002' } as never,
     { frontendBaseUrl: 'https://sts.test' } as never,
     google as never,
     googleStates as never,
@@ -214,7 +185,7 @@ describe('TeacherLineService', () => {
     );
   });
 
-  it('accepts Google only when it resolves to an active homeroom teacher in the link school', async () => {
+  it('accepts Google when it resolves to an active teacher in the link school', async () => {
     const { service, repository, sessionStore, googleStates } = createHarness();
     googleStates.consume.mockImplementation((flow: string) =>
       flow === 'teacher-line-group'
@@ -242,7 +213,7 @@ describe('TeacherLineService', () => {
     });
   });
 
-  it('uses an entered local email for shared LINE verification with homeroom scope', async () => {
+  it('uses an entered local email for shared LINE verification with school scope', async () => {
     const { service, google, repository, sessionStore } = createHarness();
 
     await expect(
@@ -261,7 +232,7 @@ describe('TeacherLineService', () => {
     });
   });
 
-  it('rejects an entered local email that is not an active homeroom teacher', async () => {
+  it('rejects an entered local email that is not an active school teacher', async () => {
     const { service, repository } = createHarness();
     repository.findActiveTeacherByEmail.mockResolvedValue(null);
 
@@ -270,26 +241,7 @@ describe('TeacherLineService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('keeps an entered local email scoped to the owner of an individual LINE invitation', async () => {
-    const { service, repository, sessionStore } = createHarness();
-
-    await expect(
-      service.developmentInvitationGoogleAuthorization('a'.repeat(64), 'somchai@school.ac.th'),
-    ).resolves.toBe('https://access.line.me/authorize');
-
-    expect(repository.findActiveTeacherByEmail).toHaveBeenCalledWith(
-      TEACHER.email,
-      INVITATION.school_id,
-    );
-    expect(sessionStore.createBindingSession).toHaveBeenCalledWith({
-      teacherId: TEACHER.teacher_id,
-      invitationId: INVITATION.id,
-      schoolId: INVITATION.school_id,
-      verificationMethod: 'GOOGLE',
-    });
-  });
-
-  it('rejects a Google account that is not an active homeroom teacher in the link school', async () => {
+  it('rejects a Google account that is not an active teacher in the link school', async () => {
     const { service, repository, googleStates } = createHarness();
     googleStates.consume.mockImplementation((flow: string) =>
       flow === 'teacher-line-group'
@@ -470,42 +422,6 @@ describe('TeacherLineService', () => {
     expect(repository.unlinkAccount).not.toHaveBeenCalled();
     expect(repository.insertAccount).not.toHaveBeenCalled();
     expect(sessionStore.clearBindingSession).toHaveBeenCalledWith('binding-token');
-  });
-
-  it('issues a scoped invitation while persisting only its hash', async () => {
-    const { service, repository } = createHarness();
-
-    const result = await service.issueInvitation(
-      {
-        teacherMembershipId: 12,
-        teacherId: TEACHER.teacher_id,
-        issuedBy: 1,
-        baseUrl: 'https://sts.test',
-      },
-      {} as QueryRunner,
-    );
-
-    const url = new URL(result.url);
-    const rawToken = new URLSearchParams(url.hash.slice(1)).get('token');
-    expect(rawToken).toMatch(/^[0-9a-f]{64}$/);
-    const [createInput] = repository.createInvitation.mock.calls[0] as unknown as [
-      { teacherMembershipId: number; issuedBy: number; tokenHash: string },
-      QueryRunner,
-    ];
-    expect(createInput.teacherMembershipId).toBe(12);
-    expect(createInput.issuedBy).toBe(1);
-    expect(createInput.tokenHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(createInput.tokenHash).not.toBe(rawToken);
-  });
-
-  it('resolves an invitation with a masked email and no token fields', async () => {
-    const { service } = createHarness();
-
-    await expect(service.resolveInvitation('b'.repeat(64))).resolves.toEqual({
-      teacherName: 'สมชาย ใจดี',
-      maskedEmail: 's***@school.ac.th',
-      expiresAt: INVITATION.expires_at,
-    });
   });
 
   it('treats a replayed callback as expired instead of binding again', async () => {

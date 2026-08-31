@@ -12,14 +12,14 @@ export class StartTeacherLineAuthorizationDto {
   token!: string;
 }
 
-export class TeacherLineInvitationTokenDto {
+export class TeacherLineGroupInvitationTokenDto {
   @Transform(trimText)
   @IsString()
   @Matches(/^[0-9a-f]{64}$/i, { message: 'ลิงก์ยืนยัน LINE ไม่ถูกต้อง' })
   token!: string;
 }
 
-export class TeacherLineDevelopmentGoogleDto extends TeacherLineInvitationTokenDto {
+export class TeacherLineDevelopmentGoogleDto extends TeacherLineGroupInvitationTokenDto {
   @Transform(trimText)
   @IsString()
   @IsEmail({}, { message: 'รูปแบบอีเมลไม่ถูกต้อง' })

@@ -6,7 +6,6 @@ import type {
   TeacherLineCitizenIdentityRow,
   TeacherLineGroupInvitationRow,
   TeacherLineIdentityRow,
-  TeacherLineInvitationRow,
   TeacherMessagingAccountRow,
 } from './teacher-line.types';
 
@@ -254,19 +253,6 @@ export class TeacherLineRepository {
           AND EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
-            JOIN classroom_homeroom_teacher_assignments homeroom
-              ON homeroom.teacher_membership_id = membership.id
-             AND homeroom.school_id = membership.school_id
-            JOIN school_classrooms classroom
-              ON classroom.id = homeroom.classroom_id
-             AND classroom.school_id = homeroom.school_id
-             AND classroom.classroom_status = 'ACTIVE'
-             AND classroom.deleted_at IS NULL
-            JOIN school_terms term
-              ON term.id = classroom.school_term_id
-             AND term.school_id = classroom.school_id
-             AND term.status = 'ACTIVE'
-             AND term.deleted_at IS NULL
             WHERE membership.teacher_id = teacher.id
               AND membership.school_id = $2
               AND membership.membership_status = 'ACTIVE'
@@ -296,19 +282,6 @@ export class TeacherLineRepository {
           AND EXISTS (
             SELECT 1
             FROM school_teacher_memberships membership
-            JOIN classroom_homeroom_teacher_assignments homeroom
-              ON homeroom.teacher_membership_id = membership.id
-             AND homeroom.school_id = membership.school_id
-            JOIN school_classrooms classroom
-              ON classroom.id = homeroom.classroom_id
-             AND classroom.school_id = homeroom.school_id
-             AND classroom.classroom_status = 'ACTIVE'
-             AND classroom.deleted_at IS NULL
-            JOIN school_terms term
-              ON term.id = classroom.school_term_id
-             AND term.school_id = classroom.school_id
-             AND term.status = 'ACTIVE'
-             AND term.deleted_at IS NULL
             WHERE membership.teacher_id = teacher.id
               AND membership.school_id = $2
               AND membership.membership_status = 'ACTIVE'
@@ -371,152 +344,6 @@ export class TeacherLineRepository {
       [teacherId, providerChannelId],
     );
     return result.rows.length > 0;
-  }
-
-  async createInvitation(
-    input: {
-      teacherMembershipId: number;
-      tokenHash: string;
-      issuedBy: number;
-      expiresAt: Date;
-    },
-    queryRunner: QueryRunner,
-  ): Promise<{ id: string; expires_at: Date | string }> {
-    const executor = this.executor(queryRunner);
-    await executor.query(
-      `
-        UPDATE teacher_line_invitations
-        SET revoked_at = now(),
-            revoked_by = $2,
-            revocation_reason = 'ROTATED_BY_NEW_INVITATION',
-            updated_at = now()
-        WHERE teacher_membership_id = $1
-          AND consumed_at IS NULL
-          AND revoked_at IS NULL
-      `,
-      [input.teacherMembershipId, input.issuedBy],
-    );
-    const result = await executor.query<{ id: string; expires_at: Date | string }>(
-      `
-        INSERT INTO teacher_line_invitations (
-          teacher_membership_id, token_hash, issued_by, expires_at
-        )
-        VALUES ($1, $2, $3, $4)
-        RETURNING id::text, expires_at
-      `,
-      [input.teacherMembershipId, input.tokenHash, input.issuedBy, input.expiresAt],
-    );
-    return result.rows[0];
-  }
-
-  async findInvitationByTokenHash(
-    tokenHash: string,
-    queryRunner?: QueryRunner,
-    lock = false,
-  ): Promise<TeacherLineInvitationRow | null> {
-    const result = await this.executor(queryRunner).query<TeacherLineInvitationRow>(
-      `
-        SELECT
-          invitation.id::text,
-          invitation.teacher_membership_id::text,
-          membership.teacher_id::text,
-          membership.school_id,
-          teacher.first_name,
-          teacher.last_name,
-          teacher.email,
-          invitation.token_hash,
-          invitation.issued_by,
-          invitation.issued_at,
-          invitation.expires_at,
-          invitation.consumed_at,
-          invitation.revoked_at,
-          invitation.revoked_by,
-          invitation.revocation_reason,
-          teacher.teacher_status,
-          membership.membership_status,
-          membership.deleted_at AS membership_deleted_at
-        FROM teacher_line_invitations invitation
-        JOIN school_teacher_memberships membership
-          ON membership.id = invitation.teacher_membership_id
-        JOIN teachers teacher ON teacher.id = membership.teacher_id
-        WHERE invitation.token_hash = $1
-        ${lock ? 'FOR UPDATE OF invitation' : ''}
-      `,
-      [tokenHash],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async findInvitationById(
-    invitationId: string,
-    queryRunner: QueryRunner,
-    lock = false,
-  ): Promise<TeacherLineInvitationRow | null> {
-    const result = await this.executor(queryRunner).query<TeacherLineInvitationRow>(
-      `
-        SELECT
-          invitation.id::text,
-          invitation.teacher_membership_id::text,
-          membership.teacher_id::text,
-          membership.school_id,
-          teacher.first_name,
-          teacher.last_name,
-          teacher.email,
-          invitation.token_hash,
-          invitation.issued_by,
-          invitation.issued_at,
-          invitation.expires_at,
-          invitation.consumed_at,
-          invitation.revoked_at,
-          invitation.revoked_by,
-          invitation.revocation_reason,
-          teacher.teacher_status,
-          membership.membership_status,
-          membership.deleted_at AS membership_deleted_at
-        FROM teacher_line_invitations invitation
-        JOIN school_teacher_memberships membership
-          ON membership.id = invitation.teacher_membership_id
-        JOIN teachers teacher ON teacher.id = membership.teacher_id
-        WHERE invitation.id = $1::uuid
-        ${lock ? 'FOR UPDATE OF invitation' : ''}
-      `,
-      [invitationId],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async revokeActiveInvitation(
-    teacherMembershipId: number,
-    revokedBy: number,
-    reason: string,
-    queryRunner: QueryRunner,
-  ): Promise<boolean> {
-    const result = await this.executor(queryRunner).query(
-      `
-        UPDATE teacher_line_invitations
-        SET revoked_at = now(), revoked_by = $2, revocation_reason = $3, updated_at = now()
-        WHERE teacher_membership_id = $1
-          AND consumed_at IS NULL
-          AND revoked_at IS NULL
-      `,
-      [teacherMembershipId, revokedBy, reason],
-    );
-    return (result.rowCount ?? 0) > 0;
-  }
-
-  async consumeInvitation(invitationId: string, queryRunner: QueryRunner): Promise<boolean> {
-    const result = await this.executor(queryRunner).query(
-      `
-        UPDATE teacher_line_invitations
-        SET consumed_at = now(), updated_at = now()
-        WHERE id = $1::uuid
-          AND consumed_at IS NULL
-          AND revoked_at IS NULL
-          AND expires_at > now()
-      `,
-      [invitationId],
-    );
-    return (result.rowCount ?? 0) > 0;
   }
 
   /** Which teacher — if anyone — this chat account is already bound to. */
@@ -601,43 +428,6 @@ export class TeacherLineRepository {
         LIMIT 1
       `,
       [teacherId, schoolId ?? null],
-    );
-    return result.rows.length > 0;
-  }
-
-  async hasActiveHomeroomTeacherMembership(
-    teacherId: string,
-    schoolId: number,
-    queryRunner: QueryRunner,
-  ): Promise<boolean> {
-    const result = await this.executor(queryRunner).query(
-      `
-        SELECT 1
-        FROM teachers teacher
-        JOIN school_teacher_memberships membership
-          ON membership.teacher_id = teacher.id
-         AND membership.school_id = $2::bigint
-        JOIN classroom_homeroom_teacher_assignments homeroom
-          ON homeroom.teacher_membership_id = membership.id
-         AND homeroom.school_id = membership.school_id
-        JOIN school_classrooms classroom
-          ON classroom.id = homeroom.classroom_id
-         AND classroom.school_id = homeroom.school_id
-         AND classroom.classroom_status = 'ACTIVE'
-         AND classroom.deleted_at IS NULL
-        JOIN school_terms term
-          ON term.id = classroom.school_term_id
-         AND term.school_id = classroom.school_id
-         AND term.status = 'ACTIVE'
-         AND term.deleted_at IS NULL
-        WHERE teacher.id = $1::bigint
-          AND teacher.teacher_status = 'ACTIVE'
-          AND teacher.deleted_at IS NULL
-          AND membership.membership_status = 'ACTIVE'
-          AND membership.deleted_at IS NULL
-        LIMIT 1
-      `,
-      [teacherId, schoolId],
     );
     return result.rows.length > 0;
   }
