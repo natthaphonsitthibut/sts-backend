@@ -125,6 +125,7 @@ async function main() {
   let linkId = null;
   let attendanceSessionId = null;
   let messagingAccountId = null;
+  let openedCaseId = null;
   let originalHomeroom = null;
   let scope = null;
 
@@ -152,6 +153,13 @@ async function main() {
       `${method} ${path}: expected ${expectedStatus}, received ${response.status}`,
     );
     return { response, payload };
+  };
+  // `notifications` and `case_referrals` hold the case with RESTRICT, so they
+  // go first. Everything else that hangs off a case cascades.
+  const removeCase = async (caseId) => {
+    await dataSource.query(`DELETE FROM notifications WHERE case_id = $1`, [caseId]);
+    await dataSource.query(`DELETE FROM case_referrals WHERE case_id = $1`, [caseId]);
+    await dataSource.query(`DELETE FROM cases WHERE id = $1`, [caseId]);
   };
   const responseCookie = (response, name) => {
     const header = response.headers.get('set-cookie') || '';
@@ -188,6 +196,15 @@ async function main() {
        AND offering.school_id = classroom.school_id
        AND offering.offering_status = 'ACTIVE'
        AND offering.deleted_at IS NULL
+      -- A teacher link now reaches the offerings that teacher actually teaches,
+      -- so the fixture has to pick one of theirs rather than any active
+      -- offering in the room.
+      JOIN classroom_subject_teachers assignment
+        ON assignment.classroom_subject_id = offering.id
+       AND assignment.teacher_membership_id = membership.id
+       AND assignment.school_id = offering.school_id
+       AND assignment.assignment_status = 'ACTIVE'
+       AND assignment.deleted_at IS NULL
       JOIN school_subjects school_subject
         ON school_subject.id = offering.school_subject_id
        AND school_subject.school_id = offering.school_id
@@ -329,7 +346,7 @@ async function main() {
         body: {
           schoolId: scope.school_id,
           schoolTermId: scope.school_term_id,
-          classroomIds: [scope.classroom_id],
+          teacherMembershipIds: [Number(scope.teacher_membership_id)],
         },
       },
     );
@@ -342,7 +359,7 @@ async function main() {
         body: {
           schoolId: scope.school_id,
           schoolTermId: scope.school_term_id,
-          classroomIds: [scope.classroom_id],
+          teacherMembershipIds: [Number(scope.teacher_membership_id)],
         },
       },
     );
@@ -352,7 +369,7 @@ async function main() {
       body: {
         schoolId: scope.school_id,
         schoolTermId: scope.school_term_id,
-        classroomIds: [scope.classroom_id],
+        teacherMembershipIds: [Number(scope.teacher_membership_id)],
       },
     });
     linkId = created.payload.data[0].id;
@@ -555,7 +572,8 @@ async function main() {
     const checkInCookie = `${CLASSROOM_LINK_SESSION_COOKIE}=${encodeURIComponent(sameSchoolSession)}`;
     const options = await request(
       'GET',
-      `/api/classroom/subjects?date=${encodeURIComponent(asDateKey(scope.check_in_date))}`,
+      `/api/classroom/subjects?date=${encodeURIComponent(asDateKey(scope.check_in_date))}` +
+        `&classroomId=${scope.classroom_id}`,
       200,
       { headers: { cookie: checkInCookie } },
     );
@@ -570,9 +588,12 @@ async function main() {
         ),
       'Public options escaped the link classroom or omitted HOMEROOM',
     );
-    const roster = await request('GET', '/api/classroom/roster', 200, {
-      headers: { cookie: checkInCookie },
-    });
+    const roster = await request(
+      'GET',
+      `/api/classroom/roster?classroomId=${scope.classroom_id}`,
+      200,
+      { headers: { cookie: checkInCookie } },
+    );
     assert(roster.payload.data.length >= 2, 'Check-in roster fixture needs at least two students');
     assert(
       roster.payload.data.every(
@@ -700,6 +721,20 @@ async function main() {
 
     // Opening a case works from the link too, and the case names the teacher who
     // opened it — the reason the owner allowed it at all.
+    // Opening a case is idempotent per student: while one is still active the
+    // endpoint hands that one back instead of creating another. A case left
+    // behind by an earlier run would therefore be returned here, and the author
+    // assertion below would be reading whoever opened it then.
+    const staleCases = await dataSource.query(
+      `SELECT id FROM cases
+       WHERE student_uuid = $1
+         AND created_by_teacher_id IS NOT NULL
+         AND status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+         AND deleted_at IS NULL`,
+      [rosterStudentId],
+    );
+    for (const stale of staleCases) await removeCase(stale.id);
+
     const openedCase = await request(
       'POST',
       `/api/classroom/students/${rosterStudentId}/cases`,
@@ -712,6 +747,11 @@ async function main() {
     assert(
       openedCase.payload?.data?.id,
       `Opening a case through the link returned no case: ${JSON.stringify(openedCase.payload).slice(0, 200)}`,
+    );
+    openedCaseId = openedCase.payload.data.id;
+    assert(
+      openedCase.payload.created === true,
+      'Link case assertion silently read an existing case instead of a new one',
     );
     const [caseRow] = await dataSource.query(
       `SELECT created_by, created_by_teacher_id::text AS created_by_teacher_id, school_id
@@ -779,6 +819,9 @@ async function main() {
     );
 
     const startBody = {
+      // A teacher link reaches every room that teacher teaches in, so the room
+      // is named rather than inferred.
+      classroomId: scope.classroom_id,
       date: asDateKey(scope.check_in_date),
       classroomSubjectId: scope.classroom_subject_id,
     };
@@ -824,7 +867,10 @@ async function main() {
       'POST',
       `/api/classroom/sessions/${attendanceSessionId}/submit`,
       201,
-      { headers: { cookie: checkInCookie }, body: { exceptions } },
+      {
+        headers: { cookie: checkInCookie },
+        body: { classroomId: scope.classroom_id, exceptions },
+      },
     );
     assert(
       submitted.payload.data.status === 'SUBMITTED' &&
@@ -856,14 +902,37 @@ async function main() {
       'POST',
       `/api/classroom/sessions/${attendanceSessionId}/submit`,
       201,
-      { headers: { cookie: checkInCookie }, body: { exceptions } },
+      {
+        headers: { cookie: checkInCookie },
+        body: { classroomId: scope.classroom_id, exceptions },
+      },
     );
     assert(duplicateSubmit.payload.data.idempotent === true, 'Identical duplicate submit was not idempotent');
+    // A submitted result is now replaceable, so a different set of exceptions is
+    // a correction rather than a conflict — and a correction has to say why.
+    await request(
+      'POST',
+      `/api/classroom/sessions/${attendanceSessionId}/submit`,
+      400,
+      {
+        headers: { cookie: checkInCookie },
+        body: { classroomId: scope.classroom_id, exceptions: exceptions.slice(0, 1) },
+      },
+    );
+    // With a reason but a spent lock version, it is a conflict again.
     await request(
       'POST',
       `/api/classroom/sessions/${attendanceSessionId}/submit`,
       409,
-      { headers: { cookie: checkInCookie }, body: { exceptions: exceptions.slice(0, 1) } },
+      {
+        headers: { cookie: checkInCookie },
+        body: {
+          classroomId: scope.classroom_id,
+          exceptions: exceptions.slice(0, 1),
+          correctionReason: 'แก้ไขหลังตรวจสอบกับครูประจำวิชา',
+          expectedLockVersion: 1,
+        },
+      },
     );
 
     const wrongSchoolSession = await sessionStore.issue({
@@ -931,9 +1000,37 @@ async function main() {
   } finally {
     try {
       if (attendanceSessionId) {
+        // Submitting writes append-only history that holds the roster and the
+        // session down. Same approach as smoke-subject-check-in-browser: a
+        // local replica transaction lifts the triggers for fixture teardown
+        // only, behind the `_smoke` database guard at the top of this file, so
+        // production DDL stays exactly as strict as it is.
+        const cleanupRunner = dataSource.createQueryRunner();
+        await cleanupRunner.connect();
+        await cleanupRunner.startTransaction();
+        try {
+          await cleanupRunner.query(`SET LOCAL session_replication_role = 'replica'`);
+          await cleanupRunner.query(
+            `DELETE FROM attendance_submission_changes WHERE session_id = $1`,
+            [attendanceSessionId],
+          );
+          await cleanupRunner.query(
+            `DELETE FROM attendance_submission_history WHERE session_id = $1`,
+            [attendanceSessionId],
+          );
+          await cleanupRunner.commitTransaction();
+        } catch (error) {
+          await cleanupRunner.rollbackTransaction();
+          throw error;
+        } finally {
+          await cleanupRunner.release();
+        }
         await dataSource.query(`DELETE FROM attendance_exceptions WHERE session_id = $1`, [attendanceSessionId]);
         await dataSource.query(`DELETE FROM attendance_session_roster WHERE session_id = $1`, [attendanceSessionId]);
         await dataSource.query(`DELETE FROM attendance_sessions WHERE id = $1`, [attendanceSessionId]);
+      }
+      if (openedCaseId) {
+        await removeCase(openedCaseId);
       }
       if (linkId) {
         await dataSource.query(`DELETE FROM classroom_attendance_links WHERE id = $1`, [linkId]);

@@ -270,6 +270,27 @@ async function clickButton(client, label) {
   );
 }
 
+async function clickDialogButton(client, label) {
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `Boolean([...document.querySelectorAll('[role="dialog"] button')]
+          .find((item) => item.innerText.trim() === ${JSON.stringify(label)} && !item.disabled))`,
+      ),
+    `Dialog button did not become ready: ${label}`,
+  );
+  await evaluate(
+    client,
+    `(() => {
+      const button = [...document.querySelectorAll('[role="dialog"] button')]
+        .find((item) => item.innerText.trim() === ${JSON.stringify(label)} && !item.disabled);
+      if (!button) throw new Error('Dialog button not found: ${label}');
+      button.click();
+    })()`,
+  );
+}
+
 async function setLabeledValue(client, label, value, selector) {
   await waitFor(
     async () => await evaluate(
@@ -294,7 +315,9 @@ async function setLabeledValue(client, label, value, selector) {
       if (!field) throw new Error('Field not found: ${label}');
       const prototype = field instanceof HTMLSelectElement
         ? HTMLSelectElement.prototype
-        : HTMLInputElement.prototype;
+        : field instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
       Object.getOwnPropertyDescriptor(prototype, 'value').set.call(
         field,
         ${JSON.stringify(String(value))},
@@ -1317,13 +1340,25 @@ async function main() {
     );
     await selectComboboxOption(client, 'วิชา', scope.scope_subject_name);
     await waitForMarked(client, rosterCount);
+    // Looking at a lesson reads whatever register is already open for it; it
+    // does not open one. Starting freezes a roster snapshot and leaves an
+    // unsubmitted session behind, which reads as a teacher having begun
+    // checking a class they only glanced at.
+    await waitFor(
+      async () =>
+        requestCount(
+          networkRequests,
+          'GET',
+          '/api/attendance/check-in/sessions/current',
+        ) >= 1,
+      'Selecting the subject did not read the register already open for it',
+    );
     assert(
       requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 0,
-      'Selecting the first subject started a session before another attendance action',
+      'Selecting a subject started an attendance session before any mark',
     );
 
-    // Handing this lesson on. Creating has to happen while the register is
-    // still open — a submitted lesson refuses the tools, by the owner's rule.
+    // Handing this lesson on from the open register.
     await openCheckInTool(client, 'มอบหมาย');
     await waitFor(
       async () =>
@@ -1353,6 +1388,7 @@ async function main() {
         .forEach((button) => button.click())`,
     );
     await waitForMarked(client, 0);
+    // Taking marks back off is not taking a register either.
     assert(
       requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 0,
       'Clearing the preserved marks started an attendance session',
@@ -1364,15 +1400,15 @@ async function main() {
         .find((row) => row.getClientRects().length > 0)
         .querySelector('[data-default-mark]').click()`,
     );
+    // The first mark is what freezes the roster — exactly once.
     await waitFor(
       async () =>
-        requestCount(
-          networkRequests,
-          'POST',
-          '/api/attendance/check-in/sessions/start',
-        ) === 1,
-      'First internal mark did not start exactly one session',
+        requestCount(networkRequests, 'POST', '/api/attendance/check-in/sessions/start') === 1,
+      'First internal mark did not freeze exactly one roster session',
     );
+    // That one start is accounted for; from here every further mark must stay
+    // local until the teacher submits.
+    networkRequests.length = 0;
     await waitFor(
       async () => {
         const rowIds = await visibleRowIds(client);
@@ -1398,7 +1434,7 @@ async function main() {
     );
     await new Promise((resolve) => setTimeout(resolve, 350));
     assert(
-      networkRequests.filter((item) => item.method === 'POST').length === 1,
+      networkRequests.filter((item) => item.method === 'POST').length === 0,
       'Internal marks generated a per-mark server write',
     );
 
@@ -1426,7 +1462,7 @@ async function main() {
     await waitForMarked(client, 4);
     await clickButton(client, 'ย้อนกลับ');
     await waitForMarked(client, 3);
-    if (networkRequests.filter((item) => item.method === 'POST').length !== 1) {
+    if (networkRequests.filter((item) => item.method === 'POST').length !== 0) {
       const debugSessions = await dataSource.query(
         `SELECT classroom_subject_id::text, subject_id, attendance_date::text,
                 record_storage_mode, status
@@ -1461,16 +1497,101 @@ async function main() {
           'POST',
           '/api/attendance/check-in/sessions/',
         ) > 0 ||
-        String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · อ่านอย่างเดียว'),
+        String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · ครั้งที่ 1'),
       'Internal submit did not complete',
     );
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · อ่านอย่างเดียว'),
-      'Internal check-in did not become read-only after submit',
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · ครั้งที่ 1'),
+      'Internal check-in did not expose its first submitted result',
+    );
+    assert(
+      networkRequests.filter((item) => item.method === 'POST').length === 1,
+      'Internal check-in generated a write other than the submit after its pre-resolved start',
+    );
+
+    // A submitted result stays editable locally. The old result remains the
+    // official one until this second submit confirms the change and its
+    // reason; there is no reopen/approval step.
+    await evaluate(
+      client,
+      `(() => {
+        const row = [...document.querySelectorAll('[data-check-in-row]')]
+          .find((item) => item.getClientRects().length > 0);
+        const button = [...row.querySelectorAll('button')]
+          .find((item) => item.textContent.trim() === 'ขาด');
+        if (!button) throw new Error('Internal correction absent button was not found');
+        button.click();
+      })()`,
+    );
+    await clickButton(client, 'แก้ไขและส่งผลใหม่');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('เหตุผลการแก้ไข'),
+      'Internal correction dialog did not ask for a reason',
+    );
+    await setLabeledValue(client, 'เหตุผลการแก้ไข', 'ส', 'textarea');
+    await clickDialogButton(client, 'แก้ไขและส่งผลใหม่');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('อย่างน้อย 3 ตัวอักษร'),
+      'Internal correction dialog accepted a reason shorter than three characters',
+    );
+    const internalCorrectionReason = 'แก้ไขหลังตรวจสอบข้อมูลกับครูประจำวิชา';
+    await setLabeledValue(
+      client,
+      'เหตุผลการแก้ไข',
+      internalCorrectionReason,
+      'textarea',
+    );
+    await clickDialogButton(client, 'แก้ไขและส่งผลใหม่');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · ครั้งที่ 2'),
+      'Internal correction did not become the second submitted result',
     );
     assert(
       networkRequests.filter((item) => item.method === 'POST').length === 2,
-      'Internal check-in did not use exactly start plus submit writes',
+      'Internal correction generated writes other than first submit and corrected submit',
+    );
+    const [internalCorrection] = await dataSource.query(
+      `SELECT
+         count(*)::int AS submission_count,
+         max(history.correction_reason) FILTER (WHERE history.submission_number = 2) AS reason,
+         max(history.actor_user_id) FILTER (WHERE history.submission_number = 2) AS actor_user_id,
+         (SELECT count(*)::int
+          FROM attendance_submission_changes change_row
+          JOIN attendance_submission_history changed_history
+            ON changed_history.id = change_row.submission_history_id
+          WHERE changed_history.session_id = history.session_id
+            AND changed_history.submission_number = 2) AS changed_student_count
+       FROM attendance_submission_history history
+       JOIN attendance_sessions session ON session.id = history.session_id
+       WHERE session.classroom_id = $1
+         AND session.classroom_subject_id = $2
+         AND session.attendance_date = $3
+       GROUP BY history.session_id`,
+      [scope.classroom_id, scope.classroom_subject_id, scope.check_in_date],
+    );
+    assert(
+      internalCorrection?.submission_count === 2 &&
+        internalCorrection?.reason === internalCorrectionReason &&
+        internalCorrection?.actor_user_id === allowed.id &&
+        internalCorrection?.changed_student_count === 1,
+      `Internal correction history was incomplete: ${JSON.stringify(internalCorrection)}`,
+    );
+
+    // Attribute this completed register to the assignment link so the usage
+    // page exercises its real session-to-link provenance and View action.
+    await dataSource.query(
+      `UPDATE attendance_sessions
+       SET classroom_attendance_link_id = $4
+       WHERE classroom_id = $1
+         AND classroom_subject_id = $2
+         AND attendance_date = $3
+         AND deleted_at IS NULL`,
+      [
+        scope.classroom_id,
+        scope.classroom_subject_id,
+        scope.check_in_date,
+        internalAssignmentLinkId,
+      ],
     );
 
     // Managing it from the tab beside the register. Done after the submit so
@@ -1531,16 +1652,80 @@ async function main() {
       'Usage page rendered without a breadcrumb leading back into attendance',
     );
 
-    // Back lands on the tab it came from, room and filter intact — the page
-    // records the URL it was opened from rather than a fixed destination.
-    await clickButton(client, 'ย้อนกลับ');
-    await waitFor(
-      async () =>
-        (await evaluate(client, 'location.pathname + location.search')) === linkTabUrl,
-      'Back from the usage page did not return to the tab it opened from',
+    assert(
+      await evaluate(
+        client,
+        `(() => {
+          const regions = [...document.querySelectorAll('[role="region"]')]
+            .filter((item) => item.getAttribute('aria-label')?.startsWith('รายการ'));
+          if (regions.length !== 2) return false;
+          const cards = regions.map((item) => item.closest('[class*="min-h-"]'));
+          return cards.every(Boolean) &&
+            Math.abs(cards[0].getBoundingClientRect().height - cards[1].getBoundingClientRect().height) < 1 &&
+            regions.every((item) => getComputedStyle(item).overflowY === 'auto');
+        })()`,
+      ),
+      'Usage sections were not equal-height independently scrollable regions',
     );
 
+    await clickButton(client, 'ดูการเช็กชื่อ');
+    await waitFor(
+      async () => {
+        const location = String(
+          await evaluate(client, 'location.pathname + location.search'),
+        );
+        const matches =
+          location.startsWith('/attendance/check-in?') &&
+          new URL(location, FRONTEND_URL).searchParams.get('date') ===
+            scope.check_in_date &&
+          new URL(location, FRONTEND_URL).searchParams.get(
+            'classroomSubjectId',
+          ) === String(scope.classroom_subject_id);
+        if (!matches) {
+          throw new Error(
+            `actual=${location}; expectedDate=${scope.check_in_date}; expectedSubject=${scope.classroom_subject_id}`,
+          );
+        }
+        return true;
+      },
+      'View attendance did not retain the session date and subject in the URL',
+    );
+    await waitFor(
+      async () =>
+        (await evaluate(
+          client,
+          `document.querySelector('input[aria-label="วิชา"]')?.value ?? ''`,
+        )) === scope.scope_subject_name,
+      'View attendance did not select the session subject in the workspace',
+    );
+    await evaluate(
+      client,
+      `document.querySelector('button[aria-label="เลือกวันที่เช็กชื่อ"]')?.click()`,
+    );
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `document.querySelector('[role="dialog"] button[aria-label=${JSON.stringify(scope.check_in_date)}]')?.classList.contains('bg-primary') ?? false`,
+        ),
+      'View attendance did not select the session date in the workspace',
+    );
+    await evaluate(
+      client,
+      `document.querySelector('button[aria-label="เลือกวันที่เช็กชื่อ"]')?.click()`,
+    );
 
+    await navigate(client, `${FRONTEND_URL}${linkTabUrl}`);
+    await waitFor(
+      async () =>
+        String(await evaluate(client, 'document.body.innerText')).includes(
+          scope.scope_subject_name,
+        ),
+      'Returning from attendance did not restore the link management tab',
+    );
+
+    // Back lands on the tab it came from, room and filter intact — the page
+    // records the URL it was opened from rather than a fixed destination.
     await client.call('Network.deleteCookies', {
       name: allowedCookie.name,
       url: BACKEND_URL,
@@ -1629,6 +1814,15 @@ async function main() {
       async () => (await visibleRowIds(client)).length === rosterCount,
       'Public classroom-link roster did not render',
     );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert(
+      !(await evaluate(
+        client,
+        `[...document.querySelectorAll('[data-sonner-toast]')]
+          .some((toast) => toast.innerText.includes('บันทึกแล้ว'))`,
+      )),
+      'Opening a verified link incorrectly showed the generic saved toast',
+    );
     await assertCheckInAvatars(client, '/api/classroom/student-photo');
 
     // The same loop through the teacher's own door. This is what the issuer
@@ -1708,7 +1902,9 @@ async function main() {
       `Teacher link showed ${shownRows} assignments but issued ${issuedByThisTeacher.count}`,
     );
 
-    // The same row on the link side, where the rooms page is the only parent.
+    // The same row on the link side. Its parent is the lesson/tab that opened
+    // the detail, labelled from the assignment returned by the API — never a
+    // hard-coded rooms-page crumb.
     await evaluate(
       client,
       `[...document.querySelectorAll('button[aria-label]')]
@@ -1720,17 +1916,20 @@ async function main() {
         String(await evaluate(client, 'location.pathname')).startsWith('/classroom/links/'),
       'Usage page did not open from the teacher link',
     );
-    assert(
-      await evaluate(
-        client,
-        `(() => {
-          const nav = document.querySelector('nav[aria-label="เส้นทางนำทาง"]');
-          if (!nav) return false;
-          return [...nav.querySelectorAll('a')].some((item) =>
-            item.getAttribute('href') === '/classroom');
-        })()`,
-      ),
-      'Usage page on the link had no breadcrumb back to the rooms page',
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `(() => {
+            const nav = document.querySelector('nav[aria-label="เส้นทางนำทาง"]');
+            if (!nav) return false;
+            return [...nav.querySelectorAll('a')].some((item) =>
+              item.getAttribute('href')?.startsWith('/classroom/check-in/') &&
+              item.textContent.includes(${JSON.stringify(subjectName)})) &&
+              !nav.innerText.includes('ห้องเรียนของฉัน');
+          })()`,
+        ),
+      'Usage page on the link did not breadcrumb back to its DB-backed lesson',
     );
     await clickButton(client, 'ย้อนกลับ');
     await waitFor(
@@ -1870,11 +2069,30 @@ async function main() {
       clickCount: 1,
     });
     await waitForMarked(client, 1);
-    await waitFor(
-      async () =>
-        requestCount(networkRequests, 'POST', '/api/classroom/sessions/start') === 1,
-      'Public swipe did not start exactly one session',
+    const publicSwipePosts = networkRequests
+      .filter((item) => item.method === 'POST')
+      .map((item) => new URL(item.url).pathname);
+    assert(
+      publicSwipePosts.every((pathname) => pathname === '/api/classroom/sessions/start'),
+      `Public swipe generated a write other than session resolution: ${publicSwipePosts.join(', ')}`,
     );
+    // The swipe is the first mark, so it is what resolves the session: opening
+    // the lesson only read for one. Poll the table rather than the request log
+    // — the write is what matters, and it lands after the mark renders.
+    let publicSessionCount;
+    await waitFor(async () => {
+      [publicSessionCount] = await dataSource.query(
+        `SELECT count(*)::int AS count
+         FROM attendance_sessions
+         WHERE classroom_id = $1
+           AND classroom_subject_id = $2
+           AND attendance_date = $3
+           AND deleted_at IS NULL`,
+        [scope.classroom_id, fixtureOfferingId, scope.check_in_date],
+      );
+      return publicSessionCount?.count === 1;
+    }, 'Public swipe did not resolve exactly one attendance session');
+    networkRequests.length = 0;
     try {
       await clickButton(client, 'ขาด');
     } catch (error) {
@@ -1894,7 +2112,7 @@ async function main() {
     await clickButton(client, 'ขาด');
     await waitForMarked(client, 2);
     assert(
-      networkRequests.filter((item) => item.method === 'POST').length === 1,
+      networkRequests.filter((item) => item.method === 'POST').length === 0,
       `Public swipe/button/undo generated an unexpected write: ${networkRequests
         .filter((item) => item.method === 'POST')
         .map((item) => new URL(item.url).pathname)
@@ -1961,12 +2179,64 @@ async function main() {
     );
     await clickButton(client, 'ส่งผลเช็กชื่อ');
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · อ่านอย่างเดียว'),
-      'Public check-in did not submit and become read-only',
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · ครั้งที่ 1'),
+      'Public check-in did not expose its first submitted result',
+    );
+    assert(
+      networkRequests.filter((item) => item.method === 'POST').length === 1,
+      'Public check-in generated a write other than submit after its pre-resolved start',
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const row = [...document.querySelectorAll('[data-check-in-row]')]
+          .find((item) => item.getClientRects().length > 0);
+        const button = [...row.querySelectorAll('button')]
+          .find((item) => item.textContent.trim() === 'ขาด');
+        if (!button) throw new Error('Public correction absent button was not found');
+        button.click();
+      })()`,
+    );
+    await clickButton(client, 'แก้ไขและส่งผลใหม่');
+    const publicCorrectionReason = 'แก้ไขหลังตรวจสอบข้อมูลจากผู้รับมอบหมาย';
+    await setLabeledValue(
+      client,
+      'เหตุผลการแก้ไข',
+      publicCorrectionReason,
+      'textarea',
+    );
+    await clickDialogButton(client, 'แก้ไขและส่งผลใหม่');
+    await waitFor(
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('ส่งแล้ว · ครั้งที่ 2'),
+      'Public correction did not become the second submitted result',
     );
     assert(
       networkRequests.filter((item) => item.method === 'POST').length === 2,
-      'Public check-in did not use exactly start plus submit writes',
+      'Public correction generated writes other than first submit and corrected submit',
+    );
+    const [publicCorrection] = await dataSource.query(
+      `SELECT
+         count(*)::int AS submission_count,
+         max(history.correction_reason) FILTER (WHERE history.submission_number = 2) AS reason,
+         max(history.actor_teacher_membership_id) FILTER
+           (WHERE history.submission_number = 2) AS actor_teacher_membership_id,
+         max(history.classroom_attendance_link_id::text) FILTER
+           (WHERE history.submission_number = 2) AS classroom_attendance_link_id
+       FROM attendance_submission_history history
+       JOIN attendance_sessions session ON session.id = history.session_id
+       WHERE session.classroom_id = $1
+         AND session.classroom_subject_id = $2
+         AND session.attendance_date = $3
+       GROUP BY history.session_id`,
+      [scope.classroom_id, fixtureOfferingId, scope.check_in_date],
+    );
+    assert(
+      publicCorrection?.submission_count === 2 &&
+        publicCorrection?.reason === publicCorrectionReason &&
+        String(publicCorrection?.actor_teacher_membership_id) ===
+          String(scope.teacher_membership_id) &&
+        publicCorrection?.classroom_attendance_link_id === linkId,
+      `Public correction history was incomplete: ${JSON.stringify(publicCorrection)}`,
     );
     assert(
       await evaluate(client, 'document.documentElement.scrollWidth <= window.innerWidth + 1'),
@@ -2084,7 +2354,7 @@ async function main() {
     );
 
     console.error(
-      '[smoke] subjects + internal/public exception check-in, history/risk aggregates, grouped absence reason, and no per-mark writes passed',
+      '[smoke] subjects + internal/public check-in corrections, immutable submission history, history/risk aggregates, grouped absence reason, and no per-mark writes passed',
     );
   } finally {
     await closeChrome(chrome);
@@ -2104,6 +2374,31 @@ async function main() {
         );
         const sessionIds = sessionRows.map((row) => row.id);
         if (sessionIds.length > 0) {
+          const cleanupRunner = dataSource.createQueryRunner();
+          await cleanupRunner.connect();
+          await cleanupRunner.startTransaction();
+          try {
+            // These rows are deliberately append-only in normal operation.
+            // The smoke database guard above and a local replica transaction
+            // make fixture cleanup explicit without weakening production DDL.
+            await cleanupRunner.query(`SET LOCAL session_replication_role = 'replica'`);
+            await cleanupRunner.query(
+              `DELETE FROM attendance_submission_changes
+               WHERE session_id = ANY($1::uuid[])`,
+              [sessionIds],
+            );
+            await cleanupRunner.query(
+              `DELETE FROM attendance_submission_history
+               WHERE session_id = ANY($1::uuid[])`,
+              [sessionIds],
+            );
+            await cleanupRunner.commitTransaction();
+          } catch (error) {
+            await cleanupRunner.rollbackTransaction();
+            throw error;
+          } finally {
+            await cleanupRunner.release();
+          }
           await dataSource.query(
             `DELETE FROM attendance_exceptions WHERE session_id = ANY($1::uuid[])`,
             [sessionIds],
@@ -2118,14 +2413,19 @@ async function main() {
           );
         }
       }
+      const assignmentIds = new Set(
+        [internalAssignmentLinkId, linkAssignmentLinkId].filter(Boolean),
+      );
       if (linkId) {
-        await dataSource.query(`DELETE FROM classroom_attendance_links WHERE id = $1`, [
-          linkId,
-        ]);
+        const linkedAssignments = await dataSource.query(
+          `SELECT id::text
+           FROM classroom_attendance_links
+           WHERE source_teacher_link_id = $1`,
+          [linkId],
+        );
+        linkedAssignments.forEach((row) => assignmentIds.add(row.id));
       }
-      for (const assignmentId of [internalAssignmentLinkId, linkAssignmentLinkId].filter(
-        Boolean,
-      )) {
+      for (const assignmentId of assignmentIds) {
         await dataSource.query(
           `UPDATE attendance_sessions SET classroom_attendance_link_id = NULL
            WHERE classroom_attendance_link_id = $1`,
@@ -2134,6 +2434,11 @@ async function main() {
         // audit_log is append-only; its rows outlive the link on purpose.
         await dataSource.query(`DELETE FROM classroom_attendance_links WHERE id = $1`, [
           assignmentId,
+        ]);
+      }
+      if (linkId) {
+        await dataSource.query(`DELETE FROM classroom_attendance_links WHERE id = $1`, [
+          linkId,
         ]);
       }
       if (fixtureSubjectId) {
