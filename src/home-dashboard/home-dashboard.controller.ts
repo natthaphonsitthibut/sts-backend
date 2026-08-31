@@ -31,6 +31,14 @@ export class HomeDashboardController {
     return await this.homeDashboardService.getTrends(actor, query);
   }
 
+  @Get('follow-up-insights')
+  async getFollowUpInsights(
+    @Query() query: HomeDashboardQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return await this.homeDashboardService.getFollowUpInsights(actor, query);
+  }
+
   @Get('filter-options')
   async getFilterOptions(
     @Query() query: HomeDashboardQueryDto,

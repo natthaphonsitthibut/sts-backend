@@ -108,10 +108,10 @@ describe('HomeDashboardRepository', () => {
     expect(queries[0].sql).not.toContain('COALESCE(c.created_at, c.updated_at)');
   });
 
-  it('includes uncategorized visit reports in the cause distribution', async () => {
+  it('counts one student per problem category rather than one row per report', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
 
-    await repository.getCauseCategoryDistribution(
+    await repository.getFollowUpProblemCategories(
       {
         id: 1,
         username: 'admin',
@@ -122,11 +122,31 @@ describe('HomeDashboardRepository', () => {
       {},
     );
 
-    expect(queries[0].sql).toContain("t.task_type = 'VISIT'");
+    // A child visited three times used to count as three, which read as three
+    // affected children on an executive's screen.
+    expect(queries[0].sql).toContain('DISTINCT ON (c.student_uuid)');
+    expect(queries[0].sql).toContain('ts.follow_up_problem_category_code IS NOT NULL');
     expect(queries[0].sql).toContain('LEFT JOIN follow_up_problem_categories');
-    expect(queries[0].sql).toContain("COALESCE(ts.follow_up_problem_category_code, 'UNSPECIFIED')");
-    expect(queries[0].sql).toContain("COALESCE(problem_category.label_th, 'ไม่ระบุสาเหตุ')");
-    expect(queries[0].sql).not.toContain('ts.follow_up_problem_category_code IS NOT NULL');
+    // ASSIST follow-ups carry the same field, so the query is not limited to visits.
+    expect(queries[0].sql).not.toContain("t.task_type = 'VISIT'");
+  });
+
+  it('reads the newest homeroom observation per student for concern levels', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+
+    await repository.getTeacherConcernLevels(
+      {
+        id: 1,
+        username: 'admin',
+        roles: ['ADMIN'],
+        permissions: ['home'],
+        data_scope: { global: true },
+      },
+      {},
+    );
+
+    expect(queries[0].sql).toContain('DISTINCT ON (observation.person_uuid)');
+    expect(queries[0].sql).toContain('classroom_student_comment_concern_levels');
   });
 
   it('does not expose retired attendance completeness attention items', async () => {
