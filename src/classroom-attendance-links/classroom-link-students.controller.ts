@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+  Res,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Public } from '../auth';
 import type { DataScope } from '../auth';
@@ -61,7 +72,9 @@ export class ClassroomLinkStudentsController {
   @ThrottleTeacherAccess()
   async revealOptions(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
     response.setHeader('Cache-Control', 'private, no-store');
-    await this.service.authorizeCheckInSession(this.cookies.read(request.headers.cookie));
+    this.assertFullStudentAccess(
+      await this.service.authorizeCheckInSession(this.cookies.read(request.headers.cookie)),
+    );
     return { data: listStaffPiiRevealReasons() };
   }
 
@@ -74,7 +87,9 @@ export class ClassroomLinkStudentsController {
   @ThrottleTeacherAccess()
   async commentOptions(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
     response.setHeader('Cache-Control', 'private, no-store');
-    await this.service.authorizeCheckInSession(this.cookies.read(request.headers.cookie));
+    this.assertFullStudentAccess(
+      await this.service.authorizeCheckInSession(this.cookies.read(request.headers.cookie)),
+    );
     const [problemCategories, concernLevels] = await Promise.all([
       this.schoolStructure.listStudentProblemCategories(),
       this.schoolStructure.listStudentCommentConcernLevels(),
@@ -254,6 +269,7 @@ export class ClassroomLinkStudentsController {
     const authorized = await this.service.authorizeCheckInSession(
       this.cookies.read(request.headers.cookie),
     );
+    this.assertFullStudentAccess(authorized);
     const classroomId = await this.service.resolveStudentClassroom(authorized, studentId);
     await this.exceptionAttendance.assertStudentInClassroom(
       {
@@ -277,5 +293,13 @@ export class ClassroomLinkStudentsController {
       // read into a 404.
       scope: { school_ids: [authorized.schoolId] } satisfies DataScope,
     };
+  }
+
+  private assertFullStudentAccess(
+    authorized: Awaited<ReturnType<ClassroomAttendanceLinksService['authorizeCheckInSession']>>,
+  ): void {
+    if (authorized.assignedClassroomSubjectId !== null) {
+      throw new ForbiddenException('ลิงก์มอบหมายใช้สำหรับรายชื่อและเช็กชื่อเท่านั้น');
+    }
   }
 }

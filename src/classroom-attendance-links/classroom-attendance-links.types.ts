@@ -15,6 +15,8 @@ export interface ClassroomLinkRow extends Record<string, unknown> {
   assigned_classroom_subject_id: string | null;
   /** Set when a teacher issued this assignment from inside their own link. */
   issued_by_teacher_membership_id: string | null;
+  /** Standing teacher link that created this assignment, if it was link-issued. */
+  source_teacher_link_id: string | null;
   created_by: number | null;
   assigned_classroom_label: string | null;
   assigned_subject_name: string | null;

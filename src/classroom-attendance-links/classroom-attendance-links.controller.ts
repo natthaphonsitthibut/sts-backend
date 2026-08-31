@@ -40,6 +40,7 @@ import { DevelopmentGoogleLoginDto } from '../google-login/dto/development-googl
 import {
   BulkCreateClassroomAttendanceLinksDto,
   ClassroomLinkRosterQueryDto,
+  ClassroomLinkSessionQueryDto,
   ClassroomLinkStudentPhotoQueryDto,
   ListMyAssignmentLinksDto,
   SubmitClassroomLinkAttendanceDto,
@@ -340,6 +341,10 @@ export class ClassroomCheckInAuthController {
       actorUserId: null,
       teacherMembershipId: authorized.teacherMembershipId,
       actorLabel: authorized.teacherDisplayName,
+      studentDataAccess:
+        authorized.assignedClassroomSubjectId === null
+          ? ('FULL' as const)
+          : ('ATTENDANCE_ONLY' as const),
       // Stamped on the session so the link's register can say what came of it.
       classroomAttendanceLinkId: authorized.linkId,
       allowedClassroomSubjectIds: await this.service.listAuthorizedSubjectIds(
@@ -394,6 +399,7 @@ export class ClassroomCheckInAuthController {
     this.noStore(response);
     return await this.exceptionAttendance.getRoster(
       await this.attendanceActor(request, query.classroomId),
+      { date: query.date, classroomSubjectId: query.classroomSubjectId },
     );
   }
 
@@ -630,6 +636,20 @@ export class ClassroomCheckInAuthController {
       actorLabel: authorized.teacherDisplayName,
       file,
     });
+  }
+
+  @Get('sessions/current')
+  @ThrottleTeacherAccess()
+  async currentSession(
+    @Query() query: ClassroomLinkSessionQueryDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    return await this.exceptionAttendance.findLessonSession(
+      await this.attendanceActor(request, query.classroomId),
+      { date: query.date, classroomSubjectId: query.classroomSubjectId },
+    );
   }
 
   @Post('sessions/start')

@@ -65,6 +65,7 @@ export class ClassroomAttendanceLinksRepository {
              link.assigned_classroom_id::text,
              link.assigned_classroom_subject_id::text,
              link.issued_by_teacher_membership_id::text,
+             link.source_teacher_link_id::text,
              link.created_by,
              link.opens_at, link.expires_at, link.assignment_note,
              assigned_grade.label || '/' || assigned_classroom.room_code AS assigned_classroom_label,
@@ -137,6 +138,8 @@ export class ClassroomAttendanceLinksRepository {
         province: 'school.province',
         district: 'school.district',
         sub_district: 'school.sub_district',
+        grade: 'classroom.grade_level_id',
+        room: 'classroom.legacy_room_number',
       },
       2,
     );
@@ -200,6 +203,8 @@ export class ClassroomAttendanceLinksRepository {
         province: 'school.province',
         district: 'school.district',
         sub_district: 'school.sub_district',
+        grade: 'classroom.grade_level_id',
+        room: 'classroom.legacy_room_number',
       },
       params.length + 1,
     );
@@ -622,12 +627,16 @@ export class ClassroomAttendanceLinksRepository {
       this.dataSource,
       `SELECT
          session.id::text AS session_id,
-         session.attendance_date,
+         session.school_id,
+         session.classroom_id,
+         session.classroom_subject_id,
+         session.attendance_date::text AS attendance_date,
          session.checking_started_at AS started_at,
          session.submitted_at,
          session.status,
          session.expected_roster_count,
          session.exception_count,
+         classroom.grade_level_id,
          grade.label || '/' || classroom.room_code AS classroom_label,
          subject.name_th AS subject_name,
          TRIM(BOTH ' ' FROM COALESCE(started.first_name, '') || ' ' ||
@@ -681,6 +690,8 @@ export class ClassroomAttendanceLinksRepository {
         province: 'school.province',
         district: 'school.district',
         sub_district: 'school.sub_district',
+        grade: 'classroom.grade_level_id',
+        room: 'classroom.legacy_room_number',
       },
       params.length + 1,
     );
@@ -1018,6 +1029,8 @@ export class ClassroomAttendanceLinksRepository {
        * is no account for `actorId` to hold. Exactly one of the two is set.
        */
       issuedByTeacherMembershipId?: number | null;
+      /** Null for assignments created by an authenticated system user. */
+      sourceTeacherLinkId?: string | null;
     },
     runner: QueryRunner,
   ): Promise<ClassroomLinkRow> {
@@ -1026,8 +1039,8 @@ export class ClassroomAttendanceLinksRepository {
          school_id, school_term_id, assigned_classroom_id, assigned_classroom_subject_id,
          opens_at, expires_at, assignment_note,
          token_hash, token_encrypted, link_status, issued_at, created_by, updated_by,
-         issued_by_teacher_membership_id
-       ) VALUES ($1, $2, $3, $10, $4, $5, $6, $7, $8, 'ACTIVE', now(), $9, $9, $11)
+         issued_by_teacher_membership_id, source_teacher_link_id
+       ) VALUES ($1, $2, $3, $10, $4, $5, $6, $7, $8, 'ACTIVE', now(), $9, $9, $11, $12)
        RETURNING id::text`,
       [
         input.schoolId,
@@ -1041,6 +1054,7 @@ export class ClassroomAttendanceLinksRepository {
         input.actorId,
         input.classroomSubjectId,
         input.issuedByTeacherMembershipId ?? null,
+        input.sourceTeacherLinkId ?? null,
       ],
     );
     const id = inserted.rows[0]?.id;
@@ -1065,6 +1079,21 @@ export class ClassroomAttendanceLinksRepository {
       [id],
     );
     return result.rows[0] ?? null;
+  }
+
+  async findActiveAssignmentsBySourceTeacherLink(
+    sourceTeacherLinkId: string,
+    runner: QueryRunner,
+  ): Promise<ClassroomLinkRow[]> {
+    const result = await createSqlQueryExecutor(runner).query<ClassroomLinkRow>(
+      `${this.linkSelect()}
+       WHERE link.source_teacher_link_id = $1
+         AND link.link_status = 'ACTIVE'
+       ORDER BY link.issued_at ASC, link.id ASC
+       FOR UPDATE OF link`,
+      [sourceTeacherLinkId],
+    );
+    return result.rows;
   }
 
   async findUsableByTokenHash(tokenHash: string): Promise<ClassroomLinkRow | null> {
@@ -1121,6 +1150,9 @@ export class ClassroomAttendanceLinksRepository {
       `SELECT 1
        FROM classroom_attendance_links link
        JOIN schools school ON school.id = link.school_id
+       LEFT JOIN school_classrooms classroom
+         ON classroom.id = link.assigned_classroom_id
+        AND classroom.school_id = link.school_id
        WHERE link.id = $1 AND ${scopeQuery.sql || 'TRUE'}
        LIMIT 1`,
       [id, ...scopeQuery.params],
@@ -1209,20 +1241,22 @@ export class ClassroomAttendanceLinksRepository {
            updated_by = $4
        WHERE id = $1
          AND link_status = 'ACTIVE'
+         -- A link belongs to a teacher, so the delivery target is the teacher it
+         -- belongs to. This used to read the homeroom of the link's classroom,
+         -- from when a link belonged to a room; that column is gone and the
+         -- query raised on every send.
+         AND teacher_membership_id = $2
          AND EXISTS (
            SELECT 1
-           FROM classroom_homeroom_teachers homeroom
-           JOIN school_teacher_memberships membership
-             ON membership.id = homeroom.teacher_membership_id
-            AND membership.school_id = homeroom.school_id
-            AND membership.membership_status = 'ACTIVE'
-            AND membership.deleted_at IS NULL
+           FROM school_teacher_memberships membership
            JOIN teachers teacher
              ON teacher.id = membership.teacher_id
             AND teacher.teacher_status = 'ACTIVE'
             AND teacher.deleted_at IS NULL
-           WHERE homeroom.classroom_id = classroom_attendance_links.classroom_id
-             AND homeroom.teacher_membership_id = $2
+           WHERE membership.id = $2
+             AND membership.school_id = classroom_attendance_links.school_id
+             AND membership.membership_status = 'ACTIVE'
+             AND membership.deleted_at IS NULL
          )
          AND (
            line_delivery_status <> 'SENDING'

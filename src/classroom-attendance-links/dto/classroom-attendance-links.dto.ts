@@ -21,6 +21,8 @@ import {
 const trimText = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 import {
+  CheckInLessonSessionQueryDto,
+  CheckInRosterQueryDto,
   CheckInStudentPhotoQueryDto,
   SubmitExceptionAttendanceDto,
 } from '../../attendance/dto/exception-attendance.dto';
@@ -180,7 +182,16 @@ export class CreateAttendanceAssignmentDto {
 }
 
 /** The room a link request is about, when the link reaches more than one. */
-export class ClassroomLinkRosterQueryDto {
+export class ClassroomLinkRosterQueryDto extends CheckInRosterQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId?: number;
+}
+
+/** The room stays optional here too: a link that reaches one need not name it. */
+export class ClassroomLinkSessionQueryDto extends CheckInLessonSessionQueryDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()

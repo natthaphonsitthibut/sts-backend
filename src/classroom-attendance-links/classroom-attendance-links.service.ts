@@ -293,6 +293,10 @@ export class ClassroomAttendanceLinksService {
         })),
         sessions: sessions.map((row) => ({
           id: row.session_id as string,
+          schoolId: Number(row.school_id),
+          gradeLevelId: Number(row.grade_level_id),
+          classroomId: Number(row.classroom_id),
+          classroomSubjectId: Number(row.classroom_subject_id),
           attendanceDate: row.attendance_date as string,
           startedAt: row.started_at as Date,
           submittedAt: (row.submitted_at as Date | null) ?? null,
@@ -355,7 +359,7 @@ export class ClassroomAttendanceLinksService {
 
   /** What became of one of your assignments: who opened it, and every register. */
   async myAssignmentUsage(issuer: AssignmentIssuer, linkId: string) {
-    await this.requireOwnedAssignment(issuer, linkId);
+    const assignment = await this.requireOwnedAssignment(issuer, linkId);
     const [opens, sessions] = await Promise.all([
       this.repository.listLinkOpens(linkId),
       this.repository.listLinkAttendanceSessions(linkId),
@@ -363,6 +367,12 @@ export class ClassroomAttendanceLinksService {
     return {
       success: true,
       data: {
+        assignment: {
+          classroomId: Number(assignment.assigned_classroom_id),
+          classroomLabel: assignment.assigned_classroom_label,
+          classroomSubjectId: Number(assignment.assigned_classroom_subject_id),
+          subjectName: assignment.assigned_subject_name,
+        },
         opens: opens.map((row) => ({
           openedAt: row.opened_at as Date,
           teacherName: (row.teacher_name as string | null) ?? 'ไม่ทราบชื่อ',
@@ -370,6 +380,10 @@ export class ClassroomAttendanceLinksService {
         })),
         sessions: sessions.map((row) => ({
           id: row.session_id as string,
+          schoolId: Number(row.school_id),
+          gradeLevelId: Number(row.grade_level_id),
+          classroomId: Number(row.classroom_id),
+          classroomSubjectId: Number(row.classroom_subject_id),
           attendanceDate: row.attendance_date as string,
           startedAt: row.started_at as Date,
           submittedAt: (row.submitted_at as Date | null) ?? null,
@@ -687,6 +701,17 @@ export class ClassroomAttendanceLinksService {
     }
     const rawToken = generateToken();
     const row = await this.repository.withTransaction(async (runner) => {
+      const sourceLink = await this.repository.findById(authorized.linkId, runner, true);
+      if (
+        !sourceLink ||
+        sourceLink.link_status !== 'ACTIVE' ||
+        sourceLink.assigned_classroom_subject_id !== null ||
+        Number(sourceLink.teacher_membership_id) !== Number(authorized.teacherMembershipId) ||
+        sourceLink.school_id !== authorized.schoolId ||
+        Number(sourceLink.school_term_id) !== authorized.schoolTermId
+      ) {
+        throw new GoneException('ลิงก์ครูถูกปิดหรือไม่สามารถมอบหมายต่อได้แล้ว');
+      }
       const offering = await this.repository.findAssignableSubject(
         {
           classroomSubjectId: input.classroomSubjectId,
@@ -714,6 +739,7 @@ export class ClassroomAttendanceLinksService {
           // who issued this — both on the row and in the audit trail.
           actorId: null,
           issuedByTeacherMembershipId: Number(authorized.teacherMembershipId),
+          sourceTeacherLinkId: sourceLink.id,
         },
         runner,
       );
@@ -915,8 +941,19 @@ export class ClassroomAttendanceLinksService {
       if (!row || !(await this.repository.isLinkInScope(id, this.actorScope(actor)))) {
         throw new NotFoundException('ไม่พบลิงก์ห้องเรียนในขอบเขตของคุณ');
       }
-      await this.repository.deactivate(id, this.actorId(actor), runner);
+      const actorId = this.actorId(actor);
+      const childAssignments =
+        row.teacher_membership_id !== null
+          ? await this.repository.findActiveAssignmentsBySourceTeacherLink(row.id, runner)
+          : [];
+      await this.repository.deactivate(id, actorId, runner);
       await this.auditLinkAction('CLASSROOM_ATTENDANCE_LINK_DEACTIVATE', row, actor, runner);
+      for (const child of childAssignments) {
+        await this.repository.deactivate(child.id, actorId, runner);
+        await this.auditLinkAction('CLASSROOM_ATTENDANCE_LINK_DEACTIVATE', child, actor, runner, {
+          deactivatedBySourceTeacherLinkId: row.id,
+        });
+      }
     });
     return { success: true, data: { id, status: 'INACTIVE' as const } };
   }
@@ -1090,7 +1127,10 @@ export class ClassroomAttendanceLinksService {
       teacherMembershipId: Number(authorized.teacherMembershipId),
       schoolTermId: authorized.schoolTermId,
     });
-    if (!classroomId) throw new ForbiddenException('นักเรียนคนนี้ไม่ได้อยู่ในห้องที่คุณสอน');
+    // Not found rather than forbidden, matching `assertStudentInClassroom` and
+    // every other out-of-scope read here: a teacher probing ids from another
+    // classroom must not learn which of them are real students.
+    if (!classroomId) throw new NotFoundException('ไม่พบนักเรียนในห้องที่คุณสอน');
     return classroomId;
   }
 
@@ -1149,6 +1189,7 @@ export class ClassroomAttendanceLinksService {
     );
     const teacher = await this.repository.findTeacherByEmail(identity.email, link.school_id);
     this.assertActiveTeacher(teacher);
+    this.assertTeacherMayOpenLink(link, teacher!);
     if (identity.persistIdentity !== false) {
       await this.bindIdentity(teacher!, 'GOOGLE', identity.subject, identity.email);
     }
@@ -1160,6 +1201,7 @@ export class ClassroomAttendanceLinksService {
     const link = await this.usableLink(rawToken);
     const teacher = await this.repository.findTeacherByEmail(identity.email, link.school_id);
     this.assertActiveTeacher(teacher);
+    this.assertTeacherMayOpenLink(link, teacher!);
     return await this.issueSession(link, teacher!, 'GOOGLE');
   }
 
@@ -1228,6 +1270,7 @@ export class ClassroomAttendanceLinksService {
     const citizenId = identity.identityNumber;
     const teacher = await this.repository.findTeacherByCitizenId(citizenId, link.school_id);
     this.assertActiveTeacher(teacher);
+    this.assertTeacherMayOpenLink(link, teacher!);
     if (!this.secureEqual(teacher!.citizen_id ?? '', citizenId)) {
       throw new ForbiddenException('ข้อมูล AraID ไม่ตรงกับครูในโรงเรียนนี้');
     }
@@ -1275,6 +1318,7 @@ export class ClassroomAttendanceLinksService {
       link.school_id,
     );
     this.assertActiveTeacher(teacher);
+    this.assertTeacherMayOpenLink(link, teacher!);
     const sessionToken = await this.issueSession(link, teacher!, 'THAID');
     return { response: { success: true, data: { status: 'APPROVED' } }, sessionToken };
   }
@@ -1468,6 +1512,16 @@ export class ClassroomAttendanceLinksService {
     }
   }
 
+  /** Standing links belong to one teacher; assignment links belong to the school. */
+  private assertTeacherMayOpenLink(link: ClassroomLinkRow, teacher: ExternalTeacherRow): void {
+    if (
+      link.teacher_membership_id !== null &&
+      String(link.teacher_membership_id) !== String(teacher.teacher_membership_id)
+    ) {
+      throw new ForbiddenException('ลิงก์ครูนี้เป็นของครูอีกคน');
+    }
+  }
+
   private async bindIdentity(
     teacher: ExternalTeacherRow,
     provider: 'GOOGLE' | 'THAID',
@@ -1500,6 +1554,7 @@ export class ClassroomAttendanceLinksService {
     teacher: ExternalTeacherRow,
     provider: 'GOOGLE' | 'THAID',
   ): Promise<string> {
+    this.assertTeacherMayOpenLink(link, teacher);
     const token = await this.sessions.issue({
       linkId: link.id,
       tokenHash: link.token_hash,
@@ -1544,6 +1599,7 @@ export class ClassroomAttendanceLinksService {
       link.school_id,
     );
     this.assertActiveTeacher(teacher);
+    this.assertTeacherMayOpenLink(link, teacher!);
     if (teacher!.teacher_id !== session.teacherId)
       throw new UnauthorizedException('เซสชันครูไม่ถูกต้อง');
     return teacher!;
@@ -1557,6 +1613,7 @@ export class ClassroomAttendanceLinksService {
     row: ClassroomLinkRow,
     actor: AuthenticatedRequestUser,
     runner: QueryRunner,
+    metadata: Record<string, unknown> = {},
   ): Promise<void> {
     await this.audit.recordAtomic(
       {
@@ -1567,7 +1624,10 @@ export class ClassroomAttendanceLinksService {
         targetId: row.id,
         metadata: {
           schoolId: row.school_id,
-          teacherMembershipId: Number(row.teacher_membership_id),
+          ...(row.teacher_membership_id === null
+            ? { classroomId: Number(row.assigned_classroom_id) }
+            : { teacherMembershipId: Number(row.teacher_membership_id) }),
+          ...metadata,
         },
         ip: null,
       },
