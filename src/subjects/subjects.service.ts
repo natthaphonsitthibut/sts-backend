@@ -225,25 +225,43 @@ export class SubjectsService {
     actor: AuthenticatedRequestUser,
     payload: SaveClassroomSubjectTeachersDto,
   ) {
-    await this.assertSchoolAccess(actor, payload.schoolId);
-    // Both id lists are re-read against this school before the write: an actor
-    // who may edit their own school could otherwise post another school's
-    // offering id, or staff their classroom with a teacher who works elsewhere.
-    const offerings = await this.repository.findClassroomSubjectsForTeacherUpdate({
-      classroomSubjectIds: payload.classroomSubjectIds,
-      schoolId: payload.schoolId,
-    });
-    if (offerings.length !== payload.classroomSubjectIds.length) {
-      throw new NotFoundException('ไม่พบรายวิชาของห้องเรียนที่เลือกในโรงเรียนนี้');
-    }
-    const teacherMembershipIds = await this.repository.filterSchoolTeacherMemberships({
-      membershipIds: payload.teacherMembershipIds,
-      schoolId: payload.schoolId,
-    });
-    if (teacherMembershipIds.length !== payload.teacherMembershipIds.length) {
-      throw new BadRequestException('มีครูที่ไม่ได้สังกัดโรงเรียนนี้');
-    }
-    await this.repository.withTransaction(async (queryRunner) => {
+    const scope = await this.assertSchoolAccess(actor, payload.schoolId);
+    const actorId = resolveAuditActorId(actor);
+    const updated = await this.repository.withTransaction(async (queryRunner) => {
+      // Lock and validate the same rows that will be rewritten. This prevents a
+      // membership or offering from becoming inactive between validation and
+      // the replacement write.
+      const offerings = await this.repository.findClassroomSubjectsForTeacherUpdate(
+        {
+          classroomSubjectIds: payload.classroomSubjectIds,
+          schoolId: payload.schoolId,
+        },
+        queryRunner,
+      );
+      if (offerings.length !== payload.classroomSubjectIds.length) {
+        throw new NotFoundException('ไม่พบรายวิชาของห้องเรียนที่เลือกในโรงเรียนนี้');
+      }
+      if (
+        offerings.some(
+          (offering) =>
+            !isClassInScope(scope, {
+              gradeLevelId: offering.grade_level_id,
+              roomId: offering.legacy_room_number,
+            }),
+        )
+      ) {
+        throw new NotFoundException('มีห้องเรียนที่อยู่นอกขอบเขตของคุณ');
+      }
+      const teacherMembershipIds = await this.repository.filterSchoolTeacherMemberships(
+        {
+          membershipIds: payload.teacherMembershipIds,
+          schoolId: payload.schoolId,
+        },
+        queryRunner,
+      );
+      if (teacherMembershipIds.length !== payload.teacherMembershipIds.length) {
+        throw new BadRequestException('มีครูที่ไม่ได้เปิดใช้งานในโรงเรียนนี้');
+      }
       await this.repository.replaceClassroomSubjectTeachers(
         {
           classroomSubjects: offerings.map((offering) => ({
@@ -252,12 +270,31 @@ export class SubjectsService {
           })),
           schoolId: payload.schoolId,
           teacherMembershipIds,
-          actorId: resolveAuditActorId(actor),
+          actorId,
         },
         queryRunner,
       );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'CLASSROOM_SUBJECTS_REPLACE',
+          targetType: 'classroom_subject_teachers',
+          targetId: String(payload.schoolId),
+          metadata: {
+            schoolId: payload.schoolId,
+            classroomSubjectIds: payload.classroomSubjectIds,
+            classroomIds: [...new Set(offerings.map((item) => Number(item.classroom_id)))],
+            teacherMembershipIds,
+            changedFields: ['teacherMembershipIds'],
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return offerings.length;
     });
-    return { success: true, data: { updated: offerings.length } };
+    return { success: true, data: { updated } };
   }
 
   async saveGradeSchoolSubject(

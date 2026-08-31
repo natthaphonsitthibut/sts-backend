@@ -102,6 +102,17 @@ describe('SubjectsService', () => {
       isSubjectSharedWithAnotherSchool: jest.fn().mockResolvedValue(false),
       replaceGradeSubjectClassrooms: jest.fn().mockResolvedValue(undefined),
       removeGradeSubjectClassrooms: jest.fn().mockResolvedValue(undefined),
+      findClassroomSubjectsForTeacherUpdate: jest.fn().mockResolvedValue([
+        {
+          id: '77',
+          classroom_id: '42',
+          school_subject_id: '10',
+          grade_level_id: 4,
+          legacy_room_number: 1,
+        },
+      ]),
+      filterSchoolTeacherMemberships: jest.fn().mockResolvedValue([5]),
+      replaceClassroomSubjectTeachers: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SubjectsRepository>;
     auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
     schoolStructureRepository = { isSchoolInScope: jest.fn().mockResolvedValue(true) };
@@ -227,6 +238,57 @@ describe('SubjectsService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.createSchoolSubject.mock.calls).toHaveLength(0);
     expect(repository.replaceGradeSubjectClassrooms.mock.calls).toHaveLength(0);
+  });
+
+  it('replaces subject teachers atomically after class scope and active-teacher checks', async () => {
+    const result = await service.saveClassroomSubjectTeachers(
+      {
+        ...actor,
+        data_scope: { school_ids: [1001], grade_levels: [4], room_ids: [1] },
+      },
+      { schoolId: 1001, classroomSubjectIds: [77], teacherMembershipIds: [5] },
+    );
+
+    expect(repository.findClassroomSubjectsForTeacherUpdate.mock.calls[0]?.[0]).toEqual({
+      classroomSubjectIds: [77],
+      schoolId: 1001,
+    });
+    expect(repository.filterSchoolTeacherMemberships.mock.calls[0]?.[0]).toEqual({
+      membershipIds: [5],
+      schoolId: 1001,
+    });
+    expect(repository.replaceClassroomSubjectTeachers.mock.calls[0]?.[0]).toMatchObject({
+      teacherMembershipIds: [5],
+    });
+    expect(auditLog.recordAtomic.mock.calls[0]?.[0]).toMatchObject({
+      targetType: 'classroom_subject_teachers',
+      metadata: { teacherMembershipIds: [5] },
+    });
+    expect(result.data.updated).toBe(1);
+  });
+
+  it('rejects a subject teacher write outside the actor room scope', async () => {
+    await expect(
+      service.saveClassroomSubjectTeachers(
+        { ...actor, data_scope: { school_ids: [1001], grade_levels: [4], room_ids: [2] } },
+        { schoolId: 1001, classroomSubjectIds: [77], teacherMembershipIds: [5] },
+      ),
+    ).rejects.toThrow('มีห้องเรียนที่อยู่นอกขอบเขตของคุณ');
+    expect(repository.filterSchoolTeacherMemberships.mock.calls).toHaveLength(0);
+    expect(repository.replaceClassroomSubjectTeachers.mock.calls).toHaveLength(0);
+  });
+
+  it('rejects an inactive teacher membership before changing subject teachers', async () => {
+    repository.filterSchoolTeacherMemberships.mockResolvedValue([]);
+
+    await expect(
+      service.saveClassroomSubjectTeachers(actor, {
+        schoolId: 1001,
+        classroomSubjectIds: [77],
+        teacherMembershipIds: [5],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.replaceClassroomSubjectTeachers.mock.calls).toHaveLength(0);
   });
 
   it('rejects renaming a global subject shared with another school', async () => {

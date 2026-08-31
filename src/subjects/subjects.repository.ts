@@ -632,49 +632,75 @@ export class SubjectsRepository {
    * before anything is written — an id from the request body is otherwise a
    * free choice of any classroom in the country.
    */
-  async findClassroomSubjectsForTeacherUpdate(input: {
-    classroomSubjectIds: number[];
-    schoolId: number;
-  }): Promise<Array<{ id: string; classroom_id: string; school_subject_id: string }>> {
-    if (input.classroomSubjectIds.length === 0) return [];
-    const result = await queryDataSource<{
+  async findClassroomSubjectsForTeacherUpdate(
+    input: {
+      classroomSubjectIds: number[];
+      schoolId: number;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<
+    Array<{
       id: string;
       classroom_id: string;
       school_subject_id: string;
-    }>(
-      this.dataSource,
+      grade_level_id: number;
+      legacy_room_number: number;
+    }>
+  > {
+    if (input.classroomSubjectIds.length === 0) return [];
+    const rows = (await queryRunner.query(
       `
-        SELECT id::text, classroom_id::text, school_subject_id::text
-        FROM classroom_subjects
-        WHERE id = ANY($1::bigint[])
-          AND school_id = $2
-          AND offering_status = 'ACTIVE'
-          AND deleted_at IS NULL
+        SELECT offering.id::text, offering.classroom_id::text,
+          offering.school_subject_id::text, classroom.grade_level_id,
+          classroom.legacy_room_number
+        FROM classroom_subjects offering
+        JOIN school_classrooms classroom
+          ON classroom.id = offering.classroom_id
+         AND classroom.school_id = offering.school_id
+        WHERE offering.id = ANY($1::bigint[])
+          AND offering.school_id = $2
+          AND offering.offering_status = 'ACTIVE'
+          AND offering.deleted_at IS NULL
+          AND classroom.classroom_status = 'ACTIVE'
+          AND classroom.deleted_at IS NULL
+        FOR UPDATE OF offering, classroom
       `,
       [input.classroomSubjectIds, input.schoolId],
-    );
-    return result.rows;
+    )) as Array<{
+      id: string;
+      classroom_id: string;
+      school_subject_id: string;
+      grade_level_id: number;
+      legacy_room_number: number;
+    }>;
+    return rows;
   }
 
   /** Memberships that are actually this school's, for the same reason. */
-  async filterSchoolTeacherMemberships(input: {
-    membershipIds: number[];
-    schoolId: number;
-  }): Promise<number[]> {
+  async filterSchoolTeacherMemberships(
+    input: {
+      membershipIds: number[];
+      schoolId: number;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<number[]> {
     if (input.membershipIds.length === 0) return [];
-    const result = await queryDataSource<{ id: string }>(
-      this.dataSource,
+    const rows = (await queryRunner.query(
       `
-        SELECT id::text
-        FROM school_teacher_memberships
-        WHERE id = ANY($1::bigint[])
-          AND school_id = $2
-          AND membership_status = 'ACTIVE'
-          AND deleted_at IS NULL
+        SELECT membership.id::text
+        FROM school_teacher_memberships membership
+        JOIN teachers teacher ON teacher.id = membership.teacher_id
+        WHERE membership.id = ANY($1::bigint[])
+          AND membership.school_id = $2
+          AND membership.membership_status = 'ACTIVE'
+          AND membership.deleted_at IS NULL
+          AND teacher.teacher_status = 'ACTIVE'
+          AND teacher.deleted_at IS NULL
+        FOR UPDATE OF membership, teacher
       `,
       [input.membershipIds, input.schoolId],
-    );
-    return result.rows.map((row) => Number(row.id));
+    )) as Array<{ id: string }>;
+    return rows.map((row) => Number(row.id));
   }
 
   /**
