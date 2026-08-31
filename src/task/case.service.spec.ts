@@ -56,6 +56,8 @@ describe('CaseService', () => {
         id: 10,
         school_id: 10010002,
         student_uuid: '11111111-1111-4111-8111-111111111111',
+        // Reviewing is only reachable once a report has been submitted.
+        status: 'PENDING_REVIEW',
       }),
       findCaseDetailById: jest.fn().mockResolvedValue({
         id: 10,
@@ -501,6 +503,7 @@ describe('CaseService', () => {
       student_name: 'นักเรียน ทดสอบ',
       school_id: 10010002,
       workflow_phase_code: 'ASSISTANCE',
+      status: 'PENDING_REVIEW',
     });
 
     await expect(
@@ -522,6 +525,30 @@ describe('CaseService', () => {
       expect.objectContaining({ id: 1 }),
       'ASSISTANCE',
     );
+  });
+
+  it('refuses to review a case that has no report waiting', async () => {
+    taskRepository.findCaseById.mockResolvedValueOnce({
+      id: 10,
+      student_name: 'นักเรียน ทดสอบ',
+      school_id: 10010002,
+      // Nobody has submitted a follow-up report, so there is nothing to review.
+      status: 'OPEN',
+    });
+
+    await expect(
+      service.reviewCase(
+        10,
+        {
+          review_action: 'CLOSE',
+          review_note: 'ปิดเคส',
+          resolution_outcome: 'RETURNED_TO_SCHOOL',
+        },
+        buildActor(['dashboard']),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
   });
 
   // Reviewing, closing and referring used to be three separate permissions;

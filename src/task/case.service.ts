@@ -550,6 +550,14 @@ export class CaseService {
       if (reviewAction.availablePhaseCode && reviewAction.availablePhaseCode !== currentPhase) {
         throw new BadRequestException('การดำเนินการนี้ใช้กับขั้นตอนปัจจุบันของเคสไม่ได้');
       }
+      // A case only reaches PENDING_REVIEW by someone submitting a follow-up
+      // report, which is what makes a review a review. The timeline already
+      // hides the buttons anywhere else; the server must not take the client's
+      // word for it, or a direct call could close a case nobody ever visited.
+      const currentStatus = this.normalizeText(caseRecord.status).toUpperCase();
+      if (currentStatus !== 'PENDING_REVIEW') {
+        throw new BadRequestException('พิจารณาได้เฉพาะเคสที่มีรายงานติดตามรอพิจารณา');
+      }
       await this.taskRepository.withTransaction(async (executor) => {
         const referralAgency =
           referralAgencyId === null
