@@ -297,6 +297,33 @@ export class SchoolStructureService {
     this.resolveScope(actor);
     const actorId = resolveAuditActorId(actor);
     if (!actorId) throw new ForbiddenException('บัญชีนี้ไม่รองรับการปรับแต่งห้องเรียน');
+    const existingClassroom = await this.repository.findClassroomById(classroomId);
+    if (!existingClassroom) throw new NotFoundException('ไม่พบห้องเรียน');
+    await this.assertSchoolAccess(existingClassroom.school_id, actor);
+    return await this.applyClassroomPresentation(classroomId, dto, {
+      actorUserId: actorId,
+      actorLabel: actor.username,
+      file,
+    });
+  }
+
+  /**
+   * The cover itself, for a caller that has already proven the room is theirs.
+   *
+   * A classroom card is the room's, not the viewer's: the same colour and the
+   * same photo whether it is reached from ห้องเรียนทั้งหมด or from a teacher's
+   * link. So both doors write this one record rather than each keeping a copy
+   * that drifts from the other.
+   *
+   * `actorUserId` is null for a link, which holds no account — the audit row
+   * still names who acted through `actorLabel`, and `updated_by` is nullable.
+   */
+  async applyClassroomPresentation(
+    classroomId: number,
+    dto: UpdateClassroomPresentationDto,
+    actor: { actorUserId: number | null; actorLabel: string; file?: Express.Multer.File },
+  ) {
+    const { actorUserId: actorId, file } = actor;
     if (file && dto.removeCover) {
       throw new BadRequestException('ไม่สามารถอัปโหลดและนำรูปออกพร้อมกันได้');
     }
@@ -311,10 +338,6 @@ export class SchoolStructureService {
       throw new BadRequestException('กรุณาระบุการปรับแต่งอย่างน้อยหนึ่งรายการ');
     }
 
-    const existing = await this.repository.findClassroomById(classroomId);
-    if (!existing) throw new NotFoundException('ไม่พบห้องเรียน');
-    await this.assertSchoolAccess(existing.school_id, actor);
-
     const newStorageKey = file
       ? await processImageUpload(file, this.storage, 'classroom-covers')
       : undefined;
@@ -323,7 +346,6 @@ export class SchoolStructureService {
       await this.repository.withTransaction(async (queryRunner) => {
         const classroom = await this.repository.findClassroomById(classroomId, queryRunner);
         if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
-        await this.assertSchoolAccess(classroom.school_id, actor);
         replacedStorageKey = classroom.cover_image_storage_key;
         const coverImageStorageKey =
           newStorageKey !== undefined
@@ -355,7 +377,7 @@ export class SchoolStructureService {
         await this.auditLog.recordAtomic(
           {
             actorUserId: actorId,
-            actorLabel: actor.username,
+            actorLabel: actor.actorLabel,
             action: 'MASTER_DATA_EDIT',
             targetType: 'school_classrooms',
             targetId: String(classroomId),
@@ -393,6 +415,13 @@ export class SchoolStructureService {
     const classroom = await this.repository.findClassroomById(classroomId);
     if (!classroom?.cover_image_storage_key) throw new NotFoundException('ไม่พบรูปห้องเรียน');
     await this.assertSchoolAccess(classroom.school_id, actor, true);
+    return await this.readClassroomCover(classroomId);
+  }
+
+  /** The cover bytes, for a caller that has already proven the room is theirs. */
+  async readClassroomCover(classroomId: number): Promise<FileServeResult> {
+    const classroom = await this.repository.findClassroomById(classroomId);
+    if (!classroom?.cover_image_storage_key) throw new NotFoundException('ไม่พบรูปห้องเรียน');
     const result = await this.storage.resolve(classroom.cover_image_storage_key);
     if (!result) throw new NotFoundException('ไม่พบรูปห้องเรียน');
     return result;
@@ -1080,7 +1109,27 @@ export class SchoolStructureService {
     const classroom = await this.repository.findClassroomById(classroomId);
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
     await this.assertSchoolAccess(classroom.school_id, actor);
+    return await this.readClassroomAttendanceHistory(classroomId, query);
+  }
 
+  /**
+   * The history itself, for a caller that has already proven the room is theirs.
+   *
+   * A classroom link holds no account and so has no permission to check — what
+   * stands in for one is the classroom bound to its signed session. Splitting
+   * the read out keeps that check at the door of each caller instead of giving
+   * the link a second, thinner copy of the same query.
+   *
+   * `photoPath` exists because the two callers reach student photos by different
+   * routes: staff through `/api/students/:id/photo`, a link through its own
+   * namespace, which is the only one its session can open.
+   */
+  async readClassroomAttendanceHistory(
+    classroomId: number,
+    query: ListClassroomAttendanceHistoryDto,
+    photoPath: (studentUuid: string, version: string) => string = (studentUuid, version) =>
+      `/api/students/${encodeURIComponent(studentUuid)}/photo?v=${version}`,
+  ) {
     const page = resolvePage(query.page);
     const limit = resolveLimit(query.limit);
     if (query.dateFrom && query.dateTo && query.dateFrom > query.dateTo) {
@@ -1176,7 +1225,7 @@ export class SchoolStructureService {
         studentUuid: row.student_uuid,
         studentNumber: row.student_number,
         photoUrl: row.photo_storage_key
-          ? `/api/students/${encodeURIComponent(row.student_uuid)}/photo?v=${encodeMediaVersion(row.photo_updated_at)}`
+          ? photoPath(row.student_uuid, encodeMediaVersion(row.photo_updated_at))
           : null,
         firstName: row.first_name,
         lastName: row.last_name,

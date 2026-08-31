@@ -304,7 +304,7 @@ async function main() {
     await waitFor(
       async () => {
         const text = String(await evaluate(client, 'document.body.innerText'));
-        return text.includes('จัดการลิงก์ห้องเรียน') && text.includes('สร้างทั้งหมด') && text.includes('สร้างลิงก์');
+        return text.includes('จัดการลิงก์ครู') && text.includes('สร้างทั้งหมด') && text.includes('สร้างลิงก์');
       },
       'Allowed classroom-links page did not render room rows and actions',
     );
@@ -320,19 +320,58 @@ async function main() {
       async () =>
         await evaluate(
           client,
-          `Boolean(document.querySelector('[data-homeroom-teacher] [data-slot="avatar"]'))`,
+          `Boolean(document.querySelector('[data-link-teacher] [data-slot="avatar"]'))`,
         ),
-      'Homeroom teacher avatar did not render beside the teacher name',
+      'Teacher avatar did not render beside the teacher name',
     );
+    // The table used to be sized past what the page can hold, so the tools
+    // column sat off the right edge behind a sideways scroll. Checked at the
+    // narrowest width the table appears at — one pixel into `xl`, with the
+    // sidebar taking its share — because that is where it first has to fit.
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1280,
+      height: 800,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await waitFor(
+      async () =>
+        await evaluate(
+          client,
+          `Boolean(document.querySelector('[data-slot="data-table"] > div'))`,
+        ),
+      'Table did not render at the narrowest width it appears at',
+    );
+    assert(
+      await evaluate(
+        client,
+        `(() => {
+          // The scroller is the wrapper's own child, not an ancestor: the
+          // outer box is overflow-hidden and would always measure as fitting.
+          const scroller = document.querySelector(
+            '[data-slot="data-table"] > div',
+          );
+          if (!scroller || scroller.clientWidth === 0) return false;
+          return scroller.scrollWidth <= scroller.clientWidth + 1;
+        })()`,
+      ),
+      'Classroom-links table scrolled sideways at the width it appears at',
+    );
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1366,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
     await evaluate(
       client,
-      `document.querySelector('[data-homeroom-teacher] button')?.click()`,
+      `document.querySelector('[data-link-teacher] button')?.click()`,
     );
     await waitFor(
       async () =>
         String(await evaluate(client, 'location.pathname')).startsWith('/teachers/') &&
         String(await evaluate(client, 'document.body.innerText')).includes('ข้อมูลทั่วไป'),
-      'Homeroom teacher avatar did not open the scoped read-only teacher profile',
+      'Teacher avatar did not open the scoped read-only teacher profile',
     );
     assert(
       !String(await evaluate(client, 'document.body.innerText')).includes('แก้ไขข้อมูล'),
@@ -380,7 +419,7 @@ async function main() {
       })()`,
     );
     await waitFor(
-      async () => String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกหรือแชร์ลิงก์ห้องเรียน'),
+      async () => String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกหรือแชร์ลิงก์ครู'),
       'Create action did not expose the copy/share fallback',
     );
     // Each action reports its own outcome, so the generic save toast must not
@@ -412,7 +451,7 @@ async function main() {
       `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]').click()`,
     );
     await waitFor(
-      async () => !String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกหรือแชร์ลิงก์ห้องเรียน'),
+      async () => !String(await evaluate(client, 'document.body.innerText')).includes('คัดลอกหรือแชร์ลิงก์ครู'),
       'Share dialog did not close',
     );
 

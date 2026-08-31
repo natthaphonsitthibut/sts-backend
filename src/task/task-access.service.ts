@@ -37,6 +37,12 @@ function maskName(name: string | null | undefined): string {
     .join(' ');
 }
 
+/** Ids arrive from raw rows as `unknown`; compare them as the text they are. */
+function toIdentityText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+}
+
 @Injectable()
 export class TaskAccessService {
   private readonly logger = new Logger(TaskAccessService.name);
@@ -74,6 +80,23 @@ export class TaskAccessService {
     };
   }
 
+  /**
+   * The verified teacher must be the one the task was assigned to.
+   *
+   * Being a teacher at the link's school was the only test, so any colleague
+   * could open a colleague's follow-up and submit a home visit under their
+   * name. The assignee is recorded on the link; when it is, it decides. Links
+   * with no assignee stay open to the school, which is what an unassigned link
+   * is for.
+   */
+  private assertAssignedTeacher(link: { assigned_teacher_id?: unknown }, teacherId: unknown): void {
+    const assignedTeacherId = toIdentityText(link.assigned_teacher_id);
+    if (assignedTeacherId === '') return;
+    if (assignedTeacherId !== toIdentityText(teacherId)) {
+      throw new ForbiddenException('ลิงก์นี้มอบหมายให้ครูอีกคน');
+    }
+  }
+
   async completeGoogleAuthorization(code: string, state: string): Promise<string> {
     const login = await this.googleStates.consume('task-link', state);
     if (!login) throw new GoneException('คำขอ Google Login หมดอายุหรือถูกใช้แล้ว');
@@ -94,6 +117,7 @@ export class TaskAccessService {
     if (!teacher) {
       throw new ForbiddenException('Google นี้ไม่ตรงกับครูที่เปิดใช้งานในโรงเรียนของลิงก์');
     }
+    this.assertAssignedTeacher(link, teacher.teacher_id);
     const sessionToken = await this.magicSessionStore.issue(login.subjectId);
     await this.auditLog.record({
       actorUserId: null,
@@ -121,6 +145,7 @@ export class TaskAccessService {
     if (!teacher) {
       throw new ForbiddenException('อีเมลนี้ไม่ตรงกับครูที่เปิดใช้งานในโรงเรียนของลิงก์');
     }
+    this.assertAssignedTeacher(link, teacher.teacher_id);
     const sessionToken = await this.magicSessionStore.issue(String(link.id));
     await this.auditLog.record({
       actorUserId: null,
@@ -256,7 +281,7 @@ export class TaskAccessService {
     }
   }
 
-  /** AraID may be used by any active teacher membership in the link's school. */
+  /** AraID must belong to the assigned teacher, or to any of the school's teachers when the link names none. */
   private async assertAraIdIdentityMatchesLink(
     linkId: string,
     araIdProfileId: string,
@@ -267,11 +292,14 @@ export class TaskAccessService {
       throw new ConflictException('ลิงก์นี้ไม่มีโรงเรียนที่ใช้ตรวจสอบตัวตน');
     }
     const verified = await this.araIdService.getVerifiedIdentityNumber(araIdProfileId);
-    if (
-      !(await this.taskRepository.findActiveTeacherInSchoolByCitizenId(verified.trim(), schoolId))
-    ) {
+    const teacher = await this.taskRepository.findActiveTeacherInSchoolByCitizenId(
+      verified.trim(),
+      schoolId,
+    );
+    if (!teacher) {
       throw new ForbiddenException('AraID นี้ไม่ตรงกับครูที่เปิดใช้งานในโรงเรียนของลิงก์');
     }
+    this.assertAssignedTeacher(identity ?? {}, teacher.teacher_id);
   }
 
   async getTaskByToken(token: string, sessionToken?: string) {

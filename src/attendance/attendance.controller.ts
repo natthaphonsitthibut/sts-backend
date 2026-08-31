@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,7 +10,9 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   AuthGuard,
@@ -21,6 +24,10 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import type { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { attendanceImportMulterOptions } from './attendance-import.multer';
+import { AttendanceImportService } from './attendance-import.service';
+import { ParseAttendanceImportDto } from './dto/attendance-import.dto';
 import { AttendanceService } from './attendance.service';
 import {
   GetHistoryQueryDto,
@@ -33,6 +40,7 @@ import { ListSchoolTermsQueryDto, UpsertSchoolTermDto } from './dto/attendance-o
 import {
   InternalCheckInOptionsQueryDto,
   InternalCheckInRosterQueryDto,
+  InternalCheckInSessionQueryDto,
   StartInternalExceptionAttendanceDto,
   SubmitExceptionAttendanceDto,
 } from './dto/exception-attendance.dto';
@@ -45,6 +53,7 @@ export class AttendanceController {
     private readonly attendanceService: AttendanceService,
     private readonly attendanceOperationsService: AttendanceOperationsService,
     private readonly exceptionAttendanceService: ExceptionAttendanceService,
+    private readonly attendanceImportService: AttendanceImportService,
   ) {}
 
   @Get('check-in/options')
@@ -72,7 +81,10 @@ export class AttendanceController {
       query.classroomId,
       actor,
     );
-    return await this.exceptionAttendanceService.getRoster(checkInActor);
+    return await this.exceptionAttendanceService.getRoster(checkInActor, {
+      date: query.date,
+      classroomSubjectId: query.classroomSubjectId,
+    });
   }
 
   @Get('check-in/student-photo')
@@ -100,6 +112,23 @@ export class AttendanceController {
       return;
     }
     response.sendFile(result.filePath);
+  }
+
+  @Get('check-in/sessions/current')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async currentCheckInSession(
+    @Query() query: InternalCheckInSessionQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    const checkInActor = await this.exceptionAttendanceService.resolveInternalActor(
+      query.classroomId,
+      actor,
+    );
+    return await this.exceptionAttendanceService.findLessonSession(checkInActor, {
+      date: query.date,
+      classroomSubjectId: query.classroomSubjectId,
+    });
   }
 
   @Post('check-in/sessions/start')
@@ -246,5 +275,25 @@ export class AttendanceController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return await this.attendanceOperationsService.deleteTerm(termId, actor);
+  }
+  // Reads a teacher-supplied spreadsheet into plain rows. It writes nothing and
+  // returns no student data, so the same 'attendance' permission that guards a
+  // check-in is the right gate; matching rows to the roster happens client-side
+  // and any resulting marks still go through the guarded write endpoints above.
+  @Post('import/parse')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  @UseInterceptors(FileInterceptor('file', attendanceImportMulterOptions))
+  async parseImport(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: ParseAttendanceImportDto,
+  ) {
+    if (file) {
+      return { data: this.attendanceImportService.parseUpload(file) };
+    }
+    if (!body.url) {
+      throw new BadRequestException('กรุณาเลือกไฟล์หรือใส่ลิงก์');
+    }
+    return { data: await this.attendanceImportService.parseUrl(body.url) };
   }
 }

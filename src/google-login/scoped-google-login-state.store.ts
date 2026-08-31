@@ -11,11 +11,7 @@ import { RedisClientService } from '../redis/redis-client.service';
  */
 const GOOGLE_LOGIN_STATE_MAX_TTL_SECONDS = 600;
 
-export type GoogleLoginFlow =
-  | 'classroom-link'
-  | 'task-link'
-  | 'teacher-line-group'
-  | 'teacher-line-invitation';
+export type GoogleLoginFlow = 'classroom-link' | 'task-link' | 'teacher-line-group';
 
 export interface ScopedGoogleLoginState {
   flow: GoogleLoginFlow;

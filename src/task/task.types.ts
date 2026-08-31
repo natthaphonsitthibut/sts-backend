@@ -56,6 +56,11 @@ export interface RiskDashboardFilters {
   academicYear?: number;
   semester?: number;
   caseStatus?: 'OPEN' | 'IN_PROGRESS' | 'PENDING_REVIEW' | 'STUDENT_NOT_FOUND' | 'RESOLVED';
+  /**
+   * Narrows the watchlist to one concern level. Unset lists every level, so the
+   * three level counts always add up to the number of rows.
+   */
+  concernLevel?: ConcernLevelCode;
   grade?: string;
   room?: string;
   page?: number;
@@ -73,6 +78,15 @@ export interface RiskDashboardSummary {
   HIGH: number;
   WATCH: number;
   NORMAL: number;
+}
+
+/** The catalog codes seeded by AddClassroomCommentConcernLevels. */
+export type ConcernLevelCode = 'NOTE' | 'WATCH' | 'CONCERN';
+
+export interface RiskDashboardConcernLevelSummary {
+  NOTE: number;
+  WATCH: number;
+  CONCERN: number;
 }
 
 export interface RiskDashboardCaseStatusSummary {
@@ -112,8 +126,10 @@ export interface RiskDashboardRow extends QueryResultRow {
   latest_case_magic_link?: string | null;
   latest_case_had_assignment: boolean;
   problem_category_label: string | null;
-  concern_level_code: 'NOTE' | 'WATCH' | 'CONCERN' | null;
+  concern_level_code: ConcernLevelCode | null;
   concern_level_label: string | null;
+  /** Every observation recorded for this student, not just the one shown. */
+  comment_count: number | string;
   teacher_comment: string | null;
 }
 
@@ -122,6 +138,7 @@ export interface RiskDashboardResult {
   totalCount: number;
   summary: RiskDashboardSummary;
   caseStatusSummary: RiskDashboardCaseStatusSummary;
+  concernLevelSummary: RiskDashboardConcernLevelSummary;
   missingProfileCount?: number;
 }
 

@@ -130,7 +130,7 @@ describe('TaskAccessService public link identity providers', () => {
       findTaskLinkByTokenHash: jest.fn().mockResolvedValue(LINK),
       findActiveTeacherInSchoolByEmail: jest
         .fn()
-        .mockResolvedValue({ teacher_id: '99', email: 'other-teacher@school.test' }),
+        .mockResolvedValue({ teacher_id: '42', email: 'assigned-teacher@school.test' }),
       findTaskLinkAraIdIdentity: jest
         .fn()
         .mockResolvedValue({ target_school_id: LINK.target_school_id }),
@@ -214,7 +214,7 @@ describe('TaskAccessService public link identity providers', () => {
     );
   });
 
-  it('lets any active teacher in the link school verify with Google', async () => {
+  it('lets the assigned teacher verify with Google', async () => {
     const { service, taskRepository, magicSessionStore } = createIdentityHarness();
 
     await expect(service.completeGoogleAuthorization('google-code', 'google-state')).resolves.toBe(
@@ -227,7 +227,7 @@ describe('TaskAccessService public link identity providers', () => {
     expect(magicSessionStore.issue).toHaveBeenCalledWith(LINK.id);
   });
 
-  it('lets an entered local email resolve only to an active teacher in the link school', async () => {
+  it('lets an entered local email resolve only to the assigned teacher', async () => {
     const { service, google, taskRepository, magicSessionStore } = createIdentityHarness();
 
     await expect(
@@ -240,6 +240,20 @@ describe('TaskAccessService public link identity providers', () => {
       LINK.target_school_id,
     );
     expect(magicSessionStore.issue).toHaveBeenCalledWith(LINK.id);
+  });
+
+  it('rejects a colleague who is not the assigned teacher', async () => {
+    const { service, taskRepository } = createIdentityHarness();
+    // Same school, active, verified — and still not the person the follow-up
+    // was handed to.
+    taskRepository.findActiveTeacherInSchoolByEmail.mockResolvedValue({
+      teacher_id: '99',
+      email: 'other-teacher@school.test',
+    });
+
+    await expect(
+      service.completeGoogleAuthorization('google-code', 'google-state'),
+    ).rejects.toMatchObject({ status: 403 });
   });
 
   it('rejects an entered local email outside the task link school', async () => {

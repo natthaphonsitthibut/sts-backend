@@ -133,6 +133,66 @@ export class ExceptionAttendanceRepository {
     return result.rows;
   }
 
+  async findRosterSessionId(input: {
+    classroomId: number;
+    attendanceDate: string;
+    classroomSubjectId: number;
+  }): Promise<string | null> {
+    const result = await queryDataSource<{ id: string }>(
+      this.dataSource,
+      `
+        SELECT id::text
+        FROM attendance_sessions
+        WHERE classroom_id = $1
+          AND attendance_date = $2
+          AND classroom_subject_id = $3
+          AND record_storage_mode = 'EXCEPTIONS'
+          AND deleted_at IS NULL
+        -- A room can hold the same subject twice in a day (homeroom sits in
+        -- period 1 and period 8), so the earliest period is named rather than
+        -- left to the planner. The frozen roster is the same either way; the
+        -- point is that repeat reads answer with the same session.
+        ORDER BY period NULLS FIRST, id
+        LIMIT 1
+      `,
+      [input.classroomId, input.attendanceDate, input.classroomSubjectId],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
+  async listRosterSnapshot(sessionId: string): Promise<CheckInRosterRow[]> {
+    const result = await queryDataSource<CheckInRosterRow>(
+      this.dataSource,
+      `
+        SELECT
+          enrollment.student_uuid::text,
+          enrollment.student_number,
+          enrollment."FirstName_Onec" AS first_name,
+          enrollment."LastName_Onec" AS last_name,
+          (person.photo_storage_key IS NOT NULL) AS has_photo,
+          person.updated_at AS photo_updated_at,
+          risk.risk_tier,
+          latest_comment.problem_description AS teacher_comment
+        FROM attendance_session_roster snapshot
+        JOIN attendance_sessions session
+          ON session.id = snapshot.session_id
+         AND session.school_id = snapshot.school_id
+        JOIN student_term enrollment
+          ON enrollment.student_uuid = snapshot.student_uuid
+         AND enrollment.classroom_id = session.classroom_id
+        ${rosterProfileJoinsSql('enrollment')}
+        WHERE snapshot.session_id = $1
+        ORDER BY
+          enrollment.student_number NULLS LAST,
+          enrollment."FirstName_Onec",
+          enrollment."LastName_Onec",
+          enrollment.student_uuid
+      `,
+      [sessionId],
+    );
+    return result.rows;
+  }
+
   async isStudentInClassroom(classroomId: number, studentUuid: string): Promise<boolean> {
     const result = await queryDataSource<{ present: boolean }>(
       this.dataSource,
@@ -265,14 +325,16 @@ export class ExceptionAttendanceRepository {
           attendance_date, period, session_kind, classroom_subject_id,
           status, expected_roster_count, recorded_count,
           exception_count, record_storage_mode, checking_started_at,
-          started_by_teacher_membership_id, created_by, updated_by
+          started_by_teacher_membership_id, created_by, updated_by,
+          classroom_attendance_link_id
         )
         VALUES (
           $1, $2, $3, $4, $5,
           $6, NULL, 'SUBJECT', $7,
           'OPEN', 0, 0,
           0, 'EXCEPTIONS', now(),
-          $8, $9, $9
+          $8, $9, $9,
+          $10
         )
         ON CONFLICT (
           school_term_id, classroom_id, classroom_subject_id, attendance_date
@@ -289,6 +351,7 @@ export class ExceptionAttendanceRepository {
         context.classroom_subject_id,
         input.actor.teacherMembershipId,
         input.actor.actorUserId,
+        input.actor.classroomAttendanceLinkId ?? null,
       ],
     )) as Array<{ id: string }>;
     return rows.length === 1;
@@ -309,8 +372,9 @@ export class ExceptionAttendanceRepository {
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
           classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
-          recorded_count, exception_count, revision, record_storage_mode,
-          checking_started_at, submitted_at
+          recorded_count, exception_count, submission_number, lock_version,
+          record_storage_mode, checking_started_at, submitted_at,
+          correction_reason, classroom_attendance_link_id::text
         FROM attendance_sessions
         WHERE school_term_id = $1
           AND classroom_id = $2
@@ -383,8 +447,9 @@ export class ExceptionAttendanceRepository {
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
           classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
-          recorded_count, exception_count, revision, record_storage_mode,
-          checking_started_at, submitted_at
+          recorded_count, exception_count, submission_number, lock_version,
+          record_storage_mode, checking_started_at, submitted_at,
+          correction_reason, classroom_attendance_link_id::text
         FROM attendance_sessions
         WHERE id = $1 AND deleted_at IS NULL
       `,
@@ -403,8 +468,9 @@ export class ExceptionAttendanceRepository {
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
           classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
-          recorded_count, exception_count, revision, record_storage_mode,
-          checking_started_at, submitted_at
+          recorded_count, exception_count, submission_number, lock_version,
+          record_storage_mode, checking_started_at, submitted_at,
+          correction_reason, classroom_attendance_link_id::text
         FROM attendance_sessions
         WHERE id = $1 AND deleted_at IS NULL
         FOR UPDATE
@@ -425,6 +491,21 @@ export class ExceptionAttendanceRepository {
       [sessionId],
     )) as Array<{ student_uuid: string }>;
     return rows.map((row) => row.student_uuid);
+  }
+
+  /** The same rows as `listStoredExceptions`, for reads outside a transaction. */
+  async listSessionExceptions(sessionId: string): Promise<StoredAttendanceExceptionRow[]> {
+    const result = await queryDataSource<StoredAttendanceExceptionRow>(
+      this.dataSource,
+      `
+        SELECT student_uuid::text, attendance_status_code
+        FROM attendance_exceptions
+        WHERE session_id = $1 AND deleted_at IS NULL
+        ORDER BY student_uuid
+      `,
+      [sessionId],
+    );
+    return result.rows;
   }
 
   async listStoredExceptions(
@@ -487,6 +568,7 @@ export class ExceptionAttendanceRepository {
     exceptionCount: number,
     rosterCount: number,
     actor: ExceptionAttendanceActor,
+    correctionReason: string | null,
     runner: QueryRunner,
   ): Promise<ExceptionAttendanceSessionRow> {
     const queryResult: unknown = await runner.query(
@@ -496,22 +578,31 @@ export class ExceptionAttendanceRepository {
             expected_roster_count = $2,
             recorded_count = $2,
             exception_count = $3,
-            submitted_at = COALESCE(submitted_at, now()),
-            submitted_by = COALESCE(submitted_by, $4),
-            submitted_by_teacher_membership_id = COALESCE(
-              submitted_by_teacher_membership_id,
-              $5
-            ),
+            submission_number = submission_number + 1,
+            lock_version = lock_version + 1,
+            submitted_at = now(),
+            submitted_by = $4,
+            submitted_by_teacher_membership_id = $5,
+            correction_reason = $6,
             updated_by = $4
-        WHERE id = $1
+        WHERE id = $1 AND lock_version = $7
         RETURNING
           id::text, school_term_id::text, school_id, grade_level_id, room_id,
           classroom_id::text, classroom_subject_id::text,
           attendance_date::text, period, status, expected_roster_count,
-          recorded_count, exception_count, revision, record_storage_mode,
-          checking_started_at, submitted_at
+          recorded_count, exception_count, submission_number, lock_version,
+          record_storage_mode, checking_started_at, submitted_at,
+          correction_reason, classroom_attendance_link_id::text
       `,
-      [session.id, rosterCount, exceptionCount, actor.actorUserId, actor.teacherMembershipId],
+      [
+        session.id,
+        rosterCount,
+        exceptionCount,
+        actor.actorUserId,
+        actor.teacherMembershipId,
+        correctionReason,
+        session.lock_version,
+      ],
     );
     const rows =
       Array.isArray(queryResult) && Array.isArray(queryResult[0]) ? queryResult[0] : queryResult;
@@ -519,5 +610,75 @@ export class ExceptionAttendanceRepository {
       throw new Error('Attendance session finalization returned no row');
     }
     return rows[0] as ExceptionAttendanceSessionRow;
+  }
+
+  async recordSubmissionHistory(
+    input: {
+      before: ExceptionAttendanceSessionRow;
+      submitted: ExceptionAttendanceSessionRow;
+      previous: StoredAttendanceExceptionRow[];
+      requested: PreparedAttendanceException[];
+      roster: string[];
+      actor: ExceptionAttendanceActor;
+      correctionReason: string | null;
+    },
+    runner: QueryRunner,
+  ): Promise<number> {
+    const historyRows = (await runner.query(
+      `
+        INSERT INTO attendance_submission_history (
+          session_id, school_id, submission_number, correction_reason,
+          actor_user_id, actor_teacher_membership_id, source,
+          classroom_attendance_link_id, submitted_at,
+          expected_roster_count, exception_count
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING id::text
+      `,
+      [
+        input.submitted.id,
+        input.submitted.school_id,
+        input.submitted.submission_number,
+        input.correctionReason,
+        input.actor.actorUserId,
+        input.actor.teacherMembershipId,
+        input.actor.source,
+        input.actor.classroomAttendanceLinkId ?? null,
+        input.submitted.submitted_at,
+        input.submitted.expected_roster_count,
+        input.submitted.exception_count,
+      ],
+    )) as Array<{ id: string }>;
+    const historyId = historyRows[0]?.id;
+    if (!historyId) throw new Error('Attendance submission history returned no row');
+
+    const previous = new Map(
+      input.previous.map((item) => [item.student_uuid, Number(item.attendance_status_code)]),
+    );
+    const requested = new Map(input.requested.map((item) => [item.studentId, item.statusCode]));
+    const changes = input.roster.flatMap((studentId) => {
+      const previousStatus = previous.get(studentId) ?? 1;
+      const newStatus = requested.get(studentId) ?? 1;
+      return previousStatus === newStatus
+        ? []
+        : [{ student_id: studentId, previous_status: previousStatus, new_status: newStatus }];
+    });
+    if (changes.length === 0) return 0;
+    await runner.query(
+      `
+        INSERT INTO attendance_submission_changes (
+          submission_history_id, session_id, student_uuid,
+          previous_attendance_status_code, new_attendance_status_code
+        )
+        SELECT $1, $2, item.student_id, item.previous_status, item.new_status
+        FROM jsonb_to_recordset($3::jsonb) AS item(
+          student_id uuid,
+          previous_status smallint,
+          new_status smallint
+        )
+      `,
+      [historyId, input.submitted.id, JSON.stringify(changes)],
+    );
+    return changes.length;
   }
 }

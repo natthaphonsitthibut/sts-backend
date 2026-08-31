@@ -28,11 +28,12 @@ describe('ClassroomAttendanceLinksRepository', () => {
 
     const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
     const sql = calls[0][0];
+    // The listing is one row per teacher now, so grade and room no longer
+    // filter the row itself — the school scope still fails closed, and grade is
+    // applied as "teaches that grade" instead.
     expect(sql).toContain('school.id = ANY($3::int[])');
-    expect(sql).toContain('classroom.grade_level_id = ANY($4::int[])');
-    expect(sql).toContain('classroom.legacy_room_number = ANY($5::text[])');
-    expect(sql).toContain('LIMIT $6 OFFSET $7');
-    expect(sql).toContain('FROM school_classrooms classroom');
+    expect(sql).toContain('LIMIT $');
+    expect(sql).toContain('FROM school_teacher_memberships membership');
     expect(sql).toContain('LEFT JOIN classroom_attendance_links link');
   });
 
@@ -53,8 +54,52 @@ describe('ClassroomAttendanceLinksRepository', () => {
     const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
     expect(calls[0][0]).toContain('classroom.grade_level_id = $4');
     expect(calls[0][0]).toContain('link.id IS NULL');
-    expect(calls[0][0]).toContain('membership.id IS NULL');
     expect(calls[1][0]).toContain('LEFT JOIN classroom_attendance_links link');
+  });
+
+  it('applies grade and room scope to assignment-link review queries', async () => {
+    const { repository, runner } = setup();
+
+    await repository.listIssuedLinks({
+      schoolId: 10,
+      schoolTermId: 20,
+      page: 1,
+      limit: 20,
+      scope: { school_ids: [10], grade_levels: [3], room_ids: [1] },
+    });
+
+    const sql = (runner.query.mock.calls as unknown as Array<[string]>)[0][0];
+    expect(sql).toContain('classroom.grade_level_id = ANY($4::int[])');
+    expect(sql).toContain('classroom.legacy_room_number = ANY($5::text[])');
+    expect(sql).toContain('LEFT JOIN school_classrooms classroom');
+  });
+
+  it('joins the classroom before checking a link against grade and room scope', async () => {
+    const { repository, runner } = setup([{ present: true }]);
+
+    await repository.isLinkInScope('11111111-1111-4111-8111-111111111111', {
+      school_ids: [10],
+      grade_levels: [3],
+      room_ids: [1],
+    });
+
+    const sql = (runner.query.mock.calls as unknown as Array<[string]>)[0][0];
+    expect(sql).toContain('LEFT JOIN school_classrooms classroom');
+    expect(sql).toContain('classroom.grade_level_id = ANY($3::int[])');
+    expect(sql).toContain('classroom.legacy_room_number = ANY($4::text[])');
+  });
+
+  it('returns database identifiers needed to reopen the exact attendance register', async () => {
+    const { repository, runner } = setup();
+
+    await repository.listLinkAttendanceSessions('11111111-1111-4111-8111-111111111111');
+
+    const sql = (runner.query.mock.calls as unknown as Array<[string]>)[0][0];
+    expect(sql).toContain('session.school_id');
+    expect(sql).toContain('session.classroom_id');
+    expect(sql).toContain('session.classroom_subject_id');
+    expect(sql).toContain('session.attendance_date::text AS attendance_date');
+    expect(sql).toContain('classroom.grade_level_id');
   });
 
   it('resolves public tokens only while link, school, term, and classroom are active', async () => {
@@ -84,7 +129,7 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).not.toContain('classroom_homeroom_teachers');
   });
 
-  it('reactivates only an inactive classroom link and rotates its token atomically', async () => {
+  it("rotates a teacher's live link for the term in place", async () => {
     const { repository, runner } = setup([{ id: 'link-id' }]);
 
     await repository.upsertLinks(
@@ -92,7 +137,7 @@ describe('ClassroomAttendanceLinksRepository', () => {
         {
           schoolId: 10,
           schoolTermId: 20,
-          classroomId: 30,
+          teacherMembershipId: 30,
           tokenHash: 'b'.repeat(64),
           tokenEncrypted: 'v1:cipher',
           actorId: 1,
@@ -103,8 +148,12 @@ describe('ClassroomAttendanceLinksRepository', () => {
 
     const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
     const sql = calls[0][0];
-    expect(sql).toContain('ON CONFLICT (classroom_id) DO UPDATE');
-    expect(sql).toContain("WHERE classroom_attendance_links.link_status = 'INACTIVE'");
+    // One live link per teacher per term: re-issuing replaces the token on the
+    // row that is already there instead of leaving a second one beside it.
+    // The predicate must repeat the partial index exactly, NOT NULL included,
+    // or Postgres refuses to match it to any constraint.
+    expect(sql).toContain('ON CONFLICT (school_term_id, teacher_membership_id)');
+    expect(sql).toContain("WHERE link_status = 'ACTIVE' AND teacher_membership_id IS NOT NULL");
     expect(sql).toContain('last_used_at = NULL');
   });
 
@@ -119,7 +168,7 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).toContain('line_delivery_request_id = NULL');
   });
 
-  it('claims delivery only for the current active homeroom membership', async () => {
+  it('claims delivery only for the active teacher the link belongs to', async () => {
     const { repository, runner } = setup();
 
     await repository.claimLineDelivery(
@@ -131,13 +180,18 @@ describe('ClassroomAttendanceLinksRepository', () => {
 
     const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
     const sql = calls[0][0];
-    expect(sql).toContain('FROM classroom_homeroom_teachers homeroom');
+    // A link belongs to a teacher, so delivery goes to that teacher. The old
+    // rule read the homeroom of the link's classroom and outlived the column it
+    // named, which made every send raise instead of deliver.
+    expect(sql).not.toContain('classroom_homeroom_teachers');
+    expect(sql).not.toContain('classroom_attendance_links.classroom_id');
+    expect(sql).toContain('AND teacher_membership_id = $2');
+    expect(sql).toContain('membership.school_id = classroom_attendance_links.school_id');
     expect(sql).toContain("membership.membership_status = 'ACTIVE'");
     expect(sql).toContain("teacher.teacher_status = 'ACTIVE'");
-    expect(sql).toContain('homeroom.teacher_membership_id = $2');
   });
 
-  it('loads all active homeroom teachers for classroom-link presentation', async () => {
+  it('loads the classrooms a teacher link reaches, for presentation', async () => {
     const { repository, runner } = setup();
 
     await repository.list({
@@ -150,8 +204,10 @@ describe('ClassroomAttendanceLinksRepository', () => {
 
     const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
     const sql = calls[0][0];
-    expect(sql).toContain('FROM classroom_homeroom_teacher_assignments all_assignment');
-    expect(sql).toContain("'isPrimary', all_assignment.is_primary");
-    expect(sql).toContain('all_homeroom.homeroom_teachers');
+    // The link reaches whichever rooms the teacher's subjects are in, counted
+    // and listed with the row so a listing never costs a query per teacher.
+    expect(sql).toContain('FROM classroom_subject_teachers assignment');
+    expect(sql).toContain('COUNT(DISTINCT assignment.classroom_id)');
+    expect(sql).toContain('taught.classrooms');
   });
 });

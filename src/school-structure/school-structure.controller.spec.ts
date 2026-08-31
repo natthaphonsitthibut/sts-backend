@@ -56,8 +56,10 @@ describe('SchoolStructureController access', () => {
       'manage-school-structure',
     ]);
     expect(() => guard.canActivate(context('listTeachers'))).toThrow();
+    // The curriculum screen staffs an offering from the same picker.
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTeacherOptions'))).toEqual([
       'manage-school-structure',
+      'manage-subjects',
     ]);
     expect(() => guard.canActivate(context('listTeacherOptions'))).toThrow();
 

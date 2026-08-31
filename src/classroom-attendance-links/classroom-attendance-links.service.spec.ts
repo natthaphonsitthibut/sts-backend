@@ -26,8 +26,19 @@ const LINK: ClassroomLinkRow = {
   issued_at: '2026-08-23T00:00:00.000Z',
   rotated_at: null,
   last_used_at: null,
-  homeroom_teacher_membership_id: '12',
-  homeroom_teacher_name: 'ครูประจำชั้น',
+  teacher_membership_id: '12',
+  teacher_name: 'ครูประจำชั้น',
+  assigned_classroom_id: null,
+  assigned_classroom_subject_id: null,
+  issued_by_teacher_membership_id: null,
+  source_teacher_link_id: null,
+  created_by: 1,
+  assigned_classroom_label: null,
+  assigned_subject_name: null,
+  opens_at: null,
+  expires_at: null,
+  assignment_note: null,
+  classroom_count: 1,
   line_provider_user_id: 'U123',
   line_friend_state: 'FRIEND',
   line_delivery_teacher_membership_id: null,
@@ -67,10 +78,11 @@ describe('ClassroomAttendanceLinksService', () => {
       withTransaction: jest.fn((callback: (runner: object) => unknown) =>
         Promise.resolve(callback({})),
       ),
-      lockEligibleClassrooms: jest.fn(),
+      lockEligibleTeachers: jest.fn(),
       upsertLink: jest.fn(),
       upsertLinks: jest.fn(),
       findById: jest.fn(),
+      findActiveAssignmentsBySourceTeacherLink: jest.fn().mockResolvedValue([]),
       findUsableByTokenHash: jest.fn(),
       findUsableById: jest.fn(),
       isLinkInScope: jest.fn(),
@@ -83,6 +95,10 @@ describe('ClassroomAttendanceLinksService', () => {
       findTeacherByCitizenId: jest.fn(),
       findActiveMembership: jest.fn(),
       findActiveSchoolInScope: jest.fn(),
+      findAssignableSubject: jest.fn(),
+      insertAssignmentLink: jest.fn(),
+      listLinkOpens: jest.fn(),
+      listLinkAttendanceSessions: jest.fn(),
       bindExternalIdentity: jest.fn(),
       touchLinkUsed: jest.fn(),
     };
@@ -150,15 +166,71 @@ describe('ClassroomAttendanceLinksService', () => {
     };
   }
 
-  it('returns an app-served homeroom photo URL without exposing the storage key', async () => {
+  it('returns DB-backed lesson identity for usage breadcrumbs and exact register links', async () => {
+    const { service, repository } = setup();
+    repository.findById.mockResolvedValue({
+      ...LINK,
+      teacher_membership_id: null,
+      assigned_classroom_id: '30',
+      assigned_classroom_subject_id: '40',
+      assigned_classroom_label: 'ป.2/2',
+      assigned_subject_name: 'การงานอาชีพ',
+      created_by: ACTOR.id,
+    });
+    repository.isLinkInScope.mockResolvedValue(true);
+    repository.listLinkOpens.mockResolvedValue([]);
+    repository.listLinkAttendanceSessions.mockResolvedValue([
+      {
+        session_id: '22222222-2222-4222-8222-222222222222',
+        school_id: 10,
+        grade_level_id: 2,
+        classroom_id: 30,
+        classroom_subject_id: 40,
+        attendance_date: '2026-08-10',
+        started_at: new Date('2026-08-10T01:00:00.000Z'),
+        submitted_at: new Date('2026-08-10T02:00:00.000Z'),
+        status: 'SUBMITTED',
+        classroom_label: 'ป.2/2',
+        subject_name: 'การงานอาชีพ',
+        started_by_name: 'ครูหนึ่ง',
+        submitted_by_name: 'ครูหนึ่ง',
+        expected_roster_count: 14,
+        exception_count: 3,
+      },
+    ]);
+
+    await expect(
+      service.myAssignmentUsage({ kind: 'USER', actor: ACTOR }, LINK.id),
+    ).resolves.toMatchObject({
+      data: {
+        assignment: {
+          classroomId: 30,
+          classroomLabel: 'ป.2/2',
+          classroomSubjectId: 40,
+          subjectName: 'การงานอาชีพ',
+        },
+        sessions: [
+          {
+            schoolId: 10,
+            gradeLevelId: 2,
+            classroomId: 30,
+            classroomSubjectId: 40,
+            attendanceDate: '2026-08-10',
+          },
+        ],
+      },
+    });
+  });
+
+  it('returns an app-served teacher photo URL without exposing the storage key', async () => {
     const { service, repository } = setup();
     repository.list.mockResolvedValue({
       rows: [
         {
           ...LINK,
           school_status: 'ACTIVE',
-          homeroom_teacher_id: '7',
-          homeroom_teacher_has_photo: true,
+          teacher_id: '7',
+          teacher_has_photo: true,
           homeroom_teachers: [
             { teacherId: '7', teacherName: 'ครูประจำชั้น', hasPhoto: true, isPrimary: true },
             { teacherId: '8', teacherName: 'ครูร่วม', hasPhoto: false, isPrimary: false },
@@ -178,18 +250,9 @@ describe('ClassroomAttendanceLinksService', () => {
     );
 
     expect(result.data[0]).toMatchObject({
-      homeroomTeacherName: 'ครูประจำชั้น',
-      homeroomTeacherId: '7',
-      homeroomTeacherPhotoUrl: '/api/teacher-profiles/7/photo',
-      homeroomTeachers: [
-        {
-          teacherId: '7',
-          teacherName: 'ครูประจำชั้น',
-          photoUrl: '/api/teacher-profiles/7/photo',
-          isPrimary: true,
-        },
-        { teacherId: '8', teacherName: 'ครูร่วม', photoUrl: null, isPrimary: false },
-      ],
+      teacherName: 'ครูประจำชั้น',
+      teacherId: '7',
+      teacherPhotoUrl: '/api/teacher-profiles/7/photo',
     });
     expect(JSON.stringify(result)).not.toContain('photo_storage_key');
   });
@@ -422,7 +485,7 @@ describe('ClassroomAttendanceLinksService', () => {
     expect(messaging.sendMessages).not.toHaveBeenCalled();
   });
 
-  it('authenticates a verified Google email against any active same-school teacher membership', async () => {
+  it('authenticates a verified Google email only for the standing-link owner', async () => {
     const { service, repository, sessions, googleStates, google } = setup();
     googleStates.consume.mockResolvedValue({
       flow: 'classroom-link',
@@ -456,6 +519,70 @@ describe('ClassroomAttendanceLinksService', () => {
         tokenHash: LINK.token_hash,
         teacherMembershipId: '12',
       }),
+    );
+  });
+
+  it('rejects another active teacher in the same school from a standing teacher link', async () => {
+    const { service, repository, sessions, googleStates, google } = setup();
+    googleStates.consume.mockResolvedValue({
+      flow: 'classroom-link',
+      subjectId: LINK.id,
+      tokenHash: LINK.token_hash,
+      schoolId: LINK.school_id,
+      nonce: 'nonce',
+    });
+    repository.findUsableByTokenHash.mockResolvedValue(LINK);
+    google.exchange.mockResolvedValue({
+      subject: 'google-subject-2',
+      email: 'teacher2@example.com',
+      persistIdentity: true,
+    });
+    repository.findTeacherByEmail.mockResolvedValue({
+      ...TEACHER,
+      teacher_id: '8',
+      teacher_membership_id: '13',
+      normalized_email: 'teacher2@example.com',
+    });
+
+    await expect(service.googleCallback('code', 'state')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(repository.bindExternalIdentity).not.toHaveBeenCalled();
+    expect(sessions.issue).not.toHaveBeenCalled();
+  });
+
+  it('allows any active same-school teacher to open an assignment link', async () => {
+    const { service, repository, sessions, googleStates, google } = setup();
+    const assignmentLink = {
+      ...LINK,
+      teacher_membership_id: null,
+      teacher_name: null,
+      assigned_classroom_id: '30',
+      assigned_classroom_subject_id: '40',
+    };
+    googleStates.consume.mockResolvedValue({
+      flow: 'classroom-link',
+      subjectId: assignmentLink.id,
+      tokenHash: assignmentLink.token_hash,
+      schoolId: assignmentLink.school_id,
+      nonce: 'nonce',
+    });
+    repository.findUsableByTokenHash.mockResolvedValue(assignmentLink);
+    google.exchange.mockResolvedValue({
+      subject: 'google-subject-2',
+      email: 'teacher2@example.com',
+      persistIdentity: true,
+    });
+    repository.findTeacherByEmail.mockResolvedValue({
+      ...TEACHER,
+      teacher_id: '8',
+      teacher_membership_id: '13',
+      normalized_email: 'teacher2@example.com',
+    });
+
+    await expect(service.googleCallback('code', 'state')).resolves.toBe('session-token');
+    expect(sessions.issue).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherMembershipId: '13' }),
     );
   });
 
@@ -623,9 +750,34 @@ describe('ClassroomAttendanceLinksService', () => {
     );
   });
 
-  it('creates selected links only from server-scoped active classroom rows', async () => {
+  it('rejects AraID for another active teacher in the standing-link school', async () => {
+    const { service, repository, araId, araIdChallenges } = setup();
+    araIdChallenges.readAuthorization.mockResolvedValue({
+      challenge: { subjectId: LINK.id, context: { tokenHash: LINK.token_hash } },
+      minimumAuthenticatedAt: 100,
+    });
+    repository.findUsableByTokenHash.mockResolvedValue(LINK);
+    araId.getVerifiedIdentityClaim.mockResolvedValue({
+      providerSubject: 'araid-record-id-2',
+      identityNumber: '1234567890124',
+    });
+    repository.findTeacherByCitizenId.mockResolvedValue({
+      ...TEACHER,
+      teacher_id: '8',
+      teacher_membership_id: '13',
+      citizen_id: '1234567890124',
+    });
+
+    await expect(
+      service.approveAraIdChallenge('authorization', 'profile', 101),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.bindExternalIdentity).not.toHaveBeenCalled();
+    expect(araIdChallenges.approveAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('creates selected links only from server-scoped teachers who teach this term', async () => {
     const { service, repository } = setup();
-    repository.lockEligibleClassrooms.mockResolvedValue([{ classroom_id: '30' }]);
+    repository.lockEligibleTeachers.mockResolvedValue([{ teacher_membership_id: '12' }]);
     repository.upsertLinks.mockImplementation(
       (inputs: Array<{ tokenHash: string; tokenEncrypted: string }>) =>
         Promise.resolve([
@@ -634,17 +786,110 @@ describe('ClassroomAttendanceLinksService', () => {
     );
 
     const result = await service.bulkCreate(
-      { schoolId: 10, schoolTermId: 20, classroomIds: [30] },
+      { schoolId: 10, schoolTermId: 20, teacherMembershipIds: [12] },
       ACTOR,
       'https://sts.example',
     );
 
-    expect(repository.lockEligibleClassrooms).toHaveBeenCalledWith(
-      expect.objectContaining({ classroomIds: [30], scope: { school_ids: [10] } }),
+    expect(repository.lockEligibleTeachers).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherMembershipIds: [12], scope: { school_ids: [10] } }),
       expect.anything(),
     );
     expect(result.data).toHaveLength(1);
     expect(result.data[0].accessUrl).toMatch(/^https:\/\/sts\.example\/classroom#token=/);
+  });
+
+  it('records the standing teacher link as the source of a link-issued assignment', async () => {
+    const { service, repository } = setup();
+    const assignment = {
+      ...LINK,
+      id: '22222222-2222-4222-8222-222222222222',
+      teacher_membership_id: null,
+      teacher_name: null,
+      assigned_classroom_id: '30',
+      assigned_classroom_subject_id: '40',
+      issued_by_teacher_membership_id: '12',
+      source_teacher_link_id: LINK.id,
+      opens_at: null,
+      expires_at: '2026-09-02T00:00:00.000Z',
+    };
+    repository.findById.mockResolvedValue(LINK);
+    repository.findAssignableSubject.mockResolvedValue({
+      classroom_id: '30',
+      classroom_subject_id: '40',
+    });
+    repository.insertAssignmentLink.mockResolvedValue(assignment);
+
+    await service.createAssignmentFromLink(
+      {
+        linkId: LINK.id,
+        schoolId: 10,
+        schoolTermId: 20,
+        assignedClassroomId: null,
+        assignedClassroomSubjectId: null,
+        assignedClassroomLabel: null,
+        assignedSubjectName: null,
+        teacherId: '7',
+        teacherMembershipId: '12',
+        teacherDisplayName: 'ครู หนึ่ง',
+        provider: 'GOOGLE',
+      },
+      { classroomSubjectId: 40, expiresAt: '2026-09-02T00:00:00.000Z' },
+      'https://sts.example',
+    );
+
+    expect(repository.insertAssignmentLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceTeacherLinkId: LINK.id,
+        issuedByTeacherMembershipId: 12,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('deactivates active assignments created from a standing teacher link', async () => {
+    const { service, repository, audit } = setup();
+    const child = {
+      ...LINK,
+      id: '22222222-2222-4222-8222-222222222222',
+      teacher_membership_id: null,
+      assigned_classroom_id: '30',
+      assigned_classroom_subject_id: '40',
+      source_teacher_link_id: LINK.id,
+    };
+    repository.findById.mockResolvedValue(LINK);
+    repository.isLinkInScope.mockResolvedValue(true);
+    repository.findActiveAssignmentsBySourceTeacherLink.mockResolvedValue([child]);
+
+    await service.deactivate(LINK.id, ACTOR);
+
+    expect(repository.deactivate.mock.calls).toEqual([
+      [LINK.id, 1, expect.anything()],
+      [child.id, 1, expect.anything()],
+    ]);
+    expect(audit.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: child.id,
+        metadata: {
+          classroomId: 30,
+          deactivatedBySourceTeacherLinkId: LINK.id,
+          schoolId: 10,
+        },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('rotating a standing teacher link does not deactivate its assignments', async () => {
+    const { service, repository } = setup();
+    repository.findById.mockResolvedValue(LINK);
+    repository.isLinkInScope.mockResolvedValue(true);
+
+    await service.rotate(LINK.id, ACTOR, 'https://sts.example');
+
+    expect(repository.updateToken).toHaveBeenCalled();
+    expect(repository.findActiveAssignmentsBySourceTeacherLink).not.toHaveBeenCalled();
+    expect(repository.deactivate).not.toHaveBeenCalled();
   });
 
   it('commits newly created links before sending them over LINE', async () => {
@@ -655,7 +900,7 @@ describe('ClassroomAttendanceLinksService', () => {
       events.push('commit');
       return result;
     });
-    repository.lockEligibleClassrooms.mockResolvedValue([{ classroom_id: '30' }]);
+    repository.lockEligibleTeachers.mockResolvedValue([{ teacher_membership_id: '12' }]);
     let createdTokenHash = LINK.token_hash;
     let createdTokenEncrypted = LINK.token_encrypted;
     repository.upsertLinks.mockImplementation(
@@ -683,7 +928,7 @@ describe('ClassroomAttendanceLinksService', () => {
     });
 
     await service.bulkCreate(
-      { schoolId: 10, schoolTermId: 20, classroomIds: [30] },
+      { schoolId: 10, schoolTermId: 20, teacherMembershipIds: [12] },
       ACTOR,
       'https://sts.example',
     );

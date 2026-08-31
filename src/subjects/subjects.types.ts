@@ -33,8 +33,18 @@ export interface GradeSchoolSubjectRow extends SchoolSubjectRow {
   grade_label: string;
 }
 
+export interface SubjectTeacherAssignment {
+  membershipId: string;
+  teacherId: string;
+  name: string;
+  /** Null when no photo is set; stamps the version the photo url carries. */
+  photoUpdatedAt: string | null;
+}
+
 export interface GradeSubjectClassroomRow extends Record<string, unknown> {
   school_subject_id: string;
+  classroom_subject_id: string;
   classroom_id: string;
   classroom_label: string;
+  teachers: SubjectTeacherAssignment[];
 }

@@ -73,10 +73,6 @@ export class AbsenceMonitorService {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
   }
 
-  private addDays(baseDate: Date, days: number): Date {
-    return new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
-  }
-
   /**
    * `studentUuids` limits the pass to those students. Saving a round only moves
    * the counts of the class that was just checked, so the save path scopes the
@@ -86,16 +82,11 @@ export class AbsenceMonitorService {
     this.logger.log('Starting CRON Job: Checking cumulative absences...');
 
     // One rule opens a case: cumulative absent days reaching the เสี่ยง
-    // threshold. The tier ladder (ต่ำ/ปานกลาง) and its SLAs are gone.
+    // threshold. The tier ladder (ต่ำ/ปานกลาง) is gone.
     const thresholdDays = this.parsePositiveIntegerSetting(
       await this.automationRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
       3,
     );
-    const slaDays = this.parsePositiveIntegerSetting(
-      await this.automationRepository.getSystemSettingValue('CASE_SLA_HIGH_DAYS'),
-      3,
-    );
-
     const newCases: NewCase[] = [];
     const autoCancelAuditEvents: CaseAutoCancelAuditEvent[] = [];
     const riskProfileStudentUuids = new Set<string>();
@@ -184,7 +175,6 @@ export class AbsenceMonitorService {
           );
 
           const reason = `ขาดเรียนหลังปิดเคสล่าสุด ${student.absent_days_since_case_reset} วัน`;
-          const slaDueAt = this.addDays(new Date(), slaDays);
 
           if (existingCase) {
             // An active case already covers this student; there is no tier to
@@ -206,7 +196,6 @@ export class AbsenceMonitorService {
               studentAddress: address,
               reason,
               riskTier: 'HIGH',
-              slaDueAt,
             },
             executor,
           );

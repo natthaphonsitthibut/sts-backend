@@ -17,7 +17,6 @@ export interface LineRuntimeConfig {
   messagingChannelAccessToken: string;
   officialAccountBasicId: string;
   requestTimeoutMs: number;
-  invitationTtlHours: number;
 }
 
 function parseBoolean(value: string | undefined, fallback = false): boolean {
@@ -42,7 +41,6 @@ export function getLineConfigFromEnv(): LineRuntimeConfig {
     messagingChannelAccessToken: process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN || '',
     officialAccountBasicId: process.env.LINE_OA_BASIC_ID || '',
     requestTimeoutMs: parseTimeout(process.env.LINE_REQUEST_TIMEOUT_MS, 8000),
-    invitationTtlHours: parseTimeout(process.env.LINE_INVITATION_TTL_HOURS, 24),
   };
 }
 

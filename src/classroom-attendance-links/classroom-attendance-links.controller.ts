@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   Inject,
@@ -12,16 +14,21 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
   UnauthorizedException,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
+import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import {
   AuthGuard,
   CurrentUser,
   PermissionsGuard,
   Public,
+  RequireAnyPermission,
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
@@ -32,9 +39,19 @@ import { ThrottleTeacherAccess } from '../config/throttle.decorators';
 import { DevelopmentGoogleLoginDto } from '../google-login/dto/development-google-login.dto';
 import {
   BulkCreateClassroomAttendanceLinksDto,
+  ClassroomLinkRosterQueryDto,
+  ClassroomLinkSessionQueryDto,
+  ClassroomLinkStudentPhotoQueryDto,
+  ListMyAssignmentLinksDto,
+  SubmitClassroomLinkAttendanceDto,
+  CreateLinkAttendanceAssignmentDto,
+  CreateAttendanceAssignmentDto,
   ClassroomLineGroupInvitationDto,
   GoogleCallbackDto,
   ListClassroomAttendanceLinksDto,
+  ListIssuedClassroomLinksDto,
+  ListClassroomLinkAttendanceHistoryDto,
+  UpdateLinkClassroomPresentationDto,
   ResendClassroomAttendanceLinkLineDto,
 } from './dto/classroom-attendance-links.dto';
 import {
@@ -45,12 +62,11 @@ import {
 } from './classroom-attendance-links.constants';
 import { ClassroomAttendanceLinksService } from './classroom-attendance-links.service';
 import { ClassroomLinkCookieService } from './classroom-link-cookie.service';
+import { SchoolStructureService } from '../school-structure/school-structure.service';
 import { ExceptionAttendanceService } from '../attendance/exception-attendance.service';
 import {
   CheckInOptionsQueryDto,
-  CheckInStudentPhotoQueryDto,
   StartExceptionAttendanceDto,
-  SubmitExceptionAttendanceDto,
 } from '../attendance/dto/exception-attendance.dto';
 
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -68,6 +84,24 @@ export class ClassroomAttendanceLinksAdminController {
     @CurrentUser() actor: AuthenticatedRequestUser,
   ) {
     return this.service.list(query, actor);
+  }
+
+  // The มอบหมาย button lives on the check-in page, so the check-in permission
+  // is what has to reach this — otherwise the button is offered to someone the
+  // endpoint will refuse. Scope is unchanged: the room still has to be theirs.
+  @Post('assignments')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  async createAssignment(
+    @Body() body: CreateAttendanceAssignmentDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return await this.service.createAssignment(
+      body,
+      actor,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
   }
 
   @Post('bulk')
@@ -133,6 +167,90 @@ export class ClassroomAttendanceLinksAdminController {
     return this.service.revokeLineGroupInvitation(invitationId, schoolId, actor);
   }
 
+  /**
+   * The assignments this account issued, for the tab inside check-in.
+   *
+   * Reachable with the check-in page's own permission, not only the
+   * link-management one: the มอบหมาย button lives on that page, and a screen
+   * that lets someone create a link and then refuses to show it back is the
+   * kind of half-permission the owner ruled out. Ownership still gates every
+   * row — this is "what I handed on", never the school's register.
+   */
+  @Get('assignments/mine')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  listMyAssignments(
+    @Query() query: ListMyAssignmentLinksDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listMyAssignments({ kind: 'USER', actor }, query);
+  }
+
+  @Get('assignments/mine/:id/usage')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  myAssignmentUsage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.myAssignmentUsage({ kind: 'USER', actor }, id);
+  }
+
+  @Get('assignments/mine/:id/link')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  myAssignmentLink(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.myAssignmentAccessUrl(
+      { kind: 'USER', actor },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/rotate')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  rotateMyAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Req() request: Request,
+  ) {
+    return this.service.rotateMyAssignment(
+      { kind: 'USER', actor },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/deactivate')
+  @RequirePermission()
+  @RequireAnyPermission('manage-classroom-links', 'attendance')
+  deactivateMyAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.deactivateMyAssignment({ kind: 'USER', actor }, id);
+  }
+
+  /** Every link this school has issued this term, teacher links and assignments alike. */
+  @Get('issued')
+  listIssued(
+    @Query() query: ListIssuedClassroomLinksDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.listIssued(query, actor);
+  }
+
+  /** Who opened one link, and every register taken through it. */
+  @Get(':id/usage')
+  usage(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
+    return this.service.usage(id, actor);
+  }
+
   @Get(':id/link')
   link(
     @Param('id', ParseUUIDPipe) id: string,
@@ -191,20 +309,48 @@ export class ClassroomCheckInAuthController {
     private readonly cookies: ClassroomLinkCookieService,
     private readonly araIdCookies: AraIdSessionCookieService,
     private readonly exceptionAttendance: ExceptionAttendanceService,
+    private readonly schoolStructure: SchoolStructureService,
     @Inject(appConfig.KEY) private readonly app: ConfigType<typeof appConfig>,
   ) {}
 
-  private async attendanceActor(request: Request) {
+  /**
+   * The acting teacher, and the room they are acting in.
+   *
+   * A teacher link is not tied to one classroom, so the room has to be named —
+   * except when the teacher has exactly one, where asking would be ceremony.
+   * Whatever is named is checked against the subjects they actually teach.
+   */
+  private async attendanceActor(request: Request, classroomId?: number) {
     const authorized = await this.service.authorizeCheckInSession(
       this.cookies.read(request.headers.cookie),
     );
+    let resolvedClassroomId = classroomId;
+    if (resolvedClassroomId === undefined) {
+      const classrooms = await this.service.listAuthorizedClassrooms(authorized);
+      if (classrooms.length !== 1) {
+        throw new BadRequestException('กรุณาเลือกห้องเรียนที่ต้องการเช็กชื่อ');
+      }
+      resolvedClassroomId = Number(classrooms[0].classroom_id);
+    } else {
+      await this.service.assertAuthorizedClassroom(authorized, resolvedClassroomId);
+    }
     return {
       source: 'CLASSROOM_LINK' as const,
       schoolId: authorized.schoolId,
-      classroomId: authorized.classroomId,
+      classroomId: resolvedClassroomId,
       actorUserId: null,
       teacherMembershipId: authorized.teacherMembershipId,
       actorLabel: authorized.teacherDisplayName,
+      studentDataAccess:
+        authorized.assignedClassroomSubjectId === null
+          ? ('FULL' as const)
+          : ('ATTENDANCE_ONLY' as const),
+      // Stamped on the session so the link's register can say what came of it.
+      classroomAttendanceLinkId: authorized.linkId,
+      allowedClassroomSubjectIds: await this.service.listAuthorizedSubjectIds(
+        authorized,
+        resolvedClassroomId,
+      ),
     };
   }
 
@@ -238,29 +384,40 @@ export class ClassroomCheckInAuthController {
   ) {
     this.noStore(response);
     return await this.exceptionAttendance.getOptions(
-      await this.attendanceActor(request),
+      await this.attendanceActor(request, query.classroomId),
       query.date,
     );
   }
 
   @Get('roster')
   @ThrottleTeacherAccess()
-  async roster(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
+  async roster(
+    @Query() query: ClassroomLinkRosterQueryDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
     this.noStore(response);
-    return await this.exceptionAttendance.getRoster(await this.attendanceActor(request));
+    return await this.exceptionAttendance.getRoster(
+      await this.attendanceActor(request, query.classroomId),
+      { date: query.date, classroomSubjectId: query.classroomSubjectId },
+    );
   }
 
   @Get('student-photo')
   @ThrottleTeacherAccess()
   async studentPhoto(
-    @Query() query: CheckInStudentPhotoQueryDto,
+    @Query() query: ClassroomLinkStudentPhotoQueryDto,
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
     this.noStore(response);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     const result = await this.exceptionAttendance.resolveStudentPhoto(
-      await this.attendanceActor(request),
+      // The room travels with the request, as it does for the roster: a
+      // standing link reaches every room its teacher's subjects touch, and
+      // without one named there is nothing to infer. The id is checked against
+      // the session before the photo is resolved.
+      await this.attendanceActor(request, query.classroomId),
       query.studentId,
     );
     if (result.kind === 'redirect') {
@@ -290,6 +447,211 @@ export class ClassroomCheckInAuthController {
     response.sendFile(result.filePath);
   }
 
+  @Post('assignments')
+  @ThrottleTeacherAccess()
+  async createAssignmentFromLink(
+    @Body() body: CreateLinkAttendanceAssignmentDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.createAssignmentFromLink(
+      authorized,
+      body,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  /**
+   * The assignments this teacher issued from their own link.
+   *
+   * Same rows the admin screen sees through its own door, gated on the
+   * membership on the session rather than on an account. Someone covering an
+   * assignment gets nothing here: their session issued nothing, so the list is
+   * empty by the same rule that hides the มอบหมาย button from them — no extra
+   * branch to keep in step.
+   */
+  @Get('assignments/mine')
+  @ThrottleTeacherAccess()
+  async listMyLinkAssignments(
+    @Query() query: ListMyAssignmentLinksDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.listMyAssignments({ kind: 'LINK', authorized }, query);
+  }
+
+  @Get('assignments/mine/:id/usage')
+  @ThrottleTeacherAccess()
+  async myLinkAssignmentUsage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.myAssignmentUsage({ kind: 'LINK', authorized }, id);
+  }
+
+  @Get('assignments/mine/:id/link')
+  @ThrottleTeacherAccess()
+  async myLinkAssignmentAccessUrl(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.myAssignmentAccessUrl(
+      { kind: 'LINK', authorized },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/rotate')
+  @ThrottleTeacherAccess()
+  async rotateMyLinkAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.rotateMyAssignment(
+      { kind: 'LINK', authorized },
+      id,
+      resolveExternalBaseUrl(request, this.app.frontendBaseUrl),
+    );
+  }
+
+  @Post('assignments/mine/:id/deactivate')
+  @ThrottleTeacherAccess()
+  async deactivateMyLinkAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    return await this.service.deactivateMyAssignment({ kind: 'LINK', authorized }, id);
+  }
+
+  /**
+   * The room's attendance history, as the app shows it.
+   *
+   * A teacher who holds a standing link owns these rooms all term, so the past
+   * is theirs to read — it is how they notice the child who has been absent
+   * three Mondays running. An assignment covers one lesson on set days and is
+   * refused here: whoever picked it up was asked to take a register, not handed
+   * a term of someone else's room.
+   */
+  @Get('attendance-history')
+  @ThrottleTeacherAccess()
+  async attendanceHistory(
+    @Query() query: ListClassroomLinkAttendanceHistoryDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    if (authorized.assignedClassroomSubjectId !== null) {
+      throw new ForbiddenException('ลิงก์มอบหมายดูประวัติการเช็กชื่อไม่ได้');
+    }
+    await this.service.assertAuthorizedClassroom(authorized, query.classroomId);
+    return await this.schoolStructure.readClassroomAttendanceHistory(
+      query.classroomId,
+      query,
+      (studentUuid, version) =>
+        `/${CLASSROOM_LINK_API_PATH}/student-photo?studentId=${encodeURIComponent(studentUuid)}&v=${version}`,
+    );
+  }
+
+  /**
+   * The room's cover, and the teacher's right to change it.
+   *
+   * A classroom card is the room's own — the colour and the photo are the same
+   * record ห้องเรียนทั้งหมด writes. A teacher who teaches here should not have
+   * to ask the office to change the picture of a room they stand in every day,
+   * so the link writes that same record rather than keeping a second one that
+   * would drift.
+   */
+  @Get('classroom-cover')
+  @ThrottleTeacherAccess()
+  async classroomCover(
+    @Query() query: ClassroomLinkRosterQueryDto,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    this.noStore(response);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    const classroomId = await this.service.assertAuthorizedClassroom(
+      authorized,
+      Number(query.classroomId),
+    );
+    const result = await this.schoolStructure.readClassroomCover(classroomId);
+    if (result.kind === 'redirect') {
+      response.redirect(302, result.url);
+      return;
+    }
+    response.sendFile(result.filePath);
+  }
+
+  @Patch('classroom-presentation')
+  @ThrottleTeacherAccess()
+  @UseInterceptors(FileInterceptor('photo', multerConfig))
+  async updateClassroomPresentation(
+    @Body() body: UpdateLinkClassroomPresentationDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    const classroomId = await this.service.assertAuthorizedClassroom(authorized, body.classroomId);
+    return await this.schoolStructure.applyClassroomPresentation(classroomId, body, {
+      actorUserId: null,
+      actorLabel: authorized.teacherDisplayName,
+      file,
+    });
+  }
+
+  @Get('sessions/current')
+  @ThrottleTeacherAccess()
+  async currentSession(
+    @Query() query: ClassroomLinkSessionQueryDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    return await this.exceptionAttendance.findLessonSession(
+      await this.attendanceActor(request, query.classroomId),
+      { date: query.date, classroomSubjectId: query.classroomSubjectId },
+    );
+  }
+
   @Post('sessions/start')
   @ThrottleTeacherAccess()
   async startSession(
@@ -298,20 +660,23 @@ export class ClassroomCheckInAuthController {
     @Res({ passthrough: true }) response: Response,
   ) {
     this.noStore(response);
-    return await this.exceptionAttendance.start(await this.attendanceActor(request), body);
+    return await this.exceptionAttendance.start(
+      await this.attendanceActor(request, body.classroomId),
+      body,
+    );
   }
 
   @Post('sessions/:sessionId/submit')
   @ThrottleTeacherAccess()
   async submitSession(
     @Param('sessionId', ParseUUIDPipe) sessionId: string,
-    @Body() body: SubmitExceptionAttendanceDto,
+    @Body() body: SubmitClassroomLinkAttendanceDto,
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
     this.noStore(response);
     return await this.exceptionAttendance.submit(
-      await this.attendanceActor(request),
+      await this.attendanceActor(request, body.classroomId),
       sessionId,
       body,
     );

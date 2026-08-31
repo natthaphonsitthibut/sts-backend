@@ -84,6 +84,7 @@ export class StatsController {
       academicYear: query.academicYear,
       semester: query.semester,
       caseStatus: query.caseStatus,
+      concernLevel: query.concernLevel,
       grade: query.grade?.trim() || undefined,
       room: query.room?.trim() || undefined,
       page: query.page,

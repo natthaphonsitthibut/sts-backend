@@ -8,7 +8,6 @@ import type { SystemSettingRow } from './settings.types';
 
 const STORED_VALUES: Record<string, string> = {
   CASE_RISK_HIGH_ABSENCE_DAYS: '3',
-  CASE_SLA_HIGH_DAYS: '3',
   ALERT_TRIGGER_TYPE: 'SCHEDULED',
   ALERT_SCHEDULE_TIME: '18:00',
   RISK_RECALC_SCHEDULE_TIME: '05:10',
@@ -191,7 +190,7 @@ describe('SettingsService catalog validation', () => {
     settingsRepository.listSettings.mockResolvedValue([
       buildRow({ setting_key: 'ALERT_SCHEDULE_TIME', setting_value: '18:00' }),
       buildRow({ setting_key: 'LEGACY_KEY', setting_value: 'x' }),
-      buildRow({ setting_key: 'CASE_SLA_HIGH_DAYS', setting_value: '3' }),
+      buildRow({ setting_key: 'RISK_RECALC_SCHEDULE_TIME', setting_value: '05:10' }),
       buildRow(),
     ]);
 
@@ -199,8 +198,8 @@ describe('SettingsService catalog validation', () => {
 
     expect(rows.map((row) => row.setting_key)).toEqual([
       'CASE_RISK_HIGH_ABSENCE_DAYS',
-      'CASE_SLA_HIGH_DAYS',
       'ALERT_SCHEDULE_TIME',
+      'RISK_RECALC_SCHEDULE_TIME',
       'LEGACY_KEY',
     ]);
   });

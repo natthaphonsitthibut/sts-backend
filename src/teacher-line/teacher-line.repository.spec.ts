@@ -27,32 +27,26 @@ describe('TeacherLineRepository', () => {
         repository.findActiveTeacherByCitizenId('1101700200018', 10),
     ],
   ])(
-    'allows shared LINE verification by active homeroom teachers only via %s',
+    'allows shared LINE verification by active school teachers via %s',
     async (_label, findTeacher) => {
       const { repository, runner } = setup();
 
       await findTeacher(repository);
 
       const [sql, params] = runner.query.mock.calls[0] as [string, unknown[]];
-      expect(sql).toContain('JOIN classroom_homeroom_teacher_assignments homeroom');
-      expect(sql).toContain('homeroom.teacher_membership_id = membership.id');
-      expect(sql).toContain('homeroom.school_id = membership.school_id');
-      expect(sql).toContain("classroom.classroom_status = 'ACTIVE'");
-      expect(sql).toContain("term.status = 'ACTIVE'");
+      expect(sql).not.toContain('classroom_homeroom_teacher_assignments');
       expect(sql).toContain('membership.school_id = $2');
       expect(params[1]).toBe(10);
     },
   );
 
-  it('rechecks active homeroom scope at the final LINE callback', async () => {
+  it('rechecks active school membership at the final LINE callback', async () => {
     const { repository, runner } = setup();
 
-    await repository.hasActiveHomeroomTeacherMembership('7', 10, runner as never);
+    await repository.hasActiveTeacherMembership('7', runner as never, 10);
 
     const [sql, params] = runner.query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain('JOIN classroom_homeroom_teacher_assignments homeroom');
-    expect(sql).toContain("classroom.classroom_status = 'ACTIVE'");
-    expect(sql).toContain("term.status = 'ACTIVE'");
+    expect(sql).not.toContain('classroom_homeroom_teacher_assignments');
     expect(sql).toContain('membership.school_id = $2::bigint');
     expect(params).toEqual(['7', 10]);
   });

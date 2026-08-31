@@ -64,7 +64,6 @@ export interface CreateAutomatedCaseInput {
   studentAddress: string | null;
   reason: string;
   riskTier: CaseRiskTier;
-  slaDueAt: Date;
 }
 
 export interface NewCase {

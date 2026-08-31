@@ -13,6 +13,8 @@ describe('TeacherProfilesController access', () => {
       'teachers',
       'manage-teachers',
       'manage-classroom-links',
+      // จัดการข้อมูลหลักสูตร shows each offering's teachers with their photos.
+      'manage-subjects',
     ]);
   });
 });

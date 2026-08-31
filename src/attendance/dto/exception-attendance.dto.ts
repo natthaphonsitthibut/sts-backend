@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Length,
   Matches,
   Min,
   ValidateNested,
@@ -20,16 +21,60 @@ export class CheckInOptionsQueryDto {
   @IsString()
   @Matches(ISO_DATE_PATTERN)
   date!: string;
+
+  /**
+   * Which room the teacher is working in. Optional because a link that reaches
+   * exactly one room needs no choosing; whatever is named is still checked
+   * against the subjects that teacher was assigned.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId?: number;
 }
 
 export class InternalCheckInOptionsQueryDto extends CheckInOptionsQueryDto {
+  /** Required in the app: there is no link to imply which room this is. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  declare classroomId: number;
+}
+
+export class CheckInRosterQueryDto {
+  @IsOptional()
+  @IsString()
+  @Matches(ISO_DATE_PATTERN)
+  date?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomSubjectId?: number;
+}
+
+/** Both halves are required: this names one lesson, not a day or a subject. */
+export class CheckInLessonSessionQueryDto {
+  @IsString()
+  @Matches(ISO_DATE_PATTERN)
+  date!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomSubjectId!: number;
+}
+
+export class InternalCheckInSessionQueryDto extends CheckInLessonSessionQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
   classroomId!: number;
 }
 
-export class InternalCheckInRosterQueryDto {
+export class InternalCheckInRosterQueryDto extends CheckInRosterQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -45,13 +90,21 @@ export class StartExceptionAttendanceDto {
   @IsInt()
   @Min(1)
   classroomSubjectId!: number;
-}
 
-export class StartInternalExceptionAttendanceDto extends StartExceptionAttendanceDto {
+  /** The room, for a link that reaches more than one. */
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  classroomId!: number;
+  classroomId?: number;
+}
+
+export class StartInternalExceptionAttendanceDto extends StartExceptionAttendanceDto {
+  /** Required in the app: there is no link to imply which room this is. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  declare classroomId: number;
 }
 
 export class AttendanceExceptionDto {
@@ -72,6 +125,19 @@ export class SubmitExceptionAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => AttendanceExceptionDto)
   exceptions!: AttendanceExceptionDto[];
+
+  /** Required only when replacing a result that was already submitted. */
+  @IsOptional()
+  @IsString()
+  @Length(3, 500)
+  correctionReason?: string;
+
+  /** Prevents one teacher from silently overwriting a newer submitted result. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  expectedLockVersion?: number;
 }
 
 export class CheckInStudentPhotoQueryDto {

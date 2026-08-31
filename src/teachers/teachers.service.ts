@@ -128,6 +128,7 @@ export class TeachersService {
       teacherStatus: row.teacher_status,
       membershipId: row.membership_id,
       schoolId: row.school_id,
+      schoolName: row.school_name ?? null,
       membershipStatus: row.membership_status,
       startedOn: row.started_on,
       endedOn: row.ended_on,
@@ -186,6 +187,7 @@ export class TeachersService {
         : null,
       teacherStatus: row.teacher_status,
       schoolId: row.school_id,
+      schoolName: row.school_name ?? null,
       membershipStatus: row.membership_status,
     };
   }

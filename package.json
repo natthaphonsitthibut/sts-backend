@@ -83,6 +83,7 @@
     "seed:demo-school-structure": "node scripts/seed-demo-school-structure.js",
     "audit:demo-school-structure": "node scripts/seed-demo-school-structure.js --audit-only",
     "seed:demo-case-scenarios": "node scripts/seed-demo-case-scenarios.js",
+    "seed:classroom-link-usage": "node scripts/seed-classroom-link-usage.js",
     "audit:presentation-data": "node scripts/audit-demo-data-provenance.js --strict",
     "audit:demo-data-provenance": "node scripts/audit-demo-data-provenance.js --strict",
     "audit:permission-registry": "DB_NAME=sts_task5_smoke node scripts/audit-permission-registry.js",

@@ -15,6 +15,7 @@ import type {
   QueryResultLike,
   QueryResultRow,
   RiskDashboardCaseStatusSummary,
+  RiskDashboardConcernLevelSummary,
   RiskDashboardFilters,
   RiskDashboardResult,
   RiskDashboardRow,
@@ -65,6 +66,12 @@ const EMPTY_RISK_DASHBOARD_CASE_STATUS_SUMMARY: RiskDashboardCaseStatusSummary =
   STUDENT_NOT_FOUND: 0,
 };
 
+const EMPTY_RISK_DASHBOARD_CONCERN_LEVEL_SUMMARY: RiskDashboardConcernLevelSummary = {
+  NOTE: 0,
+  WATCH: 0,
+  CONCERN: 0,
+};
+
 interface RiskDashboardSummaryRow extends QueryResultRow, RiskDashboardSummary {
   total_count: number | string;
   missing_profile_count?: number | string;
@@ -72,6 +79,9 @@ interface RiskDashboardSummaryRow extends QueryResultRow, RiskDashboardSummary {
   case_in_progress_count?: number | string;
   case_pending_review_count?: number | string;
   case_student_not_found_count?: number | string;
+  concern_note_count?: number | string;
+  concern_watch_count?: number | string;
+  concern_count?: number | string;
 }
 
 /**
@@ -505,139 +515,6 @@ export class TaskRepository {
             ? Number(row.created_by)
             : null,
       assigned_to_name: typeof row.assigned_to_name === 'string' ? row.assigned_to_name : null,
-    }));
-  }
-
-  async claimCaseSlaWarnings(now: Date): Promise<
-    Array<{
-      id: number;
-      student_name: string | null;
-      school_id: number | null;
-      risk_tier: string | null;
-      sla_due_at: Date | string | null;
-    }>
-  > {
-    const result = await this.query<QueryResultRow>(
-      `
-        WITH claimed AS (
-          UPDATE cases c
-          SET sla_warning_notified_at = now(), updated_at = now()
-          WHERE c.deleted_at IS NULL
-            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
-            AND c.sla_due_at IS NOT NULL
-            AND c.sla_warning_notified_at IS NULL
-            AND $1::timestamptz >= c.created_at + ((c.sla_due_at - c.created_at) * 0.8)
-            AND $1::timestamptz < c.sla_due_at
-          RETURNING c.id, c.student_name, c.school_id, c.risk_tier, c.sla_due_at
-        ), audit_insert AS (
-          INSERT INTO audit_log (
-            actor_user_id,
-            actor_label,
-            action,
-            target_type,
-            target_id,
-            metadata,
-            ip
-          )
-          SELECT
-            NULL,
-            'system:case-sla-reminder',
-            'CASE_SLA_WARNING',
-            'case',
-            claimed.id::text,
-            jsonb_build_object(
-              'riskTier', claimed.risk_tier,
-              'slaDueAt', claimed.sla_due_at,
-              'schoolId', claimed.school_id
-            ),
-            NULL
-          FROM claimed
-          RETURNING 1
-        )
-        SELECT id, student_name, school_id, risk_tier, sla_due_at FROM claimed
-      `,
-      [now.toISOString()],
-    );
-    return result.rows.map((row) => ({
-      id: Number(row.id),
-      student_name: typeof row.student_name === 'string' ? row.student_name : null,
-      school_id:
-        typeof row.school_id === 'number'
-          ? row.school_id
-          : typeof row.school_id === 'string'
-            ? Number(row.school_id)
-            : null,
-      risk_tier: typeof row.risk_tier === 'string' ? row.risk_tier : null,
-      sla_due_at:
-        row.sla_due_at instanceof Date || typeof row.sla_due_at === 'string'
-          ? row.sla_due_at
-          : null,
-    }));
-  }
-
-  async claimCaseSlaBreaches(now: Date): Promise<
-    Array<{
-      id: number;
-      student_name: string | null;
-      school_id: number | null;
-      risk_tier: string | null;
-      sla_due_at: Date | string | null;
-    }>
-  > {
-    const result = await this.query<QueryResultRow>(
-      `
-        WITH claimed AS (
-          UPDATE cases c
-          SET sla_breached_notified_at = now(), updated_at = now()
-          WHERE c.deleted_at IS NULL
-            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
-            AND c.sla_due_at IS NOT NULL
-            AND c.sla_breached_notified_at IS NULL
-            AND c.sla_due_at < $1::timestamptz
-          RETURNING c.id, c.student_name, c.school_id, c.risk_tier, c.sla_due_at
-        ), audit_insert AS (
-          INSERT INTO audit_log (
-            actor_user_id,
-            actor_label,
-            action,
-            target_type,
-            target_id,
-            metadata,
-            ip
-          )
-          SELECT
-            NULL,
-            'system:case-sla-reminder',
-            'CASE_SLA_BREACHED',
-            'case',
-            claimed.id::text,
-            jsonb_build_object(
-              'riskTier', claimed.risk_tier,
-              'slaDueAt', claimed.sla_due_at,
-              'schoolId', claimed.school_id
-            ),
-            NULL
-          FROM claimed
-          RETURNING 1
-        )
-        SELECT id, student_name, school_id, risk_tier, sla_due_at FROM claimed
-      `,
-      [now.toISOString()],
-    );
-    return result.rows.map((row) => ({
-      id: Number(row.id),
-      student_name: typeof row.student_name === 'string' ? row.student_name : null,
-      school_id:
-        typeof row.school_id === 'number'
-          ? row.school_id
-          : typeof row.school_id === 'string'
-            ? Number(row.school_id)
-            : null,
-      risk_tier: typeof row.risk_tier === 'string' ? row.risk_tier : null,
-      sla_due_at:
-        row.sla_due_at instanceof Date || typeof row.sla_due_at === 'string'
-          ? row.sla_due_at
-          : null,
     }));
   }
 
@@ -2540,6 +2417,7 @@ export class TaskRepository {
         totalCount: 0,
         summary: { ...EMPTY_RISK_DASHBOARD_SUMMARY },
         caseStatusSummary: { ...EMPTY_RISK_DASHBOARD_CASE_STATUS_SUMMARY },
+        concernLevelSummary: { ...EMPTY_RISK_DASHBOARD_CONCERN_LEVEL_SUMMARY },
       };
     }
 
@@ -2651,6 +2529,7 @@ export class TaskRepository {
           latest_comment.problem_category_label,
           latest_comment.concern_level_code,
           latest_comment.concern_level_label,
+          COALESCE(comment_totals.comment_count, 0) AS comment_count,
           COALESCE(
             latest_comment.problem_description,
             CASE
@@ -2717,10 +2596,18 @@ export class TaskRepository {
             ON concern_level.code = comment.concern_level_code
           WHERE comment.classroom_id = s.classroom_id
             AND comment.person_uuid = s.person_uuid
-            AND comment.concern_level_code IN ('WATCH', 'CONCERN')
+          -- Severity first, recency only to break a tie: a student whose most
+          -- recent note is routine but who was flagged น่ากังวล last week must
+          -- still read as น่ากังวล.
           ORDER BY concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC
           LIMIT 1
         ) latest_comment ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS comment_count
+          FROM classroom_student_comments comment
+          WHERE comment.classroom_id = s.classroom_id
+            AND comment.person_uuid = s.person_uuid
+        ) comment_totals ON TRUE
         ${whereSql}
       )
     `;
@@ -2740,13 +2627,22 @@ export class TaskRepository {
           : '';
     const scopedCte = `${baseCte}, risk_scoped AS (SELECT * FROM base_students ${riskWhere})`;
     const filteredParams = [...scopedParams];
-    const caseStatusWhere = filters.caseStatus
-      ? (() => {
-          filteredParams.push(filters.caseStatus);
-          return `WHERE latest_case_status = $${filteredParams.length}`;
-        })()
-      : '';
-    const filteredCte = `${scopedCte}, filtered AS (SELECT * FROM risk_scoped ${caseStatusWhere})`;
+    const filteredConditions: string[] = [];
+    if (filters.caseStatus) {
+      filteredParams.push(filters.caseStatus);
+      filteredConditions.push(`latest_case_status = $${filteredParams.length}`);
+    }
+    // No default level filter: the watchlist is every student a teacher has
+    // written about, and the three level cards partition exactly that set. A
+    // default that hid one level made the cards add up to more than the rows,
+    // which reads as a broken count rather than as a deliberate omission.
+    if (filters.studentGroup === 'WATCHLIST' && filters.concernLevel) {
+      filteredParams.push(filters.concernLevel);
+      filteredConditions.push(`concern_level_code = $${filteredParams.length}`);
+    }
+    const filteredWhere =
+      filteredConditions.length > 0 ? `WHERE ${filteredConditions.join(' AND ')}` : '';
+    const filteredCte = `${scopedCte}, filtered AS (SELECT * FROM risk_scoped ${filteredWhere})`;
 
     const summaryResult = await this.query<RiskDashboardSummaryRow>(
       `
@@ -2760,7 +2656,10 @@ export class TaskRepository {
           COUNT(*) FILTER (WHERE latest_case_status = 'OPEN')::int AS case_open_count,
           COUNT(*) FILTER (WHERE latest_case_status = 'IN_PROGRESS')::int AS case_in_progress_count,
           COUNT(*) FILTER (WHERE latest_case_status = 'PENDING_REVIEW')::int AS case_pending_review_count,
-          COUNT(*) FILTER (WHERE latest_case_status = 'STUDENT_NOT_FOUND')::int AS case_student_not_found_count
+          COUNT(*) FILTER (WHERE latest_case_status = 'STUDENT_NOT_FOUND')::int AS case_student_not_found_count,
+          COUNT(*) FILTER (WHERE concern_level_code = 'NOTE')::int AS concern_note_count,
+          COUNT(*) FILTER (WHERE concern_level_code = 'WATCH')::int AS concern_watch_count,
+          COUNT(*) FILTER (WHERE concern_level_code = 'CONCERN')::int AS concern_count
         FROM risk_scoped
       `,
       scopedParams,
@@ -2798,6 +2697,12 @@ export class TaskRepository {
         String(summaryResult.rows[0]?.case_student_not_found_count || '0'),
         10,
       ),
+    };
+
+    const concernLevelSummary: RiskDashboardConcernLevelSummary = {
+      NOTE: Number.parseInt(String(summaryResult.rows[0]?.concern_note_count || '0'), 10),
+      WATCH: Number.parseInt(String(summaryResult.rows[0]?.concern_watch_count || '0'), 10),
+      CONCERN: Number.parseInt(String(summaryResult.rows[0]?.concern_count || '0'), 10),
     };
 
     const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
@@ -2861,6 +2766,7 @@ export class TaskRepository {
           problem_category_label,
           concern_level_code,
           concern_level_label,
+          comment_count,
           teacher_comment
         FROM filtered
         ORDER BY ${orderBy}
@@ -2879,6 +2785,7 @@ export class TaskRepository {
       totalCount,
       summary,
       caseStatusSummary,
+      concernLevelSummary,
       missingProfileCount,
     };
   }
@@ -3432,6 +3339,9 @@ export class TaskRepository {
       `
       SELECT
         link.id AS link_id,
+        -- The assignee, so identity verification can require it rather than
+        -- accepting any teacher of the school.
+        link.assigned_teacher_id,
         task.target_school_id
       FROM task_links link
       JOIN tasks task ON task.id = link.task_id AND task.deleted_at IS NULL

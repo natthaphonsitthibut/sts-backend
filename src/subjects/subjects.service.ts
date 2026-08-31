@@ -26,6 +26,7 @@ import type {
   ListSchoolSubjectsQueryDto,
   ListSubjectGradesQueryDto,
   ReplaceClassroomSubjectsDto,
+  SaveClassroomSubjectTeachersDto,
   SaveGradeSchoolSubjectDto,
   UpdateSchoolSubjectDto,
 } from './dto/subjects.dto';
@@ -108,7 +109,20 @@ export class SubjectsService {
       status: row.subject_status,
       classrooms: classrooms.map((classroom) => ({
         id: Number(classroom.classroom_id),
+        classroomSubjectId: Number(classroom.classroom_subject_id),
         label: classroom.classroom_label,
+        teachers: (classroom.teachers ?? []).map((teacher) => ({
+          membershipId: Number(teacher.membershipId),
+          teacherId: teacher.teacherId,
+          name: teacher.name,
+          // Served through the app like every other photo, so the guard runs
+          // before the bytes and private storage stays private.
+          photoUrl: teacher.photoUpdatedAt
+            ? `/api/teacher-profiles/${teacher.teacherId}/photo?v=${encodeURIComponent(
+                new Date(teacher.photoUpdatedAt).toISOString(),
+              )}`
+            : null,
+        })),
       })),
     };
   }
@@ -205,6 +219,82 @@ export class SubjectsService {
       gradeLevelId: query.gradeLevelId,
     });
     return { success: true, data: this.toGradeSchoolSubjectResponse(row, classrooms) };
+  }
+
+  async saveClassroomSubjectTeachers(
+    actor: AuthenticatedRequestUser,
+    payload: SaveClassroomSubjectTeachersDto,
+  ) {
+    const scope = await this.assertSchoolAccess(actor, payload.schoolId);
+    const actorId = resolveAuditActorId(actor);
+    const updated = await this.repository.withTransaction(async (queryRunner) => {
+      // Lock and validate the same rows that will be rewritten. This prevents a
+      // membership or offering from becoming inactive between validation and
+      // the replacement write.
+      const offerings = await this.repository.findClassroomSubjectsForTeacherUpdate(
+        {
+          classroomSubjectIds: payload.classroomSubjectIds,
+          schoolId: payload.schoolId,
+        },
+        queryRunner,
+      );
+      if (offerings.length !== payload.classroomSubjectIds.length) {
+        throw new NotFoundException('ไม่พบรายวิชาของห้องเรียนที่เลือกในโรงเรียนนี้');
+      }
+      if (
+        offerings.some(
+          (offering) =>
+            !isClassInScope(scope, {
+              gradeLevelId: offering.grade_level_id,
+              roomId: offering.legacy_room_number,
+            }),
+        )
+      ) {
+        throw new NotFoundException('มีห้องเรียนที่อยู่นอกขอบเขตของคุณ');
+      }
+      const teacherMembershipIds = await this.repository.filterSchoolTeacherMemberships(
+        {
+          membershipIds: payload.teacherMembershipIds,
+          schoolId: payload.schoolId,
+        },
+        queryRunner,
+      );
+      if (teacherMembershipIds.length !== payload.teacherMembershipIds.length) {
+        throw new BadRequestException('มีครูที่ไม่ได้เปิดใช้งานในโรงเรียนนี้');
+      }
+      await this.repository.replaceClassroomSubjectTeachers(
+        {
+          classroomSubjects: offerings.map((offering) => ({
+            id: Number(offering.id),
+            classroomId: Number(offering.classroom_id),
+          })),
+          schoolId: payload.schoolId,
+          teacherMembershipIds,
+          actorId,
+        },
+        queryRunner,
+      );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'CLASSROOM_SUBJECTS_REPLACE',
+          targetType: 'classroom_subject_teachers',
+          targetId: String(payload.schoolId),
+          metadata: {
+            schoolId: payload.schoolId,
+            classroomSubjectIds: payload.classroomSubjectIds,
+            classroomIds: [...new Set(offerings.map((item) => Number(item.classroom_id)))],
+            teacherMembershipIds,
+            changedFields: ['teacherMembershipIds'],
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return offerings.length;
+    });
+    return { success: true, data: { updated } };
   }
 
   async saveGradeSchoolSubject(

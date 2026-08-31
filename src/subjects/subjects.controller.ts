@@ -19,6 +19,7 @@ import {
   ListSchoolSubjectsQueryDto,
   ListSubjectGradesQueryDto,
   ReplaceClassroomSubjectsDto,
+  SaveClassroomSubjectTeachersDto,
   SaveGradeSchoolSubjectDto,
   UpdateSchoolSubjectDto,
 } from './dto/subjects.dto';
@@ -90,6 +91,16 @@ export class SubjectsController {
     @Query() query: ListGradeSchoolSubjectsQueryDto,
   ) {
     return await this.subjectsService.removeGradeSchoolSubject(actor, schoolSubjectId, query);
+  }
+
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('manage-subjects')
+  @Put('school-catalog/classroom-subject-teachers')
+  async saveClassroomSubjectTeachers(
+    @CurrentUser() actor: AuthenticatedRequestUser,
+    @Body() payload: SaveClassroomSubjectTeachersDto,
+  ) {
+    return await this.subjectsService.saveClassroomSubjectTeachers(actor, payload);
   }
 
   @UseGuards(PermissionsGuard)

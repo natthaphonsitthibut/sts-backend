@@ -12,7 +12,9 @@ function firstHeaderValue(value: string | string[] | undefined): string | null {
 }
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequireAnyPermission('teachers', 'manage-teachers', 'manage-classroom-links')
+// จัดการข้อมูลหลักสูตร renders these faces beside each offering, so the page
+// that shows them grants the read, the same way the link page does.
+@RequireAnyPermission('teachers', 'manage-teachers', 'manage-classroom-links', 'manage-subjects')
 @Controller('api/teacher-profiles')
 export class TeacherProfilesController {
   constructor(private readonly service: TeachersService) {}

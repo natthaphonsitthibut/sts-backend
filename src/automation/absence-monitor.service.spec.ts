@@ -49,7 +49,6 @@ describe('AbsenceMonitorService', () => {
       getSystemSettingValue: jest.fn().mockImplementation((key: string) => {
         const values: Record<string, string> = {
           CASE_RISK_HIGH_ABSENCE_DAYS: '3',
-          CASE_SLA_HIGH_DAYS: '3',
         };
         return Promise.resolve(values[key] ?? null);
       }),
@@ -137,7 +136,6 @@ describe('AbsenceMonitorService', () => {
     automationRepository.getSystemSettingValue.mockImplementation((key) => {
       const values: Record<string, string> = {
         CASE_RISK_HIGH_ABSENCE_DAYS: '3',
-        CASE_SLA_HIGH_DAYS: '3',
       };
       return Promise.resolve(values[key] ?? null);
     });
@@ -165,7 +163,6 @@ describe('AbsenceMonitorService', () => {
     });
     const createdInput = automationRepository.createAutomatedCase.mock.calls[0]?.[0];
     expect(createdInput?.riskTier).toBe('HIGH');
-    expect(createdInput?.slaDueAt).toBeInstanceOf(Date);
     expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
