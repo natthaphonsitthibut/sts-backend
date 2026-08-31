@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import type { FileStorageAdapter } from '../files/storage/file-storage.types';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
@@ -54,10 +54,13 @@ describe('ExceptionAttendanceService', () => {
     expected_roster_count: 2,
     recorded_count: 0,
     exception_count: 0,
-    revision: 1,
+    submission_number: 0,
+    lock_version: 1,
     record_storage_mode: 'EXCEPTIONS',
     checking_started_at: '2026-08-21T01:30:00.000Z',
     submitted_at: null,
+    correction_reason: null,
+    classroom_attendance_link_id: '22222222-2222-4222-8222-222222222222',
   };
 
   let repository: jest.Mocked<ExceptionAttendanceRepository>;
@@ -73,6 +76,9 @@ describe('ExceptionAttendanceService', () => {
       findClassroom: jest.fn().mockResolvedValue(classroom),
       listSubjects: jest.fn().mockResolvedValue([]),
       listRoster: jest.fn().mockResolvedValue([]),
+      findRosterSessionId: jest.fn().mockResolvedValue(null),
+      listSessionExceptions: jest.fn().mockResolvedValue([]),
+      listRosterSnapshot: jest.fn().mockResolvedValue([]),
       findStudentPhotoStorageKey: jest.fn(),
       lockStartContext: jest.fn().mockResolvedValue({
         ...classroom,
@@ -94,12 +100,15 @@ describe('ExceptionAttendanceService', () => {
         .mockResolvedValue(['student-1', 'student-2']),
       listStoredExceptions: jest.fn().mockResolvedValue([]),
       replaceExceptions: jest.fn().mockResolvedValue(undefined),
+      recordSubmissionHistory: jest.fn().mockResolvedValue(1),
       finalizeSession: jest.fn().mockResolvedValue({
         ...openSession,
         status: 'SUBMITTED',
         recorded_count: 2,
         exception_count: 1,
         submitted_at: '2026-08-21T02:00:00.000Z',
+        submission_number: 1,
+        lock_version: 2,
       }),
     } as unknown as jest.Mocked<ExceptionAttendanceRepository>;
     audit = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
@@ -152,6 +161,77 @@ describe('ExceptionAttendanceService', () => {
     expect(storage.resolve).not.toHaveBeenCalled();
   });
 
+  it('uses the frozen roster and redacts welfare fields for an assignment link', async () => {
+    repository.findRosterSessionId.mockResolvedValue(openSession.id);
+    repository.listRosterSnapshot.mockResolvedValue([
+      {
+        student_uuid: 'student-1',
+        student_number: '1',
+        first_name: 'เด็กหญิงหนึ่ง',
+        last_name: 'ทดสอบ',
+        has_photo: true,
+        photo_updated_at: '2026-08-21T00:00:00.000Z',
+        risk_tier: 'CRITICAL',
+        teacher_comment: 'ข้อมูลติดตามที่ไม่ควรออกทางลิงก์มอบหมาย',
+      },
+    ]);
+
+    const result = await service.getRoster(
+      { ...actor, studentDataAccess: 'ATTENDANCE_ONLY', allowedClassroomSubjectIds: [84] },
+      { date: '2026-08-21', classroomSubjectId: 84 },
+    );
+
+    expect(repository.listRosterSnapshot.mock.calls).toContainEqual([openSession.id]);
+    expect(repository.listRoster.mock.calls).toHaveLength(0);
+    expect(result.data[0]).toMatchObject({ riskTier: null, teacherComment: null });
+  });
+
+  it('reports no register for a lesson nobody has started, without starting one', async () => {
+    repository.findRosterSessionId.mockResolvedValue(null);
+
+    await expect(
+      service.findLessonSession(actor, { date: '2026-08-21', classroomSubjectId: 84 }),
+    ).resolves.toEqual({ success: true, data: null });
+    // Looking at a lesson must not freeze a roster or leave a session behind.
+    expect(repository.insertTargetSession.mock.calls).toHaveLength(0);
+    expect(repository.insertRosterSnapshot.mock.calls).toHaveLength(0);
+  });
+
+  it('returns the submitted register so a lesson opens on its recorded marks', async () => {
+    repository.findRosterSessionId.mockResolvedValue(openSession.id);
+    repository.findSessionById.mockResolvedValue({
+      ...openSession,
+      status: 'SUBMITTED',
+      submission_number: 1,
+      lock_version: 2,
+      submitted_at: '2026-08-21T02:00:00.000Z',
+    });
+    repository.listSessionExceptions.mockResolvedValue([
+      { student_uuid: 'student-1', attendance_status_code: 2 },
+    ]);
+
+    await expect(
+      service.findLessonSession(actor, { date: '2026-08-21', classroomSubjectId: 84 }),
+    ).resolves.toMatchObject({
+      data: {
+        hasSubmittedResult: true,
+        lockVersion: 2,
+        exceptions: [{ studentId: 'student-1', status: 'P_ABSENT' }],
+      },
+    });
+    expect(repository.insertTargetSession.mock.calls).toHaveLength(0);
+  });
+
+  it('refuses to read a lesson outside the subjects an assignment link covers', async () => {
+    await expect(
+      service.findLessonSession(
+        { ...actor, allowedClassroomSubjectIds: [84] },
+        { date: '2026-08-21', classroomSubjectId: 99 },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.findRosterSessionId.mock.calls).toHaveLength(0);
+  });
+
   it('starts once, freezes the roster, and keeps OPEN missing marks non-present', async () => {
     const result = await service.start(actor, {
       date: '2026-08-21',
@@ -197,6 +277,7 @@ describe('ExceptionAttendanceService', () => {
       1,
       2,
       actor,
+      null,
       expect.anything(),
     ]);
     expect(audit.recordAtomic.mock.calls).toContainEqual([
@@ -236,8 +317,21 @@ describe('ExceptionAttendanceService', () => {
     expect(riskProfiles.requestStudentRecalculation.mock.calls).toHaveLength(0);
   });
 
-  it('rejects a changed duplicate submit', async () => {
-    repository.findSessionForUpdate.mockResolvedValue({ ...openSession, status: 'SUBMITTED' });
+  it('replaces a submitted result when a reason and current lock are provided', async () => {
+    const submittedSession = {
+      ...openSession,
+      status: 'SUBMITTED' as const,
+      submission_number: 1,
+      lock_version: 2,
+      submitted_at: '2026-08-21T02:00:00.000Z',
+    };
+    repository.findSessionForUpdate.mockResolvedValue(submittedSession);
+    repository.finalizeSession.mockResolvedValue({
+      ...submittedSession,
+      submission_number: 2,
+      lock_version: 3,
+      correction_reason: 'ตรวจสอบกับครูประจำวิชาแล้ว',
+    });
     repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
     repository.listStoredExceptions.mockResolvedValue([
       { student_uuid: 'student-1', attendance_status_code: 2 },
@@ -246,8 +340,56 @@ describe('ExceptionAttendanceService', () => {
     await expect(
       service.submit(actor, openSession.id, {
         exceptions: [{ studentId: 'student-1', status: 'P_LATE' }],
+        correctionReason: 'ตรวจสอบกับครูประจำวิชาแล้ว',
+        expectedLockVersion: 2,
+      }),
+    ).resolves.toMatchObject({ data: { submissionNumber: 2, lockVersion: 3 } });
+    expect(repository.recordSubmissionHistory.mock.calls[0]?.[0]).toMatchObject({
+      correctionReason: 'ตรวจสอบกับครูประจำวิชาแล้ว',
+      before: submittedSession,
+    });
+  });
+
+  it('rejects a changed submitted result without a correction reason', async () => {
+    repository.findSessionForUpdate.mockResolvedValue({
+      ...openSession,
+      status: 'SUBMITTED',
+      submission_number: 1,
+      lock_version: 2,
+    });
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+    repository.listStoredExceptions.mockResolvedValue([
+      { student_uuid: 'student-1', attendance_status_code: 2 },
+    ]);
+
+    await expect(
+      service.submit(actor, openSession.id, {
+        exceptions: [{ studentId: 'student-1', status: 'P_LATE' }],
+        expectedLockVersion: 2,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a stale correction before replacing stored results', async () => {
+    repository.findSessionForUpdate.mockResolvedValue({
+      ...openSession,
+      status: 'SUBMITTED',
+      submission_number: 2,
+      lock_version: 3,
+    });
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+    repository.listStoredExceptions.mockResolvedValue([
+      { student_uuid: 'student-1', attendance_status_code: 2 },
+    ]);
+
+    await expect(
+      service.submit(actor, openSession.id, {
+        exceptions: [{ studentId: 'student-1', status: 'P_LATE' }],
+        correctionReason: 'ตรวจสอบกับครูประจำวิชาแล้ว',
+        expectedLockVersion: 2,
       }),
     ).rejects.toBeInstanceOf(ConflictException);
+    expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
   });
 
   it('rejects an exception outside the frozen roster before any write', async () => {

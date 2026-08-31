@@ -40,6 +40,7 @@ import { ListSchoolTermsQueryDto, UpsertSchoolTermDto } from './dto/attendance-o
 import {
   InternalCheckInOptionsQueryDto,
   InternalCheckInRosterQueryDto,
+  InternalCheckInSessionQueryDto,
   StartInternalExceptionAttendanceDto,
   SubmitExceptionAttendanceDto,
 } from './dto/exception-attendance.dto';
@@ -80,7 +81,10 @@ export class AttendanceController {
       query.classroomId,
       actor,
     );
-    return await this.exceptionAttendanceService.getRoster(checkInActor);
+    return await this.exceptionAttendanceService.getRoster(checkInActor, {
+      date: query.date,
+      classroomSubjectId: query.classroomSubjectId,
+    });
   }
 
   @Get('check-in/student-photo')
@@ -108,6 +112,23 @@ export class AttendanceController {
       return;
     }
     response.sendFile(result.filePath);
+  }
+
+  @Get('check-in/sessions/current')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('attendance')
+  async currentCheckInSession(
+    @Query() query: InternalCheckInSessionQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    const checkInActor = await this.exceptionAttendanceService.resolveInternalActor(
+      query.classroomId,
+      actor,
+    );
+    return await this.exceptionAttendanceService.findLessonSession(checkInActor, {
+      date: query.date,
+      classroomSubjectId: query.classroomSubjectId,
+    });
   }
 
   @Post('check-in/sessions/start')

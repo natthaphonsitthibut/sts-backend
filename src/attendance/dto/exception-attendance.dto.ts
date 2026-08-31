@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Length,
   Matches,
   Min,
   ValidateNested,
@@ -41,7 +42,39 @@ export class InternalCheckInOptionsQueryDto extends CheckInOptionsQueryDto {
   declare classroomId: number;
 }
 
-export class InternalCheckInRosterQueryDto {
+export class CheckInRosterQueryDto {
+  @IsOptional()
+  @IsString()
+  @Matches(ISO_DATE_PATTERN)
+  date?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomSubjectId?: number;
+}
+
+/** Both halves are required: this names one lesson, not a day or a subject. */
+export class CheckInLessonSessionQueryDto {
+  @IsString()
+  @Matches(ISO_DATE_PATTERN)
+  date!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomSubjectId!: number;
+}
+
+export class InternalCheckInSessionQueryDto extends CheckInLessonSessionQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId!: number;
+}
+
+export class InternalCheckInRosterQueryDto extends CheckInRosterQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -92,6 +125,19 @@ export class SubmitExceptionAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => AttendanceExceptionDto)
   exceptions!: AttendanceExceptionDto[];
+
+  /** Required only when replacing a result that was already submitted. */
+  @IsOptional()
+  @IsString()
+  @Length(3, 500)
+  correctionReason?: string;
+
+  /** Prevents one teacher from silently overwriting a newer submitted result. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  expectedLockVersion?: number;
 }
 
 export class CheckInStudentPhotoQueryDto {

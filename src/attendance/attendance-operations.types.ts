@@ -24,7 +24,8 @@ export interface AttendanceSessionRow extends Record<string, unknown> {
   status: AttendanceSessionStatus;
   expected_roster_count: number;
   recorded_count: number;
-  revision: number;
+  submission_number: number;
+  lock_version: number;
   submitted_at: string | Date | null;
   correction_reason: string | null;
 }

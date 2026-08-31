@@ -490,70 +490,13 @@ export class AttendanceOperationsRepository {
     }));
   }
 
-  async findReopenBaseline(
-    sessionId: string,
-    revision: number,
-    executor: QueryExecutor,
-  ): Promise<Array<{ student_uuid: string; attendance_status: number }> | null> {
-    const result = await executor.query<{ baseline_statuses: unknown }>(
-      `
-        SELECT metadata->'baselineStatuses' AS baseline_statuses
-        FROM audit_log
-        WHERE action = 'ATTENDANCE_REOPEN'
-          AND target_type = 'attendance_session'
-          AND target_id = $1
-          AND metadata->>'revision' = $2::text
-        ORDER BY created_at DESC
-        LIMIT 1
-      `,
-      [sessionId, revision],
-    );
-    const raw = result.rows[0]?.baseline_statuses;
-    const parsed = typeof raw === 'string' ? (JSON.parse(raw) as unknown) : raw;
-    if (!Array.isArray(parsed)) return null;
-    return parsed.flatMap((value) => {
-      if (!value || typeof value !== 'object') return [];
-      const row = value as Record<string, unknown>;
-      if (typeof row.studentUuid !== 'string' || !Number.isFinite(Number(row.statusCode))) {
-        return [];
-      }
-      return [{ student_uuid: row.studentUuid, attendance_status: Number(row.statusCode) }];
-    });
-  }
-
-  async reopenSession(
-    sessionId: string,
-    reason: string,
-    actorUserId: number | null,
-    executor: QueryExecutor,
-  ): Promise<AttendanceSessionRow | null> {
-    const result = await executor.query<AttendanceSessionRow>(
-      `
-        UPDATE attendance_sessions
-        SET status = 'REOPENED',
-            revision = revision + 1,
-            reopened_at = now(),
-            reopened_by = $3,
-            correction_reason = $2,
-            updated_by = $3
-        WHERE id = $1 AND status = 'SUBMITTED'
-        RETURNING id, school_term_id::text, school_id, grade_level_id, room_id,
-          attendance_date::text, period, session_kind, status,
-          expected_roster_count, recorded_count, revision, submitted_at,
-          correction_reason
-      `,
-      [sessionId, reason, actorUserId],
-    );
-    return result.rows[0] ?? null;
-  }
-
   async findSessionById(sessionId: string): Promise<AttendanceSessionRow | null> {
     const result = await queryDataSource<AttendanceSessionRow>(
       this.dataSource,
       `
         SELECT id, school_term_id::text, school_id, grade_level_id, room_id,
           attendance_date::text, period, session_kind, status,
-          expected_roster_count, recorded_count, revision, submitted_at,
+          expected_roster_count, recorded_count, submission_number, lock_version, submitted_at,
           correction_reason
         FROM attendance_sessions
         WHERE id = $1 AND deleted_at IS NULL

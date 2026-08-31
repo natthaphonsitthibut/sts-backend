@@ -84,8 +84,11 @@ export class ExceptionAttendanceService {
       expectedRosterCount: Number(session.expected_roster_count),
       recordedCount: Number(session.recorded_count),
       exceptionCount: Number(session.exception_count),
-      revision: Number(session.revision),
-      readOnly: session.status === 'SUBMITTED' || session.record_storage_mode !== 'EXCEPTIONS',
+      submissionNumber: Number(session.submission_number),
+      lockVersion: Number(session.lock_version),
+      hasSubmittedResult: session.status === 'SUBMITTED',
+      correctionReason: session.correction_reason,
+      readOnly: session.status === 'VOIDED' || session.record_storage_mode !== 'EXCEPTIONS',
       idempotent,
       exceptions: exceptions.map((item) => ({
         studentId: item.student_uuid,
@@ -163,12 +166,70 @@ export class ExceptionAttendanceService {
     };
   }
 
-  async getRoster(actor: ExceptionAttendanceActor) {
+  /**
+   * The register for one lesson, if one has been started — never starting one.
+   *
+   * Opening a lesson has to show what is already recorded there, but looking is
+   * not taking a register: `start()` freezes a roster snapshot and leaves an
+   * unsubmitted session behind, which is a claim that someone began checking.
+   * This answers the same question read-only, so that claim is only made when a
+   * teacher actually marks someone.
+   */
+  async findLessonSession(
+    actor: ExceptionAttendanceActor,
+    selection: { date: string; classroomSubjectId: number },
+  ) {
     const classroom = await this.repository.findClassroom(actor.classroomId);
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
     this.assertActorMatches(actor, classroom);
     this.assertOperationalClassroom(classroom);
-    const rows = await this.repository.listRoster(actor.classroomId);
+    if (
+      actor.allowedClassroomSubjectIds &&
+      !actor.allowedClassroomSubjectIds.includes(selection.classroomSubjectId)
+    ) {
+      throw new ForbiddenException('รายวิชานี้ไม่ได้อยู่ในวิชาที่คุณสอน');
+    }
+    const sessionId = await this.repository.findRosterSessionId({
+      classroomId: actor.classroomId,
+      attendanceDate: selection.date,
+      classroomSubjectId: selection.classroomSubjectId,
+    });
+    if (!sessionId) return { success: true, data: null };
+    const session = await this.repository.findSessionById(sessionId);
+    if (!session) return { success: true, data: null };
+    const exceptions = await this.repository.listSessionExceptions(sessionId);
+    return { success: true, data: this.toSessionResponse(session, exceptions, true) };
+  }
+
+  async getRoster(
+    actor: ExceptionAttendanceActor,
+    selection?: { date?: string; classroomSubjectId?: number },
+  ) {
+    const classroom = await this.repository.findClassroom(actor.classroomId);
+    if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+    this.assertActorMatches(actor, classroom);
+    this.assertOperationalClassroom(classroom);
+    if (Boolean(selection?.date) !== Boolean(selection?.classroomSubjectId)) {
+      throw new BadRequestException('ต้องระบุวันที่และรายวิชาคู่กัน');
+    }
+    if (
+      selection?.classroomSubjectId &&
+      actor.allowedClassroomSubjectIds &&
+      !actor.allowedClassroomSubjectIds.includes(selection.classroomSubjectId)
+    ) {
+      throw new ForbiddenException('รายวิชานี้ไม่ได้อยู่ในวิชาที่คุณสอน');
+    }
+    const sessionId =
+      selection?.date && selection.classroomSubjectId
+        ? await this.repository.findRosterSessionId({
+            classroomId: actor.classroomId,
+            attendanceDate: selection.date,
+            classroomSubjectId: selection.classroomSubjectId,
+          })
+        : null;
+    const rows = sessionId
+      ? await this.repository.listRosterSnapshot(sessionId)
+      : await this.repository.listRoster(actor.classroomId);
     return {
       success: true,
       data: rows.map((row) => ({
@@ -180,8 +241,10 @@ export class ExceptionAttendanceService {
         photoVersion: row.photo_updated_at ? new Date(row.photo_updated_at).toISOString() : null,
         // The roster tab shows the same two columns the staff roster does; both
         // surfaces read this one list, so they cannot drift apart again.
-        riskTier: row.risk_tier ?? 'NORMAL',
-        teacherComment: row.teacher_comment ?? null,
+        riskTier:
+          actor.studentDataAccess === 'ATTENDANCE_ONLY' ? null : (row.risk_tier ?? 'NORMAL'),
+        teacherComment:
+          actor.studentDataAccess === 'ATTENDANCE_ONLY' ? null : (row.teacher_comment ?? null),
       })),
     };
   }
@@ -373,18 +436,25 @@ export class ExceptionAttendanceService {
         throw new BadRequestException('มีนักเรียนที่ไม่อยู่ใน roster snapshot ของรอบนี้');
       }
       const current = await this.repository.listStoredExceptions(session.id, runner);
-      if (session.status === 'SUBMITTED') {
-        if (!this.sameExceptions(current, prepared)) {
-          throw new ConflictException('รอบเช็กชื่อนี้ส่งแล้วและข้อมูลไม่ตรงกับคำขอเดิม');
+      const isCorrection = session.status === 'SUBMITTED';
+      if (isCorrection) {
+        if (this.sameExceptions(current, prepared)) {
+          return {
+            session,
+            exceptions: current,
+            roster,
+            changed: false,
+          };
         }
-        return {
-          session,
-          exceptions: current,
-          roster,
-          changed: false,
-        };
+        const correctionReason = dto.correctionReason?.trim() ?? '';
+        if (correctionReason.length < 3 || correctionReason.length > 500) {
+          throw new BadRequestException('กรุณาระบุเหตุผลการแก้ไข 3-500 ตัวอักษร');
+        }
+        if (dto.expectedLockVersion !== Number(session.lock_version)) {
+          throw new ConflictException('ผลเช็กชื่อมีการส่งใหม่แล้ว กรุณาโหลดข้อมูลล่าสุดก่อนแก้ไข');
+        }
       }
-      if (session.status !== 'OPEN' && session.status !== 'REOPENED') {
+      if (!isCorrection && session.status !== 'OPEN' && session.status !== 'REOPENED') {
         throw new ConflictException('สถานะรอบเช็กชื่อไม่อนุญาตให้ส่งข้อมูล');
       }
 
@@ -394,6 +464,19 @@ export class ExceptionAttendanceService {
         prepared.length,
         roster.length,
         actor,
+        isCorrection ? dto.correctionReason!.trim() : null,
+        runner,
+      );
+      const changedCount = await this.repository.recordSubmissionHistory(
+        {
+          before: session,
+          submitted,
+          previous: current,
+          requested: prepared,
+          roster,
+          actor,
+          correctionReason: isCorrection ? dto.correctionReason!.trim() : null,
+        },
         runner,
       );
       await this.audit.recordAtomic(
@@ -409,6 +492,10 @@ export class ExceptionAttendanceService {
             rosterCount: roster.length,
             exceptionCount: prepared.length,
             source: actor.source,
+            submissionNumber: Number(submitted.submission_number),
+            corrected: isCorrection,
+            correctionReason: isCorrection ? dto.correctionReason!.trim() : null,
+            changedStudentCount: changedCount,
           },
           ip: null,
         },

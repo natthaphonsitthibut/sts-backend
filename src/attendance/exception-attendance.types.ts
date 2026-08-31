@@ -7,6 +7,8 @@ export interface ExceptionAttendanceActor {
   actorUserId: number | null;
   teacherMembershipId: string | null;
   actorLabel: string;
+  /** Assignment links receive only the register roster, not welfare/profile data. */
+  studentDataAccess?: 'FULL' | 'ATTENDANCE_ONLY';
   /**
    * The link this register was taken through, when it was. It is what lets the
    * school that issued a link see what came of it; a register taken in the app
@@ -74,10 +76,13 @@ export interface ExceptionAttendanceSessionRow extends Record<string, unknown> {
   expected_roster_count: number;
   recorded_count: number;
   exception_count: number;
-  revision: number;
+  submission_number: number;
+  lock_version: number;
   record_storage_mode: 'FULL_ROSTER' | 'EXCEPTIONS';
   checking_started_at: Date | string;
   submitted_at: Date | string | null;
+  correction_reason: string | null;
+  classroom_attendance_link_id: string | null;
 }
 
 export interface StoredAttendanceExceptionRow extends Record<string, unknown> {

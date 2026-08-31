@@ -18,10 +18,13 @@ const session: ExceptionAttendanceSessionRow = {
   expected_roster_count: 18,
   recorded_count: 0,
   exception_count: 0,
-  revision: 1,
+  submission_number: 0,
+  lock_version: 1,
   record_storage_mode: 'EXCEPTIONS',
   checking_started_at: '2026-08-23T01:00:00.000Z',
   submitted_at: null,
+  correction_reason: null,
+  classroom_attendance_link_id: null,
 };
 
 const actor: ExceptionAttendanceActor = {
@@ -66,7 +69,7 @@ describe('ExceptionAttendanceRepository', () => {
     const repository = new ExceptionAttendanceRepository({} as never);
 
     await expect(
-      repository.finalizeSession(session, 2, 18, actor, runner as never),
+      repository.finalizeSession(session, 2, 18, actor, null, runner as never),
     ).resolves.toEqual(submitted);
   });
 
@@ -77,7 +80,56 @@ describe('ExceptionAttendanceRepository', () => {
     const repository = new ExceptionAttendanceRepository({} as never);
 
     await expect(
-      repository.finalizeSession(session, 2, 18, actor, runner as never),
+      repository.finalizeSession(session, 2, 18, actor, null, runner as never),
     ).rejects.toThrow('Attendance session finalization returned no row');
+  });
+
+  it('stores only students whose submitted attendance result changed', async () => {
+    const firstStudent = '11111111-1111-4111-8111-111111111111';
+    const secondStudent = '22222222-2222-4222-8222-222222222222';
+    const submitted = {
+      ...session,
+      status: 'SUBMITTED' as const,
+      submission_number: 2,
+      lock_version: 3,
+      submitted_at: '2026-08-23T01:10:00.000Z',
+      correction_reason: 'ตรวจสอบกับครูประจำวิชาแล้ว',
+    };
+    const runner = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([{ id: '33333333-3333-4333-8333-333333333333' }])
+        .mockResolvedValueOnce([]),
+    };
+    const repository = new ExceptionAttendanceRepository({} as never);
+
+    await expect(
+      repository.recordSubmissionHistory(
+        {
+          before: { ...session, status: 'SUBMITTED', submission_number: 1, lock_version: 2 },
+          submitted,
+          previous: [{ student_uuid: firstStudent, attendance_status_code: 2 }],
+          requested: [
+            {
+              studentId: firstStudent,
+              status: 'P_LATE',
+              statusCode: 3,
+              markedAt: '2026-08-23T01:10:00.000Z',
+            },
+          ],
+          roster: [firstStudent, secondStudent],
+          actor,
+          correctionReason: 'ตรวจสอบกับครูประจำวิชาแล้ว',
+        },
+        runner as never,
+      ),
+    ).resolves.toBe(1);
+
+    const changePayload = JSON.parse(
+      String((runner.query.mock.calls[1] as unknown[])[1]?.[2]),
+    ) as Array<Record<string, unknown>>;
+    expect(changePayload).toEqual([
+      { student_id: firstStudent, previous_status: 2, new_status: 3 },
+    ]);
   });
 });
