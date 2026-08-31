@@ -17,6 +17,15 @@ import type {
 
 const DEFAULT_PERIOD: HomeDashboardPeriod = '30_DAYS';
 
+/**
+ * Where a case count opens. It has to be the route the menu table lists, because
+ * the frontend resolves "may this account open it" by exact menu route: `/cases`
+ * is only a legacy redirect and carries no menu entry, so every case tile
+ * rendered dead for every account, admins included. `/student-risk-report`
+ * forwards to the case list and keeps the query string.
+ */
+const CASE_LIST_PATH = '/student-risk-report';
+
 function trim(value?: string): string | undefined {
   const next = value?.trim();
   return next && next.length > 0 ? next : undefined;
@@ -206,7 +215,7 @@ export class HomeDashboardService {
         key: 'totalCases',
         label: 'เคสทั้งหมด',
         value: totalCount,
-        targetPath: '/cases',
+        targetPath: CASE_LIST_PATH,
         targetQuery: { ...baseQuery },
         tone: 'default',
       });
@@ -214,16 +223,16 @@ export class HomeDashboardService {
         key: 'inProgressCases',
         label: 'เคสที่กำลังดำเนินการ',
         value: ongoingCount,
-        targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'OPEN,IN_PROGRESS,PENDING_REVIEW' },
+        targetPath: CASE_LIST_PATH,
+        targetQuery: { ...baseQuery, caseStatus: 'OPEN,IN_PROGRESS,PENDING_REVIEW' },
         tone: 'warning',
       });
       metrics.push({
         key: 'resolvedCases',
         label: 'เคสที่เสร็จสิ้น',
         value: resolvedCount,
-        targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'RESOLVED' },
+        targetPath: CASE_LIST_PATH,
+        targetQuery: { ...baseQuery, caseStatus: 'RESOLVED' },
         tone: 'success',
       });
     }

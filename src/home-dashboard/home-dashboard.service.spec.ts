@@ -221,6 +221,31 @@ describe('HomeDashboardService', () => {
     );
   });
 
+  it('points case tiles at a route the menu can resolve', async () => {
+    const repository = createRepositoryMock();
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+
+    const result = await service.getSummary(baseActor, {});
+    const caseMetrics = result.data.metrics.filter((metric) =>
+      ['totalCases', 'inProgressCases', 'resolvedCases'].includes(metric.key),
+    );
+
+    // `/cases` is only a legacy redirect and carries no menu entry, and the
+    // frontend resolves permission by exact menu route, so every case tile
+    // rendered dead — for admins too.
+    expect(caseMetrics).toHaveLength(3);
+    for (const metric of caseMetrics) {
+      expect(metric.targetPath).toBe('/student-risk-report');
+      expect(metric.targetQuery).not.toHaveProperty('status');
+    }
+    expect(
+      caseMetrics.find((metric) => metric.key === 'inProgressCases')?.targetQuery,
+    ).toMatchObject({ caseStatus: 'OPEN,IN_PROGRESS,PENDING_REVIEW' });
+    expect(caseMetrics.find((metric) => metric.key === 'resolvedCases')?.targetQuery).toMatchObject(
+      { caseStatus: 'RESOLVED' },
+    );
+  });
+
   it.each([
     [{}, 'PROVINCE'],
     [{ province: 'เชียงใหม่' }, 'DISTRICT'],
