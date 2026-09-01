@@ -10,7 +10,6 @@ import {
   type RawBodyRequest,
   Res,
   UnauthorizedException,
-  ValidationPipe,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Public } from '../auth';
@@ -152,8 +151,11 @@ export class TeacherLineController {
   @Get('google/callback')
   @ThrottleTeacherAccess()
   async googleCallback(
-    @Query(new ValidationPipe({ transform: true, whitelist: true }))
-    query: TeacherLineCallbackDto,
+    // The provider owns this URL and appends its own parameters. They are
+    // declared on ExternalOAuthCallbackDto so the global ValidationPipe drops
+    // them; a pipe here cannot help, because Nest applies
+    // `globalPipes.concat(paramPipes)` and the global one has already thrown.
+    @Query() query: TeacherLineCallbackDto,
     @Res() response: Response,
   ): Promise<void> {
     if (query.error || !query.code || !query.state) {
@@ -180,11 +182,11 @@ export class TeacherLineController {
   @Get('callback')
   @ThrottleTeacherAccess()
   async callback(
-    // LINE owns this URL and appends its own parameters, so an undeclared one
-    // must be dropped rather than rejected: a 400 here replaces the redirect
-    // with raw JSON for a teacher who already signed in successfully.
-    @Query(new ValidationPipe({ transform: true, whitelist: true }))
-    query: TeacherLineCallbackDto,
+    // The provider owns this URL and appends its own parameters. They are
+    // declared on ExternalOAuthCallbackDto so the global ValidationPipe drops
+    // them; a pipe here cannot help, because Nest applies
+    // `globalPipes.concat(paramPipes)` and the global one has already thrown.
+    @Query() query: TeacherLineCallbackDto,
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {

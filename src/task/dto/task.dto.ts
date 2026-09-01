@@ -1,4 +1,5 @@
 import { Type } from 'class-transformer';
+import { ExternalOAuthCallbackDto } from '../../common/dto/external-oauth-callback.dto';
 import {
   ArrayMaxSize,
   IsArray,
@@ -28,7 +29,7 @@ export type CaseResolutionOutcome =
 
 export class GetReferralDrilldownQueryDto extends PaginationQueryDto {}
 
-export class TaskGoogleCallbackDto {
+export class TaskGoogleCallbackDto extends ExternalOAuthCallbackDto {
   @IsOptional()
   @IsString()
   @MaxLength(512)
@@ -38,11 +39,6 @@ export class TaskGoogleCallbackDto {
   @IsString()
   @MaxLength(256)
   state?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(256)
-  error?: string;
 }
 
 // Fields are intentionally loose unions (string | number | null) because the

@@ -1,4 +1,5 @@
 import { Transform } from 'class-transformer';
+import { ExternalOAuthCallbackDto } from '../../common/dto/external-oauth-callback.dto';
 import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 const trimText = ({ value }: { value: unknown }): unknown =>
@@ -46,7 +47,7 @@ export class TeacherLineAraIdChallengeTokenDto {
  * successfully on a raw JSON error. The route therefore whitelists instead of
  * forbidding — unknown properties are dropped, never fatal.
  */
-export class TeacherLineCallbackDto {
+export class TeacherLineCallbackDto extends ExternalOAuthCallbackDto {
   @IsOptional()
   @IsString()
   @MaxLength(512)
@@ -56,11 +57,6 @@ export class TeacherLineCallbackDto {
   @IsString()
   @MaxLength(256)
   state?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(256)
-  error?: string;
 
   /** 'true' when this sign-in changed the friendship with the OA. */
   @IsOptional()
