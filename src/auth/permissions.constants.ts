@@ -125,7 +125,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'EXECUTIVE',
     label: 'ผู้บริหาร',
-    default_permissions: ['home'],
+    default_permissions: ['home', 'nl_query:use'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,

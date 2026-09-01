@@ -34,6 +34,7 @@ import {
 } from './task.entities';
 import { RoleEntity, UserEntity } from './user.entities';
 import { AraIdIdentityRecordEntity, AraIdProfileEntity } from './araid.entities';
+import { NlQueryLog } from '../../nl-query/entities/nl-query-log.entity';
 
 export const DATABASE_ENTITIES = [
   SchoolEntity,
@@ -58,6 +59,7 @@ export const DATABASE_ENTITIES = [
   UserEntity,
   AraIdProfileEntity,
   AraIdIdentityRecordEntity,
+  NlQueryLog,
   RiskFactorEntity,
   AssistanceMeasureEntity,
   EducationalAreaEntity,
@@ -101,4 +103,5 @@ export {
   UserEntity,
   AraIdProfileEntity,
   AraIdIdentityRecordEntity,
+  NlQueryLog,
 };

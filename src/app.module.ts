@@ -50,6 +50,8 @@ import { AraIdModule } from './araid/araid.module';
 import { TeacherCommentsModule } from './teacher-comments/teacher-comments.module';
 import { ClassroomAttendanceLinksModule } from './classroom-attendance-links/classroom-attendance-links.module';
 import { googleLoginConfig } from './config/google-login.config';
+import { nlQueryConfig } from './config/nl-query.config';
+import { NlQueryModule } from './nl-query/nl-query.module';
 
 @Module({
   imports: [
@@ -64,6 +66,7 @@ import { googleLoginConfig } from './config/google-login.config';
         encryptionConfig,
         geoConfig,
         googleLoginConfig,
+        nlQueryConfig,
         lineConfig,
         piiConfig,
         queueConfig,
@@ -100,6 +103,7 @@ import { googleLoginConfig } from './config/google-login.config';
           { name: 'araidLogin', ttl: config.araidLogin.ttlMs, limit: config.araidLogin.limit },
           { name: 'araidPin', ttl: config.araidPin.ttlMs, limit: config.araidPin.limit },
           { name: 'geocode', ttl: config.geocode.ttlMs, limit: config.geocode.limit },
+          { name: 'nlQuery', ttl: config.nlQuery.ttlMs, limit: config.nlQuery.limit },
           {
             name: 'followerApplication',
             ttl: config.followerApplication.ttlMs,
@@ -144,6 +148,7 @@ import { googleLoginConfig } from './config/google-login.config';
     TeacherCommentsModule,
     AraIdModule,
     ClassroomAttendanceLinksModule,
+    NlQueryModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: AuthGuard }],
