@@ -638,6 +638,19 @@ export class ClassroomAttendanceLinksService {
       if (!offering || offering.classroom_id !== classroom.classroom_id) {
         throw new NotFoundException('ไม่พบรายวิชานี้ในห้องเรียนที่เลือก');
       }
+      // One usable link per lesson. A second one does not add reach — it splits
+      // it: two tokens for the same register, and whoever holds the older one
+      // is now working from a link nobody remembers issuing. Closing or letting
+      // the first expire is what frees the lesson up again.
+      const existing = await this.repository.findUsableAssignmentForSubject(
+        dto.classroomSubjectId,
+        runner,
+      );
+      if (existing) {
+        throw new ConflictException(
+          'รายวิชานี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว กรุณาปิดลิงก์เดิมหรือรอให้หมดอายุก่อนสร้างใหม่',
+        );
+      }
       const created = await this.repository.insertAssignmentLink(
         {
           schoolId: dto.schoolId,
@@ -723,6 +736,17 @@ export class ClassroomAttendanceLinksService {
       );
       if (!offering) {
         throw new ForbiddenException('รายวิชานี้ไม่ได้อยู่ในวิชาที่คุณสอน');
+      }
+      // Same rule as the staff screen — a teacher covering for a colleague must
+      // not be able to route around it from inside their own link.
+      const existing = await this.repository.findUsableAssignmentForSubject(
+        Number(offering.classroom_subject_id),
+        runner,
+      );
+      if (existing) {
+        throw new ConflictException(
+          'รายวิชานี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว กรุณาปิดลิงก์เดิมหรือรอให้หมดอายุก่อนสร้างใหม่',
+        );
       }
       const created = await this.repository.insertAssignmentLink(
         {
