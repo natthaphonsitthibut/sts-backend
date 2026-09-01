@@ -96,7 +96,9 @@ describe('ClassroomAttendanceLinksService', () => {
       findActiveMembership: jest.fn(),
       findActiveSchoolInScope: jest.fn(),
       findAssignableSubject: jest.fn(),
+      findUsableAssignmentForSubject: jest.fn().mockResolvedValue(null),
       insertAssignmentLink: jest.fn(),
+      listIssuedAssignments: jest.fn().mockResolvedValue([]),
       listLinkOpens: jest.fn(),
       listLinkAttendanceSessions: jest.fn(),
       bindExternalIdentity: jest.fn(),
@@ -844,6 +846,98 @@ describe('ClassroomAttendanceLinksService', () => {
         issuedByTeacherMembershipId: 12,
       }),
       expect.anything(),
+    );
+  });
+
+  /**
+   * A lesson has one usable assignment link at a time. A second one does not
+   * add reach, it splits it: two tokens for the same register, and whoever
+   * holds the older one is working from a link nobody remembers issuing.
+   */
+  it('refuses a second assignment while the lesson still has a usable link', async () => {
+    const { service, repository } = setup();
+    repository.findById.mockResolvedValue(LINK);
+    repository.findAssignableSubject.mockResolvedValue({
+      classroom_id: '30',
+      classroom_subject_id: '40',
+    });
+    repository.findUsableAssignmentForSubject.mockResolvedValue({
+      id: 'existing-link',
+      expires_at: new Date('2126-09-02T00:00:00.000Z'),
+    });
+
+    await expect(
+      service.createAssignmentFromLink(
+        {
+          linkId: LINK.id,
+          schoolId: 10,
+          schoolTermId: 20,
+          assignedClassroomId: null,
+          assignedClassroomSubjectId: null,
+          assignedClassroomLabel: null,
+          assignedSubjectName: null,
+          teacherId: '7',
+          teacherMembershipId: '12',
+          teacherDisplayName: 'ครู หนึ่ง',
+          provider: 'GOOGLE',
+        },
+        { classroomSubjectId: 40, expiresAt: '2126-09-02T00:00:00.000Z' },
+        'https://sts.example',
+      ),
+    ).rejects.toThrow('รายวิชานี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว');
+
+    // Nothing was written, so the teacher still holds exactly one live token.
+    expect(repository.insertAssignmentLink).not.toHaveBeenCalled();
+  });
+
+  it('checks the lesson before writing, not after', async () => {
+    const { service, repository } = setup();
+    repository.findById.mockResolvedValue(LINK);
+    repository.findAssignableSubject.mockResolvedValue({
+      classroom_id: '30',
+      classroom_subject_id: '40',
+    });
+    repository.insertAssignmentLink.mockResolvedValue({
+      id: 'new-link',
+      school_id: 10,
+      school_term_id: '20',
+      assigned_classroom_subject_id: '40',
+      expires_at: '2126-09-02T00:00:00.000Z',
+    });
+
+    await service.createAssignmentFromLink(
+      {
+        linkId: LINK.id,
+        schoolId: 10,
+        schoolTermId: 20,
+        assignedClassroomId: null,
+        assignedClassroomSubjectId: null,
+        assignedClassroomLabel: null,
+        assignedSubjectName: null,
+        teacherId: '7',
+        teacherMembershipId: '12',
+        teacherDisplayName: 'ครู หนึ่ง',
+        provider: 'GOOGLE',
+      },
+      { classroomSubjectId: 40, expiresAt: '2126-09-02T00:00:00.000Z' },
+      'https://sts.example',
+    );
+
+    // The lesson is locked and read inside the same transaction as the insert,
+    // so two taps cannot both find nothing and both write.
+    expect(repository.findUsableAssignmentForSubject).toHaveBeenCalledWith(40, expect.anything());
+  });
+
+  it('narrows the assignment list to the state the panel asked for', async () => {
+    const { service, repository } = setup();
+
+    await service.listMyAssignments(
+      { kind: 'USER', actor: { id: 5 } as never },
+      { schoolTermId: 20, status: 'INACTIVE' },
+    );
+
+    expect(repository.listIssuedAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'INACTIVE' }),
     );
   });
 
