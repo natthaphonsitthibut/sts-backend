@@ -305,7 +305,8 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
         return (
           text.includes('นักเรียนทั้งหมด') &&
           text.includes('พื้นที่ที่มีนักเรียนเสี่ยงสูง Top 5') &&
-          text.includes('สัดส่วนสาเหตุความเสี่ยง')
+          text.includes('ภาพรวมความเสี่ยงจากผลการติดตาม') &&
+          text.includes('ประเภทปัญหาที่พบในนักเรียน')
         );
       },
       `${label} home dashboard did not render`,
@@ -342,7 +343,22 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
   ]) {
     assert(text.includes(metricLabel), `${label} metric was missing: ${metricLabel}`);
   }
-  assert(text.includes('สัดส่วนสาเหตุความเสี่ยง'), `${label} cause chart was missing`);
+  // The follow-up breakdowns live in one tabbed panel now: the default tab and
+  // the tab labels must be present, the other tabs' content must not be.
+  for (const sectionTitle of [
+    'ภาพรวมความเสี่ยงจากผลการติดตาม',
+    'ประเภทปัญหาที่พบในนักเรียน',
+    'สาเหตุการขาดเรียน',
+    'ปัญหาที่พบ',
+    'การติดตาม',
+    'ผลลัพธ์',
+  ]) {
+    assert(text.includes(sectionTitle), `${label} follow-up panel was missing: ${sectionTitle}`);
+  }
+  assert(
+    !text.includes('ผลปลายทางของแต่ละประเภทปัญหา'),
+    `${label} rendered a hidden tab's content on first paint`,
+  );
   const riskDimension = await evaluate(
     client,
     `document.querySelector('[data-risk-area-dimension]')?.getAttribute('data-risk-area-dimension')`,
@@ -351,9 +367,31 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     riskDimension === (expectations.riskDimension || 'PROVINCE'),
     `${label} default risk dimension was ${riskDimension}`,
   );
-  assert(!text.includes('แนวโน้มการมาเรียน'), `${label} rendered the retired attendance chart`);
+  assert(text.includes('แนวโน้มการมาเรียนรายวัน'), `${label} attendance trend chart was missing`);
   assert(!text.includes('การกระจายระดับความเสี่ยง'), `${label} rendered the retired risk chart`);
   assert(!text.includes('เคสเปิดใหม่เทียบปิดแล้ว'), `${label} rendered the retired case chart`);
+  const gradeRiskCard = await evaluate(
+    client,
+    `Boolean(document.querySelector('[data-grade-risk]'))`,
+  );
+  if (expectations.schoolScope) {
+    // A lone school on a national choropleth is an empty grey map, so the slot
+    // swaps to the unit that school actually works with.
+    assert(gradeRiskCard, `${label} did not replace the map with the grade breakdown`);
+    assert(
+      !(await evaluate(client, `Boolean(document.querySelector('[data-administrative-map]'))`)),
+      `${label} still rendered the national map inside one school`,
+    );
+  } else {
+    assert(!gradeRiskCard, `${label} rendered the school-only grade breakdown`);
+    // The boundary GeoJSON is fetched after first paint, so wait for the map
+    // rather than racing it.
+    await waitFor(
+      async () =>
+        evaluate(client, `Boolean(document.querySelector('[data-administrative-map]'))`),
+      `${label} did not render the administrative map`,
+    );
+  }
   const hasExportNavigation = await evaluate(
     client,
     `Boolean(document.querySelector('a[href="/data-exports"]'))`,
@@ -376,6 +414,28 @@ async function assertOverview(client, expectedActiveCases, label, expectations) 
     assert(
       String(activeCaseCardText).includes(expectedActiveCases.toLocaleString()),
       `${label} did not render expected active case count ${expectedActiveCases}\n${String(activeCaseCardText)}`,
+    );
+  }
+  if (expectations.cases) {
+    // `/cases` carried no menu entry, so the permission lookup refused it and
+    // every case tile rendered as dead text while the student tiles linked.
+    for (const metricKey of ['totalCases', 'inProgressCases', 'resolvedCases']) {
+      const caseMetricLink = await evaluate(
+        client,
+        `document.querySelector('[data-home-metric="${metricKey}"]')?.getAttribute('href')`,
+      );
+      assert(
+        String(caseMetricLink).startsWith('/student-risk-report'),
+        `${label} case metric ${metricKey} was not clickable (href=${caseMetricLink})`,
+      );
+    }
+    const inProgressLink = await evaluate(
+      client,
+      `document.querySelector('[data-home-metric="inProgressCases"]')?.getAttribute('href')`,
+    );
+    assert(
+      String(inProgressLink).includes('caseStatus='),
+      `${label} in-progress case metric lost its status filter (href=${inProgressLink})`,
     );
   }
   if (expectations.risk) {
@@ -618,6 +678,436 @@ async function assertMapAssetErrorAndRecovery(client) {
   await client.call('Network.setCacheDisabled', { cacheDisabled: false });
 }
 
+
+
+const FIXTURE_CASE_MARKER = 'AUTOMATED_TEST follow-up %';
+const FIXTURE_COMMENT_MARKER = 'AUTOMATED_TEST observation';
+
+/**
+ * Removes any fixture rows a previous interrupted run left behind, so a crash
+ * mid-seed cannot silently inflate the next run's numbers.
+ */
+async function purgeFollowUpFixtures(dataSource) {
+  const cases = await dataSource.query(`SELECT id FROM cases WHERE student_name LIKE $1`, [
+    FIXTURE_CASE_MARKER,
+  ]);
+  const caseIds = cases.map((row) => Number(row.id));
+  if (caseIds.length) {
+    await dataSource.query(`DELETE FROM case_referrals WHERE case_id = ANY($1::int[])`, [caseIds]);
+    await dataSource.query(`DELETE FROM case_reviews WHERE case_id = ANY($1::int[])`, [caseIds]);
+    await dataSource.query(
+      `DELETE FROM task_submissions
+       WHERE task_link_id IN (
+         SELECT tl.id FROM task_links tl
+         JOIN tasks t ON t.id = tl.task_id
+         WHERE t.case_id = ANY($1::int[])
+       )`,
+      [caseIds],
+    );
+    await dataSource.query(
+      `DELETE FROM task_links
+       WHERE task_id IN (SELECT id FROM tasks WHERE case_id = ANY($1::int[]))`,
+      [caseIds],
+    );
+    await dataSource.query(`DELETE FROM tasks WHERE case_id = ANY($1::int[])`, [caseIds]);
+    await dataSource.query(`DELETE FROM cases WHERE id = ANY($1::int[])`, [caseIds]);
+  }
+  await dataSource.query(`DELETE FROM classroom_student_comments WHERE problem_description = $1`, [
+    FIXTURE_COMMENT_MARKER,
+  ]);
+}
+
+
+/**
+ * The follow-up cards must carry the seeded trail, not just render their titles:
+ * an empty chart looks identical to a broken aggregate.
+ */
+async function assertFollowUpInsightValues(client, fixtures) {
+  const payload = JSON.parse(
+    await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(
+          `${BACKEND_URL}/api/home-dashboard/follow-up-insights`,
+        )}, { credentials: 'include' });
+        return JSON.stringify(await response.json());
+      })()`,
+    ),
+  );
+  const data = payload?.data;
+  assert(data, 'Follow-up insights endpoint returned no data');
+  assert(
+    data.coverage.atRiskStudents >= fixtures.highRiskStudents,
+    `Coverage reported ${data.coverage.atRiskStudents} at-risk students, expected at least ${fixtures.highRiskStudents}`,
+  );
+  assert(
+    data.coverage.followedUpStudents + data.coverage.pendingStudents ===
+      data.coverage.atRiskStudents,
+    'Coverage parts did not add up to the at-risk total',
+  );
+  assert(
+    data.coverage.recordedStudents >= 3,
+    `Recorded follow-up population was ${data.coverage.recordedStudents}, expected the seeded trail`,
+  );
+  const financial = data.problemCategories.find((entry) => entry.key === 'FINANCIAL');
+  assert(financial, 'Problem mix did not include the seeded financial problem');
+  assert(
+    financial.followUp === 2,
+    `Financial problems counted ${financial.followUp} students, expected 2 distinct students`,
+  );
+  const academic = data.problemCategories.find((entry) => entry.key === 'ACADEMIC');
+  assert(
+    academic && academic.observation === 1,
+    'Problem mix did not keep the homeroom observation as its own count',
+  );
+  assert(
+    data.absenceReasonCategories.some((entry) => entry.key === 'ECONOMIC'),
+    'Absence reason breakdown did not include the seeded economic cause',
+  );
+  assert(
+    data.concernLevels.some((entry) => entry.key === 'CONCERN'),
+    'Concern level breakdown did not include the seeded น่ากังวล observation',
+  );
+  assert(
+    data.unreachableReasons.some((entry) => entry.key === 'UNREACHABLE'),
+    'Unsuccessful follow-up reasons did not include the seeded ติดต่อไม่ได้ case',
+  );
+  const outcomes = data.problemByOutcome.flatMap((row) => row.outcomes);
+  assert(
+    outcomes.find((outcome) => outcome.key === 'RETURNED_TO_SCHOOL'),
+    'Problem/outcome matrix did not include the seeded closed case',
+  );
+  // Referring closes a case without a resolution outcome, so it used to vanish
+  // from this chart even though the agency it went to was on record.
+  assert(
+    outcomes.find((outcome) => outcome.key === 'REFERRED_AGENCY'),
+    'Problem/outcome matrix dropped the case that was closed by referral',
+  );
+  assert(
+    data.referralFunnel.byAgency.length >= 1,
+    `Referral funnel did not break down by agency: ${JSON.stringify(data.referralFunnel)}`,
+  );
+  assert(
+    data.referralFunnel.referred >= 1 && data.referralFunnel.accepted >= 1,
+    `Referral funnel reported ${JSON.stringify(data.referralFunnel)}`,
+  );
+  assert(
+    data.problemByArea && data.problemByArea.dimension === 'PROVINCE',
+    'Problem/area cross-tab was missing at national scope',
+  );
+  assert(
+    Array.isArray(data.otherProblemDetails) && data.otherProblemDetails.length === 0,
+    'Nationwide scope leaked the free text recorded about a family',
+  );
+  const schoolScoped = JSON.parse(
+    await evaluate(
+      client,
+      `(async () => {
+        const response = await fetch(${JSON.stringify(
+          `${BACKEND_URL}/api/home-dashboard/follow-up-insights?schoolId=`,
+        )} + ${fixtures.schoolId}, { credentials: 'include' });
+        return JSON.stringify(await response.json());
+      })()`,
+    ),
+  );
+  assert(
+    Array.isArray(schoolScoped?.data?.otherProblemDetails),
+    'School scope did not expose the free text behind the "อื่น ๆ" bucket',
+  );
+  const bodyCopy = await bodyText(client);
+  for (const label of ['ปัญหาด้านการเงิน', 'สาเหตุทางเศรษฐกิจ']) {
+    assert(bodyCopy.includes(label), `Follow-up panel did not render ${label}`);
+  }
+  await assertRiskInsightTabs(client);
+}
+
+/** Each tab has to actually swap the panel body, and the coverage strip has to stay. */
+async function assertRiskInsightTabs(client) {
+  const tabs = [
+    ['การติดตาม', 'ระดับความห่วงใยจากครูประจำชั้น'],
+    ['ผลลัพธ์', 'ผลปลายทางของแต่ละประเภทปัญหา'],
+    ['รายพื้นที่', 'ประเภทปัญหารายจังหวัด'],
+    ['ปัญหาที่พบ', 'ประเภทปัญหาที่พบในนักเรียน'],
+  ];
+  for (const [tabLabel, expectedHeading] of tabs) {
+    const clicked = await evaluate(
+      client,
+      `(() => {
+        const tab = Array.from(
+          document.querySelectorAll('[data-risk-insights-panel] [role="tab"]')
+        ).find((candidate) => candidate.textContent.trim() === ${JSON.stringify(tabLabel)});
+        tab?.click();
+        return Boolean(tab);
+      })()`,
+    );
+    assert(clicked, `Risk insights panel had no ${tabLabel} tab`);
+    await waitFor(
+      async () => (await bodyText(client)).includes(expectedHeading),
+      `Risk insights tab ${tabLabel} did not render ${expectedHeading}`,
+    );
+    assert(
+      await evaluate(
+        client,
+        `Boolean(document.querySelector('[data-follow-up-coverage]'))`,
+      ),
+      `Coverage strip disappeared on the ${tabLabel} tab`,
+    );
+  }
+}
+
+/**
+ * The follow-up charts only mean anything when somebody has actually followed
+ * up, so the smoke creates its own risk/follow-up trail instead of hoping the
+ * database still carries one. Everything created here is torn down in `finally`.
+ */
+async function seedFollowUpFixtures(dataSource) {
+  const [school] = await dataSource.query(
+    `SELECT s."SchoolID_Onec" AS school_id, sc.province
+     FROM student_term s
+     JOIN schools sc ON sc.id = s."SchoolID_Onec"
+     JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
+     WHERE NULLIF(BTRIM(sc.province), '') IS NOT NULL
+     GROUP BY 1, 2
+     ORDER BY COUNT(*) DESC
+     LIMIT 1`,
+  );
+  assert(school, 'Home dashboard smoke needs a school with risk profiles');
+
+  const students = await dataSource.query(
+    `SELECT s.student_uuid, s.person_uuid, profile.risk_tier, profile.risk_severity
+     FROM student_term s
+     JOIN student_current_enrollment_resolution current_enrollment
+       ON current_enrollment.person_uuid = s.person_uuid
+      AND current_enrollment.selected_student_uuid = s.student_uuid
+      AND current_enrollment.resolution_state = 'ACTIVE'
+     JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
+     WHERE s."SchoolID_Onec" = $1
+       AND NOT EXISTS (
+         SELECT 1 FROM cases existing
+         WHERE existing.student_uuid = s.student_uuid
+           AND existing.deleted_at IS NULL
+           AND existing.status <> 'RESOLVED'
+       )
+     ORDER BY s.student_uuid
+     LIMIT 4`,
+    [school.school_id],
+  );
+  assert(students.length === 4, 'Home dashboard smoke needs four students with risk profiles');
+
+  const previousTiers = students.map((student) => ({
+    student_uuid: student.student_uuid,
+    risk_tier: student.risk_tier,
+    risk_severity: student.risk_severity,
+  }));
+  await dataSource.query(
+    `UPDATE student_risk_profiles
+     SET risk_tier = 'HIGH', risk_severity = 2
+     WHERE student_uuid = ANY($1::uuid[])`,
+    [students.map((student) => student.student_uuid)],
+  );
+
+  const caseIds = [];
+  const taskIds = [];
+  const linkIds = [];
+  const submissionIds = [];
+  const reviewIds = [];
+  const referralIds = [];
+  const commentIds = [];
+
+  async function createFollowUp(student, index, options) {
+    const [createdCase] = await dataSource.query(
+      `INSERT INTO cases (student_name, student_uuid, school_id, status, reason_flagged, completion_outcome_code)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        `AUTOMATED_TEST follow-up ${index}`,
+        student.student_uuid,
+        school.school_id,
+        options.caseStatus,
+        'AUTOMATED_TEST fixture',
+        options.caseStatus !== 'RESOLVED'
+          ? null
+          : options.referredAgency
+            ? 'REFERRED_AGENCY'
+            : 'CLOSED',
+      ],
+    );
+    caseIds.push(createdCase.id);
+
+    const [task] = await dataSource.query(
+      `INSERT INTO tasks (case_id, task_type, status) VALUES ($1, $2, 'COMPLETED') RETURNING id`,
+      [createdCase.id, options.taskType],
+    );
+    taskIds.push(task.id);
+
+    const [link] = await dataSource.query(
+      `INSERT INTO task_links (task_id, token_hash, expires_at, assigned_to_name)
+       VALUES ($1, $2, now() + interval '7 days', 'AUTOMATED_TEST')
+       RETURNING id`,
+      [task.id, `automated-test-${createdCase.id}-${index}`],
+    );
+    linkIds.push(link.id);
+
+    const [submission] = await dataSource.query(
+      `INSERT INTO task_submissions (
+         task_link_id, task_execution_outcome_code, non_follow_up_reason_code,
+         follow_up_problem_category_code, absence_reason_code, absence_reason_category_code,
+         submitted_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, now())
+       RETURNING id`,
+      [
+        link.id,
+        options.executionOutcome,
+        options.nonFollowUpReason,
+        options.problemCategory,
+        options.absenceReason,
+        options.absenceReasonCategory,
+      ],
+    );
+    submissionIds.push(submission.id);
+
+    if (options.caseStatus === 'RESOLVED') {
+      const [review] = await dataSource.query(
+        `INSERT INTO case_reviews (case_id, review_action, resolution_outcome, reviewed_by, reviewed_at)
+         VALUES ($1, $2, $3, 'AUTOMATED_TEST', now())
+         RETURNING id`,
+        [
+          createdCase.id,
+          options.referredAgency ? 'REFER_AGENCY' : 'CLOSE',
+          options.referredAgency ? null : options.resolutionOutcome,
+        ],
+      );
+      reviewIds.push(review.id);
+
+      const [agency] = await dataSource.query(
+        `SELECT id FROM referral_agencies WHERE is_active = TRUE ORDER BY id LIMIT 1`,
+      );
+      // Only the referred case gets a referral row; a plain close does not.
+      if (agency && options.referredAgency) {
+        const [referral] = await dataSource.query(
+          `INSERT INTO case_referrals (case_review_id, case_id, referral_agency_id, status_code)
+           VALUES ($1, $2, $3, 'ACCEPTED')
+           RETURNING id`,
+          [review.id, createdCase.id, agency.id],
+        );
+        referralIds.push(referral.id);
+      }
+    }
+  }
+
+  await createFollowUp(students[0], 1, {
+    caseStatus: 'IN_PROGRESS',
+    taskType: 'VISIT',
+    executionOutcome: 'SUCCEEDED',
+    nonFollowUpReason: null,
+    problemCategory: 'FINANCIAL',
+    absenceReason: 'NO_LEARNING_EQUIPMENT',
+    absenceReasonCategory: 'ECONOMIC',
+  });
+  await createFollowUp(students[1], 2, {
+    caseStatus: 'IN_PROGRESS',
+    taskType: 'ASSIST',
+    executionOutcome: 'NOT_SUCCEEDED',
+    nonFollowUpReason: 'UNREACHABLE',
+    problemCategory: 'EMOTIONAL',
+    absenceReason: 'EMOTIONAL_PROBLEM',
+    absenceReasonCategory: 'MENTAL_BEHAVIOR',
+  });
+  await createFollowUp(students[2], 3, {
+    caseStatus: 'RESOLVED',
+    taskType: 'VISIT',
+    executionOutcome: 'SUCCEEDED',
+    nonFollowUpReason: null,
+    problemCategory: 'FINANCIAL',
+    absenceReason: 'PART_TIME_WORK',
+    absenceReasonCategory: 'ECONOMIC',
+    resolutionOutcome: 'RETURNED_TO_SCHOOL',
+  });
+  // Referring closes the case without a resolution outcome, so this is the case
+  // that proves referred cases still reach the outcome chart.
+  await createFollowUp(students[3], 4, {
+    caseStatus: 'RESOLVED',
+    taskType: 'VISIT',
+    executionOutcome: 'SUCCEEDED',
+    nonFollowUpReason: null,
+    problemCategory: 'HEALTH',
+    absenceReason: 'MINOR_ILLNESS',
+    absenceReasonCategory: 'PERSONAL_FAMILY',
+    referredAgency: true,
+  });
+
+  const [classroom] = await dataSource.query(
+    `SELECT id FROM school_classrooms WHERE school_id = $1 ORDER BY id LIMIT 1`,
+    [school.school_id],
+  );
+  const [author] = await dataSource.query(`SELECT id FROM users ORDER BY id LIMIT 1`);
+  if (classroom && author) {
+    const [comment] = await dataSource.query(
+      `INSERT INTO classroom_student_comments (
+         classroom_id, person_uuid, problem_description, authored_by_user_id,
+         problem_category_code, concern_level_code
+       )
+       VALUES ($1, $2, $4, $3, 'ACADEMIC', 'CONCERN')
+       RETURNING id`,
+      [classroom.id, students[3].person_uuid, author.id, FIXTURE_COMMENT_MARKER],
+    );
+    commentIds.push(comment.id);
+  }
+
+  return {
+    province: school.province,
+    schoolId: Number(school.school_id),
+    highRiskStudents: students.length,
+    previousTiers,
+    caseIds,
+    taskIds,
+    linkIds,
+    submissionIds,
+    reviewIds,
+    referralIds,
+    commentIds,
+  };
+}
+
+async function cleanupFollowUpFixtures(dataSource, fixtures) {
+  if (!fixtures) return;
+  const remove = async (sql, params) => {
+    await dataSource.query(sql, params).catch(() => null);
+  };
+  if (fixtures.commentIds.length) {
+    await remove(`DELETE FROM classroom_student_comments WHERE id = ANY($1::bigint[])`, [
+      fixtures.commentIds,
+    ]);
+  }
+  if (fixtures.referralIds.length) {
+    await remove(`DELETE FROM case_referrals WHERE id = ANY($1::uuid[])`, [fixtures.referralIds]);
+  }
+  if (fixtures.submissionIds.length) {
+    await remove(`DELETE FROM task_submissions WHERE id = ANY($1::int[])`, [
+      fixtures.submissionIds,
+    ]);
+  }
+  if (fixtures.linkIds.length) {
+    await remove(`DELETE FROM task_links WHERE id = ANY($1::uuid[])`, [fixtures.linkIds]);
+  }
+  if (fixtures.reviewIds.length) {
+    await remove(`DELETE FROM case_reviews WHERE id = ANY($1::uuid[])`, [fixtures.reviewIds]);
+  }
+  if (fixtures.taskIds.length) {
+    await remove(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [fixtures.taskIds]);
+  }
+  if (fixtures.caseIds.length) {
+    await remove(`DELETE FROM cases WHERE id = ANY($1::int[])`, [fixtures.caseIds]);
+  }
+  for (const previous of fixtures.previousTiers) {
+    await remove(
+      `UPDATE student_risk_profiles SET risk_tier = $2, risk_severity = $3 WHERE student_uuid = $1`,
+      [previous.student_uuid, previous.risk_tier, previous.risk_severity],
+    );
+  }
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -630,9 +1120,12 @@ async function main() {
     `HomeOverviewBrowser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
   let chrome;
+  let fixtures;
 
   try {
     await disableActor(dataSource);
+    await purgeFollowUpFixtures(dataSource);
+    fixtures = await seedFollowUpFixtures(dataSource);
     const actors = [
       {
         label: 'admin',
@@ -696,23 +1189,25 @@ async function main() {
       },
     ];
     const scopeSchools = await dataSource.query(
-      `SELECT id FROM schools ORDER BY id LIMIT 2`,
+      `SELECT id FROM schools WHERE id <> $1 ORDER BY id LIMIT 1`,
+      [fixtures.schoolId],
     );
-    assert(scopeSchools.length === 2, 'Home dashboard scope smoke needs at least two schools');
+    assert(scopeSchools.length === 1, 'Home dashboard scope smoke needs a second school');
     actors.push({
       label: 'school-scoped',
       username: `${USERNAME_PREFIX}_school_scoped`,
       firstName: 'Home School Scope',
       role: 'DIRECTOR',
       permissions: ['home'],
-      dataScope: { school_ids: [Number(scopeSchools[0].id)] },
+      dataScope: { school_ids: [fixtures.schoolId] },
       expectations: {
         attendance: false,
         risk: false,
         cases: false,
         exports: false,
         attendanceNavigation: false,
-        riskDimension: 'SCHOOL',
+        riskDimension: 'GRADE',
+        schoolScope: true,
       },
     });
     const actorIds = new Map();
@@ -749,6 +1244,7 @@ async function main() {
       createSessionCookie(sessionCookieService, actorIds.get(admin.label)),
     );
     await assertOverview(client, expectedActiveCases, 'desktop', admin.expectations);
+    await assertFollowUpInsightValues(client, fixtures);
     await assertAdministrativeMap(client, 'PROVINCE', 77);
     await assertMapTooltipAndZoom(client);
     await assertReducedMotionMap(client);
@@ -762,7 +1258,18 @@ async function main() {
             ?.getAttribute('data-risk-area-dimension') === 'DISTRICT'`,
         ),
       'Selecting a province did not drill the risk ranking down to districts',
-    );
+    ).catch(async (error) => {
+      const diag = await evaluate(
+        client,
+        `JSON.stringify({
+          search: location.search,
+          dim: document.querySelector('[data-risk-area-dimension]')?.getAttribute('data-risk-area-dimension'),
+          selected: '${''}',
+          text: document.body.innerText.slice(0, 300),
+        })`,
+      );
+      throw new Error(`${error.message} :: ${diag}`);
+    });
     const districtBoundaryCount = await mapFeatureCount(client, 'DISTRICT');
     assert(districtBoundaryCount > 0, 'Province map did not contain current district boundaries');
     const drilledSearch = await evaluate(client, 'location.search');
@@ -852,6 +1359,24 @@ async function main() {
     );
     await new Promise((resolve) => setTimeout(resolve, 200));
     await capture(client, '/tmp/sts-home-overview-trends-desktop.png');
+    await evaluate(
+      client,
+      `document.querySelector('[data-risk-insights-panel]')?.scrollIntoView({ block: 'start' })`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await capture(client, '/tmp/sts-home-follow-up-desktop.png');
+    await evaluate(
+      client,
+      `(() => {
+        const tab = Array.from(
+          document.querySelectorAll('[data-risk-insights-panel] [role="tab"]')
+        ).find((candidate) => candidate.textContent.trim() === 'ผลลัพธ์');
+        tab?.click();
+        document.querySelector('[data-risk-insights-panel]')?.scrollIntoView({ block: 'start' });
+      })()`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await capture(client, '/tmp/sts-home-follow-up-outcome-desktop.png');
 
     for (const actor of actors.slice(1)) {
       await loginInBrowser(
@@ -874,7 +1399,7 @@ async function main() {
       client,
       `(async () => {
         const response = await fetch(${JSON.stringify(
-          `${BACKEND_URL}/api/home-dashboard/summary?schoolId=${Number(scopeSchools[1].id)}`,
+          `${BACKEND_URL}/api/home-dashboard/summary?schoolId=${Number(scopeSchools[0].id)}`,
         )}, { credentials: 'include' });
         return response.status;
       })()`,
@@ -916,10 +1441,12 @@ async function main() {
     await capture(client, '/tmp/sts-home-overview-trends-mobile.png');
 
     console.log(
-      'home dashboard browser smoke passed (77-boundary map, province/district/sub-district drill-down, zero-area metadata, no school pins, permission navigation, scoped denial, desktop/mobile render)',
+      'home dashboard browser smoke passed (77-boundary map, province/district/sub-district drill-down, grade breakdown inside one school, follow-up risk sections, clickable case tiles, zero-area metadata, no school pins, permission navigation, scoped denial, desktop/mobile render)',
     );
   } finally {
     await closeChrome(chrome);
+    await cleanupFollowUpFixtures(dataSource, fixtures).catch(() => null);
+    await purgeFollowUpFixtures(dataSource).catch(() => null);
     await disableActor(dataSource).catch(() => null);
     await app.close();
   }

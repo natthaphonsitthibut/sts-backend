@@ -15,7 +15,6 @@ import {
   HttpStatus,
   UnauthorizedException,
   UseGuards,
-  ValidationPipe,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
@@ -140,7 +139,11 @@ export class TaskController {
   @ThrottleIdentityVerify()
   @Get('google/callback')
   async googleCallback(
-    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: TaskGoogleCallbackDto,
+    // The provider owns this URL and appends its own parameters. They are
+    // declared on ExternalOAuthCallbackDto so the global ValidationPipe drops
+    // them; a pipe here cannot help, because Nest applies
+    // `globalPipes.concat(paramPipes)` and the global one has already thrown.
+    @Query() query: TaskGoogleCallbackDto,
     @Res() response: Response,
   ): Promise<void> {
     const redirect = new URL('/task/google-callback', this.runtimeConfig.frontendBaseUrl);

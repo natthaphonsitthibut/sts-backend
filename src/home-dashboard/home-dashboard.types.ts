@@ -54,7 +54,13 @@ export interface HomeDashboardAttentionItem {
   priority: number;
 }
 
-export type HomeDashboardRiskAreaDimension = 'PROVINCE' | 'DISTRICT' | 'SUB_DISTRICT' | 'SCHOOL';
+export type HomeDashboardRiskAreaDimension =
+  | 'PROVINCE'
+  | 'DISTRICT'
+  | 'SUB_DISTRICT'
+  | 'SCHOOL'
+  | 'GRADE'
+  | 'ROOM';
 
 export interface HomeDashboardRiskAreaPoint {
   key: string;
@@ -66,6 +72,8 @@ export interface HomeDashboardRiskAreaPoint {
     district?: string;
     subDistrict?: string;
     schoolId?: number;
+    grade?: string;
+    room?: string;
   };
 }
 
@@ -91,7 +99,6 @@ export interface HomeDashboardSummary {
     attentionItems: HomeDashboardAttentionItem[];
     riskAreaRanking: HomeDashboardRiskAreaRanking;
     casePipeline: HomeDashboardCasePipeline | null;
-    causeCategoryDistribution: { key: string; label: string; count: number }[];
     monthlySuccessRates: { month: string; opened: number; resolved: number }[];
   };
 }
@@ -126,6 +133,15 @@ export interface HomeDashboardCaseMovementPoint {
   resolved: number;
 }
 
+export interface HomeDashboardGradeRiskPoint {
+  key: string;
+  label: string;
+  HIGH: number;
+  WATCH: number;
+  NORMAL: number;
+  total: number;
+}
+
 export interface HomeDashboardTrends {
   success: true;
   data: {
@@ -141,6 +157,7 @@ export interface HomeDashboardTrends {
     } | null;
     casePipeline: HomeDashboardCasePipeline | null;
     caseMovement: HomeDashboardCaseMovementPoint[] | null;
+    gradeRiskDistribution: HomeDashboardGradeRiskPoint[] | null;
   };
 }
 
@@ -162,5 +179,88 @@ export interface HomeDashboardFilterOptions {
       grades: HomeDashboardOption[];
       rooms: HomeDashboardOption[];
     };
+  };
+}
+
+export interface HomeDashboardLabelCount {
+  key: string;
+  label: string;
+  count: number;
+}
+
+/**
+ * How much of the at-risk population the follow-up charts actually speak for.
+ * `atRiskStudents` is a snapshot of who carries the HIGH tier right now — the same
+ * number the นักเรียนกลุ่มเสี่ยง tile shows — so a
+ * student whose case closed and whose tier fell back to NORMAL leaves it — which
+ * is why it can read 0 while closed cases exist. `recordedStudents` is the
+ * population the charts below actually describe: everyone with a follow-up on
+ * record in this scope, still at risk or not.
+ */
+export interface HomeDashboardFollowUpCoverage {
+  atRiskStudents: number;
+  followedUpStudents: number;
+  pendingStudents: number;
+  recordedStudents: number;
+}
+
+export interface HomeDashboardProblemOutcomeRow {
+  key: string;
+  label: string;
+  total: number;
+  outcomes: HomeDashboardLabelCount[];
+}
+
+export interface HomeDashboardProblemAreaRow {
+  key: string;
+  label: string;
+  total: number;
+  counts: Record<string, number>;
+}
+
+export interface HomeDashboardProblemAreaMatrix {
+  dimension: HomeDashboardRiskAreaDimension;
+  dimensionLabel: string;
+  categories: Array<{ key: string; label: string }>;
+  rows: HomeDashboardProblemAreaRow[];
+}
+
+export interface HomeDashboardReferralFunnel {
+  referred: number;
+  accepted: number;
+  pending: number;
+  /** ส่งไปหน่วยงานไหนบ้าง — ข้อมูลที่บันทึกอยู่แล้วตอนกดส่งต่อ */
+  byAgency: HomeDashboardLabelCount[];
+}
+
+/**
+ * The same problem seen from both sides: what a follow-up visit established, and
+ * what the homeroom teacher recorded. Teacher observations reach students who
+ * have no case yet, so keeping the two counts apart is what makes the chart
+ * honest about where each number came from.
+ */
+export interface HomeDashboardProblemCategoryPoint {
+  key: string;
+  label: string;
+  followUp: number;
+  observation: number;
+  total: number;
+}
+
+export interface HomeDashboardFollowUpInsights {
+  success: true;
+  data: {
+    generatedAt: string;
+    scopeLabel: string;
+    coverage: HomeDashboardFollowUpCoverage;
+    problemCategories: HomeDashboardProblemCategoryPoint[];
+    /** ข้อความที่ผู้ติดตามกรอกไว้ใต้หมวด "อื่น ๆ" — บอกว่าก้อนนั้นคืออะไรจริง ๆ */
+    otherProblemDetails: string[];
+    absenceReasonCategories: HomeDashboardLabelCount[];
+    concernLevels: HomeDashboardLabelCount[];
+    problemByOutcome: HomeDashboardProblemOutcomeRow[];
+    problemByArea: HomeDashboardProblemAreaMatrix | null;
+    unreachableReasons: HomeDashboardLabelCount[];
+    referralFunnel: HomeDashboardReferralFunnel;
   };
 }

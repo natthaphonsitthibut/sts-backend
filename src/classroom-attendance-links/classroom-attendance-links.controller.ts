@@ -701,12 +701,20 @@ export class ClassroomCheckInAuthController {
     @Res() response: Response,
   ): Promise<void> {
     this.noStore(response);
-    const session = await this.service.googleCallback(query.code, query.state);
-    this.cookies.set(response, session);
     const redirect = new URL(
       CLASSROOM_LINK_PATH,
       this.app.frontendBaseUrl || 'http://localhost:5173',
     );
+    // Declining consent is a user's choice, not an error to investigate: Google
+    // sends `error` back with no code, and the teacher belongs on the link page
+    // with the sign-in choices again — not on a JSON error body.
+    if (query.error || !query.code || !query.state) {
+      redirect.searchParams.set('auth', 'failed');
+      response.redirect(302, redirect.toString());
+      return;
+    }
+    const session = await this.service.googleCallback(query.code, query.state);
+    this.cookies.set(response, session);
     redirect.searchParams.set('auth', 'google');
     response.redirect(302, redirect.toString());
   }

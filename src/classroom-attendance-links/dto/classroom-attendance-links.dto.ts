@@ -1,4 +1,5 @@
 import { Transform, Type } from 'class-transformer';
+import { ExternalOAuthCallbackDto } from '../../common/dto/external-oauth-callback.dto';
 import {
   ArrayMaxSize,
   ArrayUnique,
@@ -119,14 +120,21 @@ export class ClassroomLineGroupInvitationDto {
   expiresAt!: string;
 }
 
-export class GoogleCallbackDto {
+/**
+ * Both fields are optional because declining consent at the Google screen comes
+ * back with `error` and neither one. That is a normal choice, so it has to land
+ * on the link's own page — requiring them here turned it into a raw 400.
+ */
+export class GoogleCallbackDto extends ExternalOAuthCallbackDto {
+  @IsOptional()
   @IsString()
   @MaxLength(2048)
-  code!: string;
+  code?: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(512)
-  state!: string;
+  state?: string;
 }
 
 /**

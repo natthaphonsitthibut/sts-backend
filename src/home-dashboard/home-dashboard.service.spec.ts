@@ -19,7 +19,6 @@ function createRepositoryMock(): jest.Mocked<
     | 'countActiveCases'
     | 'countHighRiskStudents'
     | 'getHighRiskAreaRanking'
-    | 'getCauseCategoryDistribution'
     | 'getMonthlySuccessRates'
     | 'getCasePipeline'
     | 'getAttentionItems'
@@ -28,6 +27,17 @@ function createRepositoryMock(): jest.Mocked<
     | 'getRiskThresholds'
     | 'getCurrentTermStart'
     | 'getCaseMovement'
+    | 'getGradeRiskDistribution'
+    | 'getFollowUpCoverage'
+    | 'getFollowUpProblemCategories'
+    | 'getObservationProblemCategories'
+    | 'getFollowUpAbsenceReasonCategories'
+    | 'getTeacherConcernLevels'
+    | 'getProblemOutcomeMatrix'
+    | 'getProblemAreaMatrix'
+    | 'getNonFollowUpReasons'
+    | 'getOtherProblemDetails'
+    | 'getReferralFunnel'
     | 'getFilterOptions'
     | 'getSchoolName'
   >
@@ -40,7 +50,28 @@ function createRepositoryMock(): jest.Mocked<
     getHighRiskAreaRanking: jest
       .fn()
       .mockResolvedValue([{ key: 'เชียงใหม่', label: 'เชียงใหม่', count: 5 }]),
-    getCauseCategoryDistribution: jest.fn().mockResolvedValue([]),
+    getGradeRiskDistribution: jest.fn().mockResolvedValue([]),
+    getFollowUpCoverage: jest.fn().mockResolvedValue({
+      atRiskStudents: 5,
+      followedUpStudents: 2,
+      pendingStudents: 3,
+      recordedStudents: 4,
+    }),
+    getFollowUpProblemCategories: jest
+      .fn()
+      .mockResolvedValue([{ key: 'FINANCIAL', label: 'ปัญหาด้านการเงิน', count: 4 }]),
+    getObservationProblemCategories: jest
+      .fn()
+      .mockResolvedValue([{ key: 'FINANCIAL', label: 'ปัญหาด้านการเงิน', count: 1 }]),
+    getFollowUpAbsenceReasonCategories: jest.fn().mockResolvedValue([]),
+    getTeacherConcernLevels: jest.fn().mockResolvedValue([]),
+    getProblemOutcomeMatrix: jest.fn().mockResolvedValue([]),
+    getProblemAreaMatrix: jest.fn().mockResolvedValue([]),
+    getNonFollowUpReasons: jest.fn().mockResolvedValue([]),
+    getOtherProblemDetails: jest.fn().mockResolvedValue(['ครอบครัวย้ายตามงานตามฤดูกาล']),
+    getReferralFunnel: jest
+      .fn()
+      .mockResolvedValue({ referred: 0, accepted: 0, pending: 0, byAgency: [] }),
     getMonthlySuccessRates: jest.fn().mockResolvedValue([]),
     getCasePipeline: jest.fn().mockResolvedValue({
       OPEN: 1,
@@ -221,6 +252,85 @@ describe('HomeDashboardService', () => {
     );
   });
 
+  it('points case tiles at a route the menu can resolve', async () => {
+    const repository = createRepositoryMock();
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+
+    const result = await service.getSummary(baseActor, {});
+    const caseMetrics = result.data.metrics.filter((metric) =>
+      ['totalCases', 'inProgressCases', 'resolvedCases'].includes(metric.key),
+    );
+
+    // `/cases` is only a legacy redirect and carries no menu entry, and the
+    // frontend resolves permission by exact menu route, so every case tile
+    // rendered dead — for admins too.
+    expect(caseMetrics).toHaveLength(3);
+    for (const metric of caseMetrics) {
+      expect(metric.targetPath).toBe('/student-risk-report');
+      expect(metric.targetQuery).not.toHaveProperty('status');
+    }
+    expect(
+      caseMetrics.find((metric) => metric.key === 'inProgressCases')?.targetQuery,
+    ).toMatchObject({ caseStatus: 'OPEN,IN_PROGRESS,PENDING_REVIEW' });
+    expect(caseMetrics.find((metric) => metric.key === 'resolvedCases')?.targetQuery).toMatchObject(
+      { caseStatus: 'RESOLVED' },
+    );
+  });
+
+  it('keeps follow-up and observation counts apart in the problem mix', async () => {
+    const repository = createRepositoryMock();
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+
+    const result = await service.getFollowUpInsights(baseActor, {});
+
+    expect(result.data.problemCategories).toEqual([
+      {
+        key: 'FINANCIAL',
+        label: 'ปัญหาด้านการเงิน',
+        followUp: 4,
+        observation: 1,
+        total: 5,
+      },
+    ]);
+    // A closed case drops the student's tier back, so the recorded population the
+    // charts describe is larger than the "still at risk" snapshot.
+    expect(result.data.coverage).toEqual({
+      atRiskStudents: 5,
+      followedUpStudents: 2,
+      pendingStudents: 3,
+      recordedStudents: 4,
+    });
+  });
+
+  it('keeps follow-up free text inside the school that recorded it', async () => {
+    const repository = createRepositoryMock();
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+    // A globally scoped account reading the whole country.
+    const nationalActor = { ...baseActor, data_scope: { global: true } };
+
+    const national = await service.getFollowUpInsights(nationalActor, {});
+    const school = await service.getFollowUpInsights(nationalActor, { schoolId: 10010002 });
+    // An account that can never see past one school stands inside it already.
+    const lockedToOneSchool = await service.getFollowUpInsights(baseActor, {});
+
+    expect(national.data.otherProblemDetails).toEqual([]);
+    expect(school.data.otherProblemDetails).toEqual(['ครอบครัวย้ายตามงานตามฤดูกาล']);
+    expect(lockedToOneSchool.data.otherProblemDetails).toEqual(['ครอบครัวย้ายตามงานตามฤดูกาล']);
+    expect(repository.getOtherProblemDetails).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the area cross-tab once the scope is a single school', async () => {
+    const repository = createRepositoryMock();
+    const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);
+
+    const national = await service.getFollowUpInsights(baseActor, {});
+    const school = await service.getFollowUpInsights(baseActor, { schoolId: 10010002 });
+
+    expect(national.data.problemByArea?.dimension).toBe('PROVINCE');
+    expect(school.data.problemByArea).toBeNull();
+    expect(repository.getProblemAreaMatrix).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     [{}, 'PROVINCE'],
     [{ province: 'เชียงใหม่' }, 'DISTRICT'],
@@ -233,7 +343,9 @@ describe('HomeDashboardService', () => {
       },
       'SCHOOL',
     ],
-    [{ schoolId: 10010002 }, 'SCHOOL'],
+    // Inside one school geography runs out, so the ranking drills into ชั้น then ห้อง.
+    [{ schoolId: 10010002 }, 'GRADE'],
+    [{ schoolId: 10010002, grade: 'ป.1' }, 'ROOM'],
   ] as const)('groups high-risk students by the next area level', async (filters, dimension) => {
     const repository = createRepositoryMock();
     const service = new HomeDashboardService(repository as unknown as HomeDashboardRepository);

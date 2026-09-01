@@ -9,6 +9,7 @@ const ALL_THROTTLERS: ThrottleName[] = [
   'araidLogin',
   'araidPin',
   'geocode',
+  'nlQuery',
   'followerApplication',
   'campaignLookup',
   'teacherAccess',
@@ -40,6 +41,7 @@ export const ThrottleIdentityVerify = () => only('identityVerify');
 export const ThrottleAraIdLogin = () => only('araidLogin');
 export const ThrottleAraIdPin = () => only('araidPin');
 export const ThrottleGeocode = () => only('geocode');
+export const ThrottleNlQuery = () => only('nlQuery');
 export const ThrottleFollowerApplication = () => only('followerApplication');
 export const ThrottleCampaignLookup = () => only('campaignLookup');
 export const ThrottleTeacherAccess = () => only('teacherAccess');

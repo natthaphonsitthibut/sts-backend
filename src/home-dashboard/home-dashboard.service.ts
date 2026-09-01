@@ -5,7 +5,10 @@ import type {
   HomeDashboardActor,
   HomeDashboardFilterOptions,
   HomeDashboardFilters,
+  HomeDashboardFollowUpInsights,
+  HomeDashboardLabelCount,
   HomeDashboardMetric,
+  HomeDashboardProblemCategoryPoint,
   HomeDashboardPeriod,
   HomeDashboardRiskAreaDimension,
   HomeDashboardRiskAreaPoint,
@@ -16,6 +19,15 @@ import type {
 } from './home-dashboard.types';
 
 const DEFAULT_PERIOD: HomeDashboardPeriod = '30_DAYS';
+
+/**
+ * Where a case count opens. It has to be the route the menu table lists, because
+ * the frontend resolves "may this account open it" by exact menu route: `/cases`
+ * is only a legacy redirect and carries no menu entry, so every case tile
+ * rendered dead for every account, admins included. `/student-risk-report`
+ * forwards to the case list and keeps the query string.
+ */
+const CASE_LIST_PATH = '/student-risk-report';
 
 function trim(value?: string): string | undefined {
   const next = value?.trim();
@@ -80,10 +92,17 @@ export class HomeDashboardService {
     ];
   }
 
+  /**
+   * Once the scope is a single school, geography stops being the unit that
+   * matters: a lone school on a national map says nothing. The ranking keeps
+   * drilling, but through the structure the school itself works with.
+   */
   private resolveRiskAreaDimension(
     filters: NormalizedHomeDashboardFilters,
   ): HomeDashboardRiskAreaDimension {
-    if (filters.subDistrict || filters.schoolId) return 'SCHOOL';
+    if (filters.grade) return 'ROOM';
+    if (filters.schoolId) return 'GRADE';
+    if (filters.subDistrict) return 'SCHOOL';
     if (filters.district) return 'SUB_DISTRICT';
     if (filters.province) return 'DISTRICT';
     return 'PROVINCE';
@@ -95,6 +114,8 @@ export class HomeDashboardService {
       DISTRICT: 'อำเภอ/เขต',
       SUB_DISTRICT: 'ตำบล/แขวง',
       SCHOOL: 'โรงเรียน',
+      GRADE: 'ระดับชั้น',
+      ROOM: 'ห้องเรียน',
     };
     return labels[dimension];
   }
@@ -106,6 +127,8 @@ export class HomeDashboardService {
     if (dimension === 'PROVINCE') return { province: point.key };
     if (dimension === 'DISTRICT') return { district: point.key };
     if (dimension === 'SUB_DISTRICT') return { subDistrict: point.key };
+    if (dimension === 'GRADE') return { grade: point.key };
+    if (dimension === 'ROOM') return { room: point.key };
     return { schoolId: Number(point.key) };
   }
 
@@ -157,21 +180,14 @@ export class HomeDashboardService {
 
     const sections = this.resolveSections();
     const riskAreaDimension = this.resolveRiskAreaDimension(filters);
-    const [
-      totalStudents,
-      watchStudents,
-      casePipeline,
-      riskAreaRows,
-      causeCategoryDistribution,
-      monthlySuccessRates,
-    ] = await Promise.all([
-      this.repository.countStudents(actor, filters),
-      this.repository.countHighRiskStudents(actor, filters),
-      this.repository.getCasePipeline(actor, filters),
-      this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
-      this.repository.getCauseCategoryDistribution(actor, filters),
-      this.repository.getMonthlySuccessRates(actor, filters),
-    ]);
+    const [totalStudents, watchStudents, casePipeline, riskAreaRows, monthlySuccessRates] =
+      await Promise.all([
+        this.repository.countStudents(actor, filters),
+        this.repository.countHighRiskStudents(actor, filters),
+        this.repository.getCasePipeline(actor, filters),
+        this.repository.getHighRiskAreaRanking(actor, filters, riskAreaDimension),
+        this.repository.getMonthlySuccessRates(actor, filters),
+      ]);
 
     const baseQuery = this.targetQuery(filters);
     const metrics: HomeDashboardMetric[] = [
@@ -206,7 +222,7 @@ export class HomeDashboardService {
         key: 'totalCases',
         label: 'เคสทั้งหมด',
         value: totalCount,
-        targetPath: '/cases',
+        targetPath: CASE_LIST_PATH,
         targetQuery: { ...baseQuery },
         tone: 'default',
       });
@@ -214,16 +230,16 @@ export class HomeDashboardService {
         key: 'inProgressCases',
         label: 'เคสที่กำลังดำเนินการ',
         value: ongoingCount,
-        targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'OPEN,IN_PROGRESS,PENDING_REVIEW' },
+        targetPath: CASE_LIST_PATH,
+        targetQuery: { ...baseQuery, caseStatus: 'OPEN,IN_PROGRESS,PENDING_REVIEW' },
         tone: 'warning',
       });
       metrics.push({
         key: 'resolvedCases',
         label: 'เคสที่เสร็จสิ้น',
         value: resolvedCount,
-        targetPath: '/cases',
-        targetQuery: { ...baseQuery, status: 'RESOLVED' },
+        targetPath: CASE_LIST_PATH,
+        targetQuery: { ...baseQuery, caseStatus: 'RESOLVED' },
         tone: 'success',
       });
     }
@@ -251,7 +267,6 @@ export class HomeDashboardService {
           })),
         },
         casePipeline,
-        causeCategoryDistribution,
         monthlySuccessRates,
       },
     };
@@ -268,24 +283,35 @@ export class HomeDashboardService {
     const today = getBangkokDateString();
     const startsOn = await this.getPeriodStart(actor, filters, today);
 
-    const [attendanceTrend, riskDistribution, riskThresholds, casePipeline, caseMovement] =
-      await Promise.all([
-        sections.includes('attendanceTrend')
-          ? this.repository.getAttendanceTrend(actor, filters, startsOn, today)
-          : Promise.resolve(null),
-        sections.includes('riskDistribution')
-          ? this.repository.getRiskDistribution(actor, filters)
-          : Promise.resolve(null),
-        sections.includes('riskDistribution')
-          ? this.repository.getRiskThresholds()
-          : Promise.resolve(null),
-        sections.includes('casePipeline')
-          ? this.repository.getCasePipeline(actor, filters)
-          : Promise.resolve(null),
-        sections.includes('caseMovement')
-          ? this.repository.getCaseMovement(actor, filters, startsOn, today)
-          : Promise.resolve(null),
-      ]);
+    const [
+      attendanceTrend,
+      riskDistribution,
+      riskThresholds,
+      casePipeline,
+      caseMovement,
+      gradeRiskDistribution,
+    ] = await Promise.all([
+      sections.includes('attendanceTrend')
+        ? this.repository.getAttendanceTrend(actor, filters, startsOn, today)
+        : Promise.resolve(null),
+      sections.includes('riskDistribution')
+        ? this.repository.getRiskDistribution(actor, filters)
+        : Promise.resolve(null),
+      sections.includes('riskDistribution')
+        ? this.repository.getRiskThresholds()
+        : Promise.resolve(null),
+      sections.includes('casePipeline')
+        ? this.repository.getCasePipeline(actor, filters)
+        : Promise.resolve(null),
+      sections.includes('caseMovement')
+        ? this.repository.getCaseMovement(actor, filters, startsOn, today)
+        : Promise.resolve(null),
+      // Only meaningful once the scope is one school; asking for it nationwide
+      // would return every grade label in the country.
+      filters.schoolId
+        ? this.repository.getGradeRiskDistribution(actor, filters)
+        : Promise.resolve(null),
+    ]);
 
     return {
       success: true,
@@ -304,8 +330,137 @@ export class HomeDashboardService {
           : null,
         casePipeline,
         caseMovement,
+        gradeRiskDistribution,
       },
     };
+  }
+
+  async getFollowUpInsights(
+    actor: HomeDashboardActor,
+    input: HomeDashboardFilters,
+  ): Promise<HomeDashboardFollowUpInsights> {
+    const filters = this.normalizeFilters(input);
+    await this.assertFiltersAllowed(actor, filters);
+
+    const areaDimension = this.resolveProblemAreaDimension(filters);
+    const [
+      coverage,
+      followUpCategories,
+      observationCategories,
+      absenceReasonCategories,
+      concernLevels,
+      problemByOutcome,
+      problemAreaRows,
+      unreachableReasons,
+      referralFunnel,
+      otherProblemDetails,
+    ] = await Promise.all([
+      this.repository.getFollowUpCoverage(actor, filters),
+      this.repository.getFollowUpProblemCategories(actor, filters),
+      this.repository.getObservationProblemCategories(actor, filters),
+      this.repository.getFollowUpAbsenceReasonCategories(actor, filters),
+      this.repository.getTeacherConcernLevels(actor, filters),
+      this.repository.getProblemOutcomeMatrix(actor, filters),
+      areaDimension
+        ? this.repository.getProblemAreaMatrix(actor, filters, areaDimension)
+        : Promise.resolve(null),
+      this.repository.getNonFollowUpReasons(actor, filters),
+      this.repository.getReferralFunnel(actor, filters),
+      // Free text about a child's family situation only helps the people who
+      // can act on that child. A province- or nationwide reader is making
+      // policy from counts, so they get the count and not the story.
+      this.isSchoolLevelScope(actor, filters)
+        ? this.repository.getOtherProblemDetails(actor, filters)
+        : Promise.resolve([]),
+    ]);
+
+    const problemCategories = this.mergeProblemCategories(
+      followUpCategories,
+      observationCategories,
+    );
+    // The cross-tab counts follow-up findings only, so its columns come from the
+    // follow-up list; taking them from the merged list would print a column of
+    // dashes for a category only homeroom teachers ever recorded.
+    const categories = followUpCategories.map(({ key, label }) => ({ key, label }));
+
+    return {
+      success: true,
+      data: {
+        generatedAt: new Date().toISOString(),
+        scopeLabel: await this.getScopeLabel(filters),
+        coverage,
+        problemCategories,
+        otherProblemDetails,
+        absenceReasonCategories,
+        concernLevels,
+        problemByOutcome,
+        problemByArea:
+          areaDimension && problemAreaRows
+            ? {
+                dimension: areaDimension,
+                dimensionLabel: this.getRiskAreaDimensionLabel(areaDimension),
+                categories,
+                rows: problemAreaRows,
+              }
+            : null,
+        unreachableReasons,
+        referralFunnel,
+      },
+    };
+  }
+
+  /**
+   * Follow-up findings and homeroom observations answer the same question from
+   * two directions, so they share a row and keep their own counts rather than
+   * being summed into a single number whose provenance nobody can check.
+   */
+  private mergeProblemCategories(
+    followUpCategories: HomeDashboardLabelCount[],
+    observationCategories: HomeDashboardLabelCount[],
+  ): HomeDashboardProblemCategoryPoint[] {
+    const merged = new Map<string, HomeDashboardProblemCategoryPoint>();
+    const upsert = (entry: HomeDashboardLabelCount, field: 'followUp' | 'observation'): void => {
+      const current = merged.get(entry.key) ?? {
+        key: entry.key,
+        label: entry.label,
+        followUp: 0,
+        observation: 0,
+        total: 0,
+      };
+      current[field] += entry.count;
+      current.total += entry.count;
+      merged.set(entry.key, current);
+    };
+    followUpCategories.forEach((entry) => upsert(entry, 'followUp'));
+    observationCategories.forEach((entry) => upsert(entry, 'observation'));
+    return Array.from(merged.values()).sort((left, right) => right.total - left.total);
+  }
+
+  /**
+   * Whether the reader is standing inside one school — either because they
+   * filtered down to it, or because their account never sees more than that.
+   */
+  private isSchoolLevelScope(
+    actor: HomeDashboardActor,
+    filters: NormalizedHomeDashboardFilters,
+  ): boolean {
+    if (filters.schoolId !== undefined) return true;
+    return actor.data_scope?.school_ids?.length === 1;
+  }
+
+  /**
+   * Which geography the problem mix is broken down by. Inside a single school
+   * there is no area left to compare, so the cross-tab is dropped rather than
+   * rendered as one row.
+   */
+  private resolveProblemAreaDimension(
+    filters: NormalizedHomeDashboardFilters,
+  ): 'PROVINCE' | 'DISTRICT' | 'SUB_DISTRICT' | 'SCHOOL' | null {
+    if (filters.schoolId) return null;
+    if (filters.subDistrict) return 'SCHOOL';
+    if (filters.district) return 'SUB_DISTRICT';
+    if (filters.province) return 'DISTRICT';
+    return 'PROVINCE';
   }
 
   async getFilterOptions(

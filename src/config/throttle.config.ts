@@ -29,6 +29,7 @@ export type ThrottleName =
   | 'araidLogin'
   | 'araidPin'
   | 'geocode'
+  | 'nlQuery'
   | 'followerApplication'
   | 'campaignLookup'
   | 'teacherAccess';
@@ -91,6 +92,7 @@ export const throttleConfig = registerAs('throttle', () => ({
   ),
   araidPin: rule(process.env.RATE_LIMIT_ARAID_PIN, process.env.RATE_LIMIT_ARAID_PIN_TTL, 10, 60),
   geocode: rule(process.env.RATE_LIMIT_GEOCODE, process.env.RATE_LIMIT_GEOCODE_TTL, 30, 60),
+  nlQuery: rule(undefined, undefined, 10, 60),
   followerApplication: rule(
     process.env.RATE_LIMIT_FOLLOWER_APPLICATION,
     process.env.RATE_LIMIT_FOLLOWER_APPLICATION_TTL,
