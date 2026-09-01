@@ -98,6 +98,7 @@ describe('ClassroomAttendanceLinksService', () => {
       findAssignableSubject: jest.fn(),
       findUsableAssignmentForSubject: jest.fn().mockResolvedValue(null),
       insertAssignmentLink: jest.fn(),
+      listIssuedAssignments: jest.fn().mockResolvedValue([]),
       listLinkOpens: jest.fn(),
       listLinkAttendanceSessions: jest.fn(),
       bindExternalIdentity: jest.fn(),
@@ -925,6 +926,19 @@ describe('ClassroomAttendanceLinksService', () => {
     // The lesson is locked and read inside the same transaction as the insert,
     // so two taps cannot both find nothing and both write.
     expect(repository.findUsableAssignmentForSubject).toHaveBeenCalledWith(40, expect.anything());
+  });
+
+  it('narrows the assignment list to the state the panel asked for', async () => {
+    const { service, repository } = setup();
+
+    await service.listMyAssignments(
+      { kind: 'USER', actor: { id: 5 } as never },
+      { schoolTermId: 20, status: 'INACTIVE' },
+    );
+
+    expect(repository.listIssuedAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'INACTIVE' }),
+    );
   });
 
   it('deactivates active assignments created from a standing teacher link', async () => {

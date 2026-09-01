@@ -292,6 +292,15 @@ export class ListMyAssignmentLinksDto {
   @IsInt()
   @Min(1)
   classroomSubjectId?: number;
+
+  /**
+   * The three states the panel already labels: ใช้งานอยู่, หมดอายุ, ปิดแล้ว.
+   * Omitted asks for every state — the panel narrows to ใช้งานอยู่ by default so
+   * a term's worth of finished links does not bury the one still in use.
+   */
+  @IsOptional()
+  @IsIn(['ACTIVE', 'EXPIRED', 'INACTIVE'])
+  status?: 'ACTIVE' | 'EXPIRED' | 'INACTIVE';
 }
 
 /** Filters for the register of links a school has issued this term. */

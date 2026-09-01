@@ -781,6 +781,12 @@ export class ClassroomAttendanceLinksRepository {
     issuedByUserId?: number;
     issuedByTeacherMembershipId?: number;
     classroomSubjectId?: number;
+    /**
+     * Matches the three badges the panel already shows. Expiry is a moment, not
+     * a stored state, so it is read against `now()` here rather than trusted
+     * from a column that nothing updates when the clock passes it.
+     */
+    status?: 'ACTIVE' | 'EXPIRED' | 'INACTIVE';
   }): Promise<Array<Record<string, unknown>>> {
     const params: unknown[] = [input.schoolTermId];
     const conditions = [
@@ -801,6 +807,15 @@ export class ClassroomAttendanceLinksRepository {
     if (input.classroomSubjectId !== undefined) {
       params.push(input.classroomSubjectId);
       conditions.push(`link.assigned_classroom_subject_id = $${params.length}`);
+    }
+    if (input.status === 'ACTIVE') {
+      conditions.push(
+        `link.link_status = 'ACTIVE' AND (link.expires_at IS NULL OR link.expires_at > now())`,
+      );
+    } else if (input.status === 'EXPIRED') {
+      conditions.push(`link.link_status = 'ACTIVE' AND link.expires_at <= now()`);
+    } else if (input.status === 'INACTIVE') {
+      conditions.push(`link.link_status = 'INACTIVE'`);
     }
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,

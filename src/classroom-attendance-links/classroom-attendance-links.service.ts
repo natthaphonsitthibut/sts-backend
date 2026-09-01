@@ -328,11 +328,16 @@ export class ClassroomAttendanceLinksService {
    */
   async listMyAssignments(
     issuer: AssignmentIssuer,
-    query: { schoolTermId: number; classroomSubjectId?: number },
+    query: {
+      schoolTermId: number;
+      classroomSubjectId?: number;
+      status?: 'ACTIVE' | 'EXPIRED' | 'INACTIVE';
+    },
   ) {
     const rows = await this.repository.listIssuedAssignments({
       schoolTermId: query.schoolTermId,
       classroomSubjectId: query.classroomSubjectId,
+      status: query.status,
       ...(issuer.kind === 'USER'
         ? { issuedByUserId: this.actorId(issuer.actor) }
         : { issuedByTeacherMembershipId: Number(issuer.authorized.teacherMembershipId) }),
