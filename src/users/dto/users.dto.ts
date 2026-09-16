@@ -92,6 +92,7 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   @MinLength(8)
+  @MaxLength(50)
   password?: string;
 
   @IsString()
@@ -367,6 +368,7 @@ export class ChangePasswordDto {
 
   @IsString()
   @MinLength(8)
+  @MaxLength(50)
   newPassword!: string;
 }
 
