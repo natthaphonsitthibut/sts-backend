@@ -15,6 +15,7 @@ import {
   resolvePage,
 } from '../common/pagination/pagination.util';
 import { queryDataSource } from '../database/sql-query';
+import { getBangkokDayBounds } from '../common/utils/date.util';
 import type { AuditLogDomain, AuditLogTaskType } from './dto/audit-log.dto';
 import type { AuditAction } from './dto/audit-log.dto';
 
@@ -1025,13 +1026,18 @@ export class AuditLogService {
       params.push(`%${filters.searchTerm}%`);
       conditions.push(`COALESCE(a.actor_label, '') ILIKE $${params.length}`);
     }
+    // `dateFrom`/`dateTo` are Thai calendar days (from a Bangkok-labelled date
+    // picker) — the DB session runs in UTC, so casting the column straight to
+    // `::date` compares against the wrong day for anything recorded in the
+    // 7-hour gap around midnight. Bound by the actual Bangkok-day instants
+    // instead, computed in application code.
     if (filters.dateFrom) {
-      params.push(filters.dateFrom);
-      conditions.push(`a.created_at >= $${params.length}::date`);
+      params.push(getBangkokDayBounds(filters.dateFrom).start);
+      conditions.push(`a.created_at >= $${params.length}`);
     }
     if (filters.dateTo) {
-      params.push(filters.dateTo);
-      conditions.push(`a.created_at < ($${params.length}::date + INTERVAL '1 day')`);
+      params.push(getBangkokDayBounds(filters.dateTo).end);
+      conditions.push(`a.created_at <= $${params.length}`);
     }
     const appendMetadataScopeFilter = (
       scopeKey: 'provinces' | 'districts' | 'sub_districts' | 'school_ids',
