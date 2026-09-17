@@ -32,6 +32,12 @@ export class NlQueryLog {
   @Column({ name: 'error_detail', type: 'text', nullable: true })
   errorDetail!: string | null;
 
+  @Column({ name: 'answer_type', type: 'varchar', length: 16, nullable: true })
+  answerType!: string | null;
+
+  @Column({ name: 'steps_used', type: 'integer', nullable: true })
+  stepsUsed!: number | null;
+
   @Column({ name: 'row_count', type: 'integer', nullable: true })
   rowCount!: number | null;
 

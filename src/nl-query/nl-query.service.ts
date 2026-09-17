@@ -71,6 +71,8 @@ export class NlQueryService {
         sql: envelope.sql,
         status: envelope.status,
         errorCode: envelope.error?.code ?? null,
+        answerType: envelope.answer_type ?? null,
+        stepsUsed: envelope.steps_used ?? null,
         rowCount: envelope.row_count,
         retryCount: envelope.retry_count,
         elapsedMs: Date.now() - startedAt,

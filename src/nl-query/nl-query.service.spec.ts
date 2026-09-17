@@ -94,7 +94,13 @@ describe('NlQueryService', () => {
     );
     expect(log.complete).toHaveBeenCalledWith(
       '41',
-      expect.objectContaining({ requestId: 'request-1', status: 'ok', rowCount: 1 }),
+      expect.objectContaining({
+        requestId: 'request-1',
+        status: 'ok',
+        answerType: 'result',
+        stepsUsed: 1,
+        rowCount: 1,
+      }),
     );
   });
 

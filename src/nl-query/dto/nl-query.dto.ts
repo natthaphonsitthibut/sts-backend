@@ -44,9 +44,9 @@ export interface QueryEnvelope {
   status: 'ok' | 'error';
   request_id: string;
   question: string;
-  answer_type: AnswerType;
+  answer_type?: AnswerType;
   message: string | null;
-  steps_used: number;
+  steps_used?: number;
   sql: string | null;
   columns: QueryColumn[];
   rows: Record<string, unknown>[] | null;
