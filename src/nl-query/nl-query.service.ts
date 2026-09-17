@@ -48,6 +48,12 @@ export class NlQueryService {
         body: JSON.stringify({
           question: dto.question,
           preferred_chart_type: dto.preferredChartType ?? null,
+          history: (dto.history ?? []).map((turn) => ({
+            question: turn.question,
+            answer_type: turn.answerType,
+            sql: turn.sql ?? null,
+            row_count: turn.rowCount ?? null,
+          })),
         }),
       });
     } catch (error) {

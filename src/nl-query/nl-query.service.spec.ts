@@ -16,6 +16,9 @@ const envelope: QueryEnvelope = {
   status: 'ok',
   request_id: 'request-1',
   question: 'นักเรียนทั้งหมดกี่คน',
+  answer_type: 'result',
+  message: null,
+  steps_used: 1,
   sql: 'SELECT COUNT(*) AS total FROM students',
   columns: [{ name: 'total', type: 'int', numeric: true, semantic_type: 'count' }],
   rows: [{ total: 10 }],
@@ -82,11 +85,60 @@ describe('NlQueryService', () => {
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': 'secret' },
+        body: JSON.stringify({
+          question: envelope.question,
+          preferred_chart_type: null,
+          history: [],
+        }),
       }),
     );
     expect(log.complete).toHaveBeenCalledWith(
       '41',
       expect.objectContaining({ requestId: 'request-1', status: 'ok', rowCount: 1 }),
+    );
+  });
+
+  it('forwards history as snake_case to the Python service', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+
+    await service.query(
+      {
+        question: envelope.question,
+        history: [
+          { question: 'เด็กเสี่ยงมีเท่าไหร่', answerType: 'clarification', sql: null, rowCount: 0 },
+          {
+            question: 'เสี่ยงสูงภาคเรียนนี้ครับ',
+            answerType: 'result',
+            sql: 'SELECT 1',
+            rowCount: 12,
+          },
+        ],
+      },
+      actor,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://python.test/api/query',
+      expect.objectContaining({
+        body: JSON.stringify({
+          question: envelope.question,
+          preferred_chart_type: null,
+          history: [
+            {
+              question: 'เด็กเสี่ยงมีเท่าไหร่',
+              answer_type: 'clarification',
+              sql: null,
+              row_count: 0,
+            },
+            {
+              question: 'เสี่ยงสูงภาคเรียนนี้ครับ',
+              answer_type: 'result',
+              sql: 'SELECT 1',
+              row_count: 12,
+            },
+          ],
+        }),
+      }),
     );
   });
 
