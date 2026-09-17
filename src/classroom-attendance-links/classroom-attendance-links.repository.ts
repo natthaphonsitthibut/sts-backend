@@ -10,6 +10,12 @@ import type {
   ExternalTeacherRow,
 } from './classroom-attendance-links.types';
 
+/**
+ * Advisory-lock namespace for "one usable assignment link per lesson". Any
+ * distinct constant works; it only has to differ from other advisory locks.
+ */
+const CLASSROOM_ASSIGNMENT_LOCK_NAMESPACE = 4210;
+
 @Injectable()
 export class ClassroomAttendanceLinksRepository {
   constructor(private readonly dataSource: DataSource) {}
@@ -775,6 +781,12 @@ export class ClassroomAttendanceLinksRepository {
     issuedByUserId?: number;
     issuedByTeacherMembershipId?: number;
     classroomSubjectId?: number;
+    /**
+     * Matches the three badges the panel already shows. Expiry is a moment, not
+     * a stored state, so it is read against `now()` here rather than trusted
+     * from a column that nothing updates when the clock passes it.
+     */
+    status?: 'ACTIVE' | 'EXPIRED' | 'INACTIVE';
   }): Promise<Array<Record<string, unknown>>> {
     const params: unknown[] = [input.schoolTermId];
     const conditions = [
@@ -795,6 +807,15 @@ export class ClassroomAttendanceLinksRepository {
     if (input.classroomSubjectId !== undefined) {
       params.push(input.classroomSubjectId);
       conditions.push(`link.assigned_classroom_subject_id = $${params.length}`);
+    }
+    if (input.status === 'ACTIVE') {
+      conditions.push(
+        `link.link_status = 'ACTIVE' AND (link.expires_at IS NULL OR link.expires_at > now())`,
+      );
+    } else if (input.status === 'EXPIRED') {
+      conditions.push(`link.link_status = 'ACTIVE' AND link.expires_at <= now()`);
+    } else if (input.status === 'INACTIVE') {
+      conditions.push(`link.link_status = 'INACTIVE'`);
     }
     const result = await queryDataSource<Record<string, unknown>>(
       this.dataSource,
@@ -1011,6 +1032,36 @@ export class ClassroomAttendanceLinksRepository {
   }
 
   /** Issues an assignment link — a classroom, a window, and nobody's name. */
+  /**
+   * The assignment link that still works for this lesson, if there is one.
+   *
+   * Serialises on the lesson first: two taps on มอบหมาย land in two
+   * transactions that would both find nothing and both insert. The advisory
+   * lock is transaction-scoped, so it releases with the commit that created the
+   * link the second one then sees. A unique index cannot do this job — "still
+   * works" depends on `now()`, which a partial index predicate cannot contain.
+   */
+  async findUsableAssignmentForSubject(
+    classroomSubjectId: number,
+    runner: QueryRunner,
+  ): Promise<{ id: string; expires_at: Date | null } | null> {
+    const executor = createSqlQueryExecutor(runner);
+    await executor.query(`SELECT pg_advisory_xact_lock($1, $2)`, [
+      CLASSROOM_ASSIGNMENT_LOCK_NAMESPACE,
+      classroomSubjectId,
+    ]);
+    const result = await executor.query<{ id: string; expires_at: Date | null }>(
+      `SELECT id::text, expires_at
+         FROM classroom_attendance_links
+        WHERE assigned_classroom_subject_id = $1
+          AND link_status = 'ACTIVE'
+          AND (expires_at IS NULL OR expires_at > now())
+        LIMIT 1`,
+      [classroomSubjectId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async insertAssignmentLink(
     input: {
       schoolId: number;

@@ -4,6 +4,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  GoneException,
   Headers,
   Inject,
   Param,
@@ -705,18 +706,45 @@ export class ClassroomCheckInAuthController {
       CLASSROOM_LINK_PATH,
       this.app.frontendBaseUrl || 'http://localhost:5173',
     );
-    // Declining consent is a user's choice, not an error to investigate: Google
-    // sends `error` back with no code, and the teacher belongs on the link page
-    // with the sign-in choices again — not on a JSON error body.
+    // Google navigates the browser here, so nothing on this route may throw: an
+    // exception renders as a raw JSON body in the teacher's window instead of a
+    // page. Every outcome leaves as a redirect carrying a reason the link page
+    // can explain — the same shape the task and LINE callbacks already use.
+    //
+    // Declining consent is one of those outcomes, not an error to investigate:
+    // Google sends `error` back with no code.
     if (query.error || !query.code || !query.state) {
-      redirect.searchParams.set('auth', 'failed');
-      response.redirect(302, redirect.toString());
+      response.redirect(302, this.failedAuthUrl(redirect, 'declined'));
       return;
     }
-    const session = await this.service.googleCallback(query.code, query.state);
+    let session: string;
+    try {
+      session = await this.service.googleCallback(query.code, query.state);
+    } catch (error) {
+      response.redirect(302, this.failedAuthUrl(redirect, this.authFailureReason(error)));
+      return;
+    }
     this.cookies.set(response, session);
     redirect.searchParams.set('auth', 'google');
     response.redirect(302, redirect.toString());
+  }
+
+  /**
+   * Why the sign-in did not produce a session, as a short stable code rather
+   * than the exception's own text: the value ends up in a URL the teacher can
+   * see and share, so it must not carry server wording anyone could forge into
+   * a convincing message.
+   */
+  private authFailureReason(error: unknown): string {
+    if (error instanceof GoneException) return 'expired';
+    if (error instanceof ForbiddenException) return 'not-allowed';
+    return 'failed';
+  }
+
+  private failedAuthUrl(redirect: URL, reason: string): string {
+    redirect.searchParams.set('auth', 'failed');
+    redirect.searchParams.set('reason', reason);
+    return redirect.toString();
   }
 
   @Post('auth/google/development')

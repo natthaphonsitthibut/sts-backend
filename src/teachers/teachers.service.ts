@@ -355,7 +355,9 @@ export class TeachersService {
             queryRunner,
           );
           if (activeMembership) {
-            throw new ConflictException('ครูคนนี้อยู่ในรายชื่อครูของโรงเรียนแล้ว');
+            throw new ConflictException(
+              'เลขบัตรประชาชนนี้มีอยู่แล้ว (ครูคนนี้อยู่ในรายชื่อครูของโรงเรียนนี้แล้ว)',
+            );
           }
         }
 

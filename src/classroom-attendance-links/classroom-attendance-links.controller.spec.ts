@@ -1,3 +1,4 @@
+import { ForbiddenException, GoneException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthGuard, PermissionsGuard } from '../auth';
@@ -39,5 +40,71 @@ describe('Classroom attendance links controller security metadata', () => {
     )?.value as () => unknown;
     expect(Reflect.getMetadata(IS_PUBLIC_KEY, ClassroomCheckInAuthController)).toBe(true);
     expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toContain(ThrottlerGuard);
+  });
+});
+
+/**
+ * Google navigates the browser straight to this route, so an exception here is
+ * not an API error a client can render — it is a raw JSON body filling the
+ * teacher's window. Every outcome has to leave as a redirect.
+ */
+describe('classroom link Google callback outcomes', () => {
+  function buildController() {
+    const service = { googleCallback: jest.fn() };
+    const cookies = { set: jest.fn() };
+    const redirects: string[] = [];
+    const response = {
+      redirect: (_status: number, url: string) => redirects.push(url),
+      setHeader: () => undefined,
+    };
+    const controller = Object.create(ClassroomCheckInAuthController.prototype) as Record<
+      string,
+      unknown
+    > & { googleCallback: (query: unknown, response: unknown) => Promise<void> };
+    Object.assign(controller, {
+      service,
+      cookies,
+      app: { frontendBaseUrl: 'https://app.example' },
+    });
+    return { controller, service, cookies, redirects, response };
+  }
+
+  it('sends a successful sign-in back to the link page with its session cookie', async () => {
+    const { controller, service, cookies, redirects, response } = buildController();
+    service.googleCallback.mockResolvedValue('session-token');
+
+    await controller.googleCallback({ code: 'c', state: 's' }, response);
+
+    expect(cookies.set).toHaveBeenCalledWith(response, 'session-token');
+    expect(redirects).toEqual(['https://app.example/classroom?auth=google']);
+  });
+
+  it.each([
+    ['declined consent', { error: 'access_denied', state: 's' }, undefined, 'declined'],
+    ['an expired request', { code: 'c', state: 's' }, new GoneException('gone'), 'expired'],
+    [
+      'an account that may not open the link',
+      { code: 'c', state: 's' },
+      new ForbiddenException('ลิงก์ครูนี้เป็นของครูอีกคน'),
+      'not-allowed',
+    ],
+    ['an unexpected failure', { code: 'c', state: 's' }, new Error('boom'), 'failed'],
+  ])('redirects instead of throwing on %s', async (_label, query, thrown, reason) => {
+    const { controller, service, cookies, redirects, response } = buildController();
+    if (thrown) service.googleCallback.mockRejectedValue(thrown);
+
+    await expect(controller.googleCallback(query, response)).resolves.toBeUndefined();
+
+    expect(cookies.set).not.toHaveBeenCalled();
+    expect(redirects).toEqual([`https://app.example/classroom?auth=failed&reason=${reason}`]);
+  });
+
+  it('never puts the server own wording in the URL', async () => {
+    const { controller, service, redirects, response } = buildController();
+    service.googleCallback.mockRejectedValue(new ForbiddenException('ลิงก์ครูนี้เป็นของครูอีกคน'));
+
+    await controller.googleCallback({ code: 'c', state: 's' }, response);
+
+    expect(redirects[0]).not.toContain('ครู');
   });
 });
