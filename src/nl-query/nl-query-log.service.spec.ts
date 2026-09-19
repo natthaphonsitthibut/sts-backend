@@ -38,6 +38,8 @@ describe('NlQueryLogService', () => {
       sql: 'SELECT 1',
       status: 'ok',
       errorCode: null,
+      answerType: 'result',
+      stepsUsed: 1,
       rowCount: 1,
       retryCount: 0,
       elapsedMs: 50,
@@ -48,8 +50,29 @@ describe('NlQueryLogService', () => {
       expect.objectContaining({
         requestId: 'request-1',
         status: 'ok',
+        answerType: 'result',
+        stepsUsed: 1,
         completedAt: expect.any(Date) as Date,
       }),
+    );
+  });
+
+  it('completes an audit row without answerType/stepsUsed for an older Python service', async () => {
+    await service.complete('41', {
+      requestId: 'request-1',
+      sql: 'SELECT 1',
+      status: 'ok',
+      errorCode: null,
+      answerType: null,
+      stepsUsed: null,
+      rowCount: 1,
+      retryCount: 0,
+      elapsedMs: 50,
+    });
+
+    expect(repository.update).toHaveBeenCalledWith(
+      '41',
+      expect.objectContaining({ answerType: null, stepsUsed: null }),
     );
   });
 

@@ -15,6 +15,8 @@ export interface CompleteNlQueryLogInput {
   sql: string | null;
   status: Extract<NlQueryLogStatus, 'ok' | 'error'>;
   errorCode: string | null;
+  answerType: string | null;
+  stepsUsed: number | null;
   rowCount: number;
   retryCount: number;
   elapsedMs: number;
@@ -46,6 +48,8 @@ export class NlQueryLogService {
       sql: input.sql,
       status: input.status,
       errorCode: input.errorCode,
+      answerType: input.answerType,
+      stepsUsed: input.stepsUsed,
       rowCount: input.rowCount,
       retryCount: input.retryCount,
       elapsedMs: input.elapsedMs,
