@@ -132,6 +132,123 @@ export class ListSchoolClassroomOptionsDto {
   gradeLevelId?: number;
 }
 
+export class CreateSchoolDto {
+  @Transform(trimText)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  name!: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
+}
+
+export class ListSchoolsQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(200)
+  search?: string;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'INACTIVE'])
+  status?: 'ACTIVE' | 'INACTIVE';
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsIn(['name', 'province', 'district', 'subDistrict', 'status'])
+  sortBy?: 'name' | 'province' | 'district' | 'subDistrict' | 'status';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
+}
+
+export class UpdateSchoolDto {
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  name?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @Transform(trimText)
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'INACTIVE'])
+  schoolStatus?: 'ACTIVE' | 'INACTIVE';
+}
+
+export class ListAdministrativeDistrictsDto {
+  @Transform(trimText)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  province!: string;
+}
+
+export class ListAdministrativeSubDistrictsDto {
+  @Transform(trimText)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  province!: string;
+
+  @Transform(trimText)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  district!: string;
+}
+
 export class CreateSchoolClassroomDto {
   @Type(() => Number)
   @IsInt()

@@ -11,6 +11,23 @@ export interface ScopedSchoolRow extends Record<string, unknown> {
   sub_district: string | null;
 }
 
+/** จัดการข้อมูลโรงเรียน (เมนูส่วนสภา) — every school regardless of status, for
+ *  the admin list/CRUD, unlike `ScopedSchoolRow`'s ACTIVE-only, scope-filtered
+ *  list every other picker in the app reads. */
+export interface SchoolAdminRow extends Record<string, unknown> {
+  id: number;
+  name: string;
+  province: string | null;
+  district: string | null;
+  sub_district: string | null;
+  school_status: StructureStatus;
+}
+
+export interface AdministrativeAreaOptionRow extends Record<string, unknown> {
+  code: string;
+  name_th: string;
+}
+
 export interface SchoolClassroomRow extends Record<string, unknown> {
   id: string;
   school_term_id: string;
