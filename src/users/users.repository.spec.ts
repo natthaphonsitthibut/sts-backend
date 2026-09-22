@@ -85,6 +85,30 @@ describe('UsersRepository user list queries', () => {
     expect(calls[1].params).not.toContain('ACTIVE');
     expect(calls[1].sql).not.toMatch(/END\s*\)\s*=\s*\$/);
   });
+
+  it('filters users by the requested school or council realm in SQL', async () => {
+    const queries: string[] = [];
+    const repository = new UsersRepository({
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn().mockImplementation((sql: string) => {
+          queries.push(sql);
+          return Promise.resolve({ records: [], affected: 0 });
+        }),
+      }),
+    } as never);
+
+    await repository.listUsersPaginated({
+      actorId: 1,
+      actorRole: 'ADMIN',
+      actorPermissions: ['*'],
+      realm: 'school',
+    });
+
+    expect(queries.join('\n')).toContain('jsonb_array_length');
+    expect(queries.join('\n')).toContain("-> 'school_ids'");
+  });
 });
 
 describe('UsersRepository updateUser', () => {

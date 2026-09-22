@@ -31,6 +31,8 @@ import {
   PermissionsGuard,
   Public,
   RequirePermission,
+  RequireRoles,
+  RolesGuard,
   SessionCookieService,
   type AuthenticatedRequestUser,
 } from '../auth';
@@ -107,6 +109,7 @@ export class UsersController {
       gradeLevelId: query.gradeLevelId,
       room: query.room?.trim() || undefined,
       accountStatus: query.accountStatus,
+      realm: query.realm,
       page: query.page,
       limit: query.limit,
     });
@@ -141,6 +144,23 @@ export class UsersController {
     });
   }
 
+  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  @RequirePermission('manage-role-groups')
+  @RequireRoles('ADMIN')
+  @Get('council-role-groups')
+  async getCouncilRoleGroups(
+    @Query() query: RoleGroupListQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.roleGroupsService.getCouncilRoleGroups(actor, {
+      searchTerm: query.searchTerm?.trim() || undefined,
+      page: query.page,
+      limit: query.limit,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
+    });
+  }
+
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-role-groups')
   @Post('role-groups')
@@ -157,6 +177,28 @@ export class UsersController {
       targetType: 'role_group',
       targetId: data.name ?? null,
       metadata: { op: 'create' },
+      ip: requestIp(req),
+    });
+    return result;
+  }
+
+  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  @RequirePermission('manage-role-groups')
+  @RequireRoles('ADMIN')
+  @Post('council-role-groups')
+  async createCouncilRoleGroup(
+    @Body() data: CreateRoleGroupDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.roleGroupsService.createCouncilRoleGroup(actor, data);
+    await this.auditLog.record({
+      action: 'ROLE_GROUP_CREATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'council_role_group',
+      targetId: result.role.name,
+      metadata: { op: 'create', scope: 'council' },
       ip: requestIp(req),
     });
     return result;
@@ -184,6 +226,29 @@ export class UsersController {
     return result;
   }
 
+  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  @RequirePermission('manage-role-groups')
+  @RequireRoles('ADMIN')
+  @Put('council-role-groups/:name')
+  async updateCouncilRoleGroup(
+    @Param('name') name: string,
+    @Body() data: UpdateRoleGroupDto,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.roleGroupsService.updateCouncilRoleGroup(actor, name, data);
+    await this.auditLog.record({
+      action: 'ROLE_GROUP_UPDATE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'council_role_group',
+      targetId: name,
+      metadata: { op: 'update', scope: 'council' },
+      ip: requestIp(req),
+    });
+    return result;
+  }
+
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-role-groups')
   @Delete('role-groups/:name')
@@ -200,6 +265,28 @@ export class UsersController {
       targetType: 'role_group',
       targetId: name,
       metadata: { op: 'delete' },
+      ip: requestIp(req),
+    });
+    return result;
+  }
+
+  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  @RequirePermission('manage-role-groups')
+  @RequireRoles('ADMIN')
+  @Delete('council-role-groups/:name')
+  async deleteCouncilRoleGroup(
+    @Param('name') name: string,
+    @Req() req: Request,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    const result = await this.roleGroupsService.deleteCouncilRoleGroup(actor, name);
+    await this.auditLog.record({
+      action: 'ROLE_GROUP_DELETE',
+      actorUserId: resolveAuditActorId(actor),
+      actorLabel: actor?.username,
+      targetType: 'council_role_group',
+      targetId: name,
+      metadata: { op: 'delete', scope: 'council' },
       ip: requestIp(req),
     });
     return result;
