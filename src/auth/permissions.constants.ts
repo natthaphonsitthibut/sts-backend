@@ -94,24 +94,24 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'DIRECTOR',
     label: 'ผู้อำนวยการ',
-    // Every page a director works in. The retired action-level ids
-    // (edit-students, close-case, manage-timetable, …) are covered by the page
-    // they lived on — see 20260821090000-CollapsePermissionsToPages.
+    // View/list pages only — ผอ. sees รายชื่อ, ADMIN holds จัดการ (owner,
+    // 2026-09-22: "permission ผอ เป็นพวกรายชื่อ แอดมินเป็นพวกจัดการนะ
+    // default"). Every `manage-*` id that used to sit here (manage-students,
+    // manage-classroom-links, manage-school-structure, manage-subjects,
+    // manage-users-list, manage-teachers) moved to ADMIN-only by
+    // 20260922110000-DemoteDirectorToViewOnly, which also strips them from
+    // existing DIRECTOR rows/accounts already in the database — this literal
+    // TS list is the intent, that migration is what makes it real for data
+    // that already exists.
     default_permissions: [
       'home',
       'dashboard',
       'students',
-      'manage-students',
       'classrooms',
       'attendance',
-      'manage-classroom-links',
-      'manage-school-structure',
-      'manage-subjects',
       'import-data',
       'export-data',
-      'manage-users-list',
       'teachers',
-      'manage-teachers',
       // ตั้งค่าระบบ is deliberately absent: system settings are one shared set of
       // values for every school, so the page is ADMIN-with-national-scope only
       // (owner, 2026-08-27). A director could never open it.
