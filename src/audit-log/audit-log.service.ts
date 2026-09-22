@@ -494,6 +494,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'fieldLabel', label: 'ข้อมูลที่แก้ไข' },
     ],
   },
+  STUDENT_PASSPORT_CORRECTION: {
+    domain: 'students',
+    label: 'แก้ไขเลขหนังสือเดินทางนักเรียน',
+    detailKeys: [
+      { key: 'reasonLabel', label: 'เหตุผล' },
+      { key: 'fieldLabel', label: 'ข้อมูลที่แก้ไข' },
+    ],
+  },
   STUDENT_DELETE: {
     domain: 'students',
     label: 'ลบข้อมูลนักเรียน',

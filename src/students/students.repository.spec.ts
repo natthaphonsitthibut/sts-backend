@@ -427,7 +427,8 @@ describe('StudentsRepository management writes', () => {
     expect(sql).toContain('UPDATE student_term');
     expect(sql).toContain('WHERE person_uuid = $1');
     expect(sql).toContain('UPDATE student_person_identifier');
-    expect(sql).toContain('source = $3');
+    expect(sql).toContain('identifier_normalized = $3');
+    expect(sql).toContain('source = $4');
     expect(calls.some((call) => call.params.includes('MANUAL_CORRECTION'))).toBe(true);
   });
 
@@ -517,5 +518,51 @@ describe('StudentsRepository management writes', () => {
     ).resolves.toEqual({ conflict: true });
     expect(queries.join('\n')).not.toContain('UPDATE student_term');
     expect(queries.join('\n')).not.toContain('UPDATE student_person_identifier');
+  });
+
+  it('corrects a passport through the same scoped identifier flow', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const manager = {
+      query: jest.fn((sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.includes('SELECT s.person_uuid')) {
+          return Promise.resolve([
+            {
+              person_uuid: '10000000-0000-4000-8000-000000000001',
+              school_id: 10010002,
+            },
+          ]);
+        }
+        if (sql.includes('AS in_scope')) {
+          return Promise.resolve([
+            {
+              student_uuid: '00000000-0000-4000-8000-000000000001',
+              passport_number: 'OLD123',
+              in_scope: true,
+            },
+          ]);
+        }
+        if (sql.includes('SELECT id FROM updated_identifier')) {
+          return Promise.resolve([{ id: '77' }]);
+        }
+        return Promise.resolve([]);
+      }),
+    };
+    const repository = new StudentsRepository({} as never);
+
+    await expect(
+      repository.correctPassport(
+        '00000000-0000-4000-8000-000000000001',
+        'new123',
+        5,
+        { school_ids: [10010002] },
+        manager as never,
+      ),
+    ).resolves.toEqual({ corrected: true, schoolId: 10010002 });
+
+    const sql = calls.map((call) => call.sql).join('\n');
+    expect(sql).toContain('"PassportNumber_Onec"');
+    expect(sql).toContain("identifier_type = 'PASSPORT'");
+    expect(calls.some((call) => call.params.includes('new123'))).toBe(true);
   });
 });
