@@ -64,6 +64,23 @@ describe('SchoolStructureService', () => {
           sub_district: 'สุเทพ',
         },
       ]),
+      findSchoolById: jest.fn().mockResolvedValue({
+        id: 1001,
+        name: 'โรงเรียนทดสอบ',
+        province: 'ข้อมูลเดิม',
+        district: 'อำเภอเดิม',
+        sub_district: 'ตำบลเดิม',
+        school_status: 'ACTIVE',
+      }),
+      updateSchool: jest.fn().mockResolvedValue({
+        id: 1001,
+        name: 'โรงเรียนทดสอบ',
+        province: 'ข้อมูลเดิม',
+        district: 'อำเภอเดิม',
+        sub_district: 'ตำบลเดิม',
+        school_status: 'INACTIVE',
+      }),
+      isValidAdministrativeArea: jest.fn().mockResolvedValue(true),
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       listClassrooms: jest.fn().mockResolvedValue({
         rows: [CLASSROOM],
@@ -143,6 +160,27 @@ describe('SchoolStructureService', () => {
       data: [{ id: 1001, name: 'โรงเรียนทดสอบ', subDistrict: 'สุเทพ' }],
     });
     expect(repository.listScopedSchools).toHaveBeenCalledWith({ school_ids: [1001] });
+  });
+
+  it('deactivates a legacy school without revalidating unchanged administrative data', async () => {
+    const { service, repository } = setup();
+
+    await expect(service.deactivateSchool(1001, SCHOOL_ACTOR)).resolves.toMatchObject({
+      data: { schoolStatus: 'INACTIVE' },
+    });
+
+    expect(repository.isValidAdministrativeArea).not.toHaveBeenCalled();
+    expect(repository.updateSchool).toHaveBeenCalledWith(
+      1001,
+      {
+        name: 'โรงเรียนทดสอบ',
+        province: 'ข้อมูลเดิม',
+        district: 'อำเภอเดิม',
+        subDistrict: 'ตำบลเดิม',
+        schoolStatus: 'INACTIVE',
+      },
+      expect.anything(),
+    );
   });
 
   it('allows classroom-link administrators to read schools and teachers only', async () => {

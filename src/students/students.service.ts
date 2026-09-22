@@ -43,12 +43,14 @@ import {
   maskNationalIdValue,
   normalizeNationalIdValue,
   STUDENT_NATIONAL_ID_CORRECTION_REASON,
+  STUDENT_PASSPORT_CORRECTION_REASON,
 } from './pii-fields.config';
 import { StudentsRepository } from './students.repository';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import type { StudentEnrollmentState, StudentListFilters } from './students.types';
 import type { AuthenticatedRequestUser } from '../auth';
 import type { CorrectStudentNationalIdDto } from './dto/correct-student-national-id.dto';
+import type { CorrectStudentPassportDto } from './dto/correct-student-passport.dto';
 
 /** Metadata captured from the HTTP request for the PII access log. */
 export interface PiiRevealRequestMeta {
@@ -947,6 +949,63 @@ export class StudentsService {
       }
       throw error;
     }
+
+    return await this.findOne(id, actor, userScope);
+  }
+
+  async correctPassport(
+    id: string,
+    dto: CorrectStudentPassportDto,
+    actor: AuthenticatedRequestUser | undefined,
+    userScope: DataScope | undefined,
+    requestMeta: { ip: string | null },
+  ) {
+    if (isRestrictedExecutive(actor)) {
+      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
+    }
+    const actorUserId = resolveAuditActorId(actor);
+    await this.studentsRepository.withTransaction(async (manager) => {
+      const result = await this.studentsRepository.correctPassport(
+        id,
+        dto.newPassportNumber,
+        actorUserId,
+        userScope,
+        manager,
+      );
+      if ('notFound' in result) {
+        throw new NotFoundException(`Student with ID ${id} not found`);
+      }
+      if ('missingPerson' in result) {
+        throw new BadRequestException(
+          'นักเรียนคนนี้ยังไม่ได้เชื่อมข้อมูลตัวตน จึงแก้ไขเลขหนังสือเดินทางไม่ได้',
+        );
+      }
+      if ('unchanged' in result) {
+        throw new BadRequestException('เลขหนังสือเดินทางใหม่ต้องไม่ตรงกับเลขเดิม');
+      }
+      if ('scopeConflict' in result) {
+        throw new ForbiddenException('ไม่สามารถแก้ไขข้อมูลตัวตนนี้ภายใต้ขอบเขตสิทธิ์ปัจจุบันได้');
+      }
+
+      await this.auditLog.recordAtomic(
+        {
+          action: 'STUDENT_PASSPORT_CORRECTION',
+          actorUserId,
+          actorLabel: actor?.username,
+          targetType: 'student',
+          targetId: id,
+          metadata: {
+            reasonCode: STUDENT_PASSPORT_CORRECTION_REASON.code,
+            reasonLabel: STUDENT_PASSPORT_CORRECTION_REASON.label,
+            fieldGroup: 'PASSPORT',
+            fieldLabel: 'เลขหนังสือเดินทาง',
+            schoolId: result.schoolId,
+          },
+          ip: requestMeta.ip,
+        },
+        manager,
+      );
+    });
 
     return await this.findOne(id, actor, userScope);
   }

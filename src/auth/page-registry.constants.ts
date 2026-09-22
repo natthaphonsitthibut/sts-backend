@@ -76,6 +76,12 @@ export const APP_PAGES: AppPageDefinition[] = [
     group: APP_PAGE_GROUPS.users,
   },
   { id: 'settings', title: 'ตั้งค่าระบบ', group: null, scopePolicy: 'global-only' },
+  {
+    id: 'manage-schools',
+    title: 'จัดการข้อมูลโรงเรียน',
+    group: null,
+    scopePolicy: 'global-only',
+  },
 ];
 
 /**

@@ -40,6 +40,7 @@ import {
 import { PiiRevealDto } from './dto/pii-reveal.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { CorrectStudentNationalIdDto } from './dto/correct-student-national-id.dto';
+import { CorrectStudentPassportDto } from './dto/correct-student-passport.dto';
 import { MasterDataService } from '../master-data/master-data.service';
 
 function firstHeaderValue(value: string | string[] | undefined): string | null {
@@ -283,6 +284,20 @@ export class StudentsController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return this.studentsService.correctNationalId(id, body, actor, resolveActorDataScope(actor), {
+      ip: req.ip ?? null,
+    });
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('manage-students')
+  @Patch(':id/passport')
+  correctPassport(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: CorrectStudentPassportDto,
+    @Req() req: Request,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return this.studentsService.correctPassport(id, body, actor, resolveActorDataScope(actor), {
       ip: req.ip ?? null,
     });
   }

@@ -7,11 +7,13 @@ import { escapeLikePattern } from '../common/utils/helpers';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import { HOMEROOM_SUBJECT_CODE } from './homeroom-subject.constants';
 import type {
+  AdministrativeAreaOptionRow,
   ClassroomRosterRow,
   ClassroomDailyAttendanceRow,
   ClassroomStudentAttendanceDayRow,
   ClassroomStudentAttendanceSummaryRow,
   ClassroomTeacherAssignmentRow,
+  SchoolAdminRow,
   SchoolClassroomOptionRow,
   SchoolClassroomRow,
   SchoolClassroomSummaryRow,
@@ -101,6 +103,252 @@ export class SchoolStructureRepository {
       scopeQuery.params,
     );
     return result.rows;
+  }
+
+  /** จัดการข้อมูลโรงเรียน's own list — every school, active or not, unscoped
+   *  (the route is global-only already). */
+  async listAllSchools(input: {
+    page: number;
+    limit: number;
+    search?: string;
+    status?: StructureStatus;
+    province?: string;
+    district?: string;
+    subDistrict?: string;
+    sortBy?: 'name' | 'province' | 'district' | 'subDistrict' | 'status';
+    sortDirection?: 'asc' | 'desc';
+  }): Promise<{ rows: SchoolAdminRow[]; totalCount: number }> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    if (input.search) {
+      params.push(`%${escapeLikePattern(input.search)}%`);
+      conditions.push(`(
+        name ILIKE $${params.length} ESCAPE '\\'
+        OR COALESCE(province, '') ILIKE $${params.length} ESCAPE '\\'
+        OR COALESCE(district, '') ILIKE $${params.length} ESCAPE '\\'
+        OR COALESCE(sub_district, '') ILIKE $${params.length} ESCAPE '\\'
+      )`);
+    }
+    const exactFilters: Array<[string, string | undefined]> = [
+      ['school_status', input.status],
+      ['province', input.province],
+      ['district', input.district],
+      ['sub_district', input.subDistrict],
+    ];
+    for (const [column, value] of exactFilters) {
+      if (!value) continue;
+      params.push(value);
+      conditions.push(`${column} = $${params.length}`);
+    }
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const countResult = await queryDataSource<{ count: string }>(
+      this.dataSource,
+      `SELECT COUNT(*)::int AS count FROM schools ${whereSql}`,
+      params,
+    );
+    const totalCount = Number(countResult.rows[0]?.count ?? 0);
+    const sortExpressions = {
+      name: 'name',
+      province: 'province',
+      district: 'district',
+      subDistrict: 'sub_district',
+      status: 'school_status',
+    } as const;
+    const sortColumn = sortExpressions[input.sortBy ?? 'name'];
+    const direction = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const limitPlaceholder = params.push(input.limit);
+    const offsetPlaceholder = params.push((input.page - 1) * input.limit);
+    const result = await queryDataSource<SchoolAdminRow>(
+      this.dataSource,
+      `
+        SELECT id, name, province, district, sub_district, school_status
+        FROM schools
+        ${whereSql}
+        ORDER BY ${sortColumn} ${direction} NULLS LAST, id ${direction}
+        LIMIT $${limitPlaceholder} OFFSET $${offsetPlaceholder}
+      `,
+      params,
+    );
+    return { rows: result.rows, totalCount };
+  }
+
+  async findSchoolById(id: number, queryRunner?: QueryRunner): Promise<SchoolAdminRow | null> {
+    const sql = `
+      SELECT id, name, province, district, sub_district, school_status
+      FROM schools
+      WHERE id = $1
+    `;
+    const result = queryRunner
+      ? await createSqlQueryExecutor(queryRunner).query<SchoolAdminRow>(sql, [id])
+      : await queryDataSource<SchoolAdminRow>(this.dataSource, sql, [id]);
+    return result.rows[0] ?? null;
+  }
+
+  async createSchool(
+    input: {
+      name: string;
+      province: string | null;
+      district: string | null;
+      subDistrict: string | null;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<SchoolAdminRow> {
+    const result = await createSqlQueryExecutor(queryRunner).query<SchoolAdminRow>(
+      `
+        INSERT INTO schools (name, province, district, sub_district, school_status)
+        VALUES ($1, $2, $3, $4, 'ACTIVE')
+        RETURNING id, name, province, district, sub_district, school_status
+      `,
+      [input.name, input.province, input.district, input.subDistrict],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error('CREATE_SCHOOL_FAILED');
+    return row;
+  }
+
+  async seedDefaultSchoolRoles(schoolId: number, queryRunner: QueryRunner): Promise<void> {
+    await createSqlQueryExecutor(queryRunner).query(
+      `
+        INSERT INTO roles (
+          name, label, default_permissions, scope_mode, scope_policy,
+          is_assignable, is_system, school_id
+        )
+        SELECT
+          'S' || $1::text || '_BASE_' || template.role_key,
+          template.label,
+          source.default_permissions - 'manage-schools',
+          'school',
+          'ASSIGNABLE',
+          TRUE,
+          FALSE,
+          $1
+        FROM (
+          VALUES
+            ('ADMIN', 'ผู้ดูแลระบบ', 'ADMIN'),
+            ('DIRECTOR', 'ผู้อำนวยการ', 'DIRECTOR')
+        ) AS template(role_key, label, source_name)
+        JOIN roles source
+          ON source.name = template.source_name
+         AND source.school_id IS NULL
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM roles existing_role
+          WHERE existing_role.school_id = $1
+            AND existing_role.name = 'S' || $1::text || '_BASE_' || template.role_key
+        )
+      `,
+      [schoolId],
+    );
+  }
+
+  async updateSchool(
+    id: number,
+    input: {
+      name: string;
+      province: string | null;
+      district: string | null;
+      subDistrict: string | null;
+      schoolStatus: StructureStatus;
+    },
+    queryRunner: QueryRunner,
+  ): Promise<SchoolAdminRow | null> {
+    const result = await createSqlQueryExecutor(queryRunner).query<SchoolAdminRow>(
+      `
+        UPDATE schools
+        SET name = $2, province = $3, district = $4, sub_district = $5, school_status = $6
+        WHERE id = $1
+        RETURNING id, name, province, district, sub_district, school_status
+      `,
+      [id, input.name, input.province, input.district, input.subDistrict, input.schoolStatus],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listAdministrativeProvinces(): Promise<AdministrativeAreaOptionRow[]> {
+    const result = await queryDataSource<AdministrativeAreaOptionRow>(
+      this.dataSource,
+      `SELECT code, name_th FROM administrative_provinces ORDER BY name_th`,
+    );
+    return result.rows;
+  }
+
+  async listAdministrativeDistricts(province: string): Promise<AdministrativeAreaOptionRow[]> {
+    const result = await queryDataSource<AdministrativeAreaOptionRow>(
+      this.dataSource,
+      `
+        SELECT d.code, d.name_th
+        FROM administrative_districts d
+        JOIN administrative_provinces p ON p.code = d.province_code
+        WHERE p.name_th = $1
+        ORDER BY d.name_th
+      `,
+      [province],
+    );
+    return result.rows;
+  }
+
+  async listAdministrativeSubDistricts(
+    province: string,
+    district: string,
+  ): Promise<AdministrativeAreaOptionRow[]> {
+    const result = await queryDataSource<AdministrativeAreaOptionRow>(
+      this.dataSource,
+      `
+        SELECT sd.code, sd.name_th
+        FROM administrative_sub_districts sd
+        JOIN administrative_districts d
+          ON d.code = sd.district_code AND d.province_code = sd.province_code
+        JOIN administrative_provinces p ON p.code = d.province_code
+        WHERE p.name_th = $1 AND d.name_th = $2
+        ORDER BY sd.name_th
+      `,
+      [province, district],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Every given level must be non-empty and actually nest under the one
+   * before it — a district without its province, or any name that doesn't
+   * match the DOPA catalog, fails closed. `schools.province/district/
+   * sub_district` stay plain TEXT (see task notes: converting to FK code
+   * would break scope-matching against `data_scope.provinces`, which is
+   * name-based everywhere else in the app), so this is the only guard against
+   * a typo'd or fabricated area landing in a school record.
+   */
+  async isValidAdministrativeArea(
+    province: string | null,
+    district: string | null,
+    subDistrict: string | null,
+  ): Promise<boolean> {
+    if (!province) return !district && !subDistrict;
+    const result = await queryDataSource<{
+      province_ok: boolean;
+      district_ok: boolean;
+      sub_district_ok: boolean;
+    }>(
+      this.dataSource,
+      `
+        SELECT
+          EXISTS(SELECT 1 FROM administrative_provinces WHERE name_th = $1) AS province_ok,
+          ($2::text IS NULL OR EXISTS(
+            SELECT 1 FROM administrative_districts d
+            JOIN administrative_provinces p ON p.code = d.province_code
+            WHERE d.name_th = $2 AND p.name_th = $1
+          )) AS district_ok,
+          ($3::text IS NULL OR ($2::text IS NOT NULL AND EXISTS(
+            SELECT 1 FROM administrative_sub_districts sd
+            JOIN administrative_districts d
+              ON d.code = sd.district_code AND d.province_code = sd.province_code
+            JOIN administrative_provinces p
+              ON p.code = d.province_code AND p.name_th = $1
+            WHERE sd.name_th = $3 AND d.name_th = $2
+          ))) AS sub_district_ok
+      `,
+      [province, district, subDistrict],
+    );
+    const row = result.rows[0];
+    return Boolean(row?.province_ok && row.district_ok && row.sub_district_ok);
   }
 
   async isSchoolInScope(schoolId: number, scope: DataScope): Promise<boolean> {

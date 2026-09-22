@@ -27,7 +27,7 @@ import {
 } from '../students/pii-fields.config';
 import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
-import { finalizePersistedDataScope } from '../auth/auth.types';
+import { finalizePersistedDataScope, type DataScope } from '../auth/auth.types';
 import { hasPermission } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
@@ -59,6 +59,9 @@ export const TEMP_PASSWORD_TTL_DAYS = 7;
 // rides on that page's permission rather than a separate one.
 const HARD_DELETE_PERMISSION = 'manage-users-list';
 const USERNAME_ALREADY_USED_MESSAGE = 'ชื่อผู้ใช้งานนี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น';
+// Semantic fallback for a nationwide council scope. Real school and area names
+// always come from the database/catalog, never from frontend constants.
+const COUNTRY_AFFILIATION = 'ประเทศ';
 
 function cleanNullableText(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -79,6 +82,18 @@ function normalizeNumericScopeValues(value: unknown): number[] {
   }
   return Array.from(
     new Set(value.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0)),
+  );
+}
+
+function normalizeScopeTextValues(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
   );
 }
 
@@ -314,6 +329,7 @@ export class UsersService {
         gradeLevelId: filters.gradeLevelId,
         room: filters.room,
         accountStatus: filters.accountStatus,
+        realm: filters.realm,
         page,
         limit,
       });
@@ -650,6 +666,10 @@ export class UsersService {
       if ((data.address_latitude == null) !== (data.address_longitude == null)) {
         throw new BadRequestException('กรุณาระบุ latitude และ longitude ให้ครบทั้งคู่');
       }
+      const derivedAffiliation = await this.resolveAffiliationFromScope(
+        persistedScope,
+        data.affiliation,
+      );
       const generatedTempPassword = usesTemporaryPassword ? password : undefined;
 
       // Only system-generated passwords start the temporary-password lifecycle.
@@ -675,7 +695,7 @@ export class UsersService {
             personIdOnec: data.PersonID_Onec,
             phone: data.phone || null,
             email: data.email || null,
-            affiliation: data.affiliation || null,
+            affiliation: derivedAffiliation ?? null,
             lineId: cleanNullableText(data.line_id),
             addressLine: cleanNullableText(data.address_line),
             addressVillageNo: cleanPrefixedAddressText('หมู่', data.address_village_no),
@@ -756,7 +776,16 @@ export class UsersService {
       const requestedRole = roleWasProvided
         ? this.usersPolicyService.normalizeRole(data)
         : existingRole;
+      const existingPersistedScope = finalizePersistedDataScope(existingUser.data_scope);
       const persistedScope = finalizePersistedDataScope(data.data_scope ?? existingUser.data_scope);
+
+      const existingIsSchoolRealm = (existingPersistedScope.school_ids?.length ?? 0) > 0;
+      const requestedIsSchoolRealm = (persistedScope.school_ids?.length ?? 0) > 0;
+      if (existingIsSchoolRealm !== requestedIsSchoolRealm) {
+        throw new BadRequestException(
+          'ไม่สามารถย้ายบัญชีระหว่างขอบเขตโรงเรียนและสภาได้ กรุณาสร้างบัญชีใหม่',
+        );
+      }
 
       if (isSelf && requestedRole !== existingRole) {
         throw new ForbiddenException('ไม่สามารถเปลี่ยนตำแหน่งของบัญชีตัวเองได้');
@@ -768,6 +797,11 @@ export class UsersService {
         { allowEqualRole: isSelf },
         roleMap,
       );
+      const shouldDeriveAffiliation =
+        data.data_scope !== undefined || data.affiliation !== undefined;
+      const derivedAffiliation = shouldDeriveAffiliation
+        ? await this.resolveAffiliationFromScope(persistedScope, data.affiliation)
+        : undefined;
 
       const primaryRole = requestedRole;
       await this.usersRepository.withTransaction(async (executor) => {
@@ -797,7 +831,7 @@ export class UsersService {
             personIdOnec: data.PersonID_Onec ?? existingUser.PersonID_Onec ?? '',
             phone: data.phone ?? existingUser.phone ?? null,
             email: data.email ?? existingUser.email ?? null,
-            affiliation: data.affiliation ?? existingUser.affiliation ?? null,
+            affiliation: derivedAffiliation ?? existingUser.affiliation ?? null,
             lineId:
               data.line_id !== undefined
                 ? cleanNullableText(data.line_id)
@@ -1211,5 +1245,46 @@ export class UsersService {
           ? driverConstraint
           : '';
     return constraint.toLowerCase().includes('username');
+  }
+
+  /**
+   * Affiliation is a projection of the account's persisted scope, never a
+   * client-controlled label. A one-school scope uses that school's catalog
+   * name; an area scope uses its deepest selected area; a nationwide scope is
+   * labelled from the shared country term. The incoming affiliation is kept
+   * only as a compatibility signal for older callers that omitted scope data.
+   */
+  private async resolveAffiliationFromScope(
+    scope: DataScope,
+    requestedAffiliation: string | null | undefined,
+  ): Promise<string | null | undefined> {
+    const schoolIds = normalizeNumericScopeValues(scope.school_ids);
+    const gradeLevels = normalizeNumericScopeValues(scope.grade_levels);
+    const roomIds = normalizeNumericScopeValues(scope.room_ids);
+
+    if (schoolIds.length > 1) {
+      throw new BadRequestException('ผู้ใช้งาน 1 คนเลือกได้เพียง 1 โรงเรียน');
+    }
+    if (gradeLevels.length > 0 || roomIds.length > 0) {
+      throw new BadRequestException('ขอบเขตผู้ใช้งานห้ามจำกัดระดับชั้นหรือห้องเรียน');
+    }
+
+    if (schoolIds.length === 1) {
+      const schools = await this.usersRepository.findSchoolNamesByIds(schoolIds);
+      const school = schools.find((item) => Number(item.id) === schoolIds[0]);
+      if (!school?.name) {
+        throw new BadRequestException('ไม่พบโรงเรียนในขอบเขตผู้ใช้งาน');
+      }
+      return school.name;
+    }
+
+    // Keep legacy callers that do not send an affiliation untouched. The
+    // admin form always sends one, so new/edited accounts are projected below.
+    if (requestedAffiliation === undefined && !scope.global) return undefined;
+
+    const subDistricts = normalizeScopeTextValues(scope.sub_districts);
+    const districts = normalizeScopeTextValues(scope.districts);
+    const provinces = normalizeScopeTextValues(scope.provinces);
+    return subDistricts[0] ?? districts[0] ?? provinces[0] ?? COUNTRY_AFFILIATION;
   }
 }

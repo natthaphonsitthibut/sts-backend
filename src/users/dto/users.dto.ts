@@ -38,6 +38,10 @@ function toBoolean(value: unknown): boolean {
 
 export class GetUsersQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
+  @IsIn(['school', 'council'])
+  realm?: 'school' | 'council';
+
+  @IsOptional()
   @IsString()
   excludeRole?: string;
 

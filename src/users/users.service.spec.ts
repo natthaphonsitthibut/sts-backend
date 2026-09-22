@@ -316,6 +316,90 @@ describe('UsersService', () => {
     ).rejects.toBe(databaseError);
   });
 
+  it('derives nationwide affiliation from a nationwide scope', async () => {
+    await service.createUser(actor, {
+      username: 'council.admin',
+      FirstName: 'ผู้ดูแล',
+      LastName: 'ระดับสภา',
+      PersonID_Onec: '1234567890123',
+      role: 'ADMIN',
+      roles: ['ADMIN'],
+      permissions: ['manage-users-list'],
+      status: 'ACTIVE',
+      affiliation: 'สภา',
+      data_scope: { global: true },
+    });
+
+    expect(usersRepository.createUser).toHaveBeenCalledWith(
+      expect.objectContaining({ affiliation: 'ประเทศ' }),
+      executor,
+    );
+  });
+
+  it('derives council affiliation from the deepest selected administrative area', async () => {
+    await service.createUser(actor, {
+      username: 'council.chonburi',
+      FirstName: 'ผู้ดูแล',
+      LastName: 'ชลบุรี',
+      PersonID_Onec: '1234567890123',
+      role: 'ADMIN',
+      roles: ['ADMIN'],
+      permissions: ['manage-users-list'],
+      status: 'ACTIVE',
+      affiliation: 'ค่าที่ client ส่งมาไม่ถูกนำมาใช้',
+      data_scope: { provinces: ['ชลบุรี'] },
+    });
+
+    expect(usersRepository.createUser).toHaveBeenCalledWith(
+      expect.objectContaining({ affiliation: 'ชลบุรี' }),
+      executor,
+    );
+  });
+
+  it('derives school affiliation from the selected school catalog', async () => {
+    await service.createUser(actor, {
+      username: 'teacher.school',
+      FirstName: 'ครู',
+      LastName: 'โรงเรียน',
+      PersonID_Onec: '1234567890123',
+      role: 'TEACHER',
+      roles: ['TEACHER'],
+      permissions: ['attendance'],
+      status: 'ACTIVE',
+      affiliation: 'ค่าที่ client ส่งมาไม่ถูกนำมาใช้',
+      data_scope: { school_ids: [10010002] },
+    });
+
+    expect(usersRepository.createUser).toHaveBeenCalledWith(
+      expect.objectContaining({ affiliation: 'โรงเรียนทดสอบ' }),
+      executor,
+    );
+  });
+
+  it('re-derives affiliation on update from the persisted scope', async () => {
+    await service.updateUser(actor, 77, { FirstName: 'ครูแก้ไข' });
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'school.user',
+      FirstName: 'ผู้ใช้',
+      LastName: 'โรงเรียน',
+      role: 'ADMIN',
+      roles: ['ADMIN'],
+      permissions: ['manage-users-list'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    } as never);
+
+    await service.updateUser(actor, 77, {
+      affiliation: 'ค่าที่ client ส่งมาไม่ถูกนำมาใช้',
+      data_scope: { school_ids: [10010002] },
+    });
+    expect(usersRepository.updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({ affiliation: 'โรงเรียนทดสอบ' }),
+      executor,
+    );
+  });
+
   it('authorizes a partial teacher update against the existing school scope', async () => {
     usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
       id: 77,
@@ -351,6 +435,53 @@ describe('UsersService', () => {
       }),
       executor,
     );
+  });
+
+  it('never widens a school user to global when saving school scope', async () => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'school.user',
+      FirstName: 'ผู้ใช้',
+      LastName: 'โรงเรียน',
+      role: 'ADMIN',
+      roles: ['ADMIN'],
+      permissions: ['manage-users-list'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    } as never);
+
+    await service.updateUser(actor, 77, {
+      data_scope: { school_ids: [10010002] },
+    });
+
+    const update = usersRepository.updateUser.mock.calls.at(-1)?.[0];
+    expect(update?.dataScope).toEqual({ school_ids: [10010002] });
+    expect(update?.dataScope).not.toHaveProperty('global');
+  });
+
+  it.each([
+    { data_scope: {}, label: 'an empty scope' },
+    { data_scope: { provinces: ['ชลบุรี'] }, label: 'an area scope' },
+  ])('rejects a school user being moved to council realm with $label', async ({ data_scope }) => {
+    usersPolicyService.hydrateUserPermissions.mockReturnValueOnce({
+      id: 77,
+      username: 'school.user',
+      FirstName: 'ผู้ใช้',
+      LastName: 'โรงเรียน',
+      role: 'ADMIN',
+      roles: ['ADMIN'],
+      permissions: ['manage-users-list'],
+      status: 'ACTIVE',
+      data_scope: { school_ids: [10010002] },
+    } as never);
+
+    await expect(service.updateUser(actor, 77, { data_scope })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(usersPolicyService.assertAssignablePayload).not.toHaveBeenCalled();
+    expect(usersRepository.withTransaction).not.toHaveBeenCalled();
+    expect(usersRepository.updateUser).not.toHaveBeenCalled();
   });
 
   it('returns minimized user detail without identity or address fields', async () => {

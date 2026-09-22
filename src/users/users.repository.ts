@@ -117,7 +117,7 @@ interface CreateRoleRecordInput {
   default_permissions: string[];
   scope_mode: string;
   scope_policy: string;
-  school_id: number;
+  school_id: number | null;
 }
 
 export interface UserListFilters {
@@ -137,6 +137,7 @@ export interface UserListFilters {
   gradeLevelId?: number;
   room?: string;
   accountStatus?: AccountLifecycleStatus;
+  realm?: 'school' | 'council';
   page?: number;
   limit?: number;
 }
@@ -458,6 +459,24 @@ export class UsersRepository {
     return result.rows.length > 0;
   }
 
+  async globalRoleLabelExists(label: string, excludeName?: string): Promise<boolean> {
+    const params: unknown[] = [label];
+    const exclude = excludeName ? `AND name <> $${params.push(excludeName)}` : '';
+    const result = await this.query(
+      `
+        SELECT 1
+        FROM roles
+        WHERE school_id IS NULL
+          AND is_system = FALSE
+          AND LOWER(BTRIM(label)) = LOWER(BTRIM($1))
+          ${exclude}
+        LIMIT 1
+      `,
+      params,
+    );
+    return result.rows.length > 0;
+  }
+
   async listUsersPaginated(filters: UserListFilters): Promise<{
     rows: HydratableUserRow[];
     totalCount: number;
@@ -571,6 +590,18 @@ export class UsersRepository {
         ELSE 'ACTIVE'
       END
     `;
+    if (filters.realm === 'council') {
+      conditions.push(`(
+        jsonb_typeof(${scopeSql} -> 'school_ids') IS NULL
+        OR jsonb_array_length(${scopeSql} -> 'school_ids') = 0
+      )`);
+    } else if (filters.realm === 'school') {
+      conditions.push(`(
+        jsonb_typeof(${scopeSql} -> 'school_ids') = 'array'
+        AND jsonb_array_length(${scopeSql} -> 'school_ids') > 0
+      )`);
+    }
+
     const lifecycleWhereSql = `WHERE ${conditions.join(' AND ')}`;
     const lifecycleParams = [...params];
     if (filters.accountStatus) {

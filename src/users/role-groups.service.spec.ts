@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { RoleGroupsService } from './role-groups.service';
 import { UsersPolicyService } from './users-policy.service';
 import type { ActorContext, RoleRow } from './users.types';
@@ -91,6 +96,19 @@ describe('RoleGroupsService school ownership', () => {
     });
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, ACTOR.data_scope);
     expect(repository.listRoleRows).toHaveBeenCalledWith(true, 1001);
+  });
+
+  it('rejects a non-global actor from council role groups', async () => {
+    const { service, repository } = setup();
+
+    await expect(service.getCouncilRoleGroups(ACTOR)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.getCouncilRoleGroups({
+        ...ACTOR,
+        data_scope: { province: 'เชียงใหม่' },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.listRoleRows).not.toHaveBeenCalled();
   });
 
   it('infers a single-school actor but requires a selection for broader scopes', async () => {

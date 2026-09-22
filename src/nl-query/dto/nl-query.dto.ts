@@ -10,6 +10,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  ValidateIf,
   Validate,
   ValidatorConstraint,
   type ValidatorConstraintInterface,
@@ -99,6 +100,18 @@ class SqlMatchesAnswerTypeConstraint implements ValidatorConstraintInterface {
   }
 }
 
+@ValidatorConstraint({ name: 'resultSqlPresent', async: false })
+class ResultSqlPresentConstraint implements ValidatorConstraintInterface {
+  validate(_value: unknown, args: ValidationArguments): boolean {
+    const turn = args.object as PriorTurnDto;
+    return turn.answerType !== 'result' || (typeof turn.sql === 'string' && turn.sql.length > 0);
+  }
+
+  defaultMessage(): string {
+    return 'sql is required when answerType is result';
+  }
+}
+
 export class PriorTurnDto {
   @IsString()
   @MinLength(1)
@@ -106,9 +119,13 @@ export class PriorTurnDto {
   question!: string;
 
   @IsIn(ANSWER_TYPES)
+  @Validate(ResultSqlPresentConstraint)
   answerType!: AnswerType;
 
   @Validate(SqlMatchesAnswerTypeConstraint)
+  @ValidateIf((_object, value) => value !== null && value !== undefined)
+  @IsString()
+  @MaxLength(10000)
   sql?: string | null;
 
   @IsOptional()

@@ -26,7 +26,10 @@ import type {
   StudentGuardianInputDto,
   UpdateStudentDto,
 } from './dto/update-student.dto';
-import { STUDENT_NATIONAL_ID_CORRECTION_SOURCE } from './pii-fields.config';
+import {
+  STUDENT_NATIONAL_ID_CORRECTION_SOURCE,
+  STUDENT_PASSPORT_CORRECTION_SOURCE,
+} from './pii-fields.config';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -46,6 +49,16 @@ function pushParams(target: unknown[], values: unknown[]): void {
     target.push(value);
   });
 }
+
+type CorrectableStudentIdentifier = 'NATIONAL_ID' | 'PASSPORT';
+type CorrectStudentIdentifierResult =
+  | { corrected: true; schoolId: number }
+  | { unchanged: true }
+  | { notFound: true }
+  | { missingPerson: true }
+  | { conflict: true }
+  | { scopeConflict: true };
+type CorrectStudentPassportResult = Exclude<CorrectStudentIdentifierResult, { conflict: true }>;
 
 @Injectable()
 export class StudentsRepository {
@@ -962,14 +975,51 @@ export class StudentsRepository {
     actorUserId: number | null,
     userScope: DataScope | undefined,
     manager: EntityManager,
-  ): Promise<
-    | { corrected: true; schoolId: number }
-    | { unchanged: true }
-    | { notFound: true }
-    | { missingPerson: true }
-    | { conflict: true }
-    | { scopeConflict: true }
-  > {
+  ): Promise<CorrectStudentIdentifierResult> {
+    return await this.correctStudentIdentifier(
+      studentUuid,
+      newNationalId,
+      actorUserId,
+      userScope,
+      manager,
+      'NATIONAL_ID',
+    );
+  }
+
+  async correctPassport(
+    studentUuid: string,
+    newPassportNumber: string,
+    actorUserId: number | null,
+    userScope: DataScope | undefined,
+    manager: EntityManager,
+  ): Promise<CorrectStudentPassportResult> {
+    return (await this.correctStudentIdentifier(
+      studentUuid,
+      newPassportNumber,
+      actorUserId,
+      userScope,
+      manager,
+      'PASSPORT',
+    )) as CorrectStudentPassportResult;
+  }
+
+  private async correctStudentIdentifier(
+    studentUuid: string,
+    newIdentifier: string,
+    actorUserId: number | null,
+    userScope: DataScope | undefined,
+    manager: EntityManager,
+    identifierType: CorrectableStudentIdentifier,
+  ): Promise<CorrectStudentIdentifierResult> {
+    const isNationalId = identifierType === 'NATIONAL_ID';
+    const termIdentifierColumn = isNationalId ? '"PersonID_Onec"' : '"PassportNumber_Onec"';
+    const source = isNationalId
+      ? STUDENT_NATIONAL_ID_CORRECTION_SOURCE
+      : STUDENT_PASSPORT_CORRECTION_SOURCE;
+    const normalizedIdentifier = isNationalId ? newIdentifier : newIdentifier.toUpperCase();
+    const identifierValuePlaceholder = '$2';
+    const sourcePlaceholder = '$4';
+    const actorPlaceholder = '$5';
     const params: unknown[] = [studentUuid];
     let scopeSql = '';
     if (userScope) {
@@ -981,7 +1031,7 @@ export class StudentsRepository {
     const findScopedEnrollment = async (forUpdate: boolean) =>
       (await manager.query(
         `
-          SELECT s.person_uuid, s."PersonID_Onec" AS national_id,
+          SELECT s.person_uuid, s.${termIdentifierColumn} AS identifier_value,
             s."SchoolID_Onec" AS school_id
           FROM student_term s
           LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
@@ -993,7 +1043,7 @@ export class StudentsRepository {
         params,
       )) as unknown as Array<{
         person_uuid: string | null;
-        national_id: string;
+        identifier_value: string | null;
         school_id: number;
       }>;
 
@@ -1002,13 +1052,15 @@ export class StudentsRepository {
     if (!candidate.person_uuid) return { missingPerson: true };
 
     await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      `student-person:${candidate.person_uuid}`,
+      'student-person:' + candidate.person_uuid,
     ]);
 
     const enrollment = (await findScopedEnrollment(true))[0];
     if (!enrollment) return { notFound: true };
     if (!enrollment.person_uuid) return { missingPerson: true };
-    if (enrollment.person_uuid !== candidate.person_uuid) return { scopeConflict: true };
+    if (enrollment.person_uuid !== candidate.person_uuid) {
+      return { scopeConflict: true };
+    }
 
     const linkedScopeParams: unknown[] = [enrollment.person_uuid];
     let linkedScopeSql = 'TRUE';
@@ -1019,7 +1071,7 @@ export class StudentsRepository {
     }
     const linkedEnrollments = (await manager.query(
       `
-        SELECT s.student_uuid, s."PersonID_Onec" AS national_id,
+        SELECT s.student_uuid, s.${termIdentifierColumn} AS identifier_value,
           (${linkedScopeSql}) AS in_scope
         FROM student_term s
         LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
@@ -1029,52 +1081,62 @@ export class StudentsRepository {
         FOR UPDATE OF s
       `,
       linkedScopeParams,
-    )) as unknown as Array<{ student_uuid: string; national_id: string; in_scope: boolean }>;
+    )) as unknown as Array<{
+      student_uuid: string;
+      identifier_value: string | null;
+      in_scope: boolean;
+    }>;
     if (linkedEnrollments.some((linked) => linked.in_scope !== true)) {
       return { scopeConflict: true };
     }
     if (
       linkedEnrollments.every(
-        (linked) => linked.national_id.replace(/[^0-9]/g, '') === newNationalId,
+        (linked) =>
+          (isNationalId
+            ? linked.identifier_value?.replace(/[^0-9]/g, '')
+            : linked.identifier_value?.toUpperCase()) === normalizedIdentifier,
       )
     ) {
       return { unchanged: true };
     }
 
-    await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      `student-national-id:${newNationalId}`,
-    ]);
-
-    const conflicts = (await manager.query(
-      `
-        SELECT 1
-        FROM student_term existing
-        WHERE existing."PersonID_Onec" = $1
-          AND existing.person_uuid IS DISTINCT FROM $2
-          AND existing.deleted_at IS NULL
-        UNION ALL
-        SELECT 1
-        FROM student_person_identifier identifier
-        WHERE identifier.identifier_type = 'NATIONAL_ID'
-          AND identifier.identifier_normalized = $1
-          AND identifier.person_uuid <> $2
-          AND identifier.deleted_at IS NULL
-        LIMIT 1
-      `,
-      [newNationalId, enrollment.person_uuid],
-    )) as unknown as Array<{ '?column?': number }>;
-    if (conflicts.length > 0) return { conflict: true };
+    // Passport values follow the existing non-unique behavior; only national
+    // IDs take the cross-person conflict lock and check.
+    if (isNationalId) {
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        'student-national-id:' + normalizedIdentifier,
+      ]);
+      const conflicts = (await manager.query(
+        `
+          SELECT 1
+          FROM student_term existing
+          WHERE existing."PersonID_Onec" = $1
+            AND existing.person_uuid IS DISTINCT FROM $2
+            AND existing.deleted_at IS NULL
+          UNION ALL
+          SELECT 1
+          FROM student_person_identifier identifier
+          WHERE identifier.identifier_type = 'NATIONAL_ID'
+            AND identifier.identifier_normalized = $1
+            AND identifier.person_uuid <> $2
+            AND identifier.deleted_at IS NULL
+          LIMIT 1
+        `,
+        [normalizedIdentifier, enrollment.person_uuid],
+      )) as unknown as Array<{ '?column?': number }>;
+      if (conflicts.length > 0) return { conflict: true };
+    }
 
     await manager.query(
       `
         UPDATE student_term
-        SET "PersonID_Onec" = $2,
+        SET ${termIdentifierColumn} = $2,
             updated_by = $3,
             updated_at = NOW()
         WHERE person_uuid = $1
           AND deleted_at IS NULL
       `,
-      [enrollment.person_uuid, newNationalId, actorUserId],
+      [enrollment.person_uuid, newIdentifier, actorUserId],
     );
 
     const identifiers = (await manager.query(
@@ -1083,18 +1145,18 @@ export class StudentsRepository {
           SELECT id
           FROM student_person_identifier
           WHERE person_uuid = $1
-            AND identifier_type = 'NATIONAL_ID'
+            AND identifier_type = '${identifierType}'
             AND deleted_at IS NULL
-          ORDER BY (identifier_normalized = $2) DESC, is_primary DESC, id DESC
+          ORDER BY (identifier_normalized = $3) DESC, is_primary DESC, id DESC
           LIMIT 1
           FOR UPDATE
         ), updated_identifier AS (
           UPDATE student_person_identifier identifier
-          SET identifier_value = $2,
-              identifier_normalized = $2,
-              is_primary = TRUE,
-              source = $3,
-              updated_by = $4,
+          SET identifier_value = ${identifierValuePlaceholder},
+            identifier_normalized = $3,
+            is_primary = TRUE,
+            source = ${sourcePlaceholder},
+            updated_by = ${actorPlaceholder},
               updated_at = NOW()
           FROM selected_identifier
           WHERE identifier.id = selected_identifier.id
@@ -1102,7 +1164,7 @@ export class StudentsRepository {
         )
         SELECT id FROM updated_identifier
       `,
-      [enrollment.person_uuid, newNationalId, STUDENT_NATIONAL_ID_CORRECTION_SOURCE, actorUserId],
+      [enrollment.person_uuid, newIdentifier, normalizedIdentifier, source, actorUserId],
     )) as unknown as Array<{ id: string }>;
 
     const primaryIdentifierId = identifiers[0]?.id;
@@ -1114,7 +1176,7 @@ export class StudentsRepository {
               updated_by = $3,
               updated_at = NOW()
           WHERE person_uuid = $1
-            AND identifier_type = 'NATIONAL_ID'
+            AND identifier_type = '${identifierType}'
             AND id <> $2
             AND is_primary = TRUE
             AND deleted_at IS NULL
@@ -1128,15 +1190,14 @@ export class StudentsRepository {
             person_uuid, identifier_type, identifier_value,
             identifier_normalized, is_primary, source, created_by, updated_by
           )
-          VALUES ($1, 'NATIONAL_ID', $2, $2, TRUE, $3, $4, $4)
+          VALUES ($1, '${identifierType}', $2, $3, TRUE, ${sourcePlaceholder}, ${actorPlaceholder}, ${actorPlaceholder})
         `,
-        [enrollment.person_uuid, newNationalId, STUDENT_NATIONAL_ID_CORRECTION_SOURCE, actorUserId],
+        [enrollment.person_uuid, newIdentifier, normalizedIdentifier, source, actorUserId],
       );
     }
 
     return { corrected: true, schoolId: enrollment.school_id };
   }
-
   /** Append one immutable PII-reveal record to the access log. */
   async insertPiiAccessEvent(event: PiiAccessEventInput): Promise<void> {
     await this.query(

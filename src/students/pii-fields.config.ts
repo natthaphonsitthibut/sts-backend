@@ -65,6 +65,15 @@ export const STUDENT_NATIONAL_ID_CORRECTION_REASON = {
 /** Provenance written to the canonical identity row after a staff correction. */
 export const STUDENT_NATIONAL_ID_CORRECTION_SOURCE = 'MANUAL_CORRECTION' as const;
 
+/** Canonical reason stored for the dedicated student passport correction flow. */
+export const STUDENT_PASSPORT_CORRECTION_REASON = {
+  code: 'INCORRECT_PASSPORT',
+  label: 'เลขหนังสือเดินทางเดิมไม่ถูกต้อง',
+} as const;
+
+/** Provenance written to the canonical identity row after a staff correction. */
+export const STUDENT_PASSPORT_CORRECTION_SOURCE = 'MANUAL_CORRECTION' as const;
+
 /** SELF_ACCESS is resolved by the server and is never selectable by staff. */
 export function listStaffPiiRevealReasons() {
   return PII_REASON_CODES.filter((code) => code !== 'SELF_ACCESS').map((code) => ({

@@ -27,6 +27,7 @@ interface RoleGroupListOptions {
 }
 
 const PERMISSION_LABELS = new Map(PERMISSION_CATALOG.map((item) => [item.id, item.label]));
+const COUNCIL_DEFAULT_ROLE_NAMES = new Set(['ADMIN', 'EXECUTIVE']);
 
 function menuLabel(role: RoleDefinition): string {
   return role.default_permissions
@@ -44,6 +45,18 @@ export class RoleGroupsService {
     private readonly usersRepository: UsersRepository,
     private readonly usersPolicyService: UsersPolicyService,
   ) {}
+
+  private assertCouncilActor(actor: ActorContext): void {
+    if (!actor.roles?.includes('ADMIN')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์จัดการกลุ่มเมนูส่วนกลาง');
+    }
+    const scope = this.usersPolicyService.normalizeScope(actor.data_scope);
+    if (!scope.global || scope.school_ids.length > 0) {
+      throw new ForbiddenException(
+        'บัญชีที่ไม่ได้อยู่ในขอบเขตส่วนกลางจัดการกลุ่มเมนูส่วนกลางไม่ได้',
+      );
+    }
+  }
 
   private async resolveSchoolId(actor: ActorContext, requestedSchoolId?: number): Promise<number> {
     let schoolId = requestedSchoolId;
@@ -117,6 +130,170 @@ export class RoleGroupsService {
       data: visible.slice(start, start + limit),
       meta: buildPaginationMeta(page, limit, visible.length),
     };
+  }
+
+  async getCouncilRoleGroups(actor?: ActorContext, options: RoleGroupListOptions = {}) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCouncilActor(currentActor);
+    const definitions = await this.usersPolicyService.getRoleDefinitions(true, null);
+    const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
+    let visible = definitions.filter(
+      (role) =>
+        role.school_id == null &&
+        (COUNCIL_DEFAULT_ROLE_NAMES.has(role.name) || !role.is_system) &&
+        this.usersPolicyService.canGrantPermissions(
+          currentActor.permissions || [],
+          role.default_permissions || [],
+          actorRole,
+          roleMap,
+        ),
+    );
+
+    const search = options.searchTerm?.trim().toLocaleLowerCase('th');
+    if (search) {
+      visible = visible.filter(
+        (role) =>
+          role.label.toLocaleLowerCase('th').includes(search) ||
+          menuLabel(role).toLocaleLowerCase('th').includes(search),
+      );
+    }
+
+    const sortBy = options.sortBy ?? 'group';
+    const direction = options.sortDirection === 'desc' ? -1 : 1;
+    visible.sort((left, right) => {
+      const leftText = sortBy === 'menus' ? menuLabel(left) : left.label;
+      const rightText = sortBy === 'menus' ? menuLabel(right) : right.label;
+      const compared = leftText.localeCompare(rightText, 'th');
+      return compared === 0 ? left.name.localeCompare(right.name) : compared * direction;
+    });
+
+    const page = resolvePage(options.page);
+    const limit = resolveLimit(options.limit);
+    const start = (page - 1) * limit;
+    return {
+      success: true,
+      data: visible.slice(start, start + limit),
+      meta: buildPaginationMeta(page, limit, visible.length),
+    };
+  }
+
+  async createCouncilRoleGroup(actor: ActorContext | undefined, data: CreateRoleGroupDto) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCouncilActor(currentActor);
+    const definitions = await this.usersPolicyService.getRoleDefinitions(false, null);
+    const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
+    const internalName = `G_${randomUUID().replaceAll('-', '').slice(0, 28).toUpperCase()}`;
+    const payload = this.usersPolicyService.normalizeRoleGroupPayload({
+      ...data,
+      name: internalName,
+      scope_mode: 'flexible',
+    });
+
+    if (await this.usersRepository.globalRoleLabelExists(payload.label)) {
+      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในส่วนกลางแล้ว');
+    }
+
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
+    if (
+      !this.usersPolicyService.canGrantPermissions(
+        currentActor.permissions || [],
+        payload.default_permissions,
+        actorRole,
+        roleMap,
+      )
+    ) {
+      throw new ForbiddenException('ไม่สามารถกำหนดเมนูที่ตนเองไม่มีสิทธิ์เข้าถึงได้');
+    }
+
+    try {
+      const row = await this.usersRepository.createRole({ ...payload, school_id: null });
+      return { success: true, role: this.usersPolicyService.mapRoleRow(row) };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('มีกลุ่มเมนูชื่อนี้ในส่วนกลางแล้ว');
+      }
+      throw error;
+    }
+  }
+
+  async updateCouncilRoleGroup(
+    actor: ActorContext | undefined,
+    roleName: string,
+    data: UpdateRoleGroupDto,
+  ) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCouncilActor(currentActor);
+    const normalizedRoleName = this.usersPolicyService.normalizeRoleName(roleName);
+    const definitions = await this.usersPolicyService.getRoleDefinitions(true, null);
+    const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
+    const existingRole = roleMap.get(normalizedRoleName);
+    if (!existingRole || existingRole.school_id != null || existingRole.is_system) {
+      throw new NotFoundException('ไม่พบกลุ่มเมนูส่วนกลาง');
+    }
+
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
+    if (
+      !this.usersPolicyService.canGrantPermissions(
+        currentActor.permissions || [],
+        existingRole.default_permissions || [],
+        actorRole,
+        roleMap,
+      )
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์จัดการกลุ่มเมนูนี้');
+    }
+
+    const payload = this.usersPolicyService.normalizeRoleGroupPayload(
+      { ...data, scope_mode: 'flexible' },
+      existingRole,
+    );
+    if (await this.usersRepository.globalRoleLabelExists(payload.label, existingRole.name)) {
+      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในส่วนกลางแล้ว');
+    }
+    if (
+      !this.usersPolicyService.canGrantPermissions(
+        currentActor.permissions || [],
+        payload.default_permissions,
+        actorRole,
+        roleMap,
+      )
+    ) {
+      throw new ForbiddenException('ไม่สามารถกำหนดเมนูที่ตนเองไม่มีสิทธิ์เข้าถึงได้');
+    }
+
+    const row = await this.usersRepository.updateRole(existingRole.name, payload);
+    return { success: true, role: this.usersPolicyService.mapRoleRow(row) };
+  }
+
+  async deleteCouncilRoleGroup(actor: ActorContext | undefined, roleName: string) {
+    const currentActor = this.usersPolicyService.ensureActor(actor);
+    this.assertCouncilActor(currentActor);
+    const normalizedRoleName = this.usersPolicyService.normalizeRoleName(roleName);
+    const definitions = await this.usersPolicyService.getRoleDefinitions(true, null);
+    const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
+    const existingRole = roleMap.get(normalizedRoleName);
+    if (!existingRole || existingRole.school_id != null || existingRole.is_system) {
+      throw new NotFoundException('ไม่พบกลุ่มเมนูส่วนกลาง');
+    }
+
+    const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
+    if (
+      !this.usersPolicyService.canGrantPermissions(
+        currentActor.permissions || [],
+        existingRole.default_permissions || [],
+        actorRole,
+        roleMap,
+      )
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ลบกลุ่มเมนูนี้');
+    }
+    if ((existingRole.user_count || 0) > 0) {
+      throw new ForbiddenException('ไม่สามารถลบกลุ่มเมนูที่ยังมีผู้ใช้งานอยู่ได้');
+    }
+
+    await this.usersRepository.deleteRole(existingRole.name);
+    return { success: true };
   }
 
   async createRoleGroup(actor: ActorContext | undefined, data: CreateRoleGroupDto) {

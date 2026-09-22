@@ -66,6 +66,25 @@ describe('hasPermission', () => {
     expect(holders).toEqual(['ADMIN']);
   });
 
+  it('keeps DIRECTOR to view/list pages only, never a manage-* page (owner, 2026-09-22)', () => {
+    const director = SYSTEM_ROLE_DEFINITIONS.find((role) => role.name === 'DIRECTOR');
+    const manageIds = director?.default_permissions.filter((id) => id.startsWith('manage-'));
+    expect(manageIds).toEqual([]);
+    // The view counterpart of every page DIRECTOR used to manage directly
+    // stays available — demoting them didn't also take away their own school's
+    // read access, just the ability to edit it themselves.
+    expect(director?.default_permissions).toEqual(
+      expect.arrayContaining([
+        'home',
+        'dashboard',
+        'students',
+        'teachers',
+        'classrooms',
+        'attendance',
+      ]),
+    );
+  });
+
   it('keeps student self-service internal and retires the STUDENT role', () => {
     expect(PERMISSION_CATALOG.map((permission) => permission.id)).not.toContain('student-self');
     expect(SYSTEM_ROLE_DEFINITIONS.map((role) => role.name)).not.toContain('STUDENT');

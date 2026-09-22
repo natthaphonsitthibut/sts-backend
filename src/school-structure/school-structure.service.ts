@@ -32,16 +32,21 @@ import type {
   CreateClassroomTeacherAssignmentDto,
   CreateClassroomStudentCommentDto,
   CreateSchoolClassroomDto,
+  CreateSchoolDto,
   CreateSchoolTeacherMembershipDto,
+  ListAdministrativeDistrictsDto,
+  ListAdministrativeSubDistrictsDto,
   ListClassroomRosterDto,
   ListClassroomAttendanceHistoryDto,
   ListSchoolClassroomOptionsDto,
   ListSchoolClassroomsDto,
+  ListSchoolsQueryDto,
   ListSchoolTeacherCandidatesDto,
   ListSchoolTeachersDto,
   SetClassroomHomeroomTeachersDto,
   UpdateSchoolClassroomDto,
   UpdateClassroomPresentationDto,
+  UpdateSchoolDto,
   UpdateSchoolTeacherMembershipDto,
 } from './dto/school-structure.dto';
 import {
@@ -53,6 +58,7 @@ import { SchoolStructureRepository } from './school-structure.repository';
 import type { ClassroomStudentProblemCategory } from './classroom-student-comment.constants';
 import type {
   ClassroomTeacherAssignmentRow,
+  SchoolAdminRow,
   SchoolClassroomRow,
   SchoolTeacherMembershipRow,
 } from './school-structure.types';
@@ -245,6 +251,153 @@ export class SchoolStructureService {
         subDistrict: row.sub_district,
       })),
     };
+  }
+
+  private toSchoolAdmin(row: SchoolAdminRow) {
+    return {
+      id: row.id,
+      name: row.name,
+      province: row.province,
+      district: row.district,
+      subDistrict: row.sub_district,
+      schoolStatus: row.school_status,
+    };
+  }
+
+  /** จัดการข้อมูลโรงเรียน's own list — GlobalScopeGuard + manage-schools
+   *  already restrict who reaches this, so it is deliberately unscoped and
+   *  includes INACTIVE schools (the school CRUD page is exactly where those
+   *  get reactivated). */
+  async listSchoolsForAdmin(query: ListSchoolsQueryDto = {}) {
+    const page = resolvePage(query.page);
+    const limit = resolveLimit(query.limit);
+    const result = await this.repository.listAllSchools({
+      page,
+      limit,
+      search: query.search,
+      status: query.status,
+      province: query.province,
+      district: query.district,
+      subDistrict: query.subDistrict,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
+    });
+    return {
+      data: result.rows.map((row) => this.toSchoolAdmin(row)),
+      meta: buildPaginationMeta(page, limit, result.totalCount),
+    };
+  }
+
+  private async assertValidAdministrativeArea(
+    province: string | null,
+    district: string | null,
+    subDistrict: string | null,
+  ): Promise<void> {
+    if (!(await this.repository.isValidAdministrativeArea(province, district, subDistrict))) {
+      throw new BadRequestException('จังหวัด/อำเภอ/ตำบลไม่ถูกต้อง กรุณาเลือกจากรายการ');
+    }
+  }
+
+  async createSchool(dto: CreateSchoolDto, actor: AuthenticatedRequestUser) {
+    const province = dto.province || null;
+    const district = dto.district || null;
+    const subDistrict = dto.subDistrict || null;
+    await this.assertValidAdministrativeArea(province, district, subDistrict);
+    const actorId = resolveAuditActorId(actor);
+    const row = await this.repository.withTransaction(async (queryRunner) => {
+      const created = await this.repository.createSchool(
+        { name: dto.name, province, district, subDistrict },
+        queryRunner,
+      );
+      await this.repository.seedDefaultSchoolRoles(created.id, queryRunner);
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'MASTER_DATA_EDIT',
+          targetType: 'schools',
+          targetId: String(created.id),
+          metadata: {
+            op: 'create',
+            changedFields: ['name', 'province', 'district', 'subDistrict'],
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return created;
+    });
+    return { data: this.toSchoolAdmin(row) };
+  }
+
+  async updateSchool(id: number, dto: UpdateSchoolDto, actor: AuthenticatedRequestUser) {
+    const actorId = resolveAuditActorId(actor);
+    const row = await this.repository.withTransaction(async (queryRunner) => {
+      const existing = await this.repository.findSchoolById(id, queryRunner);
+      if (!existing) throw new NotFoundException('ไม่พบโรงเรียน');
+
+      const name = dto.name ?? existing.name;
+      const province = dto.province !== undefined ? dto.province || null : existing.province;
+      const district = dto.district !== undefined ? dto.district || null : existing.district;
+      const subDistrict =
+        dto.subDistrict !== undefined ? dto.subDistrict || null : existing.sub_district;
+      const schoolStatus = dto.schoolStatus ?? existing.school_status;
+      if (
+        dto.province !== undefined ||
+        dto.district !== undefined ||
+        dto.subDistrict !== undefined
+      ) {
+        await this.assertValidAdministrativeArea(province, district, subDistrict);
+      }
+
+      const updated = await this.repository.updateSchool(
+        id,
+        { name, province, district, subDistrict, schoolStatus },
+        queryRunner,
+      );
+      if (!updated) throw new NotFoundException('ไม่พบโรงเรียน');
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: actor.username,
+          action: 'MASTER_DATA_EDIT',
+          targetType: 'schools',
+          targetId: String(id),
+          metadata: {
+            op: 'update',
+            changedFields: Object.keys(dto),
+          },
+          ip: null,
+        },
+        queryRunner,
+      );
+      return updated;
+    });
+    return { data: this.toSchoolAdmin(row) };
+  }
+
+  /** "ลบ" is a deactivate, not a real DELETE — `schools.id` is referenced
+   *  ON DELETE RESTRICT from classrooms/teachers/students/attendance/etc, so
+   *  a hard delete would fail (or worse, cascade) the moment any real data
+   *  exists under the school. INACTIVE already drops it from every scoped
+   *  picker (`listScopedSchools` filters on it) without touching that data. */
+  async deactivateSchool(id: number, actor: AuthenticatedRequestUser) {
+    return this.updateSchool(id, { schoolStatus: 'INACTIVE' }, actor);
+  }
+
+  async listAdministrativeProvinces() {
+    const rows = await this.repository.listAdministrativeProvinces();
+    return { data: rows.map((row) => ({ code: row.code, name: row.name_th })) };
+  }
+
+  async listAdministrativeDistricts(dto: ListAdministrativeDistrictsDto) {
+    const rows = await this.repository.listAdministrativeDistricts(dto.province);
+    return { data: rows.map((row) => ({ code: row.code, name: row.name_th })) };
+  }
+
+  async listAdministrativeSubDistricts(dto: ListAdministrativeSubDistrictsDto) {
+    const rows = await this.repository.listAdministrativeSubDistricts(dto.province, dto.district);
+    return { data: rows.map((row) => ({ code: row.code, name: row.name_th })) };
   }
 
   async listClassrooms(query: ListSchoolClassroomsDto, actor: AuthenticatedRequestUser) {
