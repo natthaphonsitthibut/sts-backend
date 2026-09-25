@@ -102,6 +102,8 @@ export const AUDIT_LOG_DOMAINS = [
   'attendance',
   'timetable',
   'subjects',
+  // Every domain at once — the council's บันทึกการใช้งาน page (owner, 2026-09-25).
+  'all',
 ] as const;
 
 export type AuditLogDomain = (typeof AUDIT_LOG_DOMAINS)[number];

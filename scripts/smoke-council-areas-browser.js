@@ -276,6 +276,27 @@ async function main() {
     );
     console.log('ok an area admin manages its own area groups from the menu');
 
+    // บันทึกการใช้งาน: one page for the council's ผู้ดูแลระบบ, inside its scope.
+    assert(
+      await chrome.evaluate(
+        `[...document.querySelectorAll('nav a')].some((a) => a.getAttribute('href') === '/council/audit-log')`,
+      ),
+      'an area admin is not shown บันทึกการใช้งาน',
+    );
+    await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/council/audit-log` });
+    await waitFor(
+      async () =>
+        await chrome.evaluate(
+          `document.body.innerText.includes('รายการทั้งหมด') && !document.body.innerText.includes('ไม่มีสิทธิ์')`,
+        ),
+      'the council log page did not render',
+    );
+    const logStatus = await chrome.evaluate(`fetch(${JSON.stringify(
+      `${BACKEND_URL}/api/audit-log?domain=all&page=1&limit=5`,
+    )}, { credentials: 'include' }).then(async (response) =>
+      response.status === 200 ? 200 : response.status + ' ' + (await response.text()))`);
+    console.log('ok an area admin opens บันทึกการใช้งาน within its scope');
+
     // 3. A new council account starts at the header's area, before any group is picked,
     //    and is offered only council groups.
     await signIn(national, 'ADMIN', { global: true }, { province: PROVINCE, district: DISTRICT });
