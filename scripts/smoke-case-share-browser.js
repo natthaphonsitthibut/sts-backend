@@ -204,6 +204,44 @@ async function main() {
     );
     console.log('ok round 1 shares its link beside ยกเลิกการมอบหมาย');
 
+    // ส่งลิงก์ผ่าน LINE sits beside it — the teacher-link page's button. Here
+    // nobody can receive LINE (not switched on / teacher not verified), so it
+    // is disabled with the reason, and the API records why it did not send.
+    // It lives inside the แชร์ dialog (still open here), above แชร์ผ่าน.
+    const lineButton = await chrome.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')].find((b) =>
+        b.offsetParent !== null && b.innerText.trim() === 'ส่งลิงก์ผ่าน LINE');
+      if (!button) return null;
+      const reason = button.parentElement?.querySelector('p')?.innerText ?? '';
+      return { label: reason, disabled: button.disabled };
+    })()`);
+    assert(lineButton, 'the ส่งลิงก์ผ่าน LINE button is missing from the แชร์ dialog');
+    assert(
+      lineButton.disabled,
+      `LINE button should be disabled here: ${JSON.stringify(lineButton)}`,
+    );
+    const sent = await chrome.evaluate(`fetch(${JSON.stringify(
+      `${BACKEND_URL}/api/cases/`,
+    )} + ${caseId} + '/rounds/' + ${JSON.stringify(taskIds[0])} + '/send-line', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deliveryRequestId: crypto.randomUUID() }),
+    }).then(async (response) => ({ status: response.status, body: await response.json() }))`);
+    assert(
+      sent.status === 200 && sent.body.data.status === 'NOT_READY',
+      `send-line without a reachable teacher returned ${JSON.stringify(sent)}`,
+    );
+    const [recorded] = await dataSource.query(
+      `SELECT line_delivery_status, line_delivery_failure_code FROM task_links WHERE task_id = $1`,
+      [taskIds[0]],
+    );
+    assert(
+      recorded.line_delivery_status === 'NOT_READY' && recorded.line_delivery_failure_code,
+      `delivery state was not recorded: ${JSON.stringify(recorded)}`,
+    );
+    console.log(
+      `ok ส่งลิงก์ผ่าน LINE is in the แชร์ dialog (${lineButton.label}); ${recorded.line_delivery_failure_code} recorded`,
+    );
+
     // Cancel round 1 and assign round 2: round 2 shares a different link,
     // round 1 hands out nothing.
     await caseService.cancelCaseAssignment(

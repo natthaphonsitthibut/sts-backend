@@ -253,6 +253,40 @@ interface SettingValueRow extends QueryResultRow {
   setting_value?: unknown;
 }
 
+/** The teacher's current verified LINE account, as the teacher-link page reads it. */
+const ROUND_LINE_ACCOUNT_JOIN_SQL = `
+  LEFT JOIN LATERAL (
+    SELECT account.provider_user_id, account.friend_state
+    FROM teacher_messaging_accounts account
+    WHERE account.teacher_id = teacher.id
+      AND account.provider = 'LINE'
+      AND account.unlinked_at IS NULL
+      AND account.deleted_at IS NULL
+    ORDER BY account.verified_at DESC, account.id DESC
+    LIMIT 1
+  ) line_account ON TRUE
+`;
+
+export type RoundLineNotReadyCode =
+  | 'ASSIGNEE_UNAVAILABLE'
+  | 'MESSAGING_DISABLED'
+  | 'ACCOUNT_NOT_VERIFIED'
+  | 'ACCOUNT_NOT_REACHABLE';
+
+export interface RoundLineLinkRow {
+  id: string;
+  task_id: string;
+  status: string;
+  expires_at: string | Date;
+  assigned_teacher_id: string | null;
+  task_type: string | null;
+  student_name: string | null;
+  student_school: string | null;
+  line_provider_user_id: string | null;
+  line_friend_state: string | null;
+  magic_link: string | null;
+}
+
 @Injectable()
 export class TaskRepository {
   private readonly logger = new Logger(TaskRepository.name);
@@ -2924,6 +2958,13 @@ export class TaskRepository {
         tl.assignment_note,
         tl.status AS link_status,
         tl.token_encrypted AS link_token_encrypted,
+        tl.assigned_teacher_id::text AS assigned_teacher_id,
+        tl.line_delivery_teacher_id::text AS line_delivery_teacher_id,
+        tl.line_delivery_status,
+        tl.line_delivery_failure_code,
+        tl.line_delivered_at,
+        round_line_account.provider_user_id AS line_provider_user_id,
+        round_line_account.friend_state AS line_friend_state,
         tl.cancelled_at,
         tl.cancel_reason,
         COALESCE(
@@ -2979,6 +3020,20 @@ export class TaskRepository {
       FROM tasks t
       LEFT JOIN task_links tl ON tl.task_id = t.id AND tl.deleted_at IS NULL
       LEFT JOIN users cancelled_by_user ON cancelled_by_user.id = tl.cancelled_by
+      LEFT JOIN LATERAL (
+        SELECT account.provider_user_id, account.friend_state
+        FROM teacher_messaging_accounts account
+        JOIN teachers account_teacher
+          ON account_teacher.id = account.teacher_id
+         AND account_teacher.teacher_status = 'ACTIVE'
+         AND account_teacher.deleted_at IS NULL
+        WHERE account.teacher_id = tl.assigned_teacher_id
+          AND account.provider = 'LINE'
+          AND account.unlinked_at IS NULL
+          AND account.deleted_at IS NULL
+        ORDER BY account.verified_at DESC, account.id DESC
+        LIMIT 1
+      ) round_line_account ON TRUE
       LEFT JOIN teachers current_assignee_teacher
         ON current_assignee_teacher.id = tl.assigned_teacher_id
        AND current_assignee_teacher.deleted_at IS NULL
@@ -3089,6 +3144,125 @@ export class TaskRepository {
           ? this.resolveMagicLink(link_token_encrypted as string | null)
           : null,
     }));
+  }
+
+  /**
+   * The link of one assignment round of a case, with what a LINE send needs:
+   * who it is assigned to, that teacher's verified LINE account, and the
+   * wording's student/school/deadline. Only a link that still opens is found.
+   */
+  async findRoundLinkForLine(caseId: number, taskId: string): Promise<RoundLineLinkRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+      SELECT
+        tl.id,
+        tl.task_id,
+        tl.status,
+        tl.expires_at,
+        tl.token_encrypted,
+        tl.assigned_teacher_id::text AS assigned_teacher_id,
+        t.task_type,
+        c.student_name,
+        c.student_school,
+        line_account.provider_user_id AS line_provider_user_id,
+        line_account.friend_state AS line_friend_state
+      FROM task_links tl
+      JOIN tasks t ON t.id = tl.task_id AND t.deleted_at IS NULL
+      JOIN cases c ON c.id = t.case_id
+      LEFT JOIN teachers teacher
+        ON teacher.id = tl.assigned_teacher_id
+       AND teacher.teacher_status = 'ACTIVE'
+       AND teacher.deleted_at IS NULL
+      ${ROUND_LINE_ACCOUNT_JOIN_SQL}
+      WHERE t.case_id = $1
+        AND tl.task_id = $2::uuid
+        AND tl.deleted_at IS NULL
+        AND tl.status IN ('ACTIVE', 'SCHEDULED')
+      ORDER BY tl.created_at DESC, tl.id DESC
+      LIMIT 1
+    `,
+      [caseId, taskId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const { token_encrypted, ...rest } = row;
+    return {
+      ...(rest as Omit<RoundLineLinkRow, 'magic_link'>),
+      magic_link: this.resolveMagicLink(token_encrypted as string | null),
+    };
+  }
+
+  async recordRoundLineNotReady(
+    linkId: string,
+    teacherId: string | null,
+    failureCode: RoundLineNotReadyCode,
+    actorId: number | null,
+  ): Promise<void> {
+    await this.query(
+      `UPDATE task_links
+       SET line_delivery_teacher_id = $2::bigint,
+           line_delivery_status = 'NOT_READY',
+           line_delivery_failure_code = $3,
+           line_delivery_request_id = NULL,
+           line_delivered_at = NULL,
+           updated_by = $4
+       WHERE id = $1::uuid AND status IN ('ACTIVE', 'SCHEDULED')`,
+      [linkId, teacherId, failureCode, actorId],
+    );
+  }
+
+  /**
+   * Claims the send for one request id: a second press with the same id, or
+   * any press while another send is still in flight (under five minutes),
+   * claims nothing — so a double click never sends twice.
+   */
+  async claimRoundLine(
+    linkId: string,
+    teacherId: string,
+    deliveryRequestId: string,
+    actorId: number | null,
+  ): Promise<boolean> {
+    const result = await this.query<{ id: string }>(
+      `UPDATE task_links
+       SET line_delivery_teacher_id = $2::bigint,
+           line_delivery_status = 'SENDING',
+           line_delivery_failure_code = NULL,
+           line_delivery_attempt_count = line_delivery_attempt_count + 1,
+           line_delivery_request_id = $3::uuid,
+           line_delivery_last_attempted_at = now(),
+           line_delivered_at = NULL,
+           updated_by = $4
+       WHERE id = $1::uuid
+         AND status IN ('ACTIVE', 'SCHEDULED')
+         AND assigned_teacher_id = $2::bigint
+         AND (
+           line_delivery_status <> 'SENDING'
+           OR line_delivery_last_attempted_at < now() - interval '5 minutes'
+         )
+         AND line_delivery_request_id IS DISTINCT FROM $3::uuid
+       RETURNING id`,
+      [linkId, teacherId, deliveryRequestId, actorId],
+    );
+    return result.rows.length > 0;
+  }
+
+  async finishRoundLine(
+    linkId: string,
+    deliveryRequestId: string,
+    delivered: boolean,
+    actorId: number | null,
+  ): Promise<void> {
+    await this.query(
+      `UPDATE task_links
+       SET line_delivery_status = CASE WHEN $3::boolean THEN 'SENT' ELSE 'FAILED' END,
+           line_delivery_failure_code = CASE WHEN $3::boolean THEN NULL ELSE 'PROVIDER_UNAVAILABLE' END,
+           line_delivered_at = CASE WHEN $3::boolean THEN now() ELSE NULL END,
+           updated_by = $4
+       WHERE id = $1::uuid
+         AND line_delivery_request_id = $2::uuid
+         AND line_delivery_status = 'SENDING'`,
+      [linkId, deliveryRequestId, delivered, actorId],
+    );
   }
 
   // Explicit safe column list (no created_by/updated_by/source actor ids) so a

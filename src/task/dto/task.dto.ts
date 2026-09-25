@@ -424,6 +424,12 @@ export class CancelCaseAssignmentDto {
   cancel_reason!: string;
 }
 
+export class SendRoundLineDto {
+  /** Stable across transport retries, so a repeated press never sends twice. */
+  @IsUUID('4')
+  deliveryRequestId!: string;
+}
+
 export class OpenCaseDto {
   @IsUUID()
   student_id!: string;

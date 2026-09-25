@@ -448,6 +448,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'assignee', label: 'ผู้รับมอบหมาย' },
     ],
   },
+  TASK_LINK_LINE_SEND: {
+    domain: 'tasks',
+    label: 'ส่งลิงก์มอบหมายผ่าน LINE',
+    detailKeys: [
+      { key: 'caseId', label: 'เคส' },
+      { key: 'delivered', label: 'ส่งสำเร็จ' },
+    ],
+  },
   TASK_EXPIRE: {
     domain: 'tasks',
     label: 'ลิงก์มอบหมายหมดอายุ',
@@ -652,6 +660,7 @@ const LINK_HISTORY_ACTIONS: AuditAction[] = [
   'TASK_CREATE',
   'TASK_DELETE',
   'TASK_CANCEL',
+  'TASK_LINK_LINE_SEND',
   'TASK_EXPIRE',
   'LINK_LOCK',
   'LINK_UNLOCK',
