@@ -79,6 +79,11 @@ export class TeachersService {
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
   ) {}
 
+  /** Orders a multi-school teacher's memberships only; access is checked separately. */
+  private preferredScope(actor: AuthenticatedRequestUser): DataScope {
+    return normalizeDataScope(actor.data_scope) ?? {};
+  }
+
   /**
    * Teacher records are school-owned personnel data, so the actor needs the
    * teacher permission AND a scope that resolves to whole schools. A grade- or
@@ -153,7 +158,11 @@ export class TeachersService {
       ) &&
       hasWholeSchoolTeacherScope
     ) {
-      const teacher = await this.repository.findTeacherById(teacherId);
+      const teacher = await this.repository.findTeacherById(
+        teacherId,
+        undefined,
+        this.preferredScope(actor),
+      );
       if (!teacher) throw new NotFoundException('ไม่พบข้อมูลครู');
       const allowed = await this.repository.isSchoolInScope(teacher.school_id, scope);
       if (!allowed) throw new NotFoundException('ไม่พบข้อมูลครู');
@@ -328,7 +337,11 @@ export class TeachersService {
   }
 
   async findOne(teacherId: string, actor: AuthenticatedRequestUser) {
-    const teacher = await this.repository.findTeacherById(teacherId);
+    const teacher = await this.repository.findTeacherById(
+      teacherId,
+      undefined,
+      this.preferredScope(actor),
+    );
     if (!teacher) throw new NotFoundException('ไม่พบข้อมูลครู');
     await this.assertSchoolAccess(teacher.school_id, actor);
     return { success: true, data: this.toResponse(teacher) };
@@ -406,7 +419,11 @@ export class TeachersService {
           queryRunner,
         );
 
-        const row = await this.repository.findTeacherById(teacherId, queryRunner);
+        const row = await this.repository.findTeacherById(
+          teacherId,
+          queryRunner,
+          this.preferredScope(actor),
+        );
         if (!row) throw new NotFoundException('ไม่พบข้อมูลครูหลังบันทึก');
         return row;
       });
@@ -427,7 +444,11 @@ export class TeachersService {
     }
     try {
       const updated = await this.repository.withTransaction(async (queryRunner) => {
-        const existing = await this.repository.findTeacherById(teacherId, queryRunner);
+        const existing = await this.repository.findTeacherById(
+          teacherId,
+          queryRunner,
+          this.preferredScope(actor),
+        );
         if (!existing) throw new NotFoundException('ไม่พบข้อมูลครู');
         await this.assertSchoolAccess(existing.school_id, actor);
 
@@ -464,7 +485,11 @@ export class TeachersService {
           queryRunner,
         );
 
-        const row = await this.repository.findTeacherById(teacherId, queryRunner);
+        const row = await this.repository.findTeacherById(
+          teacherId,
+          queryRunner,
+          this.preferredScope(actor),
+        );
         if (!row) throw new NotFoundException('ไม่พบข้อมูลครูหลังบันทึก');
         return row;
       });
@@ -497,7 +522,11 @@ export class TeachersService {
       throw new BadRequestException('กรุณาเลือกรูปหรือระบุการนำรูปออก');
     }
 
-    const existing = await this.repository.findTeacherById(teacherId);
+    const existing = await this.repository.findTeacherById(
+      teacherId,
+      undefined,
+      this.preferredScope(actor),
+    );
     if (!existing) throw new NotFoundException('ไม่พบข้อมูลครู');
     await this.assertSchoolAccess(existing.school_id, actor);
 
@@ -508,7 +537,11 @@ export class TeachersService {
 
     try {
       await this.repository.withTransaction(async (queryRunner) => {
-        const teacher = await this.repository.findTeacherById(teacherId, queryRunner);
+        const teacher = await this.repository.findTeacherById(
+          teacherId,
+          queryRunner,
+          this.preferredScope(actor),
+        );
         if (!teacher) throw new NotFoundException('ไม่พบข้อมูลครู');
         await this.assertSchoolAccess(teacher.school_id, actor);
         replacedStorageKey = teacher.photo_storage_key;
@@ -547,7 +580,11 @@ export class TeachersService {
       });
     }
 
-    const updated = await this.repository.findTeacherById(teacherId);
+    const updated = await this.repository.findTeacherById(
+      teacherId,
+      undefined,
+      this.preferredScope(actor),
+    );
     if (!updated) throw new NotFoundException('ไม่พบข้อมูลครูหลังบันทึก');
     return { success: true, data: this.toResponse(updated) };
   }
@@ -558,7 +595,11 @@ export class TeachersService {
    * object storage, or a local path in development. Never a public URL.
    */
   async resolvePhoto(teacherId: string, actor: AuthenticatedRequestUser): Promise<FileServeResult> {
-    const teacher = await this.repository.findTeacherById(teacherId);
+    const teacher = await this.repository.findTeacherById(
+      teacherId,
+      undefined,
+      this.preferredScope(actor),
+    );
     if (!teacher?.photo_storage_key) throw new NotFoundException('ไม่พบรูปประจำตัวครู');
     await this.assertSchoolAccess(teacher.school_id, actor);
     const result = await this.storage.resolve(teacher.photo_storage_key);
@@ -571,7 +612,11 @@ export class TeachersService {
     const actorId = resolveAuditActorId(actor);
     await this.repository.withTransaction(async (queryRunner) => {
       await this.repository.lockHomeroomClassroomsForTeacher(teacherId, queryRunner);
-      const existing = await this.repository.findTeacherById(teacherId, queryRunner);
+      const existing = await this.repository.findTeacherById(
+        teacherId,
+        queryRunner,
+        this.preferredScope(actor),
+      );
       if (!existing) throw new NotFoundException('ไม่พบข้อมูลครู');
       await this.assertSchoolAccess(existing.school_id, actor);
       if (existing.membership_status !== 'ACTIVE') {

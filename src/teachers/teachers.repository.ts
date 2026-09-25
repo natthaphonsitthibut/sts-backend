@@ -144,7 +144,40 @@ export class TeachersRepository {
     return { rows: result.rows, totalCount: countResult.rows[0]?.count ?? 0 };
   }
 
-  async findTeacherById(teacherId: string, queryRunner?: QueryRunner): Promise<TeacherRow | null> {
+  /**
+   * One teacher, through one of its school memberships. A teacher who belongs
+   * to several schools has one row per membership; `preferScope` puts a
+   * membership inside the caller's scope first. Without it the newest active
+   * membership won even when it was another school's, so a school's own admin
+   * got "ไม่พบข้อมูลครู" for a teacher on its own staff.
+   */
+  async findTeacherById(
+    teacherId: string,
+    queryRunner?: QueryRunner,
+    preferScope?: DataScope,
+  ): Promise<TeacherRow | null> {
+    // Only the school/area levels: a membership row has no grade or room, and
+    // passing those on would reference columns this query does not have.
+    const scopeQuery = preferScope
+      ? buildDataScopeQuery(
+          {
+            global: preferScope.global,
+            own_only: preferScope.own_only,
+            school_ids: preferScope.school_ids,
+            provinces: preferScope.provinces,
+            districts: preferScope.districts,
+            sub_districts: preferScope.sub_districts,
+          },
+          {
+            school_id: 'school.id',
+            province: 'school.province',
+            district: 'school.district',
+            sub_district: 'school.sub_district',
+          },
+          2,
+        )
+      : { sql: '', params: [] as unknown[] };
+    const inScopeOrder = scopeQuery.sql ? `CASE WHEN ${scopeQuery.sql} THEN 0 ELSE 1 END,` : '';
     const sql = `
       SELECT ${TEACHER_SELECT_SQL}
       FROM teachers teacher
@@ -154,14 +187,16 @@ export class TeachersRepository {
       LEFT JOIN schools school ON school.id = membership.school_id
       WHERE teacher.id = $1 AND teacher.deleted_at IS NULL
       ORDER BY
+        ${inScopeOrder}
         CASE WHEN membership.membership_status = 'ACTIVE' THEN 0 ELSE 1 END,
         membership.started_on DESC,
         membership.id DESC
       LIMIT 1
     `;
+    const params = [teacherId, ...scopeQuery.params];
     const result = queryRunner
-      ? await createSqlQueryExecutor(queryRunner).query<TeacherRow>(sql, [teacherId])
-      : await queryDataSource<TeacherRow>(this.dataSource, sql, [teacherId]);
+      ? await createSqlQueryExecutor(queryRunner).query<TeacherRow>(sql, params)
+      : await queryDataSource<TeacherRow>(this.dataSource, sql, params);
     return result.rows[0] ?? null;
   }
 
