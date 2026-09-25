@@ -1,5 +1,5 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
-import { AuthGuard, PermissionsGuard, RolesGuard } from '../auth';
+import { AuthGuard, PermissionsGuard } from '../auth';
 import { PERMISSIONS_KEY, ROLES_KEY } from '../auth/permissions.decorator';
 import { UsersController } from './users.controller';
 
@@ -13,14 +13,12 @@ describe('UsersController council role-group access', () => {
     'createCouncilRoleGroup',
     'updateCouncilRoleGroup',
     'deleteCouncilRoleGroup',
-  ] as const)('requires ADMIN and permission guards for %s', (method) => {
+  ] as const)('requires the permission, not the national ADMIN group, for %s', (method) => {
+    // Area council admins manage their own area's groups (owner with BA,
+    // 2026-09-25); the service keeps them inside their scope.
     const fn = handler(method);
-    expect(Reflect.getMetadata(GUARDS_METADATA, fn)).toEqual([
-      AuthGuard,
-      RolesGuard,
-      PermissionsGuard,
-    ]);
-    expect(Reflect.getMetadata(ROLES_KEY, fn)).toEqual(['ADMIN']);
+    expect(Reflect.getMetadata(GUARDS_METADATA, fn)).toEqual([AuthGuard, PermissionsGuard]);
+    expect(Reflect.getMetadata(ROLES_KEY, fn)).toBeUndefined();
     expect(Reflect.getMetadata(PERMISSIONS_KEY, fn)).toEqual(['manage-role-groups']);
   });
 });

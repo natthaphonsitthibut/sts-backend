@@ -6,6 +6,7 @@ import {
   HttpException,
   HttpStatus,
   ParseIntPipe,
+  ParseUUIDPipe,
   Param,
   Post,
   UseGuards,
@@ -17,14 +18,23 @@ import {
   RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
+import { CaseRoundLineService } from './case-round-line.service';
 import { CaseService } from './case.service';
-import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
+import {
+  CancelCaseAssignmentDto,
+  OpenCaseDto,
+  ReviewCaseDto,
+  SendRoundLineDto,
+} from './dto/task.dto';
 import { getTaskErrorMessage, hasHttpStatusGetter } from './task.types';
 
 @UseGuards(AuthGuard)
 @Controller('api/cases')
 export class CaseController {
-  constructor(private readonly caseService: CaseService) {}
+  constructor(
+    private readonly caseService: CaseService,
+    private readonly caseRoundLine: CaseRoundLineService,
+  ) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('dashboard')
@@ -49,6 +59,20 @@ export class CaseController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return await this.caseService.getCase(caseId, actor);
+  }
+
+  /** ส่งลิงก์ผ่าน LINE: one round's link, straight to its assigned teacher. */
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('dashboard')
+  @Post(':caseId/rounds/:taskId/send-line')
+  @HttpCode(HttpStatus.OK)
+  async sendRoundLine(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('taskId', new ParseUUIDPipe()) taskId: string,
+    @Body() body: SendRoundLineDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.caseRoundLine.send(caseId, taskId, body.deliveryRequestId, actor);
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)

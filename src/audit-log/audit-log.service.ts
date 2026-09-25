@@ -8,7 +8,7 @@ import {
 import { DataSource } from 'typeorm';
 import type { AuthenticatedRequestUser, DataScope } from '../auth';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
-import { hasPermission } from '../auth/permissions.constants';
+import { areaRoleKind, hasPermission } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
   resolveLimit,
@@ -448,6 +448,14 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'assignee', label: 'ผู้รับมอบหมาย' },
     ],
   },
+  TASK_LINK_LINE_SEND: {
+    domain: 'tasks',
+    label: 'ส่งลิงก์มอบหมายผ่าน LINE',
+    detailKeys: [
+      { key: 'caseId', label: 'เคส' },
+      { key: 'delivered', label: 'ส่งสำเร็จ' },
+    ],
+  },
   TASK_EXPIRE: {
     domain: 'tasks',
     label: 'ลิงก์มอบหมายหมดอายุ',
@@ -646,12 +654,15 @@ const DOMAIN_PERMISSIONS: Record<AuditLogDomain, string[]> = {
   attendance: ['attendance'],
   timetable: ['manage-subjects'],
   subjects: ['manage-subjects'],
+  // Checked with the council-admin role below, not by a page alone.
+  all: ['audit-log'],
 };
 
 const LINK_HISTORY_ACTIONS: AuditAction[] = [
   'TASK_CREATE',
   'TASK_DELETE',
   'TASK_CANCEL',
+  'TASK_LINK_LINE_SEND',
   'TASK_EXPIRE',
   'LINK_LOCK',
   'LINK_UNLOCK',
@@ -776,9 +787,17 @@ export class AuditLogService {
   }
 
   private assertDomainPermission(actor: AuthenticatedRequestUser, domain: AuditLogDomain): void {
-    const allowed = DOMAIN_PERMISSIONS[domain].some((permission) =>
-      hasPermission(actor.roles, actor.permissions, permission),
-    );
+    // The whole log is the council ผู้ดูแลระบบ's page — national or an area's
+    // own — and it still only shows events inside the actor's scope.
+    const councilAdmin =
+      domain !== 'all' ||
+      (actor.roles.some((role) => role === 'ADMIN' || areaRoleKind(role) === 'ADMIN') &&
+        (actor.data_scope?.school_ids?.length ?? 0) === 0);
+    const allowed =
+      councilAdmin &&
+      DOMAIN_PERMISSIONS[domain].some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      );
     if (!allowed || actor.data_scope?.own_only === true) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูประวัติส่วนนี้');
     }
@@ -795,7 +814,7 @@ export class AuditLogService {
       return LINK_HISTORY_ACTIONS;
     }
     return Object.entries(ACTION_DEFINITIONS)
-      .filter(([, definition]) => definition.domain === filters.domain)
+      .filter(([, definition]) => filters.domain === 'all' || definition.domain === filters.domain)
       .map(([action]) => action as AuditAction);
   }
 

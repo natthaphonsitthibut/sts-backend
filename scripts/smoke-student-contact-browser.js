@@ -859,7 +859,7 @@ async function main() {
       'Edit-page back button did not return to student detail',
     );
     assert(
-      String(await evaluate(client, 'document.body.innerText')).includes('จัดการนักเรียน'),
+      String(await evaluate(client, 'document.body.innerText')).includes('จัดการข้อมูลนักเรียน'),
       'Student detail breadcrumb lost the จัดการนักเรียน origin',
     );
 

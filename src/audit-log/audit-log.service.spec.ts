@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from './audit-log.service';
 
@@ -37,6 +37,48 @@ describe('AuditLogService', () => {
     expect(queries[0].params?.[0]).toEqual(
       expect.arrayContaining(['USER_CREATE', 'USER_DEACTIVATE', 'USER_TEMP_PASSWORD_REISSUE']),
     );
+  });
+
+  it('serves the whole log to council admins only, inside their scope', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const service = new AuditLogService({ createQueryRunner: () => queryRunner } as never);
+    const areaAdmin: AuthenticatedRequestUser = {
+      id: 2,
+      username: 'district.admin',
+      roles: ['A5001_BASE_ADMIN'],
+      permissions: ['audit-log'],
+      data_scope: { provinces: ['เชียงใหม่'], districts: ['เมืองเชียงใหม่'] },
+    };
+
+    await service.list(areaAdmin, { domain: 'all', page: 1, limit: 20 });
+    // Every domain's actions, with the actor's area as a condition.
+    expect(queries[0].params?.[0]).toEqual(
+      expect.arrayContaining(['USER_CREATE', 'TASK_CANCEL', 'STUDENT_OBSERVATION_CREATE']),
+    );
+    expect(queries[0].params).toContainEqual(['เชียงใหม่']);
+
+    const schoolAdmin = {
+      ...areaAdmin,
+      roles: ['S10010004_BASE_ADMIN'],
+      data_scope: { school_ids: [10010004] },
+    };
+    await expect(
+      service.list(schoolAdmin, { domain: 'all', page: 1, limit: 20 }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.list(
+        { ...areaAdmin, roles: ['A5001_BASE_EXECUTIVE'] },
+        { domain: 'all', page: 1, limit: 20 },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('filters user history by province scope', async () => {

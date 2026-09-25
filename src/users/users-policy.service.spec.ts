@@ -9,7 +9,7 @@ const definitions: RoleDefinition[] = [
     name: 'ADMIN',
     label: 'ผู้ดูแลระบบ',
     sort_order: 5,
-    default_permissions: ['home', 'manage-users-list', 'students', 'dashboard'],
+    default_permissions: ['home', 'manage-users-list', 'students', 'dashboard', 'settings'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -210,6 +210,80 @@ describe('UsersPolicyService functional roles and data scope', () => {
         roleMap,
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('keeps a retired national group away from council accounts', async () => {
+    const director = definitions.find((role) => role.name === 'DIRECTOR');
+    expect(director).toBeDefined();
+    const map = new Map([...roleMap, ['DIRECTOR', { ...director!, realm: 'retired' as const }]]);
+    await expect(
+      service.assertAssignablePayload(
+        globalAdmin,
+        { role: 'DIRECTOR', permissions: [], data_scope: { provinces: ['ชลบุรี'] } },
+        { allowEqualRole: false },
+        map,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    // An account already on it can still be saved.
+    await expect(
+      service.assertAssignablePayload(
+        globalAdmin,
+        { role: 'DIRECTOR', permissions: [], data_scope: { provinces: ['ชลบุรี'] } },
+        { allowEqualRole: false, currentRole: 'DIRECTOR' },
+        map,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('gives an area group only to accounts of exactly that area', async () => {
+    const areaGroup: RoleDefinition = {
+      id: 40,
+      name: 'A2001_BASE_ADMIN',
+      label: 'ผู้ดูแลระบบ',
+      default_permissions: ['home'],
+      scope_mode: 'flexible',
+      scope_policy: 'ASSIGNABLE',
+      is_assignable: true,
+      is_system: false,
+      school_id: null,
+      realm: 'council',
+      owner_area: {
+        province: 'ชลบุรี',
+        district: 'เมืองชลบุรี',
+        sub_district: null,
+        province_code: '20',
+        district_code: '2001',
+        sub_district_code: null,
+      },
+    };
+    const map = new Map([...roleMap, [areaGroup.name, areaGroup]]);
+    const assign = (role: string, data_scope: Record<string, unknown>) =>
+      service.assertAssignablePayload(
+        globalAdmin,
+        { role, permissions: ['home'], data_scope },
+        { allowEqualRole: false },
+        map,
+      );
+
+    await expect(
+      assign('A2001_BASE_ADMIN', { provinces: ['ชลบุรี'], districts: ['เมืองชลบุรี'] }),
+    ).resolves.toBeUndefined();
+    // Its sub-districts use their own groups, not the district's.
+    await expect(
+      assign('A2001_BASE_ADMIN', {
+        provinces: ['ชลบุรี'],
+        districts: ['เมืองชลบุรี'],
+        sub_districts: ['บ้านสวน'],
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(assign('A2001_BASE_ADMIN', { provinces: ['ชลบุรี'] })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    // An area account takes its area's groups, not the national ones.
+    await expect(
+      assign('ADMIN', { provinces: ['ชลบุรี'], districts: ['เมืองชลบุรี'] }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(assign('ADMIN', { global: true })).resolves.toBeUndefined();
   });
 
   it('rejects assignment of the retired STUDENT role', async () => {

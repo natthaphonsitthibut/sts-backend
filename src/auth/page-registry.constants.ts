@@ -24,64 +24,60 @@ export interface AppPageDefinition {
   group: string | null;
   /** Extra data-scope boundary enforced for page CRUD, if any. */
   scopePolicy?: 'global-only';
+  /**
+   * `held-only`: a council page that an account admin may hand out only when it
+   * holds the page itself. Schools manage their own accounts, but council pages
+   * are not theirs to give (owner, 2026-09-25). `global-only` pages are always
+   * held-only; this marks the council pages that are not global-only.
+   */
+  grantPolicy?: 'held-only';
 }
 
 export const APP_PAGE_GROUPS = {
-  data: 'จัดการข้อมูล',
-  attendance: 'ระบบเช็กชื่อ',
   users: 'จัดการสิทธิ์ผู้ใช้งาน',
+  data: 'จัดการข้อมูล',
+  transfer: 'นำเข้าและส่งออกข้อมูล',
 } as const;
 
+/** Sidebar order and wording from the owner's mockups (2026-09-25). */
 export const APP_PAGES: AppPageDefinition[] = [
   { id: 'home', title: 'หน้าหลัก', group: null },
   { id: 'dashboard', title: 'รายงานสถานะนักเรียน', group: null },
-  { id: 'students', title: 'รายชื่อนักเรียน', group: null },
-  { id: 'teachers', title: 'รายชื่อครู', group: null },
   { id: 'classrooms', title: 'ห้องเรียนทั้งหมด', group: null },
-  { id: 'nl_query:use', title: 'ถามข้อมูลด้วยภาษาไทย', group: null },
-  { id: 'manage-students', title: 'จัดการนักเรียน', group: APP_PAGE_GROUPS.users },
-  { id: 'manage-teachers', title: 'จัดการข้อมูลครู', group: APP_PAGE_GROUPS.users },
+  { id: 'teachers', title: 'รายชื่อคุณครู', group: null },
+  { id: 'students', title: 'รายชื่อนักเรียน', group: null },
+  { id: 'attendance', title: 'เช็กชื่อ', group: null },
+  { id: 'manage-users-list', title: 'จัดการผู้ใช้งาน', group: APP_PAGE_GROUPS.users },
+  { id: 'manage-role-groups', title: 'จัดการกลุ่มเมนู', group: APP_PAGE_GROUPS.users },
   {
     id: 'manage-school-structure',
     title: 'จัดการภาคเรียนและห้องเรียน',
     group: APP_PAGE_GROUPS.data,
   },
+  { id: 'manage-subjects', title: 'จัดการข้อมูลหลักสูตร', group: APP_PAGE_GROUPS.data },
+  { id: 'manage-teachers', title: 'จัดการข้อมูลคุณครู', group: APP_PAGE_GROUPS.data },
   {
-    id: 'manage-subjects',
-    title: 'จัดการหลักสูตร',
+    id: 'manage-classroom-links',
+    title: 'จัดการลิงก์คุณครู',
     group: APP_PAGE_GROUPS.data,
   },
-  { id: 'import-data', title: 'นำเข้าข้อมูล', group: APP_PAGE_GROUPS.data },
-  { id: 'export-data', title: 'ส่งออกข้อมูล', group: APP_PAGE_GROUPS.data },
+  { id: 'manage-students', title: 'จัดการข้อมูลนักเรียน', group: APP_PAGE_GROUPS.data },
   {
     id: 'master-data',
-    title: 'ข้อมูลพื้นฐาน',
+    title: 'จัดการข้อมูลพื้นฐาน',
     group: APP_PAGE_GROUPS.data,
     scopePolicy: 'global-only',
   },
-  { id: 'attendance', title: 'เช็กชื่อ', group: APP_PAGE_GROUPS.attendance },
-  {
-    id: 'manage-classroom-links',
-    title: 'จัดการลิงก์ห้องเรียน',
-    group: APP_PAGE_GROUPS.attendance,
-  },
-  {
-    id: 'manage-users-list',
-    title: 'จัดการผู้ใช้งาน',
-    group: APP_PAGE_GROUPS.users,
-  },
-  {
-    id: 'manage-role-groups',
-    title: 'จัดการกลุ่มเมนู',
-    group: APP_PAGE_GROUPS.users,
-  },
-  { id: 'settings', title: 'ตั้งค่าระบบ', group: null, scopePolicy: 'global-only' },
+  { id: 'import-data', title: 'นำเข้าข้อมูล', group: APP_PAGE_GROUPS.transfer },
+  { id: 'export-data', title: 'ส่งออกข้อมูล', group: APP_PAGE_GROUPS.transfer },
   {
     id: 'manage-schools',
     title: 'จัดการข้อมูลโรงเรียน',
     group: null,
     scopePolicy: 'global-only',
   },
+  { id: 'nl_query:use', title: 'แชตบอท', group: null, grantPolicy: 'held-only' },
+  { id: 'settings', title: 'ตั้งค่าระบบ', group: null, scopePolicy: 'global-only' },
 ];
 
 /**

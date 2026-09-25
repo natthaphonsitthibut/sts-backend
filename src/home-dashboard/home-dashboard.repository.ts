@@ -782,8 +782,22 @@ export class HomeDashboardRepository {
     actor: HomeDashboardActor,
     filters: HomeDashboardFilters,
   ): Promise<HomeDashboardFilterOptions['data']['options']> {
-    const scope = this.buildStudentScopeQuery(actor, filters);
+    // A level's choices must not be narrowed by the value picked at that same
+    // level: filtering by ม.1 used to leave ม.1 as the only grade, and room 1
+    // the only room, so a picked grade or room could never be changed. Grades
+    // ignore the grade/room pick; rooms follow the picked grade only.
+    const scope = this.buildStudentScopeQuery(actor, {
+      ...filters,
+      grade: undefined,
+      room: undefined,
+    });
     const whereSql = scope.sql ? `WHERE ${scope.sql}` : '';
+    const params = [...scope.params];
+    let roomGradeSql = '';
+    if (filters.grade) {
+      params.push(filters.grade);
+      roomGradeSql = ` AND grade_label = $${params.length}`;
+    }
     const result = await this.query<{
       provinces: HomeDashboardOption[];
       districts: HomeDashboardOption[];
@@ -820,10 +834,10 @@ export class HomeDashboardRepository {
           COALESCE(jsonb_agg(DISTINCT jsonb_build_object('value', grade_label, 'label', grade_label))
             FILTER (WHERE grade_label IS NOT NULL), '[]'::jsonb) AS grades,
           COALESCE(jsonb_agg(DISTINCT jsonb_build_object('value', room, 'label', room))
-            FILTER (WHERE room IS NOT NULL), '[]'::jsonb) AS rooms
+            FILTER (WHERE room IS NOT NULL${roomGradeSql}), '[]'::jsonb) AS rooms
         FROM scoped
       `,
-      scope.params,
+      params,
     );
     const row = result.rows[0] || {};
     return {

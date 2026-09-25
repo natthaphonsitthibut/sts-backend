@@ -1,5 +1,9 @@
 import { normalizeScopeArray, type DataScope } from './auth.types';
-import { GRANTABLE_PAGE_PERMISSIONS, NON_PAGE_PERMISSIONS } from './page-registry.constants';
+import {
+  APP_PAGES,
+  GRANTABLE_PAGE_PERMISSIONS,
+  NON_PAGE_PERMISSIONS,
+} from './page-registry.constants';
 
 export type RoleScopeMode =
   | 'flexible'
@@ -79,7 +83,79 @@ export const VALID_PERMISSION_IDS = PERMISSION_CATALOG.map((item) => item.id);
 // 20260821090000-CollapsePermissionsToPages. Keeping a second copy here as an
 // exported constant nothing reads would only give the two a way to disagree.
 
+// Council ผู้ดูแลระบบ holds every page — "แอดมินสภาก็คงทำได้ทุกอย่าง" (owner,
+// 2026-09-25) — so it can build any school's accounts and menu groups.
 const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS;
+
+/**
+ * The four default menu groups, one per sidebar mockup the owner supplied on
+ * 2026-09-25 (ผู้ดูแลระบบสภา, ผู้บริหารสภา, ผู้ดูแลระบบโรงเรียน, ผู้อำนวยการโรงเรียน).
+ * A migration applies these to rows that already exist; this file is what a
+ * fresh database and every newly created school start from.
+ *
+ * `audit-log` is not a menu entry. It is the history panel on นำเข้าข้อมูล and
+ * รายชื่อนักเรียน, so it goes to whichever group opens those pages.
+ */
+export const SCHOOL_ADMIN_DEFAULT_PERMISSIONS = [
+  'home',
+  'dashboard',
+  'classrooms',
+  'manage-users-list',
+  'manage-role-groups',
+  'manage-school-structure',
+  'manage-subjects',
+  'manage-teachers',
+  'manage-classroom-links',
+  'manage-students',
+  'import-data',
+  'export-data',
+  'audit-log',
+];
+
+/** ผอ. reads lists; managing them is the school admin's (owner, 2026-09-22). */
+export const DIRECTOR_DEFAULT_PERMISSIONS = [
+  'home',
+  'dashboard',
+  'classrooms',
+  'teachers',
+  'students',
+  // ส่งออกข้อมูล only — not นำเข้า (owner, 2026-09-25).
+  'export-data',
+  'audit-log',
+];
+
+// แชตบอท is ผู้บริหาร's alone — not ผอ. (owner, 2026-09-25).
+export const EXECUTIVE_DEFAULT_PERMISSIONS = ['home', 'dashboard', 'export-data', 'nl_query:use'];
+
+/** A school's own starter groups, created with the school (`S<id>_BASE_<key>`). */
+export const SCHOOL_ROLE_TEMPLATES = [
+  { key: 'ADMIN', label: 'ผู้ดูแลระบบ', default_permissions: SCHOOL_ADMIN_DEFAULT_PERMISSIONS },
+  { key: 'DIRECTOR', label: 'ผู้อำนวยการ', default_permissions: DIRECTOR_DEFAULT_PERMISSIONS },
+] as const;
+
+/**
+ * Each council area's (จ./อ./ต.) own starter groups, created the first time the
+ * area is used — the council's counterpart of `SCHOOL_ROLE_TEMPLATES` (owner
+ * with BA, 2026-09-25). An area's ผู้ดูแลระบบ holds every page except the
+ * national ones (`global-only`): those stay with the national council.
+ */
+export const AREA_ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter(
+  (id) => !APP_PAGES.some((page) => page.id === id && page.scopePolicy === 'global-only'),
+);
+
+/** Name prefix of an area's own groups: `A<area code>_BASE_<key>`. */
+export const AREA_ROLE_TEMPLATES = [
+  { key: 'ADMIN', label: 'ผู้ดูแลระบบ', default_permissions: AREA_ADMIN_DEFAULT_PERMISSIONS },
+  { key: 'EXECUTIVE', label: 'ผู้บริหาร', default_permissions: EXECUTIVE_DEFAULT_PERMISSIONS },
+] as const;
+
+/**
+ * The council's own default groups — ผู้ดูแลระบบ and ผู้บริหาร, shown as the
+ * starting groups of every จ./อ./ต. (owner, 2026-09-25: "สภามีแค่ผู้ดูแลระบบกับ
+ * ผู้บริหาร"). Other national system groups (the old DIRECTOR) are no realm's
+ * to hand out: directors use their school's own `S<id>_BASE_DIRECTOR`.
+ */
+export const COUNCIL_DEFAULT_ROLE_NAMES: ReadonlySet<string> = new Set(['ADMIN', 'EXECUTIVE']);
 
 export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
@@ -94,29 +170,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'DIRECTOR',
     label: 'ผู้อำนวยการ',
-    // View/list pages only — ผอ. sees รายชื่อ, ADMIN holds จัดการ (owner,
-    // 2026-09-22: "permission ผอ เป็นพวกรายชื่อ แอดมินเป็นพวกจัดการนะ
-    // default"). Every `manage-*` id that used to sit here (manage-students,
-    // manage-classroom-links, manage-school-structure, manage-subjects,
-    // manage-users-list, manage-teachers) moved to ADMIN-only by
-    // 20260922110000-DemoteDirectorToViewOnly, which also strips them from
-    // existing DIRECTOR rows/accounts already in the database — this literal
-    // TS list is the intent, that migration is what makes it real for data
-    // that already exists.
-    default_permissions: [
-      'home',
-      'dashboard',
-      'students',
-      'classrooms',
-      'attendance',
-      'import-data',
-      'export-data',
-      'teachers',
-      // ตั้งค่าระบบ is deliberately absent: system settings are one shared set of
-      // values for every school, so the page is ADMIN-with-national-scope only
-      // (owner, 2026-08-27). A director could never open it.
-      'audit-log',
-    ],
+    default_permissions: DIRECTOR_DEFAULT_PERMISSIONS,
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -125,7 +179,7 @@ export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'EXECUTIVE',
     label: 'ผู้บริหาร',
-    default_permissions: ['home', 'nl_query:use'],
+    default_permissions: EXECUTIVE_DEFAULT_PERMISSIONS,
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
@@ -292,9 +346,32 @@ export function hasPermission(
 }
 
 /** Executive-only actors stay restricted even if a raw-data permission is re-granted. */
+/** An area's own copy of a council default: `A<area code>_BASE_<ADMIN|EXECUTIVE>`. */
+const AREA_ROLE_NAME = /^A[0-9]+_BASE_(ADMIN|EXECUTIVE)$/;
+
+/**
+ * Which council default an area group copies, or null. An area's ผู้บริหาร is
+ * an executive and its ผู้ดูแลระบบ an admin for the checks below; it never
+ * becomes the national `ADMIN` group (settings, master data, AraID stay there).
+ */
+export function areaRoleKind(role: string | null | undefined): 'ADMIN' | 'EXECUTIVE' | null {
+  const match = role ? AREA_ROLE_NAME.exec(role) : null;
+  return match ? (match[1] as 'ADMIN' | 'EXECUTIVE') : null;
+}
+
+/** An account that may approve a ส่งออกข้อมูลส่วนบุคคล request, within its scope. */
+export function isExportApproverRole(role: string | null | undefined): boolean {
+  return role === 'ADMIN' || areaRoleKind(role) === 'ADMIN';
+}
+
+/** ผู้บริหาร — national or an area's own — sees aggregates only, never raw rows. */
 export function isRestrictedExecutive(actor: { roles: string[] } | undefined): boolean {
-  return Boolean(
-    actor?.roles.includes('EXECUTIVE') &&
-    !actor.roles.some((role) => role === 'ADMIN' || role === 'DIRECTOR'),
+  const roles = actor?.roles ?? [];
+  const executive = roles.some(
+    (role) => role === 'EXECUTIVE' || areaRoleKind(role) === 'EXECUTIVE',
   );
+  const exempt = roles.some(
+    (role) => role === 'ADMIN' || role === 'DIRECTOR' || areaRoleKind(role) === 'ADMIN',
+  );
+  return executive && !exempt;
 }

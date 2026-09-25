@@ -45,6 +45,15 @@ export class GetUsersQueryDto extends PaginatedSearchQueryDto {
   @IsString()
   excludeRole?: string;
 
+  /**
+   * จัดการผู้ใช้งาน's บทบาท filter, by the label the list shows: "ผู้อำนวยการ"
+   * covers both the national DIRECTOR group and each school's own copy.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  roleLabel?: string;
+
   @IsOptional()
   @IsIn(['name', 'role', 'affiliation'])
   sortBy?: 'name' | 'role' | 'affiliation';
@@ -84,6 +93,30 @@ export class GetUsersQueryDto extends PaginatedSearchQueryDto {
   accountStatus?: AccountLifecycleStatus;
 }
 
+/**
+ * Usernames and passwords: 8–50 characters of English letters, digits and
+ * printable symbols — no Thai, no spaces (owner, 2026-09-25). The frontend
+ * mirrors this in `lib/validation.ts`.
+ *
+ * The minimum length on a username is checked in `UsersService` when a name
+ * is set or changed, not here: `UpdateUserDto` re-sends the current name,
+ * and accounts created before this rule may carry a shorter one.
+ */
+export const CREDENTIAL_MIN_LENGTH = 8;
+export const CREDENTIAL_MAX_LENGTH = 50;
+export const CREDENTIAL_PATTERN = /^[\x21-\x7E]+$/;
+const CREDENTIAL_CHARACTERS_HINT = 'ใช้ได้เฉพาะภาษาอังกฤษ ตัวเลข และอักขระพิเศษ ห้ามเว้นวรรค';
+export const USERNAME_MESSAGES = {
+  min: `ชื่อผู้ใช้งานต้องมีอย่างน้อย ${CREDENTIAL_MIN_LENGTH} ตัวอักษร`,
+  max: `ชื่อผู้ใช้งานต้องไม่เกิน ${CREDENTIAL_MAX_LENGTH} ตัวอักษร`,
+  pattern: `ชื่อผู้ใช้งาน${CREDENTIAL_CHARACTERS_HINT}`,
+};
+const PASSWORD_MESSAGES = {
+  min: `รหัสผ่านต้องมีอย่างน้อย ${CREDENTIAL_MIN_LENGTH} ตัวอักษร`,
+  max: `รหัสผ่านต้องไม่เกิน ${CREDENTIAL_MAX_LENGTH} ตัวอักษร`,
+  pattern: `รหัสผ่าน${CREDENTIAL_CHARACTERS_HINT}`,
+};
+
 export class CreateUserDto {
   // FE echoes this on save; create/update services must use generated/path ids.
   @Allow()
@@ -91,12 +124,15 @@ export class CreateUserDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(CREDENTIAL_MAX_LENGTH, { message: USERNAME_MESSAGES.max })
+  @Matches(CREDENTIAL_PATTERN, { message: USERNAME_MESSAGES.pattern })
   username!: string;
 
   @IsOptional()
   @IsString()
-  @MinLength(8)
-  @MaxLength(50)
+  @MinLength(CREDENTIAL_MIN_LENGTH, { message: PASSWORD_MESSAGES.min })
+  @MaxLength(CREDENTIAL_MAX_LENGTH, { message: PASSWORD_MESSAGES.max })
+  @Matches(CREDENTIAL_PATTERN, { message: PASSWORD_MESSAGES.pattern })
   password?: string;
 
   @IsString()
@@ -355,13 +391,16 @@ export class DeactivateUserAccountDto {
   reason?: string;
 }
 
+/** Only the length is capped here: accounts older than the rules must still sign in. */
 export class LoginDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(CREDENTIAL_MAX_LENGTH, { message: USERNAME_MESSAGES.max })
   username!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(CREDENTIAL_MAX_LENGTH, { message: PASSWORD_MESSAGES.max })
   password!: string;
 }
 
@@ -371,8 +410,9 @@ export class ChangePasswordDto {
   currentPassword!: string;
 
   @IsString()
-  @MinLength(8)
-  @MaxLength(50)
+  @MinLength(CREDENTIAL_MIN_LENGTH, { message: PASSWORD_MESSAGES.min })
+  @MaxLength(CREDENTIAL_MAX_LENGTH, { message: PASSWORD_MESSAGES.max })
+  @Matches(CREDENTIAL_PATTERN, { message: PASSWORD_MESSAGES.pattern })
   newPassword!: string;
 }
 
@@ -402,9 +442,44 @@ export class CreateRoleGroupDto {
   @IsOptional()
   @IsString()
   scope_mode?: string;
+
+  /** จ./อ./ต. a council group belongs to, by the names the header filter uses. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
 }
 
 export class UpdateRoleGroupDto extends PartialType(CreateRoleGroupDto) {}
+
+/** The user form's group list: a council account's own จ./อ./ต. groups. */
+export class RoleCatalogQueryDto {
+  /** จ./อ./ต. a council group belongs to, by the names the header filter uses. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
+}
 
 export class RoleGroupListQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
@@ -412,6 +487,22 @@ export class RoleGroupListQueryDto extends PaginatedSearchQueryDto {
   @IsInt()
   @Min(1)
   schoolId?: number;
+
+  /** จ./อ./ต. a council group belongs to, by the names the header filter uses. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
 
   @IsOptional()
   @IsIn(['group', 'menus'])

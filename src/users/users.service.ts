@@ -1,3 +1,4 @@
+import { AREA_ROLE_TEMPLATES } from '../auth/permissions.constants';
 import {
   BadRequestException,
   ConflictException,
@@ -43,9 +44,10 @@ import type {
   UpdateOwnProfileDto,
   UpdateUserDto,
 } from './dto/users.dto';
+import { CREDENTIAL_MIN_LENGTH, USERNAME_MESSAGES } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
-import { UsersRepository, type UserListFilters } from './users.repository';
-import type { ActorContext } from './users.types';
+import { UsersRepository, type RoleOwnerAreaCodes, type UserListFilters } from './users.repository';
+import type { ActorContext, RoleOwnerArea } from './users.types';
 
 interface LifecycleAuditMeta {
   ip?: string | null;
@@ -59,6 +61,13 @@ export const TEMP_PASSWORD_TTL_DAYS = 7;
 // rides on that page's permission rather than a separate one.
 const HARD_DELETE_PERMISSION = 'manage-users-list';
 const USERNAME_ALREADY_USED_MESSAGE = 'ชื่อผู้ใช้งานนี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น';
+
+/** See `CREDENTIAL_MIN_LENGTH`: the minimum applies to a name being set, not one kept. */
+function assertNewUsernameLength(username: string): void {
+  if (username.length < CREDENTIAL_MIN_LENGTH) {
+    throw new BadRequestException(USERNAME_MESSAGES.min);
+  }
+}
 // Semantic fallback for a nationwide council scope. Real school and area names
 // always come from the database/catalog, never from frontend constants.
 const COUNTRY_AFFILIATION = 'ประเทศ';
@@ -319,6 +328,7 @@ export class UsersService {
         actorPermissions: currentActor.permissions || [],
         actorScope: currentActor.data_scope,
         excludeRole: filters.excludeRole,
+        roleLabel: filters.roleLabel,
         sortBy: filters.sortBy,
         sortOrder: filters.sortOrder,
         searchTerm: filters.searchTerm,
@@ -595,10 +605,10 @@ export class UsersService {
       lastName,
       phone,
       email,
-      affiliation:
-        data.affiliation !== undefined
-          ? cleanNullableText(data.affiliation)
-          : (existingUser.affiliation ?? null),
+      // สังกัด follows the account's scope (set where the scope is set); an
+      // account does not rename its own. The field is still accepted so older
+      // clients keep saving, but its value is ignored.
+      affiliation: existingUser.affiliation ?? null,
       lineId,
       addressLine:
         data.address_line !== undefined
@@ -681,6 +691,7 @@ export class UsersService {
           )
         : null;
 
+      assertNewUsernameLength(data.username);
       const userId = await this.usersRepository.withTransaction(async (executor) => {
         if (await this.usersRepository.usernameExists(data.username, executor)) {
           throw new ConflictException(USERNAME_ALREADY_USED_MESSAGE);
@@ -794,7 +805,7 @@ export class UsersService {
       await this.usersPolicyService.assertAssignablePayload(
         currentActor,
         { ...data, role: requestedRole, roles: undefined, data_scope: persistedScope },
-        { allowEqualRole: isSelf },
+        { allowEqualRole: isSelf, currentRole: existingRole },
         roleMap,
       );
       const shouldDeriveAffiliation =
@@ -804,6 +815,9 @@ export class UsersService {
         : undefined;
 
       const primaryRole = requestedRole;
+      if (data.username !== undefined && data.username !== existingUser.username) {
+        assertNewUsernameLength(data.username);
+      }
       await this.usersRepository.withTransaction(async (executor) => {
         if (
           data.username !== undefined &&
@@ -1157,7 +1171,16 @@ export class UsersService {
     };
   }
 
-  async getRoles(actor?: ActorContext) {
+  /**
+   * Groups an actor may hand out. Area groups are listed only for the one
+   * จ./อ./ต. asked for — the council user form sends the account's own area —
+   * because a council account takes exactly its own area's groups; that area's
+   * starter groups are created on first use.
+   */
+  async getRoles(
+    actor?: ActorContext,
+    area: { province?: string; district?: string; subDistrict?: string } = {},
+  ) {
     if (!actor) {
       return await this.usersPolicyService.getRoleDefinitions();
     }
@@ -1167,21 +1190,55 @@ export class UsersService {
       actorScope.global !== true && actorScope.school_ids.length === 1
         ? Number(actorScope.school_ids[0])
         : null;
+
+    let areaCodes: RoleOwnerAreaCodes | null = null;
+    if (area.province && actorScope.school_ids.length === 0) {
+      const requested = {
+        province: area.province,
+        district: area.district || null,
+        sub_district: area.district ? area.subDistrict || null : null,
+      };
+      const inReach =
+        actorScope.global === true ||
+        this.usersPolicyService.isScopeSubsetOfActor(
+          this.usersPolicyService.areaAsScope(requested),
+          actor.data_scope,
+        );
+      if (inReach) {
+        areaCodes = await this.usersRepository.resolveAreaCodes({
+          province: requested.province,
+          district: requested.district,
+          subDistrict: requested.sub_district,
+        });
+        if (areaCodes) {
+          await this.usersRepository.ensureAreaDefaultRoles(areaCodes, AREA_ROLE_TEMPLATES);
+        }
+      }
+    }
+
     const definitions = await this.usersPolicyService.getRoleDefinitions(false, ownedSchoolId);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const actorRole = this.usersPolicyService.getPrimaryRole({
       roles: actor.roles,
     });
+    const ownedByRequestedArea = (owner: RoleOwnerArea): boolean =>
+      Boolean(
+        areaCodes &&
+        owner.province_code === areaCodes.province_code &&
+        (owner.district_code ?? null) === areaCodes.district_code &&
+        (owner.sub_district_code ?? null) === areaCodes.sub_district_code,
+      );
 
     return definitions.filter(
       (role) =>
-        role.name === actorRole ||
-        this.usersPolicyService.canGrantPermissions(
-          actor.permissions || [],
-          role.default_permissions || [],
-          actorRole,
-          roleMap,
-        ),
+        (!role.owner_area || role.name === actorRole || ownedByRequestedArea(role.owner_area)) &&
+        (role.name === actorRole ||
+          this.usersPolicyService.canGrantPermissions(
+            actor.permissions || [],
+            role.default_permissions || [],
+            actorRole,
+            roleMap,
+          )),
     );
   }
 

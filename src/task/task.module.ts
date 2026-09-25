@@ -23,6 +23,8 @@ import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 import { CaseTrackingOptionsController } from './case-tracking-options.controller';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { GoogleLoginModule } from '../google-login/google-login.module';
+import { MessagingModule } from '../common/messaging/messaging.module';
+import { CaseRoundLineService } from './case-round-line.service';
 
 @Module({
   imports: [
@@ -33,6 +35,7 @@ import { GoogleLoginModule } from '../google-login/google-login.module';
     RiskProfileModule,
     TokenEncryptionModule,
     GoogleLoginModule,
+    MessagingModule,
   ],
   controllers: [
     TaskController,
@@ -53,6 +56,7 @@ import { GoogleLoginModule } from '../google-login/google-login.module';
     TaskStatsService,
     TaskService,
     CaseService,
+    CaseRoundLineService,
     CaseTrackingOptionsService,
   ],
   exports: [TaskService, CaseService, TaskPolicyService, TaskAccessService, TaskRepository],

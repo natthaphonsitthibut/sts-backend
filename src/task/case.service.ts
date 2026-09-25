@@ -141,6 +141,33 @@ export class CaseService {
     });
   }
 
+  /**
+   * The round's ส่งลิงก์ผ่าน LINE state, shaped like the teacher-link page's:
+   * a send to a teacher who is no longer the assignee reads NEEDS_RESEND.
+   * `can_send` leaves out whether LINE is switched on for the deployment —
+   * the page reads that once from the LINE status endpoint.
+   */
+  private mapRoundLineDelivery(row: Record<string, unknown>) {
+    const live = row.link_status === 'ACTIVE' || row.link_status === 'SCHEDULED';
+    const assignee = this.normalizeText(row.assigned_teacher_id) || null;
+    const sentTo = this.normalizeText(row.line_delivery_teacher_id) || null;
+    const stored = this.normalizeText(row.line_delivery_status) || 'NOT_READY';
+    const status = sentTo && assignee && sentTo !== assignee ? 'NEEDS_RESEND' : stored;
+    const accountState = row.line_provider_user_id
+      ? this.normalizeText(row.line_friend_state) || 'UNKNOWN'
+      : 'NOT_VERIFIED';
+    return {
+      status,
+      failure_code:
+        status === 'NEEDS_RESEND'
+          ? null
+          : this.normalizeText(row.line_delivery_failure_code) || null,
+      account_state: accountState,
+      delivered_at: status === 'SENT' ? (row.line_delivered_at ?? null) : null,
+      can_send: live && Boolean(assignee) && accountState === 'FRIEND' && status !== 'SENDING',
+    };
+  }
+
   private mapFollowUpRound(row: Record<string, unknown>) {
     const photoPaths = Array.isArray(row.photo_paths)
       ? JSON.stringify(row.photo_paths.filter((path): path is string => typeof path === 'string'))
@@ -165,6 +192,8 @@ export class CaseService {
       assignment_note: this.normalizeText(row.assignment_note) || null,
       link_count: this.normalizeNumber(row.link_count) ?? 0,
       link_status: this.normalizeText(row.link_status) || null,
+      magic_link: this.normalizeText(row.magic_link) || null,
+      line_delivery: this.mapRoundLineDelivery(row),
       cancelled_at: row.cancelled_at ?? null,
       cancel_reason: this.normalizeText(row.cancel_reason) || null,
       cancelled_by_label: this.normalizeText(row.cancelled_by_label) || null,

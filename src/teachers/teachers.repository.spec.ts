@@ -1,6 +1,54 @@
 import { TeachersRepository } from './teachers.repository';
 
 describe('TeachersRepository', () => {
+  it("reads a multi-school teacher through the caller's own school first", async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const runner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockImplementation((sql: string, params: unknown[]) => {
+        queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+        return Promise.resolve({ records: [], affected: 0 });
+      }),
+    };
+    const repository = new TeachersRepository({ createQueryRunner: () => runner } as never);
+
+    await repository.findTeacherById('467', undefined, { school_ids: [10010004] });
+    await repository.findTeacherById('467');
+
+    // With a scope, an in-scope membership outranks a newer one elsewhere.
+    expect(queries[0].sql).toMatch(
+      /ORDER BY CASE WHEN .*school\.id.* THEN 0 ELSE 1 END, CASE WHEN membership\.membership_status/,
+    );
+    expect(queries[0].params).toEqual(['467', [10010004]]);
+    // Without one the order is unchanged.
+    expect(queries[1].sql).toContain("ORDER BY CASE WHEN membership.membership_status = 'ACTIVE'");
+    expect(queries[1].params).toEqual(['467']);
+  });
+
+  it('orders by school only when the caller is limited to a grade or room', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const runner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockImplementation((sql: string, params: unknown[]) => {
+        queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+        return Promise.resolve({ records: [], affected: 0 });
+      }),
+    };
+    const repository = new TeachersRepository({ createQueryRunner: () => runner } as never);
+
+    await repository.findTeacherById('467', undefined, {
+      school_ids: [10010004],
+      grade_levels: [423],
+      room_ids: ['1'],
+    });
+
+    // A membership row has no grade or room column to filter on.
+    expect(queries[0].sql).not.toMatch(/grade_level_id|room_id/);
+    expect(queries[0].params).toEqual(['467', [10010004]]);
+  });
+
   it('scopes classroom-link profile reads to an active homeroom classroom', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     const runner = {

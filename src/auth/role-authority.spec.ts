@@ -1,4 +1,7 @@
+import { areaRoleKind, isExportApproverRole, isRestrictedExecutive } from './permissions.constants';
 import {
+  canGrantPages,
+  grantablePages,
   canManageRole,
   roleReachesFurtherThanActor,
   type RoleAuthorityDefinition,
@@ -55,5 +58,62 @@ describe('roleReachesFurtherThanActor', () => {
   it('refuses a role the catalogue does not offer', () => {
     expect(roleReachesFurtherThanActor('ADMIN', 'ADMIN_SCHOOL', ROLE_MAP)).toBe(true);
     expect(roleReachesFurtherThanActor('ADMIN', null, ROLE_MAP)).toBe(true);
+  });
+});
+
+describe('canGrantPages', () => {
+  it('limits an actor without an account-admin page to the pages it holds', () => {
+    expect(canGrantPages(['home', 'students'], ['home'])).toBe(true);
+    expect(canGrantPages(['home', 'students'], ['teachers'])).toBe(false);
+  });
+
+  it('lets an account admin hand out any page of its realm, held or not', () => {
+    // A school admin does not open รายชื่อนักเรียน but must create its ผอ.
+    const schoolAdmin = ['home', 'manage-users-list', 'manage-role-groups'];
+    expect(canGrantPages(schoolAdmin, ['students', 'teachers', 'import-data'])).toBe(true);
+    expect(canGrantPages(['manage-role-groups'], ['attendance'])).toBe(true);
+  });
+
+  it('never lets an account admin hand out a national page it does not hold', () => {
+    const schoolAdmin = ['home', 'manage-users-list', 'manage-role-groups'];
+    expect(canGrantPages(schoolAdmin, ['settings'])).toBe(false);
+    expect(canGrantPages(schoolAdmin, ['master-data'])).toBe(false);
+    expect(canGrantPages(schoolAdmin, ['manage-schools'])).toBe(false);
+    expect(canGrantPages([...schoolAdmin, 'settings'], ['settings'])).toBe(true);
+  });
+
+  it('keeps council pages that are not national out of reach unless held', () => {
+    // แชตบอท is the council's; a school admin cannot hand it out, even to itself.
+    const schoolAdmin = ['home', 'manage-users-list', 'manage-role-groups'];
+    expect(canGrantPages(schoolAdmin, ['nl_query:use'])).toBe(false);
+    expect(grantablePages(schoolAdmin).has('nl_query:use')).toBe(false);
+    expect(canGrantPages([...schoolAdmin, 'nl_query:use'], ['nl_query:use'])).toBe(true);
+  });
+
+  it('keeps the wildcard', () => {
+    expect(canGrantPages(['*'], ['settings'])).toBe(true);
+  });
+
+  it('carries into the role ladder', () => {
+    const map = new Map<string, RoleAuthorityDefinition>([
+      ['S1_BASE_ADMIN', { default_permissions: ['home', 'manage-users-list'] }],
+      ['S1_BASE_DIRECTOR', { default_permissions: ['home', 'students', 'teachers'] }],
+      ['ADMIN', { default_permissions: ['home', 'settings'] }],
+    ]);
+    expect(canManageRole('S1_BASE_ADMIN', 'S1_BASE_DIRECTOR', map)).toBe(true);
+    expect(canManageRole('S1_BASE_ADMIN', 'ADMIN', map)).toBe(false);
+    expect(roleReachesFurtherThanActor('S1_BASE_ADMIN', 'S1_BASE_DIRECTOR', map)).toBe(false);
+  });
+});
+
+describe('area copies of the council defaults', () => {
+  it('count as the group they copy for the executive and export checks', () => {
+    expect(areaRoleKind('A500101_BASE_EXECUTIVE')).toBe('EXECUTIVE');
+    expect(areaRoleKind('A50_BASE_ADMIN')).toBe('ADMIN');
+    expect(areaRoleKind('S10010004_BASE_ADMIN')).toBeNull();
+    expect(isRestrictedExecutive({ roles: ['A500101_BASE_EXECUTIVE'] })).toBe(true);
+    expect(isRestrictedExecutive({ roles: ['A50_BASE_ADMIN'] })).toBe(false);
+    expect(isExportApproverRole('A50_BASE_ADMIN')).toBe(true);
+    expect(isExportApproverRole('S10010004_BASE_ADMIN')).toBe(false);
   });
 });

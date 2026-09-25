@@ -8,7 +8,7 @@ import {
   type RoleScopePolicy,
 } from '../auth/permissions.constants';
 import { isUnconfiguredDataScope } from '../auth/auth.types';
-import { canManageRole, roleReachesFurtherThanActor } from '../auth/role-authority';
+import { canGrantPages, canManageRole, roleReachesFurtherThanActor } from '../auth/role-authority';
 import { TaskRepository } from './task.repository';
 import type { ActorContext, DataScope, NormalizedDataScope, RoleDefinition } from './task.types';
 
@@ -210,13 +210,7 @@ export class TaskPolicyService {
   ): boolean {
     void actorRole;
     void roleMap;
-    const grantablePermissions = Array.from(new Set(actorPermissions));
-
-    if (grantablePermissions.includes('*') || grantablePermissions.includes('ALL')) {
-      return true;
-    }
-
-    return targetPermissions.every((permission) => grantablePermissions.includes(permission));
+    return canGrantPages(actorPermissions, targetPermissions);
   }
 
   hasPermission(actor: ActorContext, permission: string): boolean {
