@@ -813,7 +813,7 @@ describe('ClassroomAttendanceLinksService', () => {
       issued_by_teacher_membership_id: '12',
       source_teacher_link_id: LINK.id,
       opens_at: null,
-      expires_at: '2026-09-02T00:00:00.000Z',
+      expires_at: '2126-09-02T00:00:00.000Z',
     };
     repository.findById.mockResolvedValue(LINK);
     repository.findAssignableSubject.mockResolvedValue({
@@ -836,7 +836,7 @@ describe('ClassroomAttendanceLinksService', () => {
         teacherDisplayName: 'ครู หนึ่ง',
         provider: 'GOOGLE',
       },
-      { classroomSubjectId: 40, expiresAt: '2026-09-02T00:00:00.000Z' },
+      { classroomSubjectId: 40, expiresAt: '2126-09-02T00:00:00.000Z' },
       'https://sts.example',
     );
 
