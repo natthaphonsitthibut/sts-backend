@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import type { DataScope } from '../auth';
+import { SCHOOL_ROLE_TEMPLATES } from '../auth/permissions.constants';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { ATTENDANCE_STATUS_CODE } from '../attendance/attendance-status';
 import { escapeLikePattern } from '../common/utils/helpers';
@@ -207,38 +208,19 @@ export class SchoolStructureRepository {
   }
 
   async seedDefaultSchoolRoles(schoolId: number, queryRunner: QueryRunner): Promise<void> {
-    await createSqlQueryExecutor(queryRunner).query(
-      `
-        INSERT INTO roles (
-          name, label, default_permissions, scope_mode, scope_policy,
-          is_assignable, is_system, school_id
-        )
-        SELECT
-          'S' || $1::text || '_BASE_' || template.role_key,
-          template.label,
-          source.default_permissions - 'manage-schools',
-          'school',
-          'ASSIGNABLE',
-          TRUE,
-          FALSE,
-          $1
-        FROM (
-          VALUES
-            ('ADMIN', 'ผู้ดูแลระบบ', 'ADMIN'),
-            ('DIRECTOR', 'ผู้อำนวยการ', 'DIRECTOR')
-        ) AS template(role_key, label, source_name)
-        JOIN roles source
-          ON source.name = template.source_name
-         AND source.school_id IS NULL
-        WHERE NOT EXISTS (
-          SELECT 1
-          FROM roles existing_role
-          WHERE existing_role.school_id = $1
-            AND existing_role.name = 'S' || $1::text || '_BASE_' || template.role_key
-        )
-      `,
-      [schoolId],
-    );
+    for (const template of SCHOOL_ROLE_TEMPLATES) {
+      await createSqlQueryExecutor(queryRunner).query(
+        `
+          INSERT INTO roles (
+            name, label, default_permissions, scope_mode, scope_policy,
+            is_assignable, is_system, school_id
+          )
+          VALUES ('S' || $1::text || '_BASE_' || $2::text, $3, $4::jsonb, 'school', 'ASSIGNABLE', TRUE, FALSE, $1)
+          ON CONFLICT (name) DO NOTHING
+        `,
+        [schoolId, template.key, template.label, JSON.stringify(template.default_permissions)],
+      );
+    }
   }
 
   async updateSchool(

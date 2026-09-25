@@ -851,8 +851,8 @@ async function assertCanonicalRouteNavigation(client) {
     ['/manage-users', 'จัดการผู้ใช้งาน', '/manage-users'],
     ['/manage-users/new', 'เพิ่มผู้ใช้งาน', '/manage-users'],
     ['/curriculum', 'จัดการข้อมูลหลักสูตร', '/curriculum'],
-    ['/teachers', 'รายชื่อครู', '/teachers'],
-    ['/manage-teachers', 'จัดการข้อมูลครู', '/manage-teachers'],
+    ['/teachers', 'รายชื่อคุณครู', '/teachers'],
+    ['/manage-teachers', 'จัดการข้อมูลคุณครู', '/manage-teachers'],
     ['/manage-teachers/new', 'เพิ่มข้อมูลคุณครู', '/manage-teachers'],
     ['/manage-role-groups', 'จัดการกลุ่มเมนู', '/manage-role-groups'],
     // /master-data and /settings are ADMIN + global scope only, so this smoke's

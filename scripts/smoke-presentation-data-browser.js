@@ -442,7 +442,7 @@ async function main() {
     await assertPage(client, FRONTEND_URL, 'นักเรียนทั้งหมด', 'home dashboard');
 
     const teacherUrl = `${FRONTEND_URL}/teachers?schoolId=${targetSchool.school_id}`;
-    await assertPage(client, teacherUrl, 'จัดการข้อมูลครู', 'teacher list');
+    await assertPage(client, teacherUrl, 'จัดการข้อมูลคุณครู', 'teacher list');
     await waitFor(
       async () => (await bodyText(client)).includes(`@${PRESENTATION_DOMAIN}`),
       'Canonical teacher email did not render',
@@ -501,7 +501,7 @@ async function main() {
     });
     for (const [url, text, label] of [
       [FRONTEND_URL, 'นักเรียนทั้งหมด', 'mobile home'],
-      [teacherUrl, 'จัดการข้อมูลครู', 'mobile teachers'],
+      [teacherUrl, 'จัดการข้อมูลคุณครู', 'mobile teachers'],
       [`${FRONTEND_URL}/manage-users`, 'จัดการผู้ใช้งาน', 'mobile users'],
       [`${FRONTEND_URL}/students`, 'รายชื่อนักเรียน', 'mobile students'],
     ]) {

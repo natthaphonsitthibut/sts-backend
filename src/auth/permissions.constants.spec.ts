@@ -49,7 +49,7 @@ describe('hasPermission', () => {
 
     expect(item).toEqual({
       id: 'master-data',
-      label: 'ข้อมูลพื้นฐาน',
+      label: 'จัดการข้อมูลพื้นฐาน',
       scopePolicy: 'global-only',
     });
     expect(admin?.default_permissions).toContain('master-data');
@@ -74,14 +74,7 @@ describe('hasPermission', () => {
     // stays available — demoting them didn't also take away their own school's
     // read access, just the ability to edit it themselves.
     expect(director?.default_permissions).toEqual(
-      expect.arrayContaining([
-        'home',
-        'dashboard',
-        'students',
-        'teachers',
-        'classrooms',
-        'attendance',
-      ]),
+      expect.arrayContaining(['home', 'dashboard', 'students', 'teachers', 'classrooms']),
     );
   });
 

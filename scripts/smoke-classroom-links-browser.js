@@ -304,7 +304,7 @@ async function main() {
     await waitFor(
       async () => {
         const text = String(await evaluate(client, 'document.body.innerText'));
-        return text.includes('จัดการลิงก์ครู') && text.includes('สร้างทั้งหมด') && text.includes('สร้างลิงก์');
+        return text.includes('จัดการลิงก์คุณครู') && text.includes('สร้างทั้งหมด') && text.includes('สร้างลิงก์');
       },
       'Allowed classroom-links page did not render room rows and actions',
     );
