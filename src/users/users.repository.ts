@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { PII_FIELD_GROUP_CODES } from '../students/pii-fields.config';
 import { isUnconfiguredDataScope, normalizeScopeArray } from '../auth/auth.types';
+import { grantablePages } from '../auth/role-authority';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
@@ -491,14 +492,16 @@ export class UsersRepository {
     params.push(filters.actorRole);
     const actorRolePlaceholder = params.length;
 
-    // A row is manageable when its role reaches no page the actor lacks. A
+    // A row is manageable when its role reaches no page the actor could not
+    // grant — the same rule as `canManageRole`, so an account admin sees the
+    // accounts it may manage even where they open pages it does not. A
     // wildcard holder manages everyone, which is what '*' has always meant.
     const hasWildcard = filters.actorPermissions.some(
       (permission) => permission === '*' || permission === 'ALL',
     );
     const manageConditions: string[] = [];
     if (!hasWildcard) {
-      params.push(JSON.stringify(filters.actorPermissions));
+      params.push(JSON.stringify([...grantablePages(filters.actorPermissions)]));
       manageConditions.push(
         `(
           COALESCE(r.default_permissions, '[]'::jsonb) <@ $${params.length}::jsonb

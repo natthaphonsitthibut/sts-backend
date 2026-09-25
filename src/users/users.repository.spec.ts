@@ -47,6 +47,32 @@ describe('UsersRepository user list queries', () => {
     expect(queries[2]).toContain("default_permissions, '[]'::jsonb) <@ $3::jsonb");
   });
 
+  it('lists the accounts an account admin may manage', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const repository = new UsersRepository({
+      createQueryRunner: () => ({
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn().mockImplementation((sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params });
+          return Promise.resolve({ records: [], affected: 0 });
+        }),
+      }),
+    } as never);
+
+    await repository.listUsersPaginated({
+      actorId: 1,
+      actorRole: 'S1_BASE_ADMIN',
+      actorPermissions: ['home', 'manage-users-list'],
+    });
+
+    const listCall = calls[calls.length - 1];
+    // A school admin does not open รายชื่อนักเรียน, but its ผอ. accounts do.
+    const grantable = JSON.parse(String(listCall.params[2])) as string[];
+    expect(grantable).toEqual(expect.arrayContaining(['students', 'teachers']));
+    expect(grantable).not.toContain('settings');
+  });
+
   it('filters rows by lifecycle status without narrowing summary counts', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const repository = new UsersRepository({
