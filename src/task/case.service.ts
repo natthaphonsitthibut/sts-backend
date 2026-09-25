@@ -165,6 +165,7 @@ export class CaseService {
       assignment_note: this.normalizeText(row.assignment_note) || null,
       link_count: this.normalizeNumber(row.link_count) ?? 0,
       link_status: this.normalizeText(row.link_status) || null,
+      magic_link: this.normalizeText(row.magic_link) || null,
       cancelled_at: row.cancelled_at ?? null,
       cancel_reason: this.normalizeText(row.cancel_reason) || null,
       cancelled_by_label: this.normalizeText(row.cancelled_by_label) || null,

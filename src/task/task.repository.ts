@@ -2923,6 +2923,7 @@ export class TaskRepository {
         tl.expires_at AS assignment_ends_at,
         tl.assignment_note,
         tl.status AS link_status,
+        tl.token_encrypted AS link_token_encrypted,
         tl.cancelled_at,
         tl.cancel_reason,
         COALESCE(
@@ -3079,7 +3080,15 @@ export class TaskRepository {
       [caseId],
     );
 
-    return result.rows;
+    // A round's link is shared again from the case page (its แชร์ button), so
+    // only a link that still opens is returned — never a cancelled or used one.
+    return result.rows.map(({ link_token_encrypted, ...row }) => ({
+      ...row,
+      magic_link:
+        row.link_status === 'ACTIVE' || row.link_status === 'SCHEDULED'
+          ? this.resolveMagicLink(link_token_encrypted as string | null)
+          : null,
+    }));
   }
 
   // Explicit safe column list (no created_by/updated_by/source actor ids) so a
