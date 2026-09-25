@@ -22,6 +22,7 @@ import type {
   DataScope,
   HydratableUserRow,
   RoleDefinition,
+  RoleOwnerArea,
   RoleRow,
 } from './users.types';
 
@@ -103,6 +104,16 @@ export class UsersPolicyService {
       is_assignable: row.is_assignable !== false,
       is_system: row.is_system === true,
       school_id: row.school_id == null ? null : Number(row.school_id),
+      owner_area: row.owner_province_code
+        ? {
+            province: String(row.owner_province ?? ''),
+            district: row.owner_district ?? null,
+            sub_district: row.owner_sub_district ?? null,
+            province_code: String(row.owner_province_code),
+            district_code: row.owner_district_code ?? null,
+            sub_district_code: row.owner_sub_district_code ?? null,
+          }
+        : null,
       realm:
         row.school_id != null
           ? 'school'
@@ -235,6 +246,56 @@ export class UsersPolicyService {
     }
 
     return true;
+  }
+
+  /** An owning area as the data_scope it stands for. */
+  areaAsScope(area: Pick<RoleOwnerArea, 'province' | 'district' | 'sub_district'>): DataScope {
+    return {
+      provinces: [area.province],
+      districts: area.district ? [area.district] : [],
+      sub_districts: area.sub_district ? [area.sub_district] : [],
+    };
+  }
+
+  /**
+   * The area a council account belongs to: its scope's one province, district
+   * and sub-district, down to the deepest it names. Null for a national,
+   * school or multi-area scope, which no area group can take.
+   */
+  scopeArea(scope: unknown): Pick<RoleOwnerArea, 'province' | 'district' | 'sub_district'> | null {
+    const target = this.normalizeScope(scope);
+    if (target.global || target.school_ids.length > 0) return null;
+    if (
+      target.provinces.length !== 1 ||
+      target.districts.length > 1 ||
+      target.sub_districts.length > 1 ||
+      (target.sub_districts.length > 0 && target.districts.length === 0)
+    ) {
+      return null;
+    }
+    return {
+      province: target.provinces[0],
+      district: target.districts[0] ?? null,
+      sub_district: target.sub_districts[0] ?? null,
+    };
+  }
+
+  /**
+   * An area group is for the accounts of exactly that area (owner, 2026-09-25:
+   * "เฉพาะพื้นที่ตัวเอง"): a sub-district account uses its sub-district's
+   * groups, never its district's.
+   */
+  isScopeExactlyArea(
+    scope: unknown,
+    area: Pick<RoleOwnerArea, 'province' | 'district' | 'sub_district'>,
+  ): boolean {
+    const own = this.scopeArea(scope);
+    return Boolean(
+      own &&
+      own.province === area.province &&
+      (own.district ?? null) === (area.district ?? null) &&
+      (own.sub_district ?? null) === (area.sub_district ?? null),
+    );
   }
 
   canGrantPermissions(
@@ -385,6 +446,26 @@ export class UsersPolicyService {
 
     // Handing a retired group out is refused; an account already on one keeps
     // it on save, so older accounts stay editable until someone moves them.
+    const targetScope = this.normalizeScope(data.data_scope);
+    // An empty scope is saved as nationwide; an area account names a province.
+    const councilAreaAccount =
+      !targetScope.global &&
+      targetScope.school_ids.length === 0 &&
+      targetScope.provinces.length > 0;
+    if (requestedDefinition.owner_area) {
+      if (!this.isScopeExactlyArea(data.data_scope, requestedDefinition.owner_area)) {
+        throw new ForbiddenException('กลุ่มเมนูนี้ใช้ได้เฉพาะผู้ใช้ของพื้นที่เจ้าของกลุ่ม');
+      }
+    } else if (
+      // An area account takes its own area's groups, not the national ones.
+      requestedDefinition.realm !== 'retired' &&
+      requestedDefinition.school_id == null &&
+      councilAreaAccount &&
+      requestedRole !== options.currentRole
+    ) {
+      throw new ForbiddenException('ผู้ใช้งานระดับพื้นที่ต้องใช้กลุ่มเมนูของพื้นที่นั้น');
+    }
+
     if (
       requestedDefinition.realm === 'retired' &&
       requestedRole !== options.currentRole &&

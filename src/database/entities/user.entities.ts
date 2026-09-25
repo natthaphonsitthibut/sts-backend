@@ -32,6 +32,16 @@ export class RoleEntity {
 
   @Column({ name: 'school_id', type: 'integer', nullable: true })
   schoolId!: number | null;
+
+  /** The จ./อ./ต. a council group belongs to; all NULL is a national group. */
+  @Column({ name: 'owner_province_code', type: 'varchar', length: 2, nullable: true })
+  ownerProvinceCode!: string | null;
+
+  @Column({ name: 'owner_district_code', type: 'varchar', length: 4, nullable: true })
+  ownerDistrictCode!: string | null;
+
+  @Column({ name: 'owner_sub_district_code', type: 'varchar', length: 6, nullable: true })
+  ownerSubDistrictCode!: string | null;
 }
 
 @Entity({ name: 'users' })

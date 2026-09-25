@@ -1,5 +1,9 @@
 import { normalizeScopeArray, type DataScope } from './auth.types';
-import { GRANTABLE_PAGE_PERMISSIONS, NON_PAGE_PERMISSIONS } from './page-registry.constants';
+import {
+  APP_PAGES,
+  GRANTABLE_PAGE_PERMISSIONS,
+  NON_PAGE_PERMISSIONS,
+} from './page-registry.constants';
 
 export type RoleScopeMode =
   | 'flexible'
@@ -127,6 +131,22 @@ export const EXECUTIVE_DEFAULT_PERMISSIONS = ['home', 'dashboard', 'export-data'
 export const SCHOOL_ROLE_TEMPLATES = [
   { key: 'ADMIN', label: 'ผู้ดูแลระบบ', default_permissions: SCHOOL_ADMIN_DEFAULT_PERMISSIONS },
   { key: 'DIRECTOR', label: 'ผู้อำนวยการ', default_permissions: DIRECTOR_DEFAULT_PERMISSIONS },
+] as const;
+
+/**
+ * Each council area's (จ./อ./ต.) own starter groups, created the first time the
+ * area is used — the council's counterpart of `SCHOOL_ROLE_TEMPLATES` (owner
+ * with BA, 2026-09-25). An area's ผู้ดูแลระบบ holds every page except the
+ * national ones (`global-only`): those stay with the national council.
+ */
+export const AREA_ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter(
+  (id) => !APP_PAGES.some((page) => page.id === id && page.scopePolicy === 'global-only'),
+);
+
+/** Name prefix of an area's own groups: `A<area code>_BASE_<key>`. */
+export const AREA_ROLE_TEMPLATES = [
+  { key: 'ADMIN', label: 'ผู้ดูแลระบบ', default_permissions: AREA_ADMIN_DEFAULT_PERMISSIONS },
+  { key: 'EXECUTIVE', label: 'ผู้บริหาร', default_permissions: EXECUTIVE_DEFAULT_PERMISSIONS },
 ] as const;
 
 /**
@@ -326,9 +346,32 @@ export function hasPermission(
 }
 
 /** Executive-only actors stay restricted even if a raw-data permission is re-granted. */
+/** An area's own copy of a council default: `A<area code>_BASE_<ADMIN|EXECUTIVE>`. */
+const AREA_ROLE_NAME = /^A[0-9]+_BASE_(ADMIN|EXECUTIVE)$/;
+
+/**
+ * Which council default an area group copies, or null. An area's ผู้บริหาร is
+ * an executive and its ผู้ดูแลระบบ an admin for the checks below; it never
+ * becomes the national `ADMIN` group (settings, master data, AraID stay there).
+ */
+export function areaRoleKind(role: string | null | undefined): 'ADMIN' | 'EXECUTIVE' | null {
+  const match = role ? AREA_ROLE_NAME.exec(role) : null;
+  return match ? (match[1] as 'ADMIN' | 'EXECUTIVE') : null;
+}
+
+/** An account that may approve a ส่งออกข้อมูลส่วนบุคคล request, within its scope. */
+export function isExportApproverRole(role: string | null | undefined): boolean {
+  return role === 'ADMIN' || areaRoleKind(role) === 'ADMIN';
+}
+
+/** ผู้บริหาร — national or an area's own — sees aggregates only, never raw rows. */
 export function isRestrictedExecutive(actor: { roles: string[] } | undefined): boolean {
-  return Boolean(
-    actor?.roles.includes('EXECUTIVE') &&
-    !actor.roles.some((role) => role === 'ADMIN' || role === 'DIRECTOR'),
+  const roles = actor?.roles ?? [];
+  const executive = roles.some(
+    (role) => role === 'EXECUTIVE' || areaRoleKind(role) === 'EXECUTIVE',
   );
+  const exempt = roles.some(
+    (role) => role === 'ADMIN' || role === 'DIRECTOR' || areaRoleKind(role) === 'ADMIN',
+  );
+  return executive && !exempt;
 }

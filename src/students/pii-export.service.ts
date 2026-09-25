@@ -1,3 +1,4 @@
+import { isExportApproverRole } from '../auth/permissions.constants';
 import {
   BadRequestException,
   ForbiddenException,
@@ -109,8 +110,9 @@ export class PiiExportService {
    * only works because requester and approver are different roles to begin with.
    */
   private assertApprover(actor: AuthenticatedRequestUser, request: PiiExportRequestRow): void {
-    const role = this.taskPolicyService.getPrimaryRole(actor);
-    if (role !== 'ADMIN') {
+    // The council's ผู้ดูแลระบบ — national or an area's own (owner, 2026-09-25:
+    // "ส่งออกจาก scope"); the scope check below keeps it inside its area.
+    if (!isExportApproverRole(this.taskPolicyService.getPrimaryRole(actor))) {
       throw new ForbiddenException('ต้องเป็นผู้ดูแลระบบเพื่ออนุมัติคำขอส่งออก');
     }
     if (actor.id === request.requester_user_id) {
@@ -215,7 +217,8 @@ export class PiiExportService {
     actor: AuthenticatedRequestUser,
     query: { status?: string; page?: number; limit?: number },
   ) {
-    const isApprover = this.taskPolicyService.getPrimaryRole(actor) === 'ADMIN';
+    // National ผู้ดูแลระบบ or an area's own; the list is still scope-bound.
+    const isApprover = isExportApproverRole(this.taskPolicyService.getPrimaryRole(actor));
     const page = Math.max(query.page ?? 1, 1);
     const limit = Math.min(Math.max(query.limit ?? 20, 1), 50);
     const { rows, totalCount } = await this.repository.listRequests({

@@ -1,3 +1,4 @@
+import { isRestrictedExecutive } from '../auth/permissions.constants';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import {
   hasPermission,
@@ -41,10 +42,7 @@ export class TeacherCommentsService {
   ) {}
 
   private denyExecutiveRaw(actor: AuthenticatedRequestUser): void {
-    if (
-      actor.roles.includes('EXECUTIVE') &&
-      !actor.roles.some((role) => role === 'ADMIN' || role === 'DIRECTOR')
-    ) {
+    if (isRestrictedExecutive(actor)) {
       throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะข้อมูลสรุปที่ไม่เปิดเผยข้อมูลดิบ');
     }
   }

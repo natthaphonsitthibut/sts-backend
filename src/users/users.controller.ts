@@ -31,8 +31,6 @@ import {
   PermissionsGuard,
   Public,
   RequirePermission,
-  RequireRoles,
-  RolesGuard,
   SessionCookieService,
   type AuthenticatedRequestUser,
 } from '../auth';
@@ -45,6 +43,7 @@ import {
   DeactivateUserAccountDto,
   GetUsersQueryDto,
   LoginDto,
+  RoleCatalogQueryDto,
   RoleGroupListQueryDto,
   UpdateRoleGroupDto,
   UpdateOwnProfileDto,
@@ -118,8 +117,15 @@ export class UsersController {
 
   @UseGuards(AuthGuard)
   @Get('roles')
-  async getRoles(@CurrentUser() actor: AuthenticatedRequestUser | undefined) {
-    return await this.usersService.getRoles(actor);
+  async getRoles(
+    @Query() query: RoleCatalogQueryDto,
+    @CurrentUser() actor: AuthenticatedRequestUser | undefined,
+  ) {
+    return await this.usersService.getRoles(actor, {
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+    });
   }
 
   @UseGuards(AuthGuard)
@@ -145,9 +151,9 @@ export class UsersController {
     });
   }
 
-  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  // Any council account holding จัดการกลุ่มเมนู, for the areas in its scope.
+  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-role-groups')
-  @RequireRoles('ADMIN')
   @Get('council-role-groups')
   async getCouncilRoleGroups(
     @Query() query: RoleGroupListQueryDto,
@@ -155,6 +161,9 @@ export class UsersController {
   ) {
     return await this.roleGroupsService.getCouncilRoleGroups(actor, {
       searchTerm: query.searchTerm?.trim() || undefined,
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
       page: query.page,
       limit: query.limit,
       sortBy: query.sortBy,
@@ -183,9 +192,9 @@ export class UsersController {
     return result;
   }
 
-  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  // Any council account holding จัดการกลุ่มเมนู, for the areas in its scope.
+  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-role-groups')
-  @RequireRoles('ADMIN')
   @Post('council-role-groups')
   async createCouncilRoleGroup(
     @Body() data: CreateRoleGroupDto,
@@ -227,9 +236,9 @@ export class UsersController {
     return result;
   }
 
-  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  // Any council account holding จัดการกลุ่มเมนู, for the areas in its scope.
+  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-role-groups')
-  @RequireRoles('ADMIN')
   @Put('council-role-groups/:name')
   async updateCouncilRoleGroup(
     @Param('name') name: string,
@@ -271,9 +280,9 @@ export class UsersController {
     return result;
   }
 
-  @UseGuards(AuthGuard, RolesGuard, PermissionsGuard)
+  // Any council account holding จัดการกลุ่มเมนู, for the areas in its scope.
+  @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('manage-role-groups')
-  @RequireRoles('ADMIN')
   @Delete('council-role-groups/:name')
   async deleteCouncilRoleGroup(
     @Param('name') name: string,

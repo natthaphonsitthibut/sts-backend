@@ -442,9 +442,44 @@ export class CreateRoleGroupDto {
   @IsOptional()
   @IsString()
   scope_mode?: string;
+
+  /** จ./อ./ต. a council group belongs to, by the names the header filter uses. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
 }
 
 export class UpdateRoleGroupDto extends PartialType(CreateRoleGroupDto) {}
+
+/** The user form's group list: a council account's own จ./อ./ต. groups. */
+export class RoleCatalogQueryDto {
+  /** จ./อ./ต. a council group belongs to, by the names the header filter uses. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
+}
 
 export class RoleGroupListQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
@@ -452,6 +487,22 @@ export class RoleGroupListQueryDto extends PaginatedSearchQueryDto {
   @IsInt()
   @Min(1)
   schoolId?: number;
+
+  /** จ./อ./ต. a council group belongs to, by the names the header filter uses. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subDistrict?: string;
 
   @IsOptional()
   @IsIn(['group', 'menus'])

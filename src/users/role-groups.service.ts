@@ -6,7 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { COUNCIL_DEFAULT_ROLE_NAMES, PERMISSION_CATALOG } from '../auth/permissions.constants';
+import { AREA_ROLE_TEMPLATES, PERMISSION_CATALOG } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
   resolveLimit,
@@ -14,14 +14,17 @@ import {
 } from '../common/pagination/pagination.util';
 import type { CreateRoleGroupDto, UpdateRoleGroupDto } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
-import { UsersRepository } from './users.repository';
-import type { ActorContext, RoleDefinition } from './users.types';
+import { UsersRepository, type RoleOwnerAreaCodes } from './users.repository';
+import type { ActorContext, RoleDefinition, RoleOwnerArea } from './users.types';
 
 interface RoleGroupListOptions {
   searchTerm?: string;
   page?: number;
   limit?: number;
   schoolId?: number;
+  province?: string;
+  district?: string;
+  subDistrict?: string;
   sortBy?: 'group' | 'menus';
   sortDirection?: 'asc' | 'desc';
 }
@@ -38,6 +41,25 @@ function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
+interface AreaRequest {
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+}
+
+type ResolvedArea = Pick<RoleOwnerArea, 'province' | 'district' | 'sub_district'> &
+  RoleOwnerAreaCodes;
+
+/** The group belongs to exactly this area. */
+function isOwnedBy(owner: RoleOwnerArea | null | undefined, area: ResolvedArea): boolean {
+  return Boolean(
+    owner &&
+    owner.province_code === area.province_code &&
+    (owner.district_code ?? null) === (area.district_code ?? null) &&
+    (owner.sub_district_code ?? null) === (area.sub_district_code ?? null),
+  );
+}
+
 @Injectable()
 export class RoleGroupsService {
   constructor(
@@ -45,15 +67,76 @@ export class RoleGroupsService {
     private readonly usersPolicyService: UsersPolicyService,
   ) {}
 
+  /**
+   * Council menu groups belong to a จ./อ./ต., like a school's belong to the
+   * school (owner with BA, 2026-09-25). Any council account holding จัดการกลุ่ม
+   * เมนู manages the groups of the areas in its scope; a school account never.
+   */
   private assertCouncilActor(actor: ActorContext): void {
-    if (!actor.roles?.includes('ADMIN')) {
-      throw new ForbiddenException('ไม่มีสิทธิ์จัดการกลุ่มเมนูส่วนกลาง');
-    }
     const scope = this.usersPolicyService.normalizeScope(actor.data_scope);
-    if (!scope.global || scope.school_ids.length > 0) {
+    if (scope.school_ids.length > 0 || (!scope.global && scope.provinces.length === 0)) {
       throw new ForbiddenException(
         'บัญชีที่ไม่ได้อยู่ในขอบเขตส่วนกลางจัดการกลุ่มเมนูส่วนกลางไม่ได้',
       );
+    }
+  }
+
+  /**
+   * The area whose groups are managed: the จ./อ./ต. picked in the header, else
+   * an area account's own. There is no "no area" — like a school must be picked
+   * on the school side. Its two starter groups are created on first use.
+   */
+  private async resolveCouncilArea(
+    actor: ActorContext,
+    requested: AreaRequest,
+  ): Promise<ResolvedArea> {
+    const scope = this.usersPolicyService.normalizeScope(actor.data_scope);
+    const area: Pick<RoleOwnerArea, 'province' | 'district' | 'sub_district'> | null =
+      requested.province
+        ? {
+            province: requested.province,
+            district: requested.district || null,
+            sub_district: requested.district ? requested.subDistrict || null : null,
+          }
+        : scope.global
+          ? null
+          : this.usersPolicyService.scopeArea(actor.data_scope);
+    if (!area) {
+      throw new BadRequestException('กรุณาเลือกจังหวัด อำเภอ หรือตำบลก่อนจัดการกลุ่มเมนู');
+    }
+    if (
+      !scope.global &&
+      !this.usersPolicyService.isScopeSubsetOfActor(
+        this.usersPolicyService.areaAsScope(area),
+        actor.data_scope,
+      )
+    ) {
+      throw new NotFoundException('ไม่พบพื้นที่ในขอบเขตของคุณ');
+    }
+    const codes = await this.usersRepository.resolveAreaCodes({
+      province: area.province,
+      district: area.district,
+      subDistrict: area.sub_district,
+    });
+    if (!codes) throw new BadRequestException('ไม่พบพื้นที่ที่เลือก');
+    await this.usersRepository.ensureAreaDefaultRoles(codes, AREA_ROLE_TEMPLATES);
+    return { ...area, ...codes };
+  }
+
+  /** An area group, of an area inside the actor's scope. */
+  private assertCouncilGroupInReach(actor: ActorContext, role: RoleDefinition | undefined): void {
+    if (!role?.owner_area || role.school_id != null) {
+      throw new NotFoundException('ไม่พบกลุ่มเมนูส่วนกลาง');
+    }
+    const scope = this.usersPolicyService.normalizeScope(actor.data_scope);
+    if (
+      !scope.global &&
+      !this.usersPolicyService.isScopeSubsetOfActor(
+        this.usersPolicyService.areaAsScope(role.owner_area),
+        actor.data_scope,
+      )
+    ) {
+      throw new NotFoundException('ไม่พบกลุ่มเมนูส่วนกลาง');
     }
   }
 
@@ -134,13 +217,13 @@ export class RoleGroupsService {
   async getCouncilRoleGroups(actor?: ActorContext, options: RoleGroupListOptions = {}) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     this.assertCouncilActor(currentActor);
+    const area = await this.resolveCouncilArea(currentActor, options);
     const definitions = await this.usersPolicyService.getRoleDefinitions(true, null);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
     let visible = definitions.filter(
       (role) =>
-        role.school_id == null &&
-        (COUNCIL_DEFAULT_ROLE_NAMES.has(role.name) || !role.is_system) &&
+        isOwnedBy(role.owner_area, area) &&
         this.usersPolicyService.canGrantPermissions(
           currentActor.permissions || [],
           role.default_permissions || [],
@@ -180,17 +263,19 @@ export class RoleGroupsService {
   async createCouncilRoleGroup(actor: ActorContext | undefined, data: CreateRoleGroupDto) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
     this.assertCouncilActor(currentActor);
+    const area = await this.resolveCouncilArea(currentActor, data);
     const definitions = await this.usersPolicyService.getRoleDefinitions(false, null);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
-    const internalName = `G_${randomUUID().replaceAll('-', '').slice(0, 28).toUpperCase()}`;
+    const code = area.sub_district_code ?? area.district_code ?? area.province_code;
+    const internalName = `A${code}_${randomUUID().replaceAll('-', '').slice(0, 24).toUpperCase()}`;
     const payload = this.usersPolicyService.normalizeRoleGroupPayload({
       ...data,
       name: internalName,
       scope_mode: 'flexible',
     });
 
-    if (await this.usersRepository.globalRoleLabelExists(payload.label)) {
-      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในส่วนกลางแล้ว');
+    if (await this.usersRepository.areaRoleLabelExists(area, payload.label)) {
+      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในพื้นที่นี้แล้ว');
     }
 
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
@@ -206,11 +291,15 @@ export class RoleGroupsService {
     }
 
     try {
-      const row = await this.usersRepository.createRole({ ...payload, school_id: null });
+      const row = await this.usersRepository.createRole({
+        ...payload,
+        school_id: null,
+        owner_area: area,
+      });
       return { success: true, role: this.usersPolicyService.mapRoleRow(row) };
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new ConflictException('มีกลุ่มเมนูชื่อนี้ในส่วนกลางแล้ว');
+        throw new ConflictException('มีกลุ่มเมนูชื่อนี้ในพื้นที่นี้แล้ว');
       }
       throw error;
     }
@@ -227,15 +316,15 @@ export class RoleGroupsService {
     const definitions = await this.usersPolicyService.getRoleDefinitions(true, null);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const existingRole = roleMap.get(normalizedRoleName);
-    if (!existingRole || existingRole.school_id != null || existingRole.is_system) {
-      throw new NotFoundException('ไม่พบกลุ่มเมนูส่วนกลาง');
-    }
+    this.assertCouncilGroupInReach(currentActor, existingRole);
+    const role = existingRole!;
+    const area = role.owner_area!;
 
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
     if (
       !this.usersPolicyService.canGrantPermissions(
         currentActor.permissions || [],
-        existingRole.default_permissions || [],
+        role.default_permissions || [],
         actorRole,
         roleMap,
       )
@@ -245,10 +334,10 @@ export class RoleGroupsService {
 
     const payload = this.usersPolicyService.normalizeRoleGroupPayload(
       { ...data, scope_mode: 'flexible' },
-      existingRole,
+      role,
     );
-    if (await this.usersRepository.globalRoleLabelExists(payload.label, existingRole.name)) {
-      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในส่วนกลางแล้ว');
+    if (await this.usersRepository.areaRoleLabelExists(area, payload.label, role.name)) {
+      throw new BadRequestException('มีกลุ่มเมนูชื่อนี้ในพื้นที่นี้แล้ว');
     }
     if (
       !this.usersPolicyService.canGrantPermissions(
@@ -261,8 +350,15 @@ export class RoleGroupsService {
       throw new ForbiddenException('ไม่สามารถกำหนดเมนูที่ตนเองไม่มีสิทธิ์เข้าถึงได้');
     }
 
-    const row = await this.usersRepository.updateRole(existingRole.name, payload);
-    return { success: true, role: this.usersPolicyService.mapRoleRow(row) };
+    try {
+      const row = await this.usersRepository.updateRole(role.name, payload);
+      return { success: true, role: this.usersPolicyService.mapRoleRow(row) };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('มีกลุ่มเมนูชื่อนี้ในพื้นที่นี้แล้ว');
+      }
+      throw error;
+    }
   }
 
   async deleteCouncilRoleGroup(actor: ActorContext | undefined, roleName: string) {
@@ -272,26 +368,25 @@ export class RoleGroupsService {
     const definitions = await this.usersPolicyService.getRoleDefinitions(true, null);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const existingRole = roleMap.get(normalizedRoleName);
-    if (!existingRole || existingRole.school_id != null || existingRole.is_system) {
-      throw new NotFoundException('ไม่พบกลุ่มเมนูส่วนกลาง');
-    }
+    this.assertCouncilGroupInReach(currentActor, existingRole);
+    const role = existingRole!;
 
     const actorRole = this.usersPolicyService.getPrimaryRole({ roles: currentActor.roles });
     if (
       !this.usersPolicyService.canGrantPermissions(
         currentActor.permissions || [],
-        existingRole.default_permissions || [],
+        role.default_permissions || [],
         actorRole,
         roleMap,
       )
     ) {
       throw new ForbiddenException('ไม่มีสิทธิ์ลบกลุ่มเมนูนี้');
     }
-    if ((existingRole.user_count || 0) > 0) {
+    if ((role.user_count || 0) > 0) {
       throw new ForbiddenException('ไม่สามารถลบกลุ่มเมนูที่ยังมีผู้ใช้งานอยู่ได้');
     }
 
-    await this.usersRepository.deleteRole(existingRole.name);
+    await this.usersRepository.deleteRole(role.name);
     return { success: true };
   }
 

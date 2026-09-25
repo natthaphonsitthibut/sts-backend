@@ -119,7 +119,33 @@ interface CreateRoleRecordInput {
   scope_mode: string;
   scope_policy: string;
   school_id: number | null;
+  owner_area?: RoleOwnerAreaCodes | null;
 }
+
+/** Codes of the จ./อ./ต. a council group belongs to (see AddRoleOwnerArea). */
+export interface RoleOwnerAreaCodes {
+  province_code: string;
+  district_code: string | null;
+  sub_district_code: string | null;
+}
+
+/** A role's owning area, as codes and as the names the rest of the app filters by. */
+const ROLE_OWNER_AREA_SELECT_SQL = `
+  r.owner_province_code,
+  r.owner_district_code,
+  r.owner_sub_district_code,
+  owner_province.name_th AS owner_province,
+  owner_district.name_th AS owner_district,
+  owner_sub_district.name_th AS owner_sub_district
+`;
+const ROLE_OWNER_AREA_JOIN_SQL = `
+  LEFT JOIN administrative_provinces owner_province
+    ON owner_province.code = r.owner_province_code
+  LEFT JOIN administrative_districts owner_district
+    ON owner_district.code = r.owner_district_code
+  LEFT JOIN administrative_sub_districts owner_sub_district
+    ON owner_sub_district.code = r.owner_sub_district_code
+`;
 
 export interface UserListFilters {
   actorId: number;
@@ -364,6 +390,114 @@ export class UsersRepository {
     });
   }
 
+  /**
+   * Area names (as data_scope and the header filter carry them) to master-data
+   * codes, level by level so a district is only looked up in its own province.
+   * `null` when a named level does not exist.
+   */
+  async resolveAreaCodes(area: {
+    province?: string | null;
+    district?: string | null;
+    subDistrict?: string | null;
+  }): Promise<RoleOwnerAreaCodes | null> {
+    if (!area.province) return null;
+    const result = await this.query<{
+      province_code: string;
+      district_code: string | null;
+      sub_district_code: string | null;
+    }>(
+      `
+        SELECT
+          province.code AS province_code,
+          district.code AS district_code,
+          sub_district.code AS sub_district_code
+        FROM administrative_provinces province
+        LEFT JOIN administrative_districts district
+          ON district.province_code = province.code
+         AND district.name_th = $2
+        LEFT JOIN administrative_sub_districts sub_district
+          ON sub_district.district_code = district.code
+         AND sub_district.name_th = $3
+        WHERE province.name_th = $1
+        LIMIT 1
+      `,
+      [area.province, area.district || null, area.subDistrict || null],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    if (area.district && !row.district_code) return null;
+    if (area.subDistrict && !row.sub_district_code) return null;
+    return {
+      province_code: row.province_code,
+      district_code: area.district ? row.district_code : null,
+      sub_district_code: area.subDistrict ? row.sub_district_code : null,
+    };
+  }
+
+  /**
+   * An area's two starter groups, created the first time the area is used —
+   * the council's counterpart of `seedDefaultSchoolRoles`.
+   */
+  async ensureAreaDefaultRoles(
+    area: RoleOwnerAreaCodes,
+    templates: ReadonlyArray<{
+      key: string;
+      label: string;
+      default_permissions: readonly string[];
+    }>,
+  ): Promise<void> {
+    const code = area.sub_district_code ?? area.district_code ?? area.province_code;
+    for (const template of templates) {
+      await this.query(
+        `
+          INSERT INTO roles (
+            name, label, default_permissions, scope_mode, scope_policy,
+            is_assignable, is_system, school_id,
+            owner_province_code, owner_district_code, owner_sub_district_code
+          )
+          VALUES ($1, $2, $3::jsonb, 'flexible', 'ASSIGNABLE', TRUE, FALSE, NULL, $4, $5, $6)
+          ON CONFLICT (name) DO NOTHING
+        `,
+        [
+          `A${code}_BASE_${template.key}`,
+          template.label,
+          JSON.stringify(template.default_permissions),
+          area.province_code,
+          area.district_code,
+          area.sub_district_code,
+        ],
+      );
+    }
+  }
+
+  async areaRoleLabelExists(
+    area: RoleOwnerAreaCodes,
+    label: string,
+    excludeName?: string,
+  ): Promise<boolean> {
+    const params: unknown[] = [
+      area.province_code,
+      area.district_code ?? '',
+      area.sub_district_code ?? '',
+      label,
+    ];
+    const exclude = excludeName ? `AND name <> $${params.push(excludeName)}` : '';
+    const result = await this.query(
+      `
+        SELECT 1
+        FROM roles
+        WHERE owner_province_code = $1
+          AND COALESCE(owner_district_code, '') = $2
+          AND COALESCE(owner_sub_district_code, '') = $3
+          AND LOWER(BTRIM(label)) = LOWER(BTRIM($4))
+          ${exclude}
+        LIMIT 1
+      `,
+      params,
+    );
+    return result.rows.length > 0;
+  }
+
   async listRoleRows(includeUsage = false, schoolId?: number | null): Promise<RoleRow[]> {
     const schoolCondition =
       schoolId === undefined
@@ -383,8 +517,10 @@ export class UsersRepository {
             r.is_assignable,
             r.is_system,
             r.school_id,
+            ${ROLE_OWNER_AREA_SELECT_SQL},
             COALESCE(u.user_count, 0)::int AS user_count
           FROM roles r
+          ${ROLE_OWNER_AREA_JOIN_SQL}
           LEFT JOIN (
             SELECT role, COUNT(*) AS user_count
             FROM users
@@ -404,8 +540,10 @@ export class UsersRepository {
             r.scope_policy,
             r.is_assignable,
             r.is_system,
-            r.school_id
+            r.school_id,
+            ${ROLE_OWNER_AREA_SELECT_SQL}
           FROM roles r
+          ${ROLE_OWNER_AREA_JOIN_SQL}
           WHERE r.is_assignable = TRUE
             ${schoolCondition}
           ORDER BY r.is_system DESC, r.name ASC
@@ -469,6 +607,7 @@ export class UsersRepository {
         SELECT 1
         FROM roles
         WHERE school_id IS NULL
+          AND owner_province_code IS NULL
           AND is_system = FALSE
           AND LOWER(BTRIM(label)) = LOWER(BTRIM($1))
           ${exclude}
@@ -1254,13 +1393,20 @@ export class UsersRepository {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<RoleRow>(
       `
-        INSERT INTO roles (
-          name, label, default_permissions, scope_mode, scope_policy,
-          is_assignable, is_system, school_id
+        WITH inserted AS (
+          INSERT INTO roles (
+            name, label, default_permissions, scope_mode, scope_policy,
+            is_assignable, is_system, school_id,
+            owner_province_code, owner_district_code, owner_sub_district_code
+          )
+          VALUES ($1, $2, $3::jsonb, $4, $5, TRUE, FALSE, $6, $7, $8, $9)
+          RETURNING *
         )
-        VALUES ($1, $2, $3::jsonb, $4, $5, TRUE, FALSE, $6)
-        RETURNING id, name, label, default_permissions, scope_mode,
-          scope_policy, is_assignable, is_system, school_id
+        SELECT r.id, r.name, r.label, r.default_permissions, r.scope_mode,
+          r.scope_policy, r.is_assignable, r.is_system, r.school_id,
+          ${ROLE_OWNER_AREA_SELECT_SQL}
+        FROM inserted r
+        ${ROLE_OWNER_AREA_JOIN_SQL}
       `,
       [
         data.name,
@@ -1269,6 +1415,9 @@ export class UsersRepository {
         data.scope_mode,
         data.scope_policy,
         data.school_id,
+        data.owner_area?.province_code ?? null,
+        data.owner_area?.district_code ?? null,
+        data.owner_area?.sub_district_code ?? null,
       ],
     );
 
@@ -1277,20 +1426,26 @@ export class UsersRepository {
 
   async updateRole(
     name: string,
-    data: Omit<CreateRoleRecordInput, 'school_id'>,
+    data: Omit<CreateRoleRecordInput, 'school_id' | 'owner_area'>,
     executor?: QueryExecutor,
   ): Promise<RoleRow> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<RoleRow>(
       `
-        UPDATE roles
-        SET label = $2,
-            default_permissions = $3::jsonb,
-            scope_mode = $4,
-            scope_policy = $5
-        WHERE name = $1
-        RETURNING id, name, label, default_permissions, scope_mode,
-          scope_policy, is_assignable, is_system, school_id
+        WITH updated AS (
+          UPDATE roles
+          SET label = $2,
+              default_permissions = $3::jsonb,
+              scope_mode = $4,
+              scope_policy = $5
+          WHERE name = $1
+          RETURNING *
+        )
+        SELECT r.id, r.name, r.label, r.default_permissions, r.scope_mode,
+          r.scope_policy, r.is_assignable, r.is_system, r.school_id,
+          ${ROLE_OWNER_AREA_SELECT_SQL}
+        FROM updated r
+        ${ROLE_OWNER_AREA_JOIN_SQL}
       `,
       [
         name,

@@ -1,3 +1,4 @@
+import { AREA_ROLE_TEMPLATES } from '../auth/permissions.constants';
 import {
   BadRequestException,
   ConflictException,
@@ -45,8 +46,8 @@ import type {
 } from './dto/users.dto';
 import { CREDENTIAL_MIN_LENGTH, USERNAME_MESSAGES } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
-import { UsersRepository, type UserListFilters } from './users.repository';
-import type { ActorContext } from './users.types';
+import { UsersRepository, type RoleOwnerAreaCodes, type UserListFilters } from './users.repository';
+import type { ActorContext, RoleOwnerArea } from './users.types';
 
 interface LifecycleAuditMeta {
   ip?: string | null;
@@ -1170,7 +1171,16 @@ export class UsersService {
     };
   }
 
-  async getRoles(actor?: ActorContext) {
+  /**
+   * Groups an actor may hand out. Area groups are listed only for the one
+   * จ./อ./ต. asked for — the council user form sends the account's own area —
+   * because a council account takes exactly its own area's groups; that area's
+   * starter groups are created on first use.
+   */
+  async getRoles(
+    actor?: ActorContext,
+    area: { province?: string; district?: string; subDistrict?: string } = {},
+  ) {
     if (!actor) {
       return await this.usersPolicyService.getRoleDefinitions();
     }
@@ -1180,21 +1190,55 @@ export class UsersService {
       actorScope.global !== true && actorScope.school_ids.length === 1
         ? Number(actorScope.school_ids[0])
         : null;
+
+    let areaCodes: RoleOwnerAreaCodes | null = null;
+    if (area.province && actorScope.school_ids.length === 0) {
+      const requested = {
+        province: area.province,
+        district: area.district || null,
+        sub_district: area.district ? area.subDistrict || null : null,
+      };
+      const inReach =
+        actorScope.global === true ||
+        this.usersPolicyService.isScopeSubsetOfActor(
+          this.usersPolicyService.areaAsScope(requested),
+          actor.data_scope,
+        );
+      if (inReach) {
+        areaCodes = await this.usersRepository.resolveAreaCodes({
+          province: requested.province,
+          district: requested.district,
+          subDistrict: requested.sub_district,
+        });
+        if (areaCodes) {
+          await this.usersRepository.ensureAreaDefaultRoles(areaCodes, AREA_ROLE_TEMPLATES);
+        }
+      }
+    }
+
     const definitions = await this.usersPolicyService.getRoleDefinitions(false, ownedSchoolId);
     const roleMap = new Map(definitions.map((definition) => [definition.name, definition]));
     const actorRole = this.usersPolicyService.getPrimaryRole({
       roles: actor.roles,
     });
+    const ownedByRequestedArea = (owner: RoleOwnerArea): boolean =>
+      Boolean(
+        areaCodes &&
+        owner.province_code === areaCodes.province_code &&
+        (owner.district_code ?? null) === areaCodes.district_code &&
+        (owner.sub_district_code ?? null) === areaCodes.sub_district_code,
+      );
 
     return definitions.filter(
       (role) =>
-        role.name === actorRole ||
-        this.usersPolicyService.canGrantPermissions(
-          actor.permissions || [],
-          role.default_permissions || [],
-          actorRole,
-          roleMap,
-        ),
+        (!role.owner_area || role.name === actorRole || ownedByRequestedArea(role.owner_area)) &&
+        (role.name === actorRole ||
+          this.usersPolicyService.canGrantPermissions(
+            actor.permissions || [],
+            role.default_permissions || [],
+            actorRole,
+            roleMap,
+          )),
     );
   }
 

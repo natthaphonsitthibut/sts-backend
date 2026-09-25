@@ -34,7 +34,19 @@ export interface RoleDefinition {
    * national system group kept only for the accounts still on it.
    */
   realm?: 'school' | 'council' | 'retired';
+  /** The จ./อ./ต. this council group belongs to; `null` for national and school groups. */
+  owner_area?: RoleOwnerArea | null;
   user_count?: number;
+}
+
+/** Names match data_scope and the header filter; codes are the master-data keys. */
+export interface RoleOwnerArea {
+  province: string;
+  district: string | null;
+  sub_district: string | null;
+  province_code: string;
+  district_code: string | null;
+  sub_district_code: string | null;
 }
 
 export interface QueryResultLike<T extends Record<string, unknown>> {
@@ -59,6 +71,12 @@ export interface RoleRow extends Record<string, unknown> {
   is_assignable: boolean;
   is_system: boolean;
   school_id?: number | null;
+  owner_province_code?: string | null;
+  owner_district_code?: string | null;
+  owner_sub_district_code?: string | null;
+  owner_province?: string | null;
+  owner_district?: string | null;
+  owner_sub_district?: string | null;
   user_count?: number;
 }
 

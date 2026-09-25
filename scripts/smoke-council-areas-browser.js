@@ -219,16 +219,62 @@ async function main() {
       console.log('ok a picked school narrows the council list to its area, with a note');
     }
 
-    // 2. Council menu groups are the council's own: never the retired ผู้อำนวยการ.
+    // 2. Council menu groups belong to a จ./อ./ต., like a school's (owner with
+    //    BA, 2026-09-25): an area must be picked, and each area starts with its
+    //    own ผู้ดูแลระบบ and ผู้บริหาร — never the retired ผู้อำนวยการ.
     await signIn(national, 'ADMIN', { global: true }, {});
+    await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/council/manage-role-groups` });
+    await waitFor(
+      async () => await chrome.evaluate(`document.body.innerText.includes('เลือกพื้นที่')`),
+      'the council group page did not ask for an area',
+    );
+    await signIn(national, 'ADMIN', { global: true }, { province: PROVINCE, district: DISTRICT });
     const groups = await openList('/council/manage-role-groups', 'ผู้บริหาร');
     const groupNames = groups.rows.map((row) => row[0]);
     assert(
       groupNames.includes('ผู้ดูแลระบบ') && groupNames.includes('ผู้บริหาร'),
-      `council groups were ${JSON.stringify(groupNames)}`,
+      `the district's groups were ${JSON.stringify(groupNames)}`,
     );
     assert(!groupNames.includes('ผู้อำนวยการ'), 'the council lists the retired ผู้อำนวยการ group');
-    console.log('ok council groups are ผู้ดูแลระบบ and ผู้บริหาร (plus its own)');
+    const starters = await dataSource.query(
+      `SELECT r.name FROM roles r
+       JOIN administrative_districts d ON d.code = r.owner_district_code
+       WHERE d.name_th = $1 AND r.owner_sub_district_code IS NULL AND r.name LIKE 'A%_BASE_%'
+       ORDER BY r.name`,
+      [DISTRICT],
+    );
+    assert(starters.length === 2, `the district's starter groups were ${JSON.stringify(starters)}`);
+    console.log(
+      `ok a picked district lists its own groups (${starters.map((r) => r.name).join(', ')})`,
+    );
+
+    // An area admin works on its own area's groups with nothing picked.
+    const districtAdminRole = starters.find((row) => row.name.endsWith('_BASE_ADMIN')).name;
+    const areaAdmin = await upsertUser(
+      dataSource,
+      'district',
+      districtAdminRole,
+      { provinces: [PROVINCE], districts: [DISTRICT] },
+      'Districtadmin',
+    );
+    await signIn(
+      areaAdmin,
+      districtAdminRole,
+      { provinces: [PROVINCE], districts: [DISTRICT] },
+      {},
+    );
+    const own = await openList('/council/manage-role-groups', 'ผู้บริหาร');
+    assert(
+      own.rows.map((row) => row[0]).includes('ผู้ดูแลระบบ'),
+      `an area admin does not see its area's groups: ${JSON.stringify(own.rows)}`,
+    );
+    assert(
+      await chrome.evaluate(
+        `[...document.querySelectorAll('nav a')].some((a) => a.getAttribute('href') === '/council/manage-role-groups')`,
+      ),
+      'an area admin is not shown จัดการกลุ่มเมนู',
+    );
+    console.log('ok an area admin manages its own area groups from the menu');
 
     // 3. A new council account starts at the header's area, before any group is picked,
     //    and is offered only council groups.
@@ -253,6 +299,21 @@ async function main() {
       `the scope did not start at the header area: ${JSON.stringify(form.values)}`,
     );
     assert(!/ผู้อำนวยการ/.test(form.text), 'the council form offers the retired ผู้อำนวยการ group');
+    // Its group list is exactly the district's own groups.
+    const catalog = await chrome.evaluate(
+      `fetch(${JSON.stringify(
+        `${BACKEND_URL}/api/users/roles?province=${encodeURIComponent(PROVINCE)}&district=${encodeURIComponent(DISTRICT)}`,
+      )}, { credentials: 'include' }).then((response) => response.json())`,
+    );
+    const list = Array.isArray(catalog) ? catalog : catalog.data;
+    assert(
+      list.some((role) => role.name === districtAdminRole),
+      `the form's catalog lacks the district's groups: ${JSON.stringify(list.map((r) => r.name))}`,
+    );
+    assert(
+      !list.some((role) => role.owner_area && role.owner_area.district !== DISTRICT),
+      'the form offers another area group',
+    );
     console.log(
       'ok a new council account starts at the header area, groups limited to the council',
     );
