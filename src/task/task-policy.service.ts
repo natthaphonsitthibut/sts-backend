@@ -349,7 +349,9 @@ export class TaskPolicyService {
   ): boolean {
     const taskType = typeof link.task_type === 'string' ? link.task_type.trim() : '';
 
-    if (taskType === 'VISIT') {
+    // Both remaining link types come from a case round and are created under the
+    // same rule (`assertCanCreateTask`), so whoever can issue one can manage it.
+    if (taskType === 'VISIT' || taskType === 'ASSIST') {
       if (!this.hasPermission(actor, 'dashboard')) {
         return false;
       }
