@@ -96,9 +96,9 @@ async function main() {
       const stored = {
         province: filter.province ?? '',
         district: filter.district ?? '',
-        subDistrict: '',
-        schoolId: '',
-        schoolName: '',
+        subDistrict: filter.subDistrict ?? '',
+        schoolId: filter.schoolId ?? '',
+        schoolName: filter.schoolName ?? '',
         userId: actor.id,
       };
       await chrome.evaluate(
@@ -192,6 +192,32 @@ async function main() {
       );
     }
     console.log('ok user list follows the picked district and shows its area');
+
+    // A school picked in the header narrows the council list to its area only, and says so.
+    const [school] = await dataSource.query(
+      `SELECT id, name, province, district, sub_district FROM schools WHERE province = $1 AND district = $2 LIMIT 1`,
+      [PROVINCE, DISTRICT],
+    );
+    if (school) {
+      await signIn(
+        national,
+        'ADMIN',
+        { global: true },
+        {
+          province: school.province,
+          district: school.district,
+          subDistrict: school.sub_district,
+          schoolId: String(school.id),
+          schoolName: school.name,
+        },
+      );
+      await openList('/council/manage-users', null);
+      assert(
+        await chrome.evaluate(`document.body.innerText.includes('ไม่กรองตามโรงเรียน')`),
+        'the council list does not say a picked school is not applied',
+      );
+      console.log('ok a picked school narrows the council list to its area, with a note');
+    }
 
     // 2. Council menu groups are the council's own: never the retired ผู้อำนวยการ.
     await signIn(national, 'ADMIN', { global: true }, {});

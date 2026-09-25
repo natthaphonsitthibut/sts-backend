@@ -435,16 +435,22 @@ async function main() {
       mobile: true,
     });
     await verifyTaskWithDevelopmentGoogle(client, visit, { proveDeniedEmail: true });
+    // The follow-up report is one form again (owner, 2026-09-25): every
+    // section is on screen at once and one บันทึกข้อมูล submits it.
     await waitFor(
-      async () => (await visibleStepId(client)) === 'visited-at',
       async () =>
-        `VISIT conversational form did not open on the first question: ${await client.evaluate(
+        await client.evaluate(
+          `['visited-at', 'visit-outcome', 'contact', 'absence-reason', 'context', 'care', 'evidence']
+            .every((id) => document.getElementById('report-section-' + id))`,
+        ),
+      async () =>
+        `VISIT form did not show every section: ${await client.evaluate(
           `location.pathname + ' — ' + document.body.innerText.slice(0, 240)`,
         )}`,
     );
     assert(
-      await client.evaluate(`document.body.innerText.includes('ข้อ 1 จาก 10')`),
-      'VISIT progress did not expose semantic step count',
+      !(await client.evaluate(`Boolean(document.querySelector('[data-conversational-report]'))`)),
+      'VISIT still renders the step-by-step flow',
     );
     assert(
       await client.evaluate(`document.documentElement.scrollWidth <= document.documentElement.clientWidth`),
@@ -452,22 +458,11 @@ async function main() {
     );
     assert(
       await client.evaluate(
-        `[...document.querySelectorAll('[role="list"][aria-label^="ข้อ"] [role="listitem"] button')]
-          .slice(1).every((item) => item.disabled)`,
-      ),
-      'future progress segments must be disabled',
-    );
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'visit-outcome', 'VISIT did not advance');
-    assert(
-      await client.evaluate(
-        `document.querySelector('[data-conversational-step] input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('พบนักเรียน')
-         && !document.querySelector('[data-conversational-step] input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('ไม่พบนักเรียน')`,
+        `document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('พบนักเรียน')
+         && !document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('ไม่พบนักเรียน')`,
       ),
       'previous unsuccessful outcome leaked into the new round',
     );
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'contact', 'VISIT contact step missing');
     assert(
       (await client.evaluate(`document.querySelector('#contact-person-selection')?.value`)) ===
         'บุคคลอื่น',
@@ -480,75 +475,25 @@ async function main() {
     );
     assert(
       !(await client.evaluate(
-        `document.querySelector('[data-conversational-step]')?.innerText.includes('ข้อความเหตุการณ์เก่าห้าม prefill')`,
+        // The history card may show it; the form fields must not.
+        `[...document.querySelectorAll('form input, form textarea')].some((field) => field.value.includes('ข้อความเหตุการณ์เก่าห้าม prefill'))`,
       )),
       'old event summary leaked into prefill UI',
     );
     await setInput(client, '#contact-person-name', 'แก้ไขแล้วในรอบใหม่');
-    await clickNext(client);
-    await client.clickText('ย้อนกลับ');
-    assert(
-      (await client.evaluate(`document.querySelector('#contact-person-name')?.value`)) ===
-        'แก้ไขแล้วในรอบใหม่',
-      'Back did not preserve the local answer',
-    );
-    await client.evaluate(
-      `document.querySelectorAll('[role="list"][aria-label^="ข้อ"] [role="listitem"] button')[0].focus()`,
-    );
-    await client.evaluate(
-      `document.activeElement.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }))`,
-    );
-    await waitFor(
-      async () => (await visibleStepId(client)) === 'visited-at',
-      'keyboard activation did not return to a completed segment',
-    );
-    await client.evaluate(
-      `document.querySelectorAll('[role="list"][aria-label^="ข้อ"] [role="listitem"] button')[2].click()`,
-    );
-    await waitFor(
-      async () => (await visibleStepId(client)) === 'contact',
-      'completed contact segment did not remain reachable',
-    );
-    await client.call('Emulation.setEmulatedMedia', {
-      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
-    });
-    assert(
-      await client.evaluate(
-        `getComputedStyle(document.querySelector('[data-conversational-step]')).transitionProperty === 'none'`,
-      ),
-      'reduced-motion did not disable step transition',
-    );
-    await client.call('Emulation.setEmulatedMedia', { features: [] });
-
-    // Finish VISIT with local-only navigation; only the final submit writes.
-    await clickNext(client);
-    await clickNext(client);
-    await waitFor(
-      async () => (await visibleStepId(client)) === 'absence-reason',
-      'VISIT absence-reason step missing',
-    );
     await client.evaluate(`document.querySelector('#absence-reason-category')?.click()`);
     await client.clickText(absenceReason.category_label);
     await client.evaluate(`document.querySelector('#absence-reason')?.click()`);
     await client.clickText(absenceReason.label_th);
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'context', 'VISIT context step missing');
-    await clickNext(client);
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'care', 'VISIT care step missing');
     await client.evaluate(`document.querySelector('#observed-disadvantage-types')?.click()`);
     await client.clickText(disadvantage.label_th);
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'evidence', 'VISIT evidence step missing');
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'review', 'VISIT review step missing');
+    await client.evaluate(`document.body.click()`);
     const beforeVisit = await dataSource.query(
       `SELECT COUNT(*)::int AS count FROM task_submissions WHERE task_link_id=$1`,
       [visit.link_id],
     );
     assert(Number(beforeVisit[0].count) === 0, 'VISIT wrote before final submit');
-    await client.clickText('ส่งรายงานการติดตาม');
+    await client.clickText('บันทึกข้อมูล');
     await waitFor(async () => {
       const [row] = await dataSource.query(
         `SELECT COUNT(*)::int AS count FROM task_submissions WHERE task_link_id=$1`,
