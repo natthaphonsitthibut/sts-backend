@@ -448,7 +448,7 @@ describe('UsersService', () => {
         role: 'TEACHER',
         data_scope: { school_ids: [10010002] },
       }),
-      { allowEqualRole: false },
+      { allowEqualRole: false, currentRole: 'TEACHER' },
       expect.any(Map),
     );
     expect(usersRepository.updateUser).toHaveBeenCalledWith(

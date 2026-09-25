@@ -6,7 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PERMISSION_CATALOG } from '../auth/permissions.constants';
+import { COUNCIL_DEFAULT_ROLE_NAMES, PERMISSION_CATALOG } from '../auth/permissions.constants';
 import {
   buildPaginationMeta,
   resolveLimit,
@@ -27,7 +27,6 @@ interface RoleGroupListOptions {
 }
 
 const PERMISSION_LABELS = new Map(PERMISSION_CATALOG.map((item) => [item.id, item.label]));
-const COUNCIL_DEFAULT_ROLE_NAMES = new Set(['ADMIN', 'EXECUTIVE']);
 
 function menuLabel(role: RoleDefinition): string {
   return role.default_permissions

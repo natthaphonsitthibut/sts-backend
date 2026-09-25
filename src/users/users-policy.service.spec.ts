@@ -212,6 +212,29 @@ describe('UsersPolicyService functional roles and data scope', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('keeps a retired national group away from council accounts', async () => {
+    const director = definitions.find((role) => role.name === 'DIRECTOR');
+    expect(director).toBeDefined();
+    const map = new Map([...roleMap, ['DIRECTOR', { ...director!, realm: 'retired' as const }]]);
+    await expect(
+      service.assertAssignablePayload(
+        globalAdmin,
+        { role: 'DIRECTOR', permissions: [], data_scope: { provinces: ['ชลบุรี'] } },
+        { allowEqualRole: false },
+        map,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    // An account already on it can still be saved.
+    await expect(
+      service.assertAssignablePayload(
+        globalAdmin,
+        { role: 'DIRECTOR', permissions: [], data_scope: { provinces: ['ชลบุรี'] } },
+        { allowEqualRole: false, currentRole: 'DIRECTOR' },
+        map,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it('rejects assignment of the retired STUDENT role', async () => {
     await expect(
       service.assertAssignablePayload(

@@ -804,7 +804,7 @@ export class UsersService {
       await this.usersPolicyService.assertAssignablePayload(
         currentActor,
         { ...data, role: requestedRole, roles: undefined, data_scope: persistedScope },
-        { allowEqualRole: isSelf },
+        { allowEqualRole: isSelf, currentRole: existingRole },
         roleMap,
       );
       const shouldDeriveAffiliation =

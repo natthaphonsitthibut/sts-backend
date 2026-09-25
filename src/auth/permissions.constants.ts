@@ -129,6 +129,14 @@ export const SCHOOL_ROLE_TEMPLATES = [
   { key: 'DIRECTOR', label: 'ผู้อำนวยการ', default_permissions: DIRECTOR_DEFAULT_PERMISSIONS },
 ] as const;
 
+/**
+ * The council's own default groups — ผู้ดูแลระบบ and ผู้บริหาร, shown as the
+ * starting groups of every จ./อ./ต. (owner, 2026-09-25: "สภามีแค่ผู้ดูแลระบบกับ
+ * ผู้บริหาร"). Other national system groups (the old DIRECTOR) are no realm's
+ * to hand out: directors use their school's own `S<id>_BASE_DIRECTOR`.
+ */
+export const COUNCIL_DEFAULT_ROLE_NAMES: ReadonlySet<string> = new Set(['ADMIN', 'EXECUTIVE']);
+
 export const SYSTEM_ROLE_DEFINITIONS: SystemRoleDefinition[] = [
   {
     name: 'ADMIN',

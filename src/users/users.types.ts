@@ -28,6 +28,12 @@ export interface RoleDefinition {
   is_assignable: boolean;
   is_system: boolean;
   school_id?: number | null;
+  /**
+   * Which user list offers this group: a school's own groups, the council's
+   * (its two defaults and every group it created), or neither — a retired
+   * national system group kept only for the accounts still on it.
+   */
+  realm?: 'school' | 'council' | 'retired';
   user_count?: number;
 }
 

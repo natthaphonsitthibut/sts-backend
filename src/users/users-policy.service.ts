@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import {
+  COUNCIL_DEFAULT_ROLE_NAMES,
   ROLE_BASELINES,
   ROLE_LABELS,
   VALID_PERMISSION_IDS,
@@ -102,6 +103,12 @@ export class UsersPolicyService {
       is_assignable: row.is_assignable !== false,
       is_system: row.is_system === true,
       school_id: row.school_id == null ? null : Number(row.school_id),
+      realm:
+        row.school_id != null
+          ? 'school'
+          : row.is_system !== true || COUNCIL_DEFAULT_ROLE_NAMES.has(String(row.name))
+            ? 'council'
+            : 'retired',
       user_count: row.user_count !== undefined ? Number(row.user_count) || 0 : undefined,
     };
   }
@@ -347,7 +354,8 @@ export class UsersPolicyService {
   async assertAssignablePayload(
     actor: ActorContext,
     data: Pick<CreateUserDto | UpdateUserDto, 'role' | 'roles' | 'permissions' | 'data_scope'>,
-    options: { allowEqualRole: boolean },
+    /** `currentRole`: the account's group before this save, when editing one. */
+    options: { allowEqualRole: boolean; currentRole?: string | null },
     roleMap?: Map<string, RoleDefinition>,
   ): Promise<void> {
     const currentRoleMap = roleMap || (await this.getRoleMap());
@@ -373,6 +381,18 @@ export class UsersPolicyService {
       ) {
         throw new ForbiddenException('กลุ่มเมนูนี้ใช้ได้เฉพาะผู้ใช้ในโรงเรียนเจ้าของกลุ่ม');
       }
+    }
+
+    // Handing a retired group out is refused; an account already on one keeps
+    // it on save, so older accounts stay editable until someone moves them.
+    if (
+      requestedDefinition.realm === 'retired' &&
+      requestedRole !== options.currentRole &&
+      this.normalizeScope(data.data_scope).school_ids.length === 0
+    ) {
+      throw new ForbiddenException(
+        'ผู้ใช้งานสภาใช้ได้เฉพาะกลุ่มผู้ดูแลระบบ ผู้บริหาร หรือกลุ่มของสภา',
+      );
     }
 
     // Assigning a group is the same question as managing one: it may not reach
