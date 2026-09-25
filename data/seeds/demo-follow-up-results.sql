@@ -95,7 +95,7 @@ SELECT id AS task_id, case_id FROM inserted;
 CREATE TEMP TABLE demo_follow_up_new_links ON COMMIT DROP AS
 WITH inserted AS (
 INSERT INTO task_links (
-  task_id, token_hash, expires_at, status, first_used_at,
+  task_id, token_hash, expires_at, status,
   assigned_teacher_id, assigned_to_first_name, assigned_to_last_name,
   assigned_to_name, created_at, updated_at
 )
@@ -104,7 +104,6 @@ SELECT
   'demo-follow-up-' || md5(demo_follow_up_tasks.task_id::text),
   now() - ((slice.seq % 90) || ' days')::interval + interval '7 days',
   'COMPLETED',
-  now() - ((slice.seq % 90) || ' days')::interval,
   slice.teacher_id,
   slice.first_name,
   slice.last_name,

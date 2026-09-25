@@ -646,7 +646,6 @@ export class TaskAccessService {
         magic_link: link.magic_link ?? null,
         expires_at: link.expires_at,
         created_at: link.created_at ?? null,
-        first_used_at: link.first_used_at ?? null,
         subject: link.subject ?? null,
         assigned_to_name: link.assigned_to_name ?? null,
         assigned_to_email: link.assigned_to_email ?? null,

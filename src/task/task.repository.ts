@@ -1913,7 +1913,6 @@ export class TaskRepository {
         tl.admin_locked,
         tl.admin_lock_reason,
         tl.subject,
-        tl.first_used_at,
         t.created_at,
         t.task_type,
         COALESCE(
