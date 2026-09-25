@@ -509,8 +509,9 @@ async function assertTeacherPhotoManagement(client) {
     async () =>
       evaluate(
         client,
-        `[...document.querySelectorAll('button')].some((candidate) =>
-          ['เปลี่ยนรูป', 'เพิ่มรูป'].includes(candidate.textContent.trim()))`,
+        // The avatar itself is the photo control (no separate เพิ่มรูป button).
+        `[...document.querySelectorAll('button[aria-label]')].some((candidate) =>
+          /^(เปลี่ยน|เพิ่ม)รูป/.test(candidate.getAttribute('aria-label')))`,
       ),
     'teacher profile did not offer photo management to an editor',
   );
@@ -1726,7 +1727,7 @@ async function assertHeaderProfileMenu(client) {
           const menu = document.querySelector('[role="menu"][aria-label="บัญชีผู้ใช้"]');
           return Boolean(
             menu
-            && menu.innerText.includes('แก้ไขข้อมูลส่วนตัว')
+            && menu.innerText.includes('ดูข้อมูลส่วนตัว')
             && menu.innerText.includes('ออกจากระบบ')
           );
         })()`,
@@ -1748,7 +1749,7 @@ async function assertHeaderProfileMenu(client) {
       evaluate(
         client,
         `document.activeElement?.getAttribute('role') === 'menuitem'
-          && document.activeElement?.innerText.includes('แก้ไขข้อมูลส่วนตัว')`,
+          && document.activeElement?.innerText.includes('ดูข้อมูลส่วนตัว')`,
       ),
     'ArrowDown did not open the header profile menu and focus its first action',
   );
