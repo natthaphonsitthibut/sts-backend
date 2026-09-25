@@ -27,6 +27,30 @@ function expectCurrentEnrollmentPolicy(sql: string) {
 }
 
 describe('HomeDashboardRepository', () => {
+  it('keeps every grade and room on offer after one is picked', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+
+    await repository.getFilterOptions(
+      {
+        id: 1,
+        username: 'admin',
+        roles: ['ADMIN'],
+        permissions: ['home'],
+        data_scope: { global: true },
+      },
+      { schoolId: 10010004, grade: 'ม.1', room: '1' },
+    );
+
+    const [{ sql, params }] = queries;
+    // The scope that feeds the grade list must not be narrowed by the pick itself.
+    expect(sql).not.toContain('gl.label = $');
+    expect(sql).not.toContain('"RoomID_Onec"::text = $');
+    // Rooms follow the picked grade only; the picked room is not a filter.
+    expect(sql).toMatch(/FILTER \(WHERE room IS NOT NULL AND grade_label = \$\d+\)/);
+    expect(params).toContain('ม.1');
+    expect(params).not.toContain('1');
+  });
+
   it('counts students through current enrollment policy', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
 
