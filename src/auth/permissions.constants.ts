@@ -115,6 +115,8 @@ export const DIRECTOR_DEFAULT_PERMISSIONS = [
   'classrooms',
   'teachers',
   'students',
+  // ส่งออกข้อมูล only — not นำเข้า (owner, 2026-09-25).
+  'export-data',
   'audit-log',
 ];
 
