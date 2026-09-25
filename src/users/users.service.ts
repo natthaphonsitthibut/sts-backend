@@ -43,6 +43,7 @@ import type {
   UpdateOwnProfileDto,
   UpdateUserDto,
 } from './dto/users.dto';
+import { CREDENTIAL_MIN_LENGTH, USERNAME_MESSAGES } from './dto/users.dto';
 import { UsersPolicyService } from './users-policy.service';
 import { UsersRepository, type UserListFilters } from './users.repository';
 import type { ActorContext } from './users.types';
@@ -59,6 +60,13 @@ export const TEMP_PASSWORD_TTL_DAYS = 7;
 // rides on that page's permission rather than a separate one.
 const HARD_DELETE_PERMISSION = 'manage-users-list';
 const USERNAME_ALREADY_USED_MESSAGE = 'ชื่อผู้ใช้งานนี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น';
+
+/** See `CREDENTIAL_MIN_LENGTH`: the minimum applies to a name being set, not one kept. */
+function assertNewUsernameLength(username: string): void {
+  if (username.length < CREDENTIAL_MIN_LENGTH) {
+    throw new BadRequestException(USERNAME_MESSAGES.min);
+  }
+}
 // Semantic fallback for a nationwide council scope. Real school and area names
 // always come from the database/catalog, never from frontend constants.
 const COUNTRY_AFFILIATION = 'ประเทศ';
@@ -681,6 +689,7 @@ export class UsersService {
           )
         : null;
 
+      assertNewUsernameLength(data.username);
       const userId = await this.usersRepository.withTransaction(async (executor) => {
         if (await this.usersRepository.usernameExists(data.username, executor)) {
           throw new ConflictException(USERNAME_ALREADY_USED_MESSAGE);
@@ -804,6 +813,9 @@ export class UsersService {
         : undefined;
 
       const primaryRole = requestedRole;
+      if (data.username !== undefined && data.username !== existingUser.username) {
+        assertNewUsernameLength(data.username);
+      }
       await this.usersRepository.withTransaction(async (executor) => {
         if (
           data.username !== undefined &&

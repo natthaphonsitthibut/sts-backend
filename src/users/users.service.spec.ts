@@ -250,6 +250,30 @@ describe('UsersService', () => {
     );
   });
 
+  it('rejects a new username shorter than eight characters', async () => {
+    await expect(
+      service.createUser(actor, {
+        username: 'short',
+        FirstName: 'ครู',
+        LastName: 'ชื่อสั้น',
+        PersonID_Onec: '1234567890123',
+        role: 'TEACHER',
+        roles: ['TEACHER'],
+        permissions: ['attendance'],
+        status: 'ACTIVE',
+        data_scope: { school_ids: [10010002] },
+      }),
+    ).rejects.toThrow('ชื่อผู้ใช้งานต้องมีอย่างน้อย 8 ตัวอักษร');
+    expect(usersRepository.createUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects renaming an account to a username shorter than eight characters', async () => {
+    await expect(service.updateUser(actor, 77, { username: 'short' })).rejects.toThrow(
+      'ชื่อผู้ใช้งานต้องมีอย่างน้อย 8 ตัวอักษร',
+    );
+    expect(usersRepository.updateUser).not.toHaveBeenCalled();
+  });
+
   it('rejects a duplicate username with a user-facing conflict message', async () => {
     usersRepository.usernameExists.mockResolvedValueOnce(true);
 
