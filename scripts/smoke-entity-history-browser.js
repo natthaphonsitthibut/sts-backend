@@ -26,7 +26,7 @@ const ALL_PERMISSIONS = [
   'home', 'dashboard', 'students', 'manage-students', 'dashboard', 'dashboard',
   'dashboard', 'student-self', 'dashboard', 'import-data', 'attendance',
   'attendance', 'manage-users-list', 'manage-users-list',
-  'manage-role-groups', 'login-links', 'settings',
+  'manage-role-groups', 'settings',
   'audit-log',
 ];
 

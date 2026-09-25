@@ -307,30 +307,6 @@ export class TaskPolicyService {
     }
   }
 
-  canManageLoginLink(
-    actor: ActorContext,
-    link: {
-      login_role?: string | null;
-      login_data_scope?: unknown;
-    },
-    roleMap?: Map<string, RoleDefinition>,
-  ): boolean {
-    const actorRole = this.getPrimaryRole({ roles: actor.roles });
-    const targetRole =
-      typeof link.login_role === 'string' && link.login_role.trim().length > 0
-        ? link.login_role.trim()
-        : null;
-
-    // A link that names no role used to fall back to `TEACHER`, which the role
-    // catalogue no longer offers, so `canManageRole` already denied it. Say so
-    // outright instead of routing through a role that cannot exist.
-    if (!targetRole || !this.canManageRole(actorRole, targetRole, roleMap)) {
-      return false;
-    }
-
-    return this.isScopeSubsetOfActor(link.login_data_scope, actor.data_scope);
-  }
-
   private normalizeLinkScopeValue(value: unknown): string | number | undefined {
     if (typeof value === 'number' && Number.isFinite(value)) {
       return value;
@@ -366,8 +342,6 @@ export class TaskPolicyService {
     actor: ActorContext,
     link: {
       task_type?: string | null;
-      login_role?: string | null;
-      login_data_scope?: unknown;
       target_school_id?: unknown;
       target_room?: unknown;
       case_created_by?: unknown;
