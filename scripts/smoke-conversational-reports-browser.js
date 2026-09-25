@@ -16,18 +16,29 @@ if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
   throw new Error('Refusing to run: DB_NAME must end with _smoke');
 }
 
-const BACKEND_URL = process.env.SMOKE_BACKEND_URL || 'http://127.0.0.1:3002';
-const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://127.0.0.1:5174';
+const BACKEND_URL = process.env.SMOKE_BACKEND_URL || 'http://localhost:3001';
+const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://localhost:5175';
 const USERNAME = 'conversational_reports_browser_smoke';
+// Optional: a directory to save full-page shots of the two report forms.
+const SCREENSHOT_DIR = process.env.SMOKE_SCREENSHOT_DIR || '';
+
+async function screenshot(client, name) {
+  if (!SCREENSHOT_DIR) return;
+  const { result } = await client.call('Page.captureScreenshot', {
+    format: 'png',
+    captureBeyondViewport: true,
+  });
+  require('fs').writeFileSync(
+    require('path').join(SCREENSHOT_DIR, `${name}.png`),
+    Buffer.from(result.data, 'base64'),
+  );
+}
 const EXECUTIVE_USERNAME = 'conversational_reports_executive_smoke';
 const REASON = 'Automated conversational reports browser smoke';
 
 function setSessionCookie(sessionCookieService, userId) {
   let cookie = null;
-  sessionCookieService.setSession(
-    { cookie: (name, value) => (cookie = { name, value }) },
-    userId,
-  );
+  sessionCookieService.setSession({ cookie: (name, value) => (cookie = { name, value }) }, userId);
   assert(cookie, 'session cookie was not created');
   return cookie;
 }
@@ -62,31 +73,7 @@ async function setInput(client, selector, value) {
   assert(changed, `field ${selector} was not found`);
 }
 
-async function visibleStepId(client) {
-  return await client.evaluate(
-    `document.querySelector('[data-conversational-step]')?.getAttribute('data-conversational-step')`,
-  );
-}
-
-async function clickNext(client) {
-  const labels = await client.evaluate(
-    `[...document.querySelectorAll('button')].filter((button) => button.offsetParent !== null)
-      .map((button) => button.textContent.trim()).join('|')`,
-  );
-  const label = labels.split('|').find((value) => value === 'ถัดไป' || value === 'ตรวจทาน');
-  assert(label, `Next button was missing: ${labels}`);
-  await client.clickText(label);
-}
-
-async function createLink(
-  dataSource,
-  lifecycle,
-  repository,
-  actor,
-  enrollment,
-  caseId,
-  taskType,
-) {
+async function createLink(dataSource, lifecycle, repository, actor, enrollment, caseId, taskType) {
   const assignees = await repository.listVisitAssignees(enrollment.student_uuid);
   const assignee = assignees.find((candidate) => candidate.email);
   assert(assignee, 'no active teacher with email is available for conversational smoke');
@@ -131,9 +118,7 @@ async function verifyTaskWithDevelopmentGoogle(client, link, { proveDeniedEmail 
   await client.call('Page.navigate', { url: link.url });
   await waitFor(
     async () =>
-      await client.evaluate(
-        `document.body.innerText.includes('ยืนยันตัวตนเพื่อเข้าใช้งาน')`,
-      ),
+      await client.evaluate(`document.body.innerText.includes('ยืนยันตัวตนเพื่อเข้าใช้งาน')`),
     'task identity gate did not render',
   );
   assert(
@@ -189,18 +174,11 @@ async function cleanupActorFixtures(dataSource, actorId) {
        WHERE task_submission_id IN (${submissionFilter})`,
       [actorId],
     );
-    await manager.query(
-      `DELETE FROM task_submissions WHERE id IN (${submissionFilter})`,
-      [actorId],
-    );
-    await manager.query(
-      `DELETE FROM case_referrals WHERE case_id IN (${caseFilter})`,
-      [actorId],
-    );
-    await manager.query(
-      `DELETE FROM notifications WHERE case_id IN (${caseFilter})`,
-      [actorId],
-    );
+    await manager.query(`DELETE FROM task_submissions WHERE id IN (${submissionFilter})`, [
+      actorId,
+    ]);
+    await manager.query(`DELETE FROM case_referrals WHERE case_id IN (${caseFilter})`, [actorId]);
+    await manager.query(`DELETE FROM notifications WHERE case_id IN (${caseFilter})`, [actorId]);
     await manager.query(`DELETE FROM cases WHERE id IN (${caseFilter})`, [actorId]);
   });
 }
@@ -290,10 +268,7 @@ async function main() {
       [[Number(enrollment.school_id), Number(secondScopedEnrollment.school_id)]],
     );
     assert(outOfScopeEnrollment, 'need a student outside the actor scope for the scoped report');
-    const actorSchoolIds = [
-      Number(enrollment.school_id),
-      Number(secondScopedEnrollment.school_id),
-    ];
+    const actorSchoolIds = [Number(enrollment.school_id), Number(secondScopedEnrollment.school_id)];
     const [absenceReason] = await dataSource.query(
       `SELECT reason.code, reason.label_th, category.code AS category_code,
               category.label_th AS category_label
@@ -352,7 +327,14 @@ async function main() {
       `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
          status, workflow_phase_code, created_by)
        VALUES ($1,$2,$3,$4,$5,'OPEN','FOLLOW_UP',$6) RETURNING id`,
-      [enrollment.student_uuid, enrollment.student_name, enrollment.school_id, enrollment.school_name, REASON, actorId],
+      [
+        enrollment.student_uuid,
+        enrollment.student_name,
+        enrollment.school_id,
+        enrollment.school_name,
+        REASON,
+        actorId,
+      ],
     );
     caseId = Number(createdCase.id);
     for (const scopeProofEnrollment of [secondScopedEnrollment, outOfScopeEnrollment]) {
@@ -412,7 +394,9 @@ async function main() {
       );
     }
     await dataSource.query(`UPDATE tasks SET status='COMPLETED' WHERE id=$1`, [previous.task_id]);
-    await dataSource.query(`UPDATE task_links SET status='COMPLETED' WHERE id=$1`, [previous.link_id]);
+    await dataSource.query(`UPDATE task_links SET status='COMPLETED' WHERE id=$1`, [
+      previous.link_id,
+    ]);
     await dataSource.query(`UPDATE cases SET status='OPEN' WHERE id=$1`, [caseId]);
 
     const visit = await createLink(
@@ -452,8 +436,11 @@ async function main() {
       !(await client.evaluate(`Boolean(document.querySelector('[data-conversational-report]'))`)),
       'VISIT still renders the step-by-step flow',
     );
+    await screenshot(client, 'visit-form');
     assert(
-      await client.evaluate(`document.documentElement.scrollWidth <= document.documentElement.clientWidth`),
+      await client.evaluate(
+        `document.documentElement.scrollWidth <= document.documentElement.clientWidth`,
+      ),
       'VISIT mobile layout has horizontal overflow',
     );
     assert(
@@ -508,7 +495,10 @@ async function main() {
        FROM task_submissions WHERE task_link_id=$1`,
       [visit.link_id],
     );
-    assert(visitSubmission.task_execution_outcome_code === 'SUCCEEDED', 'VISIT derived outcome is wrong');
+    assert(
+      visitSubmission.task_execution_outcome_code === 'SUCCEEDED',
+      'VISIT derived outcome is wrong',
+    );
     assert(visitSubmission.contact_person_name === 'แก้ไขแล้วในรอบใหม่', 'VISIT snapshot is wrong');
     assert(
       visitSubmission.absence_reason_category_code === absenceReason.category_code,
@@ -518,7 +508,10 @@ async function main() {
       visitSubmission.absence_reason_code === absenceReason.code,
       'VISIT absence category/reason selection was not persisted',
     );
-    assert(visitSubmission.cause_detail === null, 'old event detail was copied into new submission');
+    assert(
+      visitSubmission.cause_detail === null,
+      'old event detail was copied into new submission',
+    );
     assert(visitSubmission.photo_paths === null, 'old photos were copied into new submission');
     const [careObservation] = await dataSource.query(
       `SELECT EXISTS(
@@ -533,13 +526,17 @@ async function main() {
       [visit.link_id, disadvantage.code, enrollment.student_uuid],
     );
     assert(careObservation.observed === true, 'VISIT care observation was not snapshotted');
-    assert(careObservation.canonical === true, 'VISIT care observation was not applied to student data');
-
-    await setBrowserSession(
-      client,
-      setSessionCookie(sessionCookieService, actorId),
-      { id: actorId, username: USERNAME, roles: ['ADMIN'], permissions },
+    assert(
+      careObservation.canonical === true,
+      'VISIT care observation was not applied to student data',
     );
+
+    await setBrowserSession(client, setSessionCookie(sessionCookieService, actorId), {
+      id: actorId,
+      username: USERNAME,
+      roles: ['ADMIN'],
+      permissions,
+    });
     // The reviewer reads the case on a desktop, which is the only width where
     // the report's two columns share rows — and the only width a collapsed row
     // can hide answers behind each other.
@@ -551,13 +548,15 @@ async function main() {
     });
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/cases/${caseId}` });
     await waitFor(
-      async () => await client.evaluate(
-        `[...document.querySelectorAll('button')]
+      async () =>
+        await client.evaluate(
+          `[...document.querySelectorAll('button')]
           .some((button) => button.textContent.trim().startsWith('มอบหมายช่วยเหลือ'))`,
-      ),
-      async () => `VISIT review action was not offered; buttons=${await client.evaluate(
-        `[...document.querySelectorAll('button')].map((button) => button.textContent.trim()).join('|')`,
-      )}`,
+        ),
+      async () =>
+        `VISIT review action was not offered; buttons=${await client.evaluate(
+          `[...document.querySelectorAll('button')].map((button) => button.textContent.trim()).join('|')`,
+        )}`,
     );
     // A collapsed grid row draws two answers on top of each other and still
     // passes a text assertion, so the read-only report is checked by geometry.
@@ -584,10 +583,7 @@ async function main() {
         return overlaps.join(' | ');
       })()`,
     );
-    assert(
-      overlappingFields === '',
-      `case reviewer report fields overlap: ${overlappingFields}`,
-    );
+    assert(overlappingFields === '', `case reviewer report fields overlap: ${overlappingFields}`);
     // The environment note fills the rows beside it, so the two columns end on
     // the same line instead of leaving a ragged edge mid-report.
     const noteAlignment = await client.evaluate(
@@ -638,40 +634,37 @@ async function main() {
     }
     await client.clickText('มอบหมายช่วยเหลือ');
     await waitFor(
-      async () => await client.evaluate(
-        `document.querySelector('[role="dialog"]')?.innerText.includes('มาตรการช่วยเหลือที่เสนอ')`,
-      ),
+      async () =>
+        await client.evaluate(
+          `document.querySelector('[role="dialog"]')?.innerText.includes('มาตรการช่วยเหลือที่เสนอ')`,
+        ),
       'ASSIST review proposal dialog did not render',
     );
     await setInput(client, '#case-note', 'เสนอทุนจากผลการติดตาม');
     await client.evaluate(`document.querySelector('#proposed-assistance-measures')?.click()`);
-    await client.clickText(
-      assistanceMeasure.label_th,
-      `document.querySelector('[role="dialog"]')`,
-    );
+    await client.clickText(assistanceMeasure.label_th, `document.querySelector('[role="dialog"]')`);
     await client.evaluate(
       `document.querySelector('#case-note')?.dispatchEvent(
         new MouseEvent('mousedown', { bubbles: true }))`,
     );
     await waitFor(
-      async () => await client.evaluate(
-        `[...document.querySelectorAll('[role="dialog"] button')]
+      async () =>
+        await client.evaluate(
+          `[...document.querySelectorAll('[role="dialog"] button')]
           .some((button) => button.textContent.trim().startsWith('ให้ความช่วยเหลือ') && !button.disabled)`,
-      ),
-      async () => `ASSIST review submit did not become enabled: ${await client.evaluate(
-        `JSON.stringify({
+        ),
+      async () =>
+        `ASSIST review submit did not become enabled: ${await client.evaluate(
+          `JSON.stringify({
           note: document.querySelector('#case-note')?.value,
           measure: document.querySelector('#proposed-assistance-measures')?.parentElement?.innerText,
           buttons: [...document.querySelectorAll('[role="dialog"] button')]
             .map((button) => ({ text: button.textContent.trim(), disabled: button.disabled })),
           text: document.querySelector('[role="dialog"]')?.innerText,
         })`,
-      )}`,
+        )}`,
     );
-    await client.clickText(
-      'ให้ความช่วยเหลือ',
-      `document.querySelector('[role="dialog"]')`,
-    );
+    await client.clickText('ให้ความช่วยเหลือ', `document.querySelector('[role="dialog"]')`);
     await waitFor(async () => {
       const [row] = await dataSource.query(
         `SELECT review.review_action, proposal.assistance_measure_code,
@@ -683,15 +676,19 @@ async function main() {
          ORDER BY review.reviewed_at DESC LIMIT 1`,
         [caseId],
       );
-      return row?.review_action === 'ASSIST' &&
+      return (
+        row?.review_action === 'ASSIST' &&
         row?.assistance_measure_code === assistanceMeasure.code &&
-        row?.status === 'OPEN' && row?.workflow_phase_code === 'ASSISTANCE';
+        row?.status === 'OPEN' &&
+        row?.workflow_phase_code === 'ASSISTANCE'
+      );
     }, 'ASSIST review proposal was not persisted');
     await waitFor(
-      async () => await client.evaluate(
-        `document.querySelector('#assignment-assistance-measures')
+      async () =>
+        await client.evaluate(
+          `document.querySelector('#assignment-assistance-measures')
           ?.parentElement?.innerText.includes(${JSON.stringify(assistanceMeasure.label_th)})`,
-      ),
+        ),
       'ASSIST assignment did not prefill the proposed measure',
     );
     const assist = await createLink(
@@ -704,46 +701,58 @@ async function main() {
       'ASSIST',
     );
     await verifyTaskWithDevelopmentGoogle(client, assist);
-    await waitFor(async () => (await visibleStepId(client)) === 'assisted-at', 'ASSIST form missing');
-    assert(
-      await client.evaluate(`document.body.innerText.includes('ข้อ 1 จาก 6')`),
-      'ASSIST progress did not expose six steps',
+    // The assistance report is one form too (owner, 2026-09-25).
+    await waitFor(
+      async () =>
+        await client.evaluate(
+          `['assisted-at', 'measures', 'outcome', 'evidence']
+            .every((id) => document.getElementById('report-section-' + id))`,
+        ),
+      'ASSIST form did not show every section',
     );
-    await clickNext(client);
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'outcome', 'ASSIST outcome missing');
+    // The detail box and the upload box beside it are the same height.
+    const heights = await client.evaluate(`[
+      document.querySelector('#assistance-detail')?.getBoundingClientRect().height,
+      document.querySelector('[data-visit-upload-dropzone]')?.getBoundingClientRect().height,
+    ]`);
+    assert(
+      heights[0] && Math.abs(heights[0] - heights[1]) <= 1,
+      `assistance detail and upload box differ in height: ${JSON.stringify(heights)}`,
+    );
+    await screenshot(client, 'assist-form');
     await client.evaluate(
       `document.querySelector('input[name="assistance-outcome"][value="NOT_SUCCEEDED"]')?.click()`,
     );
-    await clickNext(client);
     await waitFor(
-      async () => (await visibleStepId(client)) === 'outcome-detail',
+      async () =>
+        await client.evaluate(`Boolean(document.querySelector('#execution-outcome-detail'))`),
       'ASSIST failure detail missing',
     );
     await setInput(client, '#execution-outcome-detail', 'ผู้ปกครองยังไม่พร้อม');
-    await clickNext(client);
-    await clickNext(client);
-    await waitFor(async () => (await visibleStepId(client)) === 'review', 'ASSIST review missing');
-    await client.clickText('ส่งรายงานการช่วยเหลือ');
+    await client.clickText('บันทึกข้อมูล');
     await waitFor(async () => {
       const [row] = await dataSource.query(
         `SELECT task_execution_outcome_code, execution_outcome_detail
          FROM task_submissions WHERE task_link_id=$1`,
         [assist.link_id],
       );
-      return row?.task_execution_outcome_code === 'NOT_SUCCEEDED' &&
-        row?.execution_outcome_detail === 'ผู้ปกครองยังไม่พร้อม';
+      return (
+        row?.task_execution_outcome_code === 'NOT_SUCCEEDED' &&
+        row?.execution_outcome_detail === 'ผู้ปกครองยังไม่พร้อม'
+      );
     }, 'ASSIST did not persist outcome detail');
 
     // The same action must remain available after an assistance round.
-    await setBrowserSession(
-      client,
-      setSessionCookie(sessionCookieService, actorId),
-      { id: actorId, username: USERNAME, roles: ['ADMIN'], permissions },
-    );
+    await setBrowserSession(client, setSessionCookie(sessionCookieService, actorId), {
+      id: actorId,
+      username: USERNAME,
+      roles: ['ADMIN'],
+      permissions,
+    });
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/cases/${caseId}` });
     await waitFor(
-      async () => await client.evaluate(`document.body.innerText.includes('มอบหมายช่วยเหลืออีกครั้ง')`),
+      async () =>
+        await client.evaluate(`document.body.innerText.includes('มอบหมายช่วยเหลืออีกครั้ง')`),
       'repeat ASSIST action was not offered after the assistance round',
     );
 
@@ -763,18 +772,15 @@ async function main() {
        VALUES ($1,$2,$3,$4)`,
       [reviewId, caseId, agency.id, actorId],
     );
+    // The risk tab lists students of every school in scope when the header
+    // filter names none (the report's school filter moved to the header).
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/risk` });
-    await waitFor(
-      async () => await client.evaluate(`document.body.innerText.includes('ผลการติดตามและการส่งต่อ')`),
-      'follow-up aggregate panel did not render',
-    );
     await waitFor(
       async () =>
         await client.evaluate(
-          `document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value === 'โรงเรียนทั้งหมด'
-            && document.querySelector(${JSON.stringify(
-              `[data-student-navigation="${enrollment.student_uuid}"]`,
-            )})?.innerText.includes(${JSON.stringify(enrollment.school_name)})
+          `document.querySelector(${JSON.stringify(
+            `[data-student-navigation="${enrollment.student_uuid}"]`,
+          )})?.innerText.includes(${JSON.stringify(enrollment.school_name)})
             && document.querySelector(${JSON.stringify(
               `[data-student-navigation="${secondScopedEnrollment.student_uuid}"]`,
             )})?.innerText.includes(${JSON.stringify(secondScopedEnrollment.school_name)})`,
@@ -792,30 +798,36 @@ async function main() {
       )),
       'all-schools risk report rendered a student outside the actor scope',
     );
-    assert(
-      !(await client.evaluate(`document.body.innerText.includes('เลือกโรงเรียนจากตัวกรองด้านบน')`)),
-      'risk report still blocks on a school selection',
-    );
-    await client.clickText('ดูรายการส่งต่อ');
+
+    // The ส่งต่อ tab: counts plus the scoped drill-down of referred students.
+    await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
     await waitFor(
-      async () => await client.evaluate(`document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`),
+      async () =>
+        await client.evaluate(
+          `Boolean(document.querySelector('[data-referral-register]'))
+            && document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
+        ),
       'authorized referral drill-down did not render scoped student row',
     );
 
     // Executive sees aggregate but never receives or renders PII drill-down.
-    await setBrowserSession(
-      client,
-      setSessionCookie(sessionCookieService, executiveId),
-      { id: executiveId, username: EXECUTIVE_USERNAME, roles: ['EXECUTIVE'], permissions: ['dashboard'] },
-    );
+    await setBrowserSession(client, setSessionCookie(sessionCookieService, executiveId), {
+      id: executiveId,
+      username: EXECUTIVE_USERNAME,
+      roles: ['EXECUTIVE'],
+      permissions: ['dashboard'],
+    });
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/risk` });
     await waitFor(
-      async () => await client.evaluate(`document.body.innerText.includes('แสดงเฉพาะข้อมูลรวม')`),
+      async () =>
+        await client.evaluate(`Boolean(document.querySelector('[data-referral-register]'))`),
       'executive aggregate-only dashboard did not render',
     );
     assert(
-      !(await client.evaluate(`document.body.innerText.includes('ดูรายการส่งต่อ')`)),
-      'executive UI exposed referral drill-down control',
+      !(await client.evaluate(
+        `document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
+      )),
+      'executive UI rendered a referred student by name',
     );
     const drilldownStatus = await client.evaluate(
       `fetch(${JSON.stringify(`${BACKEND_URL}/api/dashboard/referrals`)}, { credentials: 'include' })
@@ -824,16 +836,12 @@ async function main() {
     assert(drilldownStatus === 403, `executive referral drill-down returned ${drilldownStatus}`);
 
     console.log(
-      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-question flow, contact choice, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, local draft navigation, mobile/keyboard/reduced-motion, single submit, repeat ASSIST, all-schools scoped report, aggregate/drill-down scope)',
+      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-page forms, contact choice, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, single submit, repeat ASSIST, all-schools scoped report, aggregate/drill-down scope)',
     );
   } finally {
     if (chrome) chrome.close();
     await cleanupActorFixtures(dataSource, actorId);
-    if (
-      observedStudentUuid &&
-      observedDisadvantageCode &&
-      !observedDisadvantageWasPresent
-    ) {
+    if (observedStudentUuid && observedDisadvantageCode && !observedDisadvantageWasPresent) {
       await dataSource.query(
         `DELETE FROM student_term_disadvantages
          WHERE student_uuid=$1 AND disadvantage_type_code=$2`,

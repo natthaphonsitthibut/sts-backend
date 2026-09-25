@@ -210,10 +210,10 @@ async function main() {
     // It lives inside the แชร์ dialog (still open here), above แชร์ผ่าน.
     const lineButton = await chrome.evaluate(`(() => {
       const button = [...document.querySelectorAll('button')].find((b) =>
-        b.offsetParent !== null && b.innerText.trim() === 'ส่งลิงก์ผ่าน LINE');
+        b.offsetParent !== null && b.innerText.trim() === 'ส่งถึงครู');
       if (!button) return null;
-      const reason = button.parentElement?.querySelector('p')?.innerText ?? '';
-      return { label: reason, disabled: button.disabled };
+      const note = [...document.querySelectorAll('p')].find((p) => p.innerText.startsWith('ส่งถึงครู'));
+      return { label: note ? note.innerText : '', disabled: button.disabled };
     })()`);
     assert(lineButton, 'the ส่งลิงก์ผ่าน LINE button is missing from the แชร์ dialog');
     assert(

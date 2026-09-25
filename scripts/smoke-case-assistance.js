@@ -86,26 +86,12 @@ async function main() {
       data_scope: { school_ids: [Number(enrollment.school_id)] },
     };
 
-    const [createdCase] = await dataSource.query(
-      `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
+    const [createdCase] = await dataSource
+      .query(
+        `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
          status, workflow_phase_code, data_origin_code)
        VALUES ($1, $2, $3, $4, $5, 'PENDING_REVIEW', 'FOLLOW_UP', 'AUTOMATED_TEST')
        RETURNING id`,
-      [
-        enrollment.student_uuid,
-        enrollment.student_name,
-        enrollment.school_id,
-        enrollment.school_name,
-        REASON,
-      ],
-    ).catch(async (error) => {
-      // `data_origin_code` is not on every deployment of `cases`; fall back.
-      if (!/column "data_origin_code"/.test(error.message)) throw error;
-      return await dataSource.query(
-        `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
-           status, workflow_phase_code)
-         VALUES ($1, $2, $3, $4, $5, 'PENDING_REVIEW', 'FOLLOW_UP')
-         RETURNING id`,
         [
           enrollment.student_uuid,
           enrollment.student_name,
@@ -113,11 +99,29 @@ async function main() {
           enrollment.school_name,
           REASON,
         ],
-      );
-    });
+      )
+      .catch(async (error) => {
+        // `data_origin_code` is not on every deployment of `cases`; fall back.
+        if (!/column "data_origin_code"/.test(error.message)) throw error;
+        return await dataSource.query(
+          `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
+           status, workflow_phase_code)
+         VALUES ($1, $2, $3, $4, $5, 'PENDING_REVIEW', 'FOLLOW_UP')
+         RETURNING id`,
+          [
+            enrollment.student_uuid,
+            enrollment.student_name,
+            enrollment.school_id,
+            enrollment.school_name,
+            REASON,
+          ],
+        );
+      });
     caseId = Number(createdCase.id);
 
-    // 1. The follow-up review offers ASSIST; the assistance review must not.
+    // 1. Both reviews offer ASSIST: an assistance round may be followed by
+    //    another (20260827307000-CompleteConversationalReports made ASSIST an
+    //    every-phase action).
     const followUpActions = await trackingOptions.getOptions('FOLLOW_UP');
     const assistanceActions = await trackingOptions.getOptions('ASSISTANCE');
     assert(
@@ -125,8 +129,8 @@ async function main() {
       'follow-up review is missing the ASSIST action',
     );
     assert(
-      !assistanceActions.reviewActions.some((action) => action.code === 'ASSIST'),
-      'assistance review must not offer ASSIST again',
+      assistanceActions.reviewActions.some((action) => action.code === 'ASSIST'),
+      'assistance review must offer another assistance round',
     );
     assert(
       ['CLOSE', 'REFER_AGENCY'].every((code) =>
@@ -142,7 +146,12 @@ async function main() {
     // 2. ASSIST moves the case back to OPEN inside the assistance phase.
     const assisted = await caseService.reviewCase(
       caseId,
-      { review_action: 'ASSIST', review_note: 'ควรให้ทุนการศึกษาและอุปกรณ์การเรียน' },
+      {
+        review_action: 'ASSIST',
+        review_note: 'ควรให้ทุนการศึกษาและอุปกรณ์การเรียน',
+        // The review proposes the measures (20260827312600-AddReviewAssistanceMeasures).
+        assistance_measure_codes: ['SCHOLARSHIP'],
+      },
       reviewer,
     );
     assert(assisted.case_status === 'OPEN', `ASSIST left status ${assisted.case_status}`);
@@ -161,20 +170,27 @@ async function main() {
       `unexpected display label ${detail.data.display_status_label}`,
     );
 
-    // 3. A second ASSIST must be refused now that the case left FOLLOW_UP.
+    // 3. A second ASSIST from the assistance review opens another assistance
+    //    round and keeps the case in that phase.
     await dataSource.query(`UPDATE cases SET status = 'PENDING_REVIEW' WHERE id = $1`, [caseId]);
-    let refused = false;
-    try {
-      await caseService.reviewCase(
-        caseId,
-        { review_action: 'ASSIST', review_note: 'ช่วยเหลือรอบสอง' },
-        reviewer,
-      );
-    } catch (error) {
-      refused = /ขั้นตอนปัจจุบัน/.test(error.message);
-    }
-    assert(refused, 'ASSIST was accepted twice on the same case');
-    await dataSource.query(`UPDATE cases SET status = 'OPEN' WHERE id = $1`, [caseId]);
+    const again = await caseService.reviewCase(
+      caseId,
+      {
+        review_action: 'ASSIST',
+        review_note: 'ช่วยเหลือรอบสอง',
+        assistance_measure_codes: ['SCHOLARSHIP'],
+      },
+      reviewer,
+    );
+    assert(again.case_status === 'OPEN', `a second ASSIST left status ${again.case_status}`);
+    const [afterAgain] = await dataSource.query(
+      `SELECT status, workflow_phase_code FROM cases WHERE id = $1`,
+      [caseId],
+    );
+    assert(
+      afterAgain.workflow_phase_code === 'ASSISTANCE',
+      `a second ASSIST left the assistance phase: ${JSON.stringify(afterAgain)}`,
+    );
 
     // 4. Assigning the assistance round records the chosen measures.
     const assignees = await taskRepository.listVisitAssignees(enrollment.student_uuid);
@@ -274,8 +290,10 @@ async function main() {
       'assistance detail did not round-trip',
     );
     assert(
-      assistanceRound.assistance_measures.map((measure) => measure.code).sort().join(',') ===
-        'OTHER,SCHOLARSHIP',
+      assistanceRound.assistance_measures
+        .map((measure) => measure.code)
+        .sort()
+        .join(',') === 'OTHER,SCHOLARSHIP',
       'assistance measures did not round-trip to the case detail',
     );
 
@@ -322,13 +340,13 @@ async function main() {
       await dataSource
         .query(`DELETE FROM case_reviews WHERE case_id = $1`, [caseId])
         .catch(() => undefined);
-      await dataSource.query(`DELETE FROM tasks WHERE case_id = $1`, [caseId]).catch(() => undefined);
+      await dataSource
+        .query(`DELETE FROM tasks WHERE case_id = $1`, [caseId])
+        .catch(() => undefined);
       await dataSource.query(`DELETE FROM cases WHERE id = $1`, [caseId]).catch(() => undefined);
     }
     if (actorId) {
-      await dataSource
-        .query(`DELETE FROM users WHERE id = $1`, [actorId])
-        .catch(() => undefined);
+      await dataSource.query(`DELETE FROM users WHERE id = $1`, [actorId]).catch(() => undefined);
     }
     await app.close();
   }
