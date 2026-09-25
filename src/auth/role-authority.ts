@@ -11,6 +11,46 @@
  * ticking pages off one account never widens what its owner can do to others.
  */
 
+import { APP_PAGES } from './page-registry.constants';
+
+/**
+ * Pages whose holder administers other accounts. Holding one lets an actor hand
+ * out any page of the realm it administers, not only the pages it opens itself:
+ * a school's ผู้ดูแลระบบ does not read รายชื่อนักเรียน, yet must be able to create
+ * that school's ผู้อำนวยการ, who does (owner, 2026-09-25: "ตามภาพ + แก้กฎ").
+ */
+const ACCOUNT_ADMIN_PAGES = ['manage-users-list', 'manage-role-groups'];
+
+/**
+ * Pages that stay out of reach unless actually held: the council's pages. The
+ * `global-only` ones carry one national value for every school, and the rest
+ * (แชตบอท) are marked `held-only` — either way, administering a school's
+ * accounts must never be a way to hand them out.
+ */
+const HELD_ONLY_PAGES = new Set(
+  APP_PAGES.filter(
+    (page) => page.scopePolicy === 'global-only' || page.grantPolicy === 'held-only',
+  ).map((page) => page.id),
+);
+
+const REALM_PAGES = APP_PAGES.map((page) => page.id).filter((id) => !HELD_ONLY_PAGES.has(id));
+
+/** Every page an actor holding `actorPages` may hand to someone else. */
+export function grantablePages(actorPages: Iterable<string>): Set<string> {
+  const grantable = new Set(actorPages);
+  if (ACCOUNT_ADMIN_PAGES.some((page) => grantable.has(page))) {
+    for (const page of REALM_PAGES) grantable.add(page);
+  }
+  return grantable;
+}
+
+/** Whether an actor holding `actorPages` may grant every one of `targetPages`. */
+export function canGrantPages(actorPages: string[], targetPages: string[]): boolean {
+  if (actorPages.includes('*') || actorPages.includes('ALL')) return true;
+  const grantable = grantablePages(actorPages);
+  return targetPages.every((page) => grantable.has(page));
+}
+
 /** Only the part of a role row this rule needs; both services' shapes satisfy it. */
 export interface RoleAuthorityDefinition {
   default_permissions: string[];
@@ -31,8 +71,7 @@ export function canManageRole(
   const actor = actorRole ? roleMap.get(actorRole) : undefined;
   if (!target || !actor) return false;
 
-  const actorPages = new Set(actor.default_permissions ?? []);
-  return (target.default_permissions ?? []).every((page) => actorPages.has(page));
+  return canGrantPages(actor.default_permissions ?? [], target.default_permissions ?? []);
 }
 
 /**
@@ -47,8 +86,6 @@ export function roleReachesFurtherThanActor(
   const requested = requestedRole ? roleMap.get(requestedRole) : undefined;
   if (!requested) return true;
 
-  const actorPages = new Set(
-    (actorRole ? roleMap.get(actorRole)?.default_permissions : undefined) ?? [],
-  );
-  return (requested.default_permissions ?? []).some((page) => !actorPages.has(page));
+  const actorPages = (actorRole ? roleMap.get(actorRole)?.default_permissions : undefined) ?? [];
+  return !canGrantPages(actorPages, requested.default_permissions ?? []);
 }

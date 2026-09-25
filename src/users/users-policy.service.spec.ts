@@ -9,7 +9,7 @@ const definitions: RoleDefinition[] = [
     name: 'ADMIN',
     label: 'ผู้ดูแลระบบ',
     sort_order: 5,
-    default_permissions: ['home', 'manage-users-list', 'students', 'dashboard'],
+    default_permissions: ['home', 'manage-users-list', 'students', 'dashboard', 'settings'],
     scope_mode: 'flexible',
     scope_policy: 'ASSIGNABLE',
     is_assignable: true,
