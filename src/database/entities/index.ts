@@ -1,10 +1,4 @@
-import {
-  ExternalUserEntity,
-  GradeLevelEntity,
-  ScheduleEntity,
-  SchoolEntity,
-  SystemSettingEntity,
-} from './core.entities';
+import { GradeLevelEntity, SchoolEntity, SystemSettingEntity } from './core.entities';
 import {
   AbsenceReasonCategoryEntity,
   AbsenceReasonEntity,
@@ -40,8 +34,6 @@ export const DATABASE_ENTITIES = [
   SchoolEntity,
   GradeLevelEntity,
   SystemSettingEntity,
-  ScheduleEntity,
-  ExternalUserEntity,
   CaseEntity,
   CaseRiskSignalEntity,
   TaskEntity,
@@ -81,12 +73,10 @@ export {
   CaseReviewEntity,
   DisabilityTypeEntity,
   EducationalAreaEntity,
-  ExternalUserEntity,
   GradeLevelEntity,
   NonFollowUpReasonEntity,
   RiskFactorEntity,
   RoleEntity,
-  ScheduleEntity,
   SchoolEntity,
   SchoolAffiliationEntity,
   SchoolTermEntity,
