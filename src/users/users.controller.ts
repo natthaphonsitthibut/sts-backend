@@ -100,6 +100,7 @@ export class UsersController {
     return await this.usersService.getAllUsers(actor, {
       searchTerm: query.searchTerm?.trim() || undefined,
       excludeRole: query.excludeRole?.trim() || undefined,
+      roleLabel: query.roleLabel?.trim() || undefined,
       sortBy: query.sortBy,
       sortOrder: query.sortOrder,
       province: query.province?.trim() || undefined,

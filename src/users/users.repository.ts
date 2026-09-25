@@ -128,6 +128,7 @@ export interface UserListFilters {
   actorPermissions: string[];
   actorScope?: DataScope;
   excludeRole?: string;
+  roleLabel?: string;
   sortBy?: 'name' | 'role' | 'affiliation';
   sortOrder?: 'asc' | 'desc';
   searchTerm?: string;
@@ -546,6 +547,11 @@ export class UsersRepository {
         params.push(excludedRoles);
         conditions.push(`(u.role IS NULL OR NOT (u.role = ANY($${params.length}::text[])))`);
       }
+    }
+
+    if (filters.roleLabel) {
+      params.push(filters.roleLabel);
+      conditions.push(`r.label = $${params.length}`);
     }
 
     const addDataScopeFilter = (

@@ -45,6 +45,15 @@ export class GetUsersQueryDto extends PaginatedSearchQueryDto {
   @IsString()
   excludeRole?: string;
 
+  /**
+   * จัดการผู้ใช้งาน's บทบาท filter, by the label the list shows: "ผู้อำนวยการ"
+   * covers both the national DIRECTOR group and each school's own copy.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  roleLabel?: string;
+
   @IsOptional()
   @IsIn(['name', 'role', 'affiliation'])
   sortBy?: 'name' | 'role' | 'affiliation';

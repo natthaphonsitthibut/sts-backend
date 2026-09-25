@@ -47,7 +47,7 @@ describe('UsersRepository user list queries', () => {
     expect(queries[2]).toContain("default_permissions, '[]'::jsonb) <@ $3::jsonb");
   });
 
-  it('lists the accounts an account admin may manage', async () => {
+  it('lists the accounts an account admin may manage, and narrows to one role', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const repository = new UsersRepository({
       createQueryRunner: () => ({
@@ -64,6 +64,7 @@ describe('UsersRepository user list queries', () => {
       actorId: 1,
       actorRole: 'S1_BASE_ADMIN',
       actorPermissions: ['home', 'manage-users-list'],
+      roleLabel: 'ผู้อำนวยการ',
     });
 
     const listCall = calls[calls.length - 1];
@@ -71,6 +72,8 @@ describe('UsersRepository user list queries', () => {
     const grantable = JSON.parse(String(listCall.params[2])) as string[];
     expect(grantable).toEqual(expect.arrayContaining(['students', 'teachers']));
     expect(grantable).not.toContain('settings');
+    expect(listCall.params).toContain('ผู้อำนวยการ');
+    expect(listCall.sql).toMatch(/r\.label = \$\d+/);
   });
 
   it('filters rows by lifecycle status without narrowing summary counts', async () => {

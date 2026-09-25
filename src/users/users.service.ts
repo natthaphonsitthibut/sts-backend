@@ -327,6 +327,7 @@ export class UsersService {
         actorPermissions: currentActor.permissions || [],
         actorScope: currentActor.data_scope,
         excludeRole: filters.excludeRole,
+        roleLabel: filters.roleLabel,
         sortBy: filters.sortBy,
         sortOrder: filters.sortOrder,
         searchTerm: filters.searchTerm,
