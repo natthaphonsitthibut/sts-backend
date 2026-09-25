@@ -75,11 +75,7 @@ async function main() {
 
     // Tables whose rows are traces of the same test run, so clearing them loses
     // nothing a person would look for later.
-    const OWN_TRACE_TABLES = new Set([
-      'audit_log',
-      'case_tracking_user_permission_backup_20260720',
-      'permission_default_reset_backups',
-    ]);
+    const OWN_TRACE_TABLES = new Set(['audit_log']);
     const candidateIds = new Set(candidates.map((account) => account.id));
 
     const deletable = [];
