@@ -693,7 +693,8 @@ describe('UsersService', () => {
         lastName: 'ใหม่',
         phone: '0812345678',
         email: 'teacher@example.test',
-        affiliation: 'โรงเรียนทดสอบ',
+        // สังกัด follows the scope: a sent value never renames it.
+        affiliation: 'โรงเรียนเดิม',
         lineId: 'teacher.line',
         addressLine: '99/1',
         addressVillageNo: '5',

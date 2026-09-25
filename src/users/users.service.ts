@@ -604,10 +604,10 @@ export class UsersService {
       lastName,
       phone,
       email,
-      affiliation:
-        data.affiliation !== undefined
-          ? cleanNullableText(data.affiliation)
-          : (existingUser.affiliation ?? null),
+      // สังกัด follows the account's scope (set where the scope is set); an
+      // account does not rename its own. The field is still accepted so older
+      // clients keep saving, but its value is ignored.
+      affiliation: existingUser.affiliation ?? null,
       lineId,
       addressLine:
         data.address_line !== undefined
