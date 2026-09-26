@@ -11,9 +11,11 @@ import { encodeMediaVersion } from '../common/utils/media-version.util';
 import type {
   ActorContext,
   DataScope,
+  FollowUpAreaFilters,
   QueryExecutor,
   QueryResultLike,
   QueryResultRow,
+  ReferralDrilldownFilters,
   RiskDashboardCaseStatusSummary,
   RiskDashboardConcernLevelSummary,
   RiskDashboardFilters,
@@ -3326,9 +3328,51 @@ export class TaskRepository {
     return result.rows;
   }
 
-  async getFollowUpOutcomeAggregate(actor: ActorContext): Promise<QueryResultRow[]> {
+  /**
+   * The global school/area filter over `cases c`, appended after the actor's
+   * scope (which it can only narrow). Pushes its values onto `params`.
+   */
+  private buildCaseAreaFilterSql(filters: FollowUpAreaFilters, params: unknown[]): string {
+    const conditions: string[] = [];
+    const areaColumns: Array<[string | undefined, string]> = [
+      [filters.province, 'province'],
+      [filters.district, 'district'],
+      [filters.subDistrict, 'sub_district'],
+    ];
+    for (const [value, column] of areaColumns) {
+      if (!value) continue;
+      params.push(value);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM schools area_school WHERE area_school.id = c.school_id AND area_school.${column} = $${params.length})`,
+      );
+    }
+    if (filters.schoolId) {
+      params.push(filters.schoolId);
+      conditions.push(`c.school_id = $${params.length}`);
+    }
+    if (filters.grade) {
+      params.push(filters.grade);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM student_term class_student JOIN grade_levels class_grade ON class_grade.id = class_student."GradeLevelID_Onec" WHERE class_student.student_uuid = c.student_uuid AND class_grade.label = $${params.length})`,
+      );
+    }
+    if (filters.room) {
+      params.push(filters.room);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM student_term class_student WHERE class_student.student_uuid = c.student_uuid AND class_student."RoomID_Onec"::text = $${params.length})`,
+      );
+    }
+    return conditions.map((condition) => ` AND ${condition}`).join('');
+  }
+
+  async getFollowUpOutcomeAggregate(
+    actor: ActorContext,
+    filters: FollowUpAreaFilters = {},
+  ): Promise<QueryResultRow[]> {
     const scope = this.buildCaseScopeQuery(actor, 1);
-    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const params: unknown[] = [...scope.params];
+    const scopeSql =
+      (scope.sql ? ` AND ${scope.sql}` : '') + this.buildCaseAreaFilterSql(filters, params);
     const result = await this.query<QueryResultRow>(
       `
       SELECT task.task_type, submission.task_execution_outcome_code,
@@ -3342,14 +3386,19 @@ export class TaskRepository {
       GROUP BY task.task_type, submission.task_execution_outcome_code
       ORDER BY task.task_type, submission.task_execution_outcome_code
       `,
-      scope.params,
+      params,
     );
     return result.rows;
   }
 
-  async getAssistanceMeasureAggregate(actor: ActorContext): Promise<QueryResultRow[]> {
+  async getAssistanceMeasureAggregate(
+    actor: ActorContext,
+    filters: FollowUpAreaFilters = {},
+  ): Promise<QueryResultRow[]> {
     const scope = this.buildCaseScopeQuery(actor, 1);
-    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const params: unknown[] = [...scope.params];
+    const scopeSql =
+      (scope.sql ? ` AND ${scope.sql}` : '') + this.buildCaseAreaFilterSql(filters, params);
     const result = await this.query<QueryResultRow>(
       `
       SELECT measure.code, measure.label_th,
@@ -3370,14 +3419,19 @@ export class TaskRepository {
       GROUP BY measure.code, measure.label_th, measure.sort_order
       ORDER BY measure.sort_order, measure.code
       `,
-      scope.params,
+      params,
     );
     return result.rows;
   }
 
-  async getReferralAggregate(actor: ActorContext): Promise<QueryResultRow[]> {
+  async getReferralAggregate(
+    actor: ActorContext,
+    filters: FollowUpAreaFilters = {},
+  ): Promise<QueryResultRow[]> {
     const scope = this.buildCaseScopeQuery(actor, 1);
-    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const params: unknown[] = [...scope.params];
+    const scopeSql =
+      (scope.sql ? ` AND ${scope.sql}` : '') + this.buildCaseAreaFilterSql(filters, params);
     const result = await this.query<QueryResultRow>(
       `
       SELECT referral.status_code, agency.agency_name,
@@ -3393,14 +3447,19 @@ export class TaskRepository {
       GROUP BY referral.status_code, agency.agency_name
       ORDER BY referral.status_code, agency.agency_name
       `,
-      scope.params,
+      params,
     );
     return result.rows;
   }
 
-  async countRepeatedUnsuccessfulCases(actor: ActorContext): Promise<number> {
+  async countRepeatedUnsuccessfulCases(
+    actor: ActorContext,
+    filters: FollowUpAreaFilters = {},
+  ): Promise<number> {
     const scope = this.buildCaseScopeQuery(actor, 1);
-    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
+    const params: unknown[] = [...scope.params];
+    const scopeSql =
+      (scope.sql ? ` AND ${scope.sql}` : '') + this.buildCaseAreaFilterSql(filters, params);
     const result = await this.query<CountRow>(
       `
       SELECT COUNT(*)::int AS count
@@ -3416,48 +3475,61 @@ export class TaskRepository {
         HAVING COUNT(*) >= 2
       ) repeated_cases
       `,
-      scope.params,
+      params,
     );
     return Number(result.rows[0]?.count ?? 0);
   }
 
   async listReferralDrilldown(
     actor: ActorContext,
+    filters: ReferralDrilldownFilters,
     page: number,
     limit: number,
   ): Promise<{ rows: QueryResultRow[]; totalCount: number }> {
     const offset = (page - 1) * limit;
-    const scope = this.buildCaseScopeQuery(actor, 3);
-    const scopeSql = scope.sql ? ` AND ${scope.sql}` : '';
-    const countScope = this.buildCaseScopeQuery(actor, 1);
-    const countScopeSql = countScope.sql ? ` AND ${countScope.sql}` : '';
-    const params: unknown[] = [limit, offset, ...scope.params];
+    const scope = this.buildCaseScopeQuery(actor, 1);
+    const filterParams: unknown[] = [...scope.params];
+    let whereSql =
+      (scope.sql ? ` AND ${scope.sql}` : '') + this.buildCaseAreaFilterSql(filters, filterParams);
+    if (filters.statusCode) {
+      filterParams.push(filters.statusCode);
+      whereSql += ` AND referral.status_code = $${filterParams.length}`;
+    }
+    if (filters.searchTerm) {
+      filterParams.push(`%${escapeLikePattern(filters.searchTerm)}%`);
+      whereSql += ` AND (c.student_name ILIKE $${filterParams.length} ESCAPE '\\' OR agency.agency_name ILIKE $${filterParams.length} ESCAPE '\\')`;
+    }
+    const fromSql = `
+        FROM case_referrals referral
+        JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
+        JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+        WHERE 1=1${whereSql}`;
+    const rowParams = [...filterParams, limit, offset];
     const [rows, count] = await Promise.all([
       this.query<QueryResultRow>(
         `
-        SELECT referral.id, referral.case_id, c.student_name, c.school_id,
-          school.name AS school_name, referral.status_code, referral.referred_at,
+        SELECT referral.id, referral.case_id, c.student_uuid::text AS student_id,
+          c.student_name, c.school_id,
+          school.name AS school_name, grade.label AS grade,
+          student."RoomID_Onec"::text AS room,
+          person.photo_storage_key, person.updated_at AS photo_updated_at,
+          referral.status_code, referral.referred_at,
           agency.agency_name, kind.label_th AS agency_kind_label
         FROM case_referrals referral
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
         LEFT JOIN schools school ON school.id = c.school_id
+        LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
+        LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
+        LEFT JOIN student_person person ON person.person_uuid = student.person_uuid
         JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
         JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
-        WHERE 1=1${scopeSql}
+        WHERE 1=1${whereSql}
         ORDER BY referral.referred_at DESC, referral.id DESC
-        LIMIT $1 OFFSET $2
+        LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}
         `,
-        params,
+        rowParams,
       ),
-      this.query<CountRow>(
-        `
-        SELECT COUNT(*)::int AS count
-        FROM case_referrals referral
-        JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
-        WHERE 1=1${countScopeSql}
-        `,
-        countScope.params,
-      ),
+      this.query<CountRow>(`SELECT COUNT(*)::int AS count${fromSql}`, filterParams),
     ]);
     return { rows: rows.rows, totalCount: Number(count.rows[0]?.count ?? 0) };
   }

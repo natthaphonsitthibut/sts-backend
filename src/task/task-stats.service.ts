@@ -11,6 +11,8 @@ import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository, type CaseListFilters } from './task.repository';
 import type {
   ActorContext,
+  FollowUpAreaFilters,
+  ReferralDrilldownFilters,
   RiskDashboardFilters,
   RiskDashboardThresholds,
   RiskDashboardTier,
@@ -110,14 +112,14 @@ export class TaskStatsService {
     }
   }
 
-  async getFollowUpSummary(actor?: ActorContext) {
+  async getFollowUpSummary(actor?: ActorContext, filters: FollowUpAreaFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     const [outcomeRows, assistanceMeasures, referralRows, repeatedUnsuccessfulCaseCount] =
       await Promise.all([
-        this.taskRepository.getFollowUpOutcomeAggregate(currentActor),
-        this.taskRepository.getAssistanceMeasureAggregate(currentActor),
-        this.taskRepository.getReferralAggregate(currentActor),
-        this.taskRepository.countRepeatedUnsuccessfulCases(currentActor),
+        this.taskRepository.getFollowUpOutcomeAggregate(currentActor, filters),
+        this.taskRepository.getAssistanceMeasureAggregate(currentActor, filters),
+        this.taskRepository.getReferralAggregate(currentActor, filters),
+        this.taskRepository.countRepeatedUnsuccessfulCases(currentActor, filters),
       ]);
     const buildOutcome = (taskType: 'VISIT' | 'ASSIST') => {
       const rows = outcomeRows.filter((row) => row.task_type === taskType);
@@ -173,6 +175,7 @@ export class TaskStatsService {
 
   async getReferralDrilldown(
     actor?: ActorContext,
+    filters: ReferralDrilldownFilters = {},
     requestedPage?: number,
     requestedLimit?: number,
   ) {
@@ -184,22 +187,33 @@ export class TaskStatsService {
     const limit = resolveLimit(requestedLimit);
     const { rows, totalCount } = await this.taskRepository.listReferralDrilldown(
       currentActor,
+      filters,
       page,
       limit,
     );
     return {
       success: true,
-      data: rows.map((row) => ({
-        id: row.id,
-        caseId: Number(row.case_id),
-        studentName: row.student_name,
-        schoolId: row.school_id == null ? null : Number(row.school_id),
-        schoolName: row.school_name ?? null,
-        statusCode: row.status_code,
-        referredAt: row.referred_at,
-        agencyName: row.agency_name,
-        agencyKindLabel: row.agency_kind_label,
-      })),
+      data: rows.map((row) => {
+        const studentId = typeof row.student_id === 'string' ? row.student_id : null;
+        return {
+          id: row.id,
+          caseId: Number(row.case_id),
+          studentName: row.student_name,
+          schoolId: row.school_id == null ? null : Number(row.school_id),
+          schoolName: row.school_name ?? null,
+          studentId,
+          studentPhotoUrl:
+            studentId && row.photo_storage_key
+              ? `/api/students/${encodeURIComponent(studentId)}/photo?v=${encodeMediaVersion(row.photo_updated_at)}`
+              : null,
+          grade: row.grade ?? null,
+          room: row.room ?? null,
+          statusCode: row.status_code,
+          referredAt: row.referred_at,
+          agencyName: row.agency_name,
+          agencyKindLabel: row.agency_kind_label,
+        };
+      }),
       meta: buildPaginationMeta(page, limit, totalCount),
     };
   }
