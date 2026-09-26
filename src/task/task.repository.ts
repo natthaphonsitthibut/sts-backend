@@ -683,8 +683,15 @@ export class TaskRepository {
       SELECT
         c.id,
         c.student_uuid::text AS student_id,
-        c.student_name,
-        c.student_school,
+        -- cases.student_name / student_school are text snapshots taken when the
+        -- case opened; an edited student or a renamed school (e.g.
+        -- 20260827313400-RelocateBuraphaSchool) leaves them stale, so the
+        -- current enrollment and school rows win.
+        COALESCE(
+          NULLIF(TRIM(CONCAT_WS(' ', student."FirstName_Onec", student."LastName_Onec")), ''),
+          c.student_name
+        ) AS student_name,
+        COALESCE(case_school.name, c.student_school) AS student_school,
         c.student_address,
         c.student_lat,
         c.student_lng,
@@ -722,6 +729,7 @@ export class TaskRepository {
         ON completion_outcome.code = c.completion_outcome_code
       LEFT JOIN case_workflow_phases case_phase
         ON case_phase.code = c.workflow_phase_code
+      LEFT JOIN schools case_school ON case_school.id = c.school_id
       LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
       LEFT JOIN student_person person ON person.person_uuid = student.person_uuid
       LEFT JOIN student_person_contact person_contact ON person_contact.person_uuid = student.person_uuid
