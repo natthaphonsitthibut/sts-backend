@@ -38,15 +38,10 @@ export class TaskService {
     if (!result || typeof result !== 'object') {
       return result;
     }
-    // The public token endpoint must not expose the link's access config to the
-    // guest holding the token. These fields are consumed only internally by the
-    // login-verify flow (verifyMagicLogin reads the unsanitized access-service
-    // result directly), so strip them from the HTTP-facing response.
-    const { assigned_to_email, login_role, login_permissions, login_data_scope, ...safe } = result;
+    // The public token endpoint must not expose the assignee's email to the guest
+    // holding the token.
+    const { assigned_to_email, ...safe } = result;
     void assigned_to_email;
-    void login_role;
-    void login_permissions;
-    void login_data_scope;
     return safe;
   }
 

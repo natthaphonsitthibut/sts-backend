@@ -244,6 +244,7 @@ export class AttendanceController {
   @Get('terms')
   @UseGuards(PermissionsGuard)
   @RequireAnyPermission(
+    'classrooms',
     'attendance',
     'manage-school-structure',
     'manage-classroom-links',

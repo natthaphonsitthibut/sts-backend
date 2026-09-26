@@ -1105,7 +1105,7 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
       this.dataSource,
       `
         SELECT c.id AS case_id, c.student_uuid::text, c.student_first_name, c.student_last_name,
-               sc.name AS school_name, c.status, c.reason_flagged, c.created_at, c.sla_due_at,
+               sc.name AS school_name, c.status, c.reason_flagged, c.created_at,
                latest_review.review_action AS latest_review_action,
                latest_review.resolution_outcome AS latest_resolution_outcome,
                latest_review.reviewed_at AS latest_reviewed_at
@@ -1134,7 +1134,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
         'status',
         'reason_flagged',
         'created_at',
-        'sla_due_at',
         'latest_review_action',
         'latest_resolution_outcome',
         'latest_reviewed_at',

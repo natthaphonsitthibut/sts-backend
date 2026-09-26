@@ -365,8 +365,6 @@ export class TaskAccessService {
       subject: link.subject,
       school_name: link.school_name,
       auth_required: authRequired,
-      login_permissions: link.login_permissions || [],
-      login_data_scope: link.login_data_scope || {},
     };
 
     if (link.task_type === 'ASSIST') {
@@ -516,8 +514,6 @@ export class TaskAccessService {
       if (
         !this.taskPolicyService.canManageAdminLink(currentActor, {
           task_type: typeof link.task_type === 'string' ? link.task_type : null,
-          login_role: typeof link.login_role === 'string' ? link.login_role : null,
-          login_data_scope: link.login_data_scope,
           target_school_id: link.target_school_id,
           target_room: link.target_room,
           case_created_by: link.case_created_by,
@@ -612,8 +608,6 @@ export class TaskAccessService {
       if (
         !this.taskPolicyService.canManageAdminLink(currentActor, {
           task_type: typeof link.task_type === 'string' ? link.task_type : null,
-          login_role: typeof link.login_role === 'string' ? link.login_role : null,
-          login_data_scope: link.login_data_scope,
           target_school_id: link.target_school_id,
           target_room: link.target_room,
           case_created_by: link.case_created_by,
@@ -646,7 +640,6 @@ export class TaskAccessService {
         magic_link: link.magic_link ?? null,
         expires_at: link.expires_at,
         created_at: link.created_at ?? null,
-        first_used_at: link.first_used_at ?? null,
         subject: link.subject ?? null,
         assigned_to_name: link.assigned_to_name ?? null,
         assigned_to_email: link.assigned_to_email ?? null,
@@ -654,10 +647,6 @@ export class TaskAccessService {
         target_grade: link.target_grade ?? null,
         target_room: link.target_room ?? null,
         target_school_id: link.target_school_id ?? null,
-        login_role: link.login_role ?? null,
-        login_role_label: link.login_role_label ?? null,
-        login_permissions: link.login_permissions ?? [],
-        login_data_scope: link.login_data_scope ?? {},
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

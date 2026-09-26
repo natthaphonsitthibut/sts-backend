@@ -27,10 +27,20 @@ DELETE FROM case_reviews
 WHERE case_id IN (SELECT case_id FROM demo_follow_up_links)
   AND reviewed_by = 'ระบบข้อมูลตัวอย่าง';
 
+-- Reopen only when the student has no other active case: after an earlier run
+-- closed a case, the system may have opened a new one for the same student, and
+-- a student can hold at most one active case (uq_cases_active_student_uuid).
 UPDATE cases
 SET status = 'OPEN', completion_outcome_code = NULL, updated_at = now()
 WHERE id IN (SELECT case_id FROM demo_follow_up_links)
-  AND status = 'RESOLVED';
+  AND status = 'RESOLVED'
+  AND NOT EXISTS (
+    SELECT 1 FROM cases other
+    WHERE other.student_uuid = cases.student_uuid
+      AND other.id <> cases.id
+      AND other.deleted_at IS NULL
+      AND other.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+  );
 
 DELETE FROM task_submissions WHERE task_link_id IN (SELECT link_id FROM demo_follow_up_links);
 DELETE FROM task_links WHERE id IN (SELECT link_id FROM demo_follow_up_links);
@@ -95,7 +105,7 @@ SELECT id AS task_id, case_id FROM inserted;
 CREATE TEMP TABLE demo_follow_up_new_links ON COMMIT DROP AS
 WITH inserted AS (
 INSERT INTO task_links (
-  task_id, token_hash, expires_at, status, first_used_at,
+  task_id, token_hash, expires_at, status,
   assigned_teacher_id, assigned_to_first_name, assigned_to_last_name,
   assigned_to_name, created_at, updated_at
 )
@@ -104,7 +114,6 @@ SELECT
   'demo-follow-up-' || md5(demo_follow_up_tasks.task_id::text),
   now() - ((slice.seq % 90) || ' days')::interval + interval '7 days',
   'COMPLETED',
-  now() - ((slice.seq % 90) || ' days')::interval,
   slice.teacher_id,
   slice.first_name,
   slice.last_name,

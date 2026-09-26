@@ -115,9 +115,6 @@ export class TaskLinkEntity {
 
   @Column({ name: 'created_by', type: 'integer', nullable: true })
   createdBy!: number | null;
-
-  @Column({ name: 'first_used_at', type: 'timestamptz', nullable: true })
-  firstUsedAt!: Date | null;
 }
 
 @Entity({ name: 'task_submissions' })

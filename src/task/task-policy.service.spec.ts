@@ -100,4 +100,57 @@ describe('TaskPolicyService data scope policy', () => {
       ),
     ).toBe(true);
   });
+
+  it.each([
+    ['in-scope actor', { school_ids: [10010002] }, 10010002, undefined, true],
+    ['out-of-scope actor', { school_ids: [10010003] }, 10010002, undefined, false],
+    ['own-only case creator', { own_only: true }, 10010002, 9, true],
+    ['own-only non-creator', { own_only: true }, 10010002, 10, false],
+  ])(
+    'applies the visit rule to assistance links for an %s',
+    (_name, dataScope, school, creator, expected) => {
+      expect(
+        service.canManageAdminLink(
+          {
+            id: 9,
+            username: 'case-reviewer',
+            roles: ['ADMIN'],
+            permissions: ['dashboard'],
+            data_scope: dataScope,
+          },
+          { task_type: 'ASSIST', target_school_id: school, case_created_by: creator },
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it('rejects assistance links for actors without the dashboard page', () => {
+    expect(
+      service.canManageAdminLink(
+        {
+          id: 9,
+          username: 'no-dashboard',
+          roles: ['ADMIN'],
+          permissions: ['home'],
+          data_scope: { global: true },
+        },
+        { task_type: 'ASSIST', target_school_id: 10010002 },
+      ),
+    ).toBe(false);
+  });
+
+  it('still rejects retired link types', () => {
+    expect(
+      service.canManageAdminLink(
+        {
+          id: 9,
+          username: 'national',
+          roles: ['ADMIN'],
+          permissions: ['dashboard'],
+          data_scope: { global: true },
+        },
+        { task_type: 'LOGIN', target_school_id: 10010002 },
+      ),
+    ).toBe(false);
+  });
 });
