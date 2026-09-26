@@ -90,6 +90,8 @@ describe('AttendanceController access', () => {
     const guard = new PermissionsGuard(new Reflector());
 
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('listTerms'))).toEqual([
+      // the view-only ห้องเรียน page (directors) needs the term picker
+      'classrooms',
       'attendance',
       'manage-school-structure',
       'manage-classroom-links',
@@ -97,6 +99,12 @@ describe('AttendanceController access', () => {
       'import-data',
     ]);
     expect(guard.canActivate(contextWithPermissions('listTerms', ['attendance']))).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('listTerms', ['classrooms']))).toBe(true);
+    for (const method of ['upsertTerm', 'deleteTerm'] as const) {
+      expect(() => guard.canActivate(contextWithPermissions(method, ['classrooms']))).toThrow(
+        ForbiddenException,
+      );
+    }
 
     for (const method of ['upsertTerm', 'deleteTerm'] as const) {
       expect(Reflect.getMetadata(PERMISSIONS_KEY, handler(method))).toEqual([

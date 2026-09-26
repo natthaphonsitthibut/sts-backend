@@ -117,6 +117,8 @@ export class SchoolStructureService {
         'manage-role-groups',
         // จัดการข้อมูลครู reuses this endpoint for its school picker.
         'teachers',
+        // the view-only ห้องเรียน page (directors): lists, cover, roster and pins, never edits
+        'classrooms',
       ].some((permission) => hasPermission(actor.roles, actor.permissions, permission));
     if (!canManageStructure && !canUseRelatedRead) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการโครงสร้างโรงเรียน');
@@ -1086,11 +1088,11 @@ export class SchoolStructureService {
       throw new BadRequestException('กรุณาเลือกโรงเรียนหรือห้องเรียน');
     }
     if (query.schoolId) {
-      await this.assertSchoolAccess(query.schoolId, actor);
+      await this.assertSchoolAccess(query.schoolId, actor, true);
     } else {
       const classroom = await this.repository.findClassroomById(query.classroomId!);
       if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
-      await this.assertSchoolAccess(classroom.school_id, actor);
+      await this.assertSchoolAccess(classroom.school_id, actor, true);
     }
     const page = resolvePage(query.page);
     const limit = resolveLimit(query.limit);

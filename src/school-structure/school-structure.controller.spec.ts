@@ -48,6 +48,8 @@ describe('SchoolStructureController access', () => {
         'import-data',
         // The school picker is also reachable from จัดการกลุ่มเมนู and จัดการข้อมูลครู.
         ...(method === 'listSchools' ? ['manage-role-groups', 'teachers'] : []),
+        // the view-only ห้องเรียน page (directors) lists classrooms too
+        ...(method === 'listClassrooms' ? ['classrooms'] : []),
       ]);
       expect(() => guard.canActivate(context(method))).toThrow();
     }
@@ -65,6 +67,44 @@ describe('SchoolStructureController access', () => {
 
     expect(() => guard.canActivate(context('createTeacherMembership'))).toThrow();
     expect(() => guard.canActivate(context('updateTeacherMembership'))).toThrow();
+  });
+
+  it('lets a view-only classrooms account read and pin, but not edit', () => {
+    const guard = new PermissionsGuard(new Reflector());
+    const context = (method: keyof SchoolStructureController) =>
+      ({
+        getHandler: () => handler(method),
+        getClass: () => SchoolStructureController,
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: {
+              id: 7,
+              username: 'director',
+              roles: [],
+              permissions: ['classrooms', 'students'],
+            },
+          }),
+        }),
+      }) as never;
+
+    for (const method of [
+      'listClassrooms',
+      'getClassroom',
+      'listRoster',
+      'getClassroomCover',
+      'setClassroomFavorite',
+    ] as const) {
+      expect(guard.canActivate(context(method))).toBe(true);
+    }
+    for (const method of [
+      'createClassroom',
+      'updateClassroom',
+      'updateClassroomPresentation',
+      'setHomeroomTeachers',
+      'createAssignment',
+    ] as const) {
+      expect(() => guard.canActivate(context(method))).toThrow();
+    }
   });
 
   it('allows the classroom-link page to load only its scoped school picker', () => {

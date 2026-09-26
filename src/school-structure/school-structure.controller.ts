@@ -84,7 +84,7 @@ export class SchoolStructureController {
 
   @Get('classrooms')
   @RequirePermission()
-  @RequireAnyPermission('manage-school-structure', 'import-data')
+  @RequireAnyPermission('manage-school-structure', 'import-data', 'classrooms')
   listClassrooms(
     @Query() query: ListSchoolClassroomsDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -138,6 +138,8 @@ export class SchoolStructureController {
   }
 
   @Put('classrooms/:classroomId/favorite')
+  @RequirePermission()
+  @RequireAnyPermission('manage-school-structure', 'classrooms')
   setClassroomFavorite(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @Body() body: SetClassroomFavoriteDto,
@@ -158,6 +160,8 @@ export class SchoolStructureController {
   }
 
   @Get('classrooms/:classroomId/cover')
+  @RequirePermission()
+  @RequireAnyPermission('manage-school-structure', 'classrooms')
   async getClassroomCover(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -246,6 +250,8 @@ export class SchoolStructureController {
   }
 
   @Get('roster')
+  @RequirePermission()
+  @RequireAnyPermission('manage-school-structure', 'classrooms')
   listRoster(
     @Query() query: ListClassroomRosterDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
