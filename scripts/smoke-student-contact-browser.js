@@ -200,7 +200,7 @@ async function selectComboboxOption(client, ariaLabel, optionLabel) {
         await evaluate(
           client,
           `Boolean([...document.querySelectorAll('li button')]
-            .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)}))`,
+            .find((button) => (button.innerText || '').split('\\n')[0].trim() === ${JSON.stringify(optionLabel)}))`,
         ),
       ),
     `Combobox option "${optionLabel}" did not open`,
@@ -208,7 +208,43 @@ async function selectComboboxOption(client, ariaLabel, optionLabel) {
   await evaluate(
     client,
     `[...document.querySelectorAll('li button')]
-      .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)}).click()`,
+      .find((button) => (button.innerText || '').split('\\n')[0].trim() === ${JSON.stringify(optionLabel)}).click()`,
+  );
+}
+
+// The school is picked in the header's shared filter dialog now.
+async function pickSchoolInHeader(client, schoolName) {
+  // Picking a school also narrows the header's area to that school's, so clear
+  // it first; any school is then on offer again.
+  await click(
+    client,
+    `document.querySelector('button[aria-label="เลือกโรงเรียนที่จะดูข้อมูล"]')`,
+    'Header school picker was not found',
+  );
+  await waitFor(
+    async () =>
+      Boolean(
+        await evaluate(
+          client,
+          `(() => {
+            const clear = [...document.querySelectorAll('button')].find((button) => (button.innerText || '').trim() === 'ล้างตัวกรอง');
+            clear?.click();
+            return Boolean(clear);
+          })()`,
+        ),
+      ),
+    'Header school picker did not offer to clear its filter',
+  );
+  await click(
+    client,
+    `document.querySelector('button[aria-label="เลือกโรงเรียนที่จะดูข้อมูล"]')`,
+    'Header school picker was not found',
+  );
+  await selectComboboxOption(client, 'ค้นหาโรงเรียน', schoolName);
+  // Picking a school closes the dialog on its own; close it if it stayed.
+  await evaluate(
+    client,
+    `[...document.querySelectorAll('button')].find((button) => (button.innerText || '').trim() === 'เสร็จสิ้น')?.click() ?? true`,
   );
 }
 
@@ -464,6 +500,12 @@ async function main() {
         if (response.ok) {
           localStorage.setItem('sts_user', JSON.stringify(body));
           localStorage.setItem('admin_access', 'true');
+          // School pages read the school from the header's shared filter.
+          localStorage.setItem('sts_school_filter', JSON.stringify({
+            province: '', district: '', subDistrict: '',
+            schoolId: ${JSON.stringify(String(classroom.school_id))}, schoolName: '',
+            userId: body.id ?? body.user?.id ?? null,
+          }));
         }
         return { status: response.status };
       })()`,
@@ -522,12 +564,12 @@ async function main() {
       'Audit-log search did not render',
     );
     await fillInput(client, auditSearchSelector, 'first-school-filter');
-    await selectComboboxOption(client, 'กรองตามโรงเรียน', outsideClassroom.school_name);
+    await pickSchoolInHeader(client, outsideClassroom.school_name);
     await waitFor(
       async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === '',
       'Audit search crossed into a second school scope',
     );
-    await selectComboboxOption(client, 'กรองตามโรงเรียน', classroom.school_name);
+    await pickSchoolInHeader(client, classroom.school_name);
     await waitFor(
       async () => String(await evaluate(client, `document.querySelector(${JSON.stringify(auditSearchSelector)})?.value`)) === 'first-school-filter',
       'Audit search did not restore the first school scope value',
@@ -550,16 +592,12 @@ async function main() {
       `(() => {
         const status = document.querySelector('select[aria-label="กรองตามสถานะการเรียน"]');
         const school = document.querySelector('input[aria-label="กรองตามโรงเรียน"]');
-        const searchRow = status?.closest('div.flex.flex-col.gap-3');
-        const sections = searchRow?.parentElement;
         return {
           hasProvince: Boolean(document.querySelector('input[placeholder="ค้นหาจังหวัด"]')),
           hasDistrict: Boolean(document.querySelector('input[placeholder="ค้นหาอำเภอ/เขต"]')),
-          separated: Boolean(
-            sections && status && school
-              && sections.children[0]?.contains(status)
-              && sections.children[1]?.contains(school)
-          ),
+          // The school comes from the header's shared filter, never a picker
+          // on the page; the status filter stays on the page.
+          separated: Boolean(status) && !school,
         };
       })()`,
     );
@@ -736,7 +774,7 @@ async function main() {
       client,
       `(() => {
         const correctionButton = [...document.querySelectorAll('button')]
-          .find((button) => button.textContent.trim() === 'แก้ไขเลขบัตร');
+          .find((button) => (button.innerText || '').trim() === 'แก้ไขเลขบัตร');
         const revealButton = correctionButton?.previousElementSibling;
         const firstName = document.querySelector('#FirstName_Onec')?.getBoundingClientRect();
         const lastName = document.querySelector('#LastName_Onec')?.getBoundingClientRect();
@@ -746,10 +784,13 @@ async function main() {
           correctionAfterReveal:
             revealButton?.tagName === 'BUTTON'
             && revealButton.getAttribute('aria-label')?.includes('เลขบัตรประชาชน'),
+          // One row since 242fd82: first, last, then middle name.
           pairedNames: Boolean(
             firstName && lastName && middleName
             && Math.abs(firstName.top - lastName.top) < 1
-            && middleName.top > firstName.bottom,
+            && Math.abs(lastName.top - middleName.top) < 1
+            && firstName.left < lastName.left
+            && lastName.left < middleName.left,
           ),
         };
       })()`,
@@ -761,29 +802,29 @@ async function main() {
     );
     assert(
       identityCorrectionPresentation.pairedNames,
-      'First and last name are not paired above the middle-name field',
+      'First, last and middle name are not on one row in that order',
     );
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'แก้ไขเลขบัตร')`,
+      `[...document.querySelectorAll('button')].find((button) => (button.innerText || '').trim() === 'แก้ไขเลขบัตร')`,
       'National-id correction button was not found',
     );
     await waitFor(
       async () =>
-        Boolean(await evaluate(client, `Boolean(document.querySelector('#new-national-id'))`)),
+        Boolean(await evaluate(client, `Boolean(document.querySelector('#student-identifier-value'))`)),
       'National-id correction dialog did not render',
     );
     const correctionDialogIsBlank = await evaluate(
       client,
       `(() => {
-        const input = document.querySelector('#new-national-id');
+        const input = document.querySelector('#student-identifier-value');
         const dialog = input?.closest('[role="dialog"]');
         return input?.value === ''
           && !String(dialog?.innerText ?? '').includes(${JSON.stringify(originalNationalId)});
       })()`,
     );
     assert(correctionDialogIsBlank === true, 'Correction dialog exposed or prefilled the old id');
-    await fillInput(client, '#new-national-id', correctedNationalId);
+    await fillInput(client, '#student-identifier-value', correctedNationalId);
     await click(
       client,
       `[...document.querySelectorAll('button')].find((button) => button.textContent.includes('ยืนยันการแก้ไข'))`,
@@ -791,7 +832,7 @@ async function main() {
     );
     await waitFor(
       async () =>
-        Boolean(await evaluate(client, `!document.querySelector('#new-national-id')`)),
+        Boolean(await evaluate(client, `!document.querySelector('#student-identifier-value')`)),
       'National-id correction dialog did not close after submit',
     );
     const [correctedIdentity] = await dataSource.query(

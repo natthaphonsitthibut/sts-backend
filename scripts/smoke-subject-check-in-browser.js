@@ -54,7 +54,8 @@ async function waitFor(check, message, timeoutMs = 25_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${lastError.message}` : message);
+  const text = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${text}: ${lastError.message}` : text);
 }
 
 class CdpClient {
@@ -377,16 +378,15 @@ async function openScopePicker(client) {
     async () =>
       await evaluate(
         client,
-        `[...document.querySelectorAll('button')].some((item) =>
-          item.innerText.includes('ขอบเขต') && item.getClientRects().length > 0)`,
+        `[...document.querySelectorAll('button[data-scope-filter-trigger]')].some((item) =>
+          item.getClientRects().length > 0)`,
       ),
     'Scope picker trigger did not render',
   );
   await evaluate(
     client,
-    `[...document.querySelectorAll('button')]
-      .find((item) => item.innerText.includes('ขอบเขต') &&
-        item.getClientRects().length > 0).click()`,
+    `[...document.querySelectorAll('button[data-scope-filter-trigger]')]
+      .find((item) => item.getClientRects().length > 0).click()`,
   );
   await waitFor(
     async () =>
@@ -878,7 +878,6 @@ async function main() {
       networkRequests.push({
         method: request.method,
         url: request.url,
-        postData: request.postData,
       });
     });
     client.on('Network.responseReceived', ({ response }) => {
@@ -2091,7 +2090,9 @@ async function main() {
         [scope.classroom_id, fixtureOfferingId, scope.check_in_date],
       );
       return publicSessionCount?.count === 1;
-    }, 'Public swipe did not resolve exactly one attendance session');
+    }, async () =>
+      `Public swipe did not resolve exactly one attendance session (count=${publicSessionCount?.count}; post paths=${JSON.stringify(networkRequests.filter((item) => item.method === 'POST').map((item) => new URL(item.url).pathname))})`,
+    );
     networkRequests.length = 0;
     try {
       await clickButton(client, 'ขาด');
@@ -2442,6 +2443,28 @@ async function main() {
         ]);
       }
       if (fixtureSubjectId) {
+        // Sessions recorded against the fixture subject (including any a failed
+        // earlier run left behind) go first, or its classroom_subjects rows are
+        // still referenced.
+        const fixtureSessionFilter = `session_id IN (
+          SELECT session.id FROM attendance_sessions session
+          JOIN classroom_subjects offering ON offering.id = session.classroom_subject_id
+          JOIN school_subjects school_subject ON school_subject.id = offering.school_subject_id
+          WHERE school_subject.subject_id = $1)`;
+        await dataSource.query(`DELETE FROM attendance_exceptions WHERE ${fixtureSessionFilter}`, [
+          fixtureSubjectId,
+        ]);
+        await dataSource.query(
+          `DELETE FROM attendance_session_roster WHERE ${fixtureSessionFilter}`,
+          [fixtureSubjectId],
+        );
+        await dataSource.query(
+          `DELETE FROM attendance_sessions WHERE classroom_subject_id IN (
+             SELECT offering.id FROM classroom_subjects offering
+             JOIN school_subjects school_subject ON school_subject.id = offering.school_subject_id
+             WHERE school_subject.subject_id = $1)`,
+          [fixtureSubjectId],
+        );
         await dataSource.query(
           `DELETE FROM classroom_subjects
            WHERE school_subject_id IN (

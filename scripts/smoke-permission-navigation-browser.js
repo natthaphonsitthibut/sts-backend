@@ -383,7 +383,16 @@ async function main() {
         data_scope: { global: true },
       }),
     });
-    assert(widenResponse.status === 403, `scope widening returned ${widenResponse.status}`);
+    // Refused either by the realm guard (school → council is 400, R1 2026-09-23)
+    // or by the scope-subset check (403); either way nothing may be written.
+    assert(
+      [400, 403].includes(widenResponse.status),
+      `scope widening returned ${widenResponse.status}: ${(await widenResponse.text()).slice(0, 300)}`,
+    );
+    const [widenedTarget] = await dataSource.query(`SELECT data_scope FROM users WHERE id = $1`, [
+      insideId,
+    ]);
+    assert(widenedTarget?.data_scope?.global !== true, 'scope widening was written to the target');
     assert(
       [403, 404].includes(
         (await api(cookie, `/api/users/role-groups?schoolId=${roleGroupOutsideSchoolId}`)).status,

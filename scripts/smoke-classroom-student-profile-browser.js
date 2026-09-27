@@ -53,7 +53,8 @@ async function main() {
     const [scope] = await dataSource.query(
       `SELECT classroom.id::int AS classroom_id, classroom.school_id::int AS school_id,
               classroom.school_term_id::int AS school_term_id,
-              lower(btrim(teacher.email)) AS teacher_email
+              lower(btrim(teacher.email)) AS teacher_email,
+              membership.id::int AS teacher_membership_id
        FROM school_classrooms classroom
        JOIN schools school ON school.id = classroom.school_id AND school.school_status = 'ACTIVE'
        JOIN school_terms term ON term.id = classroom.school_term_id AND term.status = 'ACTIVE'
@@ -96,7 +97,8 @@ async function main() {
       {
         schoolId: scope.school_id,
         schoolTermId: scope.school_term_id,
-        classroomIds: [scope.classroom_id],
+        // Links are issued per teacher now, not per classroom.
+        teacherMembershipIds: [scope.teacher_membership_id],
       },
       {
         id: actorId,
@@ -140,6 +142,25 @@ async function main() {
     });
 
     await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/classroom?tab=roster` });
+    // A teacher link now covers every class the teacher has, so the page opens
+    // on the class chooser; pick the homeroom class to reach its roster.
+    await waitFor(
+      async () =>
+        Boolean(
+          await chrome.evaluate(`(() => {
+            if (document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]')) return true;
+            const card = [...document.querySelectorAll('a, button, [role="button"]')]
+              .find((node) => node.innerText.includes('โฮมรูม'));
+            if (!card) return false;
+            card.click();
+            return true;
+          })()`),
+        ),
+      async () =>
+        `class chooser did not offer the homeroom class: ${String(
+          await chrome.evaluate('document.body.innerText'),
+        ).slice(0, 300)}`,
+    );
     await waitFor(
       async () =>
         Boolean(
@@ -159,6 +180,13 @@ async function main() {
            .getAttribute('aria-label').replace('เปิดข้อมูลนักเรียน ', '')`,
       ),
     );
+    // Where the teacher is before opening a profile — the class roster route —
+    // is where "back" has to land.
+    const rosterLocation = String(
+      await chrome.evaluate('window.location.pathname + window.location.search'),
+    );
+    const onLinkSurface = (pathname) =>
+      pathname.startsWith('/classroom') && !pathname.startsWith('/classroom/students/');
     await chrome.evaluate(
       `document.querySelector('button[aria-label^="เปิดข้อมูลนักเรียน"]')?.click() ?? 'no-avatar-button'`,
     );
@@ -332,8 +360,8 @@ async function main() {
     await clickBack();
     await waitFor(
       async () =>
-        String(await chrome.evaluate('window.location.pathname')) === '/classroom' &&
-        String(await chrome.evaluate('window.location.search')) === '?tab=roster',
+        String(await chrome.evaluate('window.location.pathname + window.location.search')) ===
+        rosterLocation,
       async () =>
         `back from the profile did not return to the roster tab: ${String(
           await chrome.evaluate('window.location.pathname + window.location.search'),
@@ -514,15 +542,24 @@ async function main() {
     await clickBack();
     await waitFor(
       async () =>
-        String(await chrome.evaluate('window.location.pathname')) === '/classroom',
+        onLinkSurface(String(await chrome.evaluate('window.location.pathname'))),
       async () => 'back from the case profile did not return to the link page',
     );
 
     // Marking attendance, opening a profile and coming back must not lose what
     // was already marked — the draft belongs to the tab, not to the component.
-    await chrome.evaluate(
-      `[...document.querySelectorAll('[role="tab"]')].find((node) => (node.innerText || '').trim() === 'เช็กชื่อ')?.click() ?? 'no-attendance-tab'`,
-    );
+    // The class route is itself the check-in screen now (no เช็กชื่อ tab); from
+    // the class chooser, open the homeroom class again.
+    await chrome.evaluate(`(() => {
+      if (document.querySelector('button[aria-pressed]')) return 'already-on-check-in';
+      const tab = [...document.querySelectorAll('[role="tab"]')]
+        .find((node) => (node.innerText || '').trim() === 'เช็กชื่อ');
+      if (tab) { tab.click(); return 'tab'; }
+      const card = [...document.querySelectorAll('a, button, [role="button"]')]
+        .find((node) => node.innerText.includes('โฮมรูม'));
+      card?.click();
+      return card ? 'card' : 'nothing';
+    })()`);
     await waitFor(
       async () =>
         Number(
@@ -530,7 +567,12 @@ async function main() {
             `document.querySelectorAll('button[aria-pressed]').length`,
           ),
         ) > 0,
-      async () => 'the เช็กชื่อ tab did not render its status buttons',
+      async () =>
+        `the เช็กชื่อ tab did not render its status buttons @ ${String(
+          await chrome.evaluate('window.location.pathname + window.location.search'),
+        )} tabs=${await chrome.evaluate(
+          `JSON.stringify([...document.querySelectorAll('[role="tab"]')].map((t) => [t.innerText.trim(), t.getAttribute('aria-selected')]))`,
+        )} body=${String(await chrome.evaluate('document.body.innerText')).slice(0, 400)}`,
     );
     await chrome.evaluate(
       `document.querySelector('button[aria-pressed]')?.click() ?? 'no-status-button'`,
@@ -557,7 +599,7 @@ async function main() {
     await clickBack();
     await waitFor(
       async () =>
-        String(await chrome.evaluate('window.location.pathname')) === '/classroom' &&
+        onLinkSurface(String(await chrome.evaluate('window.location.pathname'))) &&
         Number(
           await chrome.evaluate(
             `document.querySelectorAll('button[aria-pressed="true"]').length`,

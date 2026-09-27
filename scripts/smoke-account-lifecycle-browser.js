@@ -250,7 +250,7 @@ async function chooseComboboxOption(client, selector, label) {
       const input = document.querySelector(${JSON.stringify(selector)});
       const option = input?.parentElement
         ? [...input.parentElement.querySelectorAll('ul button')]
-            .find((button) => button.textContent.trim() === ${JSON.stringify(label)})
+            .find((button) => button.innerText.trim() === ${JSON.stringify(label)})
         : null;
       if (!option) throw new Error('Combobox option not found: ${label}');
       option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
@@ -422,7 +422,10 @@ async function main() {
       passwordHash: await passwordService.hash(adminPassword),
       firstName: 'Account Browser',
       lastName: 'Admin',
-      permissions: ['home', 'manage-users-list', 'attendance'],
+      // nl_query:use is held-only (owner, 2026-09-25): an account admin manages
+      // an EXECUTIVE account only when it holds the chatbot itself, as the
+      // council's ผู้ดูแลระบบ does.
+      permissions: ['home', 'manage-users-list', 'attendance', 'nl_query:use'],
       role: 'ADMIN',
       dataScope: { global: true },
     });
@@ -567,7 +570,9 @@ async function main() {
       console.log('user contact/address browser smoke passed (LINE, address fields, persistence, audited detail map)');
       return;
     }
-    await navigate(client, `${FRONTEND_URL}/manage-users`);
+    // A nationally scoped account belongs to the council realm, which lists its
+    // users under /council/manage-users (realm split, 2026-09-23).
+    await navigate(client, `${FRONTEND_URL}/council/manage-users`);
     await waitFor(
       async () => String(await evaluate(client, 'document.body.innerText')).includes('จัดการผู้ใช้งาน'),
       'Manage users page did not render',
@@ -592,7 +597,7 @@ async function main() {
         Boolean(
           await evaluate(
             client,
-            `Boolean(document.querySelector('a[href="/manage-users/${teacher.id}"]'))`,
+            `Boolean(document.querySelector('a[href="/council/manage-users/${teacher.id}"]'))`,
           ),
         ),
       'Teacher fixture did not appear in manage users search',
@@ -603,7 +608,7 @@ async function main() {
           await evaluate(
             client,
             `(() => {
-              const link = document.querySelector('a[href="/manage-users/${teacher.id}"]');
+              const link = document.querySelector('a[href="/council/manage-users/${teacher.id}"]');
               const image = link?.querySelector('img[data-avatar-image]');
               return Boolean(
                 image &&
@@ -634,7 +639,7 @@ async function main() {
     await fillInput(client, '#account-deactivation-note', 'Automated browser smoke test');
     await click(
       client,
-      `[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'ปิดใช้งาน')`,
+      `[...document.querySelectorAll('button')].find((button) => button.innerText.trim() === 'ปิดใช้งาน')`,
       'Deactivate confirm button was not found',
     );
     await waitFor(async () => {
@@ -657,7 +662,7 @@ async function main() {
     await clearBrowserSession(client);
 
     await loginWithForm(client, ADMIN_USERNAME, adminPassword, true);
-    await navigate(client, `${FRONTEND_URL}/manage-users`);
+    await navigate(client, `${FRONTEND_URL}/council/manage-users`);
     await waitFor(
       async () =>
         Boolean(
@@ -674,7 +679,7 @@ async function main() {
         Boolean(
           await evaluate(
             client,
-            `Boolean(document.querySelector('a[href="/manage-users/${teacher.id}"]'))`,
+            `Boolean(document.querySelector('a[href="/council/manage-users/${teacher.id}"]'))`,
           ),
         ),
       'Disabled teacher fixture did not appear in manage users search',
@@ -695,7 +700,7 @@ async function main() {
           .find((section) => section.textContent.includes('เปิดใช้งานผู้ใช้งาน'));
         return dialog
           ? [...dialog.querySelectorAll('button')]
-              .find((button) => button.textContent.trim() === 'เปิดใช้งาน')
+              .find((button) => button.innerText.trim() === 'เปิดใช้งาน')
           : null;
       })()`,
       'Reactivate confirm button was not found',

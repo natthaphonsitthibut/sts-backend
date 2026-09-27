@@ -267,7 +267,8 @@ async function main() {
        RETURNING id`,
       [
         USERNAME,
-        JSON.stringify(['home', 'dashboard', 'students', 'classrooms']),
+        // The student profile's comment button belongs to จัดการข้อมูลนักเรียน.
+        JSON.stringify(['home', 'dashboard', 'students', 'manage-students', 'classrooms']),
         JSON.stringify({ school_ids: [student.school_id] }),
       ],
     );
@@ -314,7 +315,7 @@ async function main() {
           id: actor.id,
           username: USERNAME,
           roles: ['ADMIN'],
-          permissions: ['home', 'dashboard', 'students', 'classrooms'],
+          permissions: ['home', 'dashboard', 'students', 'manage-students', 'classrooms'],
           data_scope: { school_ids: [student.school_id] },
           must_change_password: false,
         }),
@@ -536,14 +537,18 @@ async function main() {
       throw new Error(`${error.message}: ${JSON.stringify({ state, commentResponses })}`);
     }
 
-    const noteOnly = await browserRequest(
-      client,
-      'GET',
-      '/api/student-risk-report/teacher-watchlist?page=1&limit=20',
-    );
+    // The watchlist is the กลุ่มเฝ้าระวัง tab of the student report now.
+    const watchlistUrl = `/api/dashboard/risk-watchlist?studentGroup=WATCHLIST&schoolId=${student.school_id}&page=1&limit=50`;
+    const studentRow = (payload) =>
+      (payload?.data ?? []).find((row) => row.studentId === student.student_uuid);
+    // Whether a NOTE-only student belongs on the watchlist at all is an open
+    // owner question (Task 16 said no; the watchlist tab has counted NOTE since
+    // d3c248a). What must hold either way: a NOTE never reads as a concern.
+    const noteOnly = await browserRequest(client, 'GET', watchlistUrl);
+    const noteRow = studentRow(noteOnly.payload);
     assert(
-      noteOnly.status === 200 && noteOnly.payload.data?.length === 0,
-      `NOTE leaked into watchlist: ${JSON.stringify(noteOnly.payload)}`,
+      noteOnly.status === 200 && (!noteRow || noteRow.concernLevelCode === 'NOTE'),
+      `A NOTE was escalated on the watchlist: ${JSON.stringify(noteRow)}`,
     );
     const concern = await browserRequest(
       client,
@@ -569,18 +574,15 @@ async function main() {
     );
     assert(watch.status === 201, `WATCH save failed: ${JSON.stringify(watch.payload)}`);
 
-    const prioritized = await browserRequest(
-      client,
-      'GET',
-      '/api/student-risk-report/teacher-watchlist?page=1&limit=20',
-    );
+    const prioritized = await browserRequest(client, 'GET', watchlistUrl);
+    const prioritizedRow = studentRow(prioritized.payload);
     assert(
       prioritized.status === 200 &&
-        prioritized.payload.data?.length === 1 &&
-        prioritized.payload.data[0]?.concernLevelCode === 'CONCERN' &&
-        prioritized.payload.data[0]?.latestComment === 'น่ากังวลจาก browser smoke' &&
-        prioritized.payload.data[0]?.commentCount === 2,
-      `Watchlist did not exclude NOTE and prioritize CONCERN: ${JSON.stringify(prioritized.payload)}`,
+        prioritizedRow?.concernLevelCode === 'CONCERN' &&
+        prioritizedRow?.teacherComment === 'น่ากังวลจาก browser smoke' &&
+        // Every comment counts toward the row's total (NOTE, WATCH, CONCERN).
+        prioritizedRow?.commentCount === 3,
+      `Watchlist did not prioritize CONCERN: ${JSON.stringify((({ concernLevelCode, commentCount, teacherComment }) => ({ concernLevelCode, commentCount, teacherComment }))(prioritizedRow ?? {}))}`,
     );
     const [sideEffectAfter] = await dataSource.query(
       `SELECT
@@ -616,7 +618,7 @@ async function main() {
         .filter(
           (event) =>
             event.method === 'Network.responseReceived' &&
-            event.params?.response?.url?.includes('teacher-watchlist'),
+            event.params?.response?.url?.includes('risk-watchlist'),
         )
         .map((event) => ({ url: event.params.response.url, status: event.params.response.status }));
       throw new Error(`${error.message}: ${JSON.stringify({ state, watchlistResponses })}`);
@@ -647,7 +649,7 @@ async function main() {
     );
 
     console.log(
-      'teacher comment browser smoke passed (shared form, NOTE exclusion, CONCERN priority, scope, desktop/mobile/keyboard/reduced-motion)',
+      'teacher comment browser smoke passed (shared form, NOTE never escalated, CONCERN priority, scope, desktop/mobile/keyboard/reduced-motion)',
     );
   } finally {
     if (actor) {

@@ -391,7 +391,7 @@ async function main() {
     assert(targetSchool?.school_id, 'No school contains a canonical presentation teacher');
 
     const allowedChecks = [
-      `/api/teachers?schoolId=${targetSchool.school_id}&page=1&limit=20`,
+      `/api/teacher-profiles?schoolId=${targetSchool.school_id}&page=1&limit=20`,
       '/api/users?excludeRole=TEACHER%2CSTUDENT&page=1&limit=20',
       '/api/students?page=1&limit=20',
     ];
@@ -417,7 +417,7 @@ async function main() {
             const parsed = new URL(url, window.location.origin);
             if (!parsed.pathname.startsWith('/api/')) return url;
             if (
-              parsed.pathname === '/api/teachers' &&
+              parsed.pathname === '/api/teacher-profiles' &&
               sessionStorage.getItem('presentation-fail-teachers') === 'true'
             ) {
               return 'http://127.0.0.1:9' + parsed.pathname + parsed.search;
@@ -438,11 +438,25 @@ async function main() {
       mobile: false,
     });
     await loginInBrowser(client, userShape(allowedId, allowedActor), allowedCookie);
+    // School pages read the school from the shared header filter, not the URL.
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_school_filter', ${JSON.stringify(
+        JSON.stringify({
+          province: '',
+          district: '',
+          subDistrict: '',
+          schoolId: String(targetSchool.school_id),
+          schoolName: '',
+          userId: allowedId,
+        }),
+      )}); true`,
+    );
 
     await assertPage(client, FRONTEND_URL, 'นักเรียนทั้งหมด', 'home dashboard');
 
-    const teacherUrl = `${FRONTEND_URL}/teachers?schoolId=${targetSchool.school_id}`;
-    await assertPage(client, teacherUrl, 'จัดการข้อมูลคุณครู', 'teacher list');
+    const teacherUrl = `${FRONTEND_URL}/teachers`;
+    await assertPage(client, teacherUrl, 'รายชื่อคุณครู', 'teacher list');
     await waitFor(
       async () => (await bodyText(client)).includes(`@${PRESENTATION_DOMAIN}`),
       'Canonical teacher email did not render',
@@ -452,7 +466,9 @@ async function main() {
       'Teacher list exposed a forbidden marker',
     );
 
-    await assertPage(client, `${FRONTEND_URL}/manage-users`, 'จัดการผู้ใช้งาน', 'user list');
+    // A national actor's own realm is the council list; /manage-users lists the
+    // picked school's accounts only (realm split, 2026-09-23).
+    await assertPage(client, `${FRONTEND_URL}/council/manage-users`, 'จัดการผู้ใช้งาน', 'user list');
     await waitFor(
       async () => await evaluate(client, "Boolean(document.querySelector('tbody tr'))"),
       'User table did not render',
@@ -460,7 +476,18 @@ async function main() {
     assert(!FORBIDDEN_PATTERN.test(await bodyText(client)), 'User list exposed a forbidden marker');
 
     await assertPage(client, `${FRONTEND_URL}/students`, 'รายชื่อนักเรียน', 'student list');
-    await searchForStudent(client, 'ภาณุพงศ์ อินทร์ประเสริฐ');
+    // Search for a student the picked school really has, not a fixed name that
+    // a reseed can retire.
+    const [sampleStudent] = await dataSource.query(
+      `SELECT TRIM(CONCAT_WS(' ', "FirstName_Onec", "LastName_Onec")) AS full_name
+       FROM student_term
+       WHERE "SchoolID_Onec" = $1 AND deleted_at IS NULL
+       ORDER BY "FirstName_Onec", "LastName_Onec"
+       LIMIT 1`,
+      [targetSchool.school_id],
+    );
+    assert(sampleStudent?.full_name, 'The picked school has no enrolled student');
+    await searchForStudent(client, sampleStudent.full_name);
     assert(
       !FORBIDDEN_PATTERN.test(await bodyText(client)),
       'Student list exposed a forbidden marker',
@@ -470,7 +497,7 @@ async function main() {
       client,
       "sessionStorage.setItem('presentation-fail-teachers', 'true')",
     );
-    await navigate(client, `${teacherUrl}&errorProbe=1`);
+    await navigate(client, `${teacherUrl}?errorProbe=1`);
     await waitFor(
       async () => (await bodyText(client)).includes('ไม่สามารถโหลดข้อมูลครูได้'),
       'Teacher list did not expose a recoverable error state',
@@ -501,8 +528,8 @@ async function main() {
     });
     for (const [url, text, label] of [
       [FRONTEND_URL, 'นักเรียนทั้งหมด', 'mobile home'],
-      [teacherUrl, 'จัดการข้อมูลคุณครู', 'mobile teachers'],
-      [`${FRONTEND_URL}/manage-users`, 'จัดการผู้ใช้งาน', 'mobile users'],
+      [teacherUrl, 'รายชื่อคุณครู', 'mobile teachers'],
+      [`${FRONTEND_URL}/council/manage-users`, 'จัดการผู้ใช้งาน', 'mobile users'],
       [`${FRONTEND_URL}/students`, 'รายชื่อนักเรียน', 'mobile students'],
     ]) {
       await assertPage(client, url, text, label);

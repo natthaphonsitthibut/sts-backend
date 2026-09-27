@@ -73,7 +73,8 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${errorMessage(lastError)}` : message);
+  const text = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${text}: ${errorMessage(lastError)}` : text);
 }
 
 class CdpClient {
@@ -622,7 +623,7 @@ async function main() {
           Boolean(
             await evaluate(
               client,
-              `Boolean(document.querySelector('a[href^="/manage-users/${user.id}/edit"]'))`,
+              `Boolean(document.querySelector('a[href*="manage-users/${user.id}/edit"]'))`,
             ),
           ),
         'Manage-users profile edit link did not render for an authorized user',
@@ -652,21 +653,27 @@ async function main() {
     );
     await click(
       client,
-      `document.querySelector('a[href^="/manage-users/${user.id}/edit"]')`,
+      `document.querySelector('a[href*="manage-users/${user.id}/edit"]')`,
       'Manage-users profile edit link was not clickable',
     );
+    // The URL switches first; the edit page renders once its chunk loads, and
+    // until then the profile (with its own ย้อนกลับ) is still on screen.
     await waitFor(
-      async () => String(await evaluate(client, 'location.pathname')).endsWith('/edit'),
+      async () =>
+        String(await evaluate(client, 'location.pathname')).endsWith('/edit') &&
+        String(await evaluate(client, 'document.body.innerText')).includes('แก้ไขผู้ใช้งาน') &&
+        (await evaluate(client, `Boolean(document.querySelector('#FirstName'))`)),
       'Manage-users profile edit form did not open',
     );
     await click(
       client,
-      `[...document.querySelectorAll('a,button')].find((element) => element.textContent.trim() === 'ย้อนกลับ')`,
+      `[...document.querySelectorAll('a,button')].find((element) => (element.innerText || "").trim() === 'ย้อนกลับ')`,
       'Manage-users profile edit back action was not found',
     );
     await waitFor(
       async () => (await evaluate(client, 'location.pathname')) === '/profile',
-      'Profile-origin edit did not navigate back to profile',
+      async () =>
+        `Profile-origin edit did not navigate back to profile (at ${await evaluate(client, 'location.pathname + location.search')})`,
     );
     if (NAVIGATION_ONLY) {
       console.log('profile back-navigation browser smoke passed');

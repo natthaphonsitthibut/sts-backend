@@ -199,43 +199,22 @@ async function setChecked(client, labelText, checked) {
 }
 
 async function selectValue(client, selector, value) {
+  // Base Select renders a hidden native <select> beside its trigger and portals
+  // the option list; drive the native select, which owns the real onChange.
   await evaluate(
     client,
     `(() => {
       const trigger = document.querySelector(${JSON.stringify(selector)});
       if (!trigger) throw new Error('Select trigger not found: ${selector}');
-      trigger.click();
-    })()`,
-  );
-  await waitFor(
-    async () =>
-      Boolean(
-        await evaluate(
-          client,
-          `(() => {
-            const trigger = document.querySelector(${JSON.stringify(selector)});
-            return Boolean(trigger?.parentElement?.querySelector('[role="listbox"]'));
-          })()`,
-        ),
-      ),
-    `Select options did not open: ${selector}`,
-  );
-  await evaluate(
-    client,
-    `(() => {
-      const trigger = document.querySelector(${JSON.stringify(selector)});
-      const container = trigger?.parentElement;
-      const hiddenSelect = container?.querySelector('select');
-      const option = hiddenSelect
-        ? [...hiddenSelect.options].find((item) => item.value === ${JSON.stringify(value)})
-        : null;
-      const label = option?.textContent?.trim() || ${JSON.stringify(value)};
-      const button = container
-        ? [...container.querySelectorAll('[role="listbox"] button[role="option"]')]
-            .find((item) => item.textContent.trim() === label)
-        : null;
-      if (!button) throw new Error('Select option not found: ${selector}=${value}');
-      button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      const hiddenSelect = trigger.parentElement?.querySelector('select');
+      if (!hiddenSelect) throw new Error('Native select not found: ${selector}');
+      if (![...hiddenSelect.options].some((item) => item.value === ${JSON.stringify(value)})) {
+        throw new Error('Select option not found: ${selector}=${value}');
+      }
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(hiddenSelect, ${JSON.stringify(value)});
+      hiddenSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
     })()`,
   );
   await waitFor(
@@ -250,7 +229,7 @@ async function selectValue(client, selector, value) {
           })()`,
         ),
       ),
-    `Select value did not update: ${selector}`,
+    `Select value did not settle: ${selector}=${value}`,
   );
 }
 

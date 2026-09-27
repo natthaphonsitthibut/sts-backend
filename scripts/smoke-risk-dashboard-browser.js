@@ -336,16 +336,34 @@ async function disableActor(dataSource) {
   );
 }
 
-// Mirror the page size the dashboard itself renders: the smoke picks the row
-// it will then look for in the UI, so reasoning about a shorter list than the
-// user sees makes candidates vanish for no visible reason.
-async function fetchRiskDashboard(client, sortDirection = 'desc') {
+// Replay the exact request the page itself sent (school, term, page size,
+// sort): the smoke picks the row it will then look for in the UI, so asking the
+// API with different defaults than the page makes candidates vanish for no
+// visible reason.
+async function fetchRiskDashboard(client) {
+  await navigate(client, `${FRONTEND_URL}/student-risk-report/risk`);
+  let pageRequest = null;
+  await waitFor(async () => {
+    pageRequest = await evaluate(
+      client,
+      `(() => {
+        const entries = performance.getEntriesByType('resource')
+          .map((entry) => entry.name)
+          .filter((name) => name.includes('/api/dashboard/risk-watchlist')
+            && name.includes('studentGroup=RISK'));
+        return entries.length ? entries[entries.length - 1] : null;
+      })()`,
+    );
+    return Boolean(pageRequest);
+  }, 'Risk dashboard page never requested /api/dashboard/risk-watchlist');
+  // Keep the page's own default sort (last updated first) and term; only pin
+  // the first page.
+  const url = new URL(pageRequest);
+  url.searchParams.set('page', '1');
   return evaluate(
     client,
     `(async () => {
-      const response = await fetch(${JSON.stringify(
-        `${BACKEND_URL}/api/dashboard/risk-watchlist?studentGroup=RISK&limit=20&sortBy=risk&sortDirection=${sortDirection}`,
-      )}, { credentials: 'include' });
+      const response = await fetch(${JSON.stringify(url.toString())}, { credentials: 'include' });
       const payload = await response.json();
       return { status: response.status, payload };
     })()`,
@@ -839,7 +857,8 @@ async function assertCanonicalRouteNavigation(client) {
     ['/attendance/check-in', 'เช็กชื่อ', '/attendance'],
     [
       '/attendance/classroom-links',
-      'จัดการลิงก์ห้องเรียน',
+      // Renamed with the owner's sidebar mockups (2026-09-25).
+      'จัดการลิงก์คุณครู',
       '/attendance/classroom-links',
     ],
     ['/classrooms', 'ห้องเรียนทั้งหมด', '/classrooms'],
@@ -865,9 +884,13 @@ async function assertCanonicalRouteNavigation(client) {
     ['/change-password', 'เปลี่ยนรหัสผ่าน', null],
   ];
 
+  // Walk every route and report all mismatches at once, so a renamed page does
+  // not hide the next one behind it.
+  const mismatches = [];
   for (const [route, currentLabel, menuRoute] of routes) {
     await navigate(client, `${FRONTEND_URL}${route}`);
-    await waitFor(
+    try {
+      await waitFor(
       async () =>
         evaluate(
           client,
@@ -896,9 +919,14 @@ async function assertCanonicalRouteNavigation(client) {
               .map((link) => link.getAttribute('href')),
           }))()`,
         )}`,
-    );
+      );
+    } catch (error) {
+      mismatches.push(errorMessage(error));
+      continue;
+    }
     await assertSystemFont(client, route);
   }
+  assert(mismatches.length === 0, mismatches.join('\n'));
 
   await assertGlobalOnlyRoutesAreForbidden(client);
 }
@@ -1507,11 +1535,16 @@ async function assertMobileFilterReset(client, expectedStudentName) {
   );
 }
 
+// เช็กชื่อ became a top-level item with the owner's sidebar mockups
+// (2026-09-25), so the accordion is exercised on the จัดการข้อมูล group instead.
+const ACCORDION_GROUP = 'จัดการข้อมูล';
+const ACCORDION_CHILD = '/school-structure';
+
 async function assertCollapsedGroupAccordion(client) {
-  await navigate(client, `${FRONTEND_URL}/attendance`);
+  await navigate(client, `${FRONTEND_URL}${ACCORDION_CHILD}`);
   await waitFor(
-    async () => (await bodyText(client)).includes('เช็กชื่อ'),
-    'Attendance page did not render before sidebar verification',
+    async () => (await bodyText(client)).includes('จัดการภาคเรียนและห้องเรียน'),
+    'Grouped page did not render before sidebar verification',
   );
 
   const persistedExpanded = await evaluate(
@@ -1539,33 +1572,33 @@ async function assertCollapsedGroupAccordion(client) {
     client,
     `(() => {
       const button = Array.from(document.querySelectorAll('aside button'))
-        .find((candidate) => candidate.innerText.includes('ระบบเช็กชื่อ'));
+        .find((candidate) => candidate.innerText.trim() === ${JSON.stringify(ACCORDION_GROUP)});
       if (!button || button.getAttribute('aria-expanded') !== 'true') return false;
       button.click();
       return true;
     })()`,
   );
-  assert(collapsedActiveGroup, 'active attendance group was not initially expanded');
+  assert(collapsedActiveGroup, 'active grouped menu was not initially expanded');
   await waitFor(
     async () =>
       evaluate(
         client,
         `(() => Array.from(document.querySelectorAll('aside button'))
-          .some((button) => button.innerText.includes('ระบบเช็กชื่อ')
+          .some((button) => button.innerText.trim() === ${JSON.stringify(ACCORDION_GROUP)}
             && button.getAttribute('aria-expanded') === 'false'))()`,
       ),
-    'active attendance group could not be collapsed',
+    'active grouped menu could not be collapsed',
   );
   const reopenedActiveGroup = await evaluate(
     client,
     `(() => {
       const button = Array.from(document.querySelectorAll('aside button'))
-        .find((candidate) => candidate.innerText.includes('ระบบเช็กชื่อ'));
+        .find((candidate) => candidate.innerText.trim() === ${JSON.stringify(ACCORDION_GROUP)});
       button?.click();
       return Boolean(button);
     })()`,
   );
-  assert(reopenedActiveGroup, 'active attendance group could not be reopened');
+  assert(reopenedActiveGroup, 'active grouped menu could not be reopened');
 
   const collapsed = await evaluate(
     client,
@@ -1598,8 +1631,8 @@ async function assertCollapsedGroupAccordion(client) {
   const collapsedState = await evaluate(
     client,
     `(() => {
-      const button = document.querySelector('aside button[aria-label="ระบบเช็กชื่อ"]');
-      const child = document.querySelector('aside a[href="/attendance"]');
+      const button = document.querySelector(${JSON.stringify(`aside button[aria-label="${ACCORDION_GROUP}"]`)});
+      const child = document.querySelector(${JSON.stringify(`aside a[href="${ACCORDION_CHILD}"]`)});
       const main = document.querySelector('main');
       return {
         parentActive: button?.getAttribute('aria-current') === 'page',
@@ -1659,7 +1692,7 @@ async function assertCollapsedGroupAccordion(client) {
   const hoverState = await evaluate(
     client,
     `(() => {
-      const child = document.querySelector('aside a[href="/attendance"]');
+      const child = document.querySelector(${JSON.stringify(`aside a[href="${ACCORDION_CHILD}"]`)});
       const sidebar = document.querySelector('aside');
       const main = document.querySelector('main');
       return {
@@ -1784,6 +1817,16 @@ async function assertHeaderProfileMenu(client) {
 }
 
 async function setMobileSort(client, value) {
+  // The sort control lives with the result list, which is swapped for a
+  // skeleton while the previous sort reloads — wait for it to come back.
+  await waitFor(
+    async () =>
+      evaluate(
+        client,
+        `Boolean(document.querySelector('select[aria-label="เรียงลำดับรายงานนักเรียน"]'))`,
+      ),
+    'Mobile sort select did not come back after the list reloaded',
+  );
   const selected = await evaluate(
     client,
     `(() => {
@@ -1795,7 +1838,13 @@ async function setMobileSort(client, value) {
       return select.value;
     })()`,
   );
-  assert(selected === value, `Mobile sort select did not accept ${value}`);
+  assert(
+    selected === value,
+    `Mobile sort select did not accept ${value} (got ${selected}); selects=${await evaluate(
+      client,
+      `JSON.stringify([...document.querySelectorAll('select')].map((s) => [s.getAttribute('aria-label'), s.value, [...s.options].map((o) => o.value).join(',')]))`,
+    )} @ ${await evaluate(client, 'location.pathname + location.search')}`,
+  );
 }
 
 async function assertRiskDashboard(client, expectedStudentName, expectedTotalCount, label) {
@@ -1820,7 +1869,14 @@ async function assertRiskDashboard(client, expectedStudentName, expectedTotalCou
   assert(!text.includes('ไม่สามารถโหลดรายงานนักเรียนได้'), `${label} rendered error state`);
   await waitFor(
     async () => (await bodyText(client)).includes(expectedStudentName),
-    `${label} did not render first API student ${expectedStudentName}`,
+    async () =>
+      `${label} did not render first API student ${expectedStudentName}; page requests=${await evaluate(
+        client,
+        `JSON.stringify(performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.includes('risk-watchlist')).slice(-3))`,
+      )}; names=${await evaluate(
+        client,
+        `JSON.stringify([...document.querySelectorAll('[data-student-navigation]')].slice(0, 5).map((r) => r.innerText.split('\\n').slice(0, 3).join('|')))`,
+      )}; body=${(await bodyText(client)).slice(0, 300)}`,
   );
   await waitFor(async () => {
     const nextText = await bodyText(client);
@@ -2004,20 +2060,30 @@ async function assertSharedVisualSystem(client) {
     `Underline tab colors drifted: ${JSON.stringify(tabColors)}`,
   );
 
-  await navigate(client, `${FRONTEND_URL}/`);
+  // Breadcrumb ink is checked on the report page: หน้าหลัก carries no header
+  // bar above its cards at all (owner order, 2026-09-25).
   await waitFor(
     async () =>
       evaluate(
         client,
         `Boolean(document.querySelector('nav[aria-label="เส้นทางนำทาง"] [aria-current="page"]'))`,
       ),
-    'Home breadcrumb did not render',
+    'Report breadcrumb did not render',
   );
-  const homeInk = await evaluate(
+  const breadcrumbInk = await evaluate(
     client,
     `getComputedStyle(document.querySelector('nav[aria-label="เส้นทางนำทาง"] [aria-current="page"]')).color`,
   );
-  assert(homeInk === 'rgb(17, 17, 17)', `Home breadcrumb ink drifted: ${homeInk}`);
+  assert(breadcrumbInk === 'rgb(17, 17, 17)', `Breadcrumb ink drifted: ${breadcrumbInk}`);
+  await navigate(client, `${FRONTEND_URL}/`);
+  await waitFor(
+    async () => evaluate(client, `Boolean(document.querySelector('[data-home-metric]'))`),
+    'Home did not render its metric cards',
+  );
+  assert(
+    !(await evaluate(client, `Boolean(document.querySelector('nav[aria-label="เส้นทางนำทาง"]'))`)),
+    'Home must not render a breadcrumb bar above its cards',
+  );
   const homeBrandTile = await evaluate(
     client,
     `(() => {

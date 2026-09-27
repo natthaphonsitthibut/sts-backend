@@ -306,7 +306,9 @@ async function upsertStudentFixture(dataSource) {
 }
 
 async function upsertActor(dataSource, passwordHash, username, firstName, dataScope) {
-  const permissions = ['home', 'students'];
+  // The export tab lives on จัดการข้อมูลนักเรียน, which a school's admin opens
+  // with manage-students (it no longer holds the students list page).
+  const permissions = ['home', 'manage-students'];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [
     username,
   ]);
@@ -439,11 +441,7 @@ async function main() {
       await passwordService.hash(password),
       REQUESTER_USERNAME,
       'Requester',
-      {
-        school_ids: [SCHOOL_ID],
-        grade_levels: [GRADE_LEVEL_ID],
-        room_ids: [String(ROOM_ID)],
-      },
+      { school_ids: [SCHOOL_ID] },
     );
     const approverId = await upsertActor(
       dataSource,
@@ -459,12 +457,8 @@ async function main() {
       FirstName: 'Requester',
       LastName: 'PII Export Browser',
       roles: ['ADMIN'],
-      permissions: ['home', 'students'],
-      data_scope: {
-        school_ids: [SCHOOL_ID],
-        grade_levels: [GRADE_LEVEL_ID],
-        room_ids: [String(ROOM_ID)],
-      },
+      permissions: ['home', 'manage-students'],
+      data_scope: { school_ids: [SCHOOL_ID] },
       must_change_password: false,
     };
     const approverUser = {
@@ -473,7 +467,7 @@ async function main() {
       FirstName: 'Approver',
       LastName: 'PII Export Browser',
       roles: ['ADMIN'],
-      permissions: ['home', 'students'],
+      permissions: ['home', 'manage-students'],
       data_scope: { global: true },
       must_change_password: false,
     };
@@ -491,42 +485,15 @@ async function main() {
     });
 
     await loginInBrowser(client, requesterUser, createSessionCookie(sessionCookieService, requesterId));
-    await navigate(client, `${FRONTEND_URL}/students`);
-    let observedScopeFilters;
-    try {
-      await waitFor(async () => {
-        const filters = await evaluate(
-          client,
-          `(() => {
-            const grade = document.querySelector('[aria-label="กรองตามระดับชั้น"]');
-            const room = document.querySelector('[aria-label="กรองตามห้อง"]');
-            return {
-              gradeValue: grade?.value?.trim() ?? '',
-              gradeDisabled: Boolean(grade?.disabled),
-              roomValue: room?.value?.trim() ?? '',
-              roomDisabled: Boolean(room?.disabled),
-            };
-          })()`,
-        );
-        observedScopeFilters = filters;
-        return (
-          filters.gradeValue !== '' &&
-          filters.gradeValue !== 'ทุกชั้น' &&
-          filters.gradeDisabled === true &&
-          filters.roomValue === `ห้อง ${ROOM_ID}` &&
-          filters.roomDisabled === true
-        );
-      }, 'Single-grade/single-room actor scope was not selected and locked in the student list');
-    } catch (error) {
-      throw new Error(`${errorMessage(error)}; observed=${JSON.stringify(observedScopeFilters)}`);
-    }
-    await navigate(client, `${FRONTEND_URL}/students/export`);
+    await navigate(client, `${FRONTEND_URL}/manage-students/export`);
     await waitFor(
       async () =>
         (await bodyText(client)).includes('ส่งออกข้อมูลส่วนบุคคล') &&
         (await bodyText(client)).includes('ส่งคำขอ'),
       'PII export panel did not render for requester',
-    );
+    ).catch(async (error) => {
+      throw new Error(`${errorMessage(error)} @ ${await evaluate(client, 'location.pathname')}`);
+    });
     await fillField(client, '#pii-export-note', 'Browser smoke request for export verification');
     await waitFor(
       async () =>
@@ -560,12 +527,8 @@ async function main() {
     requestIds.push(request.id);
     assert(request.status === 'PENDING', `Created request status was ${request.status}`);
     assert(
-      includesStringish(request.scope_snapshot?.grade_levels, GRADE_LEVEL_ID),
-      'Created request scope did not include the selected grade level',
-    );
-    assert(
-      includesStringish(request.scope_snapshot?.room_ids, ROOM_ID),
-      'Created request scope did not include the selected room',
+      includesStringish(request.scope_snapshot?.school_ids, SCHOOL_ID),
+      'Created request scope did not include the requester school',
     );
     assert((await eventCount(dataSource, request.id, 'REQUEST')) === 1, 'REQUEST event was not created');
     assert(
@@ -576,7 +539,22 @@ async function main() {
 
     await clearBrowserSession(client);
     await loginInBrowser(client, approverUser, createSessionCookie(sessionCookieService, approverId));
-    await navigate(client, `${FRONTEND_URL}/students/export`);
+    // A national approver sees a school's requests once that school is picked
+    // in the header filter, as on every other school page.
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_school_filter', ${JSON.stringify(
+        JSON.stringify({
+          province: '',
+          district: '',
+          subDistrict: '',
+          schoolId: String(SCHOOL_ID),
+          schoolName: '',
+          userId: approverId,
+        }),
+      )}); true`,
+    );
+    await navigate(client, `${FRONTEND_URL}/manage-students/export`);
     await waitFor(
       async () =>
         (await bodyText(client)).includes('ส่งออกข้อมูลส่วนบุคคล') &&
@@ -610,7 +588,7 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: true,
     });
-    await navigate(client, `${FRONTEND_URL}/students/export`);
+    await navigate(client, `${FRONTEND_URL}/manage-students/export`);
     await waitFor(
       async () =>
         (await bodyText(client)).includes('ส่งออกข้อมูลส่วนบุคคล') &&

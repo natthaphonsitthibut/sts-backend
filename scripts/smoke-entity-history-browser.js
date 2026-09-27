@@ -382,13 +382,24 @@ async function main() {
     );
     await waitFor(
       async () =>
-        (await bodyText(client)).includes('เลือกโรงเรียนจากตัวกรองด้านบนเพื่อแสดงรายชื่อนักเรียน'),
+        (await bodyText(client)).includes('เลือกโรงเรียนจากแถบด้านบนเพื่อแสดงรายชื่อนักเรียน'),
       'History tab did not ask for a school before rendering',
     );
-    await navigate(
+    // The school comes from the header's shared filter, not the URL.
+    await evaluate(
       client,
-      `${FRONTEND_URL}/manage-students/history?schoolId=${historySchool.id}`,
+      `localStorage.setItem('sts_school_filter', ${JSON.stringify(
+        JSON.stringify({
+          province: '',
+          district: '',
+          subDistrict: '',
+          schoolId: String(historySchool.id),
+          schoolName: '',
+          userId: session.user.id,
+        }),
+      )}); true`,
     );
+    await navigate(client, `${FRONTEND_URL}/manage-students/history`);
     await waitForHistoryPanel(client, 'ประวัติข้อมูลนักเรียน');
     assertNoSecretLeak(await bodyText(client), 'Student history (unfiltered)');
     await capture(client, '/tmp/sts-entity-history-students-desktop.png');
@@ -404,10 +415,7 @@ async function main() {
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390, height: 844, deviceScaleFactor: 1, mobile: true,
     });
-    await navigate(
-      client,
-      `${FRONTEND_URL}/manage-students/history?schoolId=${historySchool.id}`,
-    );
+    await navigate(client, `${FRONTEND_URL}/manage-students/history`);
     await waitForHistoryPanel(client, 'ประวัติข้อมูลนักเรียน');
     await capture(client, '/tmp/sts-entity-history-students-mobile.png');
 

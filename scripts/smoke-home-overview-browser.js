@@ -45,7 +45,8 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${errorMessage(lastError)}` : message);
+  const text = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${text}: ${errorMessage(lastError)}` : text);
 }
 
 class CdpClient {
@@ -520,7 +521,11 @@ async function mapFeatureCount(client, dimension) {
           `document.querySelectorAll('[data-administrative-map="${dimension}"] path[data-area-code]').length`,
         ),
       ) > 0,
-    `${dimension} administrative map did not render`,
+    async () =>
+      `${dimension} administrative map did not render; maps on page: ${await evaluate(
+        client,
+        `JSON.stringify([...document.querySelectorAll('[data-administrative-map]')].map((m) => [m.getAttribute('data-administrative-map'), m.querySelectorAll('path[data-area-code]').length]).concat([[location.pathname + location.search, localStorage.getItem('sts_school_filter'), document.querySelector('[data-risk-area-dimension]')?.getAttribute('data-risk-area-dimension'), document.body.innerText.slice(0, 160)]]))`,
+      )}`,
   );
   return Number(
     await evaluate(
@@ -1272,10 +1277,14 @@ async function main() {
     });
     const districtBoundaryCount = await mapFeatureCount(client, 'DISTRICT');
     assert(districtBoundaryCount > 0, 'Province map did not contain current district boundaries');
-    const drilledSearch = await evaluate(client, 'location.search');
+    // Area and school live in the shared header filter (`sts_school_filter`),
+    // not this page's URL, so a drill-down carries over to every other page.
+    const storedScope = () =>
+      evaluate(client, `JSON.parse(localStorage.getItem('sts_school_filter') || '{}')`);
+    const drilledScope = await storedScope();
     assert(
-      String(drilledSearch).includes(`province=${encodeURIComponent(selectedProvince)}`),
-      'Province drill-down did not retain the selected scope in the URL',
+      drilledScope?.province === selectedProvince,
+      `Province drill-down did not retain the selected scope in the header filter: ${JSON.stringify(drilledScope)}`,
     );
 
     const selectedDistrict = await selectMapArea(client, 'DISTRICT');
@@ -1306,22 +1315,22 @@ async function main() {
         ),
       'Selecting a sub-district did not drill the ranking down to schools',
     );
-    assert(
-      (await mapFeatureCount(client, 'SUB_DISTRICT')) === subDistrictBoundaryCount,
-      'School drill-down replaced the sub-district boundary map',
+    // Once the ranking lists schools there is no area left to paint, so the map
+    // card drops out by design (2fdbbfb) and the ranking card owns "back".
+    await waitFor(
+      async () =>
+        Number(await evaluate(client, `document.querySelectorAll('[data-administrative-map]').length`)) === 0,
+      'School drill-down should hide the area map (the ranking has outgrown it)',
     );
     await assertNoSchoolPins(client);
 
     const backLabel = await evaluate(
       client,
-      `document.querySelector('button[data-administrative-map-back]')?.textContent?.trim() || null`,
+      `document.querySelector('button[data-risk-area-back]')?.innerText?.trim() || null`,
     );
-    assert(backLabel === 'กลับไปดูตำบล/แขวง', `Unexpected map back label: ${backLabel}`);
+    assert(backLabel === 'กลับไปดูตำบล/แขวง', `Unexpected ranking back label: ${backLabel}`);
     for (const expectedDimension of ['SUB_DISTRICT', 'DISTRICT', 'PROVINCE']) {
-      await evaluate(
-        client,
-        `document.querySelector('button[data-administrative-map-back]')?.click()`,
-      );
+      await evaluate(client, `document.querySelector('button[data-risk-area-back]')?.click()`);
       await waitFor(
         async () =>
           evaluate(
@@ -1332,10 +1341,10 @@ async function main() {
         `Risk ranking back control did not return to ${expectedDimension}`,
       );
     }
-    const restoredSearch = await evaluate(client, 'location.search');
+    const restoredScope = await storedScope();
     assert(
-      !String(restoredSearch).includes('province='),
-      'Risk ranking back control did not clear the selected province',
+      !restoredScope?.province,
+      `Risk ranking back control did not clear the selected province: ${JSON.stringify(restoredScope)}`,
     );
     await assertMapAssetErrorAndRecovery(client);
     const apiActiveCases = await evaluate(

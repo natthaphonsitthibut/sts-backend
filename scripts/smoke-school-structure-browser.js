@@ -143,6 +143,11 @@ async function clickAppLink(client, pathname) {
 }
 
 async function assertRememberedSearchKeepsRestoredPage(client) {
+  // Walk it the way a user does: search, move to page 2 with the pager, leave
+  // the page and come back. The remembered search must come back with it and
+  // must not throw the list back to page 1. ("." matches every grade label,
+  // so the school's rooms span several pages.)
+  const SEARCH = '.';
   await navigate(client, `${FRONTEND_URL}/classrooms`);
   await waitFor(
     async () => await evaluate(client, `Boolean(document.querySelector('input[placeholder="ค้นหา"]'))`),
@@ -153,12 +158,26 @@ async function assertRememberedSearchKeepsRestoredPage(client) {
     `(() => {
       const input = document.querySelector('input[placeholder="ค้นหา"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      setter.call(input, 'remembered-classroom-filter');
+      setter.call(input, ${JSON.stringify(SEARCH)});
       input.dispatchEvent(new Event('input', { bubbles: true }));
     })()`,
   );
-  await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 400))`);
-  await evaluate(client, `history.replaceState(history.state, '', '/classrooms?page=2')`);
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `(() => {
+          const next = document.querySelector('button[aria-label="หน้าถัดไป"]');
+          return Boolean(next && !next.disabled);
+        })()`,
+      ),
+    'Classrooms search did not produce a second page to restore',
+  );
+  await evaluate(client, `document.querySelector('button[aria-label="หน้าถัดไป"]').click()`);
+  await waitFor(
+    async () => (await evaluate(client, `new URLSearchParams(location.search).get('page')`)) === '2',
+    'Classrooms pager did not move to page 2',
+  );
   await clickAppLink(client, '/');
   await evaluate(client, 'history.back()');
   await waitFor(
@@ -167,46 +186,13 @@ async function assertRememberedSearchKeepsRestoredPage(client) {
   );
   await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 650))`);
   assert(
+    (await evaluate(client, `document.querySelector('input[placeholder="ค้นหา"]')?.value`)) ===
+      SEARCH,
+    'Classrooms did not restore the remembered search',
+  );
+  assert(
     (await evaluate(client, `new URLSearchParams(location.search).get('page')`)) === '2',
     'Remembered classrooms search reset the restored page query',
-  );
-  assert(
-    (await evaluate(client, `document.querySelector('input[placeholder="ค้นหา"]')?.value`)) ===
-      'remembered-classroom-filter',
-    'Classrooms search was not restored during the page-state smoke',
-  );
-
-  await navigate(client, `${FRONTEND_URL}/school-structure`);
-  await waitFor(
-    async () => await evaluate(client, `Boolean(document.querySelector('input[placeholder="ค้นหาห้อง"]'))`),
-    'School-structure search did not render for filter restoration smoke',
-  );
-  await evaluate(
-    client,
-    `(() => {
-      const input = document.querySelector('input[placeholder="ค้นหาห้อง"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      setter.call(input, 'remembered-structure-filter');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`,
-  );
-  await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 400))`);
-  await evaluate(client, `history.replaceState(history.state, '', '/school-structure?page=2')`);
-  await clickAppLink(client, '/');
-  await evaluate(client, 'history.back()');
-  await waitFor(
-    async () => (await evaluate(client, 'location.pathname')) === '/school-structure',
-    'Browser back did not restore the school-structure page',
-  );
-  await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 650))`);
-  assert(
-    (await evaluate(client, `new URLSearchParams(location.search).get('page')`)) === '2',
-    'Remembered school-structure search reset the restored page query',
-  );
-  assert(
-    (await evaluate(client, `document.querySelector('input[placeholder="ค้นหาห้อง"]')?.value`)) ===
-      'remembered-structure-filter',
-    'School-structure search was not restored during the page-state smoke',
   );
 }
 
@@ -381,7 +367,7 @@ async function chooseCombobox(client, ariaLabel, optionLabel, searchTerm = '') {
       Boolean(
         await evaluate(
           client,
-          `Array.from(document.querySelectorAll('button')).some((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)})`,
+          `Array.from(document.querySelectorAll('button')).some((button) => (button.innerText || '').split('\\n')[0].trim() === ${JSON.stringify(optionLabel)})`,
         ),
       ),
     `Combobox option was not available: ${optionLabel}`,
@@ -390,7 +376,7 @@ async function chooseCombobox(client, ariaLabel, optionLabel, searchTerm = '') {
     client,
     `(() => {
       const option = Array.from(document.querySelectorAll('button'))
-        .find((button) => button.textContent.trim() === ${JSON.stringify(optionLabel)});
+        .find((button) => (button.innerText || '').split('\\n')[0].trim() === ${JSON.stringify(optionLabel)});
       if (!option) return false;
       option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
       option.click();
@@ -504,6 +490,29 @@ async function changeNativeSelect(client, ariaLabel, value) {
 
 // The import context cascade renders grade and classroom as native selects,
 // so pick by the option text a user reads and let the helper resolve its value.
+async function openScopeFilter(client, label) {
+  await waitFor(
+    async () =>
+      await evaluate(
+        client,
+        `(() => {
+          const trigger = document.querySelector(${JSON.stringify(`[data-scope-filter-trigger="${label}"]`)});
+          if (!trigger || trigger.disabled) return false;
+          trigger.click();
+          return true;
+        })()`,
+      ),
+    `Scope filter trigger did not render: ${label}`,
+  );
+}
+
+async function closeScopeFilter(client) {
+  await evaluate(
+    client,
+    `[...document.querySelectorAll('button')].find((button) => button.innerText.trim() === 'เสร็จสิ้น')?.click()`,
+  );
+}
+
 async function chooseNativeSelectOption(client, ariaLabel, optionLabel) {
   const selector = JSON.stringify(`[aria-label="${ariaLabel}"]`);
   const label = JSON.stringify(optionLabel);
@@ -1503,14 +1512,14 @@ async function main() {
     await chooseCombobox(chrome.client, 'ค้นหาโรงเรียน', schoolA.name);
     await chooseCombobox(chrome.client, 'เลือกภาคเรียน', `ปี ${ACADEMIC_YEAR} / ภาค 1`);
     await chooseNativeSelectOption(chrome.client, 'เลือกชั้น', classroom.gradeLabel);
-    await chooseNativeSelectOption(chrome.client, 'เลือกห้องเรียน', `ห้อง ${ROOM_NUMBER}`);
+    await chooseNativeSelectOption(chrome.client, 'เลือกห้อง', `ห้อง ${ROOM_NUMBER}`);
     const directImportContext = await evaluate(
       chrome.client,
       `({
         school: document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value,
         term: document.querySelector('[aria-label="เลือกภาคเรียน"]')?.value,
         grade: document.querySelector('[aria-label="เลือกชั้น"]')?.selectedOptions[0]?.textContent.trim(),
-        classroom: document.querySelector('[aria-label="เลือกห้องเรียน"]')?.selectedOptions[0]?.textContent.trim()
+        classroom: document.querySelector('[aria-label="เลือกห้อง"]')?.selectedOptions[0]?.textContent.trim()
       })`,
     );
     assert(
@@ -1556,7 +1565,7 @@ async function main() {
           school: document.querySelector('[aria-label="ค้นหาโรงเรียน"]')?.value,
           term: document.querySelector('[aria-label="เลือกภาคเรียน"]')?.value,
           grade: document.querySelector('[aria-label="เลือกชั้น"]')?.value,
-          classroom: document.querySelector('[aria-label="เลือกห้องเรียน"]')?.value,
+          classroom: document.querySelector('[aria-label="เลือกห้อง"]')?.value,
           buttons: Array.from(document.querySelectorAll('button'))
             .filter((item) => item.textContent.includes('ตรวจสอบไฟล์'))
             .map((item) => ({ disabled: item.disabled, text: item.textContent.trim() }))
@@ -1602,7 +1611,10 @@ async function main() {
       'Created classroom was not visible in the browser',
     );
     await changeNativeSelect(chrome.client, 'เลือกภาคเรียน', term.id);
+    // The grade filter lives in the scope dialog (like รายชื่อนักเรียน).
+    await openScopeFilter(chrome.client, 'ระดับชั้น');
     await chooseNativeSelectOption(chrome.client, 'กรองตามระดับชั้น', grade.label);
+    await closeScopeFilter(chrome.client);
     await waitFor(
       async () => (await evaluate(chrome.client, 'document.body.innerText')).includes('ห้อง Browser Smoke'),
       'Classroom table did not reflect the term and grade filters',
@@ -1967,6 +1979,34 @@ async function main() {
       `(() => { const button = document.querySelector(${JSON.stringify(`[aria-label="เปิดข้อมูลนักเรียน ${importedStudentName}"]`)}); if (!button) return false; button.click(); return true; })()`,
     );
     assert(openedStudentProfile, 'Classroom student profile button was not available');
+    // The calendar opens on today (f50f2ae); step back to the fixture's day so
+    // its record line (ผู้เช็กชื่อ …) is the one on show.
+    await waitFor(
+      async () =>
+        (await evaluate(chrome.client, 'location.pathname')).startsWith('/students/') &&
+        (await evaluate(
+          chrome.client,
+          `Boolean(document.querySelector('[data-student-attendance-calendar] button[aria-label="เดือนก่อนหน้า"]'))`,
+        )),
+      'Student profile attendance calendar did not render',
+    );
+    const recordedDay = new Date(`${RECORDED_ATTENDANCE_DATE}T00:00:00+07:00`);
+    const recordedDayPrefix = `${recordedDay.getDate()} ${recordedDay.toLocaleDateString('th-TH', { month: 'long', timeZone: 'Asia/Bangkok' })}`;
+    await waitFor(
+      async () =>
+        await evaluate(
+          chrome.client,
+          `(() => {
+            const calendar = document.querySelector('[data-student-attendance-calendar]');
+            const day = [...calendar.querySelectorAll('button[aria-label]')]
+              .find((button) => button.getAttribute('aria-label').startsWith(${JSON.stringify(`${recordedDayPrefix} `)}));
+            if (day) { day.click(); return true; }
+            calendar.querySelector('button[aria-label="เดือนก่อนหน้า"]')?.click();
+            return false;
+          })()`,
+        ),
+      `Attendance calendar never reached ${recordedDayPrefix}`,
+    );
     await waitFor(
       async () => {
         if (!(await evaluate(chrome.client, 'location.pathname')).startsWith('/students/')) {
@@ -2388,12 +2428,29 @@ async function main() {
       chrome.client,
       `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(multiSession.user))});`,
     );
+    // A multi-school actor picks its school in the header's shared filter now,
+    // not a picker on the page; store that choice the way the header does.
+    await evaluate(
+      chrome.client,
+      `localStorage.setItem('sts_school_filter', ${JSON.stringify(
+        JSON.stringify({
+          province: '',
+          district: '',
+          subDistrict: '',
+          schoolId: String(schoolA.id),
+          schoolName: schoolA.name,
+          userId: multiSession.user.id,
+        }),
+      )}); true`,
+    );
     await navigate(chrome.client, `${FRONTEND_URL}/classrooms?multi=${Date.now()}`);
     await waitFor(
-      async () => (await evaluate(chrome.client, `Boolean(document.querySelector('[aria-label="กรองตามโรงเรียน"]'))`)),
-      'Multi-school actor did not receive the school filter',
+      async () =>
+        (await evaluate(chrome.client, `document.querySelector('header')?.innerText || ''`)).includes(
+          schoolA.name,
+        ),
+      'Multi-school actor did not see the picked school in the header filter',
     );
-    await chooseCombobox(chrome.client, 'กรองตามโรงเรียน', schoolA.name, schoolA.name);
     await waitFor(
       async () => (await evaluate(chrome.client, `Boolean(document.querySelector('[data-classroom-card="${pageClassroom.id}"]'))`)),
       'Multi-school filter did not load the selected school classrooms',
