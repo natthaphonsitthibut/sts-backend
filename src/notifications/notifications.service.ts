@@ -140,6 +140,36 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * FN-STS-28 — a teacher's ควรเฝ้าดู / น่ากังวล comment puts the student into
+   * the เฝ้าระวัง group; tell everyone whose scope covers the student. The
+   * fan-out resolves the student's grade/room from `studentUuid` and never
+   * throws, so a failed alert cannot undo the saved comment.
+   */
+  async notifyStudentWatchlistAlert(event: {
+    commentId: string;
+    studentUuid: string;
+    schoolId: number;
+    concernLevelLabel: string;
+    problemCategoryLabel: string;
+    authorLabel: string | null;
+    authorUserId: number | null;
+  }): Promise<number[]> {
+    return await this.fanOutSafely({
+      typeCode: 'STUDENT_WATCHLIST_ALERT',
+      title: `นักเรียนเข้ากลุ่มเฝ้าระวัง: ${event.concernLevelLabel}`,
+      studentUuid: event.studentUuid,
+      schoolId: event.schoolId,
+      refEntity: 'classroom_student_comments',
+      refId: event.commentId,
+      excludeUserId: event.authorUserId,
+      reasonText: joinDetails(
+        `หัวข้อปัญหา: ${event.problemCategoryLabel}`,
+        text(event.authorLabel) ? `บันทึกโดย: ${text(event.authorLabel)}` : null,
+      ),
+    });
+  }
+
   async listForUser(userId: number, filters: NotificationListFilters) {
     const [{ rows, totalCount }, counts] = await Promise.all([
       this.notificationsRepository.listForRecipient(userId, filters),
@@ -164,6 +194,8 @@ export class NotificationsService {
         seen_at: row.seen_at,
         read_at: row.read_at,
         created_at: row.created_at,
+        student_uuid: row.student_uuid ?? null,
+        concern_level_code: row.concern_level_code ?? null,
       })),
       totalCount,
       page,

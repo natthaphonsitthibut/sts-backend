@@ -153,14 +153,17 @@ export class NotificationsRepository {
           COALESCE(notification_case_student.person_uuid, notification_student.person_uuid),
           $10::int,
           $15::varchar,
-          $12,
+          COALESCE(
+            NULLIF(btrim($12::text), ''),
+            NULLIF(btrim(CONCAT_WS(' ', notification_student."FirstName_Onec", notification_student."LastName_Onec")), '')
+          ),
           CASE
             WHEN nt.code = 'CASE_STATUS_CHANGED'
               THEN COALESCE(
                 NULLIF(btrim($13::text), ''),
                 NULLIF(btrim(notification_case.reason_flagged), '')
               )
-            ELSE NULL
+            ELSE NULLIF(btrim($13::text), '')
           END
         FROM notification_types nt
         CROSS JOIN users u
@@ -202,7 +205,7 @@ export class NotificationsRepository {
         input.studentNameSnapshot ?? null,
         input.reasonText ?? null,
         input.excludeUserIds ?? [],
-        input.caseStatusCode,
+        input.caseStatusCode ?? null,
       ],
     );
     return result.rows.map((row) => Number(row.recipient_user_id));
@@ -322,10 +325,18 @@ export class NotificationsRepository {
           n.seen_at,
           n.read_at,
           n.created_at,
+          -- The student's current enrollment (the profile route's id) and, for
+          -- a watchlist alert, the comment's level (its icon and colour).
+          notification_student.student_uuid::text AS student_uuid,
+          ref_comment.concern_level_code,
           COUNT(*) OVER ()::int AS total_count
         FROM notifications n
         JOIN notification_types nt ON nt.code = n.type_code
         ${CURRENT_RECIPIENT_ACCESS_JOINS_SQL}
+        LEFT JOIN classroom_student_comments ref_comment
+          ON n.ref_entity = 'classroom_student_comments'
+         AND n.ref_id ~ '^[0-9]{1,18}$'
+         AND ref_comment.id = n.ref_id::bigint
         WHERE n.recipient_user_id = $1
           AND ${CURRENT_RECIPIENT_ACCESS_WHERE_SQL}
           AND (
